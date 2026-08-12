@@ -288,6 +288,7 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 	{
 		const flat = (comp as any).flat as any[];
 		const rowFile = (comp as any).rowFile as number[];
+		const hunkStarts = (comp as any).hunkStarts as { flat: number; file: number }[];
 		for (let i = 0; i < flat.length; i++) {
 			const r = flat[i]!;
 			if (r.kind === "file" || r.kind === "sep") continue;
@@ -333,9 +334,58 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 				}
 			}
 		}
+		// The DEL PLACEMENT check: a removed line must render where it sat in
+		// the file — its old line mapped through the hunk's new↔old delta —
+		// never at the hunk's top. The filesystem.rs `.resolved_layers`
+		// (old 741) must sit inside its hunk's new-side rows (between
+		// `let ro_match = self` and `.layers`), not after the previous
+		// method's `}`. Scoped to what is unambiguous: a del may not render
+		// BEFORE the first new-side row of its own hunk (the hunk-top bug)
+		// or after the last (the hunk-bottom bug). The moved/reflowed hunks
+		// scramble the exact interpolation — the check does not chase that.
+		{
+			for (let hi = 0; hi < hunkStarts.length; hi++) {
+				const s0 = hunkStarts[hi]!.flat;
+				const e0 = hi + 1 < hunkStarts.length ? hunkStarts[hi + 1]!.flat : flat.length;
+				// The hunk index within its file = the count of hunkStarts
+				// for the same file before hi.
+				const fi = hunkStarts[hi]!.file;
+				let hunkIdx = 0;
+				for (let k = 0; k < hi; k++) if (hunkStarts[k]!.file === fi) hunkIdx++;
+				const h = files[fi]!.hunks[hunkIdx]!;
+				const delta = h.newStart - h.oldStart;
+				let firstNew = -1;
+				let lastNew = -1;
+				for (let i = s0; i < e0; i++) {
+					if (flat[i]!.newLine !== null) {
+						if (firstNew < 0) firstNew = i;
+						lastNew = i;
+					}
+				}
+				if (firstNew < 0) continue; // a del-only hunk — no new-side rows
+				for (let i = s0; i < e0; i++) {
+					const r = flat[i]!;
+					if (r.kind !== "del" || r.oldLine === null) continue;
+					// The del's expected placement (its old line through the
+					// hunk's delta). A del at the hunk's START whose old
+					// position precedes the first new row renders before it
+					// legitimately; the hunk-top bug is a del whose placement
+					// is INSIDE the new-side rows but renders before them all.
+					const p = r.oldLine + delta;
+					if (i < firstNew && p > (flat[firstNew]!.newLine ?? 0)) {
+						failures++;
+						console.error(`${corpus.name}: ${files[rowFile[i]!]!.path}: del (old ${r.oldLine}, placement ${p}) renders before its hunk's first new-side row (${flat[firstNew]!.newLine}) — the hunk-top bug`);
+					}
+					if (i > lastNew && p <= (flat[lastNew]!.newLine ?? 0)) {
+						failures++;
+						console.error(`${corpus.name}: ${files[rowFile[i]!]!.path}: del (old ${r.oldLine}, placement ${p}) renders after its hunk's last new-side row (${flat[lastNew]!.newLine})`);
+					}
+				}
+			}
+		}
+
 		// Coverage: within every hunk, the rendered rows' line numbers must be
 		// contiguous — a missing line (the dropped in-hunk ctx) breaks this.
-		const hunkStarts = (comp as any).hunkStarts as { flat: number; file: number }[];
 		for (let hi = 0; hi < hunkStarts.length; hi++) {
 			const s = hunkStarts[hi]!.flat;
 			// The coverage range stops at the next hunk OR the next FILE's

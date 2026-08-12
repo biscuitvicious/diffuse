@@ -895,13 +895,40 @@ function buildVisible(f: DiffFile): Row[] {
 		// them (`+ .layers` floating without `let ro_match = self`). Fill the
 		// gaps between the rows with the file's lines.
 		const src = side === "new" ? f.newContent : f.oldContent;
+		// A removed line must render where it SAT in the file, not at the
+		// hunk's top (the anchor-less `(0, oldLine)` key): a del's position
+		// is its OLD line mapped through the hunk's new↔old delta — the
+		// filesystem.rs `.resolved_layers` (old 741) renders between
+		// `let ro_match = self` (new 898) and `.layers` (new 899), not after
+		// the previous method's `}`. The del sorts before the add at the
+		// same mapped line (the rename pair reads del-then-add).
+		// A removed line renders where it SAT in the file: its old line
+		// mapped through the hunk's new↔old delta (the filesystem.rs
+		// `.resolved_layers`, old 741, renders between `let ro_match = self`
+		// (new 898) and `.layers` (new 899), not after the previous method's
+		// `}`). The del sorts before the add at the same mapped line (the
+		// rename pair reads del-then-add). A moved/reflowed hunk scrambles
+		// the mapping — the delta is approximate there, but it never throws
+		// a del to the hunk's top.
+		const delta = newSide ? h.newStart - h.oldStart : 0;
+		const placed = lead.rows.map((r) => {
+			const at = newSide
+				? (r.newLine !== null
+					? r.newLine
+					// Just BEFORE the mapped line: the rename pair reads
+					// del-then-add (`.resolved_layers` then `.layers`).
+					: (r.oldLine !== null ? r.oldLine + delta - 0.5 : 0))
+				: (r.oldLine ?? 0);
+			return { r, at };
+		});
+		const rank = (r: { kind: string }) => (r.kind === "del" ? 0 : 1);
+		placed.sort((x, y) => x.at - y.at || rank(x.r) - rank(y.r));
 		// cursor = start - 1: the hunk's first line (the diff's leading ctx)
 		// is part of the coverage — the gap fills from it on.
 		let cursor = start - 1;
-		for (const r of lead.rows) {
-			const rl = newSide ? r.newLine : r.oldLine;
-			if (rl !== null && rl > cursor + 1) {
-				for (let g = cursor + 1; g < rl; g++) {
+		for (const { r, at } of placed) {
+			if (at > cursor + 1) {
+				for (let g = cursor + 1; g < at; g++) {
 					rows.push({
 						kind: "ctx",
 						text: src[g - 1] ?? "",
@@ -911,7 +938,10 @@ function buildVisible(f: DiffFile): Row[] {
 				}
 			}
 			rows.push(r);
-			if (rl !== null && rl > cursor) cursor = rl;
+			// The cursor tracks the covered NEW lines — a del's fractional
+			// placement advances it only to its floor, so the gap between
+			// two dels is filled exactly once (no duplicated ctx rows).
+			if (at > cursor) cursor = Math.max(cursor, Math.floor(at));
 		}
 		// The TRAILING in-hunk ctx: the lines after the last change row but
 		// still inside the hunk's coverage (the diff's own trailing context —
