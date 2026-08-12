@@ -1,0 +1,3 @@
+[submodule "diffuse-golden"]
+	path = tests/golden
+	url = git@github.com:biscuitvicious/diffuse-golden.git

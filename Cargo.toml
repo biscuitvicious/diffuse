@@ -1,0 +1,22 @@
+[package]
+name = "diffuse"
+version = "0.1.0"
+edition = "2024"
+description = "The diffuse diff-engine: a renderer-agnostic token-stream backend (parse → moves → collapse → merged runs), ported one-for-one from the pi review extension"
+license = "MIT"
+
+[lib]
+name = "diffuse"
+path = "src/lib.rs"
+
+[[bin]]
+name = "diffuse"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+
+[dev-dependencies]
