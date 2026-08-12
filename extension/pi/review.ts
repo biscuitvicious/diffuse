@@ -189,6 +189,10 @@ import { fileURLToPath } from "node:url";
 
 // ── Config ─────────────────────────────────────────────────────────────────
 
+/** The build stamp — install.sh substitutes @BUILD@ with the git commit +
+ * date; "dev" when run from the workspace. Shown in the status line so a
+ * stale pi process (one that didn't hot-reload the module) is visible. */
+const REVIEW_BUILD = "@BUILD@";
 const DEFAULT_CONTEXT = 6;
 const NOTES_DIR = join(homedir(), ".pi", "review");
 const NOTES_FILE = join(NOTES_DIR, "notes.json");
@@ -2220,7 +2224,7 @@ class ReviewComponent {
 		const colTxt = this.colOffset > 0 ? ` · col ${this.colOffset}+` : "";
 		const goTxt = this.numBuffer ? ` · go ${this.numBuffer}` : "";
 		const mouseTxt = this.lastMouse ? ` · mouse ${this.lastMouse}` : "";
-		const statusRaw = ` ${this.fileIdx + 1}/${this.session.files.length} files  ·  hunk ${this.currentHunkIdx() + 1}/${f.hunks.length}  ·  base: ${this.session.base.label}${ctxTxt}${colTxt}${goTxt}${mouseTxt}${this.session.branch ? `  ·  branch: ${this.session.branch}` : ""}`;
+		const statusRaw = ` ${this.fileIdx + 1}/${this.session.files.length} files  ·  hunk ${this.currentHunkIdx() + 1}/${f.hunks.length}  ·  base: ${this.session.base.label}${ctxTxt}${colTxt}${goTxt}${mouseTxt}${this.session.branch ? `  ·  branch: ${this.session.branch}` : ""}  ·  ${REVIEW_BUILD}`;
 		lines.push(fit(dim(statusRaw)));
 		// The in-component note editor: a prompt line with the draft echoed
 		// across lines (ctrl+enter saves, esc cancels, plain enter breaks
