@@ -52,7 +52,7 @@ fn kw(set: &str) -> HashSet<String> {
     set.split_whitespace().map(String::from).collect()
 }
 
-pub fn lang_profile(ext: &str) -> Option<LangProfile> {
+pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
     // Fence ids are LANGUAGE names (` ```rust `); the profiles are keyed by
     // the file EXTENSIONS (`rs`). Map the common aliases so a labeled fence
     // actually highlights.
@@ -177,7 +177,23 @@ pub fn lang_profile(ext: &str) -> Option<LangProfile> {
         },
         _ => return None,
     };
-    Some(profile)
+    // The profile rebuilds a keyword HashSet + 2 regexes — and
+    // lang_profile is called PER ROW inside fence regions (classify_line
+    // / classify_frag resolve the region's language). Cache by the
+    // canonical ext: build once, leak the Box, hand out a 'static ref so
+    // no caller clones or rebuilds (the fence-region classify was the
+    // remaining classify cost).
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, &'static LangProfile>>,
+    > = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut guard = cache.lock().unwrap();
+    if let Some(p) = guard.get(ext) {
+        return Some(*p);
+    }
+    let boxed: &'static LangProfile = Box::leak(Box::new(profile));
+    guard.insert(ext.to_string(), boxed);
+    Some(boxed)
 }
 
 // Regex literal parts; the per-language alternation is composed from
@@ -540,7 +556,7 @@ pub fn classify_line(
                     }
                     classify_tokens(text, Some(p))
                 }
-                _ => classify_tokens(text, profile.as_ref()),
+                _ => classify_tokens(text, profile),
             }
         }
         None => {

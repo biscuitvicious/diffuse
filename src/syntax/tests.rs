@@ -31,7 +31,7 @@ fn has_color(
 #[test]
 fn syntax_classification() {
     let rust = lang_profile("rs").unwrap();
-    let rs = Some(&rust);
+    let rs = Some(rust);
     assert!(has_color("fn main() {", rs, "31", "fn"), "fn keyword");
     assert!(
         has_color("let mut x = 42;", rs, "31", "let")
@@ -63,7 +63,7 @@ fn syntax_classification() {
     );
     // Hash comments only for hashComment languages (python vs rust attrs).
     let py = lang_profile("py").unwrap();
-    let py_tokens = classify_tokens("# derive", Some(&py));
+    let py_tokens = classify_tokens("# derive", Some(py));
     assert!(
         py_tokens.iter().any(|t| t.color == "syntaxComment"),
         "py hash comment"

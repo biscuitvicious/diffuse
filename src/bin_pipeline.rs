@@ -135,7 +135,7 @@ pub fn colored_runs(
             }];
         }
         match region {
-            Some(rg) => classify_tokens(text, rg.lang.as_deref().and_then(lang_profile).as_ref()),
+            Some(rg) => classify_tokens(text, rg.lang.as_deref().and_then(lang_profile)),
             None => {
                 if profile.is_some_and(|p| p.markdown) {
                     markdown_tokens(text)
@@ -243,7 +243,7 @@ pub fn run_pipeline(
         let counts = file_counts(f);
         // The fence regions: the file's syntax-region spans (generic — md's
         // ``` blocks, rust's doc-comment examples, ...).
-        let regions = fence_regions(&f.new_content, profile.as_ref());
+        let regions = fence_regions(&f.new_content, profile);
         let mut hunks_out = Vec::new();
         for h in &f.hunks {
             let mut rows_out = Vec::new();
@@ -255,7 +255,7 @@ pub fn run_pipeline(
                     text: r.text.clone(),
                     del_text: r.del_text.clone(),
                     spans: r.spans.clone().unwrap_or_default(),
-                    runs: colored_runs(r, profile.as_ref(), &regions),
+                    runs: colored_runs(r, profile, &regions),
                     wholesale: r.kind == RowKind::Mod && crate::merge::is_wholesale_mod(r),
                     moved: r.moved,
                     tail: r
