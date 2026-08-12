@@ -108,9 +108,8 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
                 }
             }
             let first = char_at(add_text, *as0);
-            let gap = (del_pos[j].abs_diff(*as0)
-                + if first.is_some_and(is_word) { 0 } else { 5 })
-            .min(op_gap);
+            let gap = (del_pos[j].abs_diff(*as0) + if first.is_some_and(is_word) { 0 } else { 5 })
+                .min(op_gap);
             if gap <= best_gap {
                 best_gap = gap;
                 best = Some(i);
@@ -155,11 +154,15 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
         let ins = del_pos[j].min(add_text.len());
         let left = ins.checked_sub(1).and_then(|i| char_at(add_text, i));
         let right = char_at(add_text, ins);
-        if !(ins > 0 && ins < add_text.len() && left.is_some_and(is_word) && right.is_some_and(is_word)) {
+        if !(ins > 0
+            && ins < add_text.len()
+            && left.is_some_and(is_word)
+            && right.is_some_and(is_word))
+        {
             return false;
         }
         let t = char_slice(del_text, *ds, *de).trim_start();
-        t.chars().next().map_or(false, is_word)
+        t.chars().next().is_some_and(is_word)
     })
 }
 
@@ -182,7 +185,11 @@ pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Ve
             // moves the line into a block): show it struck at the line
             // start. Drop it only when the add's leading run is identical.
             if t.is_empty() {
-                let leading = r.text.chars().take_while(|c| c.is_ascii_whitespace()).collect::<String>();
+                let leading = r
+                    .text
+                    .chars()
+                    .take_while(|c| c.is_ascii_whitespace())
+                    .collect::<String>();
                 return raw != leading.as_str();
             }
             // A single-span del stays even when its text is inside the add
@@ -251,7 +258,8 @@ pub fn del_pairing(
             // Whitespace spans pair despite the overlap — the indent
             // change is expressed minimally (8 → 12 spaces = 8 common
             // + 4 added), not as two independent whole runs.
-            let ws_pair = all_ws(char_slice(del_text, *ds, *de)) && all_ws(char_slice(add_text, *as0, *ae));
+            let ws_pair =
+                all_ws(char_slice(del_text, *ds, *de)) && all_ws(char_slice(add_text, *as0, *ae));
             if !same && !disjoint && !ws_pair {
                 continue;
             }
@@ -265,7 +273,8 @@ pub fn del_pairing(
             // operator anchors at its own offset inside the span.
             let del_op = char_slice(del_text, *ds, *de).trim();
             let op_chars = del_op.chars().collect::<Vec<char>>();
-            let is_compare_op = op_chars.len() >= 1 && op_chars.len() <= 2
+            let is_compare_op = !op_chars.is_empty()
+                && op_chars.len() <= 2
                 && (op_chars[0] == '<' || op_chars[0] == '>')
                 && (op_chars.len() == 1 || op_chars[1] == '=');
             if is_compare_op {
@@ -298,8 +307,7 @@ pub fn del_pairing(
             // `delPairing` — dead in the reference; the gap formula is the
             // position distance plus the alnum bonus only.)
             let first = char_at(add_text, *as0);
-            let gap = del_pos[j].abs_diff(*as0)
-                + if first.is_some_and(is_word) { 0 } else { 5 };
+            let gap = del_pos[j].abs_diff(*as0) + if first.is_some_and(is_word) { 0 } else { 5 };
             // Whitespace pairs express the MINIMUM wherever they land —
             // the old `floor {`'s space before the brace pairs with the
             // new `floor\n                {`'s newline+indent even across
@@ -363,8 +371,14 @@ pub fn is_pure_deletion_mod(r: &Row) -> bool {
 pub fn merged_runs(r: &Row) -> Vec<Run> {
     if is_wholesale_mod(r) {
         return vec![
-            Run { kind: RunKind::Del, text: r.del_text.clone().unwrap_or_default() },
-            Run { kind: RunKind::Add, text: r.text.clone() },
+            Run {
+                kind: RunKind::Del,
+                text: r.del_text.clone().unwrap_or_default(),
+            },
+            Run {
+                kind: RunKind::Add,
+                text: r.text.clone(),
+            },
         ];
     }
     // The reverse stretch: the delText is a whole deleted block (the old
@@ -385,19 +399,35 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
         // + filled `.get(guest_path)`) — then the struck old block
         // spans the following visual lines (`~~\n.filesystems…~~`).
         return vec![
-            Run { kind: RunKind::Common, text: dl[..share].iter().collect() },
-            Run { kind: RunKind::Add, text: al[share..].iter().collect() },
-            Run { kind: RunKind::Del, text: dl[share..].iter().collect() },
+            Run {
+                kind: RunKind::Common,
+                text: dl[..share].iter().collect(),
+            },
+            Run {
+                kind: RunKind::Add,
+                text: al[share..].iter().collect(),
+            },
+            Run {
+                kind: RunKind::Del,
+                text: dl[share..].iter().collect(),
+            },
         ];
     }
     let spans = r.spans.clone().unwrap_or_default();
     let add_spans = spans.add.clone();
     let del_spans = del_spans_to_show(r, Some(&spans.del));
-    let DelPairing { del_pos, pair, op_anchor } = del_pairing(&del_spans, &add_spans, &r.text, &del_text);
+    let DelPairing {
+        del_pos,
+        pair,
+        op_anchor,
+    } = del_pairing(&del_spans, &add_spans, &r.text, &del_text);
     let mut runs: Vec<Run> = Vec::new();
     let emit_range = |runs: &mut Vec<Run>, from: usize, to: usize| {
         if to > from {
-            runs.push(Run { kind: RunKind::Common, text: char_slice(&r.text, from, to).to_string() });
+            runs.push(Run {
+                kind: RunKind::Common,
+                text: char_slice(&r.text, from, to).to_string(),
+            });
         }
     };
     // Events in add-text position order: each add span, each standalone
@@ -417,7 +447,11 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
             // An operator flip anchors at the operator's own offset
             // (`k ~~<~~> floor` — the `<` strikes against the `>`).
             let pos = op_anchor.get(&j).copied().unwrap_or(add_spans[*ai].0);
-            events.push(Ev { pos, del: Some(*dspan), add: Some(add_spans[*ai]) });
+            events.push(Ev {
+                pos,
+                del: Some(*dspan),
+                add: Some(add_spans[*ai]),
+            });
         } else {
             // A standalone landing mid-word must not glue the strike
             // inside a surviving token (`enumer~~.rev()~~ate()` is
@@ -427,7 +461,11 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
             let mut ins = del_pos[j];
             let left = ins.checked_sub(1).and_then(|i| char_at(&r.text, i));
             let right = char_at(&r.text, ins);
-            if ins > 0 && ins < char_len_of(&r.text) && left.is_some_and(is_word) && right.is_some_and(is_word) {
+            if ins > 0
+                && ins < char_len_of(&r.text)
+                && left.is_some_and(is_word)
+                && right.is_some_and(is_word)
+            {
                 while ins < char_len_of(&r.text) {
                     if let Some(c) = char_at(&r.text, ins)
                         && c.is_ascii_whitespace()
@@ -437,12 +475,20 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
                     ins += 1;
                 }
             }
-            events.push(Ev { pos: ins, del: Some(*dspan), add: None });
+            events.push(Ev {
+                pos: ins,
+                del: Some(*dspan),
+                add: None,
+            });
         }
     }
     for (i, aspan) in add_spans.iter().enumerate() {
         if !used_adds.contains(&i) {
-            events.push(Ev { pos: aspan.0, del: None, add: Some(*aspan) });
+            events.push(Ev {
+                pos: aspan.0,
+                del: None,
+                add: Some(*aspan),
+            });
         }
     }
     events.sort_by_key(|e| e.pos);
@@ -470,23 +516,38 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
                         share += 1;
                     }
                     if share > 0 {
-                        runs.push(Run { kind: RunKind::Common, text: dch[..share].iter().collect() });
+                        runs.push(Run {
+                            kind: RunKind::Common,
+                            text: dch[..share].iter().collect(),
+                        });
                     }
                     if share < dch.len() {
-                        runs.push(Run { kind: RunKind::Del, text: dch[share..].iter().collect() });
+                        runs.push(Run {
+                            kind: RunKind::Del,
+                            text: dch[share..].iter().collect(),
+                        });
                     }
                     if share < ach.len() {
-                        runs.push(Run { kind: RunKind::Add, text: ach[share..].iter().collect() });
+                        runs.push(Run {
+                            kind: RunKind::Add,
+                            text: ach[share..].iter().collect(),
+                        });
                     }
                     pos = aspan.1;
                     continue;
                 }
             }
-            runs.push(Run { kind: RunKind::Del, text: del_text_span.to_string() });
+            runs.push(Run {
+                kind: RunKind::Del,
+                text: del_text_span.to_string(),
+            });
             pos = pos.max(ev.pos);
         }
         if let Some(aspan) = ev.add {
-            runs.push(Run { kind: RunKind::Add, text: char_slice(&r.text, aspan.0, aspan.1).to_string() });
+            runs.push(Run {
+                kind: RunKind::Add,
+                text: char_slice(&r.text, aspan.0, aspan.1).to_string(),
+            });
             pos = aspan.1;
         }
     }
@@ -511,3 +572,6 @@ pub fn display_text(r: &Row) -> String {
     }
     merged_runs(r).iter().map(|x| x.text.as_str()).collect()
 }
+
+#[cfg(test)]
+mod tests;

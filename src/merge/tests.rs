@@ -1,1 +1,167 @@
-//! Tests for the one-for-one port — Phase 2.
+//! Ports of the merge machinery tests from test/review.test.ts: the
+//! split-word wholesale, the trace wobble, the reverse-stretch, the
+//! whitespace-minimum, the pure-deletion mod.
+
+use crate::lcs::{char_slice, word_spans};
+use crate::merge::*;
+use crate::parse::{Row, RowKind};
+
+fn mk(del: &str, add: &str) -> Row {
+    Row {
+        kind: RowKind::Mod,
+        text: add.to_string(),
+        new_line: Some(1),
+        old_line: Some(1),
+        spans: Some(word_spans(del, add)),
+        moved: false,
+        del_text: Some(del.to_string()),
+        tail: Vec::new(),
+    }
+}
+
+// The split-word wholesale: a removal landing mid-word is garble — the
+// whole-old + whole-new pair must win.
+#[test]
+fn split_word_wholesale() {
+    let r = mk(
+        "            // a frozen (snapshotted) upper carries whiteouts and opaque dirs",
+        "            // layer's markers — a frozen (snapshotted) layer carries",
+    );
+    assert!(
+        is_wholesale_mod(&r),
+        "a removal landing mid-word goes wholesale (fro~~upper~~zen)"
+    );
+    assert_eq!(
+        display_text(&r),
+        r.del_text.clone().unwrap() + &r.text,
+        "wholesale displayText is the whole-old + whole-new pair"
+    );
+}
+
+// The trace wobble: the closing quote is a delimiter, the artifact filter
+// is positional, and a del space yields to its next token's match.
+#[test]
+fn trace_wobble() {
+    let r = mk(
+        "                    trace!(host_path = ?next_lower, \"Found in lower layer\");",
+        "                    trace!(host_path = ?next_lower, \"Found in layer below the top upper\");",
+    );
+    assert_eq!(
+        display_text(&r),
+        "                    trace!(host_path = ?next_lower, \"Found in lower layer below the top upper\");",
+        "the wobble merges without the layer\"layer garble"
+    );
+    let runs = merged_runs(&r);
+    let non_common: Vec<(&str, &str)> = runs
+        .iter()
+        .filter(|x| x.kind != RunKind::Common)
+        .map(|x| {
+            (
+                match x.kind {
+                    RunKind::Del => "del",
+                    RunKind::Add => "add",
+                    RunKind::Common => "common",
+                },
+                x.text.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        non_common,
+        vec![("del", "lower "), ("add", " below the top upper")],
+        "the del lower strikes once, the rest fills"
+    );
+}
+
+// The reverse stretch: the whole old body folds into one mod — shared
+// prefix common, fill first, the struck block across the visual lines.
+#[test]
+fn reverse_stretch_merge() {
+    let del = "        self.mount_stack\n            .filesystems\n            .iter()\n            .rfind(|fs| guest_path.starts_with(fs.mount_point()))\n            .map(|fs| fs.as_ref() as &dyn Filesystem)";
+    let add = "        self.mount_stack.get(guest_path)";
+    let r = mk(del, add);
+    assert!(
+        !is_wholesale_mod(&r),
+        "the reverse stretch stays the subword mod"
+    );
+    let runs = merged_runs(&r);
+    assert_eq!(runs[0].kind, RunKind::Common);
+    assert_eq!(
+        runs[0].text, "        self.mount_stack",
+        "the shared prefix reads common"
+    );
+    assert_eq!(runs[1].kind, RunKind::Add);
+    assert_eq!(runs[1].text, ".get(guest_path)", "the fill reads first");
+    assert_eq!(runs[2].kind, RunKind::Del);
+    assert!(
+        runs[2].text.starts_with("\n            .filesystems"),
+        "the struck block spans the visual lines"
+    );
+    assert!(
+        runs[2]
+            .text
+            .contains(".rfind(|fs| guest_path.starts_with(fs.mount_point()))")
+    );
+    assert!(
+        runs[2]
+            .text
+            .ends_with(".map(|fs| fs.as_ref() as &dyn Filesystem)")
+    );
+}
+
+// The whitespace minimum: 8 → 12 spaces = 8 common + 4 added.
+#[test]
+fn whitespace_minimum() {
+    let del = "        self.cache.borrow_mut().pop(key);";
+    let add = "            self.cache.borrow_mut().pop(key);";
+    let r = mk(del, add);
+    let runs = merged_runs(&r);
+    let parts: Vec<(&str, String)> = runs
+        .iter()
+        .map(|x| {
+            (
+                match x.kind {
+                    RunKind::Common => "common",
+                    RunKind::Del => "del",
+                    RunKind::Add => "add",
+                },
+                x.text.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        parts,
+        vec![
+            ("common", "        ".to_string()),
+            ("add", "    ".to_string()),
+            ("common", "self.cache.borrow_mut().pop(key);".to_string()),
+        ],
+        "8 common + 4 added, never the whole run on each side"
+    );
+}
+
+// A pure-deletion mod: every add span is whitespace — the row is a removal.
+#[test]
+fn pure_deletion_mod() {
+    let r = mk("pub(super) struct X {", "pub struct X {");
+    assert!(
+        is_pure_deletion_mod(&r),
+        "a removal with no fill is a pure deletion"
+    );
+    let filled = mk("pub struct X {", "pub(super) struct X {");
+    assert!(
+        !is_pure_deletion_mod(&filled),
+        "an insertion with no strike is not a pure deletion"
+    );
+}
+
+// char_slice must round-trip the spans (char offsets, non-ASCII safe).
+#[test]
+fn char_slice_roundtrip() {
+    // The add spans index the ADD text (char offsets, non-ASCII safe —
+    // the é is two UTF-8 bytes but one char).
+    let add = "fn café(x: u64) -> u64 {";
+    let ws = word_spans("fn café(x: u32) -> u32 {", add);
+    assert_eq!(char_slice(add, ws.add[0].0, ws.add[0].1), "u64");
+    assert_eq!(char_slice(add, ws.add[1].0, ws.add[1].1), "u64");
+}

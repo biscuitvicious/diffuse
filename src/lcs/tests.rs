@@ -1,4 +1,3 @@
-
 use super::*;
 
 // Port of the word-level diff test block from test/review.test.ts.

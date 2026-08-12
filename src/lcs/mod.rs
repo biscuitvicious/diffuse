@@ -179,12 +179,9 @@ pub fn spans_from(
     spans
 }
 
-/// A pair of change-span sets: char ranges into the old/new text.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct WordSpans {
-    pub del: Vec<(usize, usize)>,
-    pub add: Vec<(usize, usize)>,
-}
+/// A pair of change-span sets: char ranges into the old/new text. The
+/// row's span type (parse::Spans) — one type for the whole pipeline.
+pub type WordSpans = crate::parse::Spans;
 
 /**
  * Word-level change spans between an old and a new line. Both sides get the
