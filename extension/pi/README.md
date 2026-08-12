@@ -61,8 +61,7 @@ Then `/reload` in pi and run `/review` in any git work tree.
 | `REVIEW_EDITOR` | editor binary | `$VISUAL`/`$EDITOR` → `vim` |
 | `REVIEW_EDITOR_ARGS` | argv template override: `{bin} {file} {line} {start} {end} {count}` | — |
 | `REVIEW_EDITOR_RANGE_ARGS` | argv template when a range is selected | — |
-| `REVIEW_BACKEND` | engine backend: `ts` (built-in) or `rust` (spawns the diffuse binary) | `ts` |
-| `REVIEW_DIFFUSE_BIN` | the diffuse binary path (rust backend) | the workspace's `target/{debug,release}/diffuse` |
+| `REVIEW_DIFFUSE_BIN` | the diffuse binary path (the extension spawns the bundled `bin/diffuse` by default) | the bundle next to `review.ts` |
 
 ## Development
 

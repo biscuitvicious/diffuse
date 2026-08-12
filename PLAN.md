@@ -117,7 +117,7 @@ merged runs:
   visual block needs its absorbed lines; the header counts count them).
 - The bin's output IS the golden-walk input: the acceptance test (§5)
   decodes the token-stream JSON and walks it — no separate `--golden`
-  format.
+  format. The output is COMPACT JSON (the pretty form tripled the wire).
 
 ---
 
@@ -258,9 +258,9 @@ component stays.
       are pinned to the reference by the golden's rust-leg classification
       check. The .md fence/markdown paths and the plain add/ctx rows stay
       TS-side.
-- [x] `REVIEW_BACKEND` defaults to `rust` (the equivalence gate passed —
-      this is the integration being exercised); `REVIEW_BACKEND=ts` keeps
-      the TS engine as the fallback.
+- [x] `REVIEW_BACKEND` is GONE — the extension is rust-only: it spawns the
+      bundled diffuse binary (the TS engine was removed with the reference
+      repo; the engine is tested in Rust).
 - [x] The diffuse binary is BUNDLED with the extension (`bin/diffuse`),
       and `scripts/install.sh` syncs review.ts + the binary into pi's
       extensions dir — the installed copy finds its engine with no env.
@@ -270,8 +270,23 @@ component stays.
       golden's rust leg ALSO walks every wire run and asserts its per-file
       colors equal the TS tokenizer's — the engine's classification is
       pinned to the reference, not just the render.
-- [ ] The TS backend is dropped (the fallback removed) after the user's
-      manual review of the tricky cases + the rust backend being routine.
+- [x] The renderer derives its token stream from the WIRE'S SPANS via the
+      TS-side merge machinery (`mergedTokens`) — byte-identical to the TS
+      backend by construction. (The runs were first consumed via a
+      fine→coarse reconstruction, which proved LOSSY — adjacent same-kind
+      coarse runs, e.g. four adjacent del runs, merged into one — the
+      diffuse corpus caught it.) The wire runs stay in the contract,
+      validated by the acceptance walk + the golden's classification check,
+      for other consumers.
+- [x] The frozen corpus gained a SECOND pair: `diffuse-2025-08` — the
+      diffuse repo's own port diff (26 files, 2592 diff lines), locked as
+      both a fixture + a golden. Both corpora run through the acceptance
+      walk and the extension's golden walk (rust leg).
+- [x] **The TS backend is dropped** — the built-in engine is removed from
+      the extension (the user's manual review is done; the golden's rust
+      leg is routine). The unit suite is reworked to build its files via
+      the wire; the engine-side blocks live in Rust. The reference repo
+      (~/lab/pi-review) is deleted.
 
 **Follow-up (deferred per the user's request): the runs' JSON shape.** The
 wire runs are `[{kind, color?, text}, …]` objects. The user suggested a
@@ -279,7 +294,12 @@ more compact structured form — `[{add: "xyz"}, {del: "abc"}]` — one key
 per run, less bandwidth, the kind as the key. Do it after the rust backend
 is 100% validated; it touches the contract (both the serde types + the
 consumers), so the golden.rs bin leg and the extension's wire decode must
-move together.
+move together. JSONL (one file-object per line) was also evaluated: its
+benefits (lower transient parse memory, crash robustness — the frontend
+keeps completed files if the bin dies mid-output) are real but marginal
+while the component renders all-at-once; it becomes worth it when a future
+consumer (the Rust TUI) renders file-by-file incrementally — the contract
+is already per-file, so it's a natural later step.
 
 ### Phase 5 — the Rust-y redesign
 - Only after the engine is fully ported, tested, and integrated. Now the
@@ -346,7 +366,7 @@ refactoring structure is a rewrite of the *architecture*, not the behavior.
 | Phase 1 | every port-map row is checked; `cargo build` clean |
 | Phase 2 | the extension lives in the workspace, its suite passes in place, and it reads the shared corpus |
 | Phase 3 | all unit tests pass; the golden acceptance — **lib leg and bin leg** — walks the frozen corpus byte-identically with the wire-contract invariants (§2 contract pinned to the engine) |
-| Phase 4 | `REVIEW_BACKEND=rust` renders the identical golden (the extension's golden walk's rust leg — ✅ passed); A/B on the real repo; the TS backend is dropped only after the user's manual sign-off |
+| Phase 4 | the extension renders from the rust backend (the golden's rust leg — ✅ passed); the TS backend and the reference repo are removed (✅) |
 | Phase 5 | the redesign passes the golden unchanged; the extension builds from the workspace and passes its tests against the diffuse backend; clippy `-D warnings`; the docs updated |
 | Phase 6 | the pass pipeline passes the golden AND the apply-oracle: `apply(original) == apply(each transformed step) == the checked-in new file`, for every corpus fixture |
 
@@ -410,6 +430,19 @@ These are the rules the user has tuned by hand. Each is a port-trap:
 15. **`char_slice` is total**: the JS `String.slice` clamps and never
     panics; empty del/add lines yield empty spans `(0,0)` that the
     wholesale check slices. The port must clamp, not panic.
+16. **The new-file `@@ -0,0` underflow**: a new file's hunk has old start
+    0; `oi - 1` underflows usize. Debug PANICS (which surfaced it);
+    RELEASE WRAPS and grows the vec to OOM — the stale bundled release
+    binary did exactly this. The `@@` grow must saturate; a del at `oi == 0`
+    must not index. Lesson: rebuild the bundled bin after engine fixes —
+    the `diffuse-2025-08` corpus (with its new files) now guards it.
+17. **The stretch-window blowup is O(n²)**: the consecutive-add windows
+    (`for w in 2..=len` × `for k in 0..=len-w`) are built eagerly — n³/6
+    elements for a run of n adds. A git diff with a huge new file (a
+    4000-line whole-file add) OOMs BOTH engines. Real usage dodges it
+    (untracked files bypass collapse); the golden corpora must too — the
+    diffuse corpus excludes the >1000-line new files. A lazy-window
+    redesign is Phase 5 material.
 
 ---
 

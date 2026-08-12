@@ -117,8 +117,8 @@ hundreds of edge-case rules, each tuned against the golden corpus. This
 crate is being rebuilt from it in phases (PLAN.md): a one-for-one port
 (behavior-identical, so the golden proves correctness), the extension
 moved into the workspace, the tests ported to Rust, the original tool
-switched over to this backend (`REVIEW_BACKEND=rust`, with the TS engine
-as the fallback until the byte-identical golden plus a manual review
-retire it), and finally a Rust-native redesign. The one-for-one phase is
+switched over to this backend (the extension spawns the bundled diffuse
+binary; the TS engine and the reference repo are removed), and finally a
+Rust-native redesign. The one-for-one phase is
 deliberate: it separates "did the port break anything" from "would a
 redesign be better".

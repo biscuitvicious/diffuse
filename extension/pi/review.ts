@@ -354,14 +354,6 @@ function parseReviewArgs(args: string | undefined, cwd: string, repoPrefix = "")
 // token-stream JSON. The TS engine stays the default until the rust backend
 // is proven byte-identical (the golden's rust leg) and manually reviewed.
 
-/** The engine backend: REVIEW_BACKEND=rust spawns the diffuse binary and
- * renders its token-stream JSON — the default (the equivalence gate passed;
- * this is the integration being exercised). `REVIEW_BACKEND=ts` keeps the
- * built-in TS engine as the fallback until the manual review is done. */
-function getBackend(): "rust" | "ts" {
-	return process.env.REVIEW_BACKEND === "ts" ? "ts" : "rust";
-}
-
 /** The diffuse binary: REVIEW_DIFFUSE_BIN overrides; the default is the
  * binary BUNDLED with this extension (`bin/diffuse` next to review.ts —
  * the extension ships with the engine it was tested against), with the
@@ -499,7 +491,43 @@ async function loadReview(
 		"--",
 		...base.paths,
 	]);
-	const files = parseDiff(diffRes.stdout);
+	// The engine parses the diff itself; the extension only enumerates the
+	// changed paths (to load the content the renderer reads) and their
+	// del-counts (which files need the old side).
+	const nameStatus = await git(["diff", "-M", "--name-status", ...base.baseArgs, "--", ...base.paths]);
+	const numstat = await git(["diff", "-M", "--numstat", ...base.baseArgs, "--", ...base.paths]);
+	const delOf: Record<string, number> = {};
+	for (const l of numstat.stdout.split("\n")) {
+		const m = /^(\d+)\t(\d+)\t(.+)$/.exec(l);
+		if (m) delOf[m[3]!] = Number(m[2]);
+	}
+	const files: DiffFile[] = [];
+	for (const l of nameStatus.stdout.split("\n")) {
+		const parts = l.split("\t");
+		if (!parts[0]) continue;
+		const st = parts[0]!;
+		let status: FileStatus = "modified";
+		let path = parts[1] ?? "";
+		let oldPath: string | null = null;
+		if (st.startsWith("A")) status = "added";
+		else if (st.startsWith("D")) status = "deleted";
+		else if (st.startsWith("R")) {
+			status = "renamed";
+			oldPath = parts[1] ?? null;
+			path = parts[2] ?? "";
+		}
+		files.push({
+			path,
+			oldPath,
+			status,
+			newLineCount: 0,
+			oldLineCount: 0,
+			newContent: [],
+			oldContent: [],
+			hunks: [],
+			noContent: false,
+		});
+	}
 	const untrackedSkipped: string[] = [];
 
 	// Untracked files are part of a worktree review (not --cached, no ref base
@@ -545,69 +573,26 @@ async function loadReview(
 		}
 	}
 
-	// The engine backend: rust spawns the diffuse binary for the whole
-	// pipeline (parse → moves → collapse → runs); the content loading
-	// below stays shared (buildVisible reads it).
-	if (getBackend() === "rust") {
-		return { files: await rustBackendLoad(git, repoRoot, files, diffRes.stdout, context), branch, untrackedSkipped };
-	}
-
-	// New + old content FIRST — the collapse needs both (the brace-anchor
-	// pairing reads the line after each candidate on its own side).
-	for (const f of files) {
-		const newAbs = join(repoRoot, f.path);
-		if (f.status !== "deleted" && existsSync(newAbs)) {
-			try {
-				f.newContent = readFileSync(newAbs, "utf8").split("\n");
-			} catch {
-				f.newContent = [];
-			}
-		}
-		f.newLineCount = f.newContent.length;
-	}
-	// Old content: needed for del-only hunk context (deleted files + mixed
-	// hunks), AND as a context fallback when the new side is unavailable.
-	for (const f of files) {
-		const newEmpty = f.newContent.length === 0;
-		const needsOld = f.status === "deleted" || f.hunks.some((h) => delCount(h) > 0) || newEmpty;
-		if (!needsOld) continue;
-		const oldPath = f.oldPath ?? f.path;
-		const oldRes = await git(["show", `HEAD:${oldPath}`]);
-		if (oldRes.code === 0) {
-			f.oldContent = oldRes.stdout.split("\n");
-			f.oldLineCount = f.oldContent.length;
-			// Fallback: without new content, del-side context still renders.
-			if (newEmpty && f.status !== "deleted") {
-				f.newContent = f.oldContent;
-				f.newLineCount = f.oldLineCount;
-			}
-		}
-		f.noContent = f.newContent.length === 0 && f.oldContent.length === 0;
-	}
-	for (const f of files) {
-		markMoves(f);
-		const fExt = f.path.includes(".") ? f.path.split(".").pop() ?? "" : "";
-		const fProfile = langProfile(fExt);
-		for (const h of f.hunks) {
-			h.rows = collapseHunkRows(h, fProfile, f.oldContent, f.newContent);
-			h.aboveCtx = context;
-			h.belowCtx = context;
-		}
-	}
-
-	return { files, branch, untrackedSkipped };
+	return {
+		files: await rustBackendLoad(git, repoRoot, files, diffRes.stdout, context, delOf),
+		branch,
+		untrackedSkipped,
+	};
 }
 
 /** The rust backend path: the same git + content loading, but the engine
  * pipeline (parse → moves → collapse → runs) runs in the diffuse binary.
  * The extension keeps the content it loads (buildVisible reads it) and the
- * untracked synthesis; the wire supplies the collapsed rows + token runs. */
+ * untracked synthesis; the wire supplies the collapsed rows + token runs.
+ * `delOf` is the per-file del count (from `git diff --numstat`) — which
+ * files need the old side for del-only context. */
 async function rustBackendLoad(
 	git: GitRunner,
 	repoRoot: string,
 	tsFiles: DiffFile[],
 	diffText: string,
 	context: number,
+	delOf: Record<string, number>,
 ): Promise<DiffFile[]> {
 	// New-side content (the same loading the TS path does).
 	for (const f of tsFiles) {
@@ -624,7 +609,7 @@ async function rustBackendLoad(
 	// Old-side content: needed for del-only hunks + as a context fallback.
 	for (const f of tsFiles) {
 		const newEmpty = f.newContent.length === 0;
-		const needsOld = f.status === "deleted" || f.hunks.some((h) => delCount(h) > 0) || newEmpty;
+		const needsOld = f.status === "deleted" || (delOf[f.path] ?? 0) > 0 || newEmpty;
 		if (!needsOld) continue;
 		const oldPath = f.oldPath ?? f.path;
 		const oldRes = await git(["show", `HEAD:${oldPath}`]);
@@ -766,104 +751,6 @@ function removeNotes(
 }
 
 // ── Diff parsing ───────────────────────────────────────────────────────────
-
-function unquoteGitPath(raw: string): string {
-	let s = raw;
-	if (s.startsWith('"')) {
-		s = s.slice(1, s.endsWith('"') ? -1 : undefined);
-		s = s.replace(/\\t/g, "\t").replace(/\\n/g, "\n").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
-	}
-	return s;
-}
-
-function hunkPath(sign: "+++" | "---", line: string): string | null {
-	const p = line.slice(4);
-	if (p === "/dev/null") return null;
-	const stripped = p.startsWith("b/") ? p.slice(2) : p.startsWith("a/") ? p.slice(2) : p;
-	return unquoteGitPath(stripped);
-}
-
-function parseDiff(raw: string): DiffFile[] {
-	const files: DiffFile[] = [];
-	let cur: DiffFile | null = null;
-	let hunk: Hunk | null = null;
-	let oi = 1;
-	let ni = 1;
-
-	const flushFile = () => {
-		if (cur) files.push(cur);
-		cur = null;
-		hunk = null;
-	};
-
-	for (const line of raw.split("\n")) {
-		if (line.startsWith("diff --git ")) {
-			flushFile();
-			cur = {
-				path: "",
-				oldPath: null,
-				status: "modified",
-				newLineCount: 0,
-				oldLineCount: 0,
-				newContent: [],
-				oldContent: [],
-				hunks: [],
-			};
-		} else if (!cur) {
-			continue;
-		} else if (line.startsWith("new file mode")) {
-			cur.status = "added";
-		} else if (line.startsWith("deleted file mode")) {
-			cur.status = "deleted";
-		} else if (line.startsWith("rename from ")) {
-			cur.oldPath = unquoteGitPath(line.slice(12)).replace(/^a\//, "");
-			cur.status = "renamed";
-		} else if (line.startsWith("rename to ")) {
-			cur.path = unquoteGitPath(line.slice(10));
-		} else if (line.startsWith("GIT binary patch") || line.startsWith("Binary files ")) {
-			cur.hunks = []; // binary: nothing to review
-		} else if (line.startsWith("+++ ") || line.startsWith("--- ")) {
-			const p = hunkPath(line.startsWith("+++") ? "+++" : "---", line);
-			if (line.startsWith("+++") && p) cur.path = p;
-			if (line.startsWith("---") && p) {
-				cur.oldPath ??= p;
-				// Deleted files have `+++ /dev/null` (no new path) — the old
-				// path is the only path; renames carry it via `rename to`.
-				if (!cur.path) cur.path = p;
-			}
-		} else if (line.startsWith("@@ ")) {
-			const m = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/.exec(line);
-			if (m) {
-				hunk = {
-					oldStart: Number(m[1]),
-					oldCount: Number(m[2] ?? 1),
-					newStart: Number(m[3]),
-					newCount: Number(m[4] ?? 1),
-					section: m[5]?.trim() ?? "",
-					rows: [],
-					aboveCtx: 0,
-					belowCtx: 0,
-				};
-				oi = Number(m[1]);
-				ni = Number(m[3]);
-				cur.hunks.push(hunk);
-			}
-		} else if (hunk && line.startsWith("+")) {
-			hunk.rows.push({ kind: "add", text: line.slice(1), newLine: ni, oldLine: null });
-			ni++;
-		} else if (hunk && line.startsWith("-")) {
-			hunk.rows.push({ kind: "del", text: line.slice(1), newLine: null, oldLine: oi });
-			oi++;
-		} else if (hunk && line.startsWith(" ")) {
-			oi++;
-			ni++;
-		}
-	}
-	flushFile();
-	return files.filter((f) => f.path && f.hunks.length > 0);
-}
-
-// ── Context synthesis ──────────────────────────────────────────────────────
 
 function allocateContext(f: DiffFile): { above: number; below: number }[] {
 	const alloc: { above: number; below: number; freeBelow: number }[] = [];
@@ -1110,152 +997,6 @@ function rowsCoveredBy(note: ReviewNote, rows: Row[]): number[] {
  * Tokenize a diff line into word/operator tokens (whitespace + punctuation
  * are separate tokens so `->` → `=>` highlights a single character).
  */
-function tokenizeLine(text: string): string[] {
-	// Two punctuation classes. OPERATORS glue (`->`, `=>`, `::`, `..`, `==`,
-	// `//` …) — an operator change is one span, not per-char noise. The
-	// DELIMITERS are single-char tokens: gluing `).` or `),` would hide the
-	// shared `)` from the LCS, so `…anchors).` → `…anchors),` would strike
-	// the whole `).` instead of just the period. The backtick is a delimiter
-	// too — markdown code markers must not glue onto identifiers. The quote
-	// `"` is a delimiter as well: `lower layer"` → `layer below the top
-	// upper"` must match the del's `layer` to the add's `layer` and its `"`
-	// to the add's `"` — glued, the del's `layer"` matches nothing and the
-	// string renders as `layer"layer` (the trace wobble).
-	// Unicode whitespace by character class: the White_Space property
-	// covers every standard whitespace (space separators, tabs, NEL,
-	// U+1680, U+2000-200A, U+2028/29, U+202F, U+205F, U+3000), plus the
-	// zero-width space (U+200B — a Cf format char, but a real empty-width
-	// whitespace difference vs a space, and it must subword, not glue onto
-	// the following identifier).
-	return text.split(/([\p{White_Space}\u200b]+|[<>!=+\-*\/\\|&^%~?:._]+|[()\[\]{};,@#`"])/u).filter((t) => t.length > 0);
-}
-
-/** LCS backtrace: map of old-token index → matched new-token index. */
-function lcsPairs(a: string[], b: string[]): Map<number, number> {
-	const n = a.length;
-	const m = b.length;
-	if (n === 0 || m === 0) return new Map();
-	const dp = new Uint32Array((n + 1) * (m + 1));
-	const idx = (i: number, j: number) => i * (m + 1) + j;
-	for (let i = n - 1; i >= 0; i--) {
-		for (let j = m - 1; j >= 0; j--) {
-			dp[idx(i, j)] =
-				a[i] === b[j]
-					? dp[idx(i + 1, j + 1)] + 1
-					: Math.max(dp[idx(i + 1, j)], dp[idx(i, j + 1)]);
-		}
-	}
-	const pairs = new Map<number, number>();
-	let i = 0;
-	let j = 0;
-	while (i < n && j < m) {
-		if (a[i] === b[j]) {
-			pairs.set(i, j);
-			i++;
-			j++;
-		} else if (dp[idx(i + 1, j)] > dp[idx(i, j + 1)]) {
-			i++;
-		} else if (dp[idx(i + 1, j)] < dp[idx(i, j + 1)]) {
-			j++;
-		} else if (/\s/.test(a[i]!) && !/\s/.test(b[j]!)) {
-			// A space on the del side: when the del's NEXT token pairs with
-			// the add's word, the space yields — the word pair survives
-			// (`"Found in lower layer"` → `"Found in layer below …"` keeps
-			// the old `layer` matched to the new `layer` instead of the old
-			// ` ` pairing ahead of it and the `layer` striking alone).
-			if (i + 1 < n && a[i + 1] === b[j]) {
-				i++;
-			} else {
-				j++; // otherwise the add may pair later
-			}
-		} else if (/\s/.test(b[j]!) && !/\s/.test(a[i]!)) {
-			j++; // a space on the add side yields: keep the del — a WORD del
-			// must survive to pair with its counterpart further along
-			// (`k` survives the intervening `let Some(floor) = floor`
-			// span to pair with the later `k`), never be skipped for a space
-		} else if (!b.slice(j + 1).includes(a[i]!)) {
-			i++; // the del token has no counterpart anywhere later in the
-			// add (`resolved` in `resolved_layers` → `layers`) — dropping it
-			// lets the following `layers` pair with the add's `layers`
-			// (the meaningful `self.` + `layers` run survives, the
-			// coincidental `_`-of-`sub_path` tie-break does not steal it)
-		} else if (!/[A-Za-z0-9]/.test(a[i]!) && /[A-Za-z0-9]/.test(b[j]!)) {
-			i++; // the del's punctuation (`_` after `resolved`) has no word
-			// counterpart at this spot — a later word (`layers`) pairs
-			// with the add's `layers`, not with a stray underscore
-		} else {
-			j++; // both meaningful: keep the del — it pairs with its own
-			// counterpart later, or becomes a standalone del span
-		}
-	}
-	return pairs;
-}
-
-/** Char-offset spans of the UNMATCHED (changed) tokens in `toks`. */
-function spansFrom(text: string, toks: string[], matched: Set<number>): [number, number][] {
-	const spans: [number, number][] = [];
-	let pos = 0;
-	let runStart = -1;
-	for (let i = 0; i < toks.length; i++) {
-		const len = toks[i]!.length;
-		if (!matched.has(i)) {
-			if (runStart === -1) runStart = pos;
-		} else if (runStart !== -1) {
-			spans.push([runStart, pos]);
-			runStart = -1;
-		}
-		pos += len;
-	}
-	if (runStart !== -1) spans.push([runStart, pos]);
-	return spans;
-}
-
-/**
- * Word-level change spans between an old and a new line. Both sides get the
- * runs of tokens that have no LCS counterpart; a line with no counterpart
- * (pure add/del) yields no spans (the line-level shade covers it).
- */
-function wordSpans(oldText: string, newText: string): { del: [number, number][]; add: [number, number][] } {
-	const ot = tokenizeLine(oldText);
-	const nt = tokenizeLine(newText);
-	// Cap: long lines fall back to whole-line highlighting.
-	if (ot.length * nt.length > 40_000) return { del: [], add: [] };
-	const pairs = lcsPairs(ot, nt);
-	const matchedOld = new Set<number>();
-	const matchedNew = new Set<number>();
-	for (const [o, n] of pairs) {
-		matchedOld.add(o);
-		matchedNew.add(n);
-	}
-	// Mostly-different pair (e.g. one line rewritten as another): the few
-	// coincidentally-shared words ("the", "a", "(") would leave gaps in a
-	// line that reads as fully changed — treat the whole line as one span.
-	// The threshold is low: a rename like `self.resolved_layers` →
-	// `self.layers.iter().any(…)` shares the meaningful `self.`+`layers`
-	// run (0.28) and must stay INLINE — `self.` + ~~resolved_~~ + `layers`
-	// + the addition — not the whole-line blow-up.
-	let matchedChars = 0;
-	for (const [, j] of pairs) matchedChars += nt[j]!.length;
-	const ratio = newText.length > 0 ? matchedChars / newText.length : 0;
-	if (ratio < 0.25) {
-		return { del: [[0, oldText.length]], add: [[0, newText.length]] };
-	}
-	return {
-		del: spansFrom(oldText, ot, matchedOld),
-		add: spansFrom(newText, nt, matchedNew),
-	};
-}
-
-/**
- * The wholesale decision from a raw pair: the artifact-filtered del spans,
- * the mismatched fragment counts, and the split-word insertions (a
- * standalone removal landing mid-word: `fro~~upper~~zen`). A wholesale pair
- * reads as garble inline — the collapse un-pairs it into the `-`/`+`
- * baseline rows (a `~` row must never carry an embedded "newline" — the
- * whole-old-struck + whole-new-filled blocks look like one, so they get the
- * plain two rows instead). Shared with the component's `isWholesaleMod` so
- * the two never drift apart.
- */
 function wholesalePair(delText: string, addText: string, spans: { del: [number, number][]; add: [number, number][] }): boolean {
 	const delSpans = spans.del.filter(([ds, de]) => {
 		const t = delText.slice(ds, de).trim();
@@ -1354,550 +1095,6 @@ function wholesalePair(delText: string, addText: string, spans: { del: [number, 
  * position (e.g. renumbered sections) — rendered muted and excluded from the
  * change counts. Matching is greedy per file (a multiset of add texts).
  */
-function markMoves(f: DiffFile): void {
-	// Indent-insensitive: a line reflowed to a different indentation is still
-	// a move, not a change (the pairing must not turn it into a `~` mod).
-	const key = (t: string): string => t.trim();
-	const counts = new Map<string, number>();
-	const pairOf = new Map<Row, Row>(); // del -> the add it was paired with
-	for (const h of f.hunks) {
-		for (const r of h.rows) {
-			if (r.kind === "add") counts.set(key(r.text), (counts.get(key(r.text)) ?? 0) + 1);
-		}
-	}
-	for (const h of f.hunks) {
-		for (const r of h.rows) {
-			if (r.kind !== "del" || r.moved) continue;
-			const t = key(r.text);
-			// A del whose content survives INSIDE a different add (a
-			// restructured line — the old `.iter()` of the `let up` chain
-			// folded into the one-liner mod) is a reflow the collapse
-			// absorbs, not a move: pairing it would mark an unrelated
-			// same-text add (the new `below` block's `.iter()`) as relocated.
-			if (t.length > 0 && f.hunks.some((h2) => h2.rows.some((a) => a.kind === "add" && key(a.text) !== t && a.text.includes(t)))) continue;
-			const n = counts.get(t) ?? 0;
-			if (n <= 0) continue;
-			counts.set(t, n - 1);
-			r.moved = true;
-			outer: for (const h2 of f.hunks) {
-				for (const a of h2.rows) {
-					if (a.kind === "add" && !a.moved && key(a.text) === key(r.text)) {
-						a.moved = true;
-						// The paired old text: the moved row can subword the
-						// indentation change (8 → 12 spaces is a real
-						// semantic move) instead of hiding it in the ≈.
-						(a as { delText?: string }).delText = r.text;
-						pairOf.set(r, a);
-						break outer;
-					}
-				}
-			}
-		}
-	}
-	// A del run whose FIRST line did not move is a deleted block, not a
-	// relocation — the interior "moved" lines are coincidental same-text
-	// matches (the old `find_mount`'s `.iter()/.rfind()/.map()` chain
-	// verbatim-matching lines inside the NEW `get` method). The move would
-	// render the new method's chain as ≈ inside a clearly-added block —
-	// "`self.filesystems` added, the rest moved?" — misleading. The whole
-	// deleted block reads as deleted; the new method reads as added.
-	for (const h of f.hunks) {
-		let run: Row[] = [];
-		const flush = () => {
-			if (run.length > 0 && !run[0]!.moved) {
-				for (const r of run) {
-					if (r.moved) {
-						r.moved = false;
-						const a = pairOf.get(r);
-						if (a) {
-							a.moved = false;
-							delete (a as { delText?: string }).delText;
-						}
-					}
-				}
-			}
-			run = [];
-		};
-		for (const r of h.rows) {
-			if (r.kind === "del") run.push(r);
-			else flush();
-		}
-		flush();
-	}
-}
-
-/**
- * Collapse each FIFO del→add pair into a single "mod" row: the new line with
- * its word-diff spans baked in. A modified line renders once (`~`) instead of
- * as a red/green pair against "different" lines.
- */
-/** Shared-char ratio between two lines (for the mod pairing). Whitespace
- * tokens are excluded — an indent-only reflow must not inflate the match
- * (e.g. `None` vs `        }` share only their leading spaces). */
-function lineSimilarity(a: string, b: string): number {
-	return lineSimilarityParts(a, b).sim;
-}
-
-/** Similarity parts: the overall score plus how much of the NEW line's
- * content is matched. The add-fraction distinguishes a fragment pair (the
- * add's content sits entirely inside the del — an old line split into a
- * block) from a growth pair (the del inside the add — `None` →
- * `return None;`), which both score identically on `sim` alone. */
-function lineSimilarityParts(a: string, b: string): { sim: number; addMatched: number; addTotal: number } {
-	const content = (toks: string[]): string[] => toks.filter((t) => t.trim().length > 0);
-	const ot = content(tokenizeLine(a));
-	const nt = content(tokenizeLine(b));
-	if (ot.length === 0 || nt.length === 0) {
-		return { sim: a.trim() === b.trim() ? 1 : 0, addMatched: 0, addTotal: 0 };
-	}
-	const pairs = lcsPairs(ot, nt);
-	let matched = 0;
-	for (const [, j] of pairs) matched += nt[j]!.length;
-	const total = Math.max(
-		ot.reduce((s, t) => s + t.length, 0),
-		nt.reduce((s, t) => s + t.length, 0),
-	);
-	return {
-		sim: total > 0 ? matched / total : 0,
-		addMatched: matched,
-		addTotal: nt.reduce((s, t) => s + t.length, 0),
-	};
-}
-
-/** A line that starts a comment (per-language): `///`, `//`, `/*`, `*`
- * continuations, and `#` for hash-comment languages. A comment run is its
- * own section — the mod's tail stops at one instead of gluing an unrelated
- * doc block onto the changed lines. */
-function isCommentLine(text: string, profile: LangProfile | null): boolean {
-	const t = text.trim();
-	// The `///`/`//`/`/*`/`*` markers are language-agnostic; `#` depends on
-	// the language profile (hash-comment languages only — never Rust attrs).
-	if (t.startsWith("/*") || t.startsWith("*") || t.startsWith("///") || t.startsWith("//")) return true;
-	if (profile?.hashComment && t.startsWith("#")) return true;
-	return false;
-}
-
-/** True when the row is the last expression of its block: the next line
- * on its side is a closing brace at a LOWER indent (the fn's `}` after the
- * tail `None`/`Some(result)` — not the inner if's `}`). */
-function isTailBeforeClosing(
-	line: number | null,
-	oldSide: boolean,
-	oldContent?: string[],
-	newContent?: string[],
-): boolean {
-	const content = oldSide ? oldContent : newContent;
-	if (line === null || content === undefined || !content[line]) return false;
-	// The tail's closing brace sits one indent level down from the fn's own
-	// body lines (`    }` after `        None` / `        Some(result)`) —
-	// not the inner block's brace after a nested statement.
-	return /^\s{4}\}\s*$/.test(content[line]!);
-}
-
-/** The name of the fn that contains `line` — the nearest preceding `fn`
- * signature. The blank line between fn bodies is the section boundary: the
- * `None` belongs to `lookup`, so it pairs with an add inside `lookup`, not
- * another fn's tail. */
-function fnOf(content: string[] | undefined, line: number | null): string | null {
-	if (!content || line === null) return null;
-	for (let i = line - 2; i >= 0; i--) {
-		const m = /^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)/.exec(content[i] ?? "");
-		if (m) return m[1]!;
-	}
-	return null;
-}
-
-function collapseHunkRows(h: Hunk, profile: LangProfile | null = null, oldContent?: string[], newContent?: string[]): Row[] {
-	// Pair each non-moved del with its best-matching add — NOT the FIFO next
-	// add: when a declaration is replaced and new code precedes it (e.g. an
-	// added method before the modified `pub fn lookup`), the FIFO would pair
-	// the old line with the doc comment. The similarity pairing joins the old
-	// declaration with the new one.
-	const pendingAdds = h.rows.filter((r) => r.kind === "add" && !r.moved);
-	// Consecutive-del runs — the REFLOW pairing rule. When several old lines
-	// merge onto one new line (`self.resolved_layers` / `.iter()` /
-	// `.any(…)` → the one-liner `self.layers.iter().any(…)`), the first del
-	// carries the meaningful change (`resolved_`); the later dels' content
-	// survives verbatim inside the add — pure reflows. A non-first del whose
-	// text is a substring of the candidate add must not steal the pair: it
-	// would render the same text struck against itself. The first del's mod
-	// shows the actual edit (`self.` + ~~resolved_~~ + `layers…`).
-	const delRuns: Row[][] = [];
-	for (let i = 0; i < h.rows.length; i++) {
-		if (h.rows[i]!.kind !== "del" || h.rows[i]!.moved) continue;
-		const run = [h.rows[i]!];
-		while (i + 1 < h.rows.length && h.rows[i + 1]!.kind === "del" && !h.rows[i + 1]!.moved)
-			run.push(h.rows[++i]!);
-		delRuns.push(run);
-	}
-	const runOf = new Map<Row, Row[]>();
-	for (const run of delRuns) for (const r of run) runOf.set(r, run);
-	// Consecutive-add runs — the STRETCH candidates: a deleted row whose
-	// content is recognisably spread across several added rows pairs with
-	// the whole run (`if k < floor {` → `if let Some(floor) = floor` +
-	// `&& k > floor` + `{` — one mod, three visual lines, the `<`→`>`
-	// flip struck in place).
-	const runs: Row[][] = [];
-	for (let i = 0; i < pendingAdds.length; i++) {
-		const run = [pendingAdds[i]!];
-		// A comment line ends the run — the stretch never crosses a comment
-		// boundary (`for …` must not absorb the preceding comment rewrite).
-		while (
-			i + 1 < pendingAdds.length &&
-			(pendingAdds[i + 1]!.newLine ?? 0) === (pendingAdds[i]!.newLine ?? 0) + 1 &&
-			!isCommentLine(pendingAdds[i]!.text, profile)
-		) {
-			run.push(pendingAdds[++i]!);
-		}
-		// Sliding windows over the run: the del must pair with the part of
-		// the run it actually matches (`if k < floor {` matches the trailing
-		// `if let …`/`&& …`/`{`, not the `for` line that leads the run).
-		for (let w = 2; w <= run.length; w++) {
-			for (let k = 0; k + w <= run.length; k++) runs.push(run.slice(k, k + w));
-		}
-	}
-	const pairOf = new Map<Row, Row>(); // add -> its paired del
-	const stretchOf = new Map<Row, Row[]>(); // del -> its stretched add run
-	// The REVERSE stretch: a del RUN folds into one mod against a single
-	// add (the old `find_mount` body — `self.mount_stack` / `.filesystems` /
-	// `.iter()` / `.rfind()` / `.map()` — replaced by the one-liner
-	// `self.mount_stack.get(guest_path)`). The mod's delText is the run's
-	// concatenation — the old body's lines strike across the visual lines,
-	// the add fills — instead of the first del pairing while the rest
-	// floats as `-` rows after the closed method.
-	const reverseStretchOf = new Map<Row, Row[]>(); // del (run's first) -> the run
-	for (const r of h.rows) {
-		if (r.kind !== "del" || r.moved) continue;
-		// A del whose text survives VERBATIM as a line in the new file is a
-		// pure reflow — the similarity pairing must not grab it (the old
-		// `find_mount`'s `.rfind(...)` chain reflowed into the new `get`
-		// method; a sim-based pair with `format!("no mount captures…")`
-		// would render garble). The reflow-drop absorbs it. A TAIL del
-		// (the old line after it is the fn's closing brace) is exempt:
-		// the brace-anchor pairing (`None` ↔ `Some(result)`) is the
-		// del's definitive partner and must run even when the new file
-		// happens to contain a verbatim `None` line elsewhere.
-		const rTrim = r.text.trim();
-		// The brace-anchor exemption: the del is a tail AND some pending
-		// add is a tail in the SAME fn (`None` ↔ `Some(result)` — both sit
-		// before their fn's closing brace). A tail del with NO such add
-		// (the old `find_mount`'s `.map(...)` — its `}` follows, but the
-		// new fn's tail is a different fn) stays a reflow: the pairing
-		// would only garble.
-		const tailCandidate =
-			isTailBeforeClosing(r.oldLine, true, oldContent, newContent) &&
-			pendingAdds.some(
-				(a) =>
-					isTailBeforeClosing(a.newLine, false, oldContent, newContent) &&
-					fnOf(oldContent, r.oldLine) === fnOf(newContent, a.newLine),
-			);
-		if (rTrim.length > 0 && !tailCandidate && newContent?.some((l) => l.trim() === rTrim)) continue;
-		let best: Row | null = null;
-		let bestScore = 0.15; // threshold: meaningful replacements only
-		let bestRun: Row[] | null = null;
-		let bestRunScore = 0.25; // the stretch threshold: the run must read
-		// as "the same line" restructured across the added rows.
-		for (const a of pendingAdds) {
-			const run = runOf.get(r);
-			const trimmed = r.text.trim();
-			if (
-				run &&
-				run.length > 1 &&
-				run[0] !== r &&
-				trimmed.length > 0 &&
-				a.text.trim().includes(trimmed)
-			) {
-				continue; // a reflow del — its text is verbatim inside the add
-			}
-			// A fragment pair: the add's content is (almost) entirely matched
-			// inside the del with weak overall similarity — the one-line `use`
-			// statement split into a 7-line block, and this add is one
-			// arbitrary fragment of it. Pairing it as "the" replacement
-			// renders the mod as the whole old line struck against one new
-			// fragment — misleading. Large-overlap pairs (`resolved_layers` →
-			// `layers`, a shortened line) keep the add-fraction high but score
-			// well above this band; a growth pair (`None` → `return None;`)
-			// matches only part of the add and is unaffected. A ONE-TO-ONE
-			// rename (`.resolved_layers` → `.layers` — the del has a single
-			// candidate add) is never a split: the rejection applies only
-			// when the old line's content could be spread across several
-			// additions.
-			const { sim, addMatched, addTotal } = lineSimilarityParts(r.text, a.text);
-			if (addTotal > 0 && addMatched >= addTotal * 0.8 && sim < 0.5 && pendingAdds.length > 1) continue;
-			// A `return` pairs with a `return` — the old `return
-			// self.results…` must match the new `return None;` (`return ` +
-			// struck expr + fill + `;`), not a nearby pop line that merely
-			// shares `self.`/`borrow_mut()`/`key` fragments. Definitive:
-			// a `return ` candidate outranks any non-return.
-			// A closing-brace-anchored tail pairs with its counterpart: the
-			// old `None` before the fn's `}` matches the new `Some(result)`
-			// before the `}` (`~~None~~Some(result)`), not a mid-block
-			// `return None;` that merely shares the word. When several tails
-			// tie, the one anchored in the same surrounding context wins
-			// (the pops before both `None` and `Some(result)`).
-			const braceTail =
-				isTailBeforeClosing(r.oldLine, true, oldContent, newContent) &&
-				isTailBeforeClosing(a.newLine, false, oldContent, newContent);
-			// The tail's fn must match the del's fn — the blank line between
-			// fn bodies is the section boundary (`Some(result)` is in
-			// `lookup`, the same fn as the old `None`; the `epoch` fn's
-			// tail is a different fn).
-			const sameFn = fnOf(oldContent, r.oldLine) === fnOf(newContent, a.newLine);
-			const score =
-				(r.text.trimStart().startsWith("return ") && a.text.trimStart().startsWith("return ") ? 1 : 0) +
-				(braceTail && sameFn ? 1 : 0) +
-				sim;
-			if (score > bestScore) {
-				bestScore = score;
-				best = a;
-			}
-		}
-		for (const run of runs) {
-			const text = run.map((a) => a.text).join("\n");
-			const { sim } = lineSimilarityParts(r.text, text);
-			// Longest winning window: among the windows that read as "the
-			// same line", the longest wins — the `if k < floor {` stretch
-			// keeps its `if `/`k `/` floor {` common anchors over the tighter
-			// `&& k > floor`+`{` fragment.
-			if (sim >= 0.25 && (!bestRun || run.length > bestRun.length)) {
-				bestRun = run;
-				bestRunScore = sim;
-			}
-		}
-		// The stretch must read as the same line restructured — the split-word
-		// garble (the comment rewrites' `fro~~upper~~zen`) stays the `-`/`+`
-		// baseline, not a stretched mod. The del's single best must also be a
-		// viable mod (not the wholesale): a comment rewritten across a run is
-		// still a comment rewrite — the `-`/`+` block.
-		const runText = bestRun ? bestRun.map((a) => a.text).join("\n") : "";
-		if (
-			bestRun &&
-			bestRunScore >= 0.25 &&
-			best &&
-			// The single must be CROSSED to stretch — "if a single line
-			// anchors clean against another single line that's a section
-			// separator". The if's single (`if`→`&&`, `<`/` {`→`>`) has
-			// three del runs; the for's (`lowers`→`below`, `.rev()`) and
-			// the mode's (`resolved_`) anchor cleanly — they stay mods.
-			wordSpans(r.text, best.text).del.length >= 3 &&
-			!wholesalePair(r.text, best.text, wordSpans(r.text, best.text)) &&
-			!wholesalePair(r.text, runText, wordSpans(r.text, runText))
-		) {
-			// The stretch wins: the whole run is a better "same line" than
-			// any single add. The mod's text is the run's concatenation; the
-			// run's adds are consumed (not emitted as + rows).
-			stretchOf.set(r, bestRun);
-			for (const a of bestRun) pendingAdds.splice(pendingAdds.indexOf(a), 1);
-			for (const run of runs) {
-				if (run !== bestRun && run.some((a) => bestRun!.includes(a))) run.length = 0;
-			}
-			for (let i = 0; i < runs.length; i++) {
-				if (runs[i]!.length === 0) runs.splice(i--, 1);
-			}
-		} else if (best) {
-			// A pair that would render as the wholesale (garble-shaped spans)
-			// reads better as the plain `-`/`+` baseline rows — leave it
-			// unpaired.
-			const spans = wordSpans(r.text, best.text);
-			if (!wholesalePair(r.text, best.text, spans)) {
-				pairOf.set(best, r);
-				pendingAdds.splice(pendingAdds.indexOf(best), 1);
-				// The reverse stretch: the del is the FIRST of a multi-del
-				// run and the run's later dels' text is NOT verbatim inside
-				// the add (the old method's body, deleted — versus the `let
-				// up` reflow, whose `.iter()/.find(…)` lines survive inside
-				// the one-liner and take the reflow-common path instead).
-				// The mod's delText then becomes the run's concatenation;
-				// the run's dels are consumed (not emitted as `-` rows).
-				const run = runOf.get(r);
-				if (
-					run &&
-					run.length > 1 &&
-					run[0] === r &&
-					!run.slice(1).some((d) => d.text.trim().length > 0 && best.text.includes(d.text.trim()))
-				) {
-					reverseStretchOf.set(r, run);
-				}
-			}
-		}
-	}
-	const pairedDels = new Set(pairOf.values());
-	const addOf = new Map<Row, Row>();
-	for (const [add, del] of pairOf) addOf.set(del, add);
-	const stretchedDels = new Set(stretchOf.keys());
-	const stretchedAdds = new Set<Row>();
-	for (const run of stretchOf.values()) for (const a of run) stretchedAdds.add(a);
-
-	// Ordered walk: mods emit at their del's position; each mod's tail
-	// absorbs the unpaired adds that follow it *until the next mod's del* —
-	// an unpaired add between two mods belongs to the later mod, not the
-	// earlier one's section (adjacent changes must not overlap). A blank line
-	// OR a comment line (a new comment block — per-language) ends the
-	// section: closing braces stay with their change, an unrelated doc block
-	// does not get glued onto a deleted line. Unpaired dels are collected
-	// and, when their content is already inside a paired add (formatting
-	// restructuring), dropped; the rest trail at the end.
-	const out: Row[] = [];
-	const keptDels: Row[] = [];
-	const pureAdds: Row[] = [];
-	const absorbedDels = new Set<Row>();
-	let lastMod: Row | null = null;
-	for (const r of h.rows) {
-		if (r.kind === "add") {
-			if (pairOf.has(r) || stretchedAdds.has(r)) continue; // the mod appears at its del's position
-			const trimmed = r.text.trim();
-			// The section absorbs only adds that FOLLOW the mod's new line:
-			// when the paired add is the LAST of a replacement block (old
-			// `None` ↔ new `return None;`), the block's earlier lines render
-			// as + rows before the mod, never as its tail. A trailing BLANK
-			// also joins the section (the block reads as a unit — the closing
-			// brace and the air after it), then the section ends: the
-			// following method stays a separate add.
-			if (
-				lastMod &&
-				!r.moved &&
-				!isCommentLine(r.text, profile) &&
-				(r.newLine ?? 0) > (lastMod.newLine ?? 0)
-			) {
-				(lastMod.tail ??= []).push(r);
-				if (trimmed.length === 0) lastMod = null;
-			} else {
-				lastMod = null; // a reflow or a comment block ends the section
-				pureAdds.push(r);
-			}
-		} else if (pairedDels.has(r)) {
-			const add = addOf.get(r)!;
-			// The reverse stretch: the del's own text is the RUN's
-			// concatenation (the whole old body), not just the first line.
-			const stretchRun = reverseStretchOf.get(r);
-			const delText = stretchRun ? stretchRun.map((d) => d.text).join("\n") : r.text;
-			const spans = wordSpans(delText, add.text);
-			// The reflow-common merge: the mod's del is the FIRST of its
-			// run — it carries the meaningful change; the run's later dels
-			// are reflows whose text survives verbatim inside the add. That
-			// text is the same on both sides — it must read as common, not
-			// as newly added (`self.~~resolved_~~layers.iter().any(…)`:
-			// the `.iter().any(…)` is the reflowed `.iter()` + `.any(…)`
-			// lines; the `let up` one-liner's `?;` is the reflowed
-			// `.find(…)` tail). A whole add span whose text contains a
-			// reflow line's content is that reflow — drop the span.
-			const run = runOf.get(r);
-			const reflows = run && run.length > 1 ? run.slice(1).map((d) => d.text.trim()) : [];
-			if (reflows.length > 0 && spans.add) {
-				spans.add = spans.add.filter(([as, ae]) => {
-					const seg = add.text.slice(as, ae);
-					return !reflows.some((t) => t.length > 0 && seg.includes(t));
-				});
-			}
-			const mod: Row = {
-				kind: "mod",
-				text: add.text,
-				delText,
-				newLine: add.newLine,
-				oldLine: r.oldLine,
-				spans,
-			};
-			out.push(mod);
-			lastMod = mod;
-			if (stretchRun) {
-				for (const d of stretchRun.slice(1)) absorbedDels.add(d);
-			}
-		} else if (stretchedDels.has(r)) {
-			// The stretch: one deleted row over a run of added rows. The
-			// mod's text is the run's concatenation — the merged display
-			// spans the visual lines, the `~` prefix repeats per line.
-			const run = stretchOf.get(r)!;
-			const mod: Row = {
-				kind: "mod",
-				text: run.map((a) => a.text).join("\n"),
-				delText: r.text,
-				newLine: run[0]!.newLine,
-				oldLine: r.oldLine,
-				spans: wordSpans(r.text, run.map((a) => a.text).join("\n")),
-			};
-			out.push(mod);
-			lastMod = mod;
-		} else if (!r.moved && !absorbedDels.has(r)) {
-			keptDels.push(r);
-		}
-	}
-	const addText = [...out.map((m) => m.text), ...pureAdds.map((a) => a.text)].join("\n");
-	const meaningful = keptDels.filter((d) => {
-		const t = d.text.trim();
-		return t.length === 0 || !addText.includes(t);
-	});
-	// Adds whose content exists verbatim in a del are a pure reflow — drop
-	// both sides so the reflow is invisible rather than ≈ noise. Content-
-	// based, not move-flag-based: the greedy move matcher can leave a reflow
-	// add unmarked when multiple adds share the content (a duplicated pop in
-	// a restructured block). The del corpus excludes MOVED and PAIRED dels —
-	// those are displayed elsewhere (≈ rows, mod rows), so an add matching
-	// them is real content (the second pop pair in a restructured block),
-	// not a reflow. A MOVED add checks against the full corpus: a local
-	// same-position move (old 4 → new 4) is a pure reshuffle — invisible —
-	// while the unmoved adds use the corpus of dels that are actually
-	// INVISIBLE — not moved (shown ≈), not paired (shown in the mod), and
-	// not meaningful (shown as a - row). An add matching a shown del is real
-	// content: the seven lines a one-line import was split into must all
-	// survive.
-	const delTextAll = h.rows
-		.filter((r) => r.kind === "del")
-		.map((d) => d.text.trim())
-		.join("\n");
-	const shownDels = new Set(meaningful);
-	const delTextLive = h.rows
-		.filter((r) => r.kind === "del" && !r.moved && !pairedDels.has(r) && !shownDels.has(r))
-		.map((d) => d.text.trim())
-		.join("\n");
-	const keptAdds = pureAdds.filter((a) => {
-		const t = a.text.trim();
-		const corpus = a.moved ? delTextAll : delTextLive;
-		return t.length === 0 || !corpus.includes(t);
-	});
-	// Unified order within the hunk: mods and adds render at their NEW-side
-	// position (a replacement block that precedes the paired line — new lines
-	// 134-139 before the mod at 140 — leads with the additions), and a
-	// genuinely removed line renders right after the mod whose old position
-	// preceded it (the removed old 109 sits after the mod that replaced old
-	// 108), never interrupting the new-file sequence.
-	const anchorOf = new Map<Row, Row>();
-	for (const d of meaningful) {
-		if (d.oldLine === null) continue;
-		let anchor: Row | null = null;
-		for (const m of out) {
-			if (m.kind !== "mod" || m.oldLine === null) continue;
-			if (m.oldLine <= d.oldLine && (anchor === null || m.oldLine > anchor.oldLine)) anchor = m;
-		}
-		if (anchor) anchorOf.set(d, anchor);
-	}
-	const keyOf = (r: Row): [number, number] => {
-		if (r.kind === "del") {
-			const a = anchorOf.get(r);
-			if (!a) return [0, r.oldLine ?? 0];
-			const base = a.newLine ?? 0;
-			// A removed line must not interrupt a comment block: it renders
-			// after the consecutive comment adds that follow its anchor (the
-			// removed `let mut floor` sits after the doc lines, before the
-			// new declaration — never mid-comment).
-			let last = base;
-			for (const k of keptAdds) {
-				const kn = k.newLine ?? 0;
-				if (kn === last + 1 && isCommentLine(k.text, profile)) last = kn;
-			}
-			// 2.5: after any add sharing that position (the comment's last
-			// line), before the next change.
-			return [last, 2.5];
-		}
-		return [r.newLine ?? 0, r.kind === "mod" ? 1 : 2];
-	};
-	return [...out, ...meaningful, ...keptAdds].sort((a, b) => {
-		const ka = keyOf(a);
-		const kb = keyOf(b);
-		return ka[0] - kb[0] || ka[1] - kb[1];
-	});
-}
-
-/** Display counts: moves are neither added nor removed; mods are one row. */
 function fileCounts(f: DiffFile): { adds: number; dels: number; mods: number; moved: number } {
 	let adds = 0;
 	let dels = 0;
@@ -3144,7 +2341,7 @@ class ReviewComponent {
 		const wholesale = r.kind === "mod" && this.isWholesaleMod(r);
 		const movedDiff = r.moved === true && (r as { delText?: string }).delText !== undefined && (r as { delText?: string }).delText !== r.text;
 		const merged = (r.kind === "mod" && !wholesale) || movedDiff ? this.mergedTokens(r) : null;
-		const tokens = this.rustTokens(r) ?? merged ?? this.syntaxTokens(this.colOffset > 0 ? r.text.slice(this.colOffset) : r.text);
+		const tokens = merged ?? this.syntaxTokens(this.colOffset > 0 ? r.text.slice(this.colOffset) : r.text);
 		const text = this.displayText(r);
 		const emitSeg = (segStart: number, segEnd: number, segPrefix: string, visIdx: number) => {
 			out.push(
@@ -3350,43 +2547,6 @@ class ReviewComponent {
 		this.visLine = Math.max(0, clamped - starts[row]!);
 	}
 
-	/** The diffuse backend's precomputed token stream for the rows the TS
-	 * would merge (a non-wholesale mod, or a moved row whose delText differs)
-	 * — the engine-side equivalent of `mergedTokens`. The wire runs are the
-	 * CLASSIFIED token stream (fine-grained, per-file colors); this renderer
-	 * re-derives the colors with its OWN syntax profile (the golden encodes
-	 * the renderer's classification — the cursor file's profile — so the two
-	 * backends must agree through the same classifier). Classification needs
-	 * the coarse merged runs (a `Some` alone is not a function call), so
-	 * adjacent same-kind runs are merged back first, then each coarse run is
-	 * classified exactly like `mergedTokens` does for the TS backend. */
-	private rustTokens(r: Row): { kind: "common" | "del" | "add"; color: string; text: string }[] | null {
-		const runs = r.runs;
-		if (runs === undefined || !this.wordDiff) return null;
-		const wholesale = r.kind === "mod" && this.isWholesaleMod(r);
-		const movedDiff = r.moved === true && r.delText !== undefined && r.delText !== r.text;
-		const mergeable = (r.kind === "mod" && !wholesale) || movedDiff;
-		if (!mergeable) return null;
-		const profile = this.syntaxOn ? this.syntaxProfile() : null;
-		const coarse: { kind: "common" | "del" | "add"; text: string }[] = [];
-		for (const run of runs) {
-			const last = coarse[coarse.length - 1];
-			if (last && last.kind === run.kind) last.text += run.text;
-			else coarse.push({ kind: run.kind, text: run.text });
-		}
-		const out: { kind: "common" | "del" | "add"; color: string; text: string }[] = [];
-		for (const run of coarse) {
-			if (run.kind === "del") {
-				out.push({ kind: "del", color: "text", text: run.text });
-			} else {
-				for (const t of classifyTokens(run.text, profile)) {
-					out.push({ kind: run.kind, color: t.color, text: t.text });
-				}
-			}
-		}
-		return out;
-	}
-
 	/** The current file's syntax tokens (plain when the toggle is off). */
 	private syntaxTokens(text: string): { color: string; text: string }[] {
 		if (!this.syntaxOn) return [{ color: "text", text }];
@@ -3588,7 +2748,8 @@ class ReviewComponent {
 		// A moved row has no spans of its own — compute them from its paired
 		// del text so the indentation change subwords (8 → 12 spaces is a
 		// semantic move, not invisible relocation).
-		const spans = r.spans ?? (r.moved && r.delText !== undefined ? wordSpans(r.delText, r.text) : { del: [], add: [] });
+		// The engine bakes a moved row's subword spans into the wire.
+		const spans = r.spans ?? { del: [], add: [] };
 		const addSpans = spans.add ?? [];
 		const delSpans = this.delSpansToShow(r, spans.del);
 		const { delPos, pair, opAnchor } = this.delPairing(delSpans, addSpans, r.text, r.delText ?? "");
@@ -3935,7 +3096,6 @@ export default function (pi: ExtensionAPI) {
 
 /** Exposes the pure logic for `node`-side unit tests. */
 export const reviewInternals = {
-	parseDiff,
 	buildVisible,
 	allocateContext,
 	contextRows,
@@ -3948,14 +3108,7 @@ export const reviewInternals = {
 	substitute,
 	parseReviewArgs,
 	defaultContext,
-	parseDiffFileCount: (raw: string) => parseDiff(raw).length,
-	tokenizeLine,
-	lcsPairs,
-	spansFrom,
-	wordSpans,
 	ReviewComponent,
-	markMoves,
-	collapseHunkRows,
 	fileCounts,
 	syntaxHighlight,
 	classifyTokens,
@@ -3963,7 +3116,6 @@ export const reviewInternals = {
 	loadReviewState,
 	saveReviewState,
 	resolveInitialPosition,
-	getBackend,
 	diffuseBinPath,
 	runDiffuseBin,
 	filesFromWire,

@@ -42,9 +42,6 @@ fn main() -> io::Result<()> {
         contents: HashMap::new(),
     });
     let output = run_pipeline(&input.diff, &input.contents);
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&output).expect("serialize")
-    );
+    println!("{}", serde_json::to_string(&output).expect("serialize"));
     Ok(())
 }

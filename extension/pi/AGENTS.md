@@ -6,11 +6,10 @@
 > frozen corpus is shared: the golden walk reads `../../../tests/golden/`
 > (never fork a second fixture/golden pair).
 >
-> **Backend**: the extension runs the **rust backend by default** — it
-> spawns the diffuse binary BUNDLED with it (`bin/diffuse`, next to
-> review.ts) and renders its token-stream JSON; the byte-identical golden
-> gate passed. `REVIEW_BACKEND=ts` keeps the built-in TS engine as the
-> fallback until the manual review signs off.
+> **Backend**: the extension runs the **rust backend** — it spawns the
+> diffuse binary BUNDLED with it (`bin/diffuse`, next to review.ts) and
+> renders its token-stream JSON; the byte-identical golden gate passed and
+> the TS engine is removed.
 
 Interactive git-diff review for [pi](https://github.com/earendil-works/pi-mono).
 `/review` opens the working-tree diff in a full-screen TUI: wrapped hunks with

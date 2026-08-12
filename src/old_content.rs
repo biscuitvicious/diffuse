@@ -25,7 +25,10 @@ pub fn old_content_from_diff(diff: &str, path: &str) -> Vec<String> {
                 .and_then(|s| s.split(',').next())
                 .and_then(|s| s.parse::<usize>().ok());
             oi = m.unwrap_or(1);
-            while out.len() < oi - 1 {
+            // A NEW file's hunk is `@@ -0,0 +1,N @@` — old start 0. The JS
+            // `oi - 1` is a number (-1 is fine); usize must saturate (no
+            // grow for a new file — the TS keeps its old side empty).
+            while out.len() < oi.saturating_sub(1) {
                 out.push(String::new());
             }
         } else if let Some(rest) = line.strip_prefix('-') {
@@ -36,10 +39,15 @@ pub fn old_content_from_diff(diff: &str, path: &str) -> Vec<String> {
             // markdown list bullet `- item`) is a real del — only the
             // three-dash header is skipped. A single `rest.starts_with('-')`
             // here would silently drop it (the PLAN.md `--golden` bullet).
-            while out.len() < oi {
-                out.push(String::new());
+            // A del at oi == 0 (a malformed `@@ -0,0` hunk) must not wrap
+            // the index — the JS writes a "-1" property (harmless); usize
+            // would bounds-check-panic in release. Skip, still advance oi.
+            if oi > 0 {
+                while out.len() < oi {
+                    out.push(String::new());
+                }
+                out[oi - 1] = rest.to_string();
             }
-            out[oi - 1] = rest.to_string();
             oi += 1;
         } else if line.starts_with('+') {
             // skip
@@ -49,13 +57,14 @@ pub fn old_content_from_diff(diff: &str, path: &str) -> Vec<String> {
             // `out[oi - 1] === undefined`): a hunk's first context lines may
             // repeat old lines already seen, and the second occurrence must
             // not overwrite. A `>= oi` check would never fire and would drop
-            // the line — the brace-anchor reads it.
-            if out.len() == oi - 1 {
+            // the line — the brace-anchor reads it. (`oi - 1` for a new
+            // file's `-0,0` hunk would underflow — skip instead.)
+            if oi > 0 && out.len() == oi - 1 {
                 out.push(rest.to_string());
             }
             oi += 1;
         } else if line.is_empty() {
-            if out.len() == oi - 1 {
+            if oi > 0 && out.len() == oi - 1 {
                 out.push(String::new());
             }
             oi += 1;
@@ -96,4 +105,14 @@ mod tests {
         assert_eq!(oc[99], "        None");
         assert_eq!(oc[100], "    }", "the context line after the del");
     }
+}
+
+// A NEW file's hunk is `@@ -0,0 +1,N @@` — old start 0. The JS `oi - 1`
+// is a number; usize must saturate: the old side stays empty (the
+// diffuse corpus's extension/pi/ files hit this).
+#[test]
+fn new_file_hunk_old_start_zero() {
+    let diff = "diff --git a/extension/pi/x.ts b/extension/pi/x.ts\nnew file mode 100644\n--- /dev/null\n+++ b/extension/pi/x.ts\n@@ -0,0 +1,2 @@\n+line one\n+line two\n";
+    let oc = old_content_from_diff(diff, "extension/pi/x.ts");
+    assert_eq!(oc.len(), 0, "a new file has no old side");
 }

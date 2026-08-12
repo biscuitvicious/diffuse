@@ -151,6 +151,23 @@ pub fn run_pipeline(
         for h in &mut f.hunks {
             h.rows = collapse_hunk_rows(h, hash_comment, Some(&old_content), Some(&new_content));
         }
+        // A moved row's own spans: the collapse marks the move (delText =
+        // the paired del) but bakes no spans — the renderer needs the
+        // indentation subword (8 → 12 spaces is a semantic move, not
+        // invisible). Bake word_spans(delText, text) so the wire carries
+        // them (the TS engine computed them on the fly).
+        for h in &mut f.hunks {
+            for r in &mut h.rows {
+                if r.moved
+                    && r.del_text.is_some()
+                    && r.del_text.as_deref() != Some(r.text.as_str())
+                    && r.spans.is_none()
+                {
+                    let del = r.del_text.clone().unwrap_or_default();
+                    r.spans = Some(crate::lcs::word_spans(&del, &r.text));
+                }
+            }
+        }
         let counts = file_counts(f);
         let mut hunks_out = Vec::new();
         for h in &f.hunks {

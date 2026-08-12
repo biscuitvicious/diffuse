@@ -16,13 +16,12 @@ over a frozen JSON contract (PLAN.md §2). The crate ships as a library
 token-stream JSON).
 
 The workspace also holds the engine's first consumer: **`extension/pi/`** —
-the pi review extension (TypeScript), moved in at PLAN.md Phase 2 so the
-engine and its renderer change together. The extension runs the **rust
-backend by default** — it spawns the diffuse binary BUNDLED with it
+the pi review extension (TypeScript renderer + TUI), moved in at PLAN.md
+Phase 2 so the engine and its consumer change together. The extension runs
+the **rust backend** — it spawns the diffuse binary BUNDLED with it
 (`bin/diffuse`, resolved next to review.ts) and renders its token-stream
 JSON; **Phase 4's equivalence gate passed** (the rust backend renders the
-byte-identical golden). `REVIEW_BACKEND=ts` keeps the built-in TS engine as
-the fallback until the user's manual review of the tricky cases retires it.
+byte-identical golden). The TS engine and the reference repo are removed.
 
 ## The porting phase — the one-for-one rewrite
 
@@ -123,8 +122,8 @@ the deviation.
   clean after every change.
 - `target/`, `extension/*/node_modules/`, and `extension/pi/bin/` are
   gitignored (build artifacts).
-- The extension's TS suite runs with `npm test` in `extension/pi/` (both
-  backends: `npm run test:rust` for the rust backend). `scripts/build-bin.sh`
+- The extension's suite runs with `npm test` in `extension/pi/` (rust-only:
+  the unit suite + the golden walk over both corpora). `scripts/build-bin.sh`
   bundles the diffuse binary; `scripts/install.sh` syncs review.ts + the
   binary into `~/.pi/agent/extensions/` for pi (`/reload` to pick it up).
 - Commit policy: do not commit without explicit instruction — present a
