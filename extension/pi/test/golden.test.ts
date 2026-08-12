@@ -275,7 +275,134 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 		}
 	}
 
-	// ── 2. The scrolldown walk: every visual line, width + geometry invariant. ──
+	// ── 2. The ON-DISK content walk: every rendered row must match the real
+	// file's content (the corpus's statically captured files), and the rows
+	// must COVER every line of each hunk without gaps. The width walk below
+	// only proves the render is self-consistent — a dropped ctx line (the fn
+	// signature, a chain continuation: `+ .layers` floating without
+	// `let ro_match = self`) passes it, because the render is internally
+	// uniform. This walk pins the render to the disk: a ctx/add/mod row's
+	// text must equal the fixture's line at its newLine, a del row's text
+	// must equal the reconstructed old line, and the rows' line numbers must
+	// be contiguous within every hunk (nothing dropped, nothing fabricated).
+	{
+		const flat = (comp as any).flat as any[];
+		const rowFile = (comp as any).rowFile as number[];
+		for (let i = 0; i < flat.length; i++) {
+			const r = flat[i]!;
+			if (r.kind === "file" || r.kind === "sep") continue;
+			const file = files[rowFile[i]!]!;
+			const newContent = (fixture.contents[file.path] ?? "").split("\n");
+			const oldContent = oldContentFromDiff(fixture.diff, file.path);
+			if (r.newLine !== null && (r.kind === "ctx" || r.kind === "add" || r.kind === "mod")) {
+				// A mod's text can span several new lines (a stretch/add run
+				// folded into one row) — each segment must equal the disk's
+				// consecutive lines.
+				const segs = r.text.split("\n");
+				let ok = true;
+				for (let j = 0; j < segs.length; j++) {
+					if ((newContent[r.newLine - 1 + j] ?? "") !== segs[j]) {
+						ok = false;
+						break;
+					}
+				}
+				if (!ok) {
+					failures++;
+					console.error(`${corpus.name}: ${file.path}:${r.newLine}: rendered ${r.kind} row differs from the file on disk`);
+					console.error(`   disk: ${JSON.stringify(newContent[r.newLine - 1]?.slice(0, 60))}`);
+					console.error(`   row : ${JSON.stringify(r.text.slice(0, 60))}`);
+				}
+				// The mod's absorbed tail — pure context, each line on disk.
+				for (const tl of (r as any).tail ?? []) {
+					const disk = newContent[(tl.newLine ?? 0) - 1] ?? "";
+					if (tl.text !== disk) {
+						failures++;
+						console.error(`${corpus.name}: ${file.path}:${tl.newLine}: tail row differs from the file on disk`);
+					}
+				}
+			}
+			if (r.newLine === null && r.oldLine !== null && (r.kind === "del" || r.kind === "ctx")) {
+				// The old-side rows (the removed lines + a del-only hunk's
+				// context) must match the old file line for line.
+				const disk = oldContent[r.oldLine - 1] ?? "";
+				if (r.text !== disk) {
+					failures++;
+					console.error(`${corpus.name}: ${file.path}:${r.oldLine}: rendered ${r.kind} row differs from the old file`);
+					console.error(`   old: ${JSON.stringify(disk.slice(0, 60))}`);
+					console.error(`   row: ${JSON.stringify(r.text.slice(0, 60))}`);
+				}
+			}
+		}
+		// Coverage: within every hunk, the rendered rows' line numbers must be
+		// contiguous — a missing line (the dropped in-hunk ctx) breaks this.
+		const hunkStarts = (comp as any).hunkStarts as { flat: number; file: number }[];
+		for (let hi = 0; hi < hunkStarts.length; hi++) {
+			const s = hunkStarts[hi]!.flat;
+			// The coverage range stops at the next hunk OR the next FILE's
+			// marker — a last-of-file hunk's rows must not absorb the next
+			// file's lines (that produced false "missing" reports).
+			let e = hi + 1 < hunkStarts.length ? hunkStarts[hi + 1]!.flat : flat.length;
+			for (let i = s + 1; i < e; i++) {
+				if (flat[i]!.kind === "file") {
+					e = i;
+					break;
+				}
+			}
+			const nls: number[] = [];
+			const seps: number[] = [];
+			for (let i = s; i < e; i++) {
+				const r = flat[i]!;
+				if (r.kind === "sep") {
+					seps.push(i);
+					continue;
+				}
+				if (r.newLine !== null) {
+					// A mod's multi-line text covers its whole span; its tail
+					// rows cover their lines too (they render as context).
+					nls.push(r.newLine);
+					if (r.kind === "mod") {
+						const segs = r.text.split("\n").length;
+						for (let j = 1; j < segs; j++) nls.push(r.newLine + j);
+						for (const tl of (r as any).tail ?? []) {
+							if (tl.newLine !== null) nls.push(tl.newLine);
+						}
+					}
+				}
+			}
+			// The collapsed hidden gaps: a sep hides the lines between the
+			// rows around it (the `⋯ N lines hidden` row) — those lines are
+			// legitimately absent, not dropped.
+			const hidden: [number, number][] = [];
+			for (const si of seps) {
+				let prev = 0;
+				let next = Number.POSITIVE_INFINITY;
+				for (let i = s; i < si; i++) {
+					if (flat[i]!.newLine !== null) prev = Math.max(prev, flat[i]!.newLine!);
+				}
+				for (let i = si + 1; i < e; i++) {
+					if (flat[i]!.newLine !== null) {
+						next = Math.min(next, flat[i]!.newLine!);
+						break;
+					}
+				}
+				if (prev + 1 <= next - 1) hidden.push([prev + 1, next - 1]);
+			}
+			const check = (nums: number[], side: string) => {
+				if (nums.length < 2) return;
+				const mn = Math.min(...nums);
+				const mx = Math.max(...nums);
+				for (let n = mn; n <= mx; n++) {
+					if (nums.includes(n)) continue;
+					if (hidden.some(([h0, h1]) => n >= h0 && n <= h1)) continue;
+					failures++;
+					console.error(`${corpus.name}: hunk ${hi}: ${side} line ${n} missing from the render (a dropped line)`);
+				}
+			};
+			check(nls, "new");
+		}
+	}
+
+	// ── 3. The scrolldown walk: every visual line, width + geometry invariant. ──
 	Object.defineProperty(process.stdout, "rows", { value: 40, configurable: true });
 	const seen = new Set<string>();
 	const firstFlat = (comp as any).flat;

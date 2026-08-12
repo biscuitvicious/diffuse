@@ -886,10 +886,46 @@ function buildVisible(f: DiffFile): Row[] {
 		const newSide = addCount(h) > 0;
 		const start = newSide ? h.newStart : h.oldStart;
 		const count = newSide ? addCount(h) : delCount(h);
-		const lead = absorbLeadingContext(f, newSide ? "new" : "old", start, a.above, h);
+		const side = newSide ? "new" : "old";
+		const lead = absorbLeadingContext(f, side, start, a.above, h);
 		rows.push(...lead.above);
-		rows.push(...lead.rows);
-		rows.push(...absorbClosingContext(f, newSide ? "new" : "old", start, count, a.below, h));
+		// The hunk's rows are the CHANGES only — the in-hunk lines (the
+		// context the diff carried between the changes: the fn signature, a
+		// chain's continuation) must come from the file or the display loses
+		// them (`+ .layers` floating without `let ro_match = self`). Fill the
+		// gaps between the rows with the file's lines.
+		const src = side === "new" ? f.newContent : f.oldContent;
+		// cursor = start - 1: the hunk's first line (the diff's leading ctx)
+		// is part of the coverage — the gap fills from it on.
+		let cursor = start - 1;
+		for (const r of lead.rows) {
+			const rl = newSide ? r.newLine : r.oldLine;
+			if (rl !== null && rl > cursor + 1) {
+				for (let g = cursor + 1; g < rl; g++) {
+					rows.push({
+						kind: "ctx",
+						text: src[g - 1] ?? "",
+						newLine: newSide ? g : null,
+						oldLine: newSide ? null : g,
+					});
+				}
+			}
+			rows.push(r);
+			if (rl !== null && rl > cursor) cursor = rl;
+		}
+		// The TRAILING in-hunk ctx: the lines after the last change row but
+		// still inside the hunk's coverage (the diff's own trailing context —
+		// the closing ctx starts only past the coverage end).
+		const covEnd = start + count - 1;
+		for (let g = cursor + 1; g <= covEnd; g++) {
+			rows.push({
+				kind: "ctx",
+				text: src[g - 1] ?? "",
+				newLine: newSide ? g : null,
+				oldLine: newSide ? null : g,
+			});
+		}
+		rows.push(...absorbClosingContext(f, side, start, count, a.below, h));
 	}
 	return rows;
 }
