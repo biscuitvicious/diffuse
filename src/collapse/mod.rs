@@ -368,8 +368,7 @@ pub fn collapse_hunk_rows(
                     // otherwise; replicate that (and skip the per-window
                     // String allocation in the common case).
                     let nt_trimmed = if nt_ids.is_empty() {
-                        win
-                            .iter()
+                        win.iter()
                             .map(|&ai| h.rows[ai].text.trim())
                             .collect::<Vec<_>>()
                             .join("\n")

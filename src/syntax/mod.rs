@@ -424,7 +424,13 @@ pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<Fen
 /// accent + bold), inline code (syntax-string), `**bold**`, `*italic*`,
 /// `~~strike~~`, `[text](url)` — the SGR rides the token.
 pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
-    let heading = Regex::new(r"^(#{1,6})(\s+)(.*)$").expect("the md heading");
+    // The md regexes are FIXED — compile ONCE (the classify runs per row /
+    // per merged fragment; a recompile per call was the classify's cost for
+    // the markdown corpus).
+    static HEADING: OnceLock<Regex> = OnceLock::new();
+    static MD_INLINE: OnceLock<Regex> = OnceLock::new();
+    let heading =
+        HEADING.get_or_init(|| Regex::new(r"^(#{1,6})(\s+)(.*)$").expect("the md heading"));
     if let Some(h) = heading.captures(text) {
         return vec![
             ClassifiedToken {
@@ -439,10 +445,12 @@ pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
             },
         ];
     }
-    let re = Regex::new(
-        r"(`[^`\n]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\s\n][^*\n]*\*|\[[^\]\n]+\]\([^)\n]+\))",
-    )
-    .expect("the md inline");
+    let re = MD_INLINE.get_or_init(|| {
+        Regex::new(
+            r"(`[^`\n]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\s\n][^*\n]*\*|\[[^\]\n]+\]\([^)\n]+\))",
+        )
+        .expect("the md inline")
+    });
     let mut out: Vec<ClassifiedToken> = Vec::new();
     let mut last = 0usize;
     for m in re.find_iter(text) {
