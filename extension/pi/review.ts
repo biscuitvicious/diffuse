@@ -2829,14 +2829,32 @@ class ReviewComponent {
 		if (delText.includes("\n")) {
 			let share = 0;
 			while (share < delText.length && share < r.text.length && delText[share] === r.text[share]) share++;
-			// The fill reads FIRST — the new one-liner (`self.mount_stack`
-			// + filled `.get(guest_path)`) — then the struck old block
-			// spans the following visual lines (`~~\n.filesystems…~~`).
-			return [
-				{ kind: "common", text: delText.slice(0, share) },
-				{ kind: "add", text: r.text.slice(share) },
-				{ kind: "del", text: delText.slice(share) },
-			];
+			// The shared SUFFIX: the new one-liner's tail may restate the old
+			// block's head (`if !fingerprint.is_valid() {` → the old
+			// `if fingerprint.is_valid() {` — `fingerprint.is_valid() {`
+			// reads common, not filled-then-struck-again). The longest
+			// suffix of the add's remainder that is also a prefix of the
+			// del's remainder reads common; the insertion fills before it,
+			// the old block's rest strikes after.
+			let slen = 0;
+			for (let len = Math.min(r.text.length - share, delText.length - share); len >= 1; len--) {
+				if (r.text.slice(r.text.length - len) === delText.slice(share, share + len)) {
+					slen = len;
+					break;
+				}
+			}
+			// The fill reads FIRST — the new one-liner's insertion
+			// (`!fingerprint.is_valid() {` — the `!` fills, the rest reads
+			// common) — then the struck old block spans the following visual
+			// lines (`~~\n            return self.results…~~`). Empty runs are
+			// skipped (`classifyTokens("")` would emit a phantom token — the
+			// engine's emits none; the two must stay identical).
+			const runs: { kind: "common" | "del" | "add"; text: string }[] = [];
+			if (share > 0) runs.push({ kind: "common", text: delText.slice(0, share) });
+			if (share < r.text.length - slen) runs.push({ kind: "add", text: r.text.slice(share, r.text.length - slen) });
+			if (slen > 0) runs.push({ kind: "common", text: r.text.slice(r.text.length - slen) });
+			if (share + slen < delText.length) runs.push({ kind: "del", text: delText.slice(share + slen) });
+			return runs;
 		}
 		// A moved row has no spans of its own — compute them from its paired
 		// del text so the indentation change subwords (8 → 12 spaces is a

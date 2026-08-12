@@ -396,23 +396,57 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
         while share < dl.len() && share < al.len() && dl[share] == al[share] {
             share += 1;
         }
-        // The fill reads FIRST — the new one-liner (`self.mount_stack`
-        // + filled `.get(guest_path)`) — then the struck old block
-        // spans the following visual lines (`~~\n.filesystems…~~`).
-        return vec![
-            Run {
+        // The shared SUFFIX: the new one-liner's tail may restate the old
+        // block's head (`if !fingerprint.is_valid() {` → the old
+        // `if fingerprint.is_valid() {` — the `fingerprint.is_valid() {`
+        // reads common, not filled-then-struck-again). The longest suffix
+        // of the add's remainder that is also a prefix of the del's
+        // remainder reads common; the insertion fills before it, the old
+        // block's rest strikes after.
+        let mut slen = 0usize;
+        for len in (1..=al
+            .len()
+            .saturating_sub(share)
+            .min(dl.len().saturating_sub(share)))
+            .rev()
+        {
+            if al[al.len() - len..] == dl[share..share + len] {
+                slen = len;
+                break;
+            }
+        }
+        // The fill reads FIRST — the new one-liner's insertion
+        // (`!fingerprint.is_valid() {` — the `!` fills, the rest reads
+        // common) — then the struck old block spans the following visual
+        // lines (`~~\n            return self.results…~~`). Empty runs are
+        // skipped (the TS's `classifyTokens("")` emits a phantom token;
+        // the Rust's emits none — the two must stay identical).
+        let mut runs = Vec::new();
+        if share > 0 {
+            runs.push(Run {
                 kind: RunKind::Common,
                 text: dl[..share].iter().collect(),
-            },
-            Run {
+            });
+        }
+        if share < al.len() - slen {
+            runs.push(Run {
                 kind: RunKind::Add,
-                text: al[share..].iter().collect(),
-            },
-            Run {
+                text: al[share..al.len() - slen].iter().collect(),
+            });
+        }
+        if slen > 0 {
+            runs.push(Run {
+                kind: RunKind::Common,
+                text: al[al.len() - slen..].iter().collect(),
+            });
+        }
+        if share + slen < dl.len() {
+            runs.push(Run {
                 kind: RunKind::Del,
-                text: dl[share..].iter().collect(),
-            },
-        ];
+                text: dl[share + slen..].iter().collect(),
+            });
+        }
+        return runs;
     }
     let spans = r.spans.clone().unwrap_or_default();
     let add_spans = spans.add.clone();
