@@ -200,9 +200,20 @@ const RE_OTHER: &str = ".";
 pub fn token_re_for(profile: &LangProfile) -> Regex {
     static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<u8, Regex>>> =
         OnceLock::new();
-    // (The TS caches per profile; the profile set is small and fixed — a
-    // per-lang code key works the same.)
-    let _ = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    // The key: the profile's feature flags (the regex depends on them —
+    // comment kinds). The TS caches per profile; a per-flags code works the
+    // same. THE CACHE MUST BE USED — the regex compile is expensive and the
+    // classify runs per row (and per merged fragment).
+    let key = (u8::from(profile.hash_comment))
+        | (u8::from(profile.line_comment) << 1)
+        | (u8::from(profile.block_comment) << 2);
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    {
+        let guard = cache.lock().unwrap();
+        if let Some(re) = guard.get(&key) {
+            return re.clone();
+        }
+    }
     let parts: Vec<&str> = [
         if profile.hash_comment {
             Some(RE_HASH)
@@ -232,7 +243,9 @@ pub fn token_re_for(profile: &LangProfile) -> Regex {
     .into_iter()
     .flatten()
     .collect();
-    Regex::new(&format!("({})", parts.join("|"))).expect("token regex")
+    let re = Regex::new(&format!("({})", parts.join("|"))).expect("token regex");
+    cache.lock().unwrap().insert(key, re.clone());
+    re
 }
 
 /// A classified token: the semantic color name + its text (+ an optional

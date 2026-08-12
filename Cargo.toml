@@ -20,3 +20,25 @@ serde_json = "1"
 regex = "1"
 
 [dev-dependencies]
+
+# The regex crate is ~20-50x slower in an unoptimized dev build (the automata
+# matching), and the engine's hot loops (the parse, the tokenizer, the syntax)
+# are regex-bound. Optimize it (and its dep) even in dev, so `cargo test`'s
+# golden acceptance — the validation farm — runs fast without a release build.
+[profile.dev.package.regex]
+opt-level = 3
+
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
+# The validation farm runs the engine in the DEV profile (cargo test). The
+# dev builds are unoptimized (~8x slower than release) — the golden
+# acceptance and the growing corpus farm would crawl. Optimize the dev
+# profile itself (the compile time grows a bit; the tests run fast).
+[profile.dev]
+opt-level = 1
+# compile was ~2.5x slower than opt-level 1 for little gain — 1 is the
+# sweet spot (fast enough tests, fast builds).

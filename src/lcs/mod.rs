@@ -85,12 +85,12 @@ pub fn tokenize_line(text: &str) -> Vec<String> {
 /// The TS `/\s/` test — ASCII whitespace (JS `\s` without the `u` flag),
 /// NOT Unicode whitespace. Tokens from `tokenize_line` are single-class, so
 /// `any` over the token is equivalent to the JS regex test.
-fn token_is_ws(t: &str) -> bool {
+pub fn token_is_ws(t: &str) -> bool {
     t.chars().any(|c| c.is_ascii_whitespace())
 }
 
 /// The TS `/[A-Za-z0-9]/` test — any ASCII alphanumeric char.
-fn token_is_alnum(t: &str) -> bool {
+pub fn token_is_alnum(t: &str) -> bool {
     t.chars().any(|c| c.is_ascii_alphanumeric())
 }
 
@@ -147,6 +147,80 @@ pub fn lcs_pairs(a: &[String], b: &[String]) -> std::collections::HashMap<usize,
         // (the meaningful `self.` + `layers` run survives, the
         // coincidental `_`-of-`sub_path` tie-break does not steal it)
         } else if !token_is_alnum(&a[i]) && token_is_alnum(&b[j]) {
+            i += 1; // the del's punctuation (`_` after `resolved`) has no word
+        // counterpart at this spot — a later word (`layers`) pairs
+        // with the add's `layers`, not with a stray underscore
+        } else {
+            j += 1; // both meaningful: keep the del — it pairs with its own
+            // counterpart later, or becomes a standalone del span
+        }
+    }
+    pairs
+}
+
+/// The LCS over INTERNED token ids — the pairing's hot inner loop (D×A
+/// runs per hunk). The String equality becomes a u32 compare; the tie-break
+/// ladder's `token_is_ws`/`token_is_alnum` become array lookups (the
+/// interner assigns one flag per id). Behavior-identical to `lcs_pairs`.
+pub fn lcs_pairs_ids(
+    a: &[u32],
+    b: &[u32],
+    id_ws: &[bool],
+    id_alnum: &[bool],
+) -> std::collections::HashMap<usize, usize> {
+    let n = a.len();
+    let m = b.len();
+    if n == 0 || m == 0 {
+        return std::collections::HashMap::new();
+    }
+    let mut dp = vec![0u32; (n + 1) * (m + 1)];
+    for i in (0..n).rev() {
+        let row = i * (m + 1);
+        let next = row + m + 1;
+        let ai = a[i];
+        for j in (0..m).rev() {
+            dp[row + j] = if ai == b[j] {
+                dp[next + j + 1] + 1
+            } else {
+                dp[next + j].max(dp[row + j + 1])
+            };
+        }
+    }
+    let mut pairs = std::collections::HashMap::new();
+    let mut i = 0;
+    let mut j = 0;
+    while i < n && j < m {
+        if a[i] == b[j] {
+            pairs.insert(i, j);
+            i += 1;
+            j += 1;
+        } else if dp[(i + 1) * (m + 1) + j] > dp[i * (m + 1) + j + 1] {
+            i += 1;
+        } else if dp[(i + 1) * (m + 1) + j] < dp[i * (m + 1) + j + 1] {
+            j += 1;
+        } else if id_ws[a[i] as usize] && !id_ws[b[j] as usize] {
+            // A space on the del side: when the del's NEXT token pairs with
+            // the add's word, the space yields — the word pair survives
+            // (`"Found in lower layer"` → `"Found in layer below …"` keeps
+            // the old `layer` matched to the new `layer` instead of the old
+            // ` ` pairing ahead of it and the `layer` striking alone).
+            if i + 1 < n && a[i + 1] == b[j] {
+                i += 1;
+            } else {
+                j += 1; // otherwise the add may pair later
+            }
+        } else if id_ws[b[j] as usize] && !id_ws[a[i] as usize] {
+            j += 1; // a space on the add side yields: keep the del — a WORD del
+        // must survive to pair with its counterpart further along
+        // (`k` survives the intervening `let Some(floor) = floor`
+        // span to pair with the later `k`), never be skipped for a space
+        } else if !b[j + 1..].iter().any(|t| *t == a[i]) {
+            i += 1; // the del token has no counterpart anywhere later in the
+        // add (`resolved` in `resolved_layers` → `layers`) — dropping it
+        // lets the following `layers` pair with the add's `layers`
+        // (the meaningful `self.` + `layers` run survives, the
+        // coincidental `_`-of-`sub_path` tie-break does not steal it)
+        } else if !id_alnum[a[i] as usize] && id_alnum[b[j] as usize] {
             i += 1; // the del's punctuation (`_` after `resolved`) has no word
         // counterpart at this spot — a later word (`layers`) pairs
         // with the add's `layers`, not with a stray underscore

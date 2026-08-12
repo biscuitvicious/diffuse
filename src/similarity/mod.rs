@@ -71,6 +71,134 @@ pub fn content_char_len(text: &str) -> usize {
         .sum()
 }
 
+/// The content-filtered tokens + the char sum — the PRECOMPUTED form of a
+/// line's similarity inputs. The collapse's pairing compares every del
+/// against every candidate add; tokenizing each row ONCE per hunk (instead
+/// of once per pair) is the difference between O(dels×adds) tokenizations
+/// and O(dels+adds). The tokens are INTERNED (the LCS compares u32 ids, not
+/// Strings — the pairing's hot inner loop).
+pub struct LineTokens {
+    pub tokens: Vec<String>,
+    /// The interned ids (one per content token) — the LCS input.
+    pub ids: Vec<u32>,
+    /// Each token's char length (the token-presence bound's sums).
+    pub token_chars: Vec<usize>,
+    pub chars: usize,
+    /// The whitespace-trimmed original (the empty-token case's tie-break:
+    /// two blank-ish lines score 1.0 when their trims match).
+    pub trimmed: String,
+}
+
+/// The token interner: assigns one u32 id per distinct token + records the
+/// tie-break ladder's per-token flags (ws/alnum). Shared across a hunk's
+/// rows, so identical tokens in different lines compare by id.
+#[derive(Default)]
+pub struct TokenInterner {
+    map: std::collections::HashMap<String, u32>,
+    pub ws: Vec<bool>,
+    pub alnum: Vec<bool>,
+}
+
+impl TokenInterner {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn intern(&mut self, token: &str) -> u32 {
+        if let Some(&id) = self.map.get(token) {
+            return id;
+        }
+        let id = self.map.len() as u32;
+        self.map.insert(token.to_string(), id);
+        self.ws.push(crate::lcs::token_is_ws(token));
+        self.alnum.push(crate::lcs::token_is_alnum(token));
+        id
+    }
+
+    /// Tokenize + filter + intern a line once.
+    pub fn line_tokens(&mut self, text: &str) -> LineTokens {
+        let tokens = tokenize_line(text)
+            .into_iter()
+            .filter(|t| !t.trim().is_empty())
+            .collect::<Vec<_>>();
+        let ids = tokens.iter().map(|t| self.intern(t)).collect::<Vec<_>>();
+        let token_chars = tokens.iter().map(|t| char_len(t)).collect::<Vec<_>>();
+        let chars = token_chars.iter().sum();
+        LineTokens {
+            trimmed: text.trim().to_string(),
+            tokens,
+            ids,
+            token_chars,
+            chars,
+        }
+    }
+}
+
+/// The similarity over PRETOKENIZED lines (`line_similarity` on cached
+/// tokens — identical results, no re-tokenization). `ws`/`alnum` are the
+/// interner's per-id flags (the LCS tie-break ladder).
+pub fn line_similarity_parts_tokens(
+    ot: &LineTokens,
+    nt: &LineTokens,
+    ws: &[bool],
+    alnum: &[bool],
+) -> SimilarityParts {
+    if ot.tokens.is_empty() || nt.tokens.is_empty() {
+        return SimilarityParts {
+            sim: if ot.trimmed == nt.trimmed { 1.0 } else { 0.0 },
+            add_matched: 0,
+            add_total: 0,
+        };
+    }
+    let pairs = crate::lcs::lcs_pairs_ids(&ot.ids, &nt.ids, ws, alnum);
+    let mut matched: usize = 0;
+    for j in pairs.values() {
+        matched += char_len(&nt.tokens[*j]);
+    }
+    let total = ot.chars.max(nt.chars);
+    SimilarityParts {
+        sim: if total > 0 {
+            matched as f64 / total as f64
+        } else {
+            0.0
+        },
+        add_matched: matched,
+        add_total: nt.chars,
+    }
+}
+
+/// The similarity of a del (`ot`) against a stretch WINDOW whose content
+/// tokens are a contiguous slice `nt_ids` of some add-run's concatenated
+/// ids (with the matching `nt_token_chars` and the window's total `nt_chars`).
+/// Behavior-identical to `line_similarity_parts_tokens(…).sim` — the
+/// window scan builds NO per-window `LineTokens`: the run's ids/chars are
+/// precomputed once and each window is a slice into them (move the data,
+/// don't clone it per window).
+pub fn sim_window(
+    ot: &LineTokens,
+    nt_ids: &[u32],
+    nt_token_chars: &[usize],
+    nt_chars: usize,
+    nt_trimmed: &str,
+    ws: &[bool],
+    alnum: &[bool],
+) -> f64 {
+    if ot.tokens.is_empty() || nt_ids.is_empty() {
+        return if ot.trimmed == nt_trimmed { 1.0 } else { 0.0 };
+    }
+    let pairs = crate::lcs::lcs_pairs_ids(&ot.ids, nt_ids, ws, alnum);
+    let mut matched: usize = 0;
+    for j in pairs.values() {
+        matched += nt_token_chars[*j];
+    }
+    let total = ot.chars.max(nt_chars);
+    if total > 0 {
+        matched as f64 / total as f64
+    } else {
+        0.0
+    }
+}
+
 /// A line that starts a comment (per-language): `///`, `//`, `/*`, `*`
 /// continuations, and `#` for hash-comment languages. A comment run is its
 /// own section — the mod's tail stops at one instead of gluing an unrelated

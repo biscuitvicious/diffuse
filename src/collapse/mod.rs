@@ -11,7 +11,10 @@
 use crate::lcs::{char_slice, word_spans};
 use crate::merge::wholesale_pair;
 use crate::parse::{Hunk, Row, RowKind};
-use crate::similarity::{content_char_len, is_comment_line, line_similarity_parts};
+use crate::similarity::{
+    LineTokens, TokenInterner, content_char_len, is_comment_line, line_similarity_parts_tokens,
+    sim_window,
+};
 use crate::tail::{fn_of, is_tail_before_closing};
 use std::collections::{HashMap, HashSet};
 
@@ -80,8 +83,41 @@ pub fn collapse_hunk_rows(
     // re-tokenized every window's join) and gives the 4× bound below.
     struct AddRun {
         adds: Vec<usize>,           // pending_adds' row ids
-        content_prefix: Vec<usize>, // prefix sums of the lines' content chars
+        content_prefix: Vec<usize>, // prefix sums of the lines' content chars (the 4× bound)
+        // The run's content tokens CONCATENATED once — each window is a
+        // slice into these (no per-window clone). `tok_prefix[i]` is the
+        // token offset where add `i` begins; window `[k, k+w)` →
+        // ids/tok_chars over `[tok_prefix[k], tok_prefix[k+w])`.
+        ids: Vec<u32>,
+        tok_chars: Vec<usize>,
+        tok_prefix: Vec<usize>,
+        chars_prefix: Vec<usize>, // prefix sums of the lines' (all-token) chars
     }
+    // The dels' row ids, in order — the TS iterates `h.rows`.
+    let del_ids: Vec<usize> = h
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.kind == RowKind::Del)
+        .map(|(i, _)| i)
+        .collect();
+    // The pairing compares every del against every candidate add — the same
+    // lines re-tokenized for each pair. Tokenize each row ONCE: the dels
+    // (by row id) and the adds (by row id — the rows' texts are fixed even
+    // as pending_adds is consumed). The window scan's joined text is the
+    // concatenation of its lines' content tokens, so the cached add tokens
+    // also serve the stretch windows — the run's concatenated ids/tok_chars
+    // live in the AddRun (no per-window clone).
+    let mut interner = TokenInterner::new();
+    let mut del_tokens: HashMap<usize, LineTokens> = HashMap::new();
+    let mut add_tokens: HashMap<usize, LineTokens> = HashMap::new();
+    for &ri in &del_ids {
+        del_tokens.insert(ri, interner.line_tokens(&h.rows[ri].text));
+    }
+    for &ai in &pending_adds {
+        add_tokens.insert(ai, interner.line_tokens(&h.rows[ai].text));
+    }
+
     let mut add_runs: Vec<AddRun> = Vec::new();
     let mut i = 0;
     while i < pending_adds.len() {
@@ -97,14 +133,29 @@ pub fn collapse_hunk_rows(
             run.push(pending_adds[i]);
         }
         let mut content_prefix = Vec::with_capacity(run.len() + 1);
+        let mut chars_prefix = Vec::with_capacity(run.len() + 1);
+        let mut tok_prefix = Vec::with_capacity(run.len() + 1);
+        let mut ids = Vec::new();
+        let mut tok_chars = Vec::new();
         content_prefix.push(0);
+        chars_prefix.push(0);
+        tok_prefix.push(0);
         for &ai in &run {
-            let last = *content_prefix.last().unwrap();
-            content_prefix.push(last + content_char_len(&h.rows[ai].text));
+            let at = add_tokens.get(&ai).unwrap();
+            content_prefix
+                .push(*content_prefix.last().unwrap() + content_char_len(&h.rows[ai].text));
+            chars_prefix.push(*chars_prefix.last().unwrap() + at.chars);
+            ids.extend_from_slice(&at.ids);
+            tok_chars.extend_from_slice(&at.token_chars);
+            tok_prefix.push(ids.len());
         }
         add_runs.push(AddRun {
             adds: run,
             content_prefix,
+            ids,
+            tok_chars,
+            tok_prefix,
+            chars_prefix,
         });
         i += 1;
     }
@@ -123,15 +174,6 @@ pub fn collapse_hunk_rows(
     // the add fills — instead of the first del pairing while the rest
     // floats as `-` rows after the closed method.
     let mut reverse_stretch_of: HashMap<usize, Vec<usize>> = HashMap::new(); // del row id -> the run
-
-    // The dels' row ids, in order — the TS iterates `h.rows`.
-    let del_ids: Vec<usize> = h
-        .rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.kind == RowKind::Del)
-        .map(|(i, _)| i)
-        .collect();
 
     for &ri in &del_ids {
         let r = &h.rows[ri];
@@ -166,8 +208,14 @@ pub fn collapse_hunk_rows(
         {
             continue;
         }
+        // The del's tail-ness and fn are FIXED per del — hoisted out of the
+        // candidate loop (the brace bonus needs them; recomputing the
+        // backward fn scan per candidate cost as much as the LCS it bounds).
+        let del_is_tail = is_tail_before_closing(r.old_line, true, old_content, new_content);
+        let del_fn = fn_of(old_content, r.old_line);
         let mut best: Option<usize> = None; // add row id
         let mut best_score = 0.15; // threshold: meaningful replacements only
+        let del_set: std::collections::HashSet<u32> = del_tokens[&ri].ids.iter().copied().collect();
         let mut best_run: Option<Vec<usize>> = None;
         let mut best_run_score = 0.25; // the stretch threshold: the run must read
         // as "the same line" restructured across the added rows.
@@ -183,27 +231,6 @@ pub fn collapse_hunk_rows(
                     continue; // a reflow del — its text is verbatim inside the add
                 }
             }
-            // A fragment pair: the add's content is (almost) entirely matched
-            // inside the del with weak overall similarity — the one-line `use`
-            // statement split into a 7-line block, and this add is one
-            // arbitrary fragment of it. Pairing it as "the" replacement
-            // renders the mod as the whole old line struck against one new
-            // fragment — misleading. Large-overlap pairs (`resolved_layers` →
-            // `layers`, a shortened line) keep the add-fraction high but score
-            // well above this band; a growth pair (`None` → `return None;`)
-            // matches only part of the add and is unaffected. A ONE-TO-ONE
-            // rename (`.resolved_layers` → `.layers` — the del has a single
-            // candidate add) is never a split: the rejection applies only
-            // when the old line's content could be spread across several
-            // additions.
-            let parts = line_similarity_parts(&r.text, &a.text);
-            if parts.add_total > 0
-                && parts.add_matched as f64 >= parts.add_total as f64 * 0.8
-                && parts.sim < 0.5
-                && pending_adds.len() > 1
-            {
-                continue;
-            }
             // A `return` pairs with a `return` — the old `return
             // self.results…` must match the new `return None;` (`return ` +
             // struck expr + fill + `;`), not a nearby pop line that merely
@@ -215,21 +242,68 @@ pub fn collapse_hunk_rows(
             // `return None;` that merely shares the word. When several tails
             // tie, the one anchored in the same surrounding context wins
             // (the pops before both `None` and `Some(result)`).
-            let brace_tail = is_tail_before_closing(r.old_line, true, old_content, new_content)
-                && is_tail_before_closing(a.new_line, false, old_content, new_content);
-            // The tail's fn must match the del's fn — the blank line between
-            // fn bodies is the section boundary (`Some(result)` is in
-            // `lookup`, the same fn as the old `None`; the `epoch` fn's
-            // tail is a different fn).
-            let same_fn = fn_of(old_content, r.old_line) == fn_of(new_content, a.new_line);
-            let score = if r.text.trim_start().starts_with("return ")
+            // The bonuses are computed BEFORE the LCS: the sim's upper bound
+            // (matched ≤ min(ot, nt) chars → sim ≤ min/max) plus the bonuses
+            // decides whether the LCS can beat the current best at all — the
+            // pairing's D×A LCS runs collapse to the candidates that could
+            // actually win.
+            let return_bonus = if r.text.trim_start().starts_with("return ")
                 && a.text.trim_start().starts_with("return ")
             {
                 1.0
             } else {
                 0.0
-            } + if brace_tail && same_fn { 1.0 } else { 0.0 }
-                + parts.sim;
+            };
+            let dt = &del_tokens[&ri];
+            let at = &add_tokens[&ai];
+            let brace_bonus = if del_is_tail
+                && is_tail_before_closing(a.new_line, false, old_content, new_content)
+                && del_fn == fn_of(new_content, a.new_line)
+            {
+                1.0
+            } else {
+                0.0
+            };
+            let bonus = return_bonus + brace_bonus;
+            let sim_max = if dt.tokens.is_empty() && at.tokens.is_empty() {
+                1.0 // two blank-ish lines: sim is 1.0 when the trims match
+            } else if dt.chars == 0 || at.chars == 0 {
+                0.0
+            } else {
+                // The TOKEN-PRESENCE upper bound: the LCS pairs EQUAL tokens,
+                // so the matched chars ≤ the add's tokens whose ids appear in
+                // the del (and vice versa). Tighter than min/max — the
+                // pairing's LCS runs collapse to the candidates that share
+                // actual tokens.
+                let add_common: usize = at
+                    .ids
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, id)| del_set.contains(id))
+                    .map(|(i, _)| at.token_chars[i])
+                    .sum();
+                let add_set: std::collections::HashSet<u32> = at.ids.iter().copied().collect();
+                let del_common: usize = dt
+                    .ids
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, id)| add_set.contains(id))
+                    .map(|(i, _)| dt.token_chars[i])
+                    .sum();
+                add_common.min(del_common) as f64 / dt.chars.max(at.chars) as f64
+            };
+            if bonus + sim_max <= best_score {
+                continue; // can never beat the current best
+            }
+            let parts = line_similarity_parts_tokens(dt, at, &interner.ws, &interner.alnum);
+            if parts.add_total > 0
+                && parts.add_matched as f64 >= parts.add_total as f64 * 0.8
+                && parts.sim < 0.5
+                && pending_adds.len() > 1
+            {
+                continue;
+            }
+            let score = return_bonus + brace_bonus + parts.sim;
             if score > best_score {
                 best_score = score;
                 best = Some(ai);
@@ -274,12 +348,45 @@ pub fn collapse_hunk_rows(
                     if !live {
                         continue;
                     }
-                    let text = win
-                        .iter()
-                        .map(|&ai| h.rows[ai].text.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let sim = line_similarity_parts(&r.text, &text).sim;
+                    // The window's joined text tokenizes to the concatenation
+                    // of its lines' cached content tokens (the join is "\n" —
+                    // a whitespace token, filtered by the content pass). The
+                    // run's concatenated ids/tok_chars live ONCE in the
+                    // AddRun; this window is a SLICE into them — no per-window
+                    // LineTokens clone (move the data, don't reclone it per
+                    // window: the O(dels × windows) clones were the scan's
+                    // whole cost).
+                    let tok_lo = sr.tok_prefix[k];
+                    let tok_hi = sr.tok_prefix[k + w];
+                    let nt_ids = &sr.ids[tok_lo..tok_hi];
+                    let nt_tok_chars = &sr.tok_chars[tok_lo..tok_hi];
+                    let nt_chars = sr.chars_prefix[k + w] - sr.chars_prefix[k];
+                    // The trimmed join is only needed when the window is
+                    // all-blank (nt_ids empty ⟺ every add's content-token
+                    // list is empty) — the empty-token tie-break branch.
+                    // The old per-window LineTokens set `trimmed: ""`
+                    // otherwise; replicate that (and skip the per-window
+                    // String allocation in the common case).
+                    let nt_trimmed = if nt_ids.is_empty() {
+                        win
+                            .iter()
+                            .map(|&ai| h.rows[ai].text.trim())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                            .trim()
+                            .to_string()
+                    } else {
+                        String::new()
+                    };
+                    let sim = sim_window(
+                        &del_tokens[&ri],
+                        nt_ids,
+                        nt_tok_chars,
+                        nt_chars,
+                        &nt_trimmed,
+                        &interner.ws,
+                        &interner.alnum,
+                    );
                     if sim >= 0.25 {
                         best_run = Some(win.to_vec());
                         best_run_len = w;
