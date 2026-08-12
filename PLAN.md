@@ -210,7 +210,37 @@ assembly) stay in TS — but `mergedTokens`' *classification* output (the
   user's sign-off — the golden encodes their exact preferences (the
   strike/fill minimums, the anchor pairings, the reverse-stretch shape).
 
-### Phase 5 — the engine as application-preserving refactorings
+### Phase 5 — the extension moves into the workspace
+
+The pi-review extension stops being a separate repo (`~/lab/pi-review`) and
+becomes a **workspace member of diffuse** — a sub-project that builds the
+Pi extension and uses the diffuse engine for tokenization:
+
+```
+diffuse/                    (a Cargo workspace)
+├── src/                    the engine (this crate)
+├── extension/              the Pi extension — the TS renderer + TUI
+│   ├── src/                the extension's TS (the ReviewComponent, the
+│   │                       row assembly, the theme application, the notes
+│   │                       editor, the markdown rendering)
+│   ├── package.json        builds the extension bundle
+│   └── tests/              the extension's unit + golden tests, now
+│                           running against the diffuse backend
+└── ...
+```
+
+- The extension's TS renderer is already Phase 3-integrated (it spawns the
+  diffuse binary / loads the WASM build and renders the token-stream JSON).
+  Phase 5 is the *home*: the renderer and its tests move into this repo so
+  the engine and its consumer change together.
+- The extension's own test suite (the `test/review.test.ts` unit blocks
+  and the golden walk) comes along — but the golden walk now runs against
+  the diffuse backend (the Phase 3 equivalence proof becomes the
+  extension's acceptance test).
+- The workspace shares the frozen corpus (`tests/golden/` here); the
+  extension's golden file is generated FROM the diffuse engine's output.
+
+### Phase 6 — the engine as application-preserving refactorings
 
 After every stage of the rewrite is done and green. The engine stops being
 one global pipeline and becomes a sequence of **composable passes over a
@@ -247,10 +277,10 @@ concatenated text applies identically), `reflow` (inert absorption),
   transformed diff, must produce the same new file — which is also the
   actual checked-in file.
 
-Phase 5 is deliberately last: it presupposes the port is faithful (Phase
-2's golden), integrated (Phase 3), and idiomatic (Phase 4) — then the
-refactoring structure is a rewrite of the *architecture*, not the
-behavior.
+Phase 6 is deliberately last: it presupposes the port is faithful (Phase
+2's golden), integrated (Phase 3), co-located (Phase 5), and idiomatic
+(Phase 4's redesign) — then the refactoring structure is a rewrite of the
+*architecture*, not the behavior.
 
 ---
 
@@ -261,8 +291,9 @@ behavior.
 | Phase 1 | every port-map row is checked; `cargo build` clean |
 | Phase 2 | all unit tests pass; the golden walk — **lib leg and bin leg** — matches `mirage-2025-08.golden.txt` on the frozen fixture (§2 contract pinned to the golden) |
 | Phase 3 | `REVIEW_BACKEND=rust` renders the identical golden; A/B on the real repo |
-| Phase 4 | the redesign passes the golden unchanged; clippy `-D warnings`; the docs updated |
-| Phase 5 | the pass pipeline passes the golden AND the apply-oracle: `apply(original) == apply(each transformed step) == the checked-in new file`, for every corpus fixture |
+| Phase 4 | the extension lives in the workspace; its unit + golden tests run against the diffuse backend |
+| Phase 5 | the redesign passes the golden unchanged; the extension builds from the workspace and passes its tests against the diffuse backend; clippy `-D warnings`; the docs updated |
+| Phase 6 | the pass pipeline passes the golden AND the apply-oracle: `apply(original) == apply(each transformed step) == the checked-in new file`, for every corpus fixture |
 
 ---
 
@@ -341,9 +372,11 @@ The project is done when:
 - Every test from `test/review.test.ts` + the golden walk passes in Rust.
 - The pi extension renders from the Rust backend with a byte-identical
   golden, and `REVIEW_BACKEND` is a relic (defaulted to rust).
-- Phase 4's redesign is done, the golden still passes, and the docs
+- Phase 5's redesign is done, the golden still passes, and the docs
   (this file, README, AGENTS) describe the Rust-y shape.
-- Phase 5's refactoring pipeline is done: each pass is a pure diff → diff
+- The extension lives in the workspace and passes its suite against the
+  diffuse backend.
+- Phase 6's refactoring pipeline is done: each pass is a pure diff → diff
   transformation, the apply-oracle passes on every fixture, and the render
   concerns (the ordered walk) have moved out of the engine.
 - A Rust TUI consumes the same contract (§2) — the near-term follow-up.
