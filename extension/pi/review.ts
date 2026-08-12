@@ -1797,7 +1797,20 @@ class ReviewComponent {
 	/** Every change forces a full redraw when REVIEW_FULL_REDRAW=1 — pi's
 	 * differential redraw drifts a line per file switch for some terminals;
 	 * a forced render resets its diff state. Default: diff (cheaper). */
+	/** Set when a render is requested by THIS component (an input handler);
+	 * cleared by the render. If pi redraws for an EXTERNAL reason instead —
+	 * the chat/transcript behind the overlay grew (activity in progress), a
+	 * terminal resize — the overlay shifts (pi's append-scroll) and the
+	 * header can be pushed off. An external render therefore schedules a
+	 * FORCED full redraw for the next cycle, re-anchoring the overlay. */
+	private selfRender = false;
+	/** A forced full redraw is pending (an external redraw was seen); it runs
+	 * ONCE and clears — the guard against the re-trigger loop that starves
+	 * input. */
+	private forcedRenderPending = false;
+
 	private requestRender(): void {
+		this.selfRender = true;
 		this.tui.requestRender(process.env.REVIEW_FULL_REDRAW === "1");
 	}
 
@@ -2200,6 +2213,19 @@ class ReviewComponent {
 	// ── rendering ─────────────────────────────────────────────────────────
 
 	render(width: number): string[] {
+		if (!this.selfRender && !this.forcedRenderPending) {
+			// An external redraw — pi drew the frame for a reason outside this
+			// component (the base grew / a resize). The overlay may have been
+			// shifted by pi's append-scroll, so force a clean full redraw on
+			// the NEXT cycle to re-anchor the header/status. ONE-SHOT: the
+			// forced render runs with the flag set and clears it, so it cannot
+			// re-trigger (that starved pi's input loop).
+			this.forcedRenderPending = true;
+			this.tui.requestRender(true);
+		} else if (this.forcedRenderPending) {
+			this.forcedRenderPending = false;
+		}
+		this.selfRender = false;
 		const lines: string[] = [];
 		const theme = this.theme;
 		const f = this.file;
