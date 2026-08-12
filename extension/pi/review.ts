@@ -1809,7 +1809,10 @@ class ReviewComponent {
 		const maxScroll = Math.max(0, total - maxRows);
 		this.setCursorVis(Math.max(0, Math.min(total - 1, starts[this.rowIdx]! + this.visLine + delta)));
 		this.scroll = Math.max(0, Math.min(maxScroll, this.scroll + delta));
-		this.tui.requestRender();
+		// Force a full redraw: pi's differential redraw leaves stale rows when
+		// the viewport shifts (the mashing the user saw). A forced render
+		// resets pi's diff state.
+		this.tui.requestRender(true);
 	}
 
 	private goto(idx: number): void {
@@ -2166,11 +2169,26 @@ class ReviewComponent {
 	private quit(): void {
 		// Persist the resume position (file, line, col, line-text) so a
 		// reopen can anchor the cursor to the same spot when it still matches.
-		const r = this.flat[this.rowIdx];
-		const c = r ? rowCoord(r) : null;
+		// A marker row (no coordinate) — e.g. after scrolling to the very top —
+		// falls through to the first real row after it, so quitting at the top
+		// resumes at the top, not at the stale previous position.
+		let r = this.flat[this.rowIdx];
+		let c = r ? rowCoord(r) : null;
+		let fi = this.rowFile[this.rowIdx] ?? 0;
+		if (r && c === null) {
+			for (let i = this.rowIdx + 1; i < this.flat.length; i++) {
+				const cc = rowCoord(this.flat[i]);
+				if (cc !== null) {
+					r = this.flat[i];
+					c = cc;
+					fi = this.rowFile[i] ?? fi;
+					break;
+				}
+			}
+		}
 		if (r && c !== null) {
 			saveReviewState(this.session.repo, {
-				file: this.file.path,
+				file: this.session.files[fi]?.path ?? this.file.path,
 				line: c,
 				col: this.colOffset,
 				text: r.text,
