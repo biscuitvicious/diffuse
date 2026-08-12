@@ -496,11 +496,16 @@ async function loadReview(
 	const branchRes = await git(["branch", "--show-current"]);
 	const branch = branchRes.code === 0 ? branchRes.stdout.trim() : "";
 
+	// The engine's input: the DEFAULT-context diff — the pairing (the
+	// brace-anchor, the fn-tails) needs the neighbouring lines; a -U0 diff
+	// splits nearby changes into separate hunks so the old `None` and the
+	// new `Some(result)` never sit in the same hunk (the corpus and the
+	// golden use the default context). The renderer re-synthesizes the
+	// context rows from the file contents, so the wire size is unchanged.
 	const diffRes = await git([
 		"diff",
 		"-M",
 		"--no-color",
-		"-U0",
 		...base.baseArgs,
 		"--",
 		...base.paths,
