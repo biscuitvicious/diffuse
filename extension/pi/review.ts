@@ -1615,9 +1615,9 @@ class ReviewComponent {
 			const x = Number(mouse[2]);
 			const y = Number(mouse[3]);
 			if (btn === 64) {
-				this.move(-3);
+				this.scrollBy(-3);
 			} else if (btn === 65) {
-				this.move(3);
+				this.scrollBy(3);
 			} else if (btn === 0 && mouse[4] === "M") {
 				this.dragX = x; // button-1 press: begin drag (both axes)
 				this.dragY = y;
@@ -1628,13 +1628,13 @@ class ReviewComponent {
 					this.dragX = x;
 					this.dragY = y;
 				} else {
-					// Drag follows the WHEEL convention (a scroll gesture
+					// Drag scrolls the VIEW like the wheel (a scroll gesture
 					// drags the view, not the content): dragging down scrolls
 					// down (later lines), dragging right pans right. A
 					// touchpad's two-finger scroll often arrives as button-32
 					// motion, and "content follows the finger" (the natural-
 					// scroll inversion) reads as a scroll-direction bug.
-					this.move(y - this.dragY); // vertical: view follows the drag
+					this.scrollBy(y - this.dragY); // vertical: view follows the drag
 					this.colOffset = Math.max(0, this.colOffset + (x - this.dragX)); // horizontal
 					this.dragX = x;
 					this.dragY = y;
@@ -1795,6 +1795,20 @@ class ReviewComponent {
 		if (this.flat.length === 0) return;
 		const { starts, total } = this.visualGeometry(process.stdout.columns ?? 80);
 		this.setCursorVis((starts[this.rowIdx]! + this.visLine) + delta);
+		this.tui.requestRender();
+	}
+
+	/** Wheel/drag scroll: the VIEWPORT moves by `delta` visual lines and the
+	 * cursor rides along (staying at its relative viewport position), so the
+	 * content actually scrolls instead of the highlight jumping in place —
+	 * a scroll gesture scrolls the view. Both are clamped. */
+	private scrollBy(delta: number): void {
+		if (this.flat.length === 0) return;
+		const { starts, total } = this.visualGeometry(process.stdout.columns ?? 80);
+		const maxRows = Math.max(8, (process.stdout.rows ?? 24) - 5);
+		const maxScroll = Math.max(0, total - maxRows);
+		this.setCursorVis(Math.max(0, Math.min(total - 1, starts[this.rowIdx]! + this.visLine + delta)));
+		this.scroll = Math.max(0, Math.min(maxScroll, this.scroll + delta));
 		this.tui.requestRender();
 	}
 
@@ -2232,7 +2246,7 @@ class ReviewComponent {
 		}
 
 		const total = this.flat.length;
-		const maxRows = Math.max(8, (process.stdout.rows ?? 24) - 4);
+		const maxRows = Math.max(8, (process.stdout.rows ?? 24) - 5);
 
 		// Visual-space layout: every diff row wraps at the text column width,
 		// so one flat row may span several visual lines. Movement (j/k/wheel/
@@ -2321,6 +2335,14 @@ class ReviewComponent {
 		// terminates the last one, so a full-viewport copy would be missing
 		// its final newline. An empty final row yields the missing terminator.
 		lines.push("");
+		// The frame must fit the terminal EXACTLY: pi shifts a taller overlay
+		// down (viewportStart = workingHeight - termHeight) and drops its top
+		// rows — the review's header/status would vanish and the row-diff
+		// redraw would leave stale rows. (maxRows = rows - 5 accounts for the
+		// header + status + footer + the trailing empty line; this is a final
+		// guard for the note rows.)
+		const cap = process.stdout.rows ?? 24;
+		if (lines.length > cap) lines.length = cap;
 		return lines;
 	}
 
