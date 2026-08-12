@@ -320,10 +320,33 @@ pub fn collapse_hunk_rows(
         // winning length).
         let ot_chars = content_char_len(&r.text);
         let mut best_run_len = 0;
+        // One scratch DP buffer reused across every window of this del — the
+        // 42k per-window `vec![]` allocs (across the whole hunk) collapse to
+        // a single grow-once buffer (move the data down the call chain,
+        // don't reallocate per call).
+        let mut lcs_scratch: Vec<u32> = Vec::new();
         for sr in &add_runs {
             let n = sr.adds.len();
             if n < 2 {
                 continue;
+            }
+            // The TOKEN-PRESENCE pre-filter (O(1) per window): the LCS's
+            // matched chars ≤ the window's add-tokens whose ids are in the
+            // del's id-set (`add_common`). Build a prefix sum over the run's
+            // concatenated ids once (per del, per run); each window's
+            // add_common is a prefix difference. If it can't reach 0.25 of
+            // max(del, window) chars, the DP is SKIPPED — the 42k window
+            // DP calls collapse to the few that share real tokens with the
+            // del.
+            let mut add_common_prefix: Vec<usize> = Vec::with_capacity(sr.ids.len() + 1);
+            add_common_prefix.push(0);
+            for t in 0..sr.ids.len() {
+                let add = if del_set.contains(&sr.ids[t]) {
+                    sr.tok_chars[t]
+                } else {
+                    0
+                };
+                add_common_prefix.push(*add_common_prefix.last().unwrap() + add);
             }
             for k in 0..n {
                 for w in 2..=(n - k) {
@@ -361,6 +384,14 @@ pub fn collapse_hunk_rows(
                     let nt_ids = &sr.ids[tok_lo..tok_hi];
                     let nt_tok_chars = &sr.tok_chars[tok_lo..tok_hi];
                     let nt_chars = sr.chars_prefix[k + w] - sr.chars_prefix[k];
+                    // The O(1) skip: the matched ≤ add_common (prefix diff);
+                    // if it can't reach 0.25 of max(del, window) chars, the
+                    // DP is pointless. Cuts the 42k DP calls to the windows
+                    // that share real tokens with this del.
+                    let add_common = add_common_prefix[tok_hi] - add_common_prefix[tok_lo];
+                    if (add_common as f64) < 0.25 * (ot_chars.max(nt_chars)) as f64 {
+                        continue;
+                    }
                     // The trimmed join is only needed when the window is
                     // all-blank (nt_ids empty ⟺ every add's content-token
                     // list is empty) — the empty-token tie-break branch.
@@ -385,6 +416,7 @@ pub fn collapse_hunk_rows(
                         &nt_trimmed,
                         &interner.ws,
                         &interner.alnum,
+                        &mut lcs_scratch,
                     );
                     if sim >= 0.25 {
                         best_run = Some(win.to_vec());

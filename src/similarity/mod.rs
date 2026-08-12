@@ -174,6 +174,7 @@ pub fn line_similarity_parts_tokens(
 /// window scan builds NO per-window `LineTokens`: the run's ids/chars are
 /// precomputed once and each window is a slice into them (move the data,
 /// don't clone it per window).
+#[allow(clippy::too_many_arguments)]
 pub fn sim_window(
     ot: &LineTokens,
     nt_ids: &[u32],
@@ -182,15 +183,13 @@ pub fn sim_window(
     nt_trimmed: &str,
     ws: &[bool],
     alnum: &[bool],
+    scratch: &mut Vec<u32>,
 ) -> f64 {
     if ot.tokens.is_empty() || nt_ids.is_empty() {
         return if ot.trimmed == nt_trimmed { 1.0 } else { 0.0 };
     }
-    let pairs = crate::lcs::lcs_pairs_ids(&ot.ids, nt_ids, ws, alnum);
-    let mut matched: usize = 0;
-    for j in pairs.values() {
-        matched += nt_token_chars[*j];
-    }
+    let matched =
+        crate::lcs::lcs_matched_chars_ids(&ot.ids, nt_ids, ws, alnum, nt_token_chars, scratch);
     let total = ot.chars.max(nt_chars);
     if total > 0 {
         matched as f64 / total as f64

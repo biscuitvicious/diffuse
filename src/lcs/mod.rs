@@ -232,6 +232,75 @@ pub fn lcs_pairs_ids(
     pairs
 }
 
+/// The matched CHAR count of the LCS over interned ids — the window
+/// scan's `sim` needs only this (NOT the pairs themselves). Same DP + the
+/// SAME tie-break ladder as `lcs_pairs_ids`, but accumulates `b_token_chars[j]`
+/// on each match instead of building a HashMap — the window scan's 42k
+/// per-call HashMaps (alloc + per-pair inserts) were the remaining scan
+/// cost. Behavior-identical to `lcs_pairs_ids(...).values().map(char).sum`.
+pub fn lcs_matched_chars_ids(
+    a: &[u32],
+    b: &[u32],
+    id_ws: &[bool],
+    id_alnum: &[bool],
+    b_token_chars: &[usize],
+    scratch: &mut Vec<u32>,
+) -> usize {
+    let n = a.len();
+    let m = b.len();
+    if n == 0 || m == 0 {
+        return 0;
+    }
+    // Reuse a single caller-supplied buffer across ALL window scans — the
+    // 42k per-call `vec![(n+1)*(m+1)]` allocs (132MB zeroed) were the
+    // scan's remaining cost. clear+resize reuses the backing allocation
+    // when it's already big enough (no realloc after the first big window).
+    scratch.clear();
+    scratch.resize((n + 1) * (m + 1), 0);
+    let dp = scratch.as_mut_slice();
+    for i in (0..n).rev() {
+        let row = i * (m + 1);
+        let next = row + m + 1;
+        let ai = a[i];
+        for j in (0..m).rev() {
+            dp[row + j] = if ai == b[j] {
+                dp[next + j + 1] + 1
+            } else {
+                dp[next + j].max(dp[row + j + 1])
+            };
+        }
+    }
+    let mut matched = 0usize;
+    let mut i = 0;
+    let mut j = 0;
+    while i < n && j < m {
+        if a[i] == b[j] {
+            matched += b_token_chars[j];
+            i += 1;
+            j += 1;
+        } else if dp[(i + 1) * (m + 1) + j] > dp[i * (m + 1) + j + 1] {
+            i += 1;
+        } else if dp[(i + 1) * (m + 1) + j] < dp[i * (m + 1) + j + 1] {
+            j += 1;
+        } else if id_ws[a[i] as usize] && !id_ws[b[j] as usize] {
+            if i + 1 < n && a[i + 1] == b[j] {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        } else if id_ws[b[j] as usize] && !id_ws[a[i] as usize] {
+            j += 1;
+        } else if !b[j + 1..].iter().any(|t| *t == a[i])
+            || (!id_alnum[a[i] as usize] && id_alnum[b[j] as usize])
+        {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    matched
+}
+
 /// Char-offset spans of the UNMATCHED (changed) tokens in `toks`.
 pub fn spans_from(
     text: &str,
