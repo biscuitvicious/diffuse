@@ -611,11 +611,63 @@ async function loadReview(
 		}
 	}
 
+	const refs = await resolveRefs(git, base.baseArgs, base.cached);
 	return {
-		files: await rustBackendLoad(git, repoRoot, files, diffRes.stdout, context, delOf),
+		files: await rustBackendLoad(git, repoRoot, files, diffRes.stdout, context, delOf, refs),
 		branch,
 		untrackedSkipped,
 	};
+}
+
+/** Resolve the two tree-refs a `/review` base compares: `newRef` is the
+ * "right" side (the new version), `oldRef` the "left" side (the old
+ * version). `worktreeNew` is true when the NEW side is the worktree or index
+ * (content read from disk: `/review`, `/review --cached`, `/review main`,
+ * `/review <sha>` — `git diff` against the worktree); false when BOTH sides
+ * are committed objects whose content must be streamed from git (`git diff
+ * A..B`, `git diff A B`). The old side is the LEFT ref in every case (a
+ * committed ref for committed-range reviews; HEAD/index for the worktree
+ * cases — the existing fallback).
+ *
+ * The renderer derives in-hunk context from the NEW file's content, so a
+ * historical `/review A..B` that reads new content from the WORKTREE renders
+ * the wrong lines (the worktree is the CURRENT state, not B's). This sends
+ * the content loading to the right git object. */
+interface RefPair {
+	worktreeNew: boolean;
+	newRef: string | null;
+	oldRef: string | null;
+}
+
+async function resolveRefs(git: GitRunner, baseArgs: string[], cached: boolean): Promise<RefPair> {
+	// The ref tokens are baseArgs minus flags. Paths were split off by
+	// parseReviewArgs (collected under `--`); `--cached` is a flag.
+	const refs = baseArgs.filter((t) => t !== "--cached" && !t.startsWith("-"));
+	if (refs.length === 1) {
+		const r = refs[0]!;
+		// `A..B` (two dots): tree A vs tree B, new=B, old=A — a committed range,
+		// neither side is the worktree.
+		const twoDot = /^(.+\.\.)(.+)$/.exec(r);
+		if (twoDot) return { worktreeNew: false, newRef: twoDot[2]!, oldRef: twoDot[1]!.slice(0, -2) };
+		// `A...B` (three dots): merge-base of A,B vs B, new=B, old=merge-base.
+		// Rare; resolve through git so the old side is the divergence point.
+		const threeDot = /^(.+)\.{3}(.+)$/.exec(r);
+		if (threeDot) {
+			const mb = await git(["merge-base", threeDot[1]!, threeDot[2]!]);
+			return { worktreeNew: false, newRef: threeDot[2]!, oldRef: mb.code === 0 ? mb.stdout.trim() : threeDot[1]! };
+		}
+		// A single ref `R`: `git diff R` = worktree (or index under --cached) vs
+		// R. New is the worktree/index; old is R (NOT necessarily HEAD).
+		return { worktreeNew: true, newRef: null, oldRef: r };
+	}
+	if (refs.length === 2) {
+		// `git diff A B`: tree A vs tree B, new=B, old=A — committed-range form.
+		return { worktreeNew: false, newRef: refs[1]!, oldRef: refs[0]! };
+	}
+	// No refs: `git diff` (worktree vs index) or `git diff --cached` (index vs
+	// HEAD). New is the worktree/index; old is HEAD when staged, else null
+	// (the worktree-vs-index case keeps the existing HEAD fallback).
+	return { worktreeNew: true, newRef: null, oldRef: cached ? "HEAD" : null };
 }
 
 /** The rust backend path: the same git + content loading, but the engine
@@ -631,26 +683,38 @@ async function rustBackendLoad(
 	diffText: string,
 	context: number,
 	delOf: Record<string, number>,
+	refs: RefPair,
 ): Promise<DiffFile[]> {
-	// New-side content (the same loading the TS path does).
+	// New-side content: `git show <newRef>:<path>` when the NEW side is a
+	// committed object (a range `A..B`); the worktree file on disk otherwise
+	// (the default `/review`, `/review --cached`, `/review <ref>`).
 	for (const f of tsFiles) {
-		const newAbs = join(repoRoot, f.path);
-		if (f.status !== "deleted" && existsSync(newAbs)) {
-			try {
-				f.newContent = readFileSync(newAbs, "utf8").split("\n");
-			} catch {
-				f.newContent = [];
+		if (f.status === "deleted") continue;
+		if (refs.worktreeNew) {
+			const newAbs = join(repoRoot, f.path);
+			if (existsSync(newAbs)) {
+				try {
+					f.newContent = readFileSync(newAbs, "utf8").split("\n");
+				} catch {
+					f.newContent = [];
+				}
 			}
+		} else if (refs.newRef !== null) {
+			const res = await git(["show", `${refs.newRef}:${f.path}`]);
+			if (res.code === 0) f.newContent = res.stdout.split("\n");
 		}
 		f.newLineCount = f.newContent.length;
 	}
-	// Old-side content: needed for del-only hunks + as a context fallback.
+	// Old-side content: `git show <oldRef>:<oldPath>` — the actual LEFT side
+	// (was hardcoded to HEAD, which was wrong for `main..HEAD` / `git diff
+	// main`). Needed for del-only hunks + as a context fallback.
+	const oldTreeRef = refs.oldRef ?? "HEAD";
 	for (const f of tsFiles) {
 		const newEmpty = f.newContent.length === 0;
 		const needsOld = f.status === "deleted" || (delOf[f.path] ?? 0) > 0 || newEmpty;
 		if (!needsOld) continue;
 		const oldPath = f.oldPath ?? f.path;
-		const oldRes = await git(["show", `HEAD:${oldPath}`]);
+		const oldRes = await git(["show", `${oldTreeRef}:${oldPath}`]);
 		if (oldRes.code === 0) {
 			f.oldContent = oldRes.stdout.split("\n");
 			f.oldLineCount = f.oldContent.length;
@@ -3001,4 +3065,5 @@ export const reviewInternals = {
 	diffuseBinPath,
 	runDiffuseBin,
 	filesFromWire,
+	resolveRefs,
 };
