@@ -1795,7 +1795,14 @@ class ReviewComponent {
 		if (this.flat.length === 0) return;
 		const { starts, total } = this.visualGeometry(process.stdout.columns ?? 80);
 		this.setCursorVis((starts[this.rowIdx]! + this.visLine) + delta);
-		this.tui.requestRender();
+		this.requestRender();
+	}
+
+	/** Every change forces a full redraw when REVIEW_FULL_REDRAW=1 — pi's
+	 * differential redraw drifts a line per file switch for some terminals;
+	 * a forced render resets its diff state. Default: diff (cheaper). */
+	private requestRender(): void {
+		this.tui.requestRender(process.env.REVIEW_FULL_REDRAW === "1");
 	}
 
 	/** Wheel/drag scroll: the VIEWPORT moves by `delta` visual lines and the
@@ -1809,10 +1816,7 @@ class ReviewComponent {
 		const maxScroll = Math.max(0, total - maxRows);
 		this.setCursorVis(Math.max(0, Math.min(total - 1, starts[this.rowIdx]! + this.visLine + delta)));
 		this.scroll = Math.max(0, Math.min(maxScroll, this.scroll + delta));
-		// Force a full redraw: pi's differential redraw leaves stale rows when
-		// the viewport shifts (the mashing the user saw). A forced render
-		// resets pi's diff state.
-		this.tui.requestRender(true);
+		this.requestRender();
 	}
 
 	private goto(idx: number): void {
