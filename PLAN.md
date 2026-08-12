@@ -1,8 +1,8 @@
 # diffuse — the rewrite plan
 
-The diff-engine, in Rust. The pi review extension's `review.ts` currently
-does everything: parse the git diff, mark moved lines, collapse pairs into
-mods, merge the word-diff, *and* render the TUI. This project splits that:
+The diff-engine, in Rust. The pi review extension's `review.ts` used to do
+everything: parse the git diff, mark moved lines, collapse pairs into mods,
+merge the word-diff, *and* render the TUI. This project splits that:
 **diffuse is the engine** (parse → moves → collapse → merged token runs),
 renderer-agnostic — consumed today by a thin TypeScript renderer in the pi
 extension, tomorrow by a Rust TUI.
@@ -27,29 +27,30 @@ git diff + file contents
         │  token-stream JSON (the wire contract, §2)
         ▼
 ┌─────────────────────────────────────────────────┐
-│  renderer (pi extension TS today, Rust TUI       │
-│  later) — row assembly, theme application,       │
-│  syntax → theme mapping, the component           │
+│  renderer (the pi extension's TS TUI today, a    │
+│  Rust TUI later) — row assembly, theme           │
+│  application, syntax → theme mapping, the        │
+│  component                                       │
 └─────────────────────────────────────────────────┘
 ```
 
 **In (the engine, ported to Rust):**
 
-| TS source (review.ts) | Role |
+| TS source (extension/review.ts) | Role |
 |---|---|
-| `hunkPath`, `unquoteGitPath`, `parseDiff` (579) | diff → hunks/rows, the fixture shape |
-| `addCount` (237), `delCount` (261) | hunk new/old side extents |
-| `tokenizeLine` (906), `lcsPairs` (927), `spansFrom` (988), `wordSpans` (1011) | the word-level LCS |
-| `lineSimilarity` (1230), `lineSimilarityParts` (1239) | pairing scores |
-| `markMoves` (1150) | exact-content relocation + the block-move rule |
-| `collapseHunkRows` (1303) | pairing, stretch, reverse-stretch, reflow, the ordered walk — **the big one** |
+| `hunkPath`, `unquoteGitPath`, `parseDiff` | diff → hunks/rows, the fixture shape |
+| `addCount`/`delCount` | hunk new/old side extents |
+| `tokenizeLine`, `lcsPairs`, `spansFrom`, `wordSpans` | the word-level LCS |
+| `lineSimilarity`, `lineSimilarityParts` | pairing scores |
+| `markMoves` | exact-content relocation + the block-move rule |
+| `collapseHunkRows` | pairing, stretch, reverse-stretch, reflow, the ordered walk — **the big one** |
 | `isTailBeforeClosing`, `fnOf` (inside collapse) | the brace-anchor |
-| `wholesalePair` (1052) | the split-word/garble gate |
+| `wholesalePair` | the split-word/garble gate |
 | the component's merge methods | `mergedRuns`, `delPairing`, `delSpansToShow`, `isWholesaleMod`, `isPureDeletionMod`, `displayText` |
-| `fileCounts` (1694) | the header counts |
-| `langProfile` (1848), `tokenReFor` (1902), `classifyTokens` (1927) | the *semantic* token colors (keyword/string/comment/…) — the renderer maps these to theme colors |
+| `fileCounts` | the header counts |
+| `langProfile`, `tokenReFor`, `classifyTokens` | the *semantic* token colors (keyword/string/comment/…) — the renderer maps these to theme colors |
 
-**Out (the renderer, stays in TS for now):**
+**Out (the renderer, stays in TS):**
 
 | TS source | Role |
 |---|---|
@@ -64,11 +65,11 @@ git diff + file contents
 ## 2. The wire contract (frozen early, changes only deliberately)
 
 The bin's JSON output is the integration contract — the TS renderer and the
-future Rust TUI both consume it. Freeze the schema at Phase 0; the engine
-internals may change in Phase 4, the contract does not.
+future Rust TUI both consume it. Freeze the schema; the engine internals may
+change in Phase 5, the contract does not.
 
 **Input** (stdin, or `--diff <file>`; contents keyed by path — the exact
-shape of `test/fixtures/mirage-2025-08.json`):
+shape of `tests/golden/mirage-2025-08.json`):
 
 ```json
 {
@@ -97,7 +98,7 @@ merged runs:
         "spans": { "del": [[0,12]], "add": [] },
         "runs": [ { "kind": "common", "text": "…", "color": "syntaxKeyword" },
                   { "kind": "del", "text": "…" }, { "kind": "add", "text": "…" } ],
-        "tail": null
+        "tail": [ { "newLine": 156, "text": "    }" } ]
       }]
     }]
   }],
@@ -110,8 +111,13 @@ merged runs:
 - A `del`/`add` run carries no color field (the strike/fill is the
   renderer's business); the semantic color rides the `common` runs and the
   merged tokens' syntax classification.
-- `--golden` switches the output to the golden-walk format (the acceptance
-  test, §5).
+- `tail` is a mod row's absorbed section lines (the renderer draws them as
+  pure context: `newLine` + `text`, no tint) — added at Phase 3/4 when the
+  acceptance walk and the renderer began consuming the contract (a mod's
+  visual block needs its absorbed lines; the header counts count them).
+- The bin's output IS the golden-walk input: the acceptance test (§5)
+  decodes the token-stream JSON and walks it — no separate `--golden`
+  format.
 
 ---
 
@@ -149,83 +155,131 @@ assembly) stay in TS — but `mergedTokens`' *classification* output (the
 
 ## 4. The phases
 
-### Phase 0 — the frame
+### Phase 0 — the frame ✅
 - [x] Project skeleton (bin + lib, Clap, serde, this file).
-- [ ] Freeze the wire contract (§2) — write it as the serde types in
-      `parse.rs`/`lib.rs` so the schema IS the code.
-- [ ] Port the fixture: copy `mirage-2025-08.json` into `tests/golden/`.
+- [x] Freeze the wire contract (§2) as the serde types — the schema IS the
+      code (the `tail` field lands at Phase 4 when the renderer consumes it).
+- [x] The frozen corpus in `tests/golden/`.
 
-### Phase 1 — the one-for-one port
-- Port every function in the map, in dependency order (parse → lcs →
-  similarity → moves → tail → collapse → merge → counts → syntax).
-- **100% fidelity**: same names, same branches, same thresholds, same
-  fallbacks — the TypeScript is the spec. Rust idioms are FORBIDDEN here
-  (no iterator chains that change control flow, no enum-shaped rewrites).
-  Break only for syntax (no `undefined`, no dynamic typing) and naming
-  (`camelCase` → `snake_case`).
-- The comments come over too — they carry the *why* of every odd rule
-  (the tie-break ladder, the artifact-filter position check, the reflow
-  gates).
-- The `.map`/`Map<number,number>` → `HashMap`/`BTreeMap` conversions are
-  fidelity-neutral as long as iteration order is preserved where it matters
-  (the ordered walk, the sort).
+### Phase 1 — the one-for-one port ✅
+- [x] Port every function in the map, in dependency order (parse → lcs →
+      similarity → moves → tail → collapse → merge → counts → syntax).
+- [x] 100% fidelity: same names, same branches, same thresholds, same
+      fallbacks — the TypeScript is the spec. Rust idioms are FORBIDDEN
+      (no iterator chains that change control flow, no enum-shaped
+      rewrites). Break only for syntax (no `undefined`, no dynamic typing)
+      and naming (`camelCase` → `snake_case`).
+- [x] The comments came over — they carry the *why* of every odd rule.
+- [x] The `.map`/`Map<number,number>` → `HashMap`/`BTreeMap` conversions are
+      fidelity-neutral, iteration order preserved where it matters.
 
-### Phase 2 — the tests in Rust
-- Port every assertion in `test/review.test.ts` (1789 lines) into
-  `#[test]`s, one block per source block, same inputs, same expectations.
-- Port the golden walk as a **`tests/` e2e/acceptance test with two
-  legs**:
-  1. **lib leg** — embed the lib, run the full pipeline on the frozen
-     fixture, walk the output and compare against
-     `mirage-2025-08.golden.txt`.
+### Phase 2 — the extension moves into the workspace ✅ ✅
+The pi-review extension stops being a separate repo and becomes a
+sub-project of diffuse — **co-located before the tests and the integration**,
+so the engine and its consumer change together:
+
+```
+diffuse/                    (the engine crate at the root; the extension
+├── src/                    is a sub-project, not a Cargo member — it is
+│   └── …                   TypeScript, loaded by pi as-is)
+├── tests/golden/           the SHARED frozen corpus (fixture + golden) —
+│                           the single canonical copy, read by both the
+│                           Rust acceptance and the extension's golden walk
+├── extension/              the extensions home — one subdir per agent
+│   └── pi/                 the Pi review extension — the TS renderer + TUI
+│       ├── review.ts       the whole extension (single file, pi loads it)
+│       ├── bin/diffuse     the BUNDLED diffuse binary (build-bin.sh — the
+│       │                   extension ships with the engine it was tested
+│       │                   against; review.ts resolves it next to itself)
+│       ├── package.json    builds the extension bundle
+│       ├── scripts/        check/test/golden/build-bin/install
+│       └── test/           the unit + golden suites — running against the
+│                           diffuse backend from Phase 4 on
+└── Cargo.toml              the engine (lib + bin)
+```
+
+- [x] The extension's files moved in (review.ts, package.json, scripts,
+      tests, docs) — `~/lab/pi-review` remains as the pristine upstream
+      reference until the workspace copy is proven identical.
+- [x] The extension's golden test reads the shared corpus at
+      `tests/golden/` — no forked fixture/golden pair.
+- [x] The extension's own test suite still passes in place (`npm test`).
+- [x] The diffuse binary is BUNDLED with the extension (`bin/diffuse`),
+      and `scripts/install.sh` syncs review.ts + the binary into Pi's
+      extensions dir — the installed copy needs no env to find the engine.
+- The reference paths in this doc and AGENTS.md now point at
+  `extension/pi/review.ts`.
+
+### Phase 3 — the tests in Rust ✅
+Port the engine-side assertions in `test/review.test.ts` (1789 lines) into
+`#[test]`s, one block per source block, same inputs, same expectations —
+**the renderer-side blocks stay in TS** (they test `ReviewComponent`,
+`buildVisible`, notes, markdown, movement — the renderer, which stays in
+TS). "As applicable" is the rule: a block that drives an engine function
+(`parseDiff`, `wordSpans`, `markMoves`, `collapseHunkRows`, the merge
+methods, `fileCounts`, the syntax classifier) ports; a block that drives the
+component stays.
+
+- [x] Every engine-side block in the corpus has a Rust counterpart (the
+      checklist in `tests/` and the per-module `tests.rs` files).
+- [x] The golden acceptance (`tests/golden.rs`) — TWO legs over the frozen
+      corpus, both must match byte-for-byte:
+  1. **lib leg** — embed the engine, run the full pipeline, walk the output.
   2. **bin leg** — spawn the built `diffuse` binary, feed it the same
-     input, decode the token-stream JSON, run the SAME walk over it, and
-     assert the same golden — this pins the wire contract (§2) to the
-     golden as well as the engine.
-  Both legs walk the full scrolldown: the width invariant, every flat row
-  reachable, the byte-exact golden rows.
-- **The gate: everything passes, 100%, before Phase 3.** Any failure is a
+     input, decode the token-stream JSON, run the SAME walk.
+  The walk asserts the wire contract is self-consistent over the real
+  corpus: the row-kind/line-number rules, the spans in bounds, the runs
+  concatenating to the display text, the header counts matching a walk of
+  the rows, and the two legs byte-identical.
+- [x] The wire contract gained the mods' `tail` (the absorbed section
+      lines) — the renderer needs them, and the counts walk needs them.
+- **The rendered golden walk lives in the extension** (it needs the
+  renderer — the golden.txt is the TUI's colored scrolldown). The Rust
+  side proves the engine + the contract; the extension proves the render.
+  The two meet at Phase 4's equivalence gate.
+- **The gate: everything passes, 100%, before Phase 4.** Any failure is a
   port bug — fix the port, do not change the expectation.
 
-### Phase 3 — the TS integration
-- The extension spawns the bin (or loads the WASM build) with the review
-  input, receives the token-stream JSON, and renders it with the existing
-  component (the `runs` replace `mergedRuns`, `spans` replace the baked
-  spans).
-- `REVIEW_BACKEND=rust|ts` (or a `/review` flag) keeps the TS engine as a
-  fallback during the transition — A/B the two backends on the same input.
-- **The equivalence proof**: the TS renderer fed the Rust backend's JSON
-  must produce the byte-identical golden. That is the integration gate.
+### Phase 4 — the TS integration ✅
+- [x] The extension spawns the bin with the review input (`REVIEW_BACKEND=rust`,
+      `REVIEW_DIFFUSE_BIN` override), receives the token-stream JSON, and
+      renders it with the existing component: `filesFromWire` converts the
+      wire output into the `DiffFile`/`Row` shapes (the content arrays stay
+      the extension's own — buildVisible reads them; the rows carry the
+      engine's `runs`).
+- [x] The renderer seam: `rustTokens` supplies the token stream for the rows
+      the TS would merge (non-wholesale mods + moved-diff rows), from the
+      wire runs. **The golden encodes the renderer's OWN classification**
+      (the cursor file's syntax profile — every row classifies with the
+      cursor's file), so this renderer re-derives the semantic colors with
+      its own profile over the runs' merge structure (adjacent same-kind
+      runs are merged back to the coarse runs, then classified) — the
+      engine's per-file colors ride the contract for other consumers, and
+      are pinned to the reference by the golden's rust-leg classification
+      check. The .md fence/markdown paths and the plain add/ctx rows stay
+      TS-side.
+- [x] `REVIEW_BACKEND` defaults to `rust` (the equivalence gate passed —
+      this is the integration being exercised); `REVIEW_BACKEND=ts` keeps
+      the TS engine as the fallback.
+- [x] The diffuse binary is BUNDLED with the extension (`bin/diffuse`),
+      and `scripts/install.sh` syncs review.ts + the binary into pi's
+      extensions dir — the installed copy finds its engine with no env.
+- [x] **The equivalence proof passed**: the extension's golden walk with
+      the rust backend produces the byte-identical golden — same
+      scrolldown, same width invariant, every flat row reachable. The
+      golden's rust leg ALSO walks every wire run and asserts its per-file
+      colors equal the TS tokenizer's — the engine's classification is
+      pinned to the reference, not just the render.
+- [ ] The TS backend is dropped (the fallback removed) after the user's
+      manual review of the tricky cases + the rust backend being routine.
 
-### Phase 4 — the extension moves into the workspace
-
-The pi-review extension stops being a separate repo (`~/lab/pi-review`) and
-becomes a **workspace member of diffuse** — a sub-project that builds the
-Pi extension and uses the diffuse engine for tokenization:
-
-```
-diffuse/                    (a Cargo workspace)
-├── src/                    the engine (this crate)
-├── extension/              the Pi extension — the TS renderer + TUI
-│   ├── src/                the extension's TS (the ReviewComponent, the
-│   │                       row assembly, the theme application, the notes
-│   │                       editor, the markdown rendering)
-│   ├── package.json        builds the extension bundle
-│   └── tests/              the extension's unit + golden tests, now
-│                           running against the diffuse backend
-└── ...
-```
-
-- The extension's TS renderer is already Phase 3-integrated (it spawns the
-  diffuse binary / loads the WASM build and renders the token-stream JSON).
-  Phase 5 is the *home*: the renderer and its tests move into this repo so
-  the engine and its consumer change together.
-- The extension's own test suite (the `test/review.test.ts` unit blocks
-  and the golden walk) comes along — but the golden walk now runs against
-  the diffuse backend (the Phase 3 equivalence proof becomes the
-  extension's acceptance test).
-- The workspace shares the frozen corpus (`tests/golden/` here); the
-  extension's golden file is generated FROM the diffuse engine's output.
+**Follow-up (deferred per the user's request): the runs' JSON shape.** The
+wire runs are `[{kind, color?, text}, …]` objects. The user suggested a
+more compact structured form — `[{add: "xyz"}, {del: "abc"}]` — one key
+per run, less bandwidth, the kind as the key. Do it after the rust backend
+is 100% validated; it touches the contract (both the serde types + the
+consumers), so the golden.rs bin leg and the extension's wire decode must
+move together.
 
 ### Phase 5 — the Rust-y redesign
 - Only after the engine is fully ported, tested, and integrated. Now the
@@ -280,9 +334,8 @@ concatenated text applies identically), `reflow` (inert absorption),
   actual checked-in file.
 
 Phase 6 is deliberately last: it presupposes the port is faithful (Phase
-2's golden), integrated (Phase 3), co-located (Phase 4), and idiomatic
-(Phase 4's redesign) — then the refactoring structure is a rewrite of the
-*architecture*, not the behavior.
+3's acceptance), integrated (Phase 4), and co-located (Phase 2) — then the
+refactoring structure is a rewrite of the *architecture*, not the behavior.
 
 ---
 
@@ -291,9 +344,9 @@ Phase 6 is deliberately last: it presupposes the port is faithful (Phase
 | Gate | What proves it |
 |---|---|
 | Phase 1 | every port-map row is checked; `cargo build` clean |
-| Phase 2 | all unit tests pass; the golden walk — **lib leg and bin leg** — matches `mirage-2025-08.golden.txt` on the frozen fixture (§2 contract pinned to the golden) |
-| Phase 3 | `REVIEW_BACKEND=rust` renders the identical golden; A/B on the real repo |
-| Phase 4 | the extension lives in the workspace; its unit + golden tests run against the diffuse backend |
+| Phase 2 | the extension lives in the workspace, its suite passes in place, and it reads the shared corpus |
+| Phase 3 | all unit tests pass; the golden acceptance — **lib leg and bin leg** — walks the frozen corpus byte-identically with the wire-contract invariants (§2 contract pinned to the engine) |
+| Phase 4 | `REVIEW_BACKEND=rust` renders the identical golden (the extension's golden walk's rust leg — ✅ passed); A/B on the real repo; the TS backend is dropped only after the user's manual sign-off |
 | Phase 5 | the redesign passes the golden unchanged; the extension builds from the workspace and passes its tests against the diffuse backend; clippy `-D warnings`; the docs updated |
 | Phase 6 | the pass pipeline passes the golden AND the apply-oracle: `apply(original) == apply(each transformed step) == the checked-in new file`, for every corpus fixture |
 
@@ -344,6 +397,19 @@ These are the rules the user has tuned by hand. Each is a port-trap:
     matching chars — a type change (tab vs spaces) shares nothing and
     both subword; pairs apply regardless of the position gap.
 12. **The counts**: moves are neither added nor removed; mods are one row.
+13. **The stretch-consumption splice quirk**: the TS consumes a stretch's
+    adds with `pendingAdds.splice(indexOf(a), 1)` — an add ALREADY
+    consumed by an earlier pair has `indexOf` -1, and `splice(-1, 1)`
+    removes the LAST pending add (the trailing adds drop out of the
+    pairing and surface as the stretch mod's absorbed section). The port's
+    `retain` must replicate the pop (the diffuse-repo PLAN.md case).
+14. **The old-content dash-content del**: a del whose CONTENT starts with a
+    dash (`-- item` — a markdown list bullet `- item`) is a real del; only
+    the three-dash `--- a/file` header is skipped. A `rest.starts_with('-')`
+    check swallows it and shifts every later old line by one.
+15. **`char_slice` is total**: the JS `String.slice` clamps and never
+    panics; empty del/add lines yield empty spans `(0,0)` that the
+    wholesale check slices. The port must clamp, not panic.
 
 ---
 
@@ -351,17 +417,17 @@ These are the rules the user has tuned by hand. Each is a port-trap:
 
 - **`buildVisible`/context allocation**: engine or renderer? The context
   rows are presentation, but the `absorbLeading/ClosingContext` shifts
-  read the hunk rows. Default: keep in TS for Phase 1-3; revisit at
-  Phase 4.
+  read the hunk rows. Default: keep in TS for Phase 1-4; revisit at
+  Phase 5.
 - **Syntax highlighting**: `classifyTokens`' semantic output is
   engine-side; the fence-state tracking for `.md` rows is a renderer
   concern (it spans visual rows). Keep the fence state in TS.
 - **WASM vs spawn** for the TS integration: spawn is simpler (the bin IS
   the contract); WASM is one build away if spawn latency matters. Start
   with spawn.
-- **The golden corpus in the repo**: the fixture is ~300KB; keep it under
-  `tests/golden/` as the frozen corpus, generated from the same mirage
-  snapshot.
+- **The golden walk's home**: it needs the renderer, so it lives in the
+  extension's TS suite; the Rust acceptance proves the engine + contract.
+  If a Rust TUI materializes (Phase 5+), the walk moves into it.
 
 ---
 
@@ -371,13 +437,14 @@ The project is done when:
 
 - `diffuse` (lib) is the complete engine, `diffuse` (bin) speaks the
   frozen contract.
-- Every test from `test/review.test.ts` + the golden walk passes in Rust.
-- The pi extension renders from the Rust backend with a byte-identical
-  golden, and `REVIEW_BACKEND` is a relic (defaulted to rust).
+- Every engine-side test from `test/review.test.ts` passes in Rust, and
+  the golden acceptance (lib leg + bin leg) walks the frozen corpus
+  byte-identically.
+- The pi extension (in-workspace) renders from the Rust backend with a
+  byte-identical golden, and `REVIEW_BACKEND` is a relic (defaulted to
+  rust) after the user's manual sign-off.
 - Phase 5's redesign is done, the golden still passes, and the docs
   (this file, README, AGENTS) describe the Rust-y shape.
-- The extension lives in the workspace and passes its suite against the
-  diffuse backend.
 - Phase 6's refactoring pipeline is done: each pass is a pure diff → diff
   transformation, the apply-oracle passes on every fixture, and the render
   concerns (the ordered walk) have moved out of the engine.

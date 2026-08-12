@@ -1,0 +1,17 @@
+{
+	"name": "pi-review",
+	"version": "0.1.0",
+	"description": "Interactive git-diff review for pi: wrapped hunks with syntax highlighting, persistent margin notes, and hunk-level git staging.",
+	"type": "module",
+	"scripts": {
+		"check": "node --experimental-transform-types --check review.ts",
+		"test": "node --experimental-transform-types test/review.test.ts && node --experimental-transform-types test/golden.test.ts",
+		"test:unit": "node --experimental-transform-types test/review.test.ts",
+		"test:golden": "node --experimental-transform-types test/golden.test.ts",
+		"test:rust": "REVIEW_BACKEND=rust node --experimental-transform-types test/review.test.ts && REVIEW_BACKEND=rust node --experimental-transform-types test/golden.test.ts"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-tui": "^0.83.0"
+	},
+	"license": "MIT"
+}

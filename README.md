@@ -55,7 +55,7 @@ the other side.
 ## Layout
 
 ```
-src/
+src/              the engine (lib + bin)
   lib.rs        the engine API (module tree)
   main.rs       the binary: a CLI that reads a diff and emits the token
                 streams as JSON
@@ -69,8 +69,14 @@ src/
   counts.rs     the add/del/mod/moved counts
   syntax.rs     the semantic token classification (keyword, string, …)
 tests/
-  golden.rs     the acceptance test: a golden walk (two legs)
-  golden/       a frozen diff corpus + its locked expected output
+  golden.rs     the acceptance test (two legs)
+  golden/       the SHARED frozen diff corpus + its locked expected output
+                (the extension's golden walk reads it from here too)
+extension/        the extensions home — one subdir per agent
+  pi/             the pi review extension — the engine's first renderer (TS)
+    review.ts     the whole extension (single file, pi loads it as-is)
+    bin/diffuse   the BUNDLED diffuse binary (scripts/build-bin.sh)
+    test/         the unit + golden suites (npm test; npm run test:rust)
 ```
 
 ## Build & test
@@ -88,23 +94,31 @@ cargo fmt --all -- --check
 engine's *ideal* output over a real captured diff
 (`tests/golden/mirage-2025-08.json`). It encodes dozens of hand-tuned
 rendering behaviors — the exact strike/fill minimums, which anchor
-pairings win, how moved blocks read. The acceptance test walks the golden
-in two ways:
+pairings win, how moved blocks read. The corpus is the SINGLE canonical
+copy: the extension's golden walk reads the same files.
 
-1. **lib leg** — embed the engine, run the pipeline, compare.
-2. **bin leg** — spawn the binary, decode its JSON output, compare.
+The rendered golden is a TUI output, so the byte-exact walk against it
+lives with the renderer (the extension's `test/golden.test.ts`). The
+Rust acceptance test (`tests/golden.rs`) proves the engine + the wire
+contract over the corpus in two ways:
 
-Both must match the golden byte-for-byte. The golden changes only when a
-rendering preference is deliberately changed — never to make a test pass.
+1. **lib leg** — embed the engine, run the pipeline, walk the output.
+2. **bin leg** — spawn the binary, decode its JSON output, walk it the
+   same way.
+
+Both must match byte-for-byte. The golden changes only when a rendering
+preference is deliberately changed — never to make a test pass.
 
 ## The story so far
 
 diffuse is a faithful **port** of an existing, battle-tested diff engine
 that grew organically inside a terminal review tool. That engine has
 hundreds of edge-case rules, each tuned against the golden corpus. This
-crate is being rebuilt from it in four phases (PLAN.md): a one-for-one
-port (behavior-identical, so the golden proves correctness), the tests
-ported to Rust, the original tool switched over to this backend, and
-finally a Rust-native redesign. The one-for-one phase is deliberate: it
-separates "did the port break anything" from "would a redesign be
-better".
+crate is being rebuilt from it in phases (PLAN.md): a one-for-one port
+(behavior-identical, so the golden proves correctness), the extension
+moved into the workspace, the tests ported to Rust, the original tool
+switched over to this backend (`REVIEW_BACKEND=rust`, with the TS engine
+as the fallback until the byte-identical golden plus a manual review
+retire it), and finally a Rust-native redesign. The one-for-one phase is
+deliberate: it separates "did the port break anything" from "would a
+redesign be better".
