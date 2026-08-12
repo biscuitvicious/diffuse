@@ -269,9 +269,29 @@ pub fn collapse_hunk_rows(
             // the run's adds are consumed (not emitted as + rows).
             stretch_of.insert(ri, br.clone());
             for &aid in &br {
-                pending_adds.retain(|&x| x != aid);
+                // The TS consumes each stretch add with
+                // `pendingAdds.splice(pendingAdds.indexOf(a), 1)` — when an
+                // add was ALREADY consumed by an earlier pair, `indexOf` is
+                // -1 and `splice(-1, 1)` removes the LAST pending add (a JS
+                // quirk, ported verbatim: the trailing adds drop out of the
+                // pairing and surface as the mod's absorbed section).
+                if let Some(pos) = pending_adds.iter().position(|&x| x == aid) {
+                    pending_adds.remove(pos);
+                } else if !pending_adds.is_empty() {
+                    pending_adds.pop();
+                }
             }
-            runs.retain(|run| !run.iter().any(|x| br.contains(x)));
+            // The TS keeps `bestRun` itself in the window list (its adds are
+            // consumed, but a later del may still re-stretch over the stale
+            // window); every OTHER window that shares an add is emptied.
+            let br_clone = br.clone();
+            runs.retain(|run| {
+                if *run == br_clone {
+                    true
+                } else {
+                    !run.iter().any(|x| br.contains(x))
+                }
+            });
         } else if let Some(b) = best {
             // A pair that would render as the wholesale (garble-shaped
             // spans) reads better as the plain `-`/`+` baseline rows —

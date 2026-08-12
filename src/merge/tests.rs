@@ -164,4 +164,65 @@ fn char_slice_roundtrip() {
     let ws = word_spans("fn café(x: u32) -> u32 {", add);
     assert_eq!(char_slice(add, ws.add[0].0, ws.add[0].1), "u64");
     assert_eq!(char_slice(add, ws.add[1].0, ws.add[1].1), "u64");
+    // Multi-byte 1-char span: the é ends the slice at its full UTF-8
+    // length, never a non-boundary byte.
+    assert_eq!(char_slice("é", 0, 1), "é");
+}
+
+// char_slice is total — the JS `String.slice` clamps and never panics.
+// An empty del/add line yields empty spans (0,0), and the wholesale
+// check slices them: this panicked on the real diffuse-repo diff
+// ("end byte index 1 is out of bounds for string of length 0").
+#[test]
+fn char_slice_empty_and_out_of_range() {
+    assert_eq!(char_slice("", 0, 0), "", "empty span on empty text");
+    assert_eq!(char_slice("", 0, 1), "", "start past the end clamps");
+    assert_eq!(char_slice("abc", 0, 0), "");
+    assert_eq!(char_slice("abc", 1, 1), "");
+    assert_eq!(char_slice("abc", 3, 3), "", "span at the end");
+    assert_eq!(char_slice("abc", 0, 5), "abc", "end past the end clamps");
+    assert_eq!(char_slice("abc", 4, 5), "", "start past the end");
+}
+
+// An empty DEL line is a valid row: the whole-line gate yields the empty
+// del span (0,0), and the wholesale check must not panic on it (the
+// diffuse-repo regression).
+#[test]
+fn wholesale_pair_empty_del_line() {
+    let spans = word_spans("", "        Some(content)");
+    assert_eq!(spans.del, vec![(0, 0)]);
+    assert!(
+        !wholesale_pair("", "        Some(content)", &spans),
+        "an empty del is not wholesale garble — no panic"
+    );
+}
+
+// Unicode whitespace subwords merge (the TS block: a nbsp vs a tab, a
+// zero-width space vs a space, an ideographic space vs 3 spaces): the
+// whitespace change yields del + add subwords and the identifier survives
+// as common.
+#[test]
+fn unicode_whitespace_merged_runs() {
+    let cases: [(&str, &str); 3] = [
+        ("\u{00a0}self.x", "\tself.x"),
+        ("\u{200b}self.x", " self.x"),
+        ("\u{3000}self.x", "   self.x"),
+    ];
+    for (del, add) in cases {
+        let mut r = mk(del, add);
+        // The TS block drives mergedRuns on a moved add row (spans baked).
+        r.kind = RowKind::Add;
+        r.moved = true;
+        let runs = merged_runs(&r);
+        let kinds: Vec<RunKind> = runs.iter().map(|x| x.kind).collect();
+        assert!(
+            kinds.contains(&RunKind::Del) && kinds.contains(&RunKind::Add),
+            "unicode whitespace subwords: {del:?} vs {add:?}: {kinds:?}"
+        );
+        assert!(
+            runs.iter()
+                .any(|x| x.kind == RunKind::Common && x.text.contains("self")),
+            "the identifier survives as common"
+        );
+    }
 }

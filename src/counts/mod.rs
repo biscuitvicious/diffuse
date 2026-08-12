@@ -37,7 +37,7 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileCounts {
     pub adds: usize,
     pub dels: usize,

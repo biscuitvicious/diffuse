@@ -53,3 +53,104 @@ fn operator_token_granularity() {
         "operator token span"
     );
 }
+
+// Backticks split from identifiers (markdown code markers): with
+// `` `resolved`` + `layers`` as tokens the shared `layers` can never match
+// the add's `` `layers` `` and the WHOLE `` `resolved_layers` `` becomes
+// one removal span. Split, the span is just `resolved_` and the mod reads
+// `resolved_` overstruck inside the intact code markers.
+#[test]
+fn backticks_split_from_identifiers() {
+    let del = "/// `resolved_layers` is populated during [`prepare`](Filesystem::prepare).";
+    let add = "/// `layers` is populated during [`prepare`](Filesystem::prepare).";
+    let ws = word_spans(del, add);
+    assert_eq!(ws.del.len(), 1, "one removal span");
+    assert_eq!(
+        char_slice(del, ws.del[0].0, ws.del[0].1),
+        "resolved_",
+        "the span is just resolved_"
+    );
+    assert_eq!(ws.add.len(), 0, "nothing is added");
+    // A changed identifier inside the markers keeps the markers common.
+    let w2 = word_spans("`foo` and `bar`", "`foo` and `baz`");
+    assert_eq!(w2.del.len(), 1, "one del");
+    assert_eq!(w2.add.len(), 1, "one add");
+    assert_eq!(w2.add[0].1 - w2.add[0].0, 3, "only bar→baz");
+}
+
+// Delimiters are single-char tokens (parens stay common): `…anchors).` →
+// `…anchors),` shares the `)` — only the period becomes the comma. If
+// `).`/`),` glued into single tokens the LCS could never match the shared
+// paren and the whole `).` would be struck.
+#[test]
+fn delimiters_are_single_char_tokens() {
+    let del = "    /// Resolved overlay layers (canonicalized, with TOCTOU anchors).";
+    let add = "    /// Resolved overlay layers (canonicalized, with TOCTOU anchors),";
+    let ws = word_spans(del, add);
+    assert_eq!(ws.del.len(), 1, "one del span");
+    assert_eq!(
+        char_slice(del, ws.del[0].0, ws.del[0].1),
+        ".",
+        "del span is just the period"
+    );
+    assert_eq!(ws.add.len(), 1, "one add span");
+    assert_eq!(
+        char_slice(add, ws.add[0].0, ws.add[0].1),
+        ",",
+        "add span is just the comma"
+    );
+    // The range operator: `..` and `..=` are operator-class tokens (glued
+    // by design — operator changes are one span), so the `..` → `..=`
+    // change spans the whole operator + the added bound.
+    let rg = word_spans("x[1..]", "x[1..=2]");
+    assert_eq!(rg.add.len(), 1, "one add span");
+    assert_eq!(
+        char_slice("x[1..=2]", rg.add[0].0, rg.add[0].1),
+        "..=2",
+        "operator span covers the changed operator"
+    );
+}
+
+// Whole-line span for mostly-rewritten lines (no spurious gaps): an
+// append-only change spans just the appended text; a full rewrite is one
+// whole-line span; a genuine one-word change stays partial.
+#[test]
+fn whole_line_span_for_mostly_rewritten_lines() {
+    let append = word_spans(
+        "same shared prefix content",
+        "same shared prefix content plus a new tail here",
+    );
+    assert_eq!(append.add.len(), 1, "append-only span");
+    assert!(append.add[0].0 > 0, "the prefix stays common");
+    let rewrite = word_spans(
+        "**TOCTOU Anchor Protection**: Every `AnchoredPath` opens an `O_PATH` file descriptor.",
+        "**Segment Rule (all precedence)**: each upper captures the contiguous run of read-only layers.",
+    );
+    assert_eq!(rewrite.add.len(), 1, "rewritten line is one full span");
+    let full = "**Segment Rule (all precedence)**: each upper captures the contiguous run of read-only layers.";
+    assert_eq!(rewrite.add[0].0, 0);
+    assert_eq!(rewrite.add[0].1, full.chars().count(), "the whole line");
+    let partial = word_spans("fn old_name(x: u32)", "fn new_name(x: u64)");
+    assert!(partial.add.len() >= 2, "partial change stays partial");
+    assert_ne!(partial.add[0].0, 0, "the common prefix is not struck");
+}
+
+// Unicode whitespace subwords (character class, not individual picks): a
+// nbsp (U+00A0, in White_Space) vs a tab, a zero-width space (U+200B) vs a
+// space, and an ideographic space (U+3000) vs 3 spaces — the whitespace
+// change must NOT swallow the identifier: both a del and an add survive.
+#[test]
+fn unicode_whitespace_subwords() {
+    let cases: [(&str, &str); 3] = [
+        ("\u{00a0}self.x", "\tself.x"),
+        ("\u{200b}self.x", " self.x"),
+        ("\u{3000}self.x", "   self.x"),
+    ];
+    for (del, add) in cases {
+        let ws = word_spans(del, add);
+        assert!(
+            !ws.del.is_empty() && !ws.add.is_empty(),
+            "unicode whitespace subwords: {del:?} vs {add:?}"
+        );
+    }
+}

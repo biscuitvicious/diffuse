@@ -11,21 +11,22 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
-/// Slice `s` by char offsets (the port's span convention).
+/// Slice `s` by char offsets (the port's span convention). The JS
+/// `String.slice(start, end)` clamps out-of-range indices and returns an
+/// empty slice for `start >= end` — the port must be total too: a
+/// whole-line gate or an empty del/add line yields empty spans `(0,0)`,
+/// and `wholesalePair` slices them (an empty del line is a valid row).
 pub fn char_slice(s: &str, start: usize, end: usize) -> &str {
-    let mut it = s.char_indices();
-    let start_byte = it.nth(start).map_or(s.len(), |(i, _)| i);
-    if end <= start + 1 {
-        // A 1-char span: the char at `start` was consumed by `nth(start)`;
-        // its UTF-8 length ends the slice.
-        let c = s[start_byte..].chars().next().unwrap_or('\0');
-        return &s[start_byte..start_byte + c.len_utf8()];
+    let len = s.chars().count();
+    let start = start.min(len);
+    let end = end.min(len).max(start);
+    let start_byte = s.char_indices().nth(start).map_or(s.len(), |(i, _)| i);
+    if end == start {
+        return &s[start_byte..start_byte];
     }
-    // After `nth(start)` the iterator is at index `start + 1`; `nth(k)`
-    // yields index `start + 1 + k` — want `end - 1`, so k = end - start - 2.
-    // The end byte is the char's START byte plus its UTF-8 length (a
-    // multi-byte char must not leave a non-boundary end).
-    let end_byte = match it.nth(end - start - 2) {
+    // The end byte is the char at `end - 1`'s START byte plus its UTF-8
+    // length (a multi-byte char must not leave a non-boundary end).
+    let end_byte = match s.char_indices().nth(end - 1) {
         Some((i, c)) => i + c.len_utf8(),
         None => s.len(),
     };

@@ -9,12 +9,13 @@ use crate::moves::mark_moves;
 use crate::old_content::old_content_from_diff;
 use crate::parse::{RowKind, parse_diff};
 use crate::syntax::{classify_tokens, lang_profile};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A row in the wire-contract output: the collapse row + its merged runs.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutputRow {
-    pub kind: &'static str,
+    pub kind: String,
     pub new_line: Option<u32>,
     pub old_line: Option<u32>,
     pub text: String,
@@ -23,11 +24,32 @@ pub struct OutputRow {
     pub spans: crate::parse::Spans,
     pub runs: Vec<OutputRun>,
     pub moved: bool,
+    /// The mod's absorbed section lines — the renderer draws them as pure
+    /// context (newLine + text, no tint). Added when the renderer began
+    /// consuming the contract (PLAN.md §4); also lets the acceptance walk
+    /// verify the header counts (tail rows count as adds/moves).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tail: Vec<OutputTailRow>,
 }
 
-#[derive(Serialize)]
+/// One absorbed line of a mod's tail.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputTailRow {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_line: Option<u32>,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub moved: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutputRun {
-    pub kind: &'static str,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     pub text: String,
 }
@@ -45,25 +67,33 @@ fn row_kind_name(k: RowKind) -> &'static str {
 
 /// The merged runs with the semantic syntax colors on the common/add runs
 /// (the del runs stay plain — the strike is the renderer's business). A
-/// non-mod row is a single whole-line run of its kind (an add classifies
-/// its syntax; a del stays plain).
+/// mod row — or a moved row whose delText differs (the movedDiff inline
+/// subword — an indentation reflow, say) — gets the merged runs; anything
+/// else is a single whole-line run of its kind (an add classifies its
+/// syntax; a del stays plain).
 pub fn colored_runs(
     r: &crate::parse::Row,
     profile: Option<&crate::syntax::LangProfile>,
 ) -> Vec<OutputRun> {
     let mut out = Vec::new();
-    if r.kind != RowKind::Mod {
+    // The renderer's token source (mergedTokens in review.ts): a mod row,
+    // or a moved row whose delText differs from its text, merges; a
+    // wholesale mod's del block is styled directly by the renderer.
+    let use_merged = (r.kind == RowKind::Mod
+        || (r.moved && r.del_text.as_deref() != Some(r.text.as_str())))
+        && r.del_text.is_some();
+    if !use_merged {
         if r.kind == RowKind::Add {
             for t in classify_tokens(&r.text, profile) {
                 out.push(OutputRun {
-                    kind: "add",
+                    kind: "add".to_string(),
                     color: Some(t.color),
                     text: t.text,
                 });
             }
         } else {
             out.push(OutputRun {
-                kind: row_kind_name(r.kind),
+                kind: row_kind_name(r.kind).to_string(),
                 color: None,
                 text: r.text.clone(),
             });
@@ -73,7 +103,7 @@ pub fn colored_runs(
     for run in merged_runs(r) {
         if run.kind == RunKind::Del {
             out.push(OutputRun {
-                kind: "del",
+                kind: "del".to_string(),
                 color: None,
                 text: run.text,
             });
@@ -81,9 +111,9 @@ pub fn colored_runs(
             for t in classify_tokens(&run.text, profile) {
                 out.push(OutputRun {
                     kind: if run.kind == RunKind::Common {
-                        "common"
+                        "common".to_string()
                     } else {
-                        "add"
+                        "add".to_string()
                     },
                     color: Some(t.color),
                     text: t.text,
@@ -127,7 +157,7 @@ pub fn run_pipeline(
             let mut rows_out = Vec::new();
             for r in &h.rows {
                 rows_out.push(OutputRow {
-                    kind: row_kind_name(r.kind),
+                    kind: row_kind_name(r.kind).to_string(),
                     new_line: r.new_line,
                     old_line: r.old_line,
                     text: r.text.clone(),
@@ -135,6 +165,16 @@ pub fn run_pipeline(
                     spans: r.spans.clone().unwrap_or_default(),
                     runs: colored_runs(r, profile.as_ref()),
                     moved: r.moved,
+                    tail: r
+                        .tail
+                        .iter()
+                        .map(|t| OutputTailRow {
+                            new_line: t.new_line,
+                            old_line: t.old_line,
+                            text: t.text.clone(),
+                            moved: t.moved,
+                        })
+                        .collect(),
                 });
             }
             hunks_out.push(OutputHunk {
@@ -157,7 +197,8 @@ pub fn run_pipeline(
     PipelineOutput { files: out_files }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutputHunk {
     pub old_start: u32,
     pub old_count: u32,
@@ -166,7 +207,8 @@ pub struct OutputHunk {
     pub rows: Vec<OutputRow>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OutputFile {
     pub path: String,
     pub status: String,
@@ -176,7 +218,8 @@ pub struct OutputFile {
     pub counts: crate::counts::FileCounts,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PipelineOutput {
     pub files: Vec<OutputFile>,
 }

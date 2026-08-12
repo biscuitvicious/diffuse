@@ -35,7 +35,7 @@ pub struct Row {
 }
 
 /// Word-level change spans: char-offset ranges into the del/add text.
-#[derive(Clone, Debug, Default, serde::Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Spans {
     pub del: Vec<(usize, usize)>,
     pub add: Vec<(usize, usize)>,

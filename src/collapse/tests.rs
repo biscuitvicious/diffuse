@@ -3,10 +3,17 @@
 //! brace-anchor, the reflow pairing, the reverse stretch.
 
 use crate::collapse::collapse_hunk_rows;
-use crate::parse::{Hunk, Row, RowKind};
+use crate::moves::mark_moves;
+use crate::parse::{DiffFile, FileStatus, Hunk, Row, RowKind};
 
 fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
     Row::new(kind, text, new_line, old_line)
+}
+
+fn moved_row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
+    let mut r = Row::new(kind, text, new_line, old_line);
+    r.moved = true;
+    r
 }
 
 fn hunk(rows: Vec<Row>) -> Hunk {
@@ -19,6 +26,20 @@ fn hunk(rows: Vec<Row>) -> Hunk {
         rows,
         above_ctx: 0,
         below_ctx: 0,
+    }
+}
+
+fn file(hunks: Vec<Hunk>) -> DiffFile {
+    DiffFile {
+        path: "f.rs".into(),
+        old_path: None,
+        status: FileStatus::Modified,
+        new_line_count: 20,
+        old_line_count: 20,
+        new_content: Vec::new(),
+        old_content: Vec::new(),
+        hunks,
+        no_content: false,
     }
 }
 
@@ -191,6 +212,506 @@ fn reflow_pairing_first_del() {
     assert!(
         spans.add.is_empty(),
         "the reflowed .iter().any(…) is common"
+    );
+    // The `let up` one-liner's reflowed tail: the `.find(…)` content of the
+    // dropped del feeds back as common, so the `?;` reads common, not added.
+    let h2 = hunk(vec![
+        row(
+            RowKind::Del,
+            "        let up = self.resolved_layers[ro_match + 1..]",
+            None,
+            Some(745),
+        ),
+        row(RowKind::Del, "            .iter()", None, Some(746)),
+        row(
+            RowKind::Del,
+            "            .find(|l| l.is_upper())?;",
+            None,
+            Some(747),
+        ),
+        row(
+            RowKind::Add,
+            "        let up = self.layers[ro_match + 1..].iter().find(|l| l.is_upper())?;",
+            Some(903),
+            None,
+        ),
+    ]);
+    let c2 = collapse_hunk_rows(&h2, false, None, None);
+    assert_eq!(c2.len(), 1, "one mod");
+    let m2 = &c2[0];
+    let spans2 = m2.spans.as_ref().expect("spans");
+    assert_eq!(spans2.del, vec![(22, 31)], "the resolved_ strike");
+    assert!(
+        spans2.add.is_empty(),
+        "the reflowed .iter().find(…)?; reads common"
+    );
+}
+
+// The modified-pair collapse: the mod absorbs its section's add AND the
+// closing blank into its tail; a moved del + its moved add are absorbed as
+// a pure reflow (invisible — not ≈ noise); the add after the blank is a
+// separate row.
+#[test]
+fn modified_pair_absorbs_section_and_reflow() {
+    let mut f = file(vec![hunk(vec![
+        row(RowKind::Del, "old one", None, Some(1)),
+        row(RowKind::Add, "new one", Some(1), None),
+        row(RowKind::Add, "extra line", Some(2), None),
+        row(RowKind::Add, "", Some(3), None), // section break
+        row(RowKind::Del, "moved line", None, Some(4)),
+        row(RowKind::Add, "moved line", Some(4), None),
+        row(RowKind::Add, "after the blank", Some(5), None),
+    ])]);
+    mark_moves(&mut f);
+    let c = collapse_hunk_rows(&f.hunks[0], false, None, None);
+    assert_eq!(c.len(), 2, "collapsed to 2 rows");
+    assert_eq!(
+        c[1].kind,
+        RowKind::Add,
+        "the add after the blank is a separate row"
+    );
+    assert_eq!(c[1].new_line, Some(5));
+    assert_eq!(c[0].kind, RowKind::Mod, "mod row leads");
+    let spans = c[0].spans.as_ref().expect("spans");
+    assert_eq!(spans.add.len(), 1, "mod row has baked add spans");
+    assert_eq!(c[0].tail.len(), 2, "the mod absorbed its section");
+    assert_eq!(c[0].tail[0].text, "extra line");
+    assert!(c[0].tail[1].text.trim().is_empty(), "the closing blank");
+}
+
+// A genuinely removed line (content NOT in any add) stays a del, but a
+// del RUN whose text reflows onto the one-liner folds into ONE mod.
+#[test]
+fn del_only_run_folds_into_one_mod() {
+    let h2 = hunk(vec![
+        row(
+            RowKind::Del,
+            "        let up = self.resolved_layers[ro_match + 1..]",
+            None,
+            Some(745),
+        ),
+        row(RowKind::Del, "            .iter()", None, Some(746)),
+        row(
+            RowKind::Del,
+            "            .find(|l| l.is_upper())?;",
+            None,
+            Some(747),
+        ),
+        row(
+            RowKind::Add,
+            "        let up = self.layers[ro_match + 1..].iter().find(|l| l.is_upper())?;",
+            Some(903),
+            None,
+        ),
+    ]);
+    let c = collapse_hunk_rows(&h2, false, None, None);
+    assert_eq!(c.len(), 1, "one mod row");
+    assert_eq!(c[0].kind, RowKind::Mod);
+}
+
+// Fragment-pair rejection: a one-line `use` split into a 7-line block —
+// every new line is a fragment of the old (weak overall similarity). No
+// fragment pairs as "the" replacement: the del stays a removal and all
+// seven adds survive.
+#[test]
+fn fragment_pair_rejection() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "use std::{cell::RefCell, num::NonZeroUsize, os::unix::fs::MetadataExt, path::PathBuf};",
+            None,
+            Some(1),
+        ),
+        row(RowKind::Add, "use std::{", Some(1), None),
+        row(RowKind::Add, "    cell::RefCell,", Some(2), None),
+        row(RowKind::Add, "    num::NonZeroUsize,", Some(3), None),
+        row(
+            RowKind::Add,
+            "    os::unix::fs::MetadataExt,",
+            Some(4),
+            None,
+        ),
+        row(RowKind::Add, "    path::PathBuf,", Some(5), None),
+        row(
+            RowKind::Add,
+            "    sync::atomic::{AtomicU64, Ordering},",
+            Some(6),
+            None,
+        ),
+        row(RowKind::Add, "};", Some(7), None),
+    ]);
+    let c = collapse_hunk_rows(&h, false, None, None);
+    assert!(
+        c.iter()
+            .any(|r| r.kind == RowKind::Del && r.old_line == Some(1)),
+        "the split old line stays a removal"
+    );
+    assert_eq!(
+        c.iter().filter(|r| r.kind == RowKind::Mod).count(),
+        0,
+        "no fragment mod (whole old vs one new fragment)"
+    );
+    assert_eq!(
+        c.iter().filter(|r| r.kind == RowKind::Add).count(),
+        7,
+        "all seven split lines survive"
+    );
+    assert_eq!(c[0].kind, RowKind::Del, "removal leads the block");
+    assert_eq!(c[1].kind, RowKind::Add);
+    assert_eq!(c[1].new_line, Some(1));
+}
+
+// Wholesale pairs render as the -/+ baseline rows: a WORD-led removal
+// landing mid-word is garble — the collapse un-pairs it into the plain
+// `-` + `+` rows. Meaningful identity = subword still pairs (the
+// fragment-count mismatches included).
+#[test]
+fn wholesale_pairs_render_as_baseline_rows() {
+    // The split-word garble: `fro~~upper~~zen` — must NOT pair.
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "            // a frozen (snapshotted) upper carries whiteouts and opaque dirs",
+            None,
+            Some(1),
+        ),
+        row(
+            RowKind::Add,
+            "            // layer's markers — a frozen (snapshotted) layer carries",
+            Some(1),
+            None,
+        ),
+    ]);
+    let c = collapse_hunk_rows(&h, false, None, None);
+    assert!(
+        c.iter()
+            .any(|r| r.kind == RowKind::Del && r.old_line == Some(1)),
+        "the old line stays a removal"
+    );
+    assert!(
+        c.iter()
+            .any(|r| r.kind == RowKind::Add && r.new_line == Some(1)),
+        "the new line stays an addition"
+    );
+    assert_eq!(
+        c.iter().filter(|r| r.kind == RowKind::Mod).count(),
+        0,
+        "no mod row"
+    );
+    // Growth pair: `0` → `Option<usize>`/`None` fragments still pair.
+    let g = hunk(vec![
+        row(RowKind::Del, "    let mut floor: usize = 0;", None, Some(1)),
+        row(
+            RowKind::Add,
+            "    let mut floor: Option<usize> = None;",
+            Some(1),
+            None,
+        ),
+    ]);
+    assert!(
+        collapse_hunk_rows(&g, false, None, None)
+            .iter()
+            .any(|r| r.kind == RowKind::Mod),
+        "single-del floor pairs into a mod"
+    );
+    // A clean rename still pairs.
+    let h2 = hunk(vec![
+        row(RowKind::Del, "        self.resolved_layers", None, Some(1)),
+        row(RowKind::Add, "        self.layers", Some(1), None),
+    ]);
+    assert!(
+        collapse_hunk_rows(&h2, false, None, None)
+            .iter()
+            .any(|r| r.kind == RowKind::Mod),
+        "a clean rename still pairs"
+    );
+    // The if-cross subwords too (meaningful identity).
+    let i = hunk(vec![
+        row(
+            RowKind::Del,
+            "                if k < floor {",
+            None,
+            Some(1),
+        ),
+        row(
+            RowKind::Add,
+            "                    && k > floor",
+            Some(1),
+            None,
+        ),
+    ]);
+    assert!(
+        collapse_hunk_rows(&i, false, None, None)
+            .iter()
+            .any(|r| r.kind == RowKind::Mod),
+        "the if-cross subwords too (meaningful identity)"
+    );
+}
+
+// Tail guard: when the mod's add is the LAST line of a replacement block,
+// the block's earlier lines are + rows (never the mod's unnumbered tail) —
+// and an add matching a MOVED del (shown ≈ elsewhere) is real content, not
+// a reflow, so it survives.
+#[test]
+fn tail_guard_and_reflow_corpus() {
+    let h3 = hunk(vec![
+        moved_row(
+            RowKind::Del,
+            "        self.cache.borrow_mut().pop(key);",
+            None,
+            Some(111),
+        ),
+        moved_row(
+            RowKind::Del,
+            "        self.results.borrow_mut().pop(key);",
+            None,
+            Some(112),
+        ),
+        row(RowKind::Del, "        None", None, Some(113)),
+        row(
+            RowKind::Add,
+            "        let (entry_epoch, result) = self.results.borrow_mut().get(key)?.clone();",
+            Some(147),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "        if entry_epoch != epoch {",
+            Some(148),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            // Computed under an older mount state: the epoch bump (mode flip,",
+            Some(149),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            // mount mutation) invalidated it.",
+            Some(150),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            self.cache.borrow_mut().pop(key);",
+            Some(151),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            self.results.borrow_mut().pop(key);",
+            Some(152),
+            None,
+        ),
+        row(RowKind::Add, "            return None;", Some(153), None),
+        row(RowKind::Add, "        }", Some(154), None),
+        row(RowKind::Add, "        Some(result)", Some(155), None),
+    ]);
+    let c = collapse_hunk_rows(&h3, false, None, None);
+    let mod3 = c.iter().find(|r| r.kind == RowKind::Mod).expect("the mod");
+    assert_eq!(mod3.new_line, Some(153), "pairs old None with return None;");
+    assert_eq!(mod3.del_text.as_deref(), Some("        None"));
+    assert!(
+        mod3.tail.is_empty(),
+        "no tail absorbed ahead of the mod's own line"
+    );
+    assert!(
+        c.iter()
+            .any(|r| r.kind == RowKind::Add && r.new_line == Some(151)),
+        "the duplicate pop pair survives (not reflow-absorbed)"
+    );
+    assert!(
+        c.iter()
+            .any(|r| r.kind == RowKind::Add && r.new_line == Some(147)),
+        "the block's earlier lines are adds, not tail"
+    );
+    let seq: Vec<u32> = c
+        .iter()
+        .filter(|r| r.kind == RowKind::Add || r.kind == RowKind::Mod)
+        .map(|r| r.new_line.unwrap())
+        .collect();
+    assert_eq!(
+        seq,
+        vec![147, 148, 149, 150, 151, 152, 153, 154, 155],
+        "new-file order"
+    );
+}
+
+// The stretch-consumption splice quirk (the diffuse-repo PLAN.md): when a
+// del's stretch window contains adds ALREADY consumed by earlier pairs, the
+// TS's `pendingAdds.splice(indexOf(a), 1)` hits `-1` and removes the LAST
+// pending add — the trailing adds drop out of the pairing and surface as
+// the stretch mod's absorbed section. The port's `retain` must replicate
+// the pop. Verified against the TS engine (identical rows).
+#[test]
+fn stretch_consumption_splice_quirk() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "| `hunkPath`, `unquoteGitPath`, `parseDiff` (579) | diff → hunks/rows, the fixture shape |",
+            None,
+            Some(40),
+        ),
+        row(
+            RowKind::Del,
+            "| `addCount` (237), `delCount` (261) | hunk new/old side extents |",
+            None,
+            Some(41),
+        ),
+        row(
+            RowKind::Del,
+            "| `tokenizeLine` (906), `lcsPairs` (927), `spansFrom` (988), `wordSpans` (1011) | the word-level LCS |",
+            None,
+            Some(42),
+        ),
+        row(
+            RowKind::Del,
+            "| `lineSimilarity` (1230), `lineSimilarityParts` (1239) | pairing scores |",
+            None,
+            Some(43),
+        ),
+        row(
+            RowKind::Del,
+            "| `markMoves` (1150) | exact-content relocation + the block-move rule |",
+            None,
+            Some(44),
+        ),
+        row(
+            RowKind::Del,
+            "| `collapseHunkRows` (1303) | pairing, stretch, reverse-stretch, reflow, the ordered walk — **the big one** |",
+            None,
+            Some(45),
+        ),
+        row(
+            RowKind::Add,
+            "| `hunkPath`, `unquoteGitPath`, `parseDiff` | diff → hunks/rows, the fixture shape |",
+            Some(41),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "| `addCount`/`delCount` | hunk new/old side extents |",
+            Some(42),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "| `tokenizeLine`, `lcsPairs`, `spansFrom`, `wordSpans` | the word-level LCS |",
+            Some(43),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "| `lineSimilarity`, `lineSimilarityParts` | pairing scores |",
+            Some(44),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "| `markMoves` | exact-content relocation + the block-move rule |",
+            Some(45),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "| `collapseHunkRows` | pairing, stretch, reverse-stretch, reflow, the ordered walk — **the big one** |",
+            Some(46),
+            None,
+        ),
+    ]);
+    let c = collapse_hunk_rows(&h, true, None, None);
+    let m0 = c
+        .iter()
+        .find(|r| r.old_line == Some(40))
+        .expect("reverse stretch");
+    assert_eq!(m0.new_line, Some(41));
+    assert_eq!(
+        m0.del_text.as_ref().unwrap().split('\n').count(),
+        6,
+        "old 40's delText is the whole run"
+    );
+    let m2 = c
+        .iter()
+        .find(|r| r.old_line == Some(42))
+        .expect("the stretch");
+    assert_eq!(m2.new_line, Some(41));
+    assert_eq!(
+        m2.text.split('\n').count(),
+        4,
+        "old 42 stretches over adds 41-44"
+    );
+    let tails: Vec<u32> = m2.tail.iter().map(|t| t.new_line.unwrap()).collect();
+    assert_eq!(
+        tails,
+        vec![45, 46],
+        "the trailing adds absorb as the section"
+    );
+    assert!(
+        c.iter()
+            .all(|r| r.old_line != Some(44) && r.old_line != Some(45)),
+        "dels 44/45 are not paired (their adds became the section)"
+    );
+}
+
+// Kept-del anchoring: a genuinely removed line renders right after the mod
+// whose old position preceded it, never interrupting the adds.
+#[test]
+fn kept_del_anchoring() {
+    let h2 = hunk(vec![
+        row(
+            RowKind::Del,
+            "        if fingerprint.is_valid() {",
+            None,
+            Some(108),
+        ),
+        row(
+            RowKind::Del,
+            "            return self.results.borrow_mut().get(key).cloned();",
+            None,
+            Some(109),
+        ),
+        row(
+            RowKind::Add,
+            "        if !fingerprint.is_valid() {",
+            Some(142),
+            None,
+        ),
+        moved_row(
+            RowKind::Add,
+            "            self.cache.borrow_mut().pop(key);",
+            Some(143),
+            None,
+        ),
+        moved_row(
+            RowKind::Add,
+            "            self.results.borrow_mut().pop(key);",
+            Some(144),
+            None,
+        ),
+        row(RowKind::Add, "            return None;", Some(145), None),
+    ]);
+    let c = collapse_hunk_rows(&h2, false, None, None);
+    assert_eq!(c[0].kind, RowKind::Mod, "mod leads");
+    assert_eq!(c[0].new_line, Some(142));
+    assert_eq!(c[1].kind, RowKind::Add, "then the moves");
+    assert_eq!(c[1].new_line, Some(143));
+    assert!(c[1].moved);
+    assert_eq!(c[2].kind, RowKind::Add, "then the moves");
+    assert_eq!(c[2].new_line, Some(144));
+    assert!(c[2].moved);
+    assert_eq!(
+        c[3].kind,
+        RowKind::Mod,
+        "the return pairs with return None;"
+    );
+    assert_eq!(c[3].new_line, Some(145));
+    assert!(
+        c[3].del_text
+            .as_deref()
+            .unwrap()
+            .contains("return self.results"),
+        "the kept del anchors the second mod"
     );
 }
 
