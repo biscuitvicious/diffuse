@@ -21,4 +21,5 @@ pub mod merge; // mergedRuns, delPairing, delSpansToShow, wholesalePair
 pub mod moves; // markMoves, the block-move rule
 pub mod parse; // parseDiff, hunks, rows
 pub mod similarity; // lineSimilarity, lineSimilarityParts
-pub mod tail; // isTailBeforeClosing, fnOf
+pub mod syntax;
+pub mod tail; // isTailBeforeClosing, fnOf // langProfile, classifyTokens
