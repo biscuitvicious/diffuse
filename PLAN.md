@@ -123,21 +123,23 @@ every row is checked:
 
 | review.ts | diffuse/src | notes |
 |---|---|---|
-| `parseDiff` | `parse.rs` | incl. `hunkPath`, `unquoteGitPath`, the `@@` header parse |
-| `addCount`/`delCount` | `parse.rs` | |
-| `tokenizeLine` | `lcs.rs` | the `\p{White_Space}\u200b` classes — §6 |
-| `lcsPairs` | `lcs.rs` | the tie-break ladder — §6 |
-| `spansFrom` | `lcs.rs` | |
-| `wordSpans` | `lcs.rs` | the 0.25 whole-line gate |
-| `lineSimilarity`/`lineSimilarityParts` | `similarity.rs` | |
-| `markMoves` | `moves.rs` | the reflow check, the block-move flush |
-| `collapseHunkRows` | `collapse.rs` | the pairing loop, `bestRun`, the stretch gate, the reverse-stretch, the reflow-common, the ordered walk, the sort |
-| `isTailBeforeClosing`/`fnOf` | `tail.rs` | |
-| `wholesalePair` | `merge.rs` | the split-word + the multi-line exemption |
-| `mergedRuns`/`delPairing`/`delSpansToShow`/`displayText` | `merge.rs` | incl. the whitespace-pair minimum, the reverse-stretch shared-prefix merge |
-| `isWholesaleMod`/`isPureDeletionMod` | `merge.rs` | |
-| `fileCounts` | `counts.rs` | |
-| `langProfile`/`tokenReFor`/`classifyTokens` | `syntax.rs` | the semantic colors |
+| `parseDiff` | `parse.rs` | ✅ incl. `hunkPath`, `unquoteGitPath`, the `@@` header parse |
+| `addCount`/`delCount` | `parse.rs` | ✅ |
+| `tokenizeLine` | `lcs.rs` | ✅ the `\p{White_Space}\u200b` classes — §6 |
+| `lcsPairs` | `lcs.rs` | ✅ the tie-break ladder — §6 |
+| `spansFrom` | `lcs.rs` | ✅ |
+| `wordSpans` | `lcs.rs` | ✅ the 0.25 whole-line gate |
+| `lineSimilarity`/`lineSimilarityParts` | `similarity.rs` | ✅ |
+| `markMoves` | `moves.rs` | ✅ the reflow check, the block-move flush |
+| `collapseHunkRows` | `collapse.rs` | ✅ the pairing loop, `bestRun`, the stretch gate, the reverse-stretch, the reflow-common, the ordered walk, the sort |
+| `isTailBeforeClosing`/`fnOf` | `tail.rs` | ✅ |
+| `wholesalePair` | `merge.rs` | ✅ the split-word + the multi-line exemption |
+| `mergedRuns`/`delPairing`/`delSpansToShow`/`displayText` | `merge.rs` | ✅ incl. the whitespace-pair minimum, the reverse-stretch shared-prefix merge |
+| `isWholesaleMod`/`isPureDeletionMod` | `merge.rs` | ✅ |
+| `fileCounts` | `counts.rs` | ✅ |
+| `langProfile`/`tokenReFor`/`classifyTokens` | `syntax.rs` | ✅ the semantic colors |
+| the engine pipeline + the wire contract | `bin_pipeline.rs` + the bin | ✅ parse → old-content reconstruction → moves → collapse → colored runs → counts; the JSON is §2's contract |
+| `oldContentFromDiff` | `old_content.rs` | ✅ (from the golden test) — the old side for the brace-anchor |
 
 The component's other methods (`rowSegments`, `mergedTokens`, the prefix
 assembly) stay in TS — but `mergedTokens`' *classification* output (the
