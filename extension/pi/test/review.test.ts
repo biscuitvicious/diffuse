@@ -331,14 +331,15 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	assert((c as any).rowIdx === start + 3, `wheel down +3, got ${(c as any).rowIdx}`);
 	c.handleInput("\x1b[<64;10;5M"); // wheel up
 	assert((c as any).rowIdx === start, `wheel up -3, got ${(c as any).rowIdx}`);
-	// Drag: press at row 10, move to row 7 → content follows finger (move +3).
+	// Drag: press at row 10, move to row 13 (down 3) → view down 3 (later —
+	// the drag follows the wheel convention, like a scroll gesture).
 	c.handleInput("\x1b[<0;5;10M"); // press
-	c.handleInput("\x1b[<35;5;7M"); // move up 3
+	c.handleInput("\x1b[<35;5;13M"); // move down 3
 	const afterDrag = (c as any).rowIdx;
 	assert(afterDrag === start + 3, `drag +3, got ${afterDrag}`);
-	c.handleInput("\x1b[<35;5;9M"); // move down 2
+	c.handleInput("\x1b[<35;5;11M"); // move up 2
 	assert((c as any).rowIdx === start + 1, `drag back -2, got ${(c as any).rowIdx}`);
-	c.handleInput("\x1b[<0;5;9m"); // release
+	c.handleInput("\x1b[<0;5;11m"); // release
 	c.handleInput("\x1b[<35;5;2M"); // move without press → ignored
 	assert((c as any).rowIdx === start + 1, `move after release ignored, got ${(c as any).rowIdx}`);
 	// Scroll clamps at top/bottom.
@@ -353,23 +354,23 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	assert((c as any).colOffset === 10, `h back 10, got ${(c as any).colOffset}`);
 	c.handleInput("h");
 	assert((c as any).colOffset === 0, "h clamps at 0");
-	// Drag right (x increases) pans the view right (colOffset decreases).
+	// Drag right (x increases) pans the view right (colOffset increases).
 	c.handleInput("\x1b[<0;5;10M"); // press at col 5
 	c.handleInput("\x1b[<32;15;10M"); // drag right 10 (button-1 held motion, mode 1002)
-	assert((c as any).colOffset === 0, `drag right decreases colOffset, got ${(c as any).colOffset}`);
+	assert((c as any).colOffset === 10, `drag right pans right, got ${(c as any).colOffset}`);
 	c.handleInput("l");
 	c.handleInput("\x1b[<32;10;10M"); // drag left 5
-	assert((c as any).colOffset === 15, `drag left pans right, got ${(c as any).colOffset}`);
+	assert((c as any).colOffset === 15, `drag left pans left, got ${(c as any).colOffset}`);
 	// Lazy anchor: motion without a prior press still scrolls (mode 1003 / 35).
 	c.handleInput("\x1b[<0;5;9m"); // release
 	c.handleInput("\x1b[<35;10;9M"); // motion, no press → anchors first
-	c.handleInput("\x1b[<35;12;9M"); // drag right 2 → colOffset 13
-	assert((c as any).colOffset === 13, `lazy-anchor drag: got ${(c as any).colOffset}`);
+	c.handleInput("\x1b[<35;12;9M"); // drag right 2 → colOffset 17
+	assert((c as any).colOffset === 17, `lazy-anchor drag: got ${(c as any).colOffset}`);
 	// Vertical drag under 1002 (button 32) moves rows: dragging DOWN scrolls
-	// the view UP (content follows the finger).
+	// the view DOWN (the wheel convention).
 	const beforeDrag = (c as any).rowIdx;
 	c.handleInput("\x1b[<32;12;12M"); // drag down 3 (y 9 → 12)
-	assert((c as any).rowIdx === Math.max(0, beforeDrag - 3), `vertical 1002 drag: got ${(c as any).rowIdx}`);
+	assert((c as any).rowIdx === beforeDrag + 3, `vertical 1002 drag: got ${(c as any).rowIdx}`);
 	// The status shows the mouse diagnostic.
 	const mouseStatus = c.render(120).find((l: string) => l.includes("mouse "));
 	assert(!!mouseStatus && /mouse 32@12,12M/.test(mouseStatus.replace(/\x1b\[[0-9;]*m/g, "")), `mouse diag: ${mouseStatus}`);

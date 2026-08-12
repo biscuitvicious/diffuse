@@ -1628,8 +1628,14 @@ class ReviewComponent {
 					this.dragX = x;
 					this.dragY = y;
 				} else {
-					this.move(this.dragY - y); // vertical: content follows the finger
-					this.colOffset = Math.max(0, this.colOffset + (this.dragX - x)); // horizontal
+					// Drag follows the WHEEL convention (a scroll gesture
+					// drags the view, not the content): dragging down scrolls
+					// down (later lines), dragging right pans right. A
+					// touchpad's two-finger scroll often arrives as button-32
+					// motion, and "content follows the finger" (the natural-
+					// scroll inversion) reads as a scroll-direction bug.
+					this.move(y - this.dragY); // vertical: view follows the drag
+					this.colOffset = Math.max(0, this.colOffset + (x - this.dragX)); // horizontal
 					this.dragX = x;
 					this.dragY = y;
 				}
