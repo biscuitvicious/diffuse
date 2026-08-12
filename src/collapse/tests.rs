@@ -654,6 +654,68 @@ fn stretch_consumption_splice_quirk() {
     );
 }
 
+// The stretch-window scan is LAZY: the eager build materialized every
+// sub-window of every consecutive-add run (n³/6 elements — a diff with a
+// huge whole-file add OOMs both engines before the pairing ran). The scan
+// is generated on demand and bounded by the 4× content rule, so a 5000-line
+// add with no dels costs nothing.
+#[test]
+fn whole_file_add_no_oom() {
+    let adds: Vec<Row> = (1..=5000)
+        .map(|i| {
+            row(
+                RowKind::Add,
+                &format!("let value_{i} = fn_{i}(param_{i}); // filler {i}"),
+                Some(i),
+                None,
+            )
+        })
+        .collect();
+    let h = hunk(adds);
+    let t = std::time::Instant::now();
+    let c = collapse_hunk_rows(&h, true, None, None);
+    assert_eq!(c.len(), 5000, "all adds survive unpaired");
+    assert!(
+        t.elapsed().as_secs() < 10,
+        "no eager window blowup (took {:?})",
+        t.elapsed()
+    );
+}
+
+// The stretch pick: a del that matches the TRAILING sub-window of a long
+// add run must pair with that window, not the leading lines (the `if k <
+// floor {` case — the old `for` line leads the run and must not absorb it).
+#[test]
+fn stretch_picks_trailing_window() {
+    let h = hunk(vec![
+        row(RowKind::Del, "if k < floor {", None, Some(10)),
+        row(
+            RowKind::Add,
+            "let mut floor = self.floors.last();",
+            Some(20),
+            None,
+        ),
+        row(RowKind::Add, "if let Some(floor) = floor {", Some(21), None),
+        row(RowKind::Add, "&& k > floor", Some(22), None),
+        row(RowKind::Add, "{", Some(23), None),
+    ]);
+    let c = collapse_hunk_rows(&h, true, None, None);
+    let m = c
+        .iter()
+        .find(|r| r.old_line == Some(10))
+        .expect("the stretch mod");
+    assert_eq!(
+        m.text.split('\n').count(),
+        3,
+        "old 10 stretches over adds 21-23 (the trailing window)"
+    );
+    assert_eq!(m.new_line, Some(21));
+    assert!(
+        !m.text.contains("let mut floor"),
+        "the leading add is NOT part of the stretch"
+    );
+}
+
 // Kept-del anchoring: a genuinely removed line renders right after the mod
 // whose old position preceded it, never interrupting the adds.
 #[test]

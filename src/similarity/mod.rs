@@ -57,6 +57,20 @@ pub struct SimilarityParts {
     pub add_total: usize,
 }
 
+/// The content-char count of a line: its tokenized tokens minus the
+/// whitespace-only ones (the `content` filter of `line_similarity_parts`).
+/// The collapse uses it for the stretch-window length bound — see
+/// `collapse::collapse_hunk_rows` (the LCS pairs EQUAL tokens, so the
+/// matched chars can never exceed the del's own content chars; a window
+/// with more than 4× the del's content can never score ≥ 0.25).
+pub fn content_char_len(text: &str) -> usize {
+    tokenize_line(text)
+        .into_iter()
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| char_len(&t))
+        .sum()
+}
+
 /// A line that starts a comment (per-language): `///`, `//`, `/*`, `*`
 /// continuations, and `#` for hash-comment languages. A comment run is its
 /// own section — the mod's tail stops at one instead of gluing an unrelated

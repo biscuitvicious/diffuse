@@ -11,7 +11,7 @@
 use crate::lcs::{char_slice, word_spans};
 use crate::merge::wholesale_pair;
 use crate::parse::{Hunk, Row, RowKind};
-use crate::similarity::{is_comment_line, line_similarity_parts};
+use crate::similarity::{content_char_len, is_comment_line, line_similarity_parts};
 use crate::tail::{fn_of, is_tail_before_closing};
 use std::collections::{HashMap, HashSet};
 
@@ -69,7 +69,20 @@ pub fn collapse_hunk_rows(
     // the whole run (`if k < floor {` → `if let Some(floor) = floor` +
     // `&& k > floor` + `{` — one mod, three visual lines, the `<`→`>`
     // flip struck in place).
-    let mut runs: Vec<Vec<usize>> = Vec::new(); // windows of pending_adds' row ids
+    //
+    // The windows are NOT materialized: the eager build pushed every
+    // sub-window of every run (n³/6 elements — a diff containing a huge
+    // whole-file add OOMs both engines before the pairing even ran). The
+    // pairing only ever needs the LONGEST qualifying window (ties: first in
+    // the w/k order), so the scan is generated on demand per del — O(1)
+    // memory, and a hunk with no dels never scans at all. The per-line
+    // content-char prefix makes a window's length O(1) (the eager scan
+    // re-tokenized every window's join) and gives the 4× bound below.
+    struct AddRun {
+        adds: Vec<usize>,           // pending_adds' row ids
+        content_prefix: Vec<usize>, // prefix sums of the lines' content chars
+    }
+    let mut add_runs: Vec<AddRun> = Vec::new();
     let mut i = 0;
     while i < pending_adds.len() {
         let mut run = vec![pending_adds[i]];
@@ -83,18 +96,25 @@ pub fn collapse_hunk_rows(
             i += 1;
             run.push(pending_adds[i]);
         }
-        // Sliding windows over the run: the del must pair with the part of
-        // the run it actually matches (`if k < floor {` matches the trailing
-        // `if let …`/`&& …`/`{`, not the `for` line that leads the run).
-        for w in 2..=run.len() {
-            for k in 0..=(run.len() - w) {
-                runs.push(run[k..k + w].to_vec());
-            }
+        let mut content_prefix = Vec::with_capacity(run.len() + 1);
+        content_prefix.push(0);
+        for &ai in &run {
+            let last = *content_prefix.last().unwrap();
+            content_prefix.push(last + content_char_len(&h.rows[ai].text));
         }
+        add_runs.push(AddRun {
+            adds: run,
+            content_prefix,
+        });
         i += 1;
     }
     let mut pair_of: HashMap<usize, usize> = HashMap::new(); // add row id -> del row id
     let mut stretch_of: HashMap<usize, Vec<usize>> = HashMap::new(); // del row id -> add row ids
+    // The stretch windows' live state — the lazy stand-ins for the eager
+    // window list's `retain` after a stretch: the kept run itself stays
+    // scannable; every OTHER window sharing one of its adds is dead.
+    let mut consumed_adds: HashSet<usize> = HashSet::new();
+    let mut kept_runs: Vec<Vec<usize>> = Vec::new();
     // The REVERSE stretch: a del RUN folds into one mod against a single
     // add (the old `find_mount` body — `self.mount_stack` / `.filesystems` /
     // `.iter()` / `.rfind()` / `.map()` — replaced by the one-liner
@@ -215,20 +235,57 @@ pub fn collapse_hunk_rows(
                 best = Some(ai);
             }
         }
-        for run in &runs {
-            let text = run
-                .iter()
-                .map(|&ai| h.rows[ai].text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let sim = line_similarity_parts(&r.text, &text).sim;
-            // Longest winning window: among the windows that read as "the
-            // same line", the longest wins — the `if k < floor {` stretch
-            // keeps its `if `/`k `/` floor {` common anchors over the tighter
-            // `&& k > floor`+`{` fragment.
-            if sim >= 0.25 && (best_run.is_none() || run.len() > best_run.as_ref().unwrap().len()) {
-                best_run = Some(run.clone());
-                best_run_score = sim;
+        // The window scan — generated on demand in the eager (w, k) order.
+        // Longest winning window: among the windows that read as "the
+        // same line", the longest wins — the `if k < floor {` stretch
+        // keeps its `if `/`k `/` floor {` common anchors over the tighter
+        // `&& k > floor`+`{` fragment. The k-outer/w-inner order visits
+        // the same (k, w) pairs as the eager build's w-outer/k-inner and
+        // selects the same winner: the longest qualifying window, ties
+        // broken by the first in the eager order (the smallest k at the
+        // winning length).
+        let ot_chars = content_char_len(&r.text);
+        let mut best_run_len = 0;
+        for sr in &add_runs {
+            let n = sr.adds.len();
+            if n < 2 {
+                continue;
+            }
+            for k in 0..n {
+                for w in 2..=(n - k) {
+                    if w <= best_run_len {
+                        continue; // cannot be STRICTLY longer than the best
+                    }
+                    // The 4× bound: the LCS pairs EQUAL tokens, so the
+                    // matched chars ≤ the del's own content chars; a window
+                    // with more than 4× the del's content scores ≤
+                    // del/window < 0.25 — it can never win. The bound grows
+                    // with w, so the first breach ends this k's loop.
+                    if sr.content_prefix[k + w] - sr.content_prefix[k] > ot_chars * 4 {
+                        break;
+                    }
+                    let win = &sr.adds[k..k + w];
+                    // The dead windows: an earlier stretch kept its own run
+                    // but emptied every OTHER window sharing an add. A kept
+                    // run itself stays scannable (a later del may still
+                    // re-stretch over it).
+                    let live = kept_runs.iter().any(|br| br.as_slice() == win)
+                        || win.iter().all(|a| !consumed_adds.contains(a));
+                    if !live {
+                        continue;
+                    }
+                    let text = win
+                        .iter()
+                        .map(|&ai| h.rows[ai].text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let sim = line_similarity_parts(&r.text, &text).sim;
+                    if sim >= 0.25 {
+                        best_run = Some(win.to_vec());
+                        best_run_len = w;
+                        best_run_score = sim;
+                    }
+                }
             }
         }
         // The stretch must read as the same line restructured — the split-word
@@ -283,15 +340,13 @@ pub fn collapse_hunk_rows(
             }
             // The TS keeps `bestRun` itself in the window list (its adds are
             // consumed, but a later del may still re-stretch over the stale
-            // window); every OTHER window that shares an add is emptied.
-            let br_clone = br.clone();
-            runs.retain(|run| {
-                if *run == br_clone {
-                    true
-                } else {
-                    !run.iter().any(|x| br.contains(x))
-                }
-            });
+            // window); every OTHER window that shares an add is emptied. The
+            // lazy equivalent: the consumed adds join the dead set; the kept
+            // run itself stays scannable.
+            for &aid in &br {
+                consumed_adds.insert(aid);
+            }
+            kept_runs.push(br.clone());
         } else if let Some(b) = best {
             // A pair that would render as the wholesale (garble-shaped
             // spans) reads better as the plain `-`/`+` baseline rows —
