@@ -2770,6 +2770,38 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("no changes to review", "info");
 				return;
 			}
+			// Diagnostic dump: exactly what this module fetched + which bin
+			// it spawned (the definitive tool for a stale-looking render).
+			// Unconditional — the file is tiny and each /review overwrites it.
+			{
+				try {
+					const debugRows: unknown[] = [];
+					for (const f of files) {
+						if (!f.path.includes("cache.rs")) continue;
+						for (const h of f.hunks) {
+							for (const r of h.rows) {
+								const nl = r.newLine;
+								if (nl !== null && nl >= 148 && nl <= 158) {
+									debugRows.push({ kind: r.kind, newLine: nl, oldLine: r.oldLine, text: r.text.slice(0, 40), delText: (r as { delText?: string }).delText?.slice(0, 40) });
+								}
+							}
+						}
+					}
+					const dbg = {
+						repo: repoName,
+						stamp: REVIEW_BUILD(),
+						module: fileURLToPath(import.meta.url),
+						moduleMtime: existsSync(fileURLToPath(import.meta.url)) ? statSync(fileURLToPath(import.meta.url)).mtime.toISOString() : null,
+						bin: diffuseBinPath(),
+						binMtime: existsSync(diffuseBinPath()) ? statSync(diffuseBinPath()).mtime.toISOString() : null,
+						files: files.map((f) => f.path),
+						cacheRows: debugRows,
+					};
+					writeFileSync(join(NOTES_DIR, "debug.json"), JSON.stringify(dbg, null, 1));
+				} catch {
+					/* diagnostics must never break the review */
+				}
+			}
 
 			const session: ReviewSession = {
 				repo: repoName,
