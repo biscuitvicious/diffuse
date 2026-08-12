@@ -10,5 +10,6 @@ if [ -z "$GOLDEN_EXPECT" ]; then
 	echo "First run ./scripts/test.sh and read the failing rows from the mismatch report."
 	exit 1
 fi
+sh scripts/build-bin.sh >/dev/null
 UPDATE_GOLDEN=1 GOLDEN_EXPECT="$GOLDEN_EXPECT" node --experimental-transform-types test/golden.test.ts
 echo "review the delta: git diff ../../tests/golden/"
