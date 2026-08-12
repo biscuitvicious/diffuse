@@ -195,22 +195,7 @@ assembly) stay in TS — but `mergedTokens`' *classification* output (the
 - **The equivalence proof**: the TS renderer fed the Rust backend's JSON
   must produce the byte-identical golden. That is the integration gate.
 
-### Phase 4 — the Rust-y redesign
-- Only after the engine is fully ported, tested, and integrated. Now the
-  type system earns its keep:
-  - `RowKind` as a proper enum; spans as typed ranges; the pairing
-    decisions as an explicit state machine.
-  - The LCS as a real algorithm (the `Uint32Array` → proper storage, maybe
-    Hirschberg for the long lines).
-  - `Result`/`Option` instead of the TS fallbacks; the `?`-heavy parse.
-  - The stretch/reverse-stretch/reflow machinery as typed structures
-    instead of `Map`s of rows.
-  - Zero-copy where the content is borrowed, not cloned.
-- **The golden is the regression gate**: any visual change needs the
-  user's sign-off — the golden encodes their exact preferences (the
-  strike/fill minimums, the anchor pairings, the reverse-stretch shape).
-
-### Phase 5 — the extension moves into the workspace
+### Phase 4 — the extension moves into the workspace
 
 The pi-review extension stops being a separate repo (`~/lab/pi-review`) and
 becomes a **workspace member of diffuse** — a sub-project that builds the
@@ -239,6 +224,21 @@ diffuse/                    (a Cargo workspace)
   extension's acceptance test).
 - The workspace shares the frozen corpus (`tests/golden/` here); the
   extension's golden file is generated FROM the diffuse engine's output.
+
+### Phase 5 — the Rust-y redesign
+- Only after the engine is fully ported, tested, and integrated. Now the
+  type system earns its keep:
+  - `RowKind` as a proper enum; spans as typed ranges; the pairing
+    decisions as an explicit state machine.
+  - The LCS as a real algorithm (the `Uint32Array` → proper storage, maybe
+    Hirschberg for the long lines).
+  - `Result`/`Option` instead of the TS fallbacks; the `?`-heavy parse.
+  - The stretch/reverse-stretch/reflow machinery as typed structures
+    instead of `Map`s of rows.
+  - Zero-copy where the content is borrowed, not cloned.
+- **The golden is the regression gate**: any visual change needs the
+  user's sign-off — the golden encodes their exact preferences (the
+  strike/fill minimums, the anchor pairings, the reverse-stretch shape).
 
 ### Phase 6 — the engine as application-preserving refactorings
 
@@ -278,7 +278,7 @@ concatenated text applies identically), `reflow` (inert absorption),
   actual checked-in file.
 
 Phase 6 is deliberately last: it presupposes the port is faithful (Phase
-2's golden), integrated (Phase 3), co-located (Phase 5), and idiomatic
+2's golden), integrated (Phase 3), co-located (Phase 4), and idiomatic
 (Phase 4's redesign) — then the refactoring structure is a rewrite of the
 *architecture*, not the behavior.
 
