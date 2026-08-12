@@ -273,7 +273,26 @@ function addCount(h: Hunk): number {
 }
 
 function delCount(h: Hunk): number {
-	return h.rows.filter((r) => r.kind === "del").length;
+	// Mirrors `addCount` — the dels' LINE span (max old line - oldStart +
+	// 1), NOT the del row count. The row count is wrong when the hunk has
+	// leading old context (oldStart < first del) or non-contiguous dels: it
+	// understates the coverage, so `start + count` lands INSIDE the del
+	// block and `absorbClosingContext` re-emits already-deleted lines as
+	// plain context (the `204-206` duplication under the del block that
+	// ended at 206). A del row is single-line, so `maxOld` over the dels'
+	// oldLines is the span's true end. `hasOld=false` for a no-del hunk
+	// returns 0 (only selected when the side is old-side, where a 0 is
+	// harmless / unreachable for a del-only hunk).
+	let maxOld = h.oldStart;
+	let hasOld = false;
+	const scan = (r: Row) => {
+		if (r.kind === "del" && r.oldLine !== null) {
+			maxOld = Math.max(maxOld, r.oldLine);
+			hasOld = true;
+		}
+	};
+	for (const r of h.rows) scan(r);
+	return hasOld ? Math.max(1, maxOld - h.oldStart + 1) : 0;
 }
 
 type FileStatus = "added" | "deleted" | "modified" | "renamed" | "untracked";

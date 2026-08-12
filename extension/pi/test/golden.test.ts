@@ -43,6 +43,10 @@ const WIDTH = 90;
 const CORPORA: { name: string; minFiles: number }[] = [
 	{ name: "mirage-2025-08", minFiles: 8 },
 	{ name: "diffuse-2025-08", minFiles: 26 },
+	{ name: "opt-1-cache-regex-window-slice", minFiles: 5 },
+	{ name: "opt-2-cache-markdown-regex", minFiles: 2 },
+	{ name: "opt-3-cache-lang-profile", minFiles: 3 },
+	{ name: "opt-4-manual-scanner-prefilter", minFiles: 4 },
 ];
 
 // The goldens lock the status line — the walk renders with a FIXED stamp
@@ -188,6 +192,23 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 	const actual = frame.join("\n") + "\n";
 
 	const scopedUpdate = !process.env.GOLDEN_CORPUS || process.env.GOLDEN_CORPUS === corpus.name;
+	// FIRST WRITE: when the golden does not yet exist, GEN_GOLDEN=1 creates it
+	// directly. The surgical-update guard below protects EXISTING goldens from
+	// accidental mass-bakes (it would force listing every changed row); a
+	// brand-new corpus has no prior golden to diff against, so bypass it. After
+	// the first write, edits go through the surgical guard as usual.
+	let prevExists = false;
+	try {
+		readFileSync(GOLDEN, "utf8");
+		prevExists = true;
+	} catch {
+		/* first write */
+	}
+	if (process.env.UPDATE_GOLDEN && process.env.GEN_GOLDEN && scopedUpdate && !prevExists) {
+		writeFileSync(GOLDEN, actual);
+		console.log(`${corpus.name}: initial golden written (${actual.split("\n").length} rows): ${GOLDEN}`);
+		return;
+	}
 	if (process.env.UPDATE_GOLDEN && scopedUpdate) {
 		// Surgical update: the changed set must EQUAL GOLDEN_EXPECT exactly.
 		let prev = "";
@@ -353,6 +374,15 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 				let hunkIdx = 0;
 				for (let k = 0; k < hi; k++) if (hunkStarts[k]!.file === fi) hunkIdx++;
 				const h = files[fi]!.hunks[hunkIdx]!;
+				// A del-only hunk (no add/mod rows of its own) renders its dels on
+				// the OLD side with their old line numbers — the standard
+				// deletion-block render (delta=0 on the old side). The check's
+				// premise — a del mis-placed relative to its paired ADD on the
+				// new side, mapped via `delta = newStart - oldStart` — does not
+				// apply. Skip it; otherwise the next hunk's new-side lead-in
+				// context (which bleeds into this hunk's flat slice, making
+				// `firstNew` non-null) trips a false positive.
+				if (!h.rows.some((r) => r.kind === "add" || r.kind === "mod")) continue;
 				const delta = h.newStart - h.oldStart;
 				let firstNew = -1;
 				let lastNew = -1;
