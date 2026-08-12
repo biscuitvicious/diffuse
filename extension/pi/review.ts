@@ -2224,7 +2224,7 @@ class ReviewComponent {
 		const colTxt = this.colOffset > 0 ? ` · col ${this.colOffset}+` : "";
 		const goTxt = this.numBuffer ? ` · go ${this.numBuffer}` : "";
 		const mouseTxt = this.lastMouse ? ` · mouse ${this.lastMouse}` : "";
-		const statusRaw = ` ${this.fileIdx + 1}/${this.session.files.length} files  ·  hunk ${this.currentHunkIdx() + 1}/${f.hunks.length}  ·  base: ${this.session.base.label}${ctxTxt}${colTxt}${goTxt}${mouseTxt}${this.session.branch ? `  ·  branch: ${this.session.branch}` : ""}  ·  ${REVIEW_BUILD}`;
+		const statusRaw = `[${REVIEW_BUILD}] ${this.fileIdx + 1}/${this.session.files.length} files  ·  hunk ${this.currentHunkIdx() + 1}/${f.hunks.length}  ·  base: ${this.session.base.label}${ctxTxt}${colTxt}${goTxt}${mouseTxt}${this.session.branch ? `  ·  branch: ${this.session.branch}` : ""}`;
 		lines.push(fit(dim(statusRaw)));
 		// The in-component note editor: a prompt line with the draft echoed
 		// across lines (ctrl+enter saves, esc cancels, plain enter breaks
