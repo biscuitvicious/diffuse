@@ -1,3 +1,53 @@
-//! Phase 1: one-for-one port of the corresponding `review.ts` machinery.
-//! See PLAN.md §Phase 1 and the port map — this module mirrors the
-//! TypeScript function-for-function; the Rust-y redesign is Phase 4.
+//! One-for-one port of `review.ts`'s `isTailBeforeClosing` and `fnOf`
+//! (PLAN.md §3) — the brace-anchor helpers. Comments ported verbatim.
+
+use regex::Regex;
+use std::sync::OnceLock;
+
+/// True when the row is the last expression of its block: the next line
+/// on its side is a closing brace at a LOWER indent (the fn's `}` after the
+/// tail `None`/`Some(result)` — not the inner if's `}`).
+pub fn is_tail_before_closing(
+    line: Option<u32>,
+    old_side: bool,
+    old_content: Option<&[String]>,
+    new_content: Option<&[String]>,
+) -> bool {
+    let content = if old_side { old_content } else { new_content };
+    let line = match line {
+        Some(l) => l as usize,
+        None => return false,
+    };
+    let content = match content {
+        Some(c) => c,
+        None => return false,
+    };
+    if content.get(line).is_none() {
+        return false;
+    }
+    // The tail's closing brace sits one indent level down from the fn's own
+    // body lines (`    }` after `        None` / `        Some(result)`) —
+    // not the inner block's brace after a nested statement.
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"^\s{4}\}\s*$").expect("tail brace regex"));
+    re.is_match(&content[line])
+}
+
+/// The name of the fn that contains `line` — the nearest preceding `fn`
+/// signature. The blank line between fn bodies is the section boundary: the
+/// `None` belongs to `lookup`, so it pairs with an add inside `lookup`, not
+/// another fn's tail.
+pub fn fn_of(content: Option<&[String]>, line: Option<u32>) -> Option<String> {
+    let content = content?;
+    let line = line? as usize;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)").expect("fn regex")
+    });
+    for i in (0..line.saturating_sub(1)).rev() {
+        if let Some(caps) = re.captures(content.get(i).map_or("", |s| s.as_str())) {
+            return Some(caps[1].to_string());
+        }
+    }
+    None
+}

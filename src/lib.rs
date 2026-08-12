@@ -15,10 +15,10 @@
 //! See PLAN.md for the rewrite roadmap and the port map.
 
 pub mod collapse; // collapseHunkRows: pairing, stretch, reverse-stretch, reflow, ordered walk
-pub mod counts;
+pub mod counts; // fileCounts
 pub mod lcs; // tokenizeLine, lcsPairs, spansFrom, wordSpans
 pub mod merge; // mergedRuns, delPairing, delSpansToShow, wholesalePair
 pub mod moves; // markMoves, the block-move rule
-pub mod parse; // parseDiff, hunk/row types, the fixture shape
+pub mod parse; // parseDiff, hunks, rows
 pub mod similarity; // lineSimilarity, lineSimilarityParts
-pub mod tail; // isTailBeforeClosing, fnOf // fileCounts
+pub mod tail; // isTailBeforeClosing, fnOf
