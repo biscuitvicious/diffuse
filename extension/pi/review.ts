@@ -1595,7 +1595,7 @@ class ReviewComponent {
 			} else if (data.length === 1 && data >= " ") {
 				this.noteDraft += data;
 			}
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 		// Vim-style count: digits accumulate; any non-digit / non-gG command
@@ -1635,7 +1635,7 @@ class ReviewComponent {
 					// motion, and "content follows the finger" (the natural-
 					// scroll inversion) reads as a scroll-direction bug.
 					this.scrollBy(y - this.dragY); // vertical: view follows the drag
-					this.colOffset = Math.max(0, this.colOffset + (x - this.dragX)); // horizontal
+					// Horizontal drag panning disabled — see `$`.
 					this.dragX = x;
 					this.dragY = y;
 				}
@@ -1646,7 +1646,7 @@ class ReviewComponent {
 			// Live diagnostic: the status line shows the last mouse event, so
 			// it is obvious whether the terminal forwards anything at all.
 			this.lastMouse = `${btn}@${x},${y}${mouse[4]}`;
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 		if (matchesKey(data, Key.escape)) {
@@ -1658,7 +1658,7 @@ class ReviewComponent {
 				this.quit();
 				return;
 			}
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 		if (data === "q" || data === "Q") {
@@ -1671,35 +1671,31 @@ class ReviewComponent {
 				return;
 			}
 			this.showHelp = !this.showHelp;
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 
 		if (data === "^") {
 			this.colOffset = 0;
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 		if (data === "$") {
 			// Anchor the content's right edge at the viewport's right margin
-			// (last column of the longest line lands at the screen edge).
-			const maxLen = this.flat.reduce(
-				(m, r) => (rowCoord(r) !== null ? Math.max(m, r.text.length) : m),
-				0,
-			);
-			const textCols = Math.max(1, (process.stdout.columns ?? 80) - 8);
-			this.colOffset = Math.max(0, maxLen - textCols);
-			this.tui.requestRender();
+			// Horizontal scroll is DISABLED: the wrapped layout makes it
+			// meaningless, and it shifted the display (the content started
+			// mid-line, wrapped fragments appeared at col 0). `$` is a no-op.
+			this.requestRender();
 			return;
 		}
 		if (matchesKey(data, "left") || data === "h" || data === "H") {
-			this.colOffset = Math.max(0, this.colOffset - 10);
-			this.tui.requestRender();
+			// Horizontal scroll disabled — see `$`.
+			this.requestRender();
 			return;
 		}
 		if (matchesKey(data, "right") || data === "l" || data === "L") {
-			this.colOffset += 10;
-			this.tui.requestRender();
+			// Horizontal scroll disabled — see `$`.
+			this.requestRender();
 			return;
 		}
 		if (matchesKey(data, "down") || data === "j" || data === "J") return this.move(1);
@@ -1708,7 +1704,7 @@ class ReviewComponent {
 		if (matchesKey(data, "pageUp")) return this.move(-20);
 		if (/^[0-9]$/.test(data)) {
 			this.numBuffer += data;
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 		if (data === "g" || data === "G") {
@@ -1742,7 +1738,7 @@ class ReviewComponent {
 				this.confirmed = this.computeSelection();
 				this.anchor = null;
 			}
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 
@@ -1752,19 +1748,19 @@ class ReviewComponent {
 			// invisible, with keystrokes captured until esc).
 			this.noteDraft = "";
 			this.lastMouse = null;
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 		if (data === "d" || data === "D") return this.deleteNotes();
 		if (data === "o" || data === "O") return this.openEditor();
 		if (data === "w" || data === "W") {
 			this.wordDiff = !this.wordDiff;
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 		if (data === "t" || data === "T") {
 			this.syntaxOn = !this.syntaxOn;
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 
@@ -1780,7 +1776,7 @@ class ReviewComponent {
 				h.belowCtx = Number.MAX_SAFE_INTEGER;
 			}
 			this.rebuild();
-			this.tui.requestRender();
+			this.requestRender();
 			return;
 		}
 
@@ -1822,7 +1818,7 @@ class ReviewComponent {
 	private goto(idx: number): void {
 		this.rowIdx = Math.max(0, Math.min(this.flat.length - 1, idx));
 		this.visLine = 0;
-		this.tui.requestRender();
+		this.requestRender();
 	}
 
 	private currentHunkIdx(): number {
@@ -1873,7 +1869,7 @@ class ReviewComponent {
 			idx = find();
 		}
 		if (idx >= 0) this.goto(idx);
-		this.tui.requestRender();
+		this.requestRender();
 	}
 
 	private switchFile(dir: 1 | -1): void {
@@ -1895,7 +1891,7 @@ class ReviewComponent {
 		if (dirH === 1) h.belowCtx += step;
 		if (dirH === -1) h.belowCtx = Math.max(0, h.belowCtx - step);
 		this.rebuild();
-		this.tui.requestRender();
+		this.requestRender();
 	}
 
 	private expandHunkToFull(): void {
@@ -1903,7 +1899,7 @@ class ReviewComponent {
 		h.aboveCtx = Number.MAX_SAFE_INTEGER;
 		h.belowCtx = Number.MAX_SAFE_INTEGER;
 		this.rebuild();
-		this.tui.requestRender();
+		this.requestRender();
 	}
 
 	private resetContext(all: boolean): void {
@@ -1921,7 +1917,7 @@ class ReviewComponent {
 			h.belowCtx = def;
 		}
 		this.rebuild();
-		this.tui.requestRender();
+		this.requestRender();
 	}
 
 	// ── notes ─────────────────────────────────────────────────────────────
@@ -1963,7 +1959,7 @@ class ReviewComponent {
 				})();
 		if (sel) this.confirmed = null;
 		this.notify?.(removed > 0 ? `deleted ${removed} note${removed === 1 ? "" : "s"}` : "no note here", "info");
-		this.tui.requestRender();
+		this.requestRender();
 	}
 
 	// ── editor ────────────────────────────────────────────────────────────
@@ -2017,7 +2013,7 @@ class ReviewComponent {
 			// keep previous content
 		}
 		this.rebuild();
-		this.tui.requestRender();
+		this.requestRender();
 	}
 
 	// ── git actions ───────────────────────────────────────────────────────
@@ -2162,7 +2158,7 @@ class ReviewComponent {
 		this.colOffset = 0;
 		this.anchor = null;
 		this.confirmed = null;
-		this.tui.requestRender();
+		this.requestRender();
 		const stashNote =
 			this.safetyStashes.length > 0
 				? ` · safety stash: ${this.safetyStashes[this.safetyStashes.length - 1]} (git stash apply <ref> to restore)`
@@ -2421,24 +2417,44 @@ class ReviewComponent {
 					segIdx++;
 					return;
 				}
-				let start = 0;
 				let segIdxInBlock = 0;
-				while (start < blockText.length) {
-					const end = Math.min(blockText.length, start + textCols);
-					const piece = blockText.slice(start, end);
-					const selected = this.rowIdx === flatIdx && this.visLine === segIdx;
-					if (isDel) {
-						const bg = selected ? `\x1b[48;5;${sDel.cursor}m` : `\x1b[48;5;${sDel.tint}m`;
-						out.push(bg + segPrefix(segIdxInBlock) + "\x1b[9m" + this.theme.fg(sDel.fg, piece) + "\x1b[29m");
-					} else {
-						// The add block (the surviving line) takes the mod's
-						// grey — a `~` row is never "new content".
-						const bg = selected ? `\x1b[48;5;${sMod.cursor}m` : `\x1b[48;5;${sMod.tint}m`;
-						out.push(bg + segPrefix(segIdxInBlock) + this.highlightTokens(this.syntaxTokens(piece), 0, piece.length, bg) + bg);
+				// Wrap PER LINE — a segment must never contain a raw newline
+				// (the terminal would break the line and the fragment after
+				// the \n would start at col 0, losing the indent — the
+				// wholesale block of a reverse-stretch mod's multi-line
+				// delText).
+				for (const line of blockText.split("\n")) {
+					if (line.length === 0) {
+						const selected = this.rowIdx === flatIdx && this.visLine === segIdx;
+						if (isDel) {
+							const bg = selected ? `\x1b[48;5;${sDel.cursor}m` : `\x1b[48;5;${sDel.tint}m`;
+							out.push(bg + segPrefix(segIdxInBlock) + "\x1b[9m" + this.theme.fg(sDel.fg, "") + "\x1b[29m");
+						} else {
+							const bg = selected ? `\x1b[48;5;${sMod.cursor}m` : `\x1b[48;5;${sMod.tint}m`;
+							out.push(bg + segPrefix(segIdxInBlock) + bg);
+						}
+						segIdx++;
+						segIdxInBlock++;
+						continue;
 					}
-					start = end;
-					segIdx++;
-					segIdxInBlock++;
+					let start = 0;
+					while (start < line.length) {
+						const end = Math.min(line.length, start + textCols);
+						const piece = line.slice(start, end);
+						const selected = this.rowIdx === flatIdx && this.visLine === segIdx;
+						if (isDel) {
+							const bg = selected ? `\x1b[48;5;${sDel.cursor}m` : `\x1b[48;5;${sDel.tint}m`;
+							out.push(bg + segPrefix(segIdxInBlock) + "\x1b[9m" + this.theme.fg(sDel.fg, piece) + "\x1b[29m");
+						} else {
+							// The add block (the surviving line) takes the mod's
+							// grey — a `~` row is never "new content".
+							const bg = selected ? `\x1b[48;5;${sMod.cursor}m` : `\x1b[48;5;${sMod.tint}m`;
+							out.push(bg + segPrefix(segIdxInBlock) + this.highlightTokens(this.syntaxTokens(piece), 0, piece.length, bg) + bg);
+						}
+						start = end;
+						segIdx++;
+						segIdxInBlock++;
+					}
 				}
 			};
 			emitBlock(delText, true);
@@ -2447,7 +2463,7 @@ class ReviewComponent {
 			for (const tl of r.tail ?? []) {
 				const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
 				const tlTokens = this.syntaxTokens(tlText);
-				const tlPrefix = `${tl.newLine ?? ""}  `;
+				const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `; // the ctx prefix — a tail row is pure context
 				if (tlText.length === 0) {
 					emitSeg(0, 0, tlPrefix, -1);
 					continue;
@@ -2492,7 +2508,7 @@ class ReviewComponent {
 		for (const tl of r.tail ?? []) {
 			const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
 			const tlTokens = this.syntaxTokens(tlText);
-			const tlPrefix = `${tl.newLine ?? ""}  `;
+			const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `; // the ctx prefix — a tail row is pure context
 			if (tlText.length === 0) {
 				out.push(tlPrefix);
 				continue;
@@ -2513,7 +2529,8 @@ class ReviewComponent {
 	private segCountOf(r: Row, width: number): number {
 		if (r.kind === "file" || r.kind === "sep") return 1;
 		const cols = Math.max(1, width - prefixOf(r).length - 2);
-		const wrap = (t: string): number => (t.length === 0 ? 1 : Math.max(1, Math.ceil(t.length / cols)));
+		const wrap = (t: string): number =>
+			t.split("\n").reduce((sum, line) => sum + (line.length === 0 ? 1 : Math.max(1, Math.ceil(line.length / cols))), 0);
 		if (this.isWholesaleMod(r)) {
 			return wrap(r.delText ?? "") + wrap(r.text);
 		}

@@ -346,27 +346,24 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	for (let i = 0; i < 100; i++) c.handleInput("\x1b[<64;1;1M");
 	assert((c as any).rowIdx === 0, "wheel-up clamps at top");
 
-	// ── Horizontal scroll: h/l jump 10 columns; drag-x pans; col resets. ──
+		// ── Horizontal scroll is DISABLED (the wrapped layout makes it pointless;
+	//    it shifted the display and wrapped fragments appeared at col 0). ──
 	c.handleInput("l");
-	assert((c as any).colOffset === 10, `l jumps 10 cols, got ${(c as any).colOffset}`);
 	c.handleInput("l");
 	c.handleInput("h");
-	assert((c as any).colOffset === 10, `h back 10, got ${(c as any).colOffset}`);
-	c.handleInput("h");
-	assert((c as any).colOffset === 0, "h clamps at 0");
-	// Drag right (x increases) pans the view right (colOffset increases).
+	assert((c as any).colOffset === 0, `h/l are no-ops, colOffset stays 0, got ${(c as any).colOffset}`);
+	// Drag-x panning is disabled too.
 	c.handleInput("\x1b[<0;5;10M"); // press at col 5
 	c.handleInput("\x1b[<32;15;10M"); // drag right 10 (button-1 held motion, mode 1002)
-	assert((c as any).colOffset === 10, `drag right pans right, got ${(c as any).colOffset}`);
-	c.handleInput("l");
-	c.handleInput("\x1b[<32;10;10M"); // drag left 5
-	assert((c as any).colOffset === 15, `drag left pans left, got ${(c as any).colOffset}`);
-	// Lazy anchor: motion without a prior press still scrolls (mode 1003 / 35).
+	assert((c as any).colOffset === 0, `drag-x panning disabled, got ${(c as any).colOffset}`);
+	// Lazy anchor: motion without a prior press still scrolls vertically.
 	c.handleInput("\x1b[<0;5;9m"); // release
 	c.handleInput("\x1b[<35;10;9M"); // motion, no press → anchors first
-	c.handleInput("\x1b[<35;12;9M"); // drag right 2 → colOffset 17
-	assert((c as any).colOffset === 17, `lazy-anchor drag: got ${(c as any).colOffset}`);
+	c.handleInput("\x1b[<35;12;9M"); // drag right 2
+	assert((c as any).colOffset === 0, `lazy-anchor drag-x disabled, got ${(c as any).colOffset}`);
 	// Vertical drag under 1002 (button 32) moves rows: dragging DOWN scrolls
+	// the view DOWN (the wheel convention).
+// Vertical drag under 1002 (button 32) moves rows: dragging DOWN scrolls
 	// the view DOWN (the wheel convention).
 	const beforeDrag = (c as any).rowIdx;
 	c.handleInput("\x1b[<32;12;12M"); // drag down 3 (y 9 → 12)
@@ -374,9 +371,9 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	// The status shows the mouse diagnostic.
 	const mouseStatus = c.render(120).find((l: string) => l.includes("mouse "));
 	assert(!!mouseStatus && /mouse 32@12,12M/.test(mouseStatus.replace(/\x1b\[[0-9;]*m/g, "")), `mouse diag: ${mouseStatus}`);
-	// The status line shows the column offset; render still fits.
+	// The status shows no column indicator when colOffset is 0.
 	const colStatus = c.render(120).find((l: string) => l.includes("col "));
-	assert(!!colStatus && /col \d+\+/.test(colStatus), `col indicator: ${colStatus}`);
+	assert(!colStatus, `no col indicator without horizontal scroll: ${colStatus}`);
 	for (const width of [50, 80]) {
 		for (const line of c.render(width)) {
 			assert(visibleWidth(line) <= width, `h-scroll render(${width}) too wide`);
@@ -407,26 +404,18 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	f.hunks.forEach((h: any) => { h.aboveCtx = 0; h.belowCtx = 0; }); // collapsed
 	const c = comp([f], 6);
 
-	// ^ / $ column jumps.
+	// ^ / $ horizontal jumps are disabled — colOffset stays 0 (the wrapped
+	// layout makes horizontal scrolling pointless).
 	c.handleInput("l");
 	c.handleInput("l");
-	assert((c as any).colOffset === 20, `l l → 20, got ${(c as any).colOffset}`);
+	assert((c as any).colOffset === 0, `l l are no-ops, got ${(c as any).colOffset}`);
 	c.handleInput("^");
 	assert((c as any).colOffset === 0, "^ → col 0");
-	// With collapsed context the content is short: $ stays at 0.
 	c.handleInput("$");
-	assert((c as any).colOffset === 0, "$ stays 0 when content fits");
-	// Expand context (a) → the long context lines appear; $ then anchors the
-	// content's right edge at the viewport's right margin.
-	c.handleInput("a");
+	assert((c as any).colOffset === 0, "$ is a no-op");
+	c.handleInput("a"); // expand context
 	c.handleInput("$");
-	const textCols = Math.max(1, (process.stdout.columns ?? 80) - 8);
-	const maxLen = Math.max(
-		0,
-		...c.flat.filter((r: any) => R.rowCoord(r) !== null).map((r: any) => r.text.length),
-	);
-	const expectMax = Math.max(0, maxLen - textCols);
-	assert((c as any).colOffset === expectMax, `$ anchors at the right margin (${expectMax}), got ${(c as any).colOffset}`);
+	assert((c as any).colOffset === 0, `$ stays 0, got ${(c as any).colOffset}`);
 	c.handleInput("^");
 	c.handleInput("h");
 	assert((c as any).colOffset === 0, "h clamps at 0");
