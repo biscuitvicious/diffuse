@@ -8,13 +8,14 @@ use crate::parse::{Row, Spans};
 use std::collections::{HashMap, HashSet};
 
 /// A merged run of a mod row's display.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Run {
     pub kind: RunKind,
     pub text: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RunKind {
     Common,
     Del,

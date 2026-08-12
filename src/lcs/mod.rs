@@ -23,7 +23,12 @@ pub fn char_slice(s: &str, start: usize, end: usize) -> &str {
     }
     // After `nth(start)` the iterator is at index `start + 1`; `nth(k)`
     // yields index `start + 1 + k` — want `end - 1`, so k = end - start - 2.
-    let end_byte = it.nth(end - start - 2).map_or(s.len(), |(i, _)| i + 1);
+    // The end byte is the char's START byte plus its UTF-8 length (a
+    // multi-byte char must not leave a non-boundary end).
+    let end_byte = match it.nth(end - start - 2) {
+        Some((i, c)) => i + c.len_utf8(),
+        None => s.len(),
+    };
     &s[start_byte..end_byte]
 }
 

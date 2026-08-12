@@ -4,7 +4,8 @@
 //! ported verbatim from the TypeScript.
 
 /// A diff row kind.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RowKind {
     Add,
     Del,
@@ -15,7 +16,7 @@ pub enum RowKind {
 }
 
 /// A diff row. Fields mirror `review.ts`'s `Row` interface.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct Row {
     pub kind: RowKind,
     pub text: String,
@@ -34,7 +35,7 @@ pub struct Row {
 }
 
 /// Word-level change spans: char-offset ranges into the del/add text.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Spans {
     pub del: Vec<(usize, usize)>,
     pub add: Vec<(usize, usize)>,
@@ -61,7 +62,7 @@ impl Row {
 }
 
 /// A hunk: the `@@ -old +new @@` region of a diff.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct Hunk {
     pub old_start: u32,
     pub old_count: u32,
@@ -112,7 +113,8 @@ pub fn del_count(h: &Hunk) -> u32 {
     h.rows.iter().filter(|r| r.kind == RowKind::Del).count() as u32
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum FileStatus {
     Added,
     Deleted,
@@ -122,7 +124,7 @@ pub enum FileStatus {
 }
 
 /// A parsed diff file.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct DiffFile {
     /// Repo-relative path of the NEW side (old path for deletions).
     pub path: String,

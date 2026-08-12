@@ -1,12 +1,14 @@
-//! diffuse (bin): read a git diff + the per-file contents, run the engine
-//! pipeline, emit the token streams as JSON.
+//! diffuse (bin): read a git diff + the per-file contents (the fixture
+//! shape), run the engine pipeline, emit the token-stream JSON.
 //!
 //! The bin is BOTH the CLI and the TS integration contract: the pi
-//! extension spawns it with the review input and renders the returned rows.
-//! The output schema is frozen in PLAN.md (the wire contract) — Phase 3
-//! integration and the Rust TUI (later) both consume it.
+//! extension spawns it with the review input and renders the returned
+//! rows. The output schema is frozen in PLAN.md §2 (the wire contract).
 
 use clap::Parser;
+use diffuse::bin_pipeline::run_pipeline;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::io::{self, Read};
 
 /// The diffuse diff-engine CLI.
@@ -16,16 +18,17 @@ struct Args {
     /// Read the diff from this file instead of stdin.
     #[arg(long)]
     diff: Option<String>,
+}
 
-    /// Emit the golden-walk format (acceptance tests) instead of the
-    /// token-stream JSON.
-    #[arg(long)]
-    golden: bool,
+#[derive(Deserialize)]
+struct Input {
+    diff: String,
+    contents: HashMap<String, String>,
 }
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
-    let input = match &args.diff {
+    let raw = match &args.diff {
         Some(path) => std::fs::read_to_string(path)?,
         None => {
             let mut s = String::new();
@@ -33,8 +36,15 @@ fn main() -> io::Result<()> {
             s
         }
     };
-    let _ = input;
-    // Phase 1: the engine is not yet ported — the pipeline is a stub.
-    eprintln!("diffuse: the engine port is Phase 1 of PLAN.md — nothing to run yet");
+    // The input is the fixture shape: {"diff": ..., "contents": {...}}.
+    let input: Input = serde_json::from_str(&raw).unwrap_or_else(|_| Input {
+        diff: raw,
+        contents: HashMap::new(),
+    });
+    let output = run_pipeline(&input.diff, &input.contents);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).expect("serialize")
+    );
     Ok(())
 }

@@ -23,3 +23,6 @@ pub mod parse; // parseDiff, hunks, rows
 pub mod similarity; // lineSimilarity, lineSimilarityParts
 pub mod syntax;
 pub mod tail; // isTailBeforeClosing, fnOf // langProfile, classifyTokens
+
+pub mod bin_pipeline;
+pub mod old_content;
