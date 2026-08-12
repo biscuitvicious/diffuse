@@ -202,11 +202,13 @@ pub fn collapse_hunk_rows(
             // `lookup`, the same fn as the old `None`; the `epoch` fn's
             // tail is a different fn).
             let same_fn = fn_of(old_content, r.old_line) == fn_of(new_content, a.new_line);
-            let score = (r.text.trim_start().starts_with("return ")
+            let score = if r.text.trim_start().starts_with("return ")
                 && a.text.trim_start().starts_with("return ")
-                .then_some(1)
-                .unwrap_or(0))
-                + (brace_tail && same_fn).then_some(1).unwrap_or(0)
+            {
+                1.0
+            } else {
+                0.0
+            } + if brace_tail && same_fn { 1.0 } else { 0.0 }
                 + parts.sim;
             if score > best_score {
                 best_score = score;
@@ -243,53 +245,58 @@ pub fn collapse_hunk_rows(
                     .join("\n")
             })
             .unwrap_or_default();
-        if let (Some(br), Some(b)) = (best_run.clone(), best) {
-            let best_span = word_spans(&r.text, &h.rows[b].text);
-            if best_run_score >= 0.25
-                // The single must be CROSSED to stretch — "if a single line
-                // anchors clean against another single line that's a section
-                // separator". The if's single (`if`→`&&`, `<`/` {`→`>`) has
-                // three del runs; the for's (`lowers`→`below`, `.rev()`) and
-                // the mode's (`resolved_`) anchor cleanly — they stay mods.
-                && best_span.del.len() >= 3
-                && !wholesale_pair(&r.text, &h.rows[b].text, &best_span)
-                && !wholesale_pair(&r.text, &run_text, &word_spans(&r.text, &run_text))
-            {
-                // The stretch wins: the whole run is a better "same line" than
-                // any single add. The mod's text is the run's concatenation;
-                // the run's adds are consumed (not emitted as + rows).
-                stretch_of.insert(ri, br.clone());
-                for &aid in &br {
-                    pending_adds.retain(|&x| x != aid);
-                }
-                runs.retain(|run| !run.iter().any(|x| br.contains(x)));
-            } else {
-                // A pair that would render as the wholesale (garble-shaped
-                // spans) reads better as the plain `-`/`+` baseline rows —
-                // leave it unpaired.
-                let spans = word_spans(&r.text, &h.rows[b].text);
-                if !wholesale_pair(&r.text, &h.rows[b].text, &spans) {
-                    pair_of.insert(b, ri);
-                    pending_adds.retain(|&x| x != b);
-                    // The reverse stretch: the del is the FIRST of a
-                    // multi-del run and the run's later dels' text is NOT
-                    // verbatim inside the add (the old method's body,
-                    // deleted — versus the `let up` reflow, whose
-                    // `.iter()/.find(…)` lines survive inside the one-liner
-                    // and take the reflow-common path instead). The mod's
-                    // delText then becomes the run's concatenation; the
-                    // run's dels are consumed (not emitted as `-` rows).
-                    if let Some(run) = run_of.get(&ri) {
-                        if run.len() > 1
-                            && run[0] == ri
-                            && !run.iter().skip(1).any(|&d| {
-                                let t = h.rows[d].text.trim();
-                                !t.is_empty() && h.rows[b].text.contains(t)
-                            })
-                        {
-                            reverse_stretch_of.insert(ri, run.clone());
-                        }
-                    }
+        // The stretch must read as the same line restructured — the
+        // split-word garble (the comment rewrites' `fro~~upper~~zen`) stays
+        // the `-`/`+` baseline, not a stretched mod. The del's single best
+        // must also be a viable mod (not the wholesale): a comment rewritten
+        // across a run is still a comment rewrite — the `-`/`+` block.
+        let stretch_ok = best_run.is_some()
+            && best_run_score >= 0.25
+            && best.is_some()
+            // The single must be CROSSED to stretch — "if a single line
+            // anchors clean against another single line that's a section
+            // separator". The if's single (`if`→`&&`, `<`/` {`→`>`) has
+            // three del runs; the for's (`lowers`→`below`, `.rev()`) and
+            // the mode's (`resolved_`) anchor cleanly — they stay mods.
+            && word_spans(&r.text, &h.rows[best.unwrap()].text).del.len() >= 3
+            && !wholesale_pair(&r.text, &h.rows[best.unwrap()].text, &word_spans(&r.text, &h.rows[best.unwrap()].text))
+            && !wholesale_pair(&r.text, &run_text, &word_spans(&r.text, &run_text));
+        if stretch_ok {
+            let br = best_run.as_ref().unwrap().clone();
+            let _b = best.unwrap();
+            // The stretch wins: the whole run is a better "same line" than
+            // any single add. The mod's text is the run's concatenation;
+            // the run's adds are consumed (not emitted as + rows).
+            stretch_of.insert(ri, br.clone());
+            for &aid in &br {
+                pending_adds.retain(|&x| x != aid);
+            }
+            runs.retain(|run| !run.iter().any(|x| br.contains(x)));
+        } else if let Some(b) = best {
+            // A pair that would render as the wholesale (garble-shaped
+            // spans) reads better as the plain `-`/`+` baseline rows —
+            // leave it unpaired.
+            let spans = word_spans(&r.text, &h.rows[b].text);
+            if !wholesale_pair(&r.text, &h.rows[b].text, &spans) {
+                pair_of.insert(b, ri);
+                pending_adds.retain(|&x| x != b);
+                // The reverse stretch: the del is the FIRST of a
+                // multi-del run and the run's later dels' text is NOT
+                // verbatim inside the add (the old method's body,
+                // deleted — versus the `let up` reflow, whose
+                // `.iter()/.find(…)` lines survive inside the one-liner
+                // and take the reflow-common path instead). The mod's
+                // delText then becomes the run's concatenation; the
+                // run's dels are consumed (not emitted as `-` rows).
+                if let Some(run) = run_of.get(&ri)
+                    && run.len() > 1
+                    && run[0] == ri
+                    && !run.iter().skip(1).any(|&d| {
+                        let t = h.rows[d].text.trim();
+                        !t.is_empty() && h.rows[b].text.contains(t)
+                    })
+                {
+                    reverse_stretch_of.insert(ri, run.clone());
                 }
             }
         }
@@ -367,15 +374,19 @@ pub fn collapse_hunk_rows(
             // reflow line's content is that reflow — drop the span.
             let run = run_of.get(&ri);
             let reflows: Vec<String> = match run {
-                Some(run) if run.len() > 1 => {
-                    run.iter().skip(1).map(|&d| h.rows[d].text.trim().to_string()).collect()
-                }
+                Some(run) if run.len() > 1 => run
+                    .iter()
+                    .skip(1)
+                    .map(|&d| h.rows[d].text.trim().to_string())
+                    .collect(),
                 _ => Vec::new(),
             };
             if !reflows.is_empty() {
                 spans.add.retain(|(as_, ae)| {
                     let seg = char_slice(&add.text, *as_, *ae);
-                    !reflows.iter().any(|t| !t.is_empty() && seg.contains(t.as_str()))
+                    !reflows
+                        .iter()
+                        .any(|t| !t.is_empty() && seg.contains(t.as_str()))
                 });
             }
             let mod_row = Row {
@@ -461,7 +472,12 @@ pub fn collapse_hunk_rows(
         .rows
         .iter()
         .enumerate()
-        .filter(|(i, r)| r.kind == RowKind::Del && !r.moved && !paired_dels.contains(i) && !shown_dels.contains(i))
+        .filter(|(i, r)| {
+            r.kind == RowKind::Del
+                && !r.moved
+                && !paired_dels.contains(i)
+                && !shown_dels.contains(i)
+        })
         .map(|(_, d)| d.text.trim())
         .collect::<Vec<_>>()
         .join("\n");
@@ -471,7 +487,11 @@ pub fn collapse_hunk_rows(
         .filter(|&ai| {
             let a = &h.rows[ai];
             let t = a.text.trim();
-            let corpus = if a.moved { &del_text_all } else { &del_text_live };
+            let corpus = if a.moved {
+                &del_text_all
+            } else {
+                &del_text_live
+            };
             t.is_empty() || !corpus.contains(t)
         })
         .collect();
@@ -483,7 +503,9 @@ pub fn collapse_hunk_rows(
     // 108), never interrupting the new-file sequence.
     let mut anchor_of: HashMap<usize, usize> = HashMap::new(); // del idx -> out idx of the anchor mod
     for &di in &meaningful {
-        let Some(dold) = h.rows[di].old_line else { continue };
+        let Some(dold) = h.rows[di].old_line else {
+            continue;
+        };
         let mut anchor: Option<usize> = None;
         for (mi, m) in out.iter().enumerate() {
             if m.kind != RowKind::Mod || m.old_line.is_none() {
@@ -498,40 +520,22 @@ pub fn collapse_hunk_rows(
             anchor_of.insert(di, a);
         }
     }
-    // The sort key: [position, subkey] — dels render after their anchor's
-    // comment-chain, before the next change.
-    let key_of = |r: &Row| -> (u32, f64) {
-        if r.kind == RowKind::Del {
-            let base = match r.old_line {
-                Some(ol) => {
-                    // find the anchor (out index) by matching old_line — the
-                    // anchor map is keyed by h.rows index; here we look up by
-                    // the del's old line.
-                    let _ = ol;
-                    // (recomputed below)
-                    None
-                }
-                None => None,
-            };
-            let _ = base;
-            return (0, r.old_line.unwrap_or(0) as f64);
-        }
-        (r.new_line.unwrap_or(0), if r.kind == RowKind::Mod { 1.0 } else { 2.0 })
-    };
-    let _ = key_of;
-
     // (The anchor-based sort is ported below; the del keys need the
     // meaningful dels' anchors + the comment-chain advance.)
     let mut keyed: Vec<(Row, (u32, f64))> = Vec::new();
     for r in out.into_iter() {
-        keyed.push((r, (r.new_line.unwrap_or(0), if r.kind == RowKind::Mod { 1.0 } else { 2.0 })));
+        let key = (
+            r.new_line.unwrap_or(0),
+            if r.kind == RowKind::Mod { 1.0 } else { 2.0 },
+        );
+        keyed.push((r, key));
     }
     for &di in &meaningful {
         let d = &h.rows[di];
         let key = match anchor_of.get(&di) {
             None => (0, d.old_line.unwrap_or(0) as f64),
             Some(&mi) => {
-                let base = keyed[mi].0;
+                let base = keyed[mi].1.0;
                 // A removed line must not interrupt a comment block: it
                 // renders after the consecutive comment adds that follow its
                 // anchor (the removed `let mut floor` sits after the doc
@@ -554,6 +558,15 @@ pub fn collapse_hunk_rows(
         let a = &h.rows[ai];
         keyed.push((a.clone(), (a.new_line.unwrap_or(0), 2.0)));
     }
-    keyed.sort_by(|a, b| a.1.cmp(&b.1).then(a.1.1.partial_cmp(&b.1.1).unwrap_or(std::cmp::Ordering::Equal)));
+    keyed.sort_by(|a, b| {
+        a.1.0.cmp(&b.1.0).then(
+            a.1.1
+                .partial_cmp(&b.1.1)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
     keyed.into_iter().map(|(r, _)| r).collect()
 }
+
+#[cfg(test)]
+mod tests;
