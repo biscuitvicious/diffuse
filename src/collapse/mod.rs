@@ -355,24 +355,6 @@ pub fn collapse_hunk_rows(
             if !wholesale_pair(&r.text, &h.rows[b].text, &spans) {
                 pair_of.insert(b, ri);
                 pending_adds.retain(|&x| x != b);
-                // The reverse stretch: the del is the FIRST of a
-                // multi-del run and the run's later dels' text is NOT
-                // verbatim inside the add (the old method's body,
-                // deleted — versus the `let up` reflow, whose
-                // `.iter()/.find(…)` lines survive inside the one-liner
-                // and take the reflow-common path instead). The mod's
-                // delText then becomes the run's concatenation; the
-                // run's dels are consumed (not emitted as `-` rows).
-                if let Some(run) = run_of.get(&ri)
-                    && run.len() > 1
-                    && run[0] == ri
-                    && !run.iter().skip(1).any(|&d| {
-                        let t = h.rows[d].text.trim();
-                        !t.is_empty() && h.rows[b].text.contains(t)
-                    })
-                {
-                    reverse_stretch_of.insert(ri, run.clone());
-                }
             }
         }
     }
@@ -380,6 +362,47 @@ pub fn collapse_hunk_rows(
     let add_of: HashMap<usize, usize> = pair_of.iter().map(|(&add, &del)| (del, add)).collect();
     let stretched_dels: HashSet<usize> = stretch_of.keys().copied().collect();
     let stretched_adds: HashSet<usize> = stretch_of.values().flatten().copied().collect();
+    // The reverse stretch, decided AFTER the pairing loop: a del RUN folds
+    // into one mod against the first del's add — but only the run's later
+    // dels that have NO pair of their own. Decided in-loop (as the port
+    // did), the first del's fold absorbed the WHOLE run, so a later del
+    // that also paired — the old `return self.results…cloned();` ↔ new
+    // `return None;` (cache.rs) or the renumbered AGENTS.md items 6/7 —
+    // struck TWICE: inside the fold AND as its own mod. The fold keeps
+    // only the unpaired members; a paired later del renders as its own mod.
+    // The later dels' text must also be NOT verbatim inside the first del's
+    // add (the old method's body, deleted — versus the `let up` reflow,
+    // whose `.iter()/.find(…)` lines survive inside the one-liner and take
+    // the reflow-common path instead).
+    for &ri in &del_ids {
+        let Some(run) = run_of.get(&ri) else {
+            continue;
+        };
+        if run.len() <= 1 || run[0] != ri {
+            continue;
+        }
+        // The first del must be paired — the fold needs its add.
+        let Some(&b) = add_of.get(&ri) else {
+            continue;
+        };
+        if run.iter().skip(1).any(|&d| {
+            let t = h.rows[d].text.trim();
+            !t.is_empty() && h.rows[b].text.contains(t)
+        }) {
+            continue;
+        }
+        let folded: Vec<usize> = std::iter::once(ri)
+            .chain(
+                run.iter()
+                    .skip(1)
+                    .copied()
+                    .filter(|d| !paired_dels.contains(d) && !stretched_dels.contains(d)),
+            )
+            .collect();
+        if folded.len() > 1 {
+            reverse_stretch_of.insert(ri, folded);
+        }
+    }
 
     // Ordered walk: mods emit at their del's position; each mod's tail
     // absorbs the unpaired adds that follow it *until the next mod's del* —

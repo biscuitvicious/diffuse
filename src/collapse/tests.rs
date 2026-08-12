@@ -628,8 +628,8 @@ fn stretch_consumption_splice_quirk() {
     assert_eq!(m0.new_line, Some(41));
     assert_eq!(
         m0.del_text.as_ref().unwrap().split('\n').count(),
-        6,
-        "old 40's delText is the whole run"
+        4,
+        "old 40's fold keeps only the UNPAIRED run members (41 paired, 42 stretched)"
     );
     let m2 = c
         .iter()
