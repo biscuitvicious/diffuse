@@ -45,6 +45,10 @@ const CORPORA: { name: string; minFiles: number }[] = [
 	{ name: "diffuse-2025-08", minFiles: 26 },
 ];
 
+// The goldens lock the status line — the walk renders with a FIXED stamp
+// ("test") so the golden proves the stamp renders; install.sh stamps the
+// real build (the golden stays stable because the value is fixed here).
+process.env.REVIEW_BUILD = "test";
 let failures = 0;
 function assert(cond: boolean, msg: string) {
 	if (!cond) {
