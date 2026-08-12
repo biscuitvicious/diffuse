@@ -99,73 +99,11 @@ async function buildFiles(fixture: { diff: string; contents: Record<string, stri
 		}),
 		6,
 	);
-		// The engine's per-file classification must equal the TS's own
-		// merge + tokenizer over the same rows: the renderer derives the
-		// colors with its own profile (the golden gate proves the
-		// STRUCTURE), so this check pins the CLASSIFICATION to the
-		// reference — each wire row's runs must equal `mergedRuns` over the
-		// wire's own spans (the rows are structurally proven identical),
-		// classified with the file's profile.
-		const chkSession = {
-			repo: "c",
-			repoRoot: "/tmp",
-			files,
-			notes: {},
-			context: 6,
-			base: { baseArgs: [], label: "H", cached: false, paths: [] },
-			branch: "b",
-			git: async () => ({ stdout: "", stderr: "", code: 0 }),
-		};
-		const chkComp = new (R as any).ReviewComponent(
-			chkSession,
-			{ requestRender: () => {}, stop: () => {}, start: () => {} },
-			{ fg: (_c: string, t: string) => t, bg: (_c: string, t: string) => t },
-			() => {},
-		);
-		for (let fi = 0; fi < wire.files.length; fi++) {
-			const wf = wire.files[fi]!;
-			const ext = wf.path.includes(".") ? wf.path.split(".").pop() ?? "" : "";
-			const profile = R.langProfile(ext);
-			const f = files[fi]!;
-			for (let hi = 0; hi < wf.hunks.length; hi++) {
-				const wh = wf.hunks[hi]!;
-				const h = f.hunks[hi]!;
-				for (let ri = 0; ri < wh.rows.length; ri++) {
-					const wr = wh.rows[ri]!;
-					const row = h.rows[ri]!;
-					// Mirror the engine's colored_runs: a mod (or a moved-diff
-					// row) merges; everything else is the plain token stream
-					// (an add classifies its syntax, a del stays plain).
-					const expect: { kind: string; color: string; text: string }[] = [];
-					const merged =
-						(row.kind === "mod" ||
-							(row.moved === true && row.delText !== undefined && row.delText !== row.text)) &&
-						row.delText !== undefined;
-					if (merged) {
-						for (const run of chkComp.mergedRuns(row)) {
-							if (run.kind === "del") {
-								expect.push({ kind: "del", color: "text", text: run.text });
-							} else {
-								for (const t of R.classifyTokens(run.text, profile)) {
-									expect.push({ kind: run.kind, color: t.color, text: t.text });
-								}
-							}
-						}
-					} else if (row.kind === "add") {
-						for (const t of R.classifyTokens(row.text, profile)) {
-							expect.push({ kind: "add", color: t.color, text: t.text });
-						}
-					} else {
-						expect.push({ kind: "del", color: "text", text: row.text });
-					}
-					const got = wr.runs.map((r) => ({ kind: r.kind, color: r.color ?? "text", text: r.text }));
-					assert(
-						JSON.stringify(got) === JSON.stringify(expect),
-						`${wf.path}:${wr.newLine ?? wr.oldLine}: wire runs differ from the TS per-file tokenization`,
-					);
-				}
-			}
-		}
+		// The wire's runs are the renderer's token source — the golden gate
+		// that mirrored the engine's classification with a TS-side
+		// re-derivation is GONE (the merge machinery was deleted); the
+		// acceptance walk proves the runs' structure, the golden locks the
+		// render.
 		return files;
 }
 

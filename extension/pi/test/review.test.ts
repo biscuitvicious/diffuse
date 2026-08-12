@@ -496,7 +496,7 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	) as any;
 	const pureDel = await wireRow("pub(super) struct ResolvedOverlayLayer {", "pub struct ResolvedOverlayLayer {");
 	assert(c.isPureDeletionMod(pureDel), "pub(super)→pub is a pure deletion");
-	const out = c.styleTokens(pureDel, c.mergedTokens(pureDel), 0, pureDel.text.length, "1 ~ ", false);
+	const out = c.styleTokens(pureDel, pureDel.runs, 0, pureDel.text.length, "1 ~ ", false);
 	const bgs = [...new Set([...out.matchAll(/\x1b\[48;5;(\d+)m/g)].map((x) => x[1]))];
 	assert(bgs.includes("236") && !bgs.includes("22"), `pure-deletion mod is neutral, not green: ${bgs.join(",")}`);
 	assert(bgs.includes("52"), `the struck word still carries the red: ${bgs.join(",")}`);
@@ -504,7 +504,7 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	// parameter) — the fill still carries the word.
 	const withAdd = await wireRow("pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {", "pub fn lookup(&self, key: &CacheKey, epoch: u64) -> Option<ResolutionResult> {");
 	assert(!c.isPureDeletionMod(withAdd), "an added parameter is not a pure deletion");
-	const out2 = c.styleTokens(withAdd, c.mergedTokens(withAdd), 0, withAdd.text.length, "1 ~ ", false);
+	const out2 = c.styleTokens(withAdd, withAdd.runs, 0, withAdd.text.length, "1 ~ ", false);
 	const bgs2 = [...new Set([...out2.matchAll(/\x1b\[48;5;(\d+)m/g)].map((x) => x[1]))];
 	assert(bgs2.includes("236") && bgs2.includes("28") && !bgs2.includes("22"), `mods are grey with the added fill: ${bgs2.join(",")}`);
 }
@@ -524,11 +524,11 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	) as any;
 	const bgs = (s: string) => [...new Set([...s.matchAll(/\x1b\[48;5;(\d+)m/g)].map((x) => x[1]))];
 	const repl = await wireRow("    /// Resolved overlay layers (canonicalized, with TOCTOU anchors).", "    /// Resolved overlay layers (canonicalized, with TOCTOU anchors),");
-	const sel = c.styleTokens(repl, c.mergedTokens(repl)!, 0, c.displayText(repl).length, "1 ~ ", true);
+	const sel = c.styleTokens(repl, repl.runs, 0, c.displayText(repl).length, "1 ~ ", true);
 	const selBgs = bgs(sel);
 	assert(selBgs.includes("237") && !selBgs.includes("22"), `mod selected is the neutral lift: ${selBgs.join(",")}`);
 	assert(selBgs.includes("34") && selBgs.includes("52"), "the fill lifts and the strike stays");
-	const unsel = c.styleTokens(repl, c.mergedTokens(repl)!, 0, c.displayText(repl).length, "1 ~ ", false);
+	const unsel = c.styleTokens(repl, repl.runs, 0, c.displayText(repl).length, "1 ~ ", false);
 	const unBgs = bgs(unsel);
 	assert(unBgs.includes("236") && unBgs.includes("28"), `mod unselected: ${unBgs.join(",")}`);
 	// The row must END on the line tint, not the last token's bg (the comma
@@ -541,12 +541,12 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	// Even a pure insertion (a new parameter) is grey — the fill carries the
 	// word, the row is not an addition.
 	const addMod = await wireRow("pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {", "pub fn lookup(&self, key: &CacheKey, epoch: u64) -> Option<ResolutionResult> {");
-	const addSel = c.styleTokens(addMod, c.mergedTokens(addMod)!, 0, c.displayText(addMod).length, "1 ~ ", true);
+	const addSel = c.styleTokens(addMod, addMod.runs, 0, c.displayText(addMod).length, "1 ~ ", true);
 	const addBgs = bgs(addSel);
 	assert(addBgs.includes("237") && addBgs.includes("34") && !addBgs.includes("22"), `pure-insertion mods are grey too: ${addBgs.join(",")}`);
 	// An add row still lifts its whole body.
 	const a = { kind: "add" as const, text: "new line", newLine: 1, oldLine: null, moved: false };
-	const aSel = c.styleTokens(a, c.syntaxTokens(a.text), 0, a.text.length, "1 + ", true);
+	const aSel = c.styleTokens(a, c.rowTokens(a, 0), 0, a.text.length, "1 + ", true);
 	assert(bgs(aSel).includes("28") && !bgs(aSel).includes("22"), `add rows lift the whole body: ${bgs(aSel).join(",")}`);
 }
 

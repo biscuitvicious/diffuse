@@ -8,7 +8,9 @@ use crate::merge::{RunKind, merged_runs};
 use crate::moves::mark_moves;
 use crate::old_content::old_content_from_diff;
 use crate::parse::{RowKind, parse_diff};
-use crate::syntax::{classify_tokens, lang_profile};
+use crate::syntax::{
+    ClassifiedToken, classify_tokens, fence_regions, lang_profile, markdown_tokens,
+};
 use serde::{Deserialize, Serialize};
 
 /// A row in the wire-contract output: the collapse row + its merged runs.
@@ -23,6 +25,11 @@ pub struct OutputRow {
     pub del_text: Option<String>,
     pub spans: crate::parse::Spans,
     pub runs: Vec<OutputRun>,
+    /// The mod is wholesale (the del block + the add block render as two
+    /// separate blocks, never merged) — the renderer's old isWholesaleMod
+    /// decision, baked by the engine so the TS merge machinery can go.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wholesale: bool,
     pub moved: bool,
     /// The mod's absorbed section lines — the renderer draws them as pure
     /// context (newLine + text, no tint). Added when the renderer began
@@ -51,7 +58,23 @@ pub struct OutputRun {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// The SGR attribute (the markdown emphasis — bold/italic/strike/
+    /// underline) the renderer applies with the color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sgr: Option<u32>,
     pub text: String,
+}
+
+/// A fenced syntax region in a file: the span of lines whose content
+/// classifies with a different language than the file's. `lang` empty =
+/// the plain "code" style. The delimiter lines (start-1 / end+1) render
+/// in the file's default, muted.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputFence {
+    pub start: u32,
+    pub end: u32,
+    pub lang: String,
 }
 
 fn row_kind_name(k: RowKind) -> &'static str {
@@ -70,24 +93,70 @@ fn row_kind_name(k: RowKind) -> &'static str {
 /// mod row — or a moved row whose delText differs (the movedDiff inline
 /// subword — an indentation reflow, say) — gets the merged runs; anything
 /// else is a single whole-line run of its kind (an add classifies its
-/// syntax; a del stays plain).
+/// syntax; a del stays plain). The classification is REGION-AWARE: the
+/// row's new-side line's language — a fence region's language, or the
+/// file's default (md → the markdown tokens) — and a fence DELIMITER line
+/// renders muted.
 pub fn colored_runs(
     r: &crate::parse::Row,
     profile: Option<&crate::syntax::LangProfile>,
+    regions: &[crate::syntax::FenceRegion],
 ) -> Vec<OutputRun> {
     let mut out = Vec::new();
-    // The renderer's token source (mergedTokens in review.ts): a mod row,
-    // or a moved row whose delText differs from its text, merges; a
-    // wholesale mod's del block is styled directly by the renderer.
+    let new_line = r.new_line;
+    let region = new_line.and_then(|n| crate::syntax::region_at(regions, n));
+    // A fence delimiter line (the line before a region / after it) renders
+    // muted in the file's default.
+    let is_delimiter = new_line.is_some_and(|n| {
+        regions
+            .iter()
+            .any(|rg| n + 1 == rg.start || (n > 0 && n - 1 == rg.end))
+    });
+    // The FULL-line classifier (an add row — the strip + the delimiter
+    // + the region/md default all apply), and the FRAGMENT classifier (a
+    // merged common/add run — the strip is a full-line concern, the
+    // fragments classify as-is).
+    let classify_full = |text: &str| -> Vec<ClassifiedToken> {
+        if is_delimiter {
+            return vec![ClassifiedToken {
+                color: "muted".into(),
+                sgr: None,
+                text: text.into(),
+            }];
+        }
+        crate::syntax::classify_line(text, profile, region)
+    };
+    let classify_frag = |text: &str| -> Vec<ClassifiedToken> {
+        if is_delimiter {
+            return vec![ClassifiedToken {
+                color: "muted".into(),
+                sgr: None,
+                text: text.into(),
+            }];
+        }
+        match region {
+            Some(rg) => classify_tokens(text, rg.lang.as_deref().and_then(lang_profile).as_ref()),
+            None => {
+                if profile.is_some_and(|p| p.markdown) {
+                    markdown_tokens(text)
+                } else {
+                    classify_tokens(text, profile)
+                }
+            }
+        }
+    };
+    // The renderer's token source (the wire runs): a mod row, or a moved
+    // row whose delText differs from its text, merges.
     let use_merged = (r.kind == RowKind::Mod
         || (r.moved && r.del_text.as_deref() != Some(r.text.as_str())))
         && r.del_text.is_some();
     if !use_merged {
         if r.kind == RowKind::Add {
-            for t in classify_tokens(&r.text, profile) {
+            for t in classify_full(&r.text) {
                 out.push(OutputRun {
                     kind: "add".to_string(),
                     color: Some(t.color),
+                    sgr: t.sgr,
                     text: t.text,
                 });
             }
@@ -95,6 +164,7 @@ pub fn colored_runs(
             out.push(OutputRun {
                 kind: row_kind_name(r.kind).to_string(),
                 color: None,
+                sgr: None,
                 text: r.text.clone(),
             });
         }
@@ -105,10 +175,11 @@ pub fn colored_runs(
             out.push(OutputRun {
                 kind: "del".to_string(),
                 color: None,
+                sgr: None,
                 text: run.text,
             });
         } else {
-            for t in classify_tokens(&run.text, profile) {
+            for t in classify_frag(&run.text) {
                 out.push(OutputRun {
                     kind: if run.kind == RunKind::Common {
                         "common".to_string()
@@ -116,6 +187,7 @@ pub fn colored_runs(
                         "add".to_string()
                     },
                     color: Some(t.color),
+                    sgr: t.sgr,
                     text: t.text,
                 });
             }
@@ -169,6 +241,9 @@ pub fn run_pipeline(
             }
         }
         let counts = file_counts(f);
+        // The fence regions: the file's syntax-region spans (generic — md's
+        // ``` blocks, rust's doc-comment examples, ...).
+        let regions = fence_regions(&f.new_content, profile.as_ref());
         let mut hunks_out = Vec::new();
         for h in &f.hunks {
             let mut rows_out = Vec::new();
@@ -180,7 +255,8 @@ pub fn run_pipeline(
                     text: r.text.clone(),
                     del_text: r.del_text.clone(),
                     spans: r.spans.clone().unwrap_or_default(),
-                    runs: colored_runs(r, profile.as_ref()),
+                    runs: colored_runs(r, profile.as_ref(), &regions),
+                    wholesale: r.kind == RowKind::Mod && crate::merge::is_wholesale_mod(r),
                     moved: r.moved,
                     tail: r
                         .tail
@@ -209,6 +285,14 @@ pub fn run_pipeline(
             old_line_count: f.old_line_count,
             hunks: hunks_out,
             counts,
+            fences: regions
+                .iter()
+                .map(|r| OutputFence {
+                    start: r.start,
+                    end: r.end,
+                    lang: r.lang.clone().unwrap_or_default(),
+                })
+                .collect(),
         });
     }
     PipelineOutput { files: out_files }
@@ -233,6 +317,9 @@ pub struct OutputFile {
     pub old_line_count: usize,
     pub hunks: Vec<OutputHunk>,
     pub counts: crate::counts::FileCounts,
+    /// The fence regions (the wire's syntax-region spans — line 1-indexed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fences: Vec<OutputFence>,
 }
 
 #[derive(Serialize, Deserialize)]

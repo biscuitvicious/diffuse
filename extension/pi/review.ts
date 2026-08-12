@@ -217,10 +217,14 @@ interface Row {
 	delText?: string;
 	/** Pure-add lines absorbed into a mod row's section (until the next blank). */
 	tail?: Row[];
-	/** The diffuse backend's precomputed token stream (REVIEW_BACKEND=rust):
-	 * the merged common/del/add runs with the semantic syntax colors — the
-	 * renderer uses these instead of recomputing `mergedTokens`. */
-	runs?: { kind: "common" | "del" | "add"; color?: string; text: string }[];
+	/** The diffuse backend's precomputed token stream: the merged
+	 * common/del/add runs with the semantic syntax colors (+ the SGR for
+	 * the markdown emphasis) — the renderer's ONLY token source for the
+	 * change rows. */
+	runs?: { kind: "common" | "del" | "add"; color?: string; sgr?: number; text: string }[];
+	/** The mod is wholesale (the del block + the add block render as two
+	 * separate blocks, never merged) — baked by the engine. */
+	wholesale?: boolean;
 }
 
 interface Hunk {
@@ -272,6 +276,9 @@ type FileStatus = "added" | "deleted" | "modified" | "renamed" | "untracked";
 interface DiffFile {
 	/** Repo-relative path of the NEW side (old path for deletions). */
 	path: string;
+	/** The fence regions (the wire): line spans whose content classifies
+	 * with a different language than the file's. */
+	fences?: { start: number; end: number; lang: string }[];
 	oldPath: string | null;
 	status: FileStatus;
 	newLineCount: number;
@@ -464,10 +471,12 @@ function filesFromWire(
 						moved: t.moved,
 					})),
 					runs: r.runs,
+					wholesale: r.wholesale,
 				})),
 				aboveCtx: context,
 				belowCtx: context,
 			})),
+			fences: wf.fences,
 		});
 	}
 	return out;
@@ -997,104 +1006,6 @@ function rowsCoveredBy(note: ReviewNote, rows: Row[]): number[] {
  * Tokenize a diff line into word/operator tokens (whitespace + punctuation
  * are separate tokens so `->` → `=>` highlights a single character).
  */
-function wholesalePair(delText: string, addText: string, spans: { del: [number, number][]; add: [number, number][] }): boolean {
-	const delSpans = spans.del.filter(([ds, de]) => {
-		const t = delText.slice(ds, de).trim();
-		return t.length > 0 && !addText.includes(t);
-	});
-	const addSpans = spans.add ?? [];
-	// Meaningful identity = subword: any pair recognisably "the same line"
-	// renders as the inline mod — fragment-count mismatches included (`0` →
-	// `Option<`/`>`/`None`, `lowers`+`.rev()` → `below`, `k <`+` {` →
-	// `let Some(…)`). Only the split-word check below (a standalone del
-	// landing mid-word) is garble — that one stays wholesale.
-	const delPos: number[] = [];
-	let cum = 0;
-	for (const [ds, de] of delSpans) {
-		delPos.push(ds - cum);
-		cum += de - ds;
-	}
-	const pair = new Map<number, number>();
-	const usedAdds = new Set<number>();
-	for (let j = 0; j < delSpans.length; j++) {
-		let best = -1;
-		let bestGap = 8;
-		for (let i = 0; i < addSpans.length; i++) {
-			if (usedAdds.has(i)) continue;
-			// Overlapping non-identical ranges interleave in the merge —
-			// they stay separate events (same guard as `delPairing`).
-			const [as, ae] = addSpans[i]!;
-			const [ds, de] = delSpans[j]!;
-			const delEnd = delPos[j]! + (de - ds);
-			const same = delPos[j]! === as && delEnd === ae;
-			const disjoint = delEnd <= as || ae <= delPos[j]!;
-			if (!same && !disjoint) continue;
-			// Prefer the CONTENT counterpart over a closer punctuation
-			// fragment (`0` ↔ `None`, never the type syntax `>` — the strike
-			// must read `= ~~0~~None;`).
-			// OPERATOR flips pair operator-to-operator with precedence: a
-			// `<`→`>` comparison flip is either a bug or the logical twin of
-			// another change — it must stand out (`k ~~<~~> floor`), never
-			// bury itself inside a nearer word span. The add's operator
-			// anchors at its own offset inside the span.
-			const delOp = delText.slice(ds, de).trim();
-			let opGap = Infinity;
-			for (let c = as; c < ae; c++) {
-				if ("<>!=+*/-%&|^~".includes(addText[c]!)) {
-					opGap = Math.abs(delPos[j]! - c);
-					break;
-				}
-			}
-			const gap = Math.min(Math.abs(delPos[j]! - as) + (addText.slice(as, as + 1).match(/[A-Za-z0-9_]/) ? 0 : 5), opGap);
-			if (gap <= bestGap) {
-				bestGap = gap;
-				best = i;
-			}
-			if (/^[<>]=?$/.test(delOp)) {
-				for (let c = as; c < ae; c++) {
-					if (addText[c] === "<" || addText[c] === ">") {
-						const g = Math.abs(delPos[j]! - c) + (addText[c] === delOp ? 0 : 2);
-						if (g < bestGap) {
-							bestGap = g;
-							best = i;
-							opAnchor.set(j, c);
-						}
-					}
-				}
-			}
-		}
-		if (best >= 0) {
-			usedAdds.add(best);
-			pair.set(j, best);
-		}
-	}
-	const word = (c: string) => /[A-Za-z0-9_]/.test(c);
-	// A WORD-led standalone del landing mid-word is garble (the comment
-	// rewrite's `them.` in `m~~them~~ust`); a punctuation-led fragment
-	// (`.rev()`, ` {`) reads fine struck mid-word — `enumer~~.rev()~~ate()`
-	// still reconstructs `enumerate()`. Meaningful identity = subword.
-	const splitWord = delSpans.some((span, j) => {
-		if (pair.has(j)) return false;
-		// A multi-line span (a whole deleted block folded into a
-		// reverse-stretch mod) cannot be a split-word garble — the strike
-		// spans the visual lines, the new line fills beside it. The
-		// reverse-stretch of the old `find_mount` body must stay the
-		// subword mod (`self.mount_stack` common + struck chain + filled
-		// `.get(guest_path)`), not fall to the `-`/`+` baseline.
-		if (delText.slice(span[0], span[1]).includes("\n")) return false;
-		const ins = Math.max(0, Math.min(addText.length, delPos[j]!));
-		if (!(ins > 0 && ins < addText.length && word(addText[ins - 1]!) && word(addText[ins]!))) return false;
-		const t = delText.slice(span[0], span[1]).trimStart();
-		return word(t[0] ?? "");
-	});
-	return splitWord;
-}
-
-/**
- * Mark exact-content del/add pairs as *moved*: the same line at a new
- * position (e.g. renumbered sections) — rendered muted and excluded from the
- * change counts. Matching is greedy per file (a multiset of add texts).
- */
 function fileCounts(f: DiffFile): { adds: number; dels: number; mods: number; moved: number } {
 	let adds = 0;
 	let dels = 0;
@@ -1247,12 +1158,41 @@ interface LangProfile {
 	blockComment?: boolean;
 	/** Capitalized identifiers are types (Rust/TS/C/Go...). */
 	typesByCase?: boolean;
+	/** The fence toggle (the last capture group = the region language). */
+	fence?: RegExp;
+	/** An unlabeled fence's default language (null = the plain "code" style). */
+	unlabeledFenceLang?: string | null;
+	/** The per-line prefix to strip before classifying a region's content. */
+	fenceStrip?: RegExp;
+	/** The default region is the markdown prose (headings/emphasis). */
+	markdown?: boolean;
 }
 
 function langProfile(ext: string): LangProfile | null {
+	// Fence ids are LANGUAGE names (` ```rust `); the profiles are keyed by
+	// the file EXTENSIONS (`rs`). Map the common aliases so a labeled fence
+	// actually highlights.
+	switch (ext) {
+		case "rust": ext = "rs"; break;
+		case "javascript": case "jsx": ext = "js"; break;
+		case "typescript": case "tsx": ext = "ts"; break;
+		case "python": ext = "py"; break;
+		case "shell": case "bash": ext = "sh"; break;
+		case "c++": case "cpp": ext = "cpp"; break;
+		case "markdown": ext = "md"; break;
+	}
 	switch (ext) {
 		case "rs":
-			return { keywords: KEYWORDS_RUST, lineComment: true, blockComment: true, typesByCase: true };
+			return {
+				keywords: KEYWORDS_RUST, lineComment: true, blockComment: true, typesByCase: true,
+				// Doc-comment examples: `/// ```rust` opens a rust-syntax region.
+				fence: /^\s*(\/\/\/|\/\/!)\s*```([a-z0-9_+-]*)\s*$/,
+				// An unlabeled doc fence is a rust example.
+				unlabeledFenceLang: "rust",
+				// The region's code lines are comment-prefixed — strip the
+				// prefix, classify the remainder.
+				fenceStrip: /^\s*(\/\/\/|\/\/!)?\s*/,
+			};
 		case "ts":
 		case "tsx":
 		case "js":
@@ -1274,7 +1214,14 @@ function langProfile(ext: string): LangProfile | null {
 			return { keywords: KEYWORDS_GO, lineComment: true, blockComment: true, typesByCase: true };
 		case "md":
 		case "markdown":
-			return { keywords: KEYWORDS_MD, hashComment: true };
+			return {
+				keywords: KEYWORDS_MD, hashComment: true,
+				// The md fence: ` ```lang ` — the last capture = the region language.
+				fence: /^\s*```([a-z0-9_+-]*)\s*$/,
+				// An unlabeled fence = the plain "code" style (no syntax).
+				unlabeledFenceLang: null,
+				markdown: true,
+			};
 		case "toml":
 		case "yaml":
 		case "yml":
@@ -1419,8 +1366,6 @@ class ReviewComponent {
 	private lastMouse: string | null = null;
 	/** In-component note editor: null = not editing, else the draft text. */
 	private noteDraft: string | null = null;
-	/** The open fenced-code language inside a `.md` file (null = prose). */
-	private mdFence: string | null = null;
 	private syntaxOn = true;
 	/** Visual (wrapped) line offset within the cursor's flat row. */
 	private visLine = 0;
@@ -1722,11 +1667,9 @@ class ReviewComponent {
 		if (data === "]" || data === "n" || data === "N") return this.gotoHunk(1);
 		if (data === "[" || data === "p" || data === "P") return this.gotoHunk(-1);
 		if (matchesKey(data, Key.tab)) {
-			this.mdFence = null;
 			return this.switchFile(1);
 		}
 		if (matchesKey(data, "shift+tab")) {
-			this.mdFence = null;
 			return this.switchFile(-1);
 		}
 
@@ -1786,6 +1729,18 @@ class ReviewComponent {
 	}
 
 	// ── movement ──────────────────────────────────────────────────────────
+
+	private setCursorVis(v: number): void {
+		const { starts, total } = this.visualGeometry(process.stdout.columns ?? 80);
+		const clamped = Math.max(0, Math.min(total - 1, v));
+		let row = 0;
+		for (let i = 0; i < this.flat.length; i++) {
+			if (starts[i]! <= clamped) row = i;
+			else break;
+		}
+		this.rowIdx = row;
+		this.visLine = Math.max(0, clamped - starts[row]!);
+	}
 
 	private move(delta: number): void {
 		if (this.flat.length === 0) return;
@@ -2410,10 +2365,10 @@ class ReviewComponent {
 		// filled — one wrapped line. Other rows take the plain token stream.
 		// Wholesale mods render as two separate blocks: the whole old line
 		// struck, then the whole new line filled — never concatenated.
-		const wholesale = r.kind === "mod" && this.isWholesaleMod(r);
-		const movedDiff = r.moved === true && (r as { delText?: string }).delText !== undefined && (r as { delText?: string }).delText !== r.text;
-		const merged = (r.kind === "mod" && !wholesale) || movedDiff ? this.mergedTokens(r) : null;
-		const tokens = merged ?? this.syntaxTokens(this.colOffset > 0 ? r.text.slice(this.colOffset) : r.text);
+		const wholesale = r.kind === "mod" && r.wholesale === true;
+		const movedDiff = r.moved === true && r.delText !== undefined && r.delText !== r.text;
+		const merged = ((r.kind === "mod" && !wholesale) || movedDiff) && this.wordDiff ? r.runs ?? null : null;
+		const tokens = merged ?? this.rowTokens(r, flatIdx);
 		const text = this.displayText(r);
 		const emitSeg = (segStart: number, segEnd: number, segPrefix: string, visIdx: number) => {
 			out.push(
@@ -2428,8 +2383,11 @@ class ReviewComponent {
 			);
 		};
 		if (wholesale) {
-			// Block 1: the whole old line, struck, in the deletion tint.
+			// Block 1: the whole old line, struck, in the deletion tint. The
+			// wire's runs for a wholesale mod are [del, add] — the add runs
+			// are the classified new text.
 			const delText = r.delText ?? "";
+			const addTokens = (r.runs ?? []).filter((x) => x.kind === "add");
 			let segIdx = 0;
 			const emitBlock = (blockText: string, isDel: boolean) => {
 				const segPrefix = (idx: number): string =>
@@ -2475,7 +2433,7 @@ class ReviewComponent {
 							// The add block (the surviving line) takes the mod's
 							// grey — a `~` row is never "new content".
 							const bg = selected ? `\x1b[48;5;${sMod.cursor}m` : `\x1b[48;5;${sMod.tint}m`;
-							out.push(bg + segPrefix(segIdxInBlock) + this.highlightTokens(this.syntaxTokens(piece), 0, piece.length, bg) + bg);
+							out.push(bg + segPrefix(segIdxInBlock) + this.highlightTokens(addTokens, 0, piece.length, bg) + bg);
 						}
 						start = end;
 						segIdx++;
@@ -2488,7 +2446,7 @@ class ReviewComponent {
 			// The absorbed section lines still follow.
 			for (const tl of r.tail ?? []) {
 				const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
-				const tlTokens = this.syntaxTokens(tlText);
+				const tlTokens = this.ctxTokens(tlText, this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file, tl.newLine);
 				const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `; // the ctx prefix — a tail row is pure context
 				if (tlText.length === 0) {
 					emitSeg(0, 0, tlPrefix, -1);
@@ -2533,7 +2491,7 @@ class ReviewComponent {
 		// a change.
 		for (const tl of r.tail ?? []) {
 			const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
-			const tlTokens = this.syntaxTokens(tlText);
+			const tlTokens = this.ctxTokens(tlText, this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file, tl.newLine);
 			const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `; // the ctx prefix — a tail row is pure context
 			if (tlText.length === 0) {
 				out.push(tlPrefix);
@@ -2557,7 +2515,7 @@ class ReviewComponent {
 		const cols = Math.max(1, width - prefixOf(r).length - 2);
 		const wrap = (t: string): number =>
 			t.split("\n").reduce((sum, line) => sum + (line.length === 0 ? 1 : Math.max(1, Math.ceil(line.length / cols))), 0);
-		if (this.isWholesaleMod(r)) {
+		if (r.kind === "mod" && r.wholesale === true) {
 			return wrap(r.delText ?? "") + wrap(r.text);
 		}
 		const len = this.displayText(r).length;
@@ -2569,51 +2527,84 @@ class ReviewComponent {
 	/**
 	 * The mod row's inline display text: the common words + the removed words
 	 * + the additions merged in place. Non-mod rows return their own text.
-	 */
 	/**
-	 * The del spans worth showing: an alignment artifact whose text already
-	 * exists verbatim in the add (e.g. a trailing `..]` absorbed into `..].`)
-	 * is not a real removal — skip it, or the merge would duplicate it.
+	 * A mod whose change is purely a removal: every add span is whitespace —
+	 * the new line is the old line minus text (`pub(super) struct X {` →
+	 * `pub struct X {`). Nothing was added, so the row must not render as an
+	 * addition: it takes the neutral shade with the red strikes carrying the
+	 * removal.
 	 */
-	private delSpansToShow(r: Row, delSpansIn?: [number, number][]): [number, number][] {
-		const delSpans = delSpansIn ?? r.spans?.del ?? [];
-		if (r.delText === undefined) return [];
-		return delSpans.filter(([ds, de]) => {
-			const raw = r.delText!.slice(ds, de);
-			const t = raw.trim();
-			// A whitespace-only span is a real indent change (8 → 12 spaces
-			// moves the line into a block): show it struck at the line
-			// start. Drop it only when the add's leading run is identical.
-			if (t.length === 0) return raw !== (/^\s*/.exec(r.text)?.[0] ?? "");
-			// A single-span del stays even when its text is inside the add
-			// (`None` → `return None;` is a growth — the mod must have
-			// something struck). With MULTIPLE spans, a span is an absorbed
-			// fragment only when its text sits in the add AT THE SAME
-			// POSITION (`..]` → `..].` — the `]` survives where it was, the
-			// `.` is appended). A word that merely appears elsewhere in the
-			// add (`lower` in the del's `"Found in lower layer"` vs
-			// `?next_lower,` in the add) is a REAL replacement, not
-			// absorption — `r.text.includes(t)` would drop it (the
-			// `lower` → `layer below the top upper` rewrite reads as a pure
-			// fill with no strike).
-			if (delSpans.length <= 1) return true;
-			return r.text.slice(ds, de) !== t;
-		});
-	}
-
+	/** The row's displayed text: non-mod rows their own text; a mod's
+	 * merged view is the wire runs' concatenation (the walk proves runs
+	 * concat == the engine's display text). Wholesale mods yield the whole
+	 * old + whole new pair. */
 	private displayText(r: Row): string {
 		if ((r.kind !== "mod" && !r.moved) || r.delText === undefined || !this.wordDiff) {
 			return this.colOffset > 0 ? r.text.slice(this.colOffset) : r.text;
 		}
-		// The merged string shares `mergedRuns` with the token stream — the
-		// del insertions happen at the same offsets, so the sliced text and
-		// the tokens stay in one coordinate space. Wholesale mods yield the
-		// whole old + whole new pair (never the event-walk garbage).
-		const out = this.mergedRuns(r).map((run) => run.text).join("");
+		const out = (r.runs ?? []).map((run) => run.text).join("");
 		return this.colOffset > 0 ? out.slice(this.colOffset) : out;
 	}
 
-	/** Visual layout: per-flat-row segment counts + start offsets. */
+
+	private isPureDeletionMod(r: Row): boolean {
+		return (r.spans?.add ?? []).every(([s, e]) => r.text.slice(s, e).trim().length === 0);
+	}
+
+	private rowTokens(r: Row, flatIdx: number): { kind?: "common" | "del" | "add"; color: string; sgr?: number; text: string }[] {
+		if (r.runs) {
+			// The wire runs carry the engine's colors — the syntaxOn toggle
+			// strips them (the kind stays: the strike/fill are the diff's).
+			return r.runs.map((x) => ({
+				kind: x.kind,
+				color: this.syntaxOn ? x.color ?? "text" : "text",
+				sgr: this.syntaxOn ? x.sgr : undefined,
+				text: x.text,
+			}));
+		}
+		const file = this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file;
+		return this.ctxTokens(r.text, file, r.newLine);
+	}
+
+	/** The synthesized (ctx/tail) rows' tokens: the row's OWN file's
+	 * classification (not the cursor's), with the fence regions — a line
+	 * inside a region classifies with the region's language (the file's
+	 * comment prefix stripped first for the rust doc fences), a delimiter
+	 * line renders muted, the md default region is the markdown prose. */
+	private ctxTokens(text: string, file: DiffFile, newLine: number | null): { color: string; text: string; sgr?: number }[] {
+		if (!this.syntaxOn) return [{ color: "text", text }];
+		const ext = file.path.includes(".") ? file.path.split(".").pop() ?? "" : "";
+		const profile = langProfile(ext);
+		const fences = file.fences ?? [];
+		if (newLine !== null) {
+			// A fence delimiter line (just before/after a region) is the
+			// file's default, muted.
+			if (fences.some((f) => newLine! + 1 === f.start || newLine! - 1 === f.end)) {
+				return [{ color: "muted", text }];
+			}
+			const region = fences.find((f) => f.start <= newLine! && newLine! <= f.end);
+			if (region) {
+				const rp = region.lang ? langProfile(region.lang) : null;
+				if (rp && profile?.fenceStrip) {
+					const m = profile.fenceStrip.exec(text);
+					if (m && m.index === 0 && m[0].length > 0) {
+						return [
+							{ color: "syntaxComment", text: m[0] },
+							...classifyTokens(text.slice(m[0].length), rp),
+						];
+					}
+				}
+				return rp ? classifyTokens(text, rp) : [{ color: "text", text }];
+			}
+		}
+		if (profile?.markdown) return markdownTokens(text);
+		return classifyTokens(text, profile);
+	}
+
+	/**
+	 * Visual layout: per-flat-row segment counts + start offsets (the
+	 * geometry the scroll/viewport math walks in).
+	 */
 	private visualGeometry(width: number): { starts: number[]; counts: number[]; total: number } {
 		const starts: number[] = new Array(this.flat.length);
 		const counts: number[] = new Array(this.flat.length);
@@ -2626,354 +2617,6 @@ class ReviewComponent {
 		}
 		return { starts, counts, total };
 	}
-
-	/** Position the cursor at a visual (wrapped) line index. */
-	private setCursorVis(v: number): void {
-		const { starts, total } = this.visualGeometry(process.stdout.columns ?? 80);
-		const clamped = Math.max(0, Math.min(total - 1, v));
-		let row = 0;
-		for (let i = 0; i < this.flat.length; i++) {
-			if (starts[i]! <= clamped) row = i;
-			else break;
-		}
-		this.rowIdx = row;
-		this.visLine = Math.max(0, clamped - starts[row]!);
-	}
-
-	/** The current file's syntax tokens (plain when the toggle is off). */
-	private syntaxTokens(text: string): { color: string; text: string }[] {
-		if (!this.syntaxOn) return [{ color: "text", text }];
-		const ext = this.file.path.includes(".") ? this.file.path.split(".").pop() ?? "" : "";
-		if (ext === "md" || ext === "markdown") {
-			// Fenced code blocks: the fence line toggles the language; the
-			// code inside gets that language's syntax highlighting.
-			const fence = /^\s*```([A-Za-z0-9_+-]*)\s*$/.exec(text);
-			if (fence) {
-				if (this.mdFence !== null) this.mdFence = null;
-				else this.mdFence = fence[1]!.toLowerCase() || "";
-				return [{ color: "muted", text }];
-			}
-			if (this.mdFence !== null) {
-				return classifyTokens(text, langProfile(this.mdFence));
-			}
-			return markdownTokens(text);
-		}
-		return classifyTokens(text, langProfile(ext));
-	}
-
-	/** Style one wrapped segment of a diff row (subtle line tint, stronger word fill). */
-	/**
-	 * The mod row's inline token stream: common words ("common", syntax
-	 * colors), the removed words ("del", plain — struck later), and the
-	 * additions ("add", syntax colors + word fill), merged at the position
-	 * where the change happens.
-	 */
-	/**
-	 * A mod is rendered wholesale (whole old line struck, then whole new line
-	 * filled, as separate blocks) when a token-level interleave would garble:
-	 * the lines are structurally different (a one-liner → a block), or the
-	 * LCS found different numbers of changed fragments on each side (their
-	 * spans live in different coordinate spaces).
-	 */
-	private isWholesaleMod(r: Row): boolean {
-		if (r.delText === undefined || !this.wordDiff) return false;
-		return wholesalePair(r.delText, r.text, r.spans ?? { del: [], add: [] });
-	}
-
-	/**
-	 * A mod whose change is purely a removal: every add span is whitespace —
-	 * the new line is the old line minus text (`pub(super) struct X {` →
-	 * `pub struct X {`, `resolved_layers` → `layers`). Nothing was added, so
-	 * the row must not render as an addition: it takes the neutral shade
-	 * (like a moved line — the line survives) with the red strikes carrying
-	 * the removal.
-	 */
-	private isPureDeletionMod(r: Row): boolean {
-		return (r.spans?.add ?? []).every(([s, e]) => r.text.slice(s, e).trim().length === 0);
-	}
-
-	/**
-	 * The add-text position of each del span (the del offset minus the del
-	 * text removed before it) and the pairing: a del span pairs with the add
-	 * span nearest its own position (within a small window — the aligned
-	 * replacement); a del span with no nearby add is a standalone removal.
-	 * Shared by `isWholesaleMod` (split-word detection) and `mergedRuns`
-	 * (the event positions) — the wholesale decision and the walk stay in
-	 * lockstep by construction.
-	 */
-	private delPairing(delSpans: [number, number][], addSpans: [number, number][], addText: string, delText: string): {
-		delPos: number[];
-		pair: Map<number, number>;
-	} {
-		const delPos: number[] = [];
-		let cum = 0;
-		for (const [ds, de] of delSpans) {
-			delPos.push(ds - cum);
-			cum += de - ds;
-		}
-		const pair = new Map<number, number>();
-		const usedAdds = new Set<number>();
-		const opAnchor = new Map<number, number>();
-		for (let j = 0; j < delSpans.length; j++) {
-			let best = -1;
-			let bestGap = 8;
-			for (let i = 0; i < addSpans.length; i++) {
-				if (usedAdds.has(i)) continue;
-				// The aligned replacement occupies the same range; anything
-				// else that overlaps the del's range interleaves in the merge
-				// (`resolved_` at 13 must not pair with `.iter()` at 19 —
-				// that would push the removal past `layers`). Overlapping
-				// non-identical spans stay separate events.
-				const [as, ae] = addSpans[i]!;
-				const [ds, de] = delSpans[j]!;
-				const delEnd = delPos[j]! + (de - ds);
-				const same = delPos[j]! === as && delEnd === ae;
-				const disjoint = delEnd <= as || ae <= delPos[j]!;
-				// Whitespace spans pair despite the overlap — the indent
-				// change is expressed minimally (8 → 12 spaces = 8 common
-				// + 4 added), not as two independent whole runs.
-				const wsPair =
-					/^\s+$/.test(delText.slice(ds, de)) && /^\s+$/.test(addText.slice(as, ae));
-				if (!same && !disjoint && !wsPair) continue;
-				// Prefer the CONTENT counterpart over a closer punctuation
-				// fragment (`0` ↔ `None`, never the type syntax `>` — the
-				// strike must read `= ~~0~~None;`).
-				// OPERATOR flips pair operator-to-operator with precedence: a
-				// `<`→`>` comparison flip is either a bug or the logical twin
-				// of another change — it must stand out (`k ~~<~~> floor`),
-				// never bury itself inside a nearer word span. The add's
-				// operator anchors at its own offset inside the span.
-				const delOp = delText.slice(ds, de).trim();
-				if (/^[<>]=?$/.test(delOp)) {
-					// A lone comparison operator pairs with a comparison
-					// operator wherever it appears — this is the counterpart
-					// by definition, so it WINS over the nearest-span rule
-					// (`k <` → `k >` strikes the `<` against the `>`; the
-					// flip must stand out).
-					let opBest = -1;
-					let opBestGap = Infinity;
-					for (let c = as; c < ae; c++) {
-						if (addText[c] === "<" || addText[c] === ">") {
-							const g = Math.abs(delPos[j]! - c) + (addText[c] === delOp ? 0 : 2);
-							if (g < opBestGap) {
-								opBestGap = g;
-								opBest = i;
-								opAnchor.set(j, c);
-							}
-						}
-					}
-					if (opBest >= 0) {
-						best = opBest;
-						bestGap = -1; // op wins over any gap rule
-						continue;
-					}
-				}
-				let opGap = Infinity;
-				if (/^[<>!=+*/-]/.test(delOp)) {
-					for (let c = as; c < ae; c++) {
-						if ("<>!=+*/-%&|^~".includes(addText[c]!)) {
-							opGap = Math.abs(delPos[j]! - c);
-							break;
-						}
-					}
-				}
-				const gap = Math.abs(delPos[j]! - as) + (addText.slice(as, as + 1).match(/[A-Za-z0-9_]/) ? 0 : 5);
-				// Whitespace pairs express the MINIMUM wherever they land —
-				// the old `floor {`'s space before the brace pairs with the
-				// new `floor\n                {`'s newline+indent even across
-				// the run (a big gap): the strike/fill must NOT leak into
-				// the middle of `&& k > floor` as `&&  k`.
-				if (wsPair) {
-					bestGap = 0;
-					best = i;
-					continue;
-				}
-				// `<=` — ties prefer the LATER span (the value `None` over
-				// the type syntax `Option<`; `= ~~0~~None;` reads).
-				if (gap <= bestGap) {
-					bestGap = gap;
-					best = i;
-				}
-			}
-			if (best >= 0) {
-				usedAdds.add(best);
-				pair.set(j, best);
-			}
-		}
-		return { delPos, pair, opAnchor };
-	}
-
-	/**
-	 * The ordered common/del/add runs of a mod's merged view. Each del span
-	 * pairs with the add span nearest its own add-position (within a small
-	 * window — the aligned replacement); a del span with no nearby add (a
-	 * standalone removal like `resolved_`) inserts at its own position, and a
-	 * standalone add fills at its own position. Shared by `mergedTokens` (adds
-	 * the syntax colors) and `displayText` (joins the texts) — they stay in
-	 * lockstep by construction.
-	 */
-	private mergedRuns(r: Row): { kind: "common" | "del" | "add"; text: string }[] {
-		if (this.isWholesaleMod(r)) {
-			return [
-				{ kind: "del", text: r.delText ?? "" },
-				{ kind: "add", text: r.text },
-			];
-		}
-		// The reverse stretch: the delText is a whole deleted block (the old
-		// `find_mount` body) folded against a single add. The shared prefix
-		// reads common (`self.mount_stack`), the block's rest strikes across
-		// the visual lines, the add's rest fills — the del spans' own
-		// positions (the chain's delPos) would interleave the fill into the
-		// middle of the struck block (`…iter` + `get` + `…`), garbling it.
-		const delText = r.delText ?? "";
-		if (delText.includes("\n")) {
-			let share = 0;
-			while (share < delText.length && share < r.text.length && delText[share] === r.text[share]) share++;
-			// The shared SUFFIX: the new one-liner's tail may restate the old
-			// block's head (`if !fingerprint.is_valid() {` → the old
-			// `if fingerprint.is_valid() {` — `fingerprint.is_valid() {`
-			// reads common, not filled-then-struck-again). The longest
-			// suffix of the add's remainder that is also a prefix of the
-			// del's remainder reads common; the insertion fills before it,
-			// the old block's rest strikes after.
-			let slen = 0;
-			for (let len = Math.min(r.text.length - share, delText.length - share); len >= 1; len--) {
-				if (r.text.slice(r.text.length - len) === delText.slice(share, share + len)) {
-					slen = len;
-					break;
-				}
-			}
-			// The fill reads FIRST — the new one-liner's insertion
-			// (`!fingerprint.is_valid() {` — the `!` fills, the rest reads
-			// common) — then the struck old block spans the following visual
-			// lines (`~~\n            return self.results…~~`). Empty runs are
-			// skipped (`classifyTokens("")` would emit a phantom token — the
-			// engine's emits none; the two must stay identical).
-			const runs: { kind: "common" | "del" | "add"; text: string }[] = [];
-			if (share > 0) runs.push({ kind: "common", text: delText.slice(0, share) });
-			if (share < r.text.length - slen) runs.push({ kind: "add", text: r.text.slice(share, r.text.length - slen) });
-			if (slen > 0) runs.push({ kind: "common", text: r.text.slice(r.text.length - slen) });
-			if (share + slen < delText.length) runs.push({ kind: "del", text: delText.slice(share + slen) });
-			return runs;
-		}
-		// A moved row has no spans of its own — compute them from its paired
-		// del text so the indentation change subwords (8 → 12 spaces is a
-		// semantic move, not invisible relocation).
-		// The engine bakes a moved row's subword spans into the wire.
-		const spans = r.spans ?? { del: [], add: [] };
-		const addSpans = spans.add ?? [];
-		const delSpans = this.delSpansToShow(r, spans.del);
-		const { delPos, pair, opAnchor } = this.delPairing(delSpans, addSpans, r.text, r.delText ?? "");
-		const runs: { kind: "common" | "del" | "add"; text: string }[] = [];
-		const emitRange = (from: number, to: number) => {
-			if (to > from) runs.push({ kind: "common", text: r.text.slice(from, to) });
-		};
-		// Events in add-text position order: each add span, each standalone
-		// del (no nearby add), and each del paired with its nearest add. A
-		// standalone removal must not trail the line — a `resolved_` deleted
-		// near the start inserts before the appended `.iter()` at the end.
-		type Ev = { pos: number; del?: [number, number]; add?: [number, number] };
-		const events: Ev[] = [];
-		const usedAdds = new Set<number>();
-		for (let j = 0; j < delSpans.length; j++) {
-			const ai = pair.get(j);
-			if (ai !== undefined) {
-				usedAdds.add(ai);
-				// An operator flip anchors at the operator's own offset
-				// (`k ~~<~~> floor` — the `<` strikes against the `>`).
-				const pos = opAnchor.get(j) ?? addSpans[ai]![0];
-				events.push({ pos, del: delSpans[j]!, add: addSpans[ai]! });
-			} else {
-				// A standalone landing mid-word must not glue the strike
-				// inside a surviving token (`enumer~~.rev()~~ate()` is
-				// wrong — "rev" stuck to "enumerate"'s "r"); snap forward
-				// to the end of the enclosing token run so the removal
-				// reads as a unit (`enumerate()~~.rev()~~ {`).
-				const word = (c: string) => /[A-Za-z0-9_]/.test(c);
-				let ins = delPos[j]!;
-				if (ins > 0 && ins < r.text.length && word(r.text[ins - 1]!) && word(r.text[ins]!)) {
-					while (ins < r.text.length && !/\s/.test(r.text[ins]!)) ins++;
-				}
-				events.push({ pos: ins, del: delSpans[j]! });
-			}
-		}
-		for (let i = 0; i < addSpans.length; i++) {
-			if (!usedAdds.has(i)) events.push({ pos: addSpans[i]![0], add: addSpans[i]! });
-		}
-		events.sort((a, b) => a.pos - b.pos);
-		let pos = 0;
-		for (const ev of events) {
-			if (ev.pos > pos) emitRange(pos, ev.pos);
-			if (ev.del) {
-				// Whitespace pairs express the MINIMUM change: the shared
-				// prefix survives as common, only the difference is struck
-				// or filled (8 → 12 spaces = 8 common + 4 added, never the
-				// whole run on each side).
-				const delText = r.delText.slice(ev.del[0], ev.del[1]);
-				if (ev.add && /^[\p{White_Space}\u200b]+$/u.test(delText) && /^[\p{White_Space}\u200b]+$/u.test(r.text.slice(ev.add[0], ev.add[1]))) {
-					const addText = r.text.slice(ev.add[0], ev.add[1]);
-					// The shared prefix is the ACTUAL matching chars — a
-					// type change (`\t` vs 4 spaces) shares nothing: the
-					// tab strikes, the spaces fill, both subworded.
-					let share = 0;
-					while (share < delText.length && share < addText.length && delText[share] === addText[share]) share++;
-					if (share > 0) runs.push({ kind: "common", text: delText.slice(0, share) });
-					if (share < delText.length) runs.push({ kind: "del", text: delText.slice(share) });
-					if (share < addText.length) runs.push({ kind: "add", text: addText.slice(share) });
-					pos = ev.add[1];
-					continue;
-				}
-				runs.push({ kind: "del", text: delText });
-				pos = Math.max(pos, ev.pos);
-			}
-			if (ev.add) {
-				runs.push({ kind: "add", text: r.text.slice(ev.add[0], ev.add[1]) });
-				pos = ev.add[1];
-			}
-		}
-		if (pos < r.text.length) emitRange(pos, r.text.length);
-		return runs;
-	}
-
-	private mergedTokens(r: Row): { kind: "common" | "del" | "add"; color: string; text: string }[] | null {
-		if (r.delText === undefined || !this.wordDiff) return null;
-		if (this.isWholesaleMod(r)) {
-			return [
-				{ kind: "del", color: "text", text: r.delText },
-				{ kind: "add", color: "text", text: r.text },
-			];
-		}
-		const profile = this.syntaxOn ? this.syntaxProfile() : null;
-		const out: { kind: "common" | "del" | "add"; color: string; text: string }[] = [];
-		for (const run of this.mergedRuns(r)) {
-			if (run.kind === "del") {
-				out.push({ kind: "del", color: "text", text: run.text });
-			} else {
-				for (const t of classifyTokens(run.text, profile)) {
-					out.push({ kind: run.kind, color: t.color, text: t.text });
-				}
-			}
-		}
-		return out;
-	}
-
-	/** The current file's syntax profile. */
-	private syntaxProfile(): LangProfile | null {
-		const ext = this.file.path.includes(".") ? this.file.path.split(".").pop() ?? "" : "";
-		return langProfile(ext);
-	}
-
-	/** The current file's syntax tokens (plain when the toggle is off). */
-	private syntaxTokens(text: string): { color: string; text: string }[] {
-		if (!this.syntaxOn) return [{ color: "text", text }];
-		return classifyTokens(text, this.syntaxProfile());
-	}
-
-	/** Style a token slice with the syntax colors, re-applying the CALLER's
-	 * background after every token — the theme's fg resets kill whatever
-	 * came before, and the re-application must not hardcode the green (a
-	 * neutral wholesale block or a mod tail would render its later tokens
-	 * green). */
 	private highlightTokens(tokens: { color: string; text: string }[], from: number, to: number, bg = `\x1b[48;5;${sAdd.tint}m`): string {
 		const theme = this.theme;
 		let out = "";
