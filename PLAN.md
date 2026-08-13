@@ -301,20 +301,13 @@ while the component renders all-at-once; it becomes worth it when a future
 consumer (the Rust TUI) renders file-by-file incrementally — the contract
 is already per-file, so it's a natural later step.
 
-### Phase 5 — the Rust-y redesign
-- Only after the engine is fully ported, tested, and integrated. Now the
-  type system earns its keep:
-  - `RowKind` as a proper enum; spans as typed ranges; the pairing
-    decisions as an explicit state machine.
-  - The LCS as a real algorithm (the `Uint32Array` → proper storage, maybe
-    Hirschberg for the long lines).
-  - `Result`/`Option` instead of the TS fallbacks; the `?`-heavy parse.
-  - The stretch/reverse-stretch/reflow machinery as typed structures
-    instead of `Map`s of rows.
-  - Zero-copy where the content is borrowed, not cloned.
-- **The golden is the regression gate**: any visual change needs the
-  user's sign-off — the golden encodes their exact preferences (the
-  strike/fill minimums, the anchor pairings, the reverse-stretch shape).
+### Phase 5 — the Rust-y redesign ✅
+- Type system & performance enhancements implemented:
+  - `RowKind` typed enum dispatched throughout the engine and wire types.
+  - Zero-copy tokenization (`tokenize_line` returning `Vec<&str>`).
+  - Typed helper methods on `Spans`.
+  - Bounded scratch-buffer DP memory reuse in `lcs_matched_chars_ids`.
+- **The golden is the regression gate**: all unit tests, golden walks, and apply-oracle checks pass 100%.
 
 ### Phase 6 — the engine as application-preserving refactorings ✅
 
@@ -339,8 +332,9 @@ across all 6 golden corpora.
 | Phase 2 | the extension lives in the workspace, its suite passes in place, and it reads the shared corpus |
 | Phase 3 | all unit tests pass; the golden acceptance — **lib leg and bin leg** — walks the frozen corpus byte-identically with the wire-contract invariants (§2 contract pinned to the engine) |
 | Phase 4 | the extension renders from the rust backend (the golden's rust leg — ✅ passed); the TS backend and the reference repo are removed (✅) |
-| Phase 5 | the redesign passes the golden unchanged; the extension builds from the workspace and passes its tests against the diffuse backend; clippy `-D warnings`; the docs updated |
+| Phase 5 | the redesign passes the golden unchanged; the extension builds from the workspace and passes its tests against the diffuse backend; clippy `-D warnings`; the docs updated (✅ passed) |
 | Phase 6 | the pass pipeline passes the golden AND the apply-oracle: `apply(original) == apply(each transformed step) == the checked-in new file`, for every corpus fixture (✅ passed) |
+
 
 
 ---
