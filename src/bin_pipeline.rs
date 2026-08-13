@@ -393,7 +393,11 @@ pub fn run_pipeline_with_notes(
             .collect(),
         });
     }
-    PipelineOutput { files: out_files }
+    PipelineOutput {
+        files: out_files,
+        branch: String::new(),
+        untracked_skipped: Vec::new(),
+    }
 }
 
 /// Run the pipeline over a diff + the new-file contents; produce the
@@ -455,4 +459,8 @@ pub struct OutputFile {
 #[serde(rename_all = "camelCase")]
 pub struct PipelineOutput {
     pub files: Vec<OutputFile>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub branch: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub untracked_skipped: Vec<String>,
 }

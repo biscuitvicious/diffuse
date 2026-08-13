@@ -150,192 +150,24 @@ export function filesFromWire(
 	return out;
 }
 
-export interface RefPair {
-	worktreeNew: boolean;
-	newRef: string | null;
-	oldRef: string | null;
-}
-
-export async function resolveRefs(git: GitRunner, baseArgs: string[], cached: boolean): Promise<RefPair> {
-	const refs = baseArgs.filter((t) => t !== "--cached" && !t.startsWith("-"));
-	if (refs.length === 1) {
-		const r = refs[0]!;
-		if (r.endsWith("^!")) {
-			const c = r.slice(0, -2);
-			return { worktreeNew: false, newRef: c, oldRef: `${c}^` };
-		}
-		const twoDot = /^(.+\.\.)(.+)$/.exec(r);
-		if (twoDot) return { worktreeNew: false, newRef: twoDot[2]!, oldRef: twoDot[1]!.slice(0, -2) };
-		const threeDot = /^(.+)\.{3}(.+)$/.exec(r);
-		if (threeDot) {
-			const mb = await git(["merge-base", threeDot[1]!, threeDot[2]!]);
-			return { worktreeNew: false, newRef: threeDot[2]!, oldRef: mb.code === 0 ? mb.stdout.trim() : threeDot[1]! };
-		}
-		return { worktreeNew: true, newRef: null, oldRef: r };
-	}
-	if (refs.length === 2) {
-		return { worktreeNew: false, newRef: refs[1]!, oldRef: refs[0]! };
-	}
-	return { worktreeNew: true, newRef: null, oldRef: cached ? "HEAD" : null };
-}
-
-export async function rustBackendLoad(
-	git: GitRunner,
-	repoRoot: string,
-	tsFiles: DiffFile[],
-	diffText: string,
-	context: number,
-	delOf: Record<string, number>,
-	refs: RefPair,
-	repo: string,
-): Promise<DiffFile[]> {
-	for (const f of tsFiles) {
-		if (f.status === "deleted") continue;
-		if (refs.worktreeNew) {
-			const newAbs = join(repoRoot, f.path);
-			if (existsSync(newAbs)) {
-				try {
-					f.newContent = readFileSync(newAbs, "utf8").split("\n");
-				} catch {
-					f.newContent = [];
-				}
-			}
-		} else if (refs.newRef !== null) {
-			const res = await git(["show", `${refs.newRef}:${f.path}`]);
-			if (res.code === 0) f.newContent = res.stdout.split("\n");
-		}
-		f.newLineCount = f.newContent.length;
-	}
-	const oldTreeRef = refs.oldRef ?? "HEAD";
-	for (const f of tsFiles) {
-		const newEmpty = f.newContent.length === 0;
-		const needsOld = f.status === "deleted" || (delOf[f.path] ?? 0) > 0 || newEmpty;
-		if (!needsOld) continue;
-		const oldRes = await git(["show", `${oldTreeRef}:${f.path}`]);
-		if (oldRes.code === 0) {
-			f.oldContent = oldRes.stdout.split("\n");
-			if (newEmpty && f.status !== "deleted") {
-				f.newContent = f.oldContent;
-				f.newLineCount = f.oldContent.length;
-			}
-		}
-		f.noContent = f.newContent.length === 0 && f.oldContent.length === 0;
-	}
-	const contents: Record<string, string> = {};
-	for (const f of tsFiles) contents[f.path] = f.newContent.join("\n");
-	const wire = await runDiffuseBin(
-		diffuseBinPath(),
-		JSON.stringify({ diff: diffText, contents, notesFile: NOTES_FILE, repo }),
-	);
-	const files = filesFromWire(
-		wire,
-		(p) => {
-			const f = tsFiles.find((x) => x.path === p);
-			return f
-				? { newContent: f.newContent, oldContent: f.oldContent, oldPath: null }
-				: undefined;
-		},
-		context,
-	);
-	for (const f of tsFiles) {
-		if (f.status === "untracked") files.push(f);
-	}
-	return files;
-}
-
 export async function loadReview(
-	git: GitRunner,
+	_git: GitRunner,
 	repoRoot: string,
 	base: ReviewBase,
 	context: number,
 ): Promise<{ files: DiffFile[]; branch: string; untrackedSkipped: string[] }> {
-	const branchRes = await git(["branch", "--show-current"]);
-	const branch = branchRes.code === 0 ? branchRes.stdout.trim() : "";
-
-	const diffRes = await git([
-		"diff",
-		`-U${context}`,
-		"-M",
-		"--no-color",
-		...base.baseArgs,
-		"--",
-		...base.paths,
-	]);
-	const nameStatus = await git(["diff", "-M", "--name-status", ...base.baseArgs, "--", ...base.paths]);
-	const numstat = await git(["diff", "-M", "--numstat", ...base.baseArgs, "--", ...base.paths]);
-	const delOf: Record<string, number> = {};
-	for (const l of numstat.stdout.split("\n")) {
-		const m = /^(\d+)\t(\d+)\t(.+)$/.exec(l);
-		if (m) delOf[m[3]!] = Number(m[2]);
-	}
-	const files: DiffFile[] = [];
-	for (const l of nameStatus.stdout.split("\n")) {
-		const parts = l.split("\t");
-		if (!parts[0]) continue;
-		const st = parts[0]!;
-		let status: any = "modified";
-		let path = parts[1] ?? "";
-		if (st.startsWith("A")) status = "added";
-		else if (st.startsWith("D")) status = "deleted";
-		else if (st.startsWith("R")) {
-			status = "renamed";
-			path = parts[2] ?? "";
-		}
-		files.push({
-			path,
-			status,
-			newLineCount: 0,
-			newContent: [],
-			oldContent: [],
-			hunks: [],
-			noContent: false,
-		});
-	}
-	const untrackedSkipped: string[] = [];
-
-	if (!base.cached && base.paths.length === 0) {
-		const ut = await git(["ls-files", "--others", "--exclude-standard"]);
-		if (ut.code === 0) {
-			for (const rel of ut.stdout.split("\n").filter(Boolean)) {
-				const abs = join(repoRoot, rel);
-				let content: string;
-				try {
-					content = readFileSync(abs, "utf8");
-				} catch {
-					continue;
-				}
-				if (content.includes("\0")) {
-					untrackedSkipped.push(rel);
-					continue;
-				}
-				const lines = content.split("\n");
-				files.push({
-					path: rel,
-					status: "untracked",
-					newLineCount: lines.length,
-					newContent: lines,
-					oldContent: [],
-					hunks: [
-						{
-							oldStart: 0,
-							oldCount: 0,
-							newStart: 1,
-							newCount: lines.length,
-							rows: lines.map((t, i) => ({ kind: "add", text: t, newLine: i + 1, oldLine: null })),
-							aboveCtx: 0,
-							belowCtx: 0,
-						},
-					],
-					noContent: false,
-				});
-			}
-		}
-	}
-
-	const refs = await resolveRefs(git, base.baseArgs, base.cached);
-	return {
-		files: await rustBackendLoad(git, repoRoot, files, diffRes.stdout, context, delOf, refs, base.repo),
-		branch,
-		untrackedSkipped,
+	const payload = {
+		repoRoot,
+		baseArgs: base.baseArgs,
+		paths: base.paths,
+		cached: base.cached,
+		context,
+		notesFile: NOTES_FILE,
+		repo: base.repo,
 	};
+	const wire = await runDiffuseBin(diffuseBinPath(), JSON.stringify(payload));
+	const files = filesFromWire(wire, () => undefined, context);
+	const branch = (wire as any).branch ?? "";
+	const untrackedSkipped = (wire as any).untrackedSkipped ?? [];
+	return { files, branch, untrackedSkipped };
 }

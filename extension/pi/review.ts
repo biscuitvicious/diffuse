@@ -14,7 +14,6 @@ import {
 	loadReview,
 	makeGitRunner,
 	parseReviewArgs,
-	resolveRefs,
 	runDiffuseBin,
 	runDiffuseBinBatch,
 } from "./src/backend.ts";
@@ -206,5 +205,4 @@ export const reviewInternals = {
 	runDiffuseBin,
 	runDiffuseBinBatch,
 	filesFromWire,
-	resolveRefs,
 };
