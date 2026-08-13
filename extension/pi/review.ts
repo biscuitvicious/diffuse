@@ -644,10 +644,15 @@ async function resolveRefs(git: GitRunner, baseArgs: string[], cached: boolean):
 	// parseReviewArgs (collected under `--`); `--cached` is a flag.
 	const refs = baseArgs.filter((t) => t !== "--cached" && !t.startsWith("-"));
 	if (refs.length === 1) {
-		const r = refs[0]!;
+		// `C^!` (caret-exclamation): commit C vs its parent C^ — diff a commit against its parent.
+		if (r.endsWith("^!")) {
+			const c = r.slice(0, -2);
+			return { worktreeNew: false, newRef: c, oldRef: `${c}^` };
+		}
 		// `A..B` (two dots): tree A vs tree B, new=B, old=A — a committed range,
 		// neither side is the worktree.
 		const twoDot = /^(.+\.\.)(.+)$/.exec(r);
+
 		if (twoDot) return { worktreeNew: false, newRef: twoDot[2]!, oldRef: twoDot[1]!.slice(0, -2) };
 		// `A...B` (three dots): merge-base of A,B vs B, new=B, old=merge-base.
 		// Rare; resolve through git so the old side is the divergence point.
