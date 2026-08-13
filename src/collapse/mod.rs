@@ -320,7 +320,8 @@ pub fn pass_pair_and_stretch(
         {
             let mut i = ri + 1;
             let mut del_comments = 1;
-            while i < h.rows.len() && h.rows[i].kind == RowKind::Del && is_comment(&h.rows[i].text) {
+            while i < h.rows.len() && h.rows[i].kind == RowKind::Del && is_comment(&h.rows[i].text)
+            {
                 del_comments += 1;
                 i += 1;
             }
@@ -340,8 +341,6 @@ pub fn pass_pair_and_stretch(
                 &word_spans(&r.text, &h.rows[best.unwrap()].text),
             )
             && !wholesale_pair(&r.text, &run_text, &word_spans(&r.text, &run_text));
-
-
 
         if stretch_ok {
             let br = best_run.as_ref().unwrap().clone();
@@ -613,7 +612,6 @@ pub fn pass_filter_reflows(
             t.is_empty() || !corpus.contains(t)
         })
         .collect();
-
 
     ReflowFilter {
         meaningful_dels: meaningful,

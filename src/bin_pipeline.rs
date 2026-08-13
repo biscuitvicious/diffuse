@@ -290,7 +290,16 @@ pub fn run_pipeline(
                 .map(|r| OutputFence {
                     start: r.start,
                     end: r.end,
-                    lang: r.lang.clone().unwrap_or_default(),
+                    // Normalize the raw fence tag to its profile KEY (e.g.
+                    // `rust,no_run`→`rs`, `edition2021`→`rs`, `python`→`py`)
+                    // so the wire carries the canonical form — the
+                    // renderer's `langProfile(region.lang)` resolves it via
+                    // the simple alias map, never needing the doctest-
+                    // attribute grammar (a single source of truth: the
+                    // engine owns language resolution, the renderer just
+                    // consumes the key).
+                    lang: crate::syntax::fence_lang_ext(&r.lang.clone().unwrap_or_default())
+                        .to_string(),
                 })
                 .collect(),
         });

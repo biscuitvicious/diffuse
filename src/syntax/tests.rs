@@ -1,6 +1,6 @@
 //! Ports of the syntax-highlighting tests from test/review.test.ts.
 
-use crate::syntax::{classify_tokens, lang_profile};
+use crate::syntax::{classify_tokens, fence_regions, lang_profile};
 
 // The semantic colors, per the TS test's theme codes.
 fn color_of(tok: &str) -> &str {
@@ -84,8 +84,9 @@ fn syntax_classification() {
     assert!(
         doc_bt
             .iter()
-            .any(|t| t.color == "syntaxComment" && t.text == "/// Uses ")
+            .any(|t| t.color == "syntaxComment" && t.text.contains("Uses"))
     );
+
     assert!(doc_bt.iter().any(|t| t.color == "accent" && t.text == "`"));
     assert!(
         doc_bt
@@ -102,4 +103,177 @@ fn syntax_classification() {
             .iter()
             .any(|t| t.color == "syntaxComment" && t.text == " to read.")
     );
+}
+
+// Rust doc-comment fences with doctest execution modifiers — `no_run`,
+// `ignore`, `should_panic`, `compile_fail`, `edition2021`, `ignore_linux`,
+// and combos like `rust,no_run,edition2021` — still contain valid Rust
+// syntax and must open a region that RESOLVES to the `rs` profile. The
+// fence regex's capture group must accept commas, and `lang_profile` must
+// recognize the modifier list as Rust (bare `no_run`/`edition*` tags imply
+// Rust inside a `.rs` doc). The region's `lang` carries the raw tag; the
+// profile is resolved per-row via `lang_profile(lang)`.
+fn lines(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+/// Assert the region's tag resolves to a target profile key.
+fn region_is(rs: &crate::syntax::LangProfile, doc: &[String], want: &str) {
+    let regions = fence_regions(doc, Some(rs));
+    assert_eq!(regions.len(), 1, "should open exactly one region");
+    let lang = regions[0].lang.as_deref().expect("region has a lang");
+    let resolved = lang_profile(lang).expect("lang resolves to a profile");
+    let want_prof = lang_profile(want).unwrap();
+    assert!(
+        std::ptr::addr_eq(resolved, want_prof),
+        "tag `{lang}` must resolve to the `{want}` profile"
+    );
+}
+
+#[test]
+fn rust_doc_fence_with_execution_modifier_opens_rust_region() {
+    let rs = lang_profile("rs").unwrap();
+    let cases = [
+        "```rust",
+        "```rust,no_run",
+        "```no_run",
+        "```should_panic",
+        "```compile_fail",
+        "```ignore",
+        "```edition2021",
+        "```ignore_linux",
+        "```rust,no_run,edition2021",
+        "```no_run,ignore",
+    ];
+    for tag in cases {
+        let doc = lines(&[
+            "/// leading prose.",
+            &format!("/// {tag}"),
+            "/// let x = 42;",
+            "/// ```",
+            "/// trailing prose.",
+        ]);
+        region_is(rs, &doc, "rs");
+        // The code line (line 3) is inside the region bounded by the
+        // opening fence (line 2) and closing fence (line 4).
+        let regions = fence_regions(&doc, Some(rs));
+        assert_eq!(regions[0].start, 3);
+        assert_eq!(regions[0].end, 3);
+    }
+}
+
+#[test]
+fn rust_doc_fence_unlabeled_defaults_to_rust() {
+    let rs = lang_profile("rs").unwrap();
+    let doc = lines(&["/// ```", "/// let x = 5;", "/// ```"]);
+    region_is(rs, &doc, "rs");
+}
+
+#[test]
+fn rust_doc_fence_named_other_language_overrides_rust_default() {
+    // A ` ```python ` example embedded in a rust crate's doc highlights
+    // as python, not rust — the language alias takes precedence over the
+    // implied-rust default.
+    let rs = lang_profile("rs").unwrap();
+    let doc = lines(&["/// ```python", "/// def f(): pass", "/// ```"]);
+    region_is(rs, &doc, "py");
+}
+
+#[test]
+fn md_fence_with_rust_modifier_opens_rust_region() {
+    let md = lang_profile("md").unwrap();
+    let doc = lines(&["```rust,no_run", "let x = 42;", "```"]);
+    let regions = fence_regions(&doc, Some(md));
+    assert_eq!(regions.len(), 1);
+    let lang = regions[0].lang.as_deref().expect("region has a lang");
+    assert!(
+        std::ptr::addr_eq(lang_profile(lang).unwrap(), lang_profile("rs").unwrap()),
+        "md fence tag `{lang}` must resolve to the rs profile"
+    );
+}
+
+// Plain (`//`, `/*`, `#`) comments are NOT markdown: only inline `` `code` ``
+// spans render (accent backticks + Rust-classified inner); no `**bold**`,
+// `*italic*`, `~~strike~~`, `[link](url)`. Doc comments (`///`, `//!`) ARE
+// markdown — full emphasis. The split lives in `tokenize_comment_with_backticks`.
+fn colors_of(text: &str, profile: Option<&crate::syntax::LangProfile>) -> Vec<(String, String)> {
+    crate::syntax::classify_tokens(text, profile)
+        .into_iter()
+        .map(|t| (t.color, t.text))
+        .collect()
+}
+
+#[test]
+fn plain_comment_backtick_renders_as_rust_no_markdown() {
+    let rs = lang_profile("rs").unwrap();
+    // A `//` comment: the `` `if`/`k` `` backtick spans render as accent +
+    // Rust-classified, but the surrounding text (and the `**not bold**`,
+    // `*not italic*`, `[not link](url)`) stays comment-colored — no emphasis.
+    let toks = colors_of(
+        "// keep its `if`/`k`/`floor {` fragments; **not bold** *not italic* [not link](u)",
+        Some(rs),
+    );
+    // backtick delimiters are accent
+    assert!(
+        toks.iter().any(|(c, t)| c == "accent" && t == "`"),
+        "backticks accent"
+    );
+    // inner `if` / `k` classify as Rust keyword (syntaxKeyword), not comment
+    assert!(
+        toks.iter().any(|(c, t)| c == "syntaxKeyword" && t == "if"),
+        "`if` inside backticks renders as a Rust keyword"
+    );
+    // the `**not bold**` text outside backticks stays syntaxComment — no mdBold
+    assert!(
+        toks.iter()
+            .any(|(c, t)| c == "syntaxComment" && t.contains("**not bold**")),
+        "`**bold**` in a plain comment (outside backticks) stays comment-colored"
+    );
+    // `[not link](u)` outside backticks stays syntaxComment — no mdUrl
+    assert!(
+        toks.iter()
+            .any(|(c, t)| c == "syntaxComment" && t.contains("[not link]")),
+        "`[link](url)` in a plain comment stays comment-colored"
+    );
+    // no mdBold / mdItalic / mdStrike / mdLink / mdUrl tokens at all
+    assert!(
+        toks.iter().all(|(c, _)| !matches!(
+            c.as_str(),
+            "mdBold" | "mdItalic" | "mdStrike" | "mdLink" | "mdUrl"
+        )),
+        "no markdown emphasis tokens in a plain comment"
+    );
+}
+
+#[test]
+fn doc_comment_full_markdown_renders() {
+    let rs = lang_profile("rs").unwrap();
+    // A `///` doc comment: `**bold**` renders as accent `**` + mdBold body,
+    // and `` `code` `` renders as accent backticks + Rust inner.
+    let toks = colors_of("/// **bold** and `code`", Some(rs));
+    assert!(
+        toks.iter().any(|(c, t)| *c == "mdBold" && t == "bold"),
+        "doc bold renders"
+    );
+    assert!(
+        toks.iter().any(|(c, t)| c == "accent" && t == "`"),
+        "doc backticks accent"
+    );
+    assert!(
+        toks.iter()
+            .any(|(c, t)| *c == "syntaxKeyword" || t == "code"),
+        "doc inner code classified"
+    );
+}
+
+#[test]
+fn plain_comment_without_backtick_is_uniform_comment() {
+    let rs = lang_profile("rs").unwrap();
+    // No backtick, no markdown triggers → the whole line is one syntaxComment token.
+    let toks = colors_of(
+        "// a plain comment with **stars** and *italics* but no backticks",
+        Some(rs),
+    );
+    assert_eq!(toks.len(), 1, "one token");
+    assert_eq!(toks[0].0, "syntaxComment");
 }

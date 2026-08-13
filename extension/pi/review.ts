@@ -93,6 +93,166 @@ const sDel = ROW_STYLES.del;
 const sMod = ROW_STYLES.mod;
 const sMov = ROW_STYLES.mov;
 
+// ── Multi-Theme Engine & Dark Color Sorcery (+18) ──────────────────────────
+
+/** The SGR reset a theme emits at the end of a colored span. Default-fg
+ * only (`\x1b[39m`) — the minimal, correct reset that does NOT wipe the
+ * row's background tint or the SGR attribute state (bold/italic), so the
+ * per-token re-emit of bg/SGR in styleTokens/highlightTokens is redundant
+ * rather than reparative. Exported so the golden test's host-theme stand-in
+ * can reference the SAME reset code (a single source of truth — the theme
+ * is the authority; the test harmonizes to it, never the reverse). */
+export const FG_RESET = "\x1b[39m";
+
+export interface DiffuseTheme {
+	name: string;
+	renderToken(
+		tok: { color: string; text: string; sgr?: number; kind?: string },
+		rowKind: string,
+		hostThemeFg: (c: string, t: string) => string,
+	): string;
+}
+
+export const THEME_MAGIC: DiffuseTheme = {
+	name: "magic",
+	renderToken(tok, rowKind, hostThemeFg) {
+		const c = tok.color;
+		const isAdd = rowKind === "add" || tok.kind === "add";
+		const isDel = rowKind === "del" || tok.kind === "del";
+
+		let ansiColor: string | null = null;
+
+		if (isAdd) {
+			// +18 Dark Sorcery Adaptation for ADDED green rows / fills
+			switch (c) {
+				case "mdBold":
+				case "syntaxType":
+					ansiColor = "\x1b[38;5;221m"; // Bright Warm Amber Gold (#ffd75f)
+					break;
+				case "mdItalic":
+				case "syntaxComment":
+				case "muted":
+					ansiColor = "\x1b[38;5;229m"; // Bright Warm Cream (#ffff87)
+					break;
+				case "syntaxString":
+					ansiColor = "\x1b[38;5;121m"; // Bright Mint Teal (#87ffa3)
+					break;
+				case "mdLink":
+					ansiColor = "\x1b[38;5;117m"; // Bright Sky Blue (#87d7ff)
+					break;
+				case "mdUrl":
+				case "mdStrike":
+					ansiColor = "\x1b[38;5;250m"; // Soft Minted Silver (#bcbcbc)
+					break;
+				case "accent":
+				case "mdDelim":
+					ansiColor = "\x1b[38;5;51m"; // Electric Neon Cyan (#00ffff)
+					break;
+				default:
+					ansiColor = null;
+			}
+		} else if (isDel) {
+			// +18 Dark Sorcery Adaptation for DELETED red rows / fills
+			switch (c) {
+				case "mdBold":
+				case "syntaxType":
+					ansiColor = "\x1b[38;5;222m"; // Warm Pale Amber (#fdd875)
+					break;
+				case "mdItalic":
+				case "syntaxComment":
+				case "muted":
+					ansiColor = "\x1b[38;5;224m"; // Soft Light Rose (#ffd7d7)
+					break;
+				case "syntaxString":
+					ansiColor = "\x1b[38;5;122m"; // Bright Seafoam (#87ffaf)
+					break;
+				case "mdLink":
+					ansiColor = "\x1b[38;5;153m"; // Ice Blue (#afd7ff)
+					break;
+				case "mdUrl":
+				case "mdStrike":
+					ansiColor = "\x1b[38;5;248m"; // Soft Dust Grey (#a8a8a8)
+					break;
+				case "accent":
+				case "mdDelim":
+					ansiColor = "\x1b[38;5;51m"; // Electric Neon Cyan (#00ffff)
+					break;
+				default:
+					ansiColor = null;
+			}
+		} else {
+			// Context (unmodified) lines — the user's chosen palette!
+			switch (c) {
+				case "mdBold":
+				case "syntaxType":
+					ansiColor = "\x1b[38;5;179m"; // Warm Gold / Amber (#e5c07b)
+					break;
+				case "mdItalic":
+					ansiColor = "\x1b[38;5;187m"; // Warm Parchment / Cream (#e6db74)
+					break;
+				case "syntaxString":
+					ansiColor = "\x1b[38;5;114m"; // Mint Green (#98c379)
+					break;
+				case "mdLink":
+					ansiColor = "\x1b[38;5;75m"; // Sky Blue (#61afef)
+					break;
+				case "mdUrl":
+				case "mdStrike":
+				case "syntaxComment":
+				case "muted":
+					ansiColor = "\x1b[38;5;243m"; // Muted Grey (#767676)
+					break;
+				case "accent":
+				case "mdDelim":
+					ansiColor = "\x1b[38;5;51m"; // Electric Cyan (#00ffff)
+					break;
+				default:
+					ansiColor = null;
+			}
+		}
+
+		if (ansiColor) {
+			return `${ansiColor}${tok.text}${FG_RESET}`;
+		}
+		return hostThemeFg(c, tok.text);
+	},
+};
+
+export const THEME_LEGACY: DiffuseTheme = {
+	name: "legacy",
+	renderToken(tok, rowKind, hostThemeFg) {
+		let c = tok.color;
+		if (c === "mdBold") c = "syntaxType";
+		else if (c === "mdItalic") c = "muted";
+		else if (c === "mdLink") c = "text";
+		else if (c === "mdUrl") c = "muted";
+		else if (c === "mdStrike") c = "muted";
+		else if (c === "mdDelim") c = "accent";
+		const isAdd = rowKind === "add" || tok.kind === "add";
+		if (isAdd && (c === "syntaxComment" || c === "muted")) {
+			return `\x1b[38;5;250m${tok.text}${FG_RESET}`;
+		}
+		if (c === "syntaxType") {
+			return `\x1b[38;5;173m${tok.text}${FG_RESET}`;
+		}
+		return hostThemeFg(c, tok.text);
+	},
+};
+
+
+export const THEMES: Record<string, DiffuseTheme> = {
+	magic: THEME_MAGIC,
+	sorcery: THEME_MAGIC,
+	legacy: THEME_LEGACY,
+	classic: THEME_LEGACY,
+};
+
+export function getActiveTheme(): DiffuseTheme {
+	const name = (process.env.REVIEW_THEME || "legacy").toLowerCase();
+	return THEMES[name] || THEME_MAGIC;
+}
+
+
 /**
  * Inline Markdown for the note lines: `` `code` `` (the syntax-string
  * color), `**bold**` (the accent), `*italic*` (muted); everything else
@@ -118,24 +278,26 @@ function renderMarkdown(text: string, fg: (c: string, t: string) => string): str
 	}
 	const re = /(`[^`\n]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\s\n][^*\n]*\*|\[[^\]\n]+\]\([^)\n]+\))/g;
 	const sgr = (on: number, t: string): string => `\x1b[${on}m${t}\x1b[${SGR_OFF[on]!}m`;
+	const activeTheme = getActiveTheme();
 	let out = "";
 	let last = 0;
 	for (const m of text.matchAll(re)) {
 		const idx = m.index ?? 0;
 		if (idx > last) out += fg("warning", text.slice(last, idx));
 		const tok = m[0]!;
-		if (tok.startsWith("`")) out += fg("syntaxString", tok);
-		else if (tok.startsWith("~~")) out += sgr(MD_SGR.strike, fg("muted", tok));
-		else if (tok.startsWith("**")) out += sgr(MD_SGR.bold, fg("accent", tok));
+		if (tok.startsWith("`")) out += activeTheme.renderToken({ color: "accent", text: "`" }, "ctx", fg) + activeTheme.renderToken({ color: "syntaxString", text: tok.slice(1, -1) }, "ctx", fg) + activeTheme.renderToken({ color: "accent", text: "`" }, "ctx", fg);
+		else if (tok.startsWith("~~")) out += activeTheme.renderToken({ color: "accent", text: "~~" }, "ctx", fg) + sgr(MD_SGR.strike, activeTheme.renderToken({ color: "mdStrike", text: tok.slice(2, -2) }, "ctx", fg)) + activeTheme.renderToken({ color: "accent", text: "~~" }, "ctx", fg);
+		else if (tok.startsWith("**")) out += activeTheme.renderToken({ color: "accent", text: "**" }, "ctx", fg) + sgr(MD_SGR.bold, activeTheme.renderToken({ color: "mdBold", text: tok.slice(2, -2) }, "ctx", fg)) + activeTheme.renderToken({ color: "accent", text: "**" }, "ctx", fg);
 		else if (tok.startsWith("[")) {
 			const close = tok.indexOf("](");
-			out += sgr(MD_SGR.underline, fg("text", tok.slice(0, close + 1))) + sgr(MD_SGR.underline, fg("muted", tok.slice(close + 1)));
-		} else out += sgr(MD_SGR.italic, fg("muted", tok));
+			out += activeTheme.renderToken({ color: "accent", text: "[" }, "ctx", fg) + sgr(MD_SGR.underline, activeTheme.renderToken({ color: "mdLink", text: tok.slice(1, close) }, "ctx", fg)) + activeTheme.renderToken({ color: "accent", text: "](" }, "ctx", fg) + sgr(MD_SGR.underline, activeTheme.renderToken({ color: "mdUrl", text: tok.slice(close + 2, -1) }, "ctx", fg)) + activeTheme.renderToken({ color: "accent", text: ")" }, "ctx", fg);
+		} else out += activeTheme.renderToken({ color: "accent", text: "*" }, "ctx", fg) + sgr(MD_SGR.italic, activeTheme.renderToken({ color: "mdItalic", text: tok.slice(1, -1) }, "ctx", fg)) + activeTheme.renderToken({ color: "accent", text: "*" }, "ctx", fg);
 		last = idx + tok.length;
 	}
 	if (last < text.length) out += fg("warning", text.slice(last));
 	return out;
 }
+
 
 /** SGR-on codes per markdown span (visual aids only — the control chars
  * stay in the content, the diff text is unchanged). */
@@ -151,11 +313,39 @@ const SGR_OFF: Record<number, number> = { 1: 22, 3: 23, 4: 24, 9: 29 };
  * SGR-on code; the control characters are part of the token text — a
  * diffing utility must show them.
  */
+/** Parse the inner content of a bold/italic span, stacking the parent SGR
+ * on top of any inline code or link children. The child's *color* wins;
+ * the parent's *SGR* (bold, italic) is inherited so e.g. **`code`** renders
+ * as code-color + bold rather than mdBold-color + bold. */
+function mdInnerTokens(
+	inner: string,
+	parentSgr: number,
+	parentColor: string,
+): { color: string; text: string; sgr?: number }[] {
+	const inner_re = /(`[^`\n]+`)/g;
+	const out: { color: string; text: string; sgr?: number }[] = [];
+	let last = 0;
+	let m: RegExpExecArray | null;
+	while ((m = inner_re.exec(inner))) {
+		// Plain text before a nested element inherits the parent color + SGR.
+		if (m.index > last) out.push({ color: parentColor, sgr: parentSgr, text: inner.slice(last, m.index) });
+		const tok = m[0]!;
+		// `` `code` `` inside bold/italic: code color wins, parent SGR stacks.
+		out.push({ color: "accent", text: "`" });
+		out.push({ color: "syntaxString", sgr: parentSgr, text: tok.slice(1, -1) });
+		out.push({ color: "accent", text: "`" });
+		last = m.index + tok.length;
+	}
+	if (last < inner.length) out.push({ color: parentColor, sgr: parentSgr, text: inner.slice(last) });
+	return out;
+}
+
 function markdownTokens(text: string): { color: string; text: string; sgr?: number }[] {
 	const heading = /^(#{1,6})(\s+)(.*)$/.exec(text);
 	if (heading) {
 		return [
-			{ color: "muted", text: heading[1]! + heading[2]! },
+			{ color: "accent", text: heading[1]! },
+			{ color: "text", text: heading[2]! },
 			{ color: "accent", sgr: MD_SGR.bold, text: heading[3]! },
 		];
 	}
@@ -166,19 +356,37 @@ function markdownTokens(text: string): { color: string; text: string; sgr?: numb
 	while ((m = re.exec(text))) {
 		if (m.index > last) out.push({ color: "text", text: text.slice(last, m.index) });
 		const tok = m[0]!;
-		if (tok.startsWith("`")) out.push({ color: "syntaxString", text: tok });
-		else if (tok.startsWith("~~")) out.push({ color: "muted", sgr: MD_SGR.strike, text: tok });
-		else if (tok.startsWith("**")) out.push({ color: "accent", sgr: MD_SGR.bold, text: tok });
-		else if (tok.startsWith("[")) {
+		if (tok.startsWith("`")) {
+			out.push({ color: "accent", text: "`" });
+			out.push({ color: "syntaxString", text: tok.slice(1, -1) });
+			out.push({ color: "accent", text: "`" });
+		} else if (tok.startsWith("~~")) {
+			out.push({ color: "accent", text: "~~" });
+			out.push(...mdInnerTokens(tok.slice(2, -2), MD_SGR.strike, "mdStrike"));
+			out.push({ color: "accent", text: "~~" });
+		} else if (tok.startsWith("**")) {
+			out.push({ color: "accent", text: "**" });
+			out.push(...mdInnerTokens(tok.slice(2, -2), MD_SGR.bold, "mdBold"));
+			out.push({ color: "accent", text: "**" });
+		} else if (tok.startsWith("[")) {
 			const close = tok.indexOf("](");
-			out.push({ color: "text", sgr: MD_SGR.underline, text: tok.slice(0, close + 1) });
-			out.push({ color: "muted", sgr: MD_SGR.underline, text: tok.slice(close + 1) });
-		} else out.push({ color: "muted", sgr: MD_SGR.italic, text: tok });
+			out.push({ color: "accent", text: "[" });
+			out.push(...mdInnerTokens(tok.slice(1, close), MD_SGR.underline, "mdLink"));
+			out.push({ color: "accent", text: "](" });
+			out.push({ color: "mdUrl", sgr: MD_SGR.underline, text: tok.slice(close + 2, -1) });
+			out.push({ color: "accent", text: ")" });
+		} else {
+			out.push({ color: "accent", text: "*" });
+			out.push(...mdInnerTokens(tok.slice(1, -1), MD_SGR.italic, "mdItalic"));
+			out.push({ color: "accent", text: "*" });
+		}
+
 		last = m.index + tok.length;
 	}
 	if (last < text.length) out.push({ color: "text", text: text.slice(last) });
 	return out;
 }
+
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -1333,9 +1541,11 @@ interface LangProfile {
 }
 
 function langProfile(ext: string): LangProfile | null {
-	// Fence ids are LANGUAGE names (` ```rust `); the profiles are keyed by
-	// the file EXTENSIONS (`rs`). Map the common aliases so a labeled fence
-	// actually highlights.
+	// The wire's fence `lang` is the NORMALIZED profile key (the engine
+	// resolves doctest attribute lists like `rust,no_run`/`edition2021`/
+	// `ignore_linux` to `rs` before sending — a single source of truth).
+	// This switch maps the remaining LANGUAGE aliases (`rust`→`rs`, …) so a
+	// labeled fence actually highlights; it never sees a raw modifier tag.
 	switch (ext) {
 		case "rust": ext = "rs"; break;
 		case "javascript": case "jsx": ext = "js"; break;
@@ -1350,7 +1560,7 @@ function langProfile(ext: string): LangProfile | null {
 			return {
 				keywords: KEYWORDS_RUST, lineComment: true, blockComment: true, typesByCase: true,
 				// Doc-comment examples: `/// ```rust` opens a rust-syntax region.
-				fence: /^\s*(\/\/\/|\/\/!)\s*```([a-z0-9_+-]*)\s*$/,
+				fence: /^\s*(\/\/\/|\/\/!)\s*```([a-z0-9_+,-]*)\s*$/,
 				// An unlabeled doc fence is a rust example.
 				unlabeledFenceLang: "rust",
 				// The region's code lines are comment-prefixed — strip the
@@ -1381,7 +1591,7 @@ function langProfile(ext: string): LangProfile | null {
 			return {
 				keywords: KEYWORDS_MD, hashComment: true,
 				// The md fence: ` ```lang ` — the last capture = the region language.
-				fence: /^\s*```([a-z0-9_+-]*)\s*$/,
+				fence: /^\s*```([a-z0-9_+,-]*)\s*$/,
 				// An unlabeled fence = the plain "code" style (no syntax).
 				unlabeledFenceLang: null,
 				markdown: true,
@@ -1396,6 +1606,20 @@ function langProfile(ext: string): LangProfile | null {
 			return null;
 	}
 }
+
+// TODO (recursive Markdown parser): mdInnerTokens handles `` `code` `` inside
+// bold/italic/links (SGR stacks, child color wins). Deeper nesting like
+// **`bold+italic`** requires a proper recursive descent parser — the regex
+// `\*\*[^*\n]+\*\*` already forbids `*` inside bold, so `**_italic_**` is
+// structurally unrepresentable in the current flat-regex approach. Defer until
+// there is a clear use-case that justifies the complexity.
+//
+// TODO (context lines into backend): context rows currently bypass the Rust
+// backend (no `runs` emitted for `RowKind::Ctx`). The TS renderer re-tokenizes
+// them live via ctxTokens / markdownTokens / tokenizeCommentWithBackticks —
+// duplicating all Rust-side logic. Phase 5 task: emit `runs` for Ctx rows in
+// bin_pipeline, delete ctxTokens from the renderer, and let the golden be the
+// single arbiter across all row kinds.
 
 // Regex literal parts; the per-language alternation is composed from
 // `re.source` (regex escapes, no string-escaping pitfalls).
@@ -1431,46 +1655,66 @@ function tokenReFor(profile: LangProfile): RegExp {
 	]
 		.filter(Boolean)
 		.join("|");
-	let re = TOKEN_RE_CACHE.get(parts);
-	if (!re) {
-		re = new RegExp(parts, "g");
-		TOKEN_RE_CACHE.set(parts, re);
-	}
-	return re;
+	return new RegExp(parts, "g");
 }
 
-function tokenizeCommentWithBackticks(tok: string, profile: LangProfile): { color: string; text: string }[] {
-	if (!tok.includes("`")) {
-		return [{ color: "syntaxComment", text: tok }];
-	}
+
+function tokenizeCommentWithBackticks(tok: string, profile: LangProfile): { color: string; text: string; sgr?: number }[] {
+	// Doc comments (`///`, `//!`) are MARKDOWN — rustdoc processes them, so
+	// `**bold**`, `*italic*`, `~~strike~~`, `[link](url)`, and `` `code` ``
+	// all render. Plain comments (`//`, `/*`, `#`) are NOT markdown; the
+	// convention (rust-analyzer, GitHub) is a uniform comment color. The one
+	// exception: inline `` `code` `` spans in a plain comment still render as
+	// Rust (accent backticks + classified inner) — they read as code refs,
+	// not prose. No markdown emphasis/link/strike on plain comments. This
+	// mirrors the engine's `tokenize_comment_with_backticks` so synthesized
+	// ctx rows (this path) render identically to in-hunk rows (the engine).
+	const isDoc = tok.startsWith("///") || tok.startsWith("//!");
+	const hasMarkdown = isDoc && (tok.includes("`") || tok.includes("**") || tok.includes("~~") || tok.includes("["));
+	const hasBacktick = tok.includes("`");
+	if (!hasMarkdown && !hasBacktick) return [{ color: "syntaxComment", text: tok }];
 	const rustProf = langProfile("rs") || profile;
-	const out: { color: string; text: string }[] = [];
-	let last = 0;
-	while (last < tok.length) {
-		const openRel = tok.slice(last).indexOf("`");
-		if (openRel !== -1) {
-			const open = last + openRel;
-			const closeRel = tok.slice(open + 1).indexOf("`");
-			if (closeRel !== -1) {
-				const close = open + 1 + closeRel;
-				if (open > last) {
-					out.push({ color: "syntaxComment", text: tok.slice(last, open) });
-				}
-				out.push({ color: "accent", text: "`" });
-				const inner = tok.slice(open + 1, close);
-				if (inner.length > 0) {
-					out.push(...classifyTokens(inner, rustProf));
-				}
-				out.push({ color: "accent", text: "`" });
-				last = close + 1;
-				continue;
-			}
+	let prefixLen = 0;
+	if (isDoc) prefixLen = 3;
+	else if (tok.startsWith("//") || tok.startsWith("/*")) prefixLen = 2;
+	else if (tok.startsWith("#")) prefixLen = 1;
+
+	const out: { color: string; text: string; sgr?: number }[] = [];
+	if (prefixLen > 0) out.push({ color: "syntaxComment", text: tok.slice(0, prefixLen) });
+	const body = tok.slice(prefixLen);
+	if (isDoc) {
+		for (const t of markdownTokens(body)) {
+			if (t.color === "text") out.push({ ...t, color: "syntaxComment" });
+			else if (t.color === "syntaxString") out.push(...classifyTokens(t.text, rustProf));
+			else out.push(t);
 		}
-		out.push({ color: "syntaxComment", text: tok.slice(last) });
-		break;
+	} else {
+		out.push(...backtickTokens(body, rustProf));
 	}
 	return out;
 }
+
+/** Backtick-only extraction for plain (`//`, `/*`, `#`) comments: only inline
+ * `` `code` `` spans render — accent backticks + Rust-classified inner;
+ * the surrounding comment text stays `syntaxComment`. No markdown
+ * emphasis/link/strike (plain comments aren't markdown). Mirrors the
+ * engine's `backtick_tokens`. */
+function backtickTokens(body: string, rustProf: LangProfile): { color: string; text: string; sgr?: number }[] {
+	const re = /`[^`\n]+`/g;
+	const out: { color: string; text: string; sgr?: number }[] = [];
+	let last = 0;
+	let m: RegExpExecArray | null;
+	while ((m = re.exec(body))) {
+		if (m.index > last) out.push({ color: "syntaxComment", text: body.slice(last, m.index) });
+		out.push({ color: "accent", text: "`" });
+		out.push(...classifyTokens(m[0]!.slice(1, -1), rustProf));
+		out.push({ color: "accent", text: "`" });
+		last = m.index + m[0]!.length;
+	}
+	if (last < body.length) out.push({ color: "syntaxComment", text: body.slice(last) });
+	return out;
+}
+
 
 function classifyTokens(text: string, profile: LangProfile | null): { color: string; text: string }[] {
 	if (!profile || text.length === 0) return [{ color: "text", text }];
@@ -2505,18 +2749,21 @@ class ReviewComponent {
 				vis += count;
 				continue;
 			}
-			if (vis >= this.scroll + maxRows) break;
 			const segs = this.rowSegments(r, width, i);
+			const segCount = segs.length;
 			const from = Math.max(0, this.scroll - vis);
-			const to = Math.min(count, this.scroll + maxRows - vis);
+			const to = Math.min(segCount, this.scroll + maxRows - vis);
 			for (let sIdx = from; sIdx < to; sIdx++) {
-				let seg = segs[sIdx]!;
+				let seg = segs[sIdx];
+				if (!seg) continue;
 				// The cursor row's lighter shade is applied inside the segment
 				// styling; the selection band keeps the themed stripe.
 				if (i !== this.rowIdx && bandRows.has(i)) seg = stripe(seg, "selectedBg");
 				lines.push(fit(seg));
 			}
-			vis += count;
+			vis += segCount;
+
+
 
 			const ns = noteByRow.get(i);
 			if (ns) {
@@ -2626,6 +2873,7 @@ class ReviewComponent {
 					let start = 0;
 					while (start < line.length) {
 						const end = Math.min(line.length, start + textCols);
+						if (end <= start) break;
 						const piece = line.slice(start, end);
 						const selected = this.rowIdx === flatIdx && this.visLine === segIdx;
 						if (isDel) {
@@ -2657,6 +2905,7 @@ class ReviewComponent {
 				let start = 0;
 				while (start < tlText.length) {
 					const end = Math.min(tlText.length, start + textCols);
+					if (end <= start) break;
 					const piece = tlText.slice(start, end);
 					const visIdx = -1;
 					out.push(tlPrefix + this.highlightTokens(tlTokens, start, end, ""));
@@ -2681,6 +2930,7 @@ class ReviewComponent {
 				let ls = 0;
 				while (ls < line.length) {
 					const le = Math.min(line.length, ls + textCols);
+					if (le <= ls) break;
 					emitSeg(start + ls, start + le, start + ls === 0 ? prefix : " ".repeat(prefix.length), segIdx++);
 					ls = le;
 				}
@@ -2702,12 +2952,12 @@ class ReviewComponent {
 			let start = 0;
 			while (start < tlText.length) {
 				const end = Math.min(tlText.length, start + textCols);
-				const piece = tlText.slice(start, end);
-				const visIdx = -1;
+				if (end <= start) break;
 				out.push(tlPrefix + this.highlightTokens(tlTokens, start, end, ""));
 				start = end;
 			}
 		}
+
 		return out;
 	}
 
@@ -2717,13 +2967,14 @@ class ReviewComponent {
 		const cols = Math.max(1, width - prefixOf(r).length - 2);
 		const wrap = (t: string): number =>
 			t.split("\n").reduce((sum, line) => sum + (line.length === 0 ? 1 : Math.max(1, Math.ceil(line.length / cols))), 0);
+		const tailSegs = (r.tail ?? []).reduce((sum, t) => sum + wrap(t.text), 0);
 		if (r.kind === "mod" && r.wholesale === true) {
-			return wrap(r.delText ?? "") + wrap(r.text);
+			return wrap(r.delText ?? "") + wrap(r.text) + tailSegs;
 		}
 		const len = this.displayText(r).length;
 		const multi = len === 0 ? 1 : this.displayText(r).split("\n").reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / cols)), 0);
-		const tailSegs = (r.tail ?? []).reduce((sum, t) => sum + wrap(t.text), 0);
 		return multi + tailSegs;
+
 	}
 
 	/**
@@ -2821,6 +3072,7 @@ class ReviewComponent {
 	}
 	private highlightTokens(tokens: { color: string; text: string }[], from: number, to: number, bg = `\x1b[48;5;${sAdd.tint}m`): string {
 		const theme = this.theme;
+		const activeTheme = getActiveTheme();
 		let out = "";
 		let pos = 0;
 		for (const tok of tokens) {
@@ -2832,7 +3084,12 @@ class ReviewComponent {
 			const e = Math.min(to, tokEnd);
 			const piece = tok.text.slice(s - tokStart, e - tokStart);
 			if (!piece) continue;
-			out += theme.fg(tok.color, piece) + bg;
+			const styledPiece = activeTheme.renderToken(
+				{ ...tok, text: piece },
+				"add",
+				(c, t) => theme.fg(c, t),
+			);
+			out += styledPiece + bg;
 		}
 		return out;
 	}
@@ -2849,6 +3106,7 @@ class ReviewComponent {
 		selected: boolean,
 	): string {
 		const theme = this.theme;
+		const activeTheme = getActiveTheme();
 		const isCtx = r.kind === "ctx" || r.kind === "sep";
 		// Moved rows style like context: syntax-highlighted, with only a
 		// whisper of shade (one step lighter than the old neutral) so they
@@ -2925,18 +3183,19 @@ class ReviewComponent {
 			} else {
 				const sgr = (tok as { sgr?: number }).sgr;
 				const off = sgr !== undefined ? SGR_OFF[sgr] : undefined;
-				const color =
-					tok.color === "syntaxComment" && (r.kind === "add" || tok.kind === "add")
-						? "text"
-						: tok.color;
-				out += bg + (sgr !== undefined ? `\x1b[${sgr}m` : "") + theme.fg(color, piece) + (off !== undefined ? `\x1b[${off}m` : "") + bg;
-
+				const styledPiece = activeTheme.renderToken(
+					{ ...tok, text: piece },
+					r.kind,
+					(c, t) => theme.fg(c, t),
+				);
+				out += bg + (sgr !== undefined ? `\x1b[${sgr}m` : "") + styledPiece + (off !== undefined ? `\x1b[${off}m` : "") + bg;
 			}
 		}
 		// End the row on the LINE tint, never the last token's bg: a trailing
 		// word-fill would paint the rest of the terminal width as "added".
 		return prefixBg + prefix + out + (selected || !isCtx ? lineBg : "");
 	}
+
 
 	invalidate(): void {}
 }

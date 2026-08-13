@@ -52,20 +52,41 @@ fn kw(set: &str) -> HashSet<String> {
     set.split_whitespace().map(String::from).collect()
 }
 
+/// Normalize a fence tag (or file extension) to a profile key.
+///
+/// Language aliases map to their profile (`rust`→`rs`, `typescript`→`ts`…).
+/// A Rust doc-comment fence carries a comma-separated **doctest attribute
+/// list** — `rust,no_run`, `should_panic`, `edition2021`, `ignore_linux`, or
+/// combos like `rust,no_run,edition2021`. Any `rust` token ⇒ a Rust example;
+/// any modifier (`no_run`, `ignore`, `should_panic`, `compile_fail`,
+/// `edition*`, `ignore_*`) ⇒ Rust is implied (the default lang in a `.rs`
+/// doc fence is rust). A named language alias embedded in a rust crate's
+/// doc (` ```python `) takes precedence and highlights as that language.
+pub fn fence_lang_ext(tag: &str) -> &str {
+    let mut rust_implied = false;
+    for part in tag.split(',') {
+        let p = part.trim();
+        match p {
+            "rust" => return "rs",
+            "javascript" | "jsx" => return "js",
+            "typescript" | "tsx" => return "ts",
+            "python" => return "py",
+            "shell" | "bash" => return "sh",
+            "c++" | "cpp" => return "cpp",
+            "markdown" | "md" => return "md",
+            "ignore" | "no_run" | "should_panic" | "compile_fail" => rust_implied = true,
+            _ if p.starts_with("edition") || p.starts_with("ignore_") => rust_implied = true,
+            _ => {}
+        }
+    }
+    if rust_implied { "rs" } else { tag }
+}
+
 pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
     // Fence ids are LANGUAGE names (` ```rust `); the profiles are keyed by
-    // the file EXTENSIONS (`rs`). Map the common aliases so a labeled fence
-    // actually highlights.
-    let ext = match ext {
-        "rust" => "rs",
-        "javascript" | "jsx" => "js",
-        "typescript" | "tsx" => "ts",
-        "python" => "py",
-        "shell" | "bash" => "sh",
-        "c++" | "cpp" => "cpp",
-        "markdown" => "md",
-        other => other,
-    };
+    // the file EXTENSIONS (`rs`). Map the common aliases — and the rust
+    // doctest attribute lists — so a labeled fence actually highlights.
+    let ext = fence_lang_ext(ext);
     let profile = match ext {
         "rs" => LangProfile {
             keywords: kw(KEYWORDS_RUST),
@@ -75,7 +96,10 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             hash_comment: false,
             // Doc-comment examples: `/// ```rust` opens a rust-syntax region.
             fence: Some(
-                Regex::new(r"^\s*(///|//!)\s*```([a-z0-9_+-]*)\s*$").expect("the rust doc fence"),
+                // The capture allows commas: a rust doc fence carries a
+                // comma-separated doctest attribute list —
+                // `/// ```rust,no_run`, `/// ```should_panic`, `/// ```edition2021`.
+                Regex::new(r"^\s*(///|//!)\s*```([a-z0-9_+,-]*)\s*$").expect("the rust doc fence"),
             ),
             // An unlabeled doc fence is a rust example.
             unlabeled_fence_lang: Some("rust"),
@@ -145,8 +169,9 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             line_comment: false,
             types_by_case: false,
             block_comment: false,
-            // The md fence: ` ```lang ` — group 1 = the region language.
-            fence: Some(Regex::new(r"^\s*```([a-z0-9_+-]*)\s*$").expect("the md fence")),
+            // The md fence: ` ```lang ` — group 1 = the region language
+            // (commas allowed for ` ```rust,no_run ` inside an .md file).
+            fence: Some(Regex::new(r"^\s*```([a-z0-9_+,-]*)\s*$").expect("the md fence")),
             // An unlabeled fence = the plain "code" style (no syntax).
             unlabeled_fence_lang: None,
             fence_strip: None,
@@ -616,7 +641,19 @@ pub fn classify_tokens(text: &str, profile: Option<&LangProfile>) -> Vec<Classif
 }
 
 fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<ClassifiedToken> {
-    if !tok.contains('`') {
+    // Doc comments (`///`, `//!`) are MARKDOWN — rustdoc processes them, so
+    // `**bold**`, `*italic*`, `~~strike~~`, `[link](url)`, and `` `code` ``
+    // all render. Plain comments (`//`, `/*`, `#`) are NOT markdown; the
+    // convention (rust-analyzer, GitHub) is a uniform comment color. The one
+    // exception: inline `` `code` `` spans in a plain comment still render as
+    // Rust (accent backticks + classified inner) — they read as code refs,
+    // not prose. No markdown emphasis/link/strike on plain comments.
+    let is_doc = tok.starts_with("///") || tok.starts_with("//!");
+    // Doc: any markdown trigger opens the splitter. Plain: only a backtick.
+    let has_markdown = is_doc
+        && (tok.contains('`') || tok.contains("**") || tok.contains("~~") || tok.contains('['));
+    let has_backtick = tok.contains('`');
+    if !has_markdown && !has_backtick {
         return vec![ClassifiedToken {
             color: "syntaxComment".into(),
             sgr: None,
@@ -625,48 +662,85 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
     }
 
     let rust_prof = lang_profile("rs").unwrap_or(profile);
-    let mut out = Vec::new();
-    let mut last = 0;
+    let prefix_len = if is_doc {
+        3
+    } else if tok.starts_with("//") || tok.starts_with("/*") {
+        2
+    } else if tok.starts_with('#') {
+        1
+    } else {
+        0
+    };
 
-    while last < tok.len() {
-        if let Some(open_rel) = tok[last..].find('`') {
-            let open = last + open_rel;
-            if let Some(close_rel) = tok[open + 1..].find('`') {
-                let close = open + 1 + close_rel;
-                if open > last {
-                    out.push(ClassifiedToken {
-                        color: "syntaxComment".into(),
-                        sgr: None,
-                        text: tok[last..open].into(),
-                    });
-                }
-                out.push(ClassifiedToken {
-                    color: "accent".into(),
-                    sgr: None,
-                    text: "`".into(),
-                });
-                let inner = &tok[open + 1..close];
-                if !inner.is_empty() {
-                    let inner_toks = classify_tokens(inner, Some(rust_prof));
-                    out.extend(inner_toks);
-                }
-                out.push(ClassifiedToken {
-                    color: "accent".into(),
-                    sgr: None,
-                    text: "`".into(),
-                });
-                last = close + 1;
-                continue;
-            }
-        }
+    let mut out = Vec::new();
+    if prefix_len > 0 {
         out.push(ClassifiedToken {
             color: "syntaxComment".into(),
             sgr: None,
-            text: tok[last..].into(),
+            text: tok[..prefix_len].into(),
         });
-        break;
     }
 
+    let body = &tok[prefix_len..];
+    if is_doc {
+        // Doc comments: full markdown (emphasis, links, code) — the text
+        // gaps between markdown spans are comment-colored.
+        for mut t in markdown_tokens(body) {
+            if t.color == "text" {
+                t.color = "syntaxComment".into();
+            } else if t.color == "syntaxString" {
+                let inner_toks = classify_tokens(&t.text, Some(rust_prof));
+                out.extend(inner_toks);
+                continue;
+            }
+            out.push(t);
+        }
+    } else {
+        // Plain comments: backtick-only. Everything outside `` `code` `` is
+        // comment-color; inside, the Rust classification.
+        out.extend(backtick_tokens(body, rust_prof));
+    }
+    out
+}
+
+/// Backtick-only extraction for plain (`//`, `/*`, `#`) comments: only
+/// inline `` `code` `` spans render — accent backticks + Rust-classified
+/// inner content; the surrounding comment text stays `syntaxComment`. No
+/// markdown emphasis/link/strike (plain comments aren't markdown).
+fn backtick_tokens(body: &str, rust_prof: &LangProfile) -> Vec<ClassifiedToken> {
+    static BACKTICK: OnceLock<Regex> = OnceLock::new();
+    let re = BACKTICK.get_or_init(|| Regex::new(r"`[^`\n]+`").expect("the comment backtick"));
+    let mut out = Vec::new();
+    let mut last = 0usize;
+    for m in re.find_iter(body) {
+        if m.start() > last {
+            out.push(ClassifiedToken {
+                color: "syntaxComment".into(),
+                sgr: None,
+                text: body[last..m.start()].into(),
+            });
+        }
+        out.push(ClassifiedToken {
+            color: "accent".into(),
+            sgr: None,
+            text: "`".into(),
+        });
+        let inner = &m.as_str()[1..m.as_str().len() - 1];
+        out.extend(classify_tokens(inner, Some(rust_prof)));
+        out.push(ClassifiedToken {
+            color: "accent".into(),
+            sgr: None,
+            text: "`".into(),
+        });
+        last = m.end();
+    }
+    if last < body.len() {
+        out.push(ClassifiedToken {
+            color: "syntaxComment".into(),
+            sgr: None,
+            text: body[last..].into(),
+        });
+    }
     out
 }
 
@@ -742,14 +816,57 @@ pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<Fen
     regions
 }
 
+/// Parse the inner content of a bold/italic/link span, stacking the parent
+/// SGR on top of any inline code children. The child's *color* wins; the
+/// parent's *SGR* (bold, italic, underline) is inherited — so e.g.
+/// `**`code`**` renders as code-color + bold rather than mdBold-color + bold.
+fn md_inner_tokens(inner: &str, parent_sgr: u32, parent_color: &str) -> Vec<ClassifiedToken> {
+    static INNER_CODE: OnceLock<Regex> = OnceLock::new();
+    let re = INNER_CODE.get_or_init(|| Regex::new(r"`[^`\n]+`").expect("the inner code"));
+    let mut out = Vec::new();
+    let mut last = 0usize;
+    for m in re.find_iter(inner) {
+        if m.start() > last {
+            out.push(ClassifiedToken {
+                color: parent_color.into(),
+                sgr: Some(parent_sgr),
+                text: inner[last..m.start()].into(),
+            });
+        }
+        let tok = m.as_str();
+        // `code` inside bold/italic: code color wins, parent SGR stacks.
+        out.push(ClassifiedToken {
+            color: "accent".into(),
+            sgr: None,
+            text: "`".into(),
+        });
+        out.push(ClassifiedToken {
+            color: "syntaxString".into(),
+            sgr: Some(parent_sgr),
+            text: tok[1..tok.len() - 1].into(),
+        });
+        out.push(ClassifiedToken {
+            color: "accent".into(),
+            sgr: None,
+            text: "`".into(),
+        });
+        last = m.end();
+    }
+    if last < inner.len() {
+        out.push(ClassifiedToken {
+            color: parent_color.into(),
+            sgr: Some(parent_sgr),
+            text: inner[last..].into(),
+        });
+    }
+    out
+}
+
 /// The markdown tokens — the md default region's classifier (the renderer's
 /// `markdownTokens` ported): `#`-headings (the marker muted, the title
 /// accent + bold), inline code (syntax-string), `**bold**`, `*italic*`,
 /// `~~strike~~`, `[text](url)` — the SGR rides the token.
 pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
-    // The md regexes are FIXED — compile ONCE (the classify runs per row /
-    // per merged fragment; a recompile per call was the classify's cost for
-    // the markdown corpus).
     static HEADING: OnceLock<Regex> = OnceLock::new();
     static MD_INLINE: OnceLock<Regex> = OnceLock::new();
     let heading =
@@ -757,9 +874,14 @@ pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
     if let Some(h) = heading.captures(text) {
         return vec![
             ClassifiedToken {
-                color: "muted".into(),
+                color: "accent".into(),
                 sgr: None,
-                text: h[1].to_string() + &h[2],
+                text: h[1].to_string(),
+            },
+            ClassifiedToken {
+                color: "text".into(),
+                sgr: None,
+                text: h[2].to_string(),
             },
             ClassifiedToken {
                 color: "accent".into(),
@@ -785,35 +907,95 @@ pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
             });
         }
         let tok = m.as_str();
-        let (color, sgr) = if tok.starts_with('`') {
-            ("syntaxString", None)
+        if tok.starts_with('`') {
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "`".into(),
+            });
+            out.push(ClassifiedToken {
+                color: "syntaxString".into(),
+                sgr: None,
+                text: tok[1..tok.len() - 1].into(),
+            });
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "`".into(),
+            });
         } else if tok.starts_with("~~") {
-            ("muted", Some(MD_SGR_STRIKE))
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "~~".into(),
+            });
+            out.extend(md_inner_tokens(
+                &tok[2..tok.len() - 2],
+                MD_SGR_STRIKE,
+                "mdStrike",
+            ));
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "~~".into(),
+            });
         } else if tok.starts_with("**") {
-            ("accent", Some(MD_SGR_BOLD))
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "**".into(),
+            });
+            out.extend(md_inner_tokens(
+                &tok[2..tok.len() - 2],
+                MD_SGR_BOLD,
+                "mdBold",
+            ));
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "**".into(),
+            });
         } else if tok.starts_with('[') {
-            // The TS splits the link: the label + the URL, both underlined.
             let close = tok.find("](").unwrap_or(0);
             out.push(ClassifiedToken {
-                color: "text".into(),
-                sgr: Some(MD_SGR_UNDERLINE),
-                text: tok[..close + 1].into(),
+                color: "accent".into(),
+                sgr: None,
+                text: "[".into(),
+            });
+            out.extend(md_inner_tokens(&tok[1..close], MD_SGR_UNDERLINE, "mdLink"));
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "](".into(),
             });
             out.push(ClassifiedToken {
-                color: "muted".into(),
+                color: "mdUrl".into(),
                 sgr: Some(MD_SGR_UNDERLINE),
-                text: tok[close + 1..].into(),
+                text: tok[close + 2..tok.len() - 1].into(),
             });
-            last = m.end();
-            continue;
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: ")".into(),
+            });
         } else {
-            ("muted", Some(MD_SGR_ITALIC))
-        };
-        out.push(ClassifiedToken {
-            color: color.into(),
-            sgr,
-            text: tok.into(),
-        });
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "*".into(),
+            });
+            out.extend(md_inner_tokens(
+                &tok[1..tok.len() - 1],
+                MD_SGR_ITALIC,
+                "mdItalic",
+            ));
+            out.push(ClassifiedToken {
+                color: "accent".into(),
+                sgr: None,
+                text: "*".into(),
+            });
+        }
+
         last = m.end();
     }
     if last < text.len() {

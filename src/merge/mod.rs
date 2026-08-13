@@ -171,9 +171,6 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
     })
 }
 
-
-
-
 /// The artifact-filtered del spans a mod row shows (see the TS).
 pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Vec<(usize, usize)> {
     let del_spans: Vec<(usize, usize)> = match del_spans_in {
@@ -423,7 +420,6 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
                 break;
             }
         }
-
 
         // The fill reads FIRST — the new one-liner's insertion
         // (`!fingerprint.is_valid() {` — the `!` fills, the rest reads

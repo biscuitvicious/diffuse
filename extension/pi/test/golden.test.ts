@@ -8,8 +8,8 @@
  * canonical copy shared with the Rust acceptance tests. This file must never
  * fork its own fixture/golden pairs.
  *
- * UPDATE IS SURGICAL — never a blanket regeneration:
- *   1. Run the test WITHOUT UPDATE_GOLDEN: it reports the exact failing
+ * UPDATE IS SURGICAL — the default path, never a blanket regeneration:
+ *   1. Run the test WITHOUT any env flag: it reports the exact failing
  *      rows (the change your code produced), per corpus.
  *   2. Review the report: the changed rows must be ONLY the region your
  *      change was supposed to touch.
@@ -24,12 +24,31 @@
  *   The golden diff is therefore always the exact intended change set,
  *   reviewed row by row.
  *
+ * FULL REGENERATION — when a deliberate, reviewed change shifts the whole
+ *   render (a theme overhaul, a reset-code change, a reclassification),
+ *   the surgical flag is the wrong tool. GEN_GOLDEN=1 writes the full frame
+ *   unconditionally (no surgical guard), then falls through to the on-disk
+ *   coverage walk so a regen that drops or fabricates a row still fails:
+ *     GEN_GOLDEN=1 node .../golden.test.ts                 # every corpus
+ *     GEN_GOLDEN=1 GOLDEN_CORPUS=mirage-2025-08 node .../golden.test.ts  # one
+ *   Use only after reviewing the mismatch report row by row.
+ *
+ * TODO: move the golden generation into the Rust backend. The renderer's
+ * TS harness is pathologically slow (~6s for the diffuse corpus — the node
+ * TS transform + the per-row ReviewComponent walks dominate); the Rust
+ * engine already produces the token stream, so a Rust-side render + golden
+ * comparison (a new `diffuse --render-golden` subcommand over the same
+ * `tests/golden/*.json` fixtures) would cut the regen cycle from seconds
+ * to milliseconds and keep the golden-generation logic beside the engine
+ * it exercises. The on-disk coverage walk stays (it pins the render to
+ * the fixture's real content); only the render frame capture moves.
+ *
  * Also walks the cursor through every visual line (the whole scrolldown),
  * asserting the width invariant and geometry consistency at each step — the
  * viewport never crashes and every row is reachable.
  */
 
-import { reviewInternals as R } from "../review.ts";
+import { reviewInternals as R, FG_RESET } from "../review.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -179,7 +198,7 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 	const { total: visTotal } = comp.visualGeometry(WIDTH);
 	Object.defineProperty(process.stdout, "rows", { value: visTotal + 20, configurable: true });
 	const theme2 = {
-		fg: (c: string, t: string) => `\x1b[38;5;${COLOR[c] ?? 231}m${t}\x1b[0m`,
+		fg: (c: string, t: string) => `\x1b[38;5;${COLOR[c] ?? 231}m${t}${FG_RESET}`,
 		bg: (_c: string, t: string) => t,
 	};
 	const comp2 = new (R as any).ReviewComponent(
@@ -192,24 +211,20 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 	const actual = frame.join("\n") + "\n";
 
 	const scopedUpdate = !process.env.GOLDEN_CORPUS || process.env.GOLDEN_CORPUS === corpus.name;
-	// FIRST WRITE: when the golden does not yet exist, GEN_GOLDEN=1 creates it
-	// directly. The surgical-update guard below protects EXISTING goldens from
-	// accidental mass-bakes (it would force listing every changed row); a
-	// brand-new corpus has no prior golden to diff against, so bypass it. After
-	// the first write, edits go through the surgical guard as usual.
-	let prevExists = false;
-	try {
-		readFileSync(GOLDEN, "utf8");
-		prevExists = true;
-	} catch {
-		/* first write */
-	}
-	if (process.env.UPDATE_GOLDEN && process.env.GEN_GOLDEN && scopedUpdate && !prevExists) {
+	// GEN_GOLDEN=1: regenerate the golden from scratch — write the full
+	// frame unconditionally (no surgical guard, no prev-existence check).
+	// Use after a deliberate, reviewed rendering change to bake the new
+	// output in one pass. The on-disk coverage walk below still runs after,
+	// so a regen that drops a row fails loudly. Pair with GOLDEN_CORPUS to
+	// scope, or omit it to regen every corpus in one shot:
+	//   GEN_GOLDEN=1 node --experimental-transform-types test/golden.test.ts
+	if (process.env.GEN_GOLDEN && scopedUpdate) {
 		writeFileSync(GOLDEN, actual);
-		console.log(`${corpus.name}: initial golden written (${actual.split("\n").length} rows): ${GOLDEN}`);
-		return;
+		console.log(`${corpus.name}: golden regenerated (${actual.split("\n").length} rows): ${GOLDEN}`);
+		// Fall through to the on-disk coverage walk (below) — a regen must
+		// still pass it, so a dropped or fabricated row fails the run.
 	}
-	if (process.env.UPDATE_GOLDEN && scopedUpdate) {
+	if (process.env.UPDATE_GOLDEN && scopedUpdate && !process.env.GEN_GOLDEN) {
 		// Surgical update: the changed set must EQUAL GOLDEN_EXPECT exactly.
 		let prev = "";
 		try {
@@ -266,7 +281,7 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 			console.error(`  UPDATE_GOLDEN=1 GOLDEN_CORPUS=${corpus.name} GOLDEN_EXPECT="734,735,736" node --experimental-transform-types test/golden.test.ts`);
 			process.exit(1);
 		}
-	} else {
+	} else if (!process.env.GEN_GOLDEN) {
 		let golden: string;
 		try {
 			golden = readFileSync(GOLDEN, "utf8");
@@ -291,7 +306,7 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 				}
 			}
 			console.error(
-				`${corpus.name}: ${failures} failure(s) — regenerate with UPDATE_GOLDEN=1 only after reviewing the change.`,
+				`${corpus.name}: ${failures} failure(s) — regenerate with GEN_GOLDEN=1 only after reviewing the change.`,
 			);
 		}
 	}

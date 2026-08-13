@@ -12,9 +12,11 @@ type RowPos = (usize, usize);
 /// position (e.g. renumbered sections) — rendered muted and excluded from
 /// the change counts. Matching is greedy per file (a multiset of add texts).
 pub fn mark_moves(f: &mut DiffFile) {
-    // Indent-insensitive: a line reflowed to a different indentation is still
-    // a move, not a change (the pairing must not turn it into a `~` mod).
-    let key = |t: &str| -> String { t.trim().to_string() };
+    // Leading-indent-insensitive: a line reflowed to a different indentation
+    // is still a move, not a change. Trailing whitespace is NOT stripped —
+    // trimming the right side would cause trailing-space cleanup hunks (like
+    // `/// ` → `///`) to match across hunks, producing false-positive ≈ moves.
+    let key = |t: &str| -> String { t.trim_start().to_string() };
 
     let mut counts: HashMap<String, usize> = HashMap::new();
     for h in &f.hunks {
