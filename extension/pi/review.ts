@@ -1651,10 +1651,20 @@ class ReviewComponent {
 	// ── model ─────────────────────────────────────────────────────────────
 
 	private visualCache: { width: number; result: { starts: number[]; counts: number[]; total: number } } | null = null;
+	private rowSegmentsCache: Map<number, string[]> = new Map();
+	private lastSegWidth: number = -1;
+	private lastSyntaxOn: boolean = true;
+	private lastWordDiff: boolean = true;
+	private lastColOffset: number = 0;
+
+	private clearRowSegmentsCache(): void {
+		this.rowSegmentsCache.clear();
+	}
 
 	/** Rebuild the merged row list from all files (markers + hunk index). */
 	private rebuild(): void {
 		this.visualCache = null;
+		this.clearRowSegmentsCache();
 		this.flat = [];
 		this.rowFile = [];
 		this.hunkStarts = [];
@@ -1873,8 +1883,10 @@ class ReviewComponent {
 			this.requestRender();
 			return;
 		}
-		if (matchesKey(data, "down") || data === "j" || data === "J") return this.move(1);
-		if (matchesKey(data, "up") || data === "k" || data === "K") return this.move(-1);
+		if (/^[jJ]+$/.test(data)) return this.move(data.length);
+		if (/^[kK]+$/.test(data)) return this.move(-data.length);
+		if (matchesKey(data, "down")) return this.move(1);
+		if (matchesKey(data, "up")) return this.move(-1);
 		if (matchesKey(data, "pageDown")) return this.move(20);
 		if (matchesKey(data, "pageUp")) return this.move(-20);
 		if (/^[0-9]$/.test(data)) {
@@ -2534,7 +2546,7 @@ class ReviewComponent {
 				vis += count;
 				continue;
 			}
-			const segs = this.rowSegments(r, width, i);
+			const segs = this.getRowSegments(r, width, i);
 			const segCount = segs.length;
 			const from = Math.max(0, this.scroll - vis);
 			const to = Math.min(segCount, this.scroll + maxRows - vis);
@@ -2577,6 +2589,30 @@ class ReviewComponent {
 		const cap = process.stdout.rows ?? 24;
 		if (lines.length > cap) lines.length = cap;
 		return lines;
+	}
+
+	private getRowSegments(r: Row, width: number, flatIdx: number): string[] {
+		if (
+			width !== this.lastSegWidth ||
+			this.syntaxOn !== this.lastSyntaxOn ||
+			this.wordDiff !== this.lastWordDiff ||
+			this.colOffset !== this.lastColOffset
+		) {
+			this.clearRowSegmentsCache();
+			this.lastSegWidth = width;
+			this.lastSyntaxOn = this.syntaxOn;
+			this.lastWordDiff = this.wordDiff;
+			this.lastColOffset = this.colOffset;
+		}
+		if (flatIdx === this.rowIdx) {
+			return this.rowSegments(r, width, flatIdx);
+		}
+		let cached = this.rowSegmentsCache.get(flatIdx);
+		if (!cached) {
+			cached = this.rowSegments(r, width, flatIdx);
+			this.rowSegmentsCache.set(flatIdx, cached);
+		}
+		return cached;
 	}
 
 	private rowSegments(r: Row, width: number, flatIdx: number): string[] {
