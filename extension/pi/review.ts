@@ -662,10 +662,33 @@ function runDiffuseBin(bin: string, input: string): Promise<WireOutput> {
 			else {
 				try {
 					resolve(JSON.parse(out) as WireOutput);
-			} catch (e) {
-				reject(new Error(`diffuse output was not JSON: ${String(e)}`));
+				} catch (e) {
+					reject(new Error(`diffuse output was not JSON: ${String(e)}`));
+				}
 			}
-		}
+		});
+		p.stdin.write(input);
+		p.stdin.end();
+	});
+}
+
+function runDiffuseBinBatch(bin: string, input: string): Promise<WireOutput[]> {
+	return new Promise((resolve, reject) => {
+		const p = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
+		let out = "";
+		let err = "";
+		p.stdout.on("data", (d: Buffer) => (out += d.toString("utf8")));
+		p.stderr.on("data", (d: Buffer) => (err += d.toString("utf8")));
+		p.on("error", reject);
+		p.on("close", (code) => {
+			if (code !== 0) reject(new Error(`diffuse exited ${code}: ${err}`));
+			else {
+				try {
+					resolve(JSON.parse(out) as WireOutput[]);
+				} catch (e) {
+					reject(new Error(`diffuse output was not JSON: ${String(e)}`));
+				}
+			}
 		});
 		p.stdin.write(input);
 		p.stdin.end();
@@ -1627,8 +1650,11 @@ class ReviewComponent {
 
 	// ── model ─────────────────────────────────────────────────────────────
 
+	private visualCache: { width: number; result: { starts: number[]; counts: number[]; total: number } } | null = null;
+
 	/** Rebuild the merged row list from all files (markers + hunk index). */
 	private rebuild(): void {
+		this.visualCache = null;
 		this.flat = [];
 		this.rowFile = [];
 		this.hunkStarts = [];
@@ -2797,6 +2823,9 @@ class ReviewComponent {
 	 * geometry the scroll/viewport math walks in).
 	 */
 	private visualGeometry(width: number): { starts: number[]; counts: number[]; total: number } {
+		if (this.visualCache && this.visualCache.width === width) {
+			return this.visualCache.result;
+		}
 		const starts: number[] = new Array(this.flat.length);
 		const counts: number[] = new Array(this.flat.length);
 		let total = 0;
@@ -2806,7 +2835,9 @@ class ReviewComponent {
 			counts[i] = c;
 			total += c;
 		}
-		return { starts, counts, total };
+		const res = { starts, counts, total };
+		this.visualCache = { width, result: res };
+		return res;
 	}
 	private highlightTokens(tokens: { color: string; text: string }[], from: number, to: number, bg = `\x1b[48;5;${sAdd.tint}m`): string {
 		const theme = this.theme;
@@ -3124,6 +3155,7 @@ export const reviewInternals = {
 	resolveInitialPosition,
 	diffuseBinPath,
 	runDiffuseBin,
+	runDiffuseBinBatch,
 	filesFromWire,
 	resolveRefs,
 };

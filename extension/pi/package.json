@@ -6,7 +6,7 @@
 	"scripts": {
 		"check": "node --experimental-transform-types --check review.ts",
 		"pretest": "sh scripts/build-bin.sh",
-		"test": "node --experimental-transform-types test/review.test.ts && node --experimental-transform-types test/golden.test.ts",
+		"test": "node --experimental-transform-types test/runner.ts",
 		"test:unit": "node --experimental-transform-types test/review.test.ts",
 		"test:golden": "node --experimental-transform-types test/golden.test.ts"
 	},

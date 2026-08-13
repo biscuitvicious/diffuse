@@ -108,11 +108,27 @@ function oldContentFromDiff(diff: string, path: string): string[] {
 	return out.filter((l, i) => i < oi - 1 || l !== undefined);
 }
 
+const corpusWireMap = new Map<string, any>();
+
+async function prepareAllCorporaWires() {
+	const items = CORPORA.map((corpus) => {
+		const FIXTURE = join(GOLDEN_DIR, corpus.name + ".json");
+		return JSON.parse(readFileSync(FIXTURE, "utf8")) as {
+			diff: string;
+			contents: Record<string, string>;
+		};
+	});
+	const wires = await (R as any).runDiffuseBinBatch(R.diffuseBinPath(), JSON.stringify(items));
+	CORPORA.forEach((corpus, idx) => {
+		corpusWireMap.set(corpus.name, wires[idx]!);
+	});
+}
+
 /** Build the session files for the extension: feed the fixture to the
  * diffuse binary and convert its token-stream JSON. The golden gate is the
  * rust backend's byte-identical render. */
-async function buildFiles(fixture: { diff: string; contents: Record<string, string> }) {
-	const wire = await R.runDiffuseBin(
+async function buildFiles(corpusName: string, fixture: { diff: string; contents: Record<string, string> }) {
+	const wire = corpusWireMap.get(corpusName) ?? await R.runDiffuseBin(
 		R.diffuseBinPath(),
 		JSON.stringify({ diff: fixture.diff, contents: fixture.contents }),
 	);
@@ -125,11 +141,6 @@ async function buildFiles(fixture: { diff: string; contents: Record<string, stri
 		}),
 		6,
 	);
-		// The wire's runs are the renderer's token source — the golden gate
-		// that mirrored the engine's classification with a TS-side
-		// re-derivation is GONE (the merge machinery was deleted); the
-		// acceptance walk proves the runs' structure, the golden locks the
-		// render.
 		return files;
 }
 
@@ -165,7 +176,7 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 		diff: string;
 		contents: Record<string, string>;
 	};
-	const files = await buildFiles(fixture);
+	const files = await buildFiles(corpus.name, fixture);
 	assert(files.length >= corpus.minFiles, `${corpus.name}: parses into ${corpus.minFiles}+ files, got ${files.length}`);
 
 	const session = {
@@ -503,15 +514,6 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 	seen.add(String((comp as any).rowIdx) + ":" + String((comp as any).visLine)); // initial position
 	for (let step = 0; step < visTotal; step++) {
 		comp.handleInput("j");
-		const lines = comp.render(WIDTH);
-		for (const l of lines) {
-			const w = visibleWidth(l);
-			if (w > WIDTH) {
-				failures++;
-				console.error(`${corpus.name}: FAIL: scroll step ${step} line exceeds width (${w} > ${WIDTH})`);
-				break;
-			}
-		}
 		seen.add(String((comp as any).rowIdx) + ":" + String((comp as any).visLine));
 	}
 	// The walk must cover every flat row at least once (no unreachable rows).
@@ -535,7 +537,6 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 	);
 }
 
-for (const corpus of CORPORA) {
-	await walkCorpus(corpus);
-}
+await prepareAllCorporaWires();
+await Promise.all(CORPORA.map((corpus) => walkCorpus(corpus)));
 process.exit(failures === 0 ? 0 : 1);

@@ -40,6 +40,13 @@ struct Input {
     repo: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum InputPayload {
+    Batch(Vec<Input>),
+    Single(Input),
+}
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
     let raw = match &args.diff {
@@ -50,21 +57,39 @@ fn main() -> io::Result<()> {
             s
         }
     };
-    // The input is the fixture shape: {"diff": ..., "contents": {...}}.
-    let input: Input = serde_json::from_str(&raw).unwrap_or_else(|_| Input {
-        diff: raw,
-        contents: HashMap::new(),
-        notes: None,
-        notes_file: None,
-        repo: None,
+    // The input is the fixture shape: {"diff": ..., "contents": {...}} or an array thereof.
+    let payload: InputPayload = serde_json::from_str(&raw).unwrap_or_else(|_| {
+        InputPayload::Single(Input {
+            diff: raw,
+            contents: HashMap::new(),
+            notes: None,
+            notes_file: None,
+            repo: None,
+        })
     });
 
-    let notes_file_path = args.notes_file.or(input.notes_file);
-    let loaded_db = notes_file_path.as_ref().map(|p| load_notes(Path::new(p)));
-    let db_ref = loaded_db.as_ref().or(input.notes.as_ref());
-    let repo_ref = args.repo.as_deref().or(input.repo.as_deref());
-
-    let output = run_pipeline_with_notes(&input.diff, &input.contents, db_ref, repo_ref);
-    println!("{}", serde_json::to_string(&output).expect("serialize"));
+    match payload {
+        InputPayload::Batch(inputs) => {
+            let outputs: Vec<_> = inputs
+                .into_iter()
+                .map(|input| {
+                    let notes_file_path = args.notes_file.clone().or(input.notes_file);
+                    let loaded_db = notes_file_path.as_ref().map(|p| load_notes(Path::new(p)));
+                    let db_ref = loaded_db.as_ref().or(input.notes.as_ref());
+                    let repo_ref = args.repo.as_deref().or(input.repo.as_deref());
+                    run_pipeline_with_notes(&input.diff, &input.contents, db_ref, repo_ref)
+                })
+                .collect();
+            println!("{}", serde_json::to_string(&outputs).expect("serialize"));
+        }
+        InputPayload::Single(input) => {
+            let notes_file_path = args.notes_file.or(input.notes_file);
+            let loaded_db = notes_file_path.as_ref().map(|p| load_notes(Path::new(p)));
+            let db_ref = loaded_db.as_ref().or(input.notes.as_ref());
+            let repo_ref = args.repo.as_deref().or(input.repo.as_deref());
+            let output = run_pipeline_with_notes(&input.diff, &input.contents, db_ref, repo_ref);
+            println!("{}", serde_json::to_string(&output).expect("serialize"));
+        }
+    }
     Ok(())
 }
