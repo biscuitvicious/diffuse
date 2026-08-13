@@ -3,11 +3,22 @@
  */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { renderMarkdown } from "./markdown.ts";
 import { fileCounts, pad4, prefixOf, rowCoord, truncateMiddle } from "./model.ts";
 import { notesFor } from "./persistence.ts";
 import { getActiveTheme, sAdd, sDel, sMod, sMov, SGR_OFF } from "./theme.ts";
 import type { ReviewNote, ReviewSession, Row } from "./types.ts";
+
+export function renderNoteRuns(
+	runs: { kind?: string; color?: string; text: string; sgr?: number }[],
+	fg: (c: string, t: string) => string,
+): string {
+	const activeTheme = getActiveTheme();
+	let out = "";
+	for (const r of runs) {
+		out += activeTheme.renderToken({ color: r.color ?? "warning", text: r.text, sgr: r.sgr }, "ctx", fg);
+	}
+	return out;
+}
 
 export interface RenderState {
 	fileIdx: number;
@@ -167,7 +178,10 @@ export function renderComponentFrame(
 		if (ns) {
 			for (const n of ns) {
 				const where = `${n.start}${n.end !== n.start ? `-${n.end}` : ""}`;
-				lines.push(fit(`   💬 [${where}] ` + renderMarkdown(n.text, theme.fg)));
+				const renderedText = (n as any).runs && (n as any).runs.length > 0
+					? renderNoteRuns((n as any).runs, theme.fg)
+					: theme.fg("warning", n.text);
+				lines.push(fit(`   💬 [${where}] ` + renderedText));
 			}
 		}
 	}
