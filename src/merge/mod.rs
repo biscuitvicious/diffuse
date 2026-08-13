@@ -410,11 +410,14 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
             .min(dl.len().saturating_sub(share)))
             .rev()
         {
-            if al[al.len() - len..] == dl[share..share + len] {
+            let del_sub = &dl[share..share + len];
+            if !del_sub.contains(&'\n') && al[al.len() - len..] == *del_sub {
                 slen = len;
                 break;
             }
         }
+
+
         // The fill reads FIRST — the new one-liner's insertion
         // (`!fingerprint.is_valid() {` — the `!` fills, the rest reads
         // common) — then the struck old block spans the following visual
