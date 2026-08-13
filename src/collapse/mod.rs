@@ -311,7 +311,26 @@ pub fn pass_pair_and_stretch(
                     .join("\n")
             })
             .unwrap_or_default();
+        let is_comment = |t: &str| -> bool {
+            let s = t.trim();
+            s.starts_with("//") || s.starts_with("#") || s.starts_with("/*") || s.starts_with("*")
+        };
+        let is_comment_stretch_steal = if is_comment(&r.text)
+            && best_run.as_ref().is_some_and(|run| run.len() > 1)
+        {
+            let mut i = ri + 1;
+            let mut del_comments = 1;
+            while i < h.rows.len() && h.rows[i].kind == RowKind::Del && is_comment(&h.rows[i].text) {
+                del_comments += 1;
+                i += 1;
+            }
+            del_comments > 1
+        } else {
+            false
+        };
+
         let stretch_ok = best_run.is_some()
+            && !is_comment_stretch_steal
             && best_run_score >= 0.25
             && best.is_some()
             && word_spans(&r.text, &h.rows[best.unwrap()].text).del.len() >= 3
@@ -321,6 +340,8 @@ pub fn pass_pair_and_stretch(
                 &word_spans(&r.text, &h.rows[best.unwrap()].text),
             )
             && !wholesale_pair(&r.text, &run_text, &word_spans(&r.text, &run_text));
+
+
 
         if stretch_ok {
             let br = best_run.as_ref().unwrap().clone();

@@ -152,6 +152,10 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
         if char_slice(del_text, *ds, *de).contains('\n') {
             return false;
         }
+        let del_span_text = char_slice(del_text, *ds, *de);
+        if del_span_text.trim().contains(' ') {
+            return false;
+        }
         let ins = del_pos[j].min(add_text.len());
         let left = ins.checked_sub(1).and_then(|i| char_at(add_text, i));
         let right = char_at(add_text, ins);
@@ -162,10 +166,13 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
         {
             return false;
         }
-        let t = char_slice(del_text, *ds, *de).trim_start();
+        let t = del_span_text.trim_start();
         t.chars().next().is_some_and(is_word)
     })
 }
+
+
+
 
 /// The artifact-filtered del spans a mod row shows (see the TS).
 pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Vec<(usize, usize)> {
