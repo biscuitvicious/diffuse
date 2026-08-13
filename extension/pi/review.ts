@@ -2883,7 +2883,12 @@ class ReviewComponent {
 			} else {
 				const sgr = (tok as { sgr?: number }).sgr;
 				const off = sgr !== undefined ? SGR_OFF[sgr] : undefined;
-				out += bg + (sgr !== undefined ? `\x1b[${sgr}m` : "") + theme.fg(tok.color, piece) + (off !== undefined ? `\x1b[${off}m` : "") + bg;
+				const color =
+					tok.color === "syntaxComment" && (r.kind === "add" || tok.kind === "add")
+						? "text"
+						: tok.color;
+				out += bg + (sgr !== undefined ? `\x1b[${sgr}m` : "") + theme.fg(color, piece) + (off !== undefined ? `\x1b[${off}m` : "") + bg;
+
 			}
 		}
 		// End the row on the LINE tint, never the last token's bg: a trailing
