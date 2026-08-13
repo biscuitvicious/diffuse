@@ -66,6 +66,45 @@ pub fn apply_file_diff(file_diff: &str, old: &[String]) -> Vec<String> {
     out
 }
 
+/// Apply a parsed file's hunks and rows (at any stage of transformation in
+/// Phase 6) to its old contents → producing the new contents.
+pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = old.to_vec();
+    let mut sorted_hunks: Vec<&crate::parse::Hunk> = hunks.iter().collect();
+    sorted_hunks.sort_by_key(|h| std::cmp::Reverse(h.old_start as usize));
+    for h in sorted_hunks {
+        let old_start = h.old_start as usize;
+        let old_count = h.old_count as usize;
+        let mut new_lines = Vec::new();
+        for r in &h.rows {
+            match r.kind {
+                crate::parse::RowKind::Ctx | crate::parse::RowKind::Add => {
+                    new_lines.push(r.text.clone());
+                }
+                crate::parse::RowKind::Mod => {
+                    for line in r.text.split('\n') {
+                        new_lines.push(line.to_string());
+                    }
+                    for t in &r.tail {
+                        new_lines.push(t.text.clone());
+                    }
+                }
+                crate::parse::RowKind::Del
+                | crate::parse::RowKind::Sep
+                | crate::parse::RowKind::File => {}
+            }
+        }
+        if old_start == 0 {
+            out.splice(0..0, new_lines);
+        } else {
+            let lo = old_start - 1;
+            let hi = (lo + old_count).min(out.len());
+            out.splice(lo..hi, new_lines);
+        }
+    }
+    out
+}
+
 /// Parse `@@ -oldStart,oldCount +newStart,newCount @@` → (oldStart, oldCount).
 /// `oldCount` defaults to 1 when the `,N` is omitted (git's convention).
 fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {

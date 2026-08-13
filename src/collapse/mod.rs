@@ -1,12 +1,11 @@
-//! One-for-one port of `review.ts`'s `collapseHunkRows` (PLAN.md §3) —
-//! the pairing (similarity + the brace-anchor), the stretch and
-//! reverse-stretch, the reflow rules, the ordered walk, and the final
-//! sort. Comments ported verbatim. This is the heart of the engine.
+//! One-for-one port of `review.ts`'s `collapseHunkRows` (PLAN.md §3), refactored in
+//! Phase 6 into composable passes over a hunk's diff AST:
 //!
-//! The TS mutates its row arrays (splicing `pendingAdds` during the
-//! pairing loop); the port tracks rows by their **hunk row index** — the
-//! adds' identities survive the consumption, exactly like the TS's object
-//! references.
+//! 1. `pass_pair_and_stretch`: Similarity, brace-anchor, and stretch window pairing.
+//! 2. `pass_reverse_stretch`: Del-run folding into single mod rows.
+//! 3. `pass_assemble_mods`: Ordered walk creating `Mod` rows, subword spans, and tails.
+//! 4. `pass_filter_reflows`: Filtering verbatim reflow dels and adds.
+//! 5. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row stream.
 
 use crate::lcs::{char_slice, word_spans};
 use crate::merge::wholesale_pair;
@@ -18,21 +17,31 @@ use crate::similarity::{
 use crate::tail::{fn_of, is_tail_before_closing};
 use std::collections::{HashMap, HashSet};
 
-/// Collapse each FIFO del→add pair into a single "mod" row: the new line
-/// with its word-diff spans baked in. A modified line renders once (`~`)
-/// instead of as a red/green pair against "different" lines.
-#[allow(clippy::too_many_arguments)]
-pub fn collapse_hunk_rows(
+/// Results of the initial pairing and stretch pass.
+pub struct PairingResults {
+    pub pair_of: HashMap<usize, usize>, // add row id -> del row id
+    pub stretch_of: HashMap<usize, Vec<usize>>, // del row id -> add row ids
+    pub del_runs: Vec<Vec<usize>>,
+    pub run_of: HashMap<usize, Vec<usize>>,
+    pub del_ids: Vec<usize>,
+}
+
+struct AddRun {
+    adds: Vec<usize>,
+    content_prefix: Vec<usize>,
+    ids: Vec<u32>,
+    tok_chars: Vec<usize>,
+    tok_prefix: Vec<usize>,
+    chars_prefix: Vec<usize>,
+}
+
+/// Pass 1: Similarity, brace-anchor, and stretch window pairing.
+pub fn pass_pair_and_stretch(
     h: &Hunk,
     hash_comment: bool,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
-) -> Vec<Row> {
-    // Pair each non-moved del with its best-matching add — NOT the FIFO next
-    // add: when a declaration is replaced and new code precedes it (e.g. an
-    // added method before the modified `pub fn lookup`), the FIFO would pair
-    // the old line with the doc comment. The similarity pairing joins the old
-    // declaration with the new one.
+) -> PairingResults {
     let mut pending_adds: Vec<usize> = h
         .rows
         .iter()
@@ -40,14 +49,7 @@ pub fn collapse_hunk_rows(
         .filter(|(_, r)| r.kind == RowKind::Add && !r.moved)
         .map(|(i, _)| i)
         .collect();
-    // Consecutive-del runs — the REFLOW pairing rule. When several old lines
-    // merge onto one new line (`self.resolved_layers` / `.iter()` /
-    // `.any(…)` → the one-liner `self.layers.iter().any(…)`), the first del
-    // carries the meaningful change (`resolved_`); the later dels' content
-    // survives verbatim inside the add — pure reflows. A non-first del whose
-    // text is a substring of the candidate add must not steal the pair: it
-    // would render the same text struck against itself. The first del's mod
-    // shows the actual edit (`self.` + ~~resolved_~~ + `layers…`).
+
     let mut del_runs: Vec<Vec<usize>> = Vec::new();
     let mut i = 0;
     while i < h.rows.len() {
@@ -67,33 +69,7 @@ pub fn collapse_hunk_rows(
         .iter()
         .flat_map(|run| run.iter().map(|&ri| (ri, run.clone())))
         .collect();
-    // Consecutive-add runs — the STRETCH candidates: a deleted row whose
-    // content is recognisably spread across several added rows pairs with
-    // the whole run (`if k < floor {` → `if let Some(floor) = floor` +
-    // `&& k > floor` + `{` — one mod, three visual lines, the `<`→`>`
-    // flip struck in place).
-    //
-    // The windows are NOT materialized: the eager build pushed every
-    // sub-window of every run (n³/6 elements — a diff containing a huge
-    // whole-file add OOMs both engines before the pairing even ran). The
-    // pairing only ever needs the LONGEST qualifying window (ties: first in
-    // the w/k order), so the scan is generated on demand per del — O(1)
-    // memory, and a hunk with no dels never scans at all. The per-line
-    // content-char prefix makes a window's length O(1) (the eager scan
-    // re-tokenized every window's join) and gives the 4× bound below.
-    struct AddRun {
-        adds: Vec<usize>,           // pending_adds' row ids
-        content_prefix: Vec<usize>, // prefix sums of the lines' content chars (the 4× bound)
-        // The run's content tokens CONCATENATED once — each window is a
-        // slice into these (no per-window clone). `tok_prefix[i]` is the
-        // token offset where add `i` begins; window `[k, k+w)` →
-        // ids/tok_chars over `[tok_prefix[k], tok_prefix[k+w])`.
-        ids: Vec<u32>,
-        tok_chars: Vec<usize>,
-        tok_prefix: Vec<usize>,
-        chars_prefix: Vec<usize>, // prefix sums of the lines' (all-token) chars
-    }
-    // The dels' row ids, in order — the TS iterates `h.rows`.
+
     let del_ids: Vec<usize> = h
         .rows
         .iter()
@@ -101,13 +77,7 @@ pub fn collapse_hunk_rows(
         .filter(|(_, r)| r.kind == RowKind::Del)
         .map(|(i, _)| i)
         .collect();
-    // The pairing compares every del against every candidate add — the same
-    // lines re-tokenized for each pair. Tokenize each row ONCE: the dels
-    // (by row id) and the adds (by row id — the rows' texts are fixed even
-    // as pending_adds is consumed). The window scan's joined text is the
-    // concatenation of its lines' content tokens, so the cached add tokens
-    // also serve the stretch windows — the run's concatenated ids/tok_chars
-    // live in the AddRun (no per-window clone).
+
     let mut interner = TokenInterner::new();
     let mut del_tokens: HashMap<usize, LineTokens> = HashMap::new();
     let mut add_tokens: HashMap<usize, LineTokens> = HashMap::new();
@@ -122,8 +92,6 @@ pub fn collapse_hunk_rows(
     let mut i = 0;
     while i < pending_adds.len() {
         let mut run = vec![pending_adds[i]];
-        // A comment line ends the run — the stretch never crosses a comment
-        // boundary (`for …` must not absorb the preceding comment rewrite).
         while i + 1 < pending_adds.len()
             && h.rows[pending_adds[i + 1]].new_line.unwrap_or(0)
                 == h.rows[pending_adds[i]].new_line.unwrap_or(0) + 1
@@ -159,43 +127,18 @@ pub fn collapse_hunk_rows(
         });
         i += 1;
     }
-    let mut pair_of: HashMap<usize, usize> = HashMap::new(); // add row id -> del row id
-    let mut stretch_of: HashMap<usize, Vec<usize>> = HashMap::new(); // del row id -> add row ids
-    // The stretch windows' live state — the lazy stand-ins for the eager
-    // window list's `retain` after a stretch: the kept run itself stays
-    // scannable; every OTHER window sharing one of its adds is dead.
+
+    let mut pair_of: HashMap<usize, usize> = HashMap::new();
+    let mut stretch_of: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut consumed_adds: HashSet<usize> = HashSet::new();
     let mut kept_runs: Vec<Vec<usize>> = Vec::new();
-    // The REVERSE stretch: a del RUN folds into one mod against a single
-    // add (the old `find_mount` body — `self.mount_stack` / `.filesystems` /
-    // `.iter()` / `.rfind()` / `.map()` — replaced by the one-liner
-    // `self.mount_stack.get(guest_path)`). The mod's delText is the run's
-    // concatenation — the old body's lines strike across the visual lines,
-    // the add fills — instead of the first del pairing while the rest
-    // floats as `-` rows after the closed method.
-    let mut reverse_stretch_of: HashMap<usize, Vec<usize>> = HashMap::new(); // del row id -> the run
 
     for &ri in &del_ids {
         let r = &h.rows[ri];
         if r.moved {
             continue;
         }
-        // A del whose text survives VERBATIM as a line in the new file is a
-        // pure reflow — the similarity pairing must not grab it (the old
-        // `find_mount`'s `.rfind(...)` chain reflowed into the new `get`
-        // method; a sim-based pair with `format!("no mount captures…")`
-        // would render garble). The reflow-drop absorbs it. A TAIL del
-        // (the old line after it is the fn's closing brace) is exempt:
-        // the brace-anchor pairing (`None` ↔ `Some(result)`) is the
-        // del's definitive partner and must run even when the new file
-        // happens to contain a verbatim `None` line elsewhere.
         let r_trim = r.text.trim();
-        // The brace-anchor exemption: the del is a tail AND some pending
-        // add is a tail in the SAME fn (`None` ↔ `Some(result)` — both sit
-        // before their fn's closing brace). A tail del with NO such add
-        // (the old `find_mount`'s `.map(...)` — its `}` follows, but the
-        // new fn's tail is a different fn) stays a reflow: the pairing
-        // would only garble.
         let tail_candidate = is_tail_before_closing(r.old_line, true, old_content, new_content)
             && pending_adds.iter().any(|&ai| {
                 let a = &h.rows[ai];
@@ -208,17 +151,15 @@ pub fn collapse_hunk_rows(
         {
             continue;
         }
-        // The del's tail-ness and fn are FIXED per del — hoisted out of the
-        // candidate loop (the brace bonus needs them; recomputing the
-        // backward fn scan per candidate cost as much as the LCS it bounds).
+
         let del_is_tail = is_tail_before_closing(r.old_line, true, old_content, new_content);
         let del_fn = fn_of(old_content, r.old_line);
-        let mut best: Option<usize> = None; // add row id
-        let mut best_score = 0.15; // threshold: meaningful replacements only
-        let del_set: std::collections::HashSet<u32> = del_tokens[&ri].ids.iter().copied().collect();
+        let mut best: Option<usize> = None;
+        let mut best_score = 0.15;
+        let del_set: HashSet<u32> = del_tokens[&ri].ids.iter().copied().collect();
         let mut best_run: Option<Vec<usize>> = None;
-        let mut best_run_score = 0.25; // the stretch threshold: the run must read
-        // as "the same line" restructured across the added rows.
+        let mut best_run_score = 0.25;
+
         for &ai in &pending_adds {
             let a = &h.rows[ai];
             if let Some(run) = run_of.get(&ri) {
@@ -228,25 +169,10 @@ pub fn collapse_hunk_rows(
                     && !trimmed.is_empty()
                     && a.text.trim().contains(trimmed)
                 {
-                    continue; // a reflow del — its text is verbatim inside the add
+                    continue;
                 }
             }
-            // A `return` pairs with a `return` — the old `return
-            // self.results…` must match the new `return None;` (`return ` +
-            // struck expr + fill + `;`), not a nearby pop line that merely
-            // shares `self.`/`borrow_mut()`/`key` fragments. Definitive:
-            // a `return ` candidate outranks any non-return.
-            // A closing-brace-anchored tail pairs with its counterpart: the
-            // old `None` before the fn's `}` matches the new `Some(result)`
-            // before the `}` (`~~None~~Some(result)`), not a mid-block
-            // `return None;` that merely shares the word. When several tails
-            // tie, the one anchored in the same surrounding context wins
-            // (the pops before both `None` and `Some(result)`).
-            // The bonuses are computed BEFORE the LCS: the sim's upper bound
-            // (matched ≤ min(ot, nt) chars → sim ≤ min/max) plus the bonuses
-            // decides whether the LCS can beat the current best at all — the
-            // pairing's D×A LCS runs collapse to the candidates that could
-            // actually win.
+
             let return_bonus = if r.text.trim_start().starts_with("return ")
                 && a.text.trim_start().starts_with("return ")
             {
@@ -266,15 +192,10 @@ pub fn collapse_hunk_rows(
             };
             let bonus = return_bonus + brace_bonus;
             let sim_max = if dt.tokens.is_empty() && at.tokens.is_empty() {
-                1.0 // two blank-ish lines: sim is 1.0 when the trims match
+                1.0
             } else if dt.chars == 0 || at.chars == 0 {
                 0.0
             } else {
-                // The TOKEN-PRESENCE upper bound: the LCS pairs EQUAL tokens,
-                // so the matched chars ≤ the add's tokens whose ids appear in
-                // the del (and vice versa). Tighter than min/max — the
-                // pairing's LCS runs collapse to the candidates that share
-                // actual tokens.
                 let add_common: usize = at
                     .ids
                     .iter()
@@ -282,7 +203,7 @@ pub fn collapse_hunk_rows(
                     .filter(|(_, id)| del_set.contains(id))
                     .map(|(i, _)| at.token_chars[i])
                     .sum();
-                let add_set: std::collections::HashSet<u32> = at.ids.iter().copied().collect();
+                let add_set: HashSet<u32> = at.ids.iter().copied().collect();
                 let del_common: usize = dt
                     .ids
                     .iter()
@@ -293,7 +214,7 @@ pub fn collapse_hunk_rows(
                 add_common.min(del_common) as f64 / dt.chars.max(at.chars) as f64
             };
             if bonus + sim_max <= best_score {
-                continue; // can never beat the current best
+                continue;
             }
             let parts = line_similarity_parts_tokens(dt, at, &interner.ws, &interner.alnum);
             if parts.add_total > 0
@@ -309,35 +230,15 @@ pub fn collapse_hunk_rows(
                 best = Some(ai);
             }
         }
-        // The window scan — generated on demand in the eager (w, k) order.
-        // Longest winning window: among the windows that read as "the
-        // same line", the longest wins — the `if k < floor {` stretch
-        // keeps its `if `/`k `/` floor {` common anchors over the tighter
-        // `&& k > floor`+`{` fragment. The k-outer/w-inner order visits
-        // the same (k, w) pairs as the eager build's w-outer/k-inner and
-        // selects the same winner: the longest qualifying window, ties
-        // broken by the first in the eager order (the smallest k at the
-        // winning length).
+
         let ot_chars = content_char_len(&r.text);
         let mut best_run_len = 0;
-        // One scratch DP buffer reused across every window of this del — the
-        // 42k per-window `vec![]` allocs (across the whole hunk) collapse to
-        // a single grow-once buffer (move the data down the call chain,
-        // don't reallocate per call).
         let mut lcs_scratch: Vec<u32> = Vec::new();
         for sr in &add_runs {
             let n = sr.adds.len();
             if n < 2 {
                 continue;
             }
-            // The TOKEN-PRESENCE pre-filter (O(1) per window): the LCS's
-            // matched chars ≤ the window's add-tokens whose ids are in the
-            // del's id-set (`add_common`). Build a prefix sum over the run's
-            // concatenated ids once (per del, per run); each window's
-            // add_common is a prefix difference. If it can't reach 0.25 of
-            // max(del, window) chars, the DP is SKIPPED — the 42k window
-            // DP calls collapse to the few that share real tokens with the
-            // del.
             let mut add_common_prefix: Vec<usize> = Vec::with_capacity(sr.ids.len() + 1);
             add_common_prefix.push(0);
             for t in 0..sr.ids.len() {
@@ -351,53 +252,26 @@ pub fn collapse_hunk_rows(
             for k in 0..n {
                 for w in 2..=(n - k) {
                     if w <= best_run_len {
-                        continue; // cannot be STRICTLY longer than the best
+                        continue;
                     }
-                    // The 4× bound: the LCS pairs EQUAL tokens, so the
-                    // matched chars ≤ the del's own content chars; a window
-                    // with more than 4× the del's content scores ≤
-                    // del/window < 0.25 — it can never win. The bound grows
-                    // with w, so the first breach ends this k's loop.
                     if sr.content_prefix[k + w] - sr.content_prefix[k] > ot_chars * 4 {
                         break;
                     }
                     let win = &sr.adds[k..k + w];
-                    // The dead windows: an earlier stretch kept its own run
-                    // but emptied every OTHER window sharing an add. A kept
-                    // run itself stays scannable (a later del may still
-                    // re-stretch over it).
                     let live = kept_runs.iter().any(|br| br.as_slice() == win)
                         || win.iter().all(|a| !consumed_adds.contains(a));
                     if !live {
                         continue;
                     }
-                    // The window's joined text tokenizes to the concatenation
-                    // of its lines' cached content tokens (the join is "\n" —
-                    // a whitespace token, filtered by the content pass). The
-                    // run's concatenated ids/tok_chars live ONCE in the
-                    // AddRun; this window is a SLICE into them — no per-window
-                    // LineTokens clone (move the data, don't reclone it per
-                    // window: the O(dels × windows) clones were the scan's
-                    // whole cost).
                     let tok_lo = sr.tok_prefix[k];
                     let tok_hi = sr.tok_prefix[k + w];
                     let nt_ids = &sr.ids[tok_lo..tok_hi];
                     let nt_tok_chars = &sr.tok_chars[tok_lo..tok_hi];
                     let nt_chars = sr.chars_prefix[k + w] - sr.chars_prefix[k];
-                    // The O(1) skip: the matched ≤ add_common (prefix diff);
-                    // if it can't reach 0.25 of max(del, window) chars, the
-                    // DP is pointless. Cuts the 42k DP calls to the windows
-                    // that share real tokens with this del.
                     let add_common = add_common_prefix[tok_hi] - add_common_prefix[tok_lo];
                     if (add_common as f64) < 0.25 * (ot_chars.max(nt_chars)) as f64 {
                         continue;
                     }
-                    // The trimmed join is only needed when the window is
-                    // all-blank (nt_ids empty ⟺ every add's content-token
-                    // list is empty) — the empty-token tie-break branch.
-                    // The old per-window LineTokens set `trimmed: ""`
-                    // otherwise; replicate that (and skip the per-window
-                    // String allocation in the common case).
                     let nt_trimmed = if nt_ids.is_empty() {
                         win.iter()
                             .map(|&ai| h.rows[ai].text.trim())
@@ -426,11 +300,7 @@ pub fn collapse_hunk_rows(
                 }
             }
         }
-        // The stretch must read as the same line restructured — the split-word
-        // garble (the comment rewrites' `fro~~upper~~zen`) stays the `-`/`+`
-        // baseline, not a stretched mod. The del's single best must also be a
-        // viable mod (not the wholesale): a comment rewritten across a run is
-        // still a comment rewrite — the `-`/`+` block.
+
         let run_text = best_run
             .as_ref()
             .map(|run| {
@@ -440,55 +310,32 @@ pub fn collapse_hunk_rows(
                     .join("\n")
             })
             .unwrap_or_default();
-        // The stretch must read as the same line restructured — the
-        // split-word garble (the comment rewrites' `fro~~upper~~zen`) stays
-        // the `-`/`+` baseline, not a stretched mod. The del's single best
-        // must also be a viable mod (not the wholesale): a comment rewritten
-        // across a run is still a comment rewrite — the `-`/`+` block.
         let stretch_ok = best_run.is_some()
             && best_run_score >= 0.25
             && best.is_some()
-            // The single must be CROSSED to stretch — "if a single line
-            // anchors clean against another single line that's a section
-            // separator". The if's single (`if`→`&&`, `<`/` {`→`>`) has
-            // three del runs; the for's (`lowers`→`below`, `.rev()`) and
-            // the mode's (`resolved_`) anchor cleanly — they stay mods.
             && word_spans(&r.text, &h.rows[best.unwrap()].text).del.len() >= 3
-            && !wholesale_pair(&r.text, &h.rows[best.unwrap()].text, &word_spans(&r.text, &h.rows[best.unwrap()].text))
+            && !wholesale_pair(
+                &r.text,
+                &h.rows[best.unwrap()].text,
+                &word_spans(&r.text, &h.rows[best.unwrap()].text),
+            )
             && !wholesale_pair(&r.text, &run_text, &word_spans(&r.text, &run_text));
+
         if stretch_ok {
             let br = best_run.as_ref().unwrap().clone();
-            let _b = best.unwrap();
-            // The stretch wins: the whole run is a better "same line" than
-            // any single add. The mod's text is the run's concatenation;
-            // the run's adds are consumed (not emitted as + rows).
             stretch_of.insert(ri, br.clone());
             for &aid in &br {
-                // The TS consumes each stretch add with
-                // `pendingAdds.splice(pendingAdds.indexOf(a), 1)` — when an
-                // add was ALREADY consumed by an earlier pair, `indexOf` is
-                // -1 and `splice(-1, 1)` removes the LAST pending add (a JS
-                // quirk, ported verbatim: the trailing adds drop out of the
-                // pairing and surface as the mod's absorbed section).
                 if let Some(pos) = pending_adds.iter().position(|&x| x == aid) {
                     pending_adds.remove(pos);
                 } else if !pending_adds.is_empty() {
                     pending_adds.pop();
                 }
             }
-            // The TS keeps `bestRun` itself in the window list (its adds are
-            // consumed, but a later del may still re-stretch over the stale
-            // window); every OTHER window that shares an add is emptied. The
-            // lazy equivalent: the consumed adds join the dead set; the kept
-            // run itself stays scannable.
             for &aid in &br {
                 consumed_adds.insert(aid);
             }
             kept_runs.push(br.clone());
         } else if let Some(b) = best {
-            // A pair that would render as the wholesale (garble-shaped
-            // spans) reads better as the plain `-`/`+` baseline rows —
-            // leave it unpaired.
             let spans = word_spans(&r.text, &h.rows[b].text);
             if !wholesale_pair(&r.text, &h.rows[b].text, &spans) {
                 pair_of.insert(b, ri);
@@ -496,30 +343,33 @@ pub fn collapse_hunk_rows(
             }
         }
     }
-    let paired_dels: HashSet<usize> = pair_of.values().copied().collect();
-    let add_of: HashMap<usize, usize> = pair_of.iter().map(|(&add, &del)| (del, add)).collect();
-    let stretched_dels: HashSet<usize> = stretch_of.keys().copied().collect();
-    let stretched_adds: HashSet<usize> = stretch_of.values().flatten().copied().collect();
-    // The reverse stretch, decided AFTER the pairing loop: a del RUN folds
-    // into one mod against the first del's add — but only the run's later
-    // dels that have NO pair of their own. Decided in-loop (as the port
-    // did), the first del's fold absorbed the WHOLE run, so a later del
-    // that also paired — the old `return self.results…cloned();` ↔ new
-    // `return None;` (cache.rs) or the renumbered AGENTS.md items 6/7 —
-    // struck TWICE: inside the fold AND as its own mod. The fold keeps
-    // only the unpaired members; a paired later del renders as its own mod.
-    // The later dels' text must also be NOT verbatim inside the first del's
-    // add (the old method's body, deleted — versus the `let up` reflow,
-    // whose `.iter()/.find(…)` lines survive inside the one-liner and take
-    // the reflow-common path instead).
-    for &ri in &del_ids {
+
+    PairingResults {
+        pair_of,
+        stretch_of,
+        del_runs,
+        run_of,
+        del_ids,
+    }
+}
+
+/// Pass 2: Reverse stretch identification.
+pub fn pass_reverse_stretch(
+    h: &Hunk,
+    del_ids: &[usize],
+    run_of: &HashMap<usize, Vec<usize>>,
+    add_of: &HashMap<usize, usize>,
+    paired_dels: &HashSet<usize>,
+    stretched_dels: &HashSet<usize>,
+) -> HashMap<usize, Vec<usize>> {
+    let mut reverse_stretch_of: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &ri in del_ids {
         let Some(run) = run_of.get(&ri) else {
             continue;
         };
         if run.len() <= 1 || run[0] != ri {
             continue;
         }
-        // The first del must be paired — the fold needs its add.
         let Some(&b) = add_of.get(&ri) else {
             continue;
         };
@@ -541,34 +391,43 @@ pub fn collapse_hunk_rows(
             reverse_stretch_of.insert(ri, folded);
         }
     }
+    reverse_stretch_of
+}
 
-    // Ordered walk: mods emit at their del's position; each mod's tail
-    // absorbs the unpaired adds that follow it *until the next mod's del* —
-    // an unpaired add between two mods belongs to the later mod, not the
-    // earlier one's section (adjacent changes must not overlap). A blank line
-    // OR a comment line (a new comment block — per-language) ends the
-    // section: closing braces stay with their change, an unrelated doc block
-    // does not get glued onto a deleted line. Unpaired dels are collected
-    // and, when their content is already inside a paired add (formatting
-    // restructuring), dropped; the rest trail at the end.
+/// Assembly product of the ordered walk.
+pub struct AssembledMods {
+    pub out: Vec<Row>,
+    pub kept_dels: Vec<usize>,
+    pub pure_adds: Vec<usize>,
+    pub absorbed_dels: HashSet<usize>,
+}
+
+/// Context holding all pairing maps and sets for assembly.
+pub struct PairingContext<'a> {
+    pub pair_of: &'a HashMap<usize, usize>,
+    pub add_of: &'a HashMap<usize, usize>,
+    pub stretch_of: &'a HashMap<usize, Vec<usize>>,
+    pub reverse_stretch_of: &'a HashMap<usize, Vec<usize>>,
+    pub run_of: &'a HashMap<usize, Vec<usize>>,
+    pub paired_dels: &'a HashSet<usize>,
+    pub stretched_dels: &'a HashSet<usize>,
+    pub stretched_adds: &'a HashSet<usize>,
+}
+
+/// Pass 3: Assemble Mod rows, subword spans, and section tails.
+pub fn pass_assemble_mods(h: &Hunk, hash_comment: bool, ctx: &PairingContext) -> AssembledMods {
     let mut out: Vec<Row> = Vec::new();
     let mut kept_dels: Vec<usize> = Vec::new();
     let mut pure_adds: Vec<usize> = Vec::new();
     let mut absorbed_dels: HashSet<usize> = HashSet::new();
-    let mut last_mod: Option<usize> = None; // index into out
+    let mut last_mod: Option<usize> = None;
+
     for (ri, r) in h.rows.iter().enumerate() {
         if r.kind == RowKind::Add {
-            if pair_of.contains_key(&ri) || stretched_adds.contains(&ri) {
-                continue; // the mod appears at its del's position
+            if ctx.pair_of.contains_key(&ri) || ctx.stretched_adds.contains(&ri) {
+                continue;
             }
             let trimmed = r.text.trim();
-            // The section absorbs only adds that FOLLOW the mod's new line:
-            // when the paired add is the LAST of a replacement block (old
-            // `None` ↔ new `return None;`), the block's earlier lines render
-            // as + rows before the mod, never as its tail. A trailing BLANK
-            // also joins the section (the block reads as a unit — the closing
-            // brace and the air after it), then the section ends: the
-            // following method stays a separate add.
             if let Some(lm) = last_mod {
                 let m = &out[lm];
                 if !r.moved
@@ -582,14 +441,12 @@ pub fn collapse_hunk_rows(
                     continue;
                 }
             }
-            last_mod = None; // a reflow or a comment block ends the section
+            last_mod = None;
             pure_adds.push(ri);
-        } else if paired_dels.contains(&ri) {
-            let add_ri = add_of[&ri];
+        } else if ctx.paired_dels.contains(&ri) {
+            let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
-            // The reverse stretch: the del's own text is the RUN's
-            // concatenation (the whole old body), not just the first line.
-            let stretch_run = reverse_stretch_of.get(&ri);
+            let stretch_run = ctx.reverse_stretch_of.get(&ri);
             let del_text = match stretch_run {
                 Some(run) => run
                     .iter()
@@ -599,16 +456,7 @@ pub fn collapse_hunk_rows(
                 None => r.text.clone(),
             };
             let mut spans = word_spans(&del_text, &add.text);
-            // The reflow-common merge: the mod's del is the FIRST of its
-            // run — it carries the meaningful change; the run's later dels
-            // are reflows whose text survives verbatim inside the add. That
-            // text is the same on both sides — it must read as common, not
-            // as newly added (`self.~~resolved_~~layers.iter().any(…)`:
-            // the `.iter().any(…)` is the reflowed `.iter()` + `.any(…)`
-            // lines; the `let up` one-liner's `?;` is the reflowed
-            // `.find(…)` tail). A whole add span whose text contains a
-            // reflow line's content is that reflow — drop the span.
-            let run = run_of.get(&ri);
+            let run = ctx.run_of.get(&ri);
             let reflows: Vec<String> = match run {
                 Some(run) if run.len() > 1 => run
                     .iter()
@@ -642,11 +490,8 @@ pub fn collapse_hunk_rows(
                     absorbed_dels.insert(d);
                 }
             }
-        } else if stretched_dels.contains(&ri) {
-            // The stretch: one deleted row over a run of added rows. The
-            // mod's text is the run's concatenation — the merged display
-            // spans the visual lines, the `~` prefix repeats per line.
-            let run = &stretch_of[&ri];
+        } else if ctx.stretched_dels.contains(&ri) {
+            let run = &ctx.stretch_of[&ri];
             let text = run
                 .iter()
                 .map(|&ai| h.rows[ai].text.as_str())
@@ -668,12 +513,36 @@ pub fn collapse_hunk_rows(
             kept_dels.push(ri);
         }
     }
+
+    AssembledMods {
+        out,
+        kept_dels,
+        pure_adds,
+        absorbed_dels: absorbed_dels.clone(),
+    }
+}
+
+/// Reflow filter product.
+pub struct ReflowFilter {
+    pub meaningful_dels: Vec<usize>,
+    pub kept_adds: Vec<usize>,
+}
+
+/// Pass 4: Filter verbatim reflow dels and adds.
+pub fn pass_filter_reflows(
+    h: &Hunk,
+    out: &[Row],
+    kept_dels: &[usize],
+    pure_adds: &[usize],
+    paired_dels: &HashSet<usize>,
+) -> ReflowFilter {
     let add_text = out
         .iter()
         .map(|m| m.text.as_str())
         .chain(pure_adds.iter().map(|&ri| h.rows[ri].text.as_str()))
         .collect::<Vec<_>>()
         .join("\n");
+
     let meaningful: Vec<usize> = kept_dels
         .iter()
         .copied()
@@ -682,20 +551,7 @@ pub fn collapse_hunk_rows(
             t.is_empty() || !add_text.contains(t)
         })
         .collect();
-    // Adds whose content exists verbatim in a del are a pure reflow — drop
-    // both sides so the reflow is invisible rather than ≈ noise. Content-
-    // based, not move-flag-based: the greedy move matcher can leave a reflow
-    // add unmarked when multiple adds share the content (a duplicated pop in
-    // a restructured block). The del corpus excludes MOVED and PAIRED dels —
-    // those are displayed elsewhere (≈ rows, mod rows), so an add matching
-    // them is real content (the second pop pair in a restructured block),
-    // not a reflow. A MOVED add checks against the full corpus: a local
-    // same-position move (old 4 → new 4) is a pure reshuffle — invisible —
-    // while the unmoved adds use the corpus of dels that are actually
-    // INVISIBLE — not moved (shown ≈), not paired (shown in the mod), and
-    // not meaningful (shown as a - row). An add matching a shown del is real
-    // content: the seven lines a one-line import was split into must all
-    // survive.
+
     let del_text_all = h
         .rows
         .iter()
@@ -717,6 +573,7 @@ pub fn collapse_hunk_rows(
         .map(|(_, d)| d.text.trim())
         .collect::<Vec<_>>()
         .join("\n");
+
     let kept_adds: Vec<usize> = pure_adds
         .iter()
         .copied()
@@ -731,14 +588,23 @@ pub fn collapse_hunk_rows(
             t.is_empty() || !corpus.contains(t)
         })
         .collect();
-    // Unified order within the hunk: mods and adds render at their NEW-side
-    // position (a replacement block that precedes the paired line — new lines
-    // 134-139 before the mod at 140 — leads with the additions), and a
-    // genuinely removed line renders right after the mod whose old position
-    // preceded it (the removed old 109 sits after the mod that replaced old
-    // 108), never interrupting the new-file sequence.
-    let mut anchor_of: HashMap<usize, usize> = HashMap::new(); // del idx -> out idx of the anchor mod
-    for &di in &meaningful {
+
+    ReflowFilter {
+        meaningful_dels: meaningful,
+        kept_adds,
+    }
+}
+
+/// Pass 5: Keyed anchor sorting into the final visual row stream.
+pub fn pass_sort_ordered_walk(
+    h: &Hunk,
+    hash_comment: bool,
+    out: Vec<Row>,
+    meaningful_dels: &[usize],
+    kept_adds: &[usize],
+) -> Vec<Row> {
+    let mut anchor_of: HashMap<usize, usize> = HashMap::new();
+    for &di in meaningful_dels {
         let Some(dold) = h.rows[di].old_line else {
             continue;
         };
@@ -756,8 +622,7 @@ pub fn collapse_hunk_rows(
             anchor_of.insert(di, a);
         }
     }
-    // (The anchor-based sort is ported below; the del keys need the
-    // meaningful dels' anchors + the comment-chain advance.)
+
     let mut keyed: Vec<(Row, (u32, f64))> = Vec::new();
     for r in out.into_iter() {
         let key = (
@@ -766,31 +631,25 @@ pub fn collapse_hunk_rows(
         );
         keyed.push((r, key));
     }
-    for &di in &meaningful {
+    for &di in meaningful_dels {
         let d = &h.rows[di];
         let key = match anchor_of.get(&di) {
             None => (0, d.old_line.unwrap_or(0) as f64),
             Some(&mi) => {
                 let base = keyed[mi].1.0;
-                // A removed line must not interrupt a comment block: it
-                // renders after the consecutive comment adds that follow its
-                // anchor (the removed `let mut floor` sits after the doc
-                // lines, before the new declaration — never mid-comment).
                 let mut last = base;
-                for &ai in &kept_adds {
+                for &ai in kept_adds {
                     let kn = h.rows[ai].new_line.unwrap_or(0);
                     if kn == last + 1 && is_comment_line(&h.rows[ai].text, hash_comment) {
                         last = kn;
                     }
                 }
-                // 2.5: after any add sharing that position (the comment's
-                // last line), before the next change.
                 (last, 2.5)
             }
         };
         keyed.push((h.rows[di].clone(), key));
     }
-    for &ai in &kept_adds {
+    for &ai in kept_adds {
         let a = &h.rows[ai];
         keyed.push((a.clone(), (a.new_line.unwrap_or(0), 2.0)));
     }
@@ -802,6 +661,54 @@ pub fn collapse_hunk_rows(
         )
     });
     keyed.into_iter().map(|(r, _)| r).collect()
+}
+
+/// Collapse each FIFO del→add pair into a single "mod" row: the new line
+/// with its word-diff spans baked in.
+///
+/// Phase 6 Pipeline: composed of 5 pure, application-preserving passes over
+/// the diff AST.
+pub fn collapse_hunk_rows(
+    h: &Hunk,
+    hash_comment: bool,
+    old_content: Option<&[String]>,
+    new_content: Option<&[String]>,
+) -> Vec<Row> {
+    // Pass 1: Similarity, brace-anchor, and stretch window pairing
+    let p1 = pass_pair_and_stretch(h, hash_comment, old_content, new_content);
+    let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
+    let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
+    let stretched_dels: HashSet<usize> = p1.stretch_of.keys().copied().collect();
+    let stretched_adds: HashSet<usize> = p1.stretch_of.values().flatten().copied().collect();
+
+    // Pass 2: Reverse stretch identification
+    let reverse_stretch_of = pass_reverse_stretch(
+        h,
+        &p1.del_ids,
+        &p1.run_of,
+        &add_of,
+        &paired_dels,
+        &stretched_dels,
+    );
+
+    // Pass 3: Assemble Mod rows, subword spans, and section tails
+    let pairing_ctx = PairingContext {
+        pair_of: &p1.pair_of,
+        add_of: &add_of,
+        stretch_of: &p1.stretch_of,
+        reverse_stretch_of: &reverse_stretch_of,
+        run_of: &p1.run_of,
+        paired_dels: &paired_dels,
+        stretched_dels: &stretched_dels,
+        stretched_adds: &stretched_adds,
+    };
+    let p3 = pass_assemble_mods(h, hash_comment, &pairing_ctx);
+
+    // Pass 4: Filter verbatim reflow dels and adds
+    let p4 = pass_filter_reflows(h, &p3.out, &p3.kept_dels, &p3.pure_adds, &paired_dels);
+
+    // Pass 5: Keyed anchor sorting into the final visual row stream
+    pass_sort_ordered_walk(h, hash_comment, p3.out, &p4.meaningful_dels, &p4.kept_adds)
 }
 
 #[cfg(test)]
