@@ -38,47 +38,35 @@ pub fn char_len(s: &str) -> usize {
     s.chars().count()
 }
 
-/**
- * Tokenize a diff line into word/operator tokens (whitespace + punctuation
- * are separate tokens so `->` → `=>` highlights a single character).
- */
-pub fn tokenize_line(text: &str) -> Vec<String> {
-    // Two punctuation classes. OPERATORS glue (`->`, `=>`, `::`, `..`, `==`,
-    // `//` …) — an operator change is one span, not per-char noise. The
-    // DELIMITERS are single-char tokens: gluing `).` or `),` would hide the
-    // shared `)` from the LCS, so `…anchors).` → `…anchors),` would strike
-    // the whole `).` instead of just the period. The backtick is a delimiter
-    // too — markdown code markers must not glue onto identifiers. The quote
-    // `"` is a delimiter as well: `lower layer"` → `layer below the top
-    // upper"` must match the del's `layer` to the add's `layer` and its `"`
-    // to the add's `"` — glued, the del's `layer"` matches nothing and the
-    // string renders as `layer"layer` (the trace wobble).
-    // Unicode whitespace by character class: the White_Space property
-    // covers every standard whitespace (space separators, tabs, NEL,
-    // U+1680, U+2000-200A, U+2028/29, U+202F, U+205F, U+3000), plus the
-    // zero-width space (U+200B — a Cf format char, but a real empty-width
-    // whitespace difference vs a space, and it must subword, not glue onto
-    // the following identifier).
+/// Tokenize a diff line into word/operator tokens (whitespace + punctuation
+/// are separate tokens so `->` → `=>` highlights a single character). Zero-copy slices.
+pub fn tokenize_line(text: &str) -> Vec<&str> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         Regex::new(r#"([\p{White_Space}\u200b]+|[<>!=+\-*\/\\|&^%~?:._]+|[()\[\]{};,@#`"])"#)
             .expect("tokenizer regex")
     });
-    // JS `split` with a single capturing group interleaves the separators as
-    // tokens; `regex`'s split ignores captures, so walk `find_iter` instead.
     let mut out = Vec::new();
     let mut last = 0;
     for m in re.find_iter(text) {
         if m.start() > last {
-            out.push(text[last..m.start()].to_string());
+            let seg = &text[last..m.start()];
+            if !seg.is_empty() {
+                out.push(seg);
+            }
         }
-        out.push(m.as_str().to_string());
+        let seg = m.as_str();
+        if !seg.is_empty() {
+            out.push(seg);
+        }
         last = m.end();
     }
     if last < text.len() {
-        out.push(text[last..].to_string());
+        let seg = &text[last..];
+        if !seg.is_empty() {
+            out.push(seg);
+        }
     }
-    out.retain(|t| !t.is_empty());
     out
 }
 
@@ -95,7 +83,7 @@ pub fn token_is_alnum(t: &str) -> bool {
 }
 
 /// LCS backtrace: map of old-token index → matched new-token index.
-pub fn lcs_pairs(a: &[String], b: &[String]) -> std::collections::HashMap<usize, usize> {
+pub fn lcs_pairs(a: &[&str], b: &[&str]) -> std::collections::HashMap<usize, usize> {
     let n = a.len();
     let m = b.len();
     if n == 0 || m == 0 {
@@ -124,35 +112,20 @@ pub fn lcs_pairs(a: &[String], b: &[String]) -> std::collections::HashMap<usize,
             i += 1;
         } else if dp[idx(i + 1, j)] < dp[idx(i, j + 1)] {
             j += 1;
-        } else if token_is_ws(&a[i]) && !token_is_ws(&b[j]) {
-            // A space on the del side: when the del's NEXT token pairs with
-            // the add's word, the space yields — the word pair survives
-            // (`"Found in lower layer"` → `"Found in layer below …"` keeps
-            // the old `layer` matched to the new `layer` instead of the old
-            // ` ` pairing ahead of it and the `layer` striking alone).
+        } else if token_is_ws(a[i]) && !token_is_ws(b[j]) {
             if i + 1 < n && a[i + 1] == b[j] {
                 i += 1;
             } else {
-                j += 1; // otherwise the add may pair later
+                j += 1;
             }
-        } else if token_is_ws(&b[j]) && !token_is_ws(&a[i]) {
-            j += 1; // a space on the add side yields: keep the del — a WORD del
-        // must survive to pair with its counterpart further along
-        // (`k` survives the intervening `let Some(floor) = floor`
-        // span to pair with the later `k`), never be skipped for a space
-        } else if !b[j + 1..].iter().any(|t| *t == a[i]) {
-            i += 1; // the del token has no counterpart anywhere later in the
-        // add (`resolved` in `resolved_layers` → `layers`) — dropping it
-        // lets the following `layers` pair with the add's `layers`
-        // (the meaningful `self.` + `layers` run survives, the
-        // coincidental `_`-of-`sub_path` tie-break does not steal it)
-        } else if !token_is_alnum(&a[i]) && token_is_alnum(&b[j]) {
-            i += 1; // the del's punctuation (`_` after `resolved`) has no word
-        // counterpart at this spot — a later word (`layers`) pairs
-        // with the add's `layers`, not with a stray underscore
+        } else if token_is_ws(b[j]) && !token_is_ws(a[i]) {
+            j += 1;
+        } else if !b[j + 1..].iter().any(|t| *t == a[i])
+            || (!token_is_alnum(a[i]) && token_is_alnum(b[j]))
+        {
+            i += 1;
         } else {
-            j += 1; // both meaningful: keep the del — it pairs with its own
-            // counterpart later, or becomes a standalone del span
+            j += 1;
         }
     }
     pairs
@@ -304,7 +277,7 @@ pub fn lcs_matched_chars_ids(
 /// Char-offset spans of the UNMATCHED (changed) tokens in `toks`.
 pub fn spans_from(
     text: &str,
-    toks: &[String],
+    toks: &[&str],
     matched: &std::collections::HashSet<usize>,
 ) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
@@ -358,7 +331,8 @@ pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
     // `self.layers.iter().any(…)` shares the meaningful `self.`+`layers`
     // run (0.28) and must stay INLINE — `self.` + ~~resolved_~~ + `layers`
     // + the addition — not the whole-line blow-up.
-    let matched_chars: usize = pairs.values().map(|j| char_len(&nt[*j])).sum();
+    let matched_chars: usize = pairs.values().map(|j| char_len(nt[*j])).sum();
+
     let ratio = if !new_text.is_empty() {
         matched_chars as f64 / char_len(new_text) as f64
     } else {

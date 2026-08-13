@@ -41,6 +41,23 @@ pub struct Spans {
     pub add: Vec<(usize, usize)>,
 }
 
+impl Spans {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.del.is_empty() && self.add.is_empty()
+    }
+
+    #[inline]
+    pub fn del_char_len(&self) -> usize {
+        self.del.iter().map(|(s, e)| e.saturating_sub(*s)).sum()
+    }
+
+    #[inline]
+    pub fn add_char_len(&self) -> usize {
+        self.add.iter().map(|(s, e)| e.saturating_sub(*s)).sum()
+    }
+}
+
 impl Row {
     pub fn new(
         kind: RowKind,

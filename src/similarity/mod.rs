@@ -16,11 +16,12 @@ pub fn line_similarity(a: &str, b: &str) -> f64 {
 /// block) from a growth pair (the del inside the add — `None` →
 /// `return None;`), which both score identically on `sim` alone.
 pub fn line_similarity_parts(a: &str, b: &str) -> SimilarityParts {
-    let content = |toks: Vec<String>| -> Vec<String> {
+    fn content(toks: Vec<&str>) -> Vec<&str> {
         toks.into_iter().filter(|t| !t.trim().is_empty()).collect()
-    };
+    }
     let ot = content(tokenize_line(a));
     let nt = content(tokenize_line(b));
+
     if ot.is_empty() || nt.is_empty() {
         return SimilarityParts {
             sim: if a.trim() == b.trim() { 1.0 } else { 0.0 },
@@ -31,7 +32,7 @@ pub fn line_similarity_parts(a: &str, b: &str) -> SimilarityParts {
     let pairs = lcs_pairs(&ot, &nt);
     let mut matched: usize = 0;
     for j in pairs.values() {
-        matched += char_len(&nt[*j]);
+        matched += char_len(nt[*j]);
     }
     let total = ot
         .iter()
@@ -67,7 +68,7 @@ pub fn content_char_len(text: &str) -> usize {
     tokenize_line(text)
         .into_iter()
         .filter(|t| !t.trim().is_empty())
-        .map(|t| char_len(&t))
+        .map(char_len)
         .sum()
 }
 
@@ -117,9 +118,11 @@ impl TokenInterner {
 
     /// Tokenize + filter + intern a line once.
     pub fn line_tokens(&mut self, text: &str) -> LineTokens {
-        let tokens = tokenize_line(text)
+        let raw_tokens = tokenize_line(text);
+        let tokens = raw_tokens
             .into_iter()
             .filter(|t| !t.trim().is_empty())
+            .map(|t| t.to_string())
             .collect::<Vec<_>>();
         let ids = tokens.iter().map(|t| self.intern(t)).collect::<Vec<_>>();
         let token_chars = tokens.iter().map(|t| char_len(t)).collect::<Vec<_>>();
