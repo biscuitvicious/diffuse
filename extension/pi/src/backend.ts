@@ -142,8 +142,9 @@ export function filesFromWire(
 				aboveCtx: context,
 				belowCtx: context,
 			})),
-			noContent: (src?.newContent ?? []).length === 0 && (src?.oldContent ?? []).length === 0,
-			contentRuns: wf.contentRuns,
+			noContent: !src?.newContent?.length && !src?.oldContent?.length,
+			notes: wf.notes ?? [],
+			visibleRows: wf.visibleRows,
 		});
 	}
 	return out;

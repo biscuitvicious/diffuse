@@ -154,6 +154,10 @@ function absorbClosingContext(
 }
 
 export function buildVisible(f: DiffFile): Row[] {
+	if (f.visibleRows && f.visibleRows.length > 0) {
+		const isDefault = f.hunks.every((h) => h.aboveCtx === 6 && h.belowCtx === 6);
+		if (isDefault) return f.visibleRows;
+	}
 	const alloc = allocateContext(f);
 	const rows: Row[] = [];
 	for (let i = 0; i < f.hunks.length; i++) {

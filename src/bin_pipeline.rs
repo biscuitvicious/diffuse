@@ -369,6 +369,28 @@ pub fn run_pipeline_with_notes(
                 .collect(),
             notes: notes_out,
             content_runs,
+            visible_rows: crate::visible::build_visible(
+                &f.hunks,
+                f.new_line_count,
+                f.old_line_count,
+                &f.new_content,
+                &f.old_content,
+                f.new_content.is_empty() && f.old_content.is_empty(),
+            )
+            .into_iter()
+            .map(|r| OutputRow {
+                kind: r.kind,
+                new_line: r.new_line,
+                old_line: r.old_line,
+                text: r.text,
+                del_text: r.del_text,
+                spans: r.spans.unwrap_or_default(),
+                runs: Vec::new(),
+                wholesale: false,
+                moved: r.moved,
+                tail: Vec::new(),
+            })
+            .collect(),
         });
     }
     PipelineOutput { files: out_files }
@@ -424,6 +446,9 @@ pub struct OutputFile {
     /// Pre-classified syntax token runs for all context/content lines of the file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_runs: Vec<Vec<OutputRun>>,
+    /// Pre-assembled visible row sequence for default context.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visible_rows: Vec<OutputRow>,
 }
 
 #[derive(Serialize, Deserialize)]
