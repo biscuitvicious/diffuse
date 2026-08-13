@@ -5,6 +5,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { diffuseBinPath, runDiffuseBin } from "./backend.ts";
 import type { DiffFile, ReviewNote } from "./types.ts";
 
 export type NotesDB = Record<string, Record<string, ReviewNote[]>>;
@@ -49,6 +50,10 @@ export function addNote(db: NotesDB, repo: string, note: ReviewNote): void {
 	(db[repo] ??= {});
 	(db[repo][note.file] ??= []).push(note);
 	saveNotes(db);
+	runDiffuseBin(
+		diffuseBinPath(),
+		JSON.stringify({ action: "addNote", notesFile: NOTES_FILE, repo, note }),
+	).catch(() => {});
 }
 
 export function removeNotes(
@@ -64,7 +69,13 @@ export function removeNotes(
 	const before = list.length;
 	db[repo][file] = list.filter((n) => !(n.side === side && n.start <= end && n.end >= start));
 	const removed = before - db[repo][file].length;
-	if (removed > 0) saveNotes(db);
+	if (removed > 0) {
+		saveNotes(db);
+		runDiffuseBin(
+			diffuseBinPath(),
+			JSON.stringify({ action: "removeNotes", notesFile: NOTES_FILE, repo, file, side, start, end }),
+		).catch(() => {});
+	}
 	return removed;
 }
 

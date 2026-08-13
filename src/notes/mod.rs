@@ -35,6 +35,18 @@ pub struct ReviewNote {
 /// The notes database: repo -> (file_path -> list of notes).
 pub type NotesDB = HashMap<String, HashMap<String, Vec<ReviewNote>>>;
 
+/// Default notes path (`~/.pi/review/notes.json`).
+pub fn default_notes_path() -> std::path::PathBuf {
+    if let Some(home) = std::env::var_os("HOME") {
+        std::path::PathBuf::from(home)
+            .join(".pi")
+            .join("review")
+            .join("notes.json")
+    } else {
+        std::path::PathBuf::from(".pi/review/notes.json")
+    }
+}
+
 /// Load notes from disk. Returns an empty DB if the file does not exist or fails to parse.
 pub fn load_notes(path: &Path) -> NotesDB {
     fs::read_to_string(path)
