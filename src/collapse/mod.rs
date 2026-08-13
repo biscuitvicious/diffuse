@@ -580,6 +580,9 @@ pub fn pass_filter_reflows(
         .copied()
         .filter(|&ai| {
             let a = &h.rows[ai];
+            if a.moved && a.del_text.as_deref().is_some_and(|dt| dt != a.text) {
+                return true;
+            }
             let t = a.text.trim();
             let corpus = if a.moved {
                 &del_text_all
@@ -589,6 +592,7 @@ pub fn pass_filter_reflows(
             t.is_empty() || !corpus.contains(t)
         })
         .collect();
+
 
     ReflowFilter {
         meaningful_dels: meaningful,
