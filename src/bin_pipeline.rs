@@ -321,6 +321,28 @@ pub fn run_pipeline_with_notes(
             _ => Vec::new(),
         };
 
+        let content_to_classify = if !f.new_content.is_empty() {
+            &f.new_content
+        } else {
+            &f.old_content
+        };
+        let content_runs: Vec<Vec<OutputRun>> = content_to_classify
+            .iter()
+            .enumerate()
+            .map(|(idx, line_text)| {
+                let line_num = (idx + 1) as u32;
+                classify_ctx_line(line_text, Some(line_num), profile, &regions)
+                    .into_iter()
+                    .map(|tk| OutputRun {
+                        kind: RunKind::Ctx,
+                        color: Some(tk.color),
+                        sgr: tk.sgr,
+                        text: tk.text,
+                    })
+                    .collect()
+            })
+            .collect();
+
         out_files.push(OutputFile {
             path: f.path.clone(),
             status: format!("{:?}", f.status).to_lowercase(),
@@ -346,6 +368,7 @@ pub fn run_pipeline_with_notes(
                 })
                 .collect(),
             notes: notes_out,
+            content_runs,
         });
     }
     PipelineOutput { files: out_files }
@@ -398,6 +421,9 @@ pub struct OutputFile {
     /// The review notes attached to this file (with engine-classified markdown runs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<OutputNote>,
+    /// Pre-classified syntax token runs for all context/content lines of the file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content_runs: Vec<Vec<OutputRun>>,
 }
 
 #[derive(Serialize, Deserialize)]

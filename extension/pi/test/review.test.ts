@@ -564,26 +564,6 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 		},
 		bg: (_c: string, t: string) => t, // identity: no background but keep the text
 	};
-	const rust = R.langProfile("rs");
-	const raw = (t: string) => R.syntaxHighlight(t, rust, theme);
-	assert(raw("fn main() {").includes("\x1b[31mfn\x1b[0m"), "fn keyword");
-	assert(raw("let mut x = 42;").includes("\x1b[31mlet\x1b[0m") && raw("let mut x = 42;").includes("\x1b[31mmut\x1b[0m"), "let/mut keywords");
-	assert(raw("// a comment").includes("\x1b[32m// a comment\x1b[0m"), "line comment");
-	assert(raw("let s = \"hi\";").includes("\x1b[33m\"hi\"\x1b[0m"), "string");
-	assert(raw("x = 0x1F;").includes("\x1b[34m0x1F\x1b[0m"), "hex number");
-	assert(raw("Foo::new()").includes("\x1b[35mFoo\x1b[0m"), "capitalized type");
-	assert(raw("call_it()").includes("\x1b[36mcall_it\x1b[0m"), "function call");
-	assert(raw("->").includes("\x1b[37m-\x1b[0m"), "operator");
-	assert(raw("plain").includes("\x1b[90mplain\x1b[0m"), "plain identifier");
-	// A comment/string inside a longer line keeps the rest tokenized.
-	const mixed = R.syntaxHighlight("fn f() { // note", rust, theme);
-	assert(mixed.includes("\x1b[32m// note\x1b[0m") && mixed.includes("\x1b[31mfn\x1b[0m"), "comment after code");
-	// Hash comments only for hashComment languages (python vs rust attrs).
-	assert(R.syntaxHighlight("# derive", R.langProfile("py"), theme).includes("\x1b[32m"), "py hash comment");
-	const rustAttr = R.syntaxHighlight("#[derive]", rust, theme);
-	assert(!rustAttr.includes("\x1b[32m"), "rust # is not a comment");
-	// Unknown language → plain text.
-	assert(R.syntaxHighlight("anything", null, theme).includes("\x1b[90manything\x1b[0m"), "no profile → plain");
 	// The component applies syntax colors to diff rows (stub fg codes flow).
 	const f = (await wireFiles(`diff --git a/code.rs b/code.rs
 --- a/code.rs

@@ -522,6 +522,8 @@ interface DiffFile {
 	hunks: Hunk[];
 	/** True when neither side's content could be loaded (no context source). */
 	noContent?: boolean;
+	fences?: { start: number; end: number; lang: string }[];
+	contentRuns?: { kind?: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[][];
 }
 
 interface ReviewNote {
@@ -641,6 +643,7 @@ interface WireOutput {
 			createdAt: number;
 			runs: { kind: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[];
 		}[];
+		contentRuns?: { kind?: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[][];
 	}[];
 }
 
@@ -720,6 +723,7 @@ function filesFromWire(
 				belowCtx: context,
 			})),
 			fences: wf.fences,
+			contentRuns: wf.contentRuns,
 		});
 	}
 	return out;
@@ -742,6 +746,7 @@ async function loadReview(
 	// context rows from the file contents, so the wire size is unchanged.
 	const diffRes = await git([
 		"diff",
+		`-U${context}`,
 		"-M",
 		"--no-color",
 		...base.baseArgs,
@@ -1522,268 +1527,8 @@ function editorArgs(
 }
 
 // ── Syntax highlighting ────────────────────────────────────────────────────
-// A compact per-language tokenizer driving the theme's syntax palette. No
-// external deps: keywords/comments/strings/numbers/types/functions cover the
-// readability value; the diff line tints carry the rest.
-
-const KEYWORDS_RUST = new Set("as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait type unsafe use where while macro_rules yield".split(" "));
-const KEYWORDS_TS = new Set("as async await break case catch class const continue debugger default delete do else enum export extends false finally for from function get if import in instanceof interface let new null of return set static super switch this throw true try typeof var void while with yield".split(" "));
-const KEYWORDS_PY = new Set("and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield".split(" "));
-const KEYWORDS_SH = new Set("if then else elif fi case esac for while until do done function in return exit local export echo set unset true false break continue".split(" "));
-const KEYWORDS_C = new Set("auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while".split(" "));
-const KEYWORDS_GO = new Set("break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var".split(" "));
-const KEYWORDS_MD = new Set<string>();
-
-interface LangProfile {
-	keywords: Set<string>;
-	/** `#` to end of line is a comment (python/shell/yaml/toml/markdown). */
-	hashComment?: boolean;
-	/** `//` to end of line. */
-	lineComment?: boolean;
-	/** `/* ... *​/` block comment. */
-	blockComment?: boolean;
-	/** Capitalized identifiers are types (Rust/TS/C/Go...). */
-	typesByCase?: boolean;
-	/** The fence toggle (the last capture group = the region language). */
-	fence?: RegExp;
-	/** An unlabeled fence's default language (null = the plain "code" style). */
-	unlabeledFenceLang?: string | null;
-	/** The per-line prefix to strip before classifying a region's content. */
-	fenceStrip?: RegExp;
-	/** The default region is the markdown prose (headings/emphasis). */
-	markdown?: boolean;
-}
-
-function langProfile(ext: string): LangProfile | null {
-	// The wire's fence `lang` is the NORMALIZED profile key (the engine
-	// resolves doctest attribute lists like `rust,no_run`/`edition2021`/
-	// `ignore_linux` to `rs` before sending — a single source of truth).
-	// This switch maps the remaining LANGUAGE aliases (`rust`→`rs`, …) so a
-	// labeled fence actually highlights; it never sees a raw modifier tag.
-	switch (ext) {
-		case "rust": ext = "rs"; break;
-		case "javascript": case "jsx": ext = "js"; break;
-		case "typescript": case "tsx": ext = "ts"; break;
-		case "python": ext = "py"; break;
-		case "shell": case "bash": ext = "sh"; break;
-		case "c++": case "cpp": ext = "cpp"; break;
-		case "markdown": ext = "md"; break;
-	}
-	switch (ext) {
-		case "rs":
-			return {
-				keywords: KEYWORDS_RUST, lineComment: true, blockComment: true, typesByCase: true,
-				// Doc-comment examples: `/// ```rust` opens a rust-syntax region.
-				fence: /^\s*(\/\/\/|\/\/!)\s*```([a-z0-9_+,-]*)\s*$/,
-				// An unlabeled doc fence is a rust example.
-				unlabeledFenceLang: "rust",
-				// The region's code lines are comment-prefixed — strip the
-				// prefix, classify the remainder.
-				fenceStrip: /^\s*(\/\/\/|\/\/!)?\s*/,
-			};
-		case "ts":
-		case "tsx":
-		case "js":
-		case "jsx":
-		case "mjs":
-			return { keywords: KEYWORDS_TS, lineComment: true, blockComment: true, typesByCase: true };
-		case "py":
-			return { keywords: KEYWORDS_PY, hashComment: true, lineComment: false, typesByCase: true };
-		case "sh":
-		case "bash":
-			return { keywords: KEYWORDS_SH, hashComment: true };
-		case "c":
-		case "h":
-		case "cpp":
-		case "hpp":
-		case "java":
-			return { keywords: KEYWORDS_C, lineComment: true, blockComment: true, typesByCase: true };
-		case "go":
-			return { keywords: KEYWORDS_GO, lineComment: true, blockComment: true, typesByCase: true };
-		case "md":
-		case "markdown":
-			return {
-				keywords: KEYWORDS_MD, hashComment: true,
-				// The md fence: ` ```lang ` — the last capture = the region language.
-				fence: /^\s*```([a-z0-9_+,-]*)\s*$/,
-				// An unlabeled fence = the plain "code" style (no syntax).
-				unlabeledFenceLang: null,
-				markdown: true,
-			};
-		case "toml":
-		case "yaml":
-		case "yml":
-			return { keywords: KEYWORDS_MD, hashComment: true };
-		case "json":
-			return { keywords: KEYWORDS_MD };
-		default:
-			return null;
-	}
-}
-
-// TODO (recursive Markdown parser): mdInnerTokens handles `` `code` `` inside
-// bold/italic/links (SGR stacks, child color wins). Deeper nesting like
-// **`bold+italic`** requires a proper recursive descent parser — the regex
-// `\*\*[^*\n]+\*\*` already forbids `*` inside bold, so `**_italic_**` is
-// structurally unrepresentable in the current flat-regex approach. Defer until
-// there is a clear use-case that justifies the complexity.
-//
-// TODO (context lines into backend): context rows currently bypass the Rust
-// backend (no `runs` emitted for `RowKind::Ctx`). The TS renderer re-tokenizes
-// them live via ctxTokens / markdownTokens / tokenizeCommentWithBackticks —
-// duplicating all Rust-side logic. Phase 5 task: emit `runs` for Ctx rows in
-// bin_pipeline, delete ctxTokens from the renderer, and let the golden be the
-// single arbiter across all row kinds.
-
-// Regex literal parts; the per-language alternation is composed from
-// `re.source` (regex escapes, no string-escaping pitfalls).
-const RE_HASH = /#[^\n]*/;
-const RE_LINE = /\/\/[^\n]*/;
-const RE_BLOCK = /\/\*[\s\S]*?\*\//;
-const RE_RAW = /r#*"(?:[^"\\]|\\.)*"#*/;
-const RE_DSTR = /"(?:[^"\\\n]|\\.)*"/;
-const RE_SSTR = /'(?:[^'\\\n]|\\.)*'/;
-const RE_BT = /`(?:[^`\\\n]|\\.)*`/;
-const RE_HEX = /\b0x[0-9a-fA-F_]+\b/;
-const RE_NUM = /\b\d[\d_]*(?:\.[\d_]+)?(?:[eE][+-]?\d+)?\b/;
-const RE_ID = /[A-Za-z_][A-Za-z0-9_]*/;
-const RE_WS = /\s+/;
-const RE_OTHER = /./;
-
-const TOKEN_RE_CACHE = new Map<string, RegExp>();
-
-function tokenReFor(profile: LangProfile): RegExp {
-	const parts = [
-		profile.hashComment ? RE_HASH.source : null,
-		profile.lineComment ? RE_LINE.source : null,
-		profile.blockComment ? RE_BLOCK.source : null,
-		RE_RAW.source,
-		RE_DSTR.source,
-		RE_SSTR.source,
-		RE_BT.source,
-		RE_HEX.source,
-		RE_NUM.source,
-		RE_ID.source,
-		RE_WS.source,
-		RE_OTHER.source,
-	]
-		.filter(Boolean)
-		.join("|");
-	return new RegExp(parts, "g");
-}
-
-
-function tokenizeCommentWithBackticks(tok: string, profile: LangProfile): { color: string; text: string; sgr?: number }[] {
-	// Doc comments (`///`, `//!`) are MARKDOWN — rustdoc processes them, so
-	// `**bold**`, `*italic*`, `~~strike~~`, `[link](url)`, and `` `code` ``
-	// all render. Plain comments (`//`, `/*`, `#`) are NOT markdown; the
-	// convention (rust-analyzer, GitHub) is a uniform comment color. The one
-	// exception: inline `` `code` `` spans in a plain comment still render as
-	// Rust (accent backticks + classified inner) — they read as code refs,
-	// not prose. No markdown emphasis/link/strike on plain comments. This
-	// mirrors the engine's `tokenize_comment_with_backticks` so synthesized
-	// ctx rows (this path) render identically to in-hunk rows (the engine).
-	const isDoc = tok.startsWith("///") || tok.startsWith("//!");
-	const hasMarkdown = isDoc && (tok.includes("`") || tok.includes("**") || tok.includes("~~") || tok.includes("["));
-	const hasBacktick = tok.includes("`");
-	if (!hasMarkdown && !hasBacktick) return [{ color: "syntaxComment", text: tok }];
-	const rustProf = langProfile("rs") || profile;
-	let prefixLen = 0;
-	if (isDoc) prefixLen = 3;
-	else if (tok.startsWith("//") || tok.startsWith("/*")) prefixLen = 2;
-	else if (tok.startsWith("#")) prefixLen = 1;
-
-	const out: { color: string; text: string; sgr?: number }[] = [];
-	if (prefixLen > 0) out.push({ color: "syntaxComment", text: tok.slice(0, prefixLen) });
-	const body = tok.slice(prefixLen);
-	if (isDoc) {
-		for (const t of markdownTokens(body)) {
-			if (t.color === "text") out.push({ ...t, color: "syntaxComment" });
-			else if (t.color === "syntaxString") out.push(...classifyTokens(t.text, rustProf));
-			else out.push(t);
-		}
-	} else {
-		out.push(...backtickTokens(body, rustProf));
-	}
-	return out;
-}
-
-/** Backtick-only extraction for plain (`//`, `/*`, `#`) comments: only inline
- * `` `code` `` spans render — accent backticks + Rust-classified inner;
- * the surrounding comment text stays `syntaxComment`. No markdown
- * emphasis/link/strike (plain comments aren't markdown). Mirrors the
- * engine's `backtick_tokens`. */
-function backtickTokens(body: string, rustProf: LangProfile): { color: string; text: string; sgr?: number }[] {
-	const re = /`[^`\n]+`/g;
-	const out: { color: string; text: string; sgr?: number }[] = [];
-	let last = 0;
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(body))) {
-		if (m.index > last) out.push({ color: "syntaxComment", text: body.slice(last, m.index) });
-		out.push({ color: "accent", text: "`" });
-		out.push(...classifyTokens(m[0]!.slice(1, -1), rustProf));
-		out.push({ color: "accent", text: "`" });
-		last = m.index + m[0]!.length;
-	}
-	if (last < body.length) out.push({ color: "syntaxComment", text: body.slice(last) });
-	return out;
-}
-
-
-function classifyTokens(text: string, profile: LangProfile | null): { color: string; text: string }[] {
-	if (!profile || text.length === 0) return [{ color: "text", text }];
-	const re = tokenReFor(profile);
-	re.lastIndex = 0;
-	const out: { color: string; text: string }[] = [];
-	let last = 0;
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(text))) {
-		if (m.index > last) out.push({ color: "text", text: text.slice(last, m.index) });
-		const tok = m[0];
-		const next = text[m.index + tok.length];
-		if ((profile.hashComment && tok.startsWith("#")) || tok.startsWith("//") || tok.startsWith("/*")) {
-			out.push(...tokenizeCommentWithBackticks(tok, profile));
-			last = m.index + tok.length;
-			continue;
-		}
-		let color = "text";
-		if (tok.startsWith('"') || tok.startsWith("'") || tok.startsWith("`") || tok.startsWith('r"')) {
-			color = "syntaxString";
-		} else if (/^0x/i.test(tok) || /^\d/.test(tok)) {
-			color = "syntaxNumber";
-		} else if (/^[A-Za-z_]/.test(tok)) {
-			if (profile.keywords.has(tok)) color = "syntaxKeyword";
-			else if (profile.typesByCase && /^[A-Z]/.test(tok)) color = "syntaxType";
-			else if (next === "(") color = "syntaxFunction";
-		} else if (/^\s+$/.test(tok)) {
-			color = "text";
-		} else {
-			color = "syntaxOperator";
-		}
-		out.push({ color, text: tok });
-		last = m.index + tok.length;
-	}
-	if (last < text.length) out.push({ color: "text", text: text.slice(last) });
-	return out;
-}
-
-
-/** Styled ANSI for a full line (tests); the component slices the token stream
- * per wrap segment instead, so colors continue across visual line breaks. */
-function syntaxHighlight(
-	text: string,
-	profile: LangProfile | null,
-	theme: { fg: (color: string, t: string) => string },
-	/** Re-applied after every token's reset (keeps a background run intact). */
-	bgAfter = "",
-): string {
-	if (!profile || text.length === 0) return theme.fg("text", text) + bgAfter;
-	let out = "";
-	for (const t of classifyTokens(text, profile)) {
-		out += theme.fg(t.color, t.text) + bgAfter;
-	}
-	return out;
-}
+// All syntax tokenization for diffs, comments, fence regions, and content context lines
+// is executed by the Rust backend (`bin/diffuse`). The wire contract delivers pre-tokenized `runs`.
 
 // ── Review component ───────────────────────────────────────────────────────
 
@@ -3024,68 +2769,27 @@ class ReviewComponent {
 
 	private rowTokens(r: Row, flatIdx: number): { kind?: "common" | "del" | "add" | "ctx"; color: string; sgr?: number; text: string }[] {
 		if (r.runs) {
-			// The wire runs carry the engine's colors — the syntaxOn toggle
-			// strips them (the kind stays: the strike/fill are the diff's).
 			return this.wireTokens(r.runs);
 		}
-		// Synthesized ctx rows (the context allocation, the gap fills, the
-		// mod's absorbed "above" rows) have no wire runs — the engine
-		// doesn't see them (they're TS-built from content outside the
-		// hunks). ctxTokens is the fallback for these ONLY. TODO: emit a
-		// ctx-classify wire for arbitrary line numbers (a `classifyLines`
-		// endpoint keyed by file + line range) and delete ctxTokens + the
-		// engine-duplicating TS markdownTokens/tokenizeCommentWithBackticks/
-		// backtickTokens entirely.
 		const file = this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file;
-		return this.ctxTokens(r.text, file, r.newLine);
+		const lineNum = r.newLine ?? r.oldLine;
+		if (lineNum !== null && file.contentRuns && file.contentRuns[lineNum - 1]) {
+			return this.wireTokens(file.contentRuns[lineNum - 1]!);
+		}
+		return [{ kind: "ctx", color: this.syntaxOn ? "text" : "text", text: r.text }];
 	}
 
 	/** Map the wire's precomputed runs to the renderer's token shape,
 	 * applying the syntaxOn toggle (off → all text-color; the kind stays so
-	 * the strike/fill render). Shared by in-hunk ctx rows, add rows, and tail
-	 * rows — every row kind that carries engine-side `runs`. */
-	private wireTokens(runs: { kind: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[]): { kind?: "common" | "del" | "add" | "ctx"; color: string; sgr?: number; text: string }[] {
+	 * the strike/fill render). Shared by in-hunk ctx rows, add rows, tail
+	 * rows, and content/context rows — every row kind that carries engine-side `runs`. */
+	private wireTokens(runs: { kind?: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[]): { kind?: "common" | "del" | "add" | "ctx"; color: string; sgr?: number; text: string }[] {
 		return runs.map((x) => ({
 			kind: x.kind,
 			color: this.syntaxOn ? x.color ?? "text" : "text",
 			sgr: this.syntaxOn ? x.sgr : undefined,
 			text: x.text,
 		}));
-	}
-
-	/** The synthesized (ctx/tail) rows' tokens: the row's OWN file's
-	 * classification (not the cursor's), with the fence regions — a line
-	 * inside a region classifies with the region's language (the file's
-	 * comment prefix stripped first for the rust doc fences), a delimiter
-	 * line renders muted, the md default region is the markdown prose. */
-	private ctxTokens(text: string, file: DiffFile, newLine: number | null): { color: string; text: string; sgr?: number }[] {
-		if (!this.syntaxOn) return [{ color: "text", text }];
-		const ext = file.path.includes(".") ? file.path.split(".").pop() ?? "" : "";
-		const profile = langProfile(ext);
-		const fences = file.fences ?? [];
-		if (newLine !== null) {
-			// A fence delimiter line (just before/after a region) is the
-			// file's default, muted.
-			if (fences.some((f) => newLine! + 1 === f.start || newLine! - 1 === f.end)) {
-				return [{ color: "muted", text }];
-			}
-			const region = fences.find((f) => f.start <= newLine! && newLine! <= f.end);
-			if (region) {
-				const rp = region.lang ? langProfile(region.lang) : null;
-				if (rp && profile?.fenceStrip) {
-					const m = profile.fenceStrip.exec(text);
-					if (m && m.index === 0 && m[0].length > 0) {
-						return [
-							{ color: "syntaxComment", text: m[0] },
-							...classifyTokens(text.slice(m[0].length), rp),
-						];
-					}
-				}
-				return rp ? classifyTokens(text, rp) : [{ color: "text", text }];
-			}
-		}
-		if (profile?.markdown) return markdownTokens(text);
-		return classifyTokens(text, profile);
 	}
 
 	/**
@@ -3415,9 +3119,6 @@ export const reviewInternals = {
 	defaultContext,
 	ReviewComponent,
 	fileCounts,
-	syntaxHighlight,
-	classifyTokens,
-	langProfile,
 	loadReviewState,
 	saveReviewState,
 	resolveInitialPosition,
