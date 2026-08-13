@@ -1439,6 +1439,39 @@ function tokenReFor(profile: LangProfile): RegExp {
 	return re;
 }
 
+function tokenizeCommentWithBackticks(tok: string, profile: LangProfile): { color: string; text: string }[] {
+	if (!tok.includes("`")) {
+		return [{ color: "syntaxComment", text: tok }];
+	}
+	const rustProf = langProfile("rs") || profile;
+	const out: { color: string; text: string }[] = [];
+	let last = 0;
+	while (last < tok.length) {
+		const openRel = tok.slice(last).indexOf("`");
+		if (openRel !== -1) {
+			const open = last + openRel;
+			const closeRel = tok.slice(open + 1).indexOf("`");
+			if (closeRel !== -1) {
+				const close = open + 1 + closeRel;
+				if (open > last) {
+					out.push({ color: "syntaxComment", text: tok.slice(last, open) });
+				}
+				out.push({ color: "accent", text: "`" });
+				const inner = tok.slice(open + 1, close);
+				if (inner.length > 0) {
+					out.push(...classifyTokens(inner, rustProf));
+				}
+				out.push({ color: "accent", text: "`" });
+				last = close + 1;
+				continue;
+			}
+		}
+		out.push({ color: "syntaxComment", text: tok.slice(last) });
+		break;
+	}
+	return out;
+}
+
 function classifyTokens(text: string, profile: LangProfile | null): { color: string; text: string }[] {
 	if (!profile || text.length === 0) return [{ color: "text", text }];
 	const re = tokenReFor(profile);
@@ -1450,10 +1483,13 @@ function classifyTokens(text: string, profile: LangProfile | null): { color: str
 		if (m.index > last) out.push({ color: "text", text: text.slice(last, m.index) });
 		const tok = m[0];
 		const next = text[m.index + tok.length];
-		let color = "text";
 		if ((profile.hashComment && tok.startsWith("#")) || tok.startsWith("//") || tok.startsWith("/*")) {
-			color = "syntaxComment";
-		} else if (tok.startsWith('"') || tok.startsWith("'") || tok.startsWith("`") || tok.startsWith('r"')) {
+			out.push(...tokenizeCommentWithBackticks(tok, profile));
+			last = m.index + tok.length;
+			continue;
+		}
+		let color = "text";
+		if (tok.startsWith('"') || tok.startsWith("'") || tok.startsWith("`") || tok.startsWith('r"')) {
 			color = "syntaxString";
 		} else if (/^0x/i.test(tok) || /^\d/.test(tok)) {
 			color = "syntaxNumber";
@@ -1472,6 +1508,7 @@ function classifyTokens(text: string, profile: LangProfile | null): { color: str
 	if (last < text.length) out.push({ color: "text", text: text.slice(last) });
 	return out;
 }
+
 
 /** Styled ANSI for a full line (tests); the component slices the token stream
  * per wrap segment instead, so colors continue across visual line breaks. */

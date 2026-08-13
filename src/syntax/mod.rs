@@ -557,12 +557,16 @@ pub fn classify_tokens(text: &str, profile: Option<&LangProfile>) -> Vec<Classif
         }
         let tok = &text[start..end];
         let next = text[end..].chars().next();
-        let color = if (profile.hash_comment && tok.starts_with('#'))
+        let is_comment = (profile.hash_comment && tok.starts_with('#'))
             || tok.starts_with("//")
-            || tok.starts_with("/*")
-        {
-            "syntaxComment"
-        } else if tok.starts_with('"')
+            || tok.starts_with("/*");
+        if is_comment {
+            out.extend(tokenize_comment_with_backticks(tok, profile));
+            last = end;
+            continue;
+        }
+
+        let color = if tok.starts_with('"')
             || tok.starts_with('\'')
             || tok.starts_with('`')
             || tok.starts_with("r\"")
@@ -608,6 +612,61 @@ pub fn classify_tokens(text: &str, profile: Option<&LangProfile>) -> Vec<Classif
             text: text[last..].into(),
         });
     }
+    out
+}
+
+fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<ClassifiedToken> {
+    if !tok.contains('`') {
+        return vec![ClassifiedToken {
+            color: "syntaxComment".into(),
+            sgr: None,
+            text: tok.into(),
+        }];
+    }
+
+    let rust_prof = lang_profile("rs").unwrap_or(profile);
+    let mut out = Vec::new();
+    let mut last = 0;
+
+    while last < tok.len() {
+        if let Some(open_rel) = tok[last..].find('`') {
+            let open = last + open_rel;
+            if let Some(close_rel) = tok[open + 1..].find('`') {
+                let close = open + 1 + close_rel;
+                if open > last {
+                    out.push(ClassifiedToken {
+                        color: "syntaxComment".into(),
+                        sgr: None,
+                        text: tok[last..open].into(),
+                    });
+                }
+                out.push(ClassifiedToken {
+                    color: "accent".into(),
+                    sgr: None,
+                    text: "`".into(),
+                });
+                let inner = &tok[open + 1..close];
+                if !inner.is_empty() {
+                    let inner_toks = classify_tokens(inner, Some(rust_prof));
+                    out.extend(inner_toks);
+                }
+                out.push(ClassifiedToken {
+                    color: "accent".into(),
+                    sgr: None,
+                    text: "`".into(),
+                });
+                last = close + 1;
+                continue;
+            }
+        }
+        out.push(ClassifiedToken {
+            color: "syntaxComment".into(),
+            sgr: None,
+            text: tok[last..].into(),
+        });
+        break;
+    }
+
     out
 }
 

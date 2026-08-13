@@ -78,4 +78,28 @@ fn syntax_classification() {
     assert_eq!(plain.len(), 1);
     assert_eq!(plain[0].color, "text");
     assert_eq!(plain[0].text, "anything");
+
+    // Backticks inside doc comments get accent backticks + Rust syntax tokens.
+    let doc_bt = classify_tokens("/// Uses `VFS::resolve` to read.", rs);
+    assert!(
+        doc_bt
+            .iter()
+            .any(|t| t.color == "syntaxComment" && t.text == "/// Uses ")
+    );
+    assert!(doc_bt.iter().any(|t| t.color == "accent" && t.text == "`"));
+    assert!(
+        doc_bt
+            .iter()
+            .any(|t| t.color == "syntaxType" && t.text == "VFS")
+    );
+    assert!(
+        doc_bt
+            .iter()
+            .any(|t| t.color == "syntaxOperator" && t.text == ":")
+    );
+    assert!(
+        doc_bt
+            .iter()
+            .any(|t| t.color == "syntaxComment" && t.text == " to read.")
+    );
 }
