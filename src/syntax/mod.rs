@@ -820,7 +820,11 @@ pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<Fen
 /// SGR on top of any inline code children. The child's *color* wins; the
 /// parent's *SGR* (bold, italic, underline) is inherited — so e.g.
 /// `**`code`**` renders as code-color + bold rather than mdBold-color + bold.
-fn md_inner_tokens(inner: &str, parent_sgr: u32, parent_color: &str) -> Vec<ClassifiedToken> {
+pub(crate) fn md_inner_tokens(
+    inner: &str,
+    parent_sgr: u32,
+    parent_color: &str,
+) -> Vec<ClassifiedToken> {
     static INNER_CODE: OnceLock<Regex> = OnceLock::new();
     let re = INNER_CODE.get_or_init(|| Regex::new(r"`[^`\n]+`").expect("the inner code"));
     let mut out = Vec::new();

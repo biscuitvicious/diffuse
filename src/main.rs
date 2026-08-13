@@ -6,10 +6,12 @@
 //! rows. The output schema is frozen in PLAN.md §2 (the wire contract).
 
 use clap::Parser;
-use diffuse::bin_pipeline::run_pipeline;
+use diffuse::bin_pipeline::run_pipeline_with_notes;
+use diffuse::notes::{NotesDB, load_notes};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{self, Read};
+use std::path::Path;
 
 /// The diffuse diff-engine CLI.
 #[derive(Parser, Debug)]
@@ -18,12 +20,24 @@ struct Args {
     /// Read the diff from this file instead of stdin.
     #[arg(long)]
     diff: Option<String>,
+    /// Path to notes database file (e.g. ~/.pi/review/notes.json).
+    #[arg(long)]
+    notes_file: Option<String>,
+    /// Repository name key for notes lookup.
+    #[arg(long)]
+    repo: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct Input {
     diff: String,
     contents: HashMap<String, String>,
+    #[serde(default)]
+    notes: Option<NotesDB>,
+    #[serde(default)]
+    notes_file: Option<String>,
+    #[serde(default)]
+    repo: Option<String>,
 }
 
 fn main() -> io::Result<()> {
@@ -40,8 +54,17 @@ fn main() -> io::Result<()> {
     let input: Input = serde_json::from_str(&raw).unwrap_or_else(|_| Input {
         diff: raw,
         contents: HashMap::new(),
+        notes: None,
+        notes_file: None,
+        repo: None,
     });
-    let output = run_pipeline(&input.diff, &input.contents);
+
+    let notes_file_path = args.notes_file.or(input.notes_file);
+    let loaded_db = notes_file_path.as_ref().map(|p| load_notes(Path::new(p)));
+    let db_ref = loaded_db.as_ref().or(input.notes.as_ref());
+    let repo_ref = args.repo.as_deref().or(input.repo.as_deref());
+
+    let output = run_pipeline_with_notes(&input.diff, &input.contents, db_ref, repo_ref);
     println!("{}", serde_json::to_string(&output).expect("serialize"));
     Ok(())
 }

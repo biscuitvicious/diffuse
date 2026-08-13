@@ -26,4 +26,5 @@ pub mod tail; // isTailBeforeClosing, fnOf // langProfile, classifyTokens
 
 pub mod apply; // apply_file_diff: the Phase 6 apply-oracle primitive
 pub mod bin_pipeline;
+pub mod notes;
 pub mod old_content;

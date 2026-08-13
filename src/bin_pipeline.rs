@@ -208,11 +208,13 @@ pub fn colored_runs(
     out
 }
 
-/// Run the pipeline over a diff + the new-file contents; produce the
-/// wire-contract output.
-pub fn run_pipeline(
+/// Run the pipeline over a diff + the new-file contents + optional notes;
+/// produce the wire-contract output.
+pub fn run_pipeline_with_notes(
     diff: &str,
     contents: &std::collections::HashMap<String, String>,
+    notes_db: Option<&crate::notes::NotesDB>,
+    repo: Option<&str>,
 ) -> PipelineOutput {
     let mut files = parse_diff(diff);
     let mut out_files = Vec::new();
@@ -302,6 +304,23 @@ pub fn run_pipeline(
                 rows: rows_out,
             });
         }
+        let notes_out = match (notes_db, repo) {
+            (Some(db), Some(r)) => crate::notes::notes_for_file(db, r, &f.path)
+                .into_iter()
+                .map(|n| OutputNote {
+                    id: n.id.clone(),
+                    file: n.file.clone(),
+                    side: n.side,
+                    start: n.start,
+                    end: n.end,
+                    text: n.text.clone(),
+                    created_at: n.created_at,
+                    runs: crate::notes::note_runs(&n.text),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+
         out_files.push(OutputFile {
             path: f.path.clone(),
             status: format!("{:?}", f.status).to_lowercase(),
@@ -326,9 +345,32 @@ pub fn run_pipeline(
                         .to_string(),
                 })
                 .collect(),
+            notes: notes_out,
         });
     }
     PipelineOutput { files: out_files }
+}
+
+/// Run the pipeline over a diff + the new-file contents; produce the
+/// wire-contract output.
+pub fn run_pipeline(
+    diff: &str,
+    contents: &std::collections::HashMap<String, String>,
+) -> PipelineOutput {
+    run_pipeline_with_notes(diff, contents, None, None)
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputNote {
+    pub id: String,
+    pub file: String,
+    pub side: crate::notes::Side,
+    pub start: u32,
+    pub end: u32,
+    pub text: String,
+    pub created_at: u64,
+    pub runs: Vec<OutputRun>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -353,6 +395,9 @@ pub struct OutputFile {
     /// The fence regions (the wire's syntax-region spans — line 1-indexed).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fences: Vec<OutputFence>,
+    /// The review notes attached to this file (with engine-classified markdown runs).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<OutputNote>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -631,6 +631,16 @@ interface WireOutput {
 			tail: { newLine: number | null; oldLine: number | null; text: string; moved: boolean; runs?: { kind: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[] }[];
 			}[];
 		}[];
+		notes?: {
+			id: string;
+			file: string;
+			side: "new" | "old";
+			start: number;
+			end: number;
+			text: string;
+			createdAt: number;
+			runs: { kind: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[];
+		}[];
 	}[];
 }
 
@@ -943,7 +953,10 @@ async function rustBackendLoad(
 	// The wire input: the diff + the new-side contents (the fixture shape).
 	const contents: Record<string, string> = {};
 	for (const f of tsFiles) contents[f.path] = f.newContent.join("\n");
-	const wire = await runDiffuseBin(diffuseBinPath(), JSON.stringify({ diff: diffText, contents }));
+	const wire = await runDiffuseBin(
+		diffuseBinPath(),
+		JSON.stringify({ diff: diffText, contents, notesFile: NOTES_FILE, repo: base.repo }),
+	);
 	const files = filesFromWire(
 		wire,
 		(p) => {
