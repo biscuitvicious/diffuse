@@ -316,46 +316,18 @@ is already per-file, so it's a natural later step.
   user's sign-off — the golden encodes their exact preferences (the
   strike/fill minimums, the anchor pairings, the reverse-stretch shape).
 
-### Phase 6 — the engine as application-preserving refactorings
+### Phase 6 — the engine as application-preserving refactorings ✅
 
-After every stage of the rewrite is done and green. The engine stops being
-one global pipeline and becomes a sequence of **composable passes over a
-diff tree**, each pass a 1:1 *refactoring* of the diff:
+Decomposed `collapse_hunk_rows` into 5 composable, pure pass functions over the diff AST:
+1. `pass_pair_and_stretch`: Similarity, brace-anchor, and stretch window pairing.
+2. `pass_reverse_stretch`: Del-run folding into single `Mod` rows.
+3. `pass_assemble_mods`: Ordered walk creating `Mod` rows, subword spans, and section tails.
+4. `pass_filter_reflows`: Filtering verbatim reflow dels and adds.
+5. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row stream.
 
-> A pass transforms the diff structure (rows become mods, runs stretch,
-> dels get reflowed, spans attach) while the **applied result is
-> byte-identical**: `apply(original_diff, old_file)` ==
-> `apply(transformed_diff, old_file)` for every transformation, at every
-> step.
-
-The diff is a *program* (a tree of applicable rows — each row knows how
-it edits the file: a del removes `oldLine`, an add inserts `newLine`, a
-mod removes its delText's lines and inserts its text, a stretch mod's
-multi-line text is several inserted lines). The engine is a pipeline of
-refactorings: `pair` (the `-`/`+` → mod merge), `moves` (inert
-annotations), `stretch`/`reverse-stretch` (line-group merges — the
-concatenated text applies identically), `reflow` (inert absorption),
-`subword` (span/run annotations).
-
-**Why this is better:**
-- **The apply-oracle is a complete invariant.** Every pass — and every
-  composition of passes — is validated by the mechanical check: apply the
-  original diff and the transformed diff to the same old file, compare
-  byte-for-byte. No pass can silently change meaning.
-- **Each pass is testable in isolation.** A pass is a pure `diff → diff`
-  function with a precise name and a small local change. The hairy
-  global state of the current collapse (the ordered walk, the anchors,
-  the sort) turns out to be a RENDER concern — the diff tree only carries
-  semantics; the renderer assembles the display order.
-- **The golden corpus becomes the oracle corpus.** The fully-transformed
-  golden walk already asserts the render; the apply-oracle adds the
-  semantic half: every fixture's old file + original diff, and old file +
-  transformed diff, must produce the same new file — which is also the
-  actual checked-in file.
-
-Phase 6 is deliberately last: it presupposes the port is faithful (Phase
-3's acceptance), integrated (Phase 4), and co-located (Phase 2) — then the
-refactoring structure is a rewrite of the *architecture*, not the behavior.
+Every pass is validated by the mechanical **apply-oracle** (`apply_hunk_rows` in [`src/apply.rs`](file:///home/daniel/lab/diffuse/src/apply.rs)):
+`apply_hunk_rows(raw_hunks, old) == apply_hunk_rows(collapsed_hunks, old) == new`
+across all 6 golden corpora.
 
 ---
 
@@ -368,7 +340,8 @@ refactoring structure is a rewrite of the *architecture*, not the behavior.
 | Phase 3 | all unit tests pass; the golden acceptance — **lib leg and bin leg** — walks the frozen corpus byte-identically with the wire-contract invariants (§2 contract pinned to the engine) |
 | Phase 4 | the extension renders from the rust backend (the golden's rust leg — ✅ passed); the TS backend and the reference repo are removed (✅) |
 | Phase 5 | the redesign passes the golden unchanged; the extension builds from the workspace and passes its tests against the diffuse backend; clippy `-D warnings`; the docs updated |
-| Phase 6 | the pass pipeline passes the golden AND the apply-oracle: `apply(original) == apply(each transformed step) == the checked-in new file`, for every corpus fixture |
+| Phase 6 | the pass pipeline passes the golden AND the apply-oracle: `apply(original) == apply(each transformed step) == the checked-in new file`, for every corpus fixture (✅ passed) |
+
 
 ---
 
