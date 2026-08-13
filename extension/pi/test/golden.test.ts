@@ -8,7 +8,7 @@
  * canonical copy shared with the Rust acceptance tests. This file must never
  * fork its own fixture/golden pairs.
  *
- * UPDATE IS SURGICAL — the default path, never a blanket regeneration:
+ * UPDATE IS SURGICAL — the standard process for targeted changes:
  *   1. Run the test WITHOUT any env flag: it reports the exact failing
  *      rows (the change your code produced), per corpus.
  *   2. Review the report: the changed rows must be ONLY the region your
@@ -21,14 +21,13 @@
  *      any row outside it (a regression elsewhere in the corpus) or any
  *      expected row that did NOT change fails WITHOUT writing, exit 1.
  *      Use GOLDEN_CORPUS=mirage-2025-08 to scope the update to one corpus.
- *   The golden diff is therefore always the exact intended change set,
- *   reviewed row by row.
  *
- * FULL REGENERATION — when a deliberate, reviewed change shifts the whole
- *   render (a theme overhaul, a reset-code change, a reclassification),
- *   the surgical flag is the wrong tool. GEN_GOLDEN=1 writes the full frame
- *   unconditionally (no surgical guard), then falls through to the on-disk
- *   coverage walk so a regen that drops or fabricates a row still fails:
+ * FULL REGENERATION (GEN_GOLDEN=1) — RESTRICTED USE ONLY:
+ *   Use ONLY for large-scale structural changes (such as theme overhauls or
+ *   reset code changes) where the golden output is already fully validated.
+ *   GEN_GOLDEN=1 writes the full frame unconditionally without the surgical
+ *   safety guard. Never use GEN_GOLDEN=1 for small, focused bug fixes or
+ *   feature changes — use UPDATE_GOLDEN=1 with GOLDEN_EXPECT instead.
  *     GEN_GOLDEN=1 node .../golden.test.ts                 # every corpus
  *     GEN_GOLDEN=1 GOLDEN_CORPUS=mirage-2025-08 node .../golden.test.ts  # one
  *   Use only after reviewing the mismatch report row by row.

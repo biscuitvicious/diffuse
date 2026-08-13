@@ -14,12 +14,13 @@ pub struct Run {
     pub text: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunKind {
     Common,
     Del,
     Add,
+    Ctx,
 }
 
 /// The Unicode White_Space property plus the zero-width space — the

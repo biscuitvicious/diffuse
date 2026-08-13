@@ -434,7 +434,7 @@ interface Row {
 	 * common/del/add runs with the semantic syntax colors (+ the SGR for
 	 * the markdown emphasis) — the renderer's ONLY token source for the
 	 * change rows. */
-	runs?: { kind: "common" | "del" | "add"; color?: string; sgr?: number; text: string }[];
+	runs?: { kind: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[];
 	/** The mod is wholesale (the del block + the add block render as two
 	 * separate blocks, never merged) — baked by the engine. */
 	wholesale?: boolean;
@@ -626,9 +626,9 @@ interface WireOutput {
 				text: string;
 				delText?: string;
 				spans: { del: [number, number][]; add: [number, number][] };
-				runs: { kind: "common" | "del" | "add"; color?: string; text: string }[];
+				runs: { kind: "common" | "del" | "add" | "ctx"; color?: string; text: string }[];
 				moved: boolean;
-			tail: { newLine: number | null; oldLine: number | null; text: string; moved: boolean }[];
+			tail: { newLine: number | null; oldLine: number | null; text: string; moved: boolean; runs?: { kind: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[] }[];
 			}[];
 		}[];
 	}[];
@@ -701,6 +701,7 @@ function filesFromWire(
 						newLine: t.newLine,
 						oldLine: t.oldLine,
 						moved: t.moved,
+						runs: t.runs,
 					})),
 					runs: r.runs,
 					wholesale: r.wholesale,
@@ -2896,7 +2897,9 @@ class ReviewComponent {
 			// The absorbed section lines still follow.
 			for (const tl of r.tail ?? []) {
 				const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
-				const tlTokens = this.ctxTokens(tlText, this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file, tl.newLine);
+				const tlTokens = tl.runs
+					? this.wireTokens(tl.runs)
+					: this.ctxTokens(tlText, this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file, tl.newLine);
 				const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `; // the ctx prefix — a tail row is pure context
 				if (tlText.length === 0) {
 					emitSeg(0, 0, tlPrefix, -1);
@@ -2943,7 +2946,9 @@ class ReviewComponent {
 		// a change.
 		for (const tl of r.tail ?? []) {
 			const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
-			const tlTokens = this.ctxTokens(tlText, this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file, tl.newLine);
+			const tlTokens = tl.runs
+				? this.wireTokens(tl.runs)
+				: this.ctxTokens(tlText, this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file, tl.newLine);
 			const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `; // the ctx prefix — a tail row is pure context
 			if (tlText.length === 0) {
 				out.push(tlPrefix);
@@ -3004,19 +3009,35 @@ class ReviewComponent {
 		return (r.spans?.add ?? []).every(([s, e]) => r.text.slice(s, e).trim().length === 0);
 	}
 
-	private rowTokens(r: Row, flatIdx: number): { kind?: "common" | "del" | "add"; color: string; sgr?: number; text: string }[] {
+	private rowTokens(r: Row, flatIdx: number): { kind?: "common" | "del" | "add" | "ctx"; color: string; sgr?: number; text: string }[] {
 		if (r.runs) {
 			// The wire runs carry the engine's colors — the syntaxOn toggle
 			// strips them (the kind stays: the strike/fill are the diff's).
-			return r.runs.map((x) => ({
-				kind: x.kind,
-				color: this.syntaxOn ? x.color ?? "text" : "text",
-				sgr: this.syntaxOn ? x.sgr : undefined,
-				text: x.text,
-			}));
+			return this.wireTokens(r.runs);
 		}
+		// Synthesized ctx rows (the context allocation, the gap fills, the
+		// mod's absorbed "above" rows) have no wire runs — the engine
+		// doesn't see them (they're TS-built from content outside the
+		// hunks). ctxTokens is the fallback for these ONLY. TODO: emit a
+		// ctx-classify wire for arbitrary line numbers (a `classifyLines`
+		// endpoint keyed by file + line range) and delete ctxTokens + the
+		// engine-duplicating TS markdownTokens/tokenizeCommentWithBackticks/
+		// backtickTokens entirely.
 		const file = this.rowFile[flatIdx] !== undefined ? this.session.files[this.rowFile[flatIdx]!]! : this.file;
 		return this.ctxTokens(r.text, file, r.newLine);
+	}
+
+	/** Map the wire's precomputed runs to the renderer's token shape,
+	 * applying the syntaxOn toggle (off → all text-color; the kind stays so
+	 * the strike/fill render). Shared by in-hunk ctx rows, add rows, and tail
+	 * rows — every row kind that carries engine-side `runs`. */
+	private wireTokens(runs: { kind: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[]): { kind?: "common" | "del" | "add" | "ctx"; color: string; sgr?: number; text: string }[] {
+		return runs.map((x) => ({
+			kind: x.kind,
+			color: this.syntaxOn ? x.color ?? "text" : "text",
+			sgr: this.syntaxOn ? x.sgr : undefined,
+			text: x.text,
+		}));
 	}
 
 	/** The synthesized (ctx/tail) rows' tokens: the row's OWN file's
@@ -3099,7 +3120,7 @@ class ReviewComponent {
 	 * never re-tokenized. */
 	private styleTokens(
 		r: Row,
-		tokens: { kind?: "common" | "del" | "add"; color: string; text: string }[],
+		tokens: { kind?: "common" | "del" | "add" | "ctx"; color: string; text: string }[],
 		segStart: number,
 		segEnd: number,
 		prefix: string,
@@ -3149,6 +3170,10 @@ class ReviewComponent {
 			if (isCtx && !selected) return "";
 			if (kind === "del") return delBg;
 			if (kind === "add" && !isPureDelMod) return wordBg;
+			// "common" (a merged run) and "ctx" (an in-hunk context row's
+			// token) share the line tint — neither is struck nor filled; both
+			// fall through to the row's base background. Explicit so a future
+			// run kind can't silently inherit the fill/strike tint.
 			return lineBg;
 		};
 		const text = this.displayText(r);
@@ -3180,7 +3205,22 @@ class ReviewComponent {
 			const bg = baseBg(tok.kind);
 			if (tok.kind === "del") {
 				out += bg + "\x1b[9m" + theme.fg(sDel.fg, piece) + "\x1b[29m";
+			} else if (tok.kind === "add") {
+				// A fill (added word) — the SGR emphasis rides on top of the
+				// add-color (markdown bold/italic inside an added line).
+				const sgr = (tok as { sgr?: number }).sgr;
+				const off = sgr !== undefined ? SGR_OFF[sgr] : undefined;
+				const styledPiece = activeTheme.renderToken(
+					{ ...tok, text: piece },
+					r.kind,
+					(c, t) => theme.fg(c, t),
+				);
+				out += bg + (sgr !== undefined ? `\x1b[${sgr}m` : "") + styledPiece + (off !== undefined ? `\x1b[${off}m` : "") + bg;
 			} else {
+				// "common" (merged) and "ctx" (in-hunk context) — unstyled
+				// content: the row's line tint, the syntax color only (no
+				// strike, no fill). Explicit so the two unstyled kinds share
+				// one documented branch.
 				const sgr = (tok as { sgr?: number }).sgr;
 				const off = sgr !== undefined ? SGR_OFF[sgr] : undefined;
 				const styledPiece = activeTheme.renderToken(

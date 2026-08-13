@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputRow {
-    pub kind: String,
+    pub kind: RowKind,
     pub new_line: Option<u32>,
     pub old_line: Option<u32>,
     pub text: String,
@@ -50,12 +50,18 @@ pub struct OutputTailRow {
     pub text: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub moved: bool,
+    /// The engine's classified tokens for this absorbed line (it renders as
+    /// ctx — the engine classifies it with the file's fence regions, same
+    /// as a ctx row). The renderer reads these straight off the wire — no
+    /// TS-side re-tokenization. Empty when there's nothing to classify.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<OutputRun>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputRun {
-    pub kind: String,
+    pub kind: RunKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
     /// The SGR attribute (the markdown emphasis — bold/italic/strike/
@@ -77,15 +83,32 @@ pub struct OutputFence {
     pub lang: String,
 }
 
-fn row_kind_name(k: RowKind) -> &'static str {
-    match k {
-        RowKind::Add => "add",
-        RowKind::Del => "del",
-        RowKind::Ctx => "ctx",
-        RowKind::Sep => "sep",
-        RowKind::File => "file",
-        RowKind::Mod => "mod",
+/// Classify a full line as the renderer's ctx/token source: a fence
+/// delimiter line renders muted; otherwise the line classifies in its
+/// region's language (or the file's default — md prose, the rust doc
+/// fence's strip-then-classify, the plain comment-aware tokenizer). This
+/// is the SINGLE engine-side ctx classifier — the renderer no longer
+/// re-tokenizes ctx rows (they ride the wire's `runs`).
+fn classify_ctx_line(
+    text: &str,
+    new_line: Option<u32>,
+    profile: Option<&crate::syntax::LangProfile>,
+    regions: &[crate::syntax::FenceRegion],
+) -> Vec<ClassifiedToken> {
+    let is_delimiter = new_line.is_some_and(|n| {
+        regions
+            .iter()
+            .any(|rg| n + 1 == rg.start || (n > 0 && n - 1 == rg.end))
+    });
+    if is_delimiter {
+        return vec![ClassifiedToken {
+            color: "muted".into(),
+            sgr: None,
+            text: text.into(),
+        }];
     }
+    let region = new_line.and_then(|n| crate::syntax::region_at(regions, n));
+    crate::syntax::classify_line(text, profile, region)
 }
 
 /// The merged runs with the semantic syntax colors on the common/add runs
@@ -104,36 +127,17 @@ pub fn colored_runs(
 ) -> Vec<OutputRun> {
     let mut out = Vec::new();
     let new_line = r.new_line;
-    let region = new_line.and_then(|n| crate::syntax::region_at(regions, n));
-    // A fence delimiter line (the line before a region / after it) renders
-    // muted in the file's default.
-    let is_delimiter = new_line.is_some_and(|n| {
-        regions
-            .iter()
-            .any(|rg| n + 1 == rg.start || (n > 0 && n - 1 == rg.end))
-    });
     // The FULL-line classifier (an add row — the strip + the delimiter
     // + the region/md default all apply), and the FRAGMENT classifier (a
     // merged common/add run — the strip is a full-line concern, the
     // fragments classify as-is).
     let classify_full = |text: &str| -> Vec<ClassifiedToken> {
-        if is_delimiter {
-            return vec![ClassifiedToken {
-                color: "muted".into(),
-                sgr: None,
-                text: text.into(),
-            }];
-        }
-        crate::syntax::classify_line(text, profile, region)
+        classify_ctx_line(text, new_line, profile, regions)
     };
+    // A merged common/add fragment classifies in the row's region (no
+    // delimiter-muted path — a fragment is never a whole delimiter line).
+    let region = new_line.and_then(|n| crate::syntax::region_at(regions, n));
     let classify_frag = |text: &str| -> Vec<ClassifiedToken> {
-        if is_delimiter {
-            return vec![ClassifiedToken {
-                color: "muted".into(),
-                sgr: None,
-                text: text.into(),
-            }];
-        }
         match region {
             Some(rg) => classify_tokens(text, rg.lang.as_deref().and_then(lang_profile)),
             None => {
@@ -151,10 +155,22 @@ pub fn colored_runs(
         || (r.moved && r.del_text.as_deref() != Some(r.text.as_str())))
         && r.del_text.is_some();
     if !use_merged {
-        if r.kind == RowKind::Add {
+        if r.kind == RowKind::Add || r.kind == RowKind::Ctx {
+            // Add AND ctx rows carry the engine's classified runs — the
+            // renderer reads them straight off the wire for both row
+            // kinds (no TS-side re-tokenization). A del stays plain (the
+            // strike is the renderer's business). The RUN kind is the
+            // renderer's strike/fill hint: add → Add, ctx → Ctx (a ctx
+            // row is neither struck nor filled — Ctx falls through to
+            // the line tint in styleTokens).
+            let kind = if r.kind == RowKind::Add {
+                RunKind::Add
+            } else {
+                RunKind::Ctx
+            };
             for t in classify_full(&r.text) {
                 out.push(OutputRun {
-                    kind: "add".to_string(),
+                    kind,
                     color: Some(t.color),
                     sgr: t.sgr,
                     text: t.text,
@@ -162,7 +178,7 @@ pub fn colored_runs(
             }
         } else {
             out.push(OutputRun {
-                kind: row_kind_name(r.kind).to_string(),
+                kind: RunKind::Del,
                 color: None,
                 sgr: None,
                 text: r.text.clone(),
@@ -173,7 +189,7 @@ pub fn colored_runs(
     for run in merged_runs(r) {
         if run.kind == RunKind::Del {
             out.push(OutputRun {
-                kind: "del".to_string(),
+                kind: RunKind::Del,
                 color: None,
                 sgr: None,
                 text: run.text,
@@ -181,11 +197,7 @@ pub fn colored_runs(
         } else {
             for t in classify_frag(&run.text) {
                 out.push(OutputRun {
-                    kind: if run.kind == RunKind::Common {
-                        "common".to_string()
-                    } else {
-                        "add".to_string()
-                    },
+                    kind: run.kind,
                     color: Some(t.color),
                     sgr: t.sgr,
                     text: t.text,
@@ -249,7 +261,7 @@ pub fn run_pipeline(
             let mut rows_out = Vec::new();
             for r in &h.rows {
                 rows_out.push(OutputRow {
-                    kind: row_kind_name(r.kind).to_string(),
+                    kind: r.kind,
                     new_line: r.new_line,
                     old_line: r.old_line,
                     text: r.text.clone(),
@@ -261,11 +273,23 @@ pub fn run_pipeline(
                     tail: r
                         .tail
                         .iter()
-                        .map(|t| OutputTailRow {
-                            new_line: t.new_line,
-                            old_line: t.old_line,
-                            text: t.text.clone(),
-                            moved: t.moved,
+                        .map(|t| {
+                            let runs = classify_ctx_line(&t.text, t.new_line, profile, &regions);
+                            OutputTailRow {
+                                new_line: t.new_line,
+                                old_line: t.old_line,
+                                text: t.text.clone(),
+                                moved: t.moved,
+                                runs: runs
+                                    .into_iter()
+                                    .map(|tk| OutputRun {
+                                        kind: RunKind::Ctx,
+                                        color: Some(tk.color),
+                                        sgr: tk.sgr,
+                                        text: tk.text,
+                                    })
+                                    .collect(),
+                            }
                         })
                         .collect(),
                 });
