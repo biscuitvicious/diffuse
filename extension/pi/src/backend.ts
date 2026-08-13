@@ -144,7 +144,7 @@ export function filesFromWire(
 			})),
 			noContent: !src?.newContent?.length && !src?.oldContent?.length,
 			notes: wf.notes ?? [],
-			visibleRows: wf.visibleRows,
+			rows: wf.rows,
 		});
 	}
 	return out;

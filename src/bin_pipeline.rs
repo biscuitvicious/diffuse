@@ -369,7 +369,7 @@ pub fn run_pipeline_with_notes(
                 .collect(),
             notes: notes_out,
             content_runs,
-            visible_rows: crate::visible::build_visible(
+            rows: crate::visible::build_visible(
                 &f.hunks,
                 f.new_line_count,
                 f.old_line_count,
@@ -446,9 +446,9 @@ pub struct OutputFile {
     /// Pre-classified syntax token runs for all context/content lines of the file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_runs: Vec<Vec<OutputRun>>,
-    /// Pre-assembled visible row sequence for default context.
+    /// Pre-assembled row sequence for default context.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub visible_rows: Vec<OutputRow>,
+    pub rows: Vec<OutputRow>,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -41,7 +41,7 @@ export interface DiffFile {
 	oldContent: string[];
 	newLineCount: number;
 	noContent: boolean;
-	visibleRows?: Row[];
+	rows?: Row[];
 	contentRuns?: { kind?: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[][];
 }
 
@@ -113,7 +113,7 @@ export interface WireFile {
 	counts: WireCounts;
 	hunks: WireHunk[];
 	contentRuns?: WireRun[][];
-	visibleRows?: Row[];
+	rows?: Row[];
 }
 
 export interface WireNote {
@@ -130,7 +130,7 @@ export interface WireNote {
 export interface WireOutput {
 	files: WireFile[];
 	notes?: WireNote[];
-	visibleRows?: Row[];
+	rows?: Row[];
 }
 
 // ── Config Helpers ─────────────────────────────────────────────────────────
