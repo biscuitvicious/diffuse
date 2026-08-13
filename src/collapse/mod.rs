@@ -219,11 +219,12 @@ pub fn pass_pair_and_stretch(
             let parts = line_similarity_parts_tokens(dt, at, &interner.ws, &interner.alnum);
             if parts.add_total > 0
                 && parts.add_matched as f64 >= parts.add_total as f64 * 0.8
-                && parts.sim < 0.5
+                && parts.sim < 0.3
                 && pending_adds.len() > 1
             {
                 continue;
             }
+
             let score = return_bonus + brace_bonus + parts.sim;
             if score > best_score {
                 best_score = score;
