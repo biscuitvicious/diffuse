@@ -425,6 +425,7 @@ These are the rules the user has tuned by hand. Each is a port-trap:
 - **WASM vs spawn** for the TS integration: spawn is simpler (the bin IS
   the contract); WASM is one build away if spawn latency matters. Start
   with spawn.
+- **Native Git Crate (TODO)**: Currently `src/git.rs` executes `git` CLI subprocesses (`git diff`, `git show`, `git ls-files`, `git merge-base`). In Phase 5/6, replace subshell `Command::new("git")` calls with a native Rust git crate (`gix` or `git2`) for pure in-process git operations without spawning external process children.
 - **The golden walk's home**: it needs the renderer, so it lives in the
   extension's TS suite; the Rust acceptance proves the engine + contract.
   If a Rust TUI materializes (Phase 5+), the walk moves into it.
