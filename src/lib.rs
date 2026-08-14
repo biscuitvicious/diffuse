@@ -27,6 +27,7 @@ pub mod merge; // mergedRuns, delPairing, delSpansToShow, wholesalePair
 pub mod moves; // markMoves, the block-move rule
 pub mod parse; // parseDiff, hunks, rows
 pub mod scope; // is_tail_before_closing, fn_of
+pub mod shift; // diff identity transformations: content-neutral upward/downward hunk shifts
 pub mod similarity; // lineSimilarity, lineSimilarityParts
 pub mod syntax; // lang_profile, classify_tokens
 

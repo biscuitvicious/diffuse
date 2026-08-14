@@ -1037,3 +1037,78 @@ fn test_resolved_layers_subword_collapse() {
     assert_eq!(collapsed.len(), 1, "Should collapse to 1 Mod row");
     assert_eq!(collapsed[0].kind(), RowKind::Mod);
 }
+
+#[test]
+fn test_closing_brace_released_from_add_block() {
+    let h = hunk(vec![
+        row(RowKind::Del, "        self.mount_stack", None, Some(1020)),
+        row(RowKind::Del, "            .filesystems", None, Some(1021)),
+        row(RowKind::Del, "            .iter()", None, Some(1022)),
+        row(
+            RowKind::Del,
+            "            .rfind(|fs| guest_path.starts_with(fs.mount_point()))",
+            None,
+            Some(1023),
+        ),
+        row(
+            RowKind::Del,
+            "            .map(|fs| fs.as_ref() as &dyn Filesystem)",
+            None,
+            Some(1024),
+        ),
+        row(
+            RowKind::Add,
+            "        self.mount_stack.get(guest_path)",
+            Some(1060),
+            None,
+        ),
+        row(RowKind::Add, "    }", Some(1061), None),
+        row(RowKind::Add, "", Some(1062), None),
+        row(
+            RowKind::Add,
+            "    /// Mutable variant of [`Self::find_mount`] — for live mode changes",
+            Some(1063),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "    pub fn find_mount_mut(&mut self, guest_path: &Path) -> Option<&mut dyn Filesystem> {",
+            Some(1064),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "        self.mount_stack.get_mut(guest_path)",
+            Some(1065),
+            None,
+        ),
+    ]);
+
+    let mut new_content: Vec<String> = vec![String::new(); 1100];
+    new_content[1059] = "        self.mount_stack.get(guest_path)".to_string();
+    new_content[1060] = "    }".to_string();
+    new_content[1061] = "".to_string();
+    new_content[1062] =
+        "    /// Mutable variant of [`Self::find_mount`] — for live mode changes".to_string();
+    new_content[1063] =
+        "    pub fn find_mount_mut(&mut self, guest_path: &Path) -> Option<&mut dyn Filesystem> {"
+            .to_string();
+    new_content[1064] = "        self.mount_stack.get_mut(guest_path)".to_string();
+    new_content[1065] = "    }".to_string();
+    new_content[1066] = "".to_string();
+
+    let collapsed = collapse_hunk_rows(&h, false, None, Some(&new_content));
+    // The first row should be the mod at 1060
+    assert_eq!(collapsed[0].kind(), RowKind::Mod);
+    assert_eq!(collapsed[0].new_line(), Some(1060));
+
+    // The first addition in collapsed should be at 1063 (NOT 1061)
+    assert_eq!(collapsed[4].kind(), RowKind::Add);
+    assert_eq!(collapsed[4].new_line(), Some(1063));
+
+    // The additions should end with lines 1066 ("    }") and 1067 ("")
+    assert_eq!(collapsed.last().unwrap().new_line(), Some(1067));
+    assert_eq!(collapsed.last().unwrap().text(), "");
+    assert_eq!(collapsed[collapsed.len() - 2].text(), "    }");
+    assert_eq!(collapsed[collapsed.len() - 2].new_line(), Some(1066));
+}

@@ -8,18 +8,21 @@
 //! 4. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row
 //!    stream.
 
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
+
+use regex::Regex;
+
 use crate::{
     lcs::{char_slice, tokenize_line, word_spans},
     merge::wholesale_pair,
     parse::{AddLine, DelLine, Hunk, Row, Spans},
     scope::{fn_of, is_tail_before_closing},
+    shift::pass_shift_hunk,
     similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens},
-};
-use regex::Regex;
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    sync::OnceLock,
 };
 
 /// Results of the initial pairing pass.
@@ -620,6 +623,9 @@ pub fn collapse_hunk_rows(
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
 ) -> Vec<Row> {
+    let h_norm = pass_shift_hunk(h, new_content);
+    let h = &h_norm;
+
     // Pass 1: Similarity and brace-anchor pairing
     let p1 = pass_pairing(h, hash_comment, old_content, new_content);
     let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
