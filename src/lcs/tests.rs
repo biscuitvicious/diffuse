@@ -212,3 +212,35 @@ fn test_recursive_patience_anchoring() {
         "isolated adds across multiple sub-intervals"
     );
 }
+
+#[test]
+fn test_semantic_delimiter_atomicity_and_literals() {
+    // 1. Lifetime updates: &'a str -> &'static str
+    let old1 = "fn get_name(&self) -> &'a str;";
+    let new1 = "fn get_name(&self) -> &'static str;";
+    let lifetime_ws = word_spans(old1, new1);
+    assert_eq!(lifetime_ws.del.len(), 1);
+    assert_eq!(lifetime_ws.add.len(), 1);
+    assert_eq!(
+        char_slice(new1, lifetime_ws.add[0].0, lifetime_ws.add[0].1),
+        "'static"
+    );
+
+    // 2. String literal content update: "Alice" -> "Bob"
+    let old2 = "let name = \"Alice\";";
+    let new2 = "let name = \"Bob\";";
+    let str_ws = word_spans(old2, new2);
+    assert_eq!(str_ws.del.len(), 1);
+    assert_eq!(str_ws.add.len(), 1);
+    assert_eq!(char_slice(new2, str_ws.add[0].0, str_ws.add[0].1), "Bob");
+
+    // 3. String literal to macro expansion: "Alice" -> format!("{user}")
+    let old3 = "let name = \"Alice\";";
+    let new3 = "let name = format!(\"{user}\");";
+    let macro_ws = word_spans(old3, new3);
+    assert_eq!(macro_ws.del.len(), 1);
+    assert_eq!(
+        char_slice(old3, macro_ws.del[0].0, macro_ws.del[0].1),
+        "Alice"
+    );
+}
