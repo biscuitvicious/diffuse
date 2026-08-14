@@ -256,3 +256,56 @@ fn test_bidirectional_run_projection() {
         }
     }
 }
+
+#[test]
+fn test_del_placement_before_replacement_add() {
+    let r = mk(
+        "    pub fn lookup(&self) -> Option<ResolutionResult> {",
+        "    pub fn epoch(&self) -> u64 {",
+    );
+    let runs = merged_runs(&r);
+
+    // Verify del("Option<ResolutionResult>") appears BEFORE add("u64")
+    let opt_del_idx = runs
+        .iter()
+        .position(|run| run.kind == RunKind::Del && run.text.contains("Option<ResolutionResult>"))
+        .expect("Option<ResolutionResult> deletion run exists");
+    let u64_add_idx = runs
+        .iter()
+        .position(|run| run.kind == RunKind::Add && run.text.contains("u64"))
+        .expect("u64 addition run exists");
+
+    assert!(
+        opt_del_idx < u64_add_idx,
+        "del('Option<ResolutionResult>') at {} must precede add('u64') at {}",
+        opt_del_idx,
+        u64_add_idx
+    );
+}
+
+#[test]
+fn test_unpaired_del_position_before_add_at_same_offset() {
+    let del_text = "    pub fn epoch(&self) -> Option<ResolutionResult> {";
+    let add_text = "    pub fn epoch(&self) -> u64 {";
+    let del_spans = vec![(27, 51)]; // Option<ResolutionResult>
+    let add_spans = vec![(27, 30)]; // u64
+    let pos = del_display_positions(&del_spans, &add_spans, del_text, add_text);
+    assert_eq!(
+        pos[0], 27,
+        "unpaired deletion at offset 27 must be placed before add at offset 27"
+    );
+}
+
+#[test]
+fn test_del_position_with_filtered_intermediate_spans() {
+    let del_text = "    pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {";
+    let add_text = "    pub fn epoch(&self) -> u64 {";
+    let del_spans = vec![(11, 17), (44, 68)]; // lookup, Option<ResolutionResult>
+    let add_spans = vec![(11, 16), (27, 30)]; // epoch, u64
+    let pos = del_display_positions(&del_spans, &add_spans, del_text, add_text);
+    assert_eq!(
+        pos,
+        vec![11, 27],
+        "Option<ResolutionResult> at offset 44 in old text must map to offset 27 (start of u64) in new text"
+    );
+}

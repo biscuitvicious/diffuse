@@ -76,38 +76,57 @@ fn char_at(s: &str, i: usize) -> Option<char> {
  * */
 /// Exact display position of each del span in the merged (new-text) view.
 ///
-/// The merged display is the new text with del runs interspersed. Position
-/// `display_pos[j]` is the new-text character index where del span `j` begins:
-///
-/// ```text
-/// raw_pos[j]     = del_span[j].start − Σ(de−ds for del spans k < j)
-/// as0_common[i]  = add_span[i].start − Σ(ae−as for add spans m < i)
-/// display_pos[j] = raw_pos[j] + Σ(ae−as for add spans where as0_common <= raw_pos[j])
-/// ```
-///
-/// `raw_pos` and `as0_common` project both deletion and addition offsets into
-/// the shared common-subsequence coordinate space. Comparing `as0_common <=
-/// raw` precisely counts all additions that occur at or before this deletion in
-/// the stream, correctly placing trailing and inline deletions.
+/// Position `display_pos[j]` is the new-text character index where del span `j`
+/// begins, determined by projecting the deletion offset against the LCS common
+/// token boundaries between `del_text` and `add_text`.
 pub fn del_display_positions(
     del_spans: &[(usize, usize)],
-    add_spans: &[(usize, usize)],
+    _add_spans: &[(usize, usize)],
+    del_text: &str,
+    add_text: &str,
 ) -> Vec<usize> {
+    if del_text.is_empty() || add_text.is_empty() {
+        return vec![0; del_spans.len()];
+    }
+    let dtoks = crate::lcs::tokenize_line(del_text);
+    let atoks = crate::lcs::tokenize_line(add_text);
+    let pairs = crate::lcs::lcs_pairs(&dtoks, &atoks);
+
+    let mut d_spans = Vec::with_capacity(dtoks.len());
+    let mut d_pos = 0usize;
+    for t in &dtoks {
+        let len = crate::lcs::char_len(t);
+        d_spans.push((d_pos, d_pos + len));
+        d_pos += len;
+    }
+
+    let mut a_spans = Vec::with_capacity(atoks.len());
+    let mut a_pos = 0usize;
+    for t in &atoks {
+        let len = crate::lcs::char_len(t);
+        a_spans.push((a_pos, a_pos + len));
+        a_pos += len;
+    }
+
     let mut positions = Vec::with_capacity(del_spans.len());
-    let mut cum_dels = 0usize;
-    for (ds, de) in del_spans {
-        let raw = ds - cum_dels;
-        let mut cum_adds = 0usize;
-        let mut add_common_offset = 0usize;
-        for (as0, ae) in add_spans {
-            let as0_common = as0 - add_common_offset;
-            if as0_common <= raw {
-                cum_adds += ae - as0;
+    for (ds, _) in del_spans {
+        let mut ins_pos = 0usize;
+        for (di, (d_start, d_end)) in d_spans.iter().enumerate() {
+            if *d_end <= *ds {
+                if let Some(&ai) = pairs.get(&di) {
+                    ins_pos = a_spans[ai].1;
+                }
+            } else if *d_start < *ds {
+                if let Some(&ai) = pairs.get(&di) {
+                    let offset = ds - d_start;
+                    ins_pos = a_spans[ai].0 + offset;
+                }
+                break;
+            } else {
+                break;
             }
-            add_common_offset += ae - as0;
         }
-        positions.push(raw + cum_adds);
-        cum_dels += de - ds;
+        positions.push(ins_pos);
     }
     positions
 }
@@ -217,18 +236,7 @@ pub fn del_pairing(
     add_text: &str,
     del_text: &str,
 ) -> DelPairing {
-    let mut raw_pos: Vec<usize> = Vec::new();
-    let mut cum = 0usize;
-    for (ds, de) in del_spans {
-        raw_pos.push(ds - cum);
-        cum += de - ds;
-    }
-    let mut add_common_pos: Vec<usize> = Vec::new();
-    let mut add_cum = 0usize;
-    for (as0, ae) in add_spans {
-        add_common_pos.push(as0 - add_cum);
-        add_cum += ae - as0;
-    }
+    let del_pos = del_display_positions(del_spans, add_spans, del_text, add_text);
     let mut pair: HashMap<usize, usize> = HashMap::new();
     let mut used_adds: HashSet<usize> = HashSet::new();
     let mut op_anchor: HashMap<usize, usize> = HashMap::new();
@@ -239,10 +247,10 @@ pub fn del_pairing(
             if used_adds.contains(&i) {
                 continue;
             }
-            let del_start = raw_pos[j];
+            let del_start = del_pos[j];
             let del_end = del_start + (de - ds);
-            let add_start = add_common_pos[i];
-            let add_end = add_start + (ae - as0);
+            let add_start = *as0;
+            let add_end = *ae;
             let same_start = del_start == add_start;
             let disjoint = del_end <= add_start || add_end <= del_start;
             let ws_pair =
@@ -263,7 +271,7 @@ pub fn del_pairing(
                     if let Some(ch) = char_at(add_text, c)
                         && (ch == '<' || ch == '>')
                     {
-                        let g = raw_pos[j].abs_diff(c) + if ch == op_chars[0] { 0 } else { 2 };
+                        let g = del_pos[j].abs_diff(c) + if ch == op_chars[0] { 0 } else { 2 };
                         if g < op_best_gap {
                             op_best_gap = g;
                             op_best = Some(i);
@@ -296,7 +304,7 @@ pub fn del_pairing(
         }
     }
     DelPairing {
-        del_pos: del_display_positions(del_spans, add_spans),
+        del_pos,
         pair,
         op_anchor,
     }
