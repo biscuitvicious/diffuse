@@ -1,7 +1,11 @@
-use crate::collapse::collapse_hunk_rows;
-use crate::counts::{FileCounts, file_counts};
-use crate::moves::mark_moves;
-use crate::parse::{AddLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row};
+//! Unit tests for file and row count calculation.
+
+use crate::{
+    collapse::collapse_hunk_rows,
+    counts::{FileCounts, file_counts},
+    moves::mark_moves,
+    parse::{AddLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row},
+};
 
 fn del(num: u32, text: &str) -> Row {
     Row::Del(DelLine::new(LineNum::new(num).unwrap(), text))

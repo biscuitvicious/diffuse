@@ -1,19 +1,21 @@
 //! Note storage, persistence, and markdown rendering for review notes.
 
-use crate::bin_pipeline::OutputRun;
-use crate::merge::RunKind;
-use crate::syntax::{
-    ClassifiedToken, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE, classify_tokens,
-    lang_profile, md_inner_tokens,
+use crate::{
+    bin_pipeline::OutputRun,
+    merge::RunKind,
+    syntax::{
+        ClassifiedToken, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE,
+        classify_tokens, lang_profile, md_inner_tokens,
+    },
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::env;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::{
+    collections::HashMap,
+    env, fs, io,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -43,7 +45,7 @@ pub struct ReviewNote {
     pub created_at: u64,
 }
 
-/// The notes database: repo -> (file_path -> list of notes).
+/// The notes database: repo -> (`file_path` -> list of notes).
 pub type NotesDB = HashMap<String, HashMap<String, Vec<ReviewNote>>>;
 
 /// Default notes path (`~/.pi/review/notes.json`).
@@ -58,7 +60,8 @@ pub fn default_notes_path() -> PathBuf {
     }
 }
 
-/// Load notes from disk. Returns an empty DB if the file does not exist or fails to parse.
+/// Load notes from disk. Returns an empty DB if the file does not exist or
+/// fails to parse.
 pub fn load_notes(path: &Path) -> NotesDB {
     fs::read_to_string(path)
         .ok()
@@ -99,8 +102,8 @@ pub fn add_note(db: &mut NotesDB, repo: &str, note: ReviewNote) {
         .push(note);
 }
 
-/// Remove notes matching the repo, file, side, and overlapping line range [start, end].
-/// Returns the number of removed notes.
+/// Remove notes matching the repo, file, side, and overlapping line range
+/// [start, end]. Returns the number of removed notes.
 pub fn remove_notes(
     db: &mut NotesDB,
     repo: &str,
@@ -299,7 +302,7 @@ pub fn render_note_markdown(text: &str) -> Vec<ClassifiedToken> {
     out
 }
 
-/// Convert note classified tokens to OutputRun wire format.
+/// Convert note classified tokens to `OutputRun` wire format.
 pub fn note_runs(text: &str) -> Vec<OutputRun> {
     render_note_markdown(text)
         .into_iter()

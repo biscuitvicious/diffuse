@@ -1,0 +1,35 @@
+# diffuse project rustfmt configuration.
+#
+# Requires nightly rustfmt for imports_granularity and comment formatting.
+# CI and local scripts use `cargo +nightly fmt`.
+#
+# Import style (enforced manually via blank lines, not by rustfmt):
+#   1. std
+#   2. dependencies
+#   3. workspace crates (e.g. util::)
+#   4. same crate (crate::)
+#   5. parent module (super::)
+
+edition = "2024"
+max_width = 100
+
+# Reorder import statements alphabetically within each group.
+reorder_imports = true
+
+# Reorder `mod` declarations alphabetically.
+reorder_modules = true
+
+# Merge imports from the same crate into one `use` statement.
+imports_granularity = "Crate"
+
+# Wrap long comments and doc comments to max_width.
+wrap_comments = true
+
+# Format code examples inside doc comments.
+format_code_in_doc_comments = true
+
+# Collapse more than one consecutive blank line down to one.
+blank_lines_upper_bound = 1
+
+# Use field-init shorthand when possible.
+use_field_init_shorthand = true

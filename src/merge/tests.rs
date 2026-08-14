@@ -1,6 +1,10 @@
-use crate::lcs::{char_slice, word_spans};
-use crate::merge::*;
-use crate::parse::{AddLine, DelLine, LineNum, Row};
+//! Unit tests for token stream merging and multi-line subword projection.
+
+use crate::{
+    lcs::{char_slice, word_spans},
+    merge::*,
+    parse::{AddLine, DelLine, LineNum, Row},
+};
 
 fn mk(del: &str, add: &str) -> Row {
     Row::Mod {
@@ -64,7 +68,8 @@ fn trace_wobble() {
     );
 }
 
-// The 1-to-1 mount.rs mod merge: shared prefix common, added .get(...) fills, no embedded newlines.
+// The 1-to-1 mount.rs mod merge: shared prefix common, added .get(...) fills,
+// no embedded newlines.
 #[test]
 fn mount_1_to_1_mod_merge() {
     let del = "        self.mount_stack";

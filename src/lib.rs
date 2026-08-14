@@ -14,6 +14,12 @@
 //!
 //! See PLAN.md for the rewrite roadmap and the port map.
 
+#![warn(
+    clippy::doc_markdown,
+    clippy::redundant_closure_for_method_calls,
+    clippy::match_same_arms
+)]
+
 pub mod collapse; // collapseHunkRows: pairing, stretch, reverse-stretch, reflow, ordered walk
 pub mod counts; // fileCounts
 pub mod lcs; // tokenizeLine, lcsPairs, spansFrom, wordSpans

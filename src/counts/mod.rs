@@ -1,3 +1,5 @@
+//! File and row count calculation for review summaries.
+
 use crate::parse::{DiffFile, Row};
 
 /// Display counts: moves are neither added nor removed; mods are one row.

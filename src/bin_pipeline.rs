@@ -2,21 +2,24 @@
 //! mark moves → collapse → merged runs → counts. The output shape is the
 //! wire contract (PLAN.md §2).
 
-use crate::collapse::collapse_hunk_rows;
-use crate::counts::{FileCounts, file_counts};
-use crate::lcs::word_spans;
-use crate::merge::{RunKind, is_wholesale_mod, merged_runs};
-use crate::moves::mark_moves;
-use crate::notes::{NotesDB, Side as NoteSide, note_runs, notes_for_file};
-use crate::old_content::old_content_from_diff;
-use crate::parse::{
-    AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind, Spans, parse_diff,
+use crate::{
+    collapse::collapse_hunk_rows,
+    counts::{FileCounts, file_counts},
+    lcs::word_spans,
+    merge::{RunKind, is_wholesale_mod, merged_runs},
+    moves::mark_moves,
+    notes::{NotesDB, Side as NoteSide, note_runs, notes_for_file},
+    old_content::old_content_from_diff,
+    parse::{
+        AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind, Spans,
+        parse_diff,
+    },
+    syntax::{
+        ClassifiedToken, FenceRegion, LangProfile, classify_line, classify_tokens, fence_lang_ext,
+        fence_regions, lang_profile, markdown_tokens, region_at,
+    },
+    visible::{Side as VisibleSide, build_visible},
 };
-use crate::syntax::{
-    ClassifiedToken, FenceRegion, LangProfile, classify_line, classify_tokens, fence_lang_ext,
-    fence_regions, lang_profile, markdown_tokens, region_at,
-};
-use crate::visible::{Side as VisibleSide, build_visible};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -96,7 +99,7 @@ impl OutputRow {
                 None
             },
             spans: self.spans.reverse(),
-            runs: self.runs.iter().map(|r| r.reverse()).collect(),
+            runs: self.runs.iter().map(OutputRun::reverse).collect(),
             wholesale: self.wholesale,
             moved: self.moved,
         }
@@ -541,12 +544,13 @@ pub fn run_pipeline_with_notes(
                     .collect()
                 };
                 let (new_line, old_line) = match (&r, vis.side) {
-                    (Row::Ctx(_), Some(VisibleSide::New)) => (r.new_line(), None),
-                    (Row::Ctx(_), Some(VisibleSide::Old)) => (None, r.old_line()),
-                    (Row::Ctx(_), None) => (r.new_line(), r.old_line()),
-                    (Row::Del(_), _) => (None, r.old_line()),
-                    (Row::Add(_) | Row::Mov { .. }, _) => (r.new_line(), None),
-                    (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
+                    (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
+                        (r.new_line(), None)
+                    }
+                    (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => {
+                        (None, r.old_line())
+                    }
+                    (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
                     (Row::Sep(_), _) => (None, None),
                 };
                 let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
@@ -601,7 +605,7 @@ impl OutputNote {
             end: self.end,
             text: self.text.clone(),
             created_at: self.created_at,
-            runs: self.runs.iter().map(|r| r.reverse()).collect(),
+            runs: self.runs.iter().map(OutputRun::reverse).collect(),
         }
     }
 }
@@ -623,7 +627,7 @@ impl OutputHunk {
             old_count: self.new_count,
             new_start: self.old_start,
             new_count: self.old_count,
-            rows: self.rows.iter().map(|r| r.reverse()).collect(),
+            rows: self.rows.iter().map(OutputRow::reverse).collect(),
         }
     }
 
@@ -634,7 +638,7 @@ impl OutputHunk {
             new_start: self.new_start,
             new_count: self.new_count,
             section: String::new(),
-            rows: self.rows.iter().map(|r| r.reconstruct()).collect(),
+            rows: self.rows.iter().map(OutputRow::reconstruct).collect(),
             above_ctx: 0,
             below_ctx: 0,
         }
@@ -657,10 +661,12 @@ pub struct OutputFile {
     /// The fence regions (the wire's syntax-region spans — line 1-indexed).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fences: Vec<OutputFence>,
-    /// The review notes attached to this file (with engine-classified markdown runs).
+    /// The review notes attached to this file (with engine-classified markdown
+    /// runs).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<OutputNote>,
-    /// Pre-classified syntax token runs for all context/content lines of the file.
+    /// Pre-classified syntax token runs for all context/content lines of the
+    /// file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub content_runs: Vec<Vec<OutputRun>>,
     /// Pre-assembled row sequence for default context.
@@ -682,16 +688,16 @@ impl OutputFile {
             old_line_count: self.new_line_count,
             new_content: self.old_content.clone(),
             old_content: self.new_content.clone(),
-            hunks: self.hunks.iter().map(|h| h.reverse()).collect(),
+            hunks: self.hunks.iter().map(OutputHunk::reverse).collect(),
             counts: self.counts.reverse(),
             fences: self.fences.clone(),
-            notes: self.notes.iter().map(|n| n.reverse()).collect(),
+            notes: self.notes.iter().map(OutputNote::reverse).collect(),
             content_runs: self
                 .content_runs
                 .iter()
-                .map(|runs| runs.iter().map(|r| r.reverse()).collect())
+                .map(|runs| runs.iter().map(OutputRun::reverse).collect())
                 .collect(),
-            rows: self.rows.iter().map(|r| r.reverse()).collect(),
+            rows: self.rows.iter().map(OutputRow::reverse).collect(),
         }
     }
 
@@ -711,7 +717,7 @@ impl OutputFile {
             old_line_count: self.old_line_count,
             new_content: self.new_content.clone(),
             old_content: self.old_content.clone(),
-            hunks: self.hunks.iter().map(|h| h.reconstruct()).collect(),
+            hunks: self.hunks.iter().map(OutputHunk::reconstruct).collect(),
             no_content: self.new_content.is_empty() && self.old_content.is_empty(),
         }
     }
@@ -730,14 +736,14 @@ pub struct PipelineOutput {
 impl PipelineOutput {
     pub fn reverse(&self) -> Self {
         PipelineOutput {
-            files: self.files.iter().map(|f| f.reverse()).collect(),
+            files: self.files.iter().map(OutputFile::reverse).collect(),
             branch: self.branch.clone(),
             untracked_skipped: self.untracked_skipped.clone(),
         }
     }
 
     pub fn reconstruct(&self) -> Vec<DiffFile> {
-        self.files.iter().map(|f| f.reconstruct()).collect()
+        self.files.iter().map(OutputFile::reconstruct).collect()
     }
 }
 
@@ -790,7 +796,8 @@ mod tests {
 
     #[test]
     fn test_comment_reflow_del_span_positioning() {
-        // Row 1078: `lowers` is deleted before `non-top-upper layers` is added, and trailing `layer's markers —` lands at the end
+        // Row 1078: `lowers` is deleted before `non-top-upper layers` is added, and
+        // trailing `layer's markers —` lands at the end
         let old_1078 = "// Walk the lowers top → bottom, honoring each layer's markers —";
         let new_1078 = "// Walk the non-top-upper layers top → bottom, honoring each";
         let r_1078 = Row::Mod {
@@ -817,7 +824,8 @@ mod tests {
             "1078: lowers deletes before non-top-upper layers adds, layer's markers strikes at end"
         );
 
-        // Row 1079: `layer's markers — ` adds at start, `upper`->`layer` pairs, `whiteouts...` strikes at end of `carries` (not inside `ca...rries`)
+        // Row 1079: `layer's markers — ` adds at start, `upper`->`layer` pairs,
+        // `whiteouts...` strikes at end of `carries` (not inside `ca...rries`)
         let old_1079 = "// a frozen (snapshotted) upper carries whiteouts and opaque dirs";
         let new_1079 = "// layer's markers — a frozen (snapshotted) layer carries";
         let r_1079 = Row::Mod {
@@ -874,8 +882,10 @@ index 111..222 100644
 
         // Reconstruct from reverse wire matches reversed AST files
         let rev_files_from_wire = wire_rev.reconstruct();
-        let rev_files_direct: Vec<DiffFile> =
-            reconstructed_files.iter().map(|f| f.reverse()).collect();
+        let rev_files_direct: Vec<DiffFile> = reconstructed_files
+            .iter()
+            .map(super::super::parse::DiffFile::reverse)
+            .collect();
         assert_eq!(rev_files_from_wire[0].path, rev_files_direct[0].path);
         assert_eq!(
             rev_files_from_wire[0].hunks.len(),

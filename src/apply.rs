@@ -186,8 +186,8 @@ pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
     out
 }
 
-/// Single-stream mapping: transforms `old` lines via a sequence of rows into `new` lines.
-/// `read(old_file).map(diff).collect() === new_file`
+/// Single-stream mapping: transforms `old` lines via a sequence of rows into
+/// `new` lines. `read(old_file).map(diff).collect() === new_file`
 pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut cursor = 0;
@@ -266,7 +266,7 @@ mod tests {
     use super::apply_file_diff;
 
     fn s(lines: &[&str]) -> Vec<String> {
-        lines.iter().map(|x| x.to_string()).collect()
+        lines.iter().map(std::string::ToString::to_string).collect()
     }
 
     #[test]

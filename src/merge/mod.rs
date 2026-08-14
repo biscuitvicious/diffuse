@@ -3,8 +3,10 @@
 //! `isWholesaleMod`, `isPureDeletionMod`. Comments ported verbatim; char
 //! offsets throughout (the lcs.rs convention).
 
-use crate::lcs::char_slice;
-use crate::parse::{Row, Spans};
+use crate::{
+    lcs::char_slice,
+    parse::{Row, Spans},
+};
 use std::collections::{HashMap, HashSet};
 
 /// A merged run of a mod row's display.
@@ -43,7 +45,7 @@ impl RunKind {
     }
 }
 
-/// The Unicode White_Space property plus the zero-width space — the
+/// The Unicode `White_Space` property plus the zero-width space — the
 /// tokenizer's whitespace class.
 fn is_ws_class(c: char) -> bool {
     c.is_whitespace() || c == '\u{200b}'
@@ -71,7 +73,7 @@ fn char_at(s: &str, i: usize) -> Option<char> {
  * whole-old-struck + whole-new-filled blocks look like one, so they get the
  * plain two rows instead). Shared with the collapse so the two never drift
  * apart.
- */
+ * */
 /// Exact display position of each del span in the merged (new-text) view.
 ///
 /// The merged display is the new text with del runs interspersed. Position
@@ -84,9 +86,9 @@ fn char_at(s: &str, i: usize) -> Option<char> {
 /// ```
 ///
 /// `raw_pos` and `as0_common` project both deletion and addition offsets into
-/// the shared common-subsequence coordinate space. Comparing `as0_common <= raw`
-/// precisely counts all additions that occur at or before this deletion in the
-/// stream, correctly placing trailing and inline deletions.
+/// the shared common-subsequence coordinate space. Comparing `as0_common <=
+/// raw` precisely counts all additions that occur at or before this deletion in
+/// the stream, correctly placing trailing and inline deletions.
 pub fn del_display_positions(
     del_spans: &[(usize, usize)],
     add_spans: &[(usize, usize)],
@@ -172,7 +174,7 @@ pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Ve
                 let leading = r
                     .text()
                     .chars()
-                    .take_while(|c| c.is_ascii_whitespace())
+                    .take_while(char::is_ascii_whitespace)
                     .collect::<String>();
                 return raw != leading.as_str();
             }
@@ -509,7 +511,8 @@ pub fn display_text(r: &Row) -> String {
     merged_runs(r).iter().map(|x| x.text.as_str()).collect()
 }
 
-/// Project the row runs forward to reconstruct the new line (stripping Del runs).
+/// Project the row runs forward to reconstruct the new line (stripping Del
+/// runs).
 pub fn project_forward(runs: &[Run]) -> String {
     runs.iter()
         .filter(|r| r.kind != RunKind::Del)
@@ -517,7 +520,8 @@ pub fn project_forward(runs: &[Run]) -> String {
         .collect()
 }
 
-/// Project the row runs backward to reconstruct the old line (stripping Add runs).
+/// Project the row runs backward to reconstruct the old line (stripping Add
+/// runs).
 pub fn project_reverse(runs: &[Run]) -> String {
     runs.iter()
         .filter(|r| r.kind != RunKind::Add)

@@ -6,14 +6,18 @@
 //! rows. The output schema is frozen in PLAN.md §2 (the wire contract).
 
 use clap::Parser;
-use diffuse::bin_pipeline::run_pipeline_with_notes;
-use diffuse::git::load_git_repo;
-use diffuse::notes::{NotesDB, load_notes};
+use diffuse::{
+    bin_pipeline::run_pipeline_with_notes,
+    git::load_git_repo,
+    notes::{NotesDB, load_notes},
+};
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::fs;
-use std::io::{self, Read};
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    fs,
+    io::{self, Read},
+    path::Path,
+};
 
 /// The diffuse diff-engine CLI.
 #[derive(Parser, Debug)]

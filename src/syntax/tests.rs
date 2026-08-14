@@ -13,7 +13,6 @@ fn color_of(tok: &str) -> &str {
         "syntaxType" => "35",
         "syntaxFunction" => "36",
         "syntaxOperator" => "37",
-        "text" => "90",
         _ => "90",
     }
 }
@@ -110,7 +109,7 @@ fn syntax_classification() {
 // Rust inside a `.rs` doc). The region's `lang` carries the raw tag; the
 // profile is resolved per-row via `lang_profile(lang)`.
 fn lines(v: &[&str]) -> Vec<String> {
-    v.iter().map(|s| s.to_string()).collect()
+    v.iter().map(std::string::ToString::to_string).collect()
 }
 
 /// Assert the region's tag resolves to a target profile key.
@@ -191,7 +190,8 @@ fn md_fence_with_rust_modifier_opens_rust_region() {
 // Plain (`//`, `/*`, `#`) comments are NOT markdown: only inline `` `code` ``
 // spans render (accent backticks + Rust-classified inner); no `**bold**`,
 // `*italic*`, `~~strike~~`, `[link](url)`. Doc comments (`///`, `//!`) ARE
-// markdown — full emphasis. The split lives in `tokenize_comment_with_backticks`.
+// markdown — full emphasis. The split lives in
+// `tokenize_comment_with_backticks`.
 fn colors_of(text: &str, profile: Option<&LangProfile>) -> Vec<(String, String)> {
     classify_tokens(text, profile)
         .into_iter()
@@ -265,7 +265,8 @@ fn doc_comment_full_markdown_renders() {
 #[test]
 fn plain_comment_without_backtick_is_uniform_comment() {
     let rs = lang_profile("rs").unwrap();
-    // No backtick, no markdown triggers → the whole line is one syntaxComment token.
+    // No backtick, no markdown triggers → the whole line is one syntaxComment
+    // token.
     let toks = colors_of(
         "// a plain comment with **stars** and *italics* but no backticks",
         Some(rs),

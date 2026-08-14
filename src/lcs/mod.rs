@@ -10,8 +10,10 @@
 
 use crate::parse::Spans;
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
 
 /// Slice `s` by char offsets (the port's span convention). The JS
 /// `String.slice(start, end)` clamps out-of-range indices and returns an
@@ -41,7 +43,8 @@ pub fn char_len(s: &str) -> usize {
 }
 
 /// Tokenize a diff line into word/operator tokens (whitespace + punctuation
-/// are separate tokens so `->` → `=>` highlights a single character). Zero-copy slices.
+/// are separate tokens so `->` → `=>` highlights a single character). Zero-copy
+/// slices.
 pub fn tokenize_line(text: &str) -> Vec<&str> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
@@ -210,8 +213,8 @@ pub fn lcs_pairs_ids(
 /// The matched CHAR count of the LCS over interned ids — the window
 /// scan's `sim` needs only this (NOT the pairs themselves). Same DP + the
 /// SAME tie-break ladder as `lcs_pairs_ids`, but accumulates `b_token_chars[j]`
-/// on each match instead of building a HashMap — the window scan's 42k
-/// per-call HashMaps (alloc + per-pair inserts) were the remaining scan
+/// on each match instead of building a `HashMap` — the window scan's 42k
+/// per-call `HashMaps` (alloc + per-pair inserts) were the remaining scan
 /// cost. Behavior-identical to `lcs_pairs_ids(...).values().map(char).sum`.
 pub fn lcs_matched_chars_ids(
     a: &[u32],
@@ -300,7 +303,7 @@ pub fn spans_from(text: &str, toks: &[&str], matched: &HashSet<usize>) -> Vec<(u
 }
 
 /// A pair of change-span sets: char ranges into the old/new text. The
-/// row's span type (parse::Spans) — one type for the whole pipeline.
+/// row's span type (`parse::Spans`) — one type for the whole pipeline.
 pub type WordSpans = Spans;
 
 /**
@@ -370,7 +373,7 @@ fn merge_whitespace_gaps(
 
     for &(next_start, next_end) in spans.iter().skip(1) {
         let gap = char_slice(text, current.1, next_start);
-        if !gap.is_empty() && gap.chars().all(|c| c.is_whitespace()) {
+        if !gap.is_empty() && gap.chars().all(char::is_whitespace) {
             current = (current.0, next_end);
             merged_any = true;
         } else {

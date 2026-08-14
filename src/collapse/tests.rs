@@ -2,9 +2,11 @@
 //! pairing + the declaration section-stop, the `None` ↔ `Some(result)`
 //! brace-anchor, the reflow pairing, the reverse stretch.
 
-use crate::collapse::collapse_hunk_rows;
-use crate::moves::mark_moves;
-use crate::parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind};
+use crate::{
+    collapse::collapse_hunk_rows,
+    moves::mark_moves,
+    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind},
+};
 use std::time::Instant;
 
 fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
@@ -817,9 +819,9 @@ fn kept_del_anchoring() {
     );
 }
 
-// Multi-line deletion into a 1-to-1 mod row: the first line pairs into a single-line
-// mod row, verbatim reflows drop, and the remaining deleted lines render as separate
-// `-` lines (no internal newlines / multi-line folded rows).
+// Multi-line deletion into a 1-to-1 mod row: the first line pairs into a
+// single-line mod row, verbatim reflows drop, and the remaining deleted lines
+// render as separate `-` lines (no internal newlines / multi-line folded rows).
 #[test]
 fn multiline_del_mount_pairs_1_to_1_with_two_del_rows() {
     let h = hunk(vec![

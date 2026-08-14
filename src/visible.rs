@@ -180,10 +180,7 @@ fn context_rows(side: Side, start_line: usize, count: usize, src: &[String]) -> 
             .cloned()
             .unwrap_or_default();
         let num = LineNum::new(line_no as u32).unwrap_or(LineNum::MIN);
-        let ctx_line = match side {
-            Side::New => CtxLine::new(num, num, text),
-            Side::Old => CtxLine::new(num, num, text),
-        };
+        let ctx_line = CtxLine::new(num, num, text);
         rows.push(VisibleRow {
             row: Row::Ctx(ctx_line),
             side: Some(side),
@@ -249,10 +246,7 @@ pub fn build_visible(
                 for g in (cursor + 1)..target {
                     let text = src.get(g.saturating_sub(1)).cloned().unwrap_or_default();
                     let num = LineNum::new(g as u32).unwrap_or(LineNum::MIN);
-                    let ctx_line = match side {
-                        Side::New => CtxLine::new(num, num, text),
-                        Side::Old => CtxLine::new(num, num, text),
-                    };
+                    let ctx_line = CtxLine::new(num, num, text);
                     rows.push(VisibleRow {
                         row: Row::Ctx(ctx_line),
                         side: Some(side),
@@ -339,8 +333,8 @@ mod tests {
         let old_content: Vec<String> = (1..=100).map(|i| format!("line {}", i)).collect();
         let vis = build_visible(&hunks, 100, 100, &new_content, &old_content, false);
         // Above: 6 rows (lines 57..62)
-        // Body: 14 rows (line 63, context 64..75, line 76) -> note context between 63 and 76 is synthesized
-        // Below: 6 rows (lines 77..82)
+        // Body: 14 rows (line 63, context 64..75, line 76) -> note context between 63
+        // and 76 is synthesized Below: 6 rows (lines 77..82)
         assert_eq!(vis.first().unwrap().row.new_line(), Some(57));
         assert_eq!(vis.last().unwrap().row.new_line(), Some(82));
     }

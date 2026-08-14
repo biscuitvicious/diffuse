@@ -1,6 +1,6 @@
-use super::*;
+//! Unit tests for diff parsing and line number reconstruction.
 
-// Port of the parseDiff test block from test/review.test.ts.
+use super::*;
 const DIFF: &str = "diff --git a/src/a.rs b/src/a.rs
 index 111..222 100644
 --- a/src/a.rs

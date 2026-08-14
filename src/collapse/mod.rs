@@ -1,20 +1,26 @@
-//! One-for-one port of `review.ts`'s `collapseHunkRows` (PLAN.md §3), refactored in
-//! Phase 6 into composable passes over a hunk's diff AST:
+//! One-for-one port of `review.ts`'s `collapseHunkRows` (PLAN.md §3),
+//! refactored in Phase 6 into composable passes over a hunk's diff AST:
 //!
 //! 1. `pass_pairing`: Similarity and brace-anchor pairing (1-to-1).
-//! 2. `pass_assemble_mods`: Assemble 1-to-1 `Mod` rows, multiline subword distribution, and reflow suppression.
+//! 2. `pass_assemble_mods`: Assemble 1-to-1 `Mod` rows, multiline subword
+//!    distribution, and reflow suppression.
 //! 3. `pass_filter_reflows`: Filtering verbatim reflow dels and adds.
-//! 4. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row stream.
+//! 4. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row
+//!    stream.
 
-use crate::lcs::{char_slice, tokenize_line, word_spans};
-use crate::merge::wholesale_pair;
-use crate::parse::{AddLine, DelLine, Hunk, Row, Spans};
-use crate::scope::{fn_of, is_tail_before_closing};
-use crate::similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens};
+use crate::{
+    lcs::{char_slice, tokenize_line, word_spans},
+    merge::wholesale_pair,
+    parse::{AddLine, DelLine, Hunk, Row, Spans},
+    scope::{fn_of, is_tail_before_closing},
+    similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens},
+};
 use regex::Regex;
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
 
 /// Results of the initial pairing pass.
 pub struct PairingResults {
@@ -263,7 +269,8 @@ pub struct PairingContext<'a> {
     pub paired_dels: &'a HashSet<usize>,
 }
 
-/// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow suppression.
+/// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow
+/// suppression.
 pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -> AssembledMods {
     let mut out: Vec<Row> = Vec::new();
     let mut kept_dels: Vec<usize> = Vec::new();
@@ -447,7 +454,7 @@ pub fn pass_filter_reflows(
 ) -> ReflowFilter {
     let add_text = out
         .iter()
-        .map(|m| m.text())
+        .map(super::parse::Row::text)
         .chain(pure_adds.iter().map(|&ri| h.rows[ri].text()))
         .collect::<Vec<_>>()
         .join("\n");

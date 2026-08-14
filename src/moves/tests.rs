@@ -1,3 +1,5 @@
+//! Unit tests for exact move detection and block move rules.
+
 use super::*;
 use crate::parse::{AddLine, DelLine, FileStatus, Hunk, LineNum, Row};
 

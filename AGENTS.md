@@ -94,8 +94,8 @@ Every bug fix, behavior adjustment, or new feature must expand the test corpus w
 
 - Rust edition 2024; the toolchain is pinned in `rust-toolchain.toml`
   (same pin as the broader workspace it was born from).
-- `cargo clippy -- -D warnings` and `cargo fmt --all -- --check` must be
-  clean after every change.
+- `cargo clippy -- -D warnings` and `cargo +nightly fmt --all -- --check`
+  must be clean after every change (see `CODE_STYLE.md`).
 - `target/`, `extension/*/node_modules/`, and `extension/pi/bin/` are
   gitignored (build artifacts).
 - The extension's suite runs with `npm test` in `extension/pi/` (rust-only:

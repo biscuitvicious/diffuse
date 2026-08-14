@@ -1,6 +1,6 @@
-use super::*;
+//! Unit tests for tokenization, LCS, and word-level diff spans.
 
-// Port of the word-level diff test block from test/review.test.ts.
+use super::*;
 #[test]
 fn word_diff_highlighting() {
     // Underscores and operators are separate tokens, so

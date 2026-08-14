@@ -126,7 +126,7 @@ impl TokenInterner {
         let tokens = raw_tokens
             .into_iter()
             .filter(|t| !t.trim().is_empty())
-            .map(|t| t.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<_>>();
         let ids = tokens.iter().map(|t| self.intern(t)).collect::<Vec<_>>();
         let token_chars = tokens.iter().map(|t| char_len(t)).collect::<Vec<_>>();

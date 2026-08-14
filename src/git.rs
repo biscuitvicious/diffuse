@@ -2,10 +2,7 @@
 //!
 //! Port of TypeScript's `resolveRefs`, `loadReview`, and `rustBackendLoad`.
 
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
-use std::process::Command;
+use std::{collections::HashMap, fs, path::Path, process::Command};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefPair {
@@ -28,11 +25,12 @@ pub fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
     }
 }
 
-/// Resolve old/new git refs from base args (e.g. `main..feature`, `HEAD^!`, `main...feature`).
+/// Resolve old/new git refs from base args (e.g. `main..feature`, `HEAD^!`,
+/// `main...feature`).
 pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
     let refs: Vec<&str> = base_args
         .iter()
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .filter(|t| *t != "--cached" && !t.starts_with('-'))
         .collect();
 
@@ -128,7 +126,7 @@ pub fn load_git_repo(
     diff_cmd.push("--".to_string());
     diff_cmd.extend(paths.iter().cloned());
 
-    let diff_args: Vec<&str> = diff_cmd.iter().map(|s| s.as_str()).collect();
+    let diff_args: Vec<&str> = diff_cmd.iter().map(std::string::String::as_str).collect();
     let diff_text = run_git(repo_root, &diff_args).unwrap_or_default();
 
     let mut name_cmd = vec![
@@ -139,7 +137,7 @@ pub fn load_git_repo(
     name_cmd.extend(base_args.iter().cloned());
     name_cmd.push("--".to_string());
     name_cmd.extend(paths.iter().cloned());
-    let name_args: Vec<&str> = name_cmd.iter().map(|s| s.as_str()).collect();
+    let name_args: Vec<&str> = name_cmd.iter().map(std::string::String::as_str).collect();
     let name_status = run_git(repo_root, &name_args).unwrap_or_default();
 
     let mut num_cmd = vec![
@@ -150,7 +148,7 @@ pub fn load_git_repo(
     num_cmd.extend(base_args.iter().cloned());
     num_cmd.push("--".to_string());
     num_cmd.extend(paths.iter().cloned());
-    let num_args: Vec<&str> = num_cmd.iter().map(|s| s.as_str()).collect();
+    let num_args: Vec<&str> = num_cmd.iter().map(std::string::String::as_str).collect();
     let numstat = run_git(repo_root, &num_args).unwrap_or_default();
 
     let mut del_of: HashMap<String, usize> = HashMap::new();
@@ -205,7 +203,10 @@ pub fn load_git_repo(
                     untracked_skipped.push(rel.to_string());
                     continue;
                 }
-                let lines: Vec<String> = content.split('\n').map(|s| s.to_string()).collect();
+                let lines: Vec<String> = content
+                    .split('\n')
+                    .map(std::string::ToString::to_string)
+                    .collect();
                 files.push(GitFileItem {
                     path: rel.to_string(),
                     status: "untracked".to_string(),
@@ -224,12 +225,18 @@ pub fn load_git_repo(
         if refs.worktree_new {
             let new_abs = repo_root.join(&f.path);
             if let Ok(c) = fs::read_to_string(&new_abs) {
-                f.new_content = c.split('\n').map(|s| s.to_string()).collect();
+                f.new_content = c
+                    .split('\n')
+                    .map(std::string::ToString::to_string)
+                    .collect();
             }
         } else if let Some(new_ref) = &refs.new_ref {
             let spec = format!("{new_ref}:{}", f.path);
             if let Some(c) = run_git(repo_root, &["show", &spec]) {
-                f.new_content = c.split('\n').map(|s| s.to_string()).collect();
+                f.new_content = c
+                    .split('\n')
+                    .map(std::string::ToString::to_string)
+                    .collect();
             }
         }
     }
@@ -247,7 +254,10 @@ pub fn load_git_repo(
         }
         let spec = format!("{old_tree_ref}:{}", f.path);
         if let Some(c) = run_git(repo_root, &["show", &spec]) {
-            f.old_content = c.split('\n').map(|s| s.to_string()).collect();
+            f.old_content = c
+                .split('\n')
+                .map(std::string::ToString::to_string)
+                .collect();
             if new_empty && f.status != "deleted" {
                 f.new_content = f.old_content.clone();
             }
@@ -275,7 +285,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_two_dot() {
         let refs = resolve_refs(Path::new("."), &["main..feature".into()], false);
-        assert_eq!(refs.worktree_new, false);
+        assert!(!refs.worktree_new);
         assert_eq!(refs.new_ref.as_deref(), Some("feature"));
         assert_eq!(refs.old_ref.as_deref(), Some("main"));
     }
@@ -283,7 +293,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_single_ref() {
         let refs = resolve_refs(Path::new("."), &["main".into()], false);
-        assert_eq!(refs.worktree_new, true);
+        assert!(refs.worktree_new);
         assert_eq!(refs.new_ref, None);
         assert_eq!(refs.old_ref.as_deref(), Some("main"));
     }
@@ -291,7 +301,7 @@ mod tests {
     #[test]
     fn test_resolve_refs_caret_exclamation() {
         let refs = resolve_refs(Path::new("."), &["abc1234^!".into()], false);
-        assert_eq!(refs.worktree_new, false);
+        assert!(!refs.worktree_new);
         assert_eq!(refs.new_ref.as_deref(), Some("abc1234"));
         assert_eq!(refs.old_ref.as_deref(), Some("abc1234^"));
     }

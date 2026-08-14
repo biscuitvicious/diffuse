@@ -1,7 +1,7 @@
+//! Unit tests for note persistence, markdown formatting, and querying.
+
 use super::*;
-use std::env;
-use std::fs;
-use std::process;
+use std::{env, fs, process};
 
 #[test]
 fn test_notes_add_and_query() {

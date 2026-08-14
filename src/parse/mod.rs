@@ -1,6 +1,9 @@
+//! Unified diff parsing and core AST data structures.
+//!
+//! Models the diff hierarchy: `DiffFile` -> `Hunk` -> `Row`.
+
 use regex::Regex;
-use std::num::NonZero;
-use std::sync::OnceLock;
+use std::{num::NonZero, sync::OnceLock};
 
 /// A 1-based source line number.
 pub type LineNum = NonZero<u32>;
@@ -30,7 +33,7 @@ impl RowKind {
     }
 }
 
-/// A line deletion: (line_num, text).
+/// A line deletion: (`line_num`, text).
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DelLine {
     pub num: LineNum,
@@ -47,7 +50,7 @@ impl DelLine {
     }
 }
 
-/// A line addition: (line_num, text, spans, optional donor del_text).
+/// A line addition: (`line_num`, text, spans, optional donor `del_text`).
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct AddLine {
     pub num: LineNum,
@@ -95,7 +98,7 @@ impl AddLine {
     }
 }
 
-/// A context line: (old_pos, new_pos, text).
+/// A context line: (`old_pos`, `new_pos`, text).
 #[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CtxLine {
     pub old_pos: LineNum,
@@ -169,9 +172,8 @@ impl Row {
         match self {
             Row::Ctx(_) => RowKind::Ctx,
             Row::Del(_) => RowKind::Del,
-            Row::Add(_) => RowKind::Add,
+            Row::Add(_) | Row::Mov { .. } => RowKind::Add,
             Row::Mod { .. } => RowKind::Mod,
-            Row::Mov { .. } => RowKind::Add,
             Row::Sep(_) => RowKind::Sep,
         }
     }
@@ -182,8 +184,7 @@ impl Row {
             Row::Ctx(ctx_line) => &ctx_line.text,
             Row::Del(del_line) => &del_line.text,
             Row::Add(add_line) => &add_line.text,
-            Row::Mod { new_line, .. } => &new_line.text,
-            Row::Mov { new_line, .. } => &new_line.text,
+            Row::Mod { new_line, .. } | Row::Mov { new_line, .. } => &new_line.text,
             Row::Sep(text) => text.as_str(),
         }
     }
@@ -194,8 +195,7 @@ impl Row {
             Row::Ctx(ctx_line) => Some(&ctx_line.text),
             Row::Del(del_line) => Some(&del_line.text),
             Row::Add(add_line) => add_line.del_text.as_deref(),
-            Row::Mod { old_line, .. } => Some(&old_line.text),
-            Row::Mov { old_line, .. } => Some(&old_line.text),
+            Row::Mod { old_line, .. } | Row::Mov { old_line, .. } => Some(&old_line.text),
             Row::Sep(_) => None,
         }
     }
@@ -205,8 +205,7 @@ impl Row {
         match self {
             Row::Ctx(ctx_line) => Some(ctx_line.old_pos),
             Row::Del(del_line) => Some(del_line.num),
-            Row::Mod { old_line, .. } => Some(old_line.num),
-            Row::Mov { old_line, .. } => Some(old_line.num),
+            Row::Mod { old_line, .. } | Row::Mov { old_line, .. } => Some(old_line.num),
             Row::Add(_) | Row::Sep(_) => None,
         }
     }
@@ -216,20 +215,19 @@ impl Row {
         match self {
             Row::Ctx(ctx_line) => Some(ctx_line.new_pos),
             Row::Add(add_line) => Some(add_line.num),
-            Row::Mod { new_line, .. } => Some(new_line.num),
-            Row::Mov { new_line, .. } => Some(new_line.num),
+            Row::Mod { new_line, .. } | Row::Mov { new_line, .. } => Some(new_line.num),
             Row::Del(_) | Row::Sep(_) => None,
         }
     }
 
     #[inline]
     pub fn old_line(&self) -> Option<u32> {
-        self.old_line_num().map(|l| l.get())
+        self.old_line_num().map(std::num::NonZero::get)
     }
 
     #[inline]
     pub fn new_line(&self) -> Option<u32> {
-        self.new_line_num().map(|l| l.get())
+        self.new_line_num().map(std::num::NonZero::get)
     }
 
     #[inline]
@@ -306,7 +304,7 @@ impl Hunk {
             new_start: self.old_start,
             new_count: self.old_count,
             section: self.section.clone(),
-            rows: self.rows.iter().map(|r| r.reverse()).collect(),
+            rows: self.rows.iter().map(Row::reverse).collect(),
             above_ctx: self.above_ctx,
             below_ctx: self.below_ctx,
         }
@@ -398,7 +396,7 @@ impl DiffFile {
             old_line_count: self.new_line_count,
             new_content: self.old_content.clone(),
             old_content: self.new_content.clone(),
-            hunks: self.hunks.iter().map(|h| h.reverse()).collect(),
+            hunks: self.hunks.iter().map(Hunk::reverse).collect(),
             no_content: self.no_content,
         }
     }

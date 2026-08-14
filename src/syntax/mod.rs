@@ -4,8 +4,10 @@
 //! maps them to theme colors.
 
 use regex::Regex;
-use std::collections::{HashMap, HashSet};
-use std::sync::{Mutex, OnceLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::{Mutex, OnceLock},
+};
 
 /// A per-language syntax profile.
 #[derive(Clone, Debug)]
@@ -615,7 +617,7 @@ pub fn classify_tokens(text: &str, profile: Option<&LangProfile>) -> Vec<Classif
             } else {
                 "text"
             }
-        } else if tok.chars().all(|c| c.is_whitespace()) {
+        } else if tok.chars().all(char::is_whitespace) {
             "text"
         } else {
             "syntaxOperator"
@@ -800,7 +802,8 @@ pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<Fen
                 Some(_) => {
                     if !captured_tag.is_empty() {
                         // A tagged fence line (`/// ```ignore`) is an opening fence — if a
-                        // previous fence was unclosed, close it at n-1 and start a new region at n+1.
+                        // previous fence was unclosed, close it at n-1 and start a new region at
+                        // n+1.
                         if region_start < n {
                             regions.push(FenceRegion {
                                 start: region_start,
