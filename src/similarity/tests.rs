@@ -58,3 +58,20 @@ fn comment_line_markers() {
     );
     assert!(!is_comment_line("let x = 1;", false));
 }
+
+#[test]
+fn test_syntax_weighted_similarity_prioritizes_identifiers() {
+    let base = "pub fn resolve_path(vfs: &VFS, path: &Path) -> Result<PathBuf>;";
+    let renamed = "pub fn resolve_path(vfs: &VFS, req: &Request) -> io::Result<ResolvedPath>;";
+    let unrelated = "pub fn check_perms(vfs: &VFS, path: &Path) -> bool;";
+
+    let sim_renamed = line_similarity(base, renamed);
+    let sim_unrelated = line_similarity(base, unrelated);
+
+    assert!(
+        sim_renamed >= sim_unrelated,
+        "rename of same function ({:.3}) should score higher than unrelated function ({:.3})",
+        sim_renamed,
+        sim_unrelated
+    );
+}

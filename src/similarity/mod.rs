@@ -220,3 +220,6 @@ pub fn is_comment_line(text: &str, hash_comment: bool) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests;
