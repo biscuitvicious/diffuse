@@ -187,6 +187,65 @@ pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<Stri
     out
 }
 
+/// Single-stream mapping: transforms `old` lines via a sequence of rows into `new` lines.
+/// `read(old_file).map(diff).collect() === new_file`
+pub fn apply_stream(rows: &[crate::parse::Row], old: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cursor = 0;
+    for r in rows {
+        match r.kind {
+            crate::parse::RowKind::Ctx => {
+                if cursor < old.len() {
+                    assert_eq!(
+                        &old[cursor],
+                        &r.text,
+                        "apply_stream: context mismatch at line {}",
+                        cursor + 1
+                    );
+                }
+                out.push(r.text.clone());
+                cursor += 1;
+            }
+            crate::parse::RowKind::Add => {
+                out.push(r.text.clone());
+            }
+            crate::parse::RowKind::Del => {
+                if cursor < old.len() {
+                    assert_eq!(
+                        &old[cursor],
+                        &r.text,
+                        "apply_stream: deletion mismatch at line {}",
+                        cursor + 1
+                    );
+                }
+                cursor += 1;
+            }
+            crate::parse::RowKind::Mod => {
+                let del = r.del_text.as_deref().unwrap_or(&r.text);
+                for line in del.split('\n') {
+                    if cursor < old.len() {
+                        assert_eq!(
+                            &old[cursor],
+                            line,
+                            "apply_stream: mod del mismatch at line {}",
+                            cursor + 1
+                        );
+                    }
+                    cursor += 1;
+                }
+                for line in r.text.split('\n') {
+                    out.push(line.to_string());
+                }
+                for t in &r.tail {
+                    out.push(t.text.clone());
+                }
+            }
+            crate::parse::RowKind::Sep | crate::parse::RowKind::File => {}
+        }
+    }
+    out
+}
+
 /// Parse `@@ -oldStart,oldCount +newStart,newCount @@` → (oldStart, oldCount).
 /// `oldCount` defaults to 1 when the `,N` is omitted (git's convention).
 fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {

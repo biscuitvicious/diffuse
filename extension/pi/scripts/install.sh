@@ -10,11 +10,8 @@
 #   INSTALL_DIR=/custom ./scripts/install.sh
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."     # extension/pi
+PROFILE=release ./scripts/build-bin.sh
 DEST="${INSTALL_DIR:-$HOME/.pi/agent/extensions/diffuse-review}"
-if [ ! -f bin/diffuse ]; then
-	echo "no bundled binary — run ./scripts/build-bin.sh first" >&2
-	exit 1
-fi
 BUILD="$(git -C ../.. log -1 --format='%h %ad' --date=short 2>/dev/null || echo dev)"
 # Remove old flat installation if it exists
 if [ -z "$INSTALL_DIR" ]; then

@@ -319,49 +319,22 @@ pub fn build_visible(
         rows.extend(lead_above);
 
         let src = if new_side { new_content } else { old_content };
-        let delta = if new_side {
-            (h.new_start as f64) - (h.old_start as f64)
-        } else {
-            0.0
-        };
-
-        struct PlacedRow {
-            r: Row,
-            at: f64,
-        }
-
-        let mut placed: Vec<PlacedRow> = lead_rows
-            .into_iter()
-            .map(|r| {
-                let at = if new_side {
-                    if let Some(nl) = r.new_line {
-                        nl as f64
-                    } else if let Some(ol) = r.old_line {
-                        (ol as f64) + delta - 0.5
-                    } else {
-                        0.0
-                    }
-                } else {
-                    (r.old_line.unwrap_or(0)) as f64
-                };
-                PlacedRow { r, at }
-            })
-            .collect();
-
-        placed.sort_by(|x, y| {
-            x.at.partial_cmp(&y.at)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    let rank = |kind| if kind == RowKind::Del { 0 } else { 1 };
-                    rank(x.r.kind).cmp(&rank(y.r.kind))
-                })
-        });
-
         let mut cursor = start.saturating_sub(1);
-        for item in placed {
-            let at_floor = item.at.floor() as usize;
-            if at_floor > cursor + 1 {
-                for g in (cursor + 1)..at_floor {
+        for r in lead_rows {
+            let target_line = if new_side {
+                r.new_line.map(|nl| nl as usize).or_else(|| {
+                    r.old_line.map(|ol| {
+                        ((ol as isize) + ((h.new_start as isize) - (h.old_start as isize))) as usize
+                    })
+                })
+            } else {
+                r.old_line.map(|ol| ol as usize)
+            };
+            if let Some(target) = target_line
+                && target > cursor + 1
+                && r.kind != RowKind::Del
+            {
+                for g in (cursor + 1)..target {
                     let text = src.get(g.saturating_sub(1)).cloned().unwrap_or_default();
                     rows.push(Row {
                         kind: RowKind::Ctx,
@@ -374,11 +347,12 @@ pub fn build_visible(
                         tail: Vec::new(),
                     });
                 }
+                cursor = target - 1;
             }
-            rows.push(item.r);
-            if at_floor > cursor {
-                cursor = cursor.max(at_floor);
+            if let Some(nl) = r.new_line {
+                cursor = cursor.max(nl as usize);
             }
+            rows.push(r);
         }
 
         let cov_end = start + count - 1;
