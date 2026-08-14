@@ -94,6 +94,13 @@ pub fn pass_pairing(
             continue;
         }
         let r_trim = r.text().trim();
+        let was_moved = !r_trim.is_empty()
+            && h.rows.iter().any(|a| {
+                a.is_moved() && (a.old_line() == r.old_line() || a.text().trim() == r_trim)
+            });
+        if was_moved {
+            continue;
+        }
         let del_is_tail = is_tail_before_closing(r.old_line(), true, old_content, new_content);
         let tail_candidate = del_is_tail
             && pending_adds.iter().any(|&ai| {
@@ -107,10 +114,7 @@ pub fn pass_pairing(
         if !r_trim.is_empty()
             && !tail_candidate
             && !has_same_hunk_add
-            && (new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
-                || h.rows
-                    .iter()
-                    .any(|a| a.is_moved() && a.text().trim() == r_trim))
+            && new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
         {
             continue;
         }
@@ -484,8 +488,14 @@ pub fn pass_filter_reflows(
         .iter()
         .enumerate()
         .filter(|(i, r)| {
+            let r_trim = r.text().trim();
             matches!(r, Row::Del(_))
                 && !r.is_moved()
+                && !h.rows.iter().any(|m| {
+                    m.is_moved()
+                        && (m.old_line() == r.old_line()
+                            || (!r_trim.is_empty() && m.text().trim() == r_trim))
+                })
                 && !paired_dels.contains(i)
                 && !shown_dels.contains(i)
         })

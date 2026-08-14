@@ -568,6 +568,75 @@ fn tail_guard_and_reflow_corpus() {
 }
 
 #[test]
+fn test_moved_line_duplicate_in_added_block_stays_add() {
+    let mut f = file(vec![hunk(vec![
+        row(
+            RowKind::Del,
+            "        self.cache.borrow_mut().pop(key);",
+            None,
+            Some(111),
+        ),
+        row(
+            RowKind::Del,
+            "        self.results.borrow_mut().pop(key);",
+            None,
+            Some(112),
+        ),
+        row(
+            RowKind::Add,
+            "            self.cache.borrow_mut().pop(key);",
+            Some(143),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            self.results.borrow_mut().pop(key);",
+            Some(144),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "        if entry_epoch != epoch {",
+            Some(148),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            self.cache.borrow_mut().pop(key);",
+            Some(151),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            self.results.borrow_mut().pop(key);",
+            Some(152),
+            None,
+        ),
+        row(RowKind::Add, "        }", Some(154), None),
+    ])]);
+    mark_moves(&mut f);
+    let c = collapse_hunk_rows(&f.hunks[0], false, None, None);
+    let r151 = c
+        .iter()
+        .find(|r| r.new_line() == Some(151))
+        .expect("line 151 exists");
+    assert_eq!(
+        r151.kind(),
+        RowKind::Add,
+        "line 151 in the middle of add block must remain an addition, not a spurious mod"
+    );
+    let r152 = c
+        .iter()
+        .find(|r| r.new_line() == Some(152))
+        .expect("line 152 exists");
+    assert_eq!(
+        r152.kind(),
+        RowKind::Add,
+        "line 152 in the middle of add block must remain an addition"
+    );
+}
+
+#[test]
 fn markdown_table_1_to_1_pairing() {
     let h = hunk(vec![
         row(
