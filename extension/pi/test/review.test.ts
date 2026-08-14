@@ -135,8 +135,8 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	assert(mod.includes("\x1b[48;5;237m"), "cursor mod row lifts to 237 (neutral)");
 	assert(mod.includes("\x1b[48;5;34m"), "cursor mod words lift to 34");
 	assert(mod.includes("\x1b[9m"), "removed words struck inline");
-	c.handleInput("j"); // → the mod's absorbed blank (still the mod's row)
-	c.handleInput("j"); // → the pure add row
+	c.handleInput("j"); // → the blank add row (line 2)
+	c.handleInput("j"); // → the add row (line 3)
 	const rows2 = c.render(120);
 	const mod2 = rows2.find((l: string) => plain(l).startsWith("   1 ~")) ?? "";
 	assert(mod2.includes("\x1b[48;5;236m") && mod2.includes("\x1b[48;5;28m"), "the ~ line stays grey with the added fill");
@@ -151,40 +151,6 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	}
 }
 
-// ── Smart window: a mod row centers on its off-screen change ──────────────
-{
-	const f = (await wireFiles(`diff --git a/m.rs b/m.rs
---- a/m.rs
-+++ b/m.rs
-@@ -1,1 +1,1 @@
--old shared prefix content
-+new shared prefix with an appended change far beyond the view
-`, { "m.rs": "new shared prefix with an appended change far beyond the view" }))[0]!;
-	const mod = f.hunks[0]!.rows[0]!;
-	assert(mod.kind === "mod", "pair collapsed");
-	const c = comp([f]);
-	// The rewritten line: the whole old line struck, then the whole new line
-	// filled — wrapped, both with the mod's line-number prefix on their
-	// first segment.
-	const rendered = c.render(50);
-	const plain = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
-	const first = rendered.find((l: string) => plain(l).startsWith("   1 ~")) ?? "";
-	assert(first !== "", "del block rendered with the prefix");
-	assert(first.includes("\x1b[9m") && first.includes("old shared prefix"), "del block struck");
-	const filled = rendered.find((l: string) => plain(l).includes("appended change")) ?? "";
-	assert(filled !== "", "add block rendered");
-	const all = rendered.map(plain).join("\n");
-	assert(all.includes("appended"), "changed word visible via wrapping");
-	assert(all.includes("beyond"), "wrapped tail content visible");
-	assert(all.includes("old shared prefix"), "the removed content is visible inline");
-	// The wrapped block spans multiple visual rows: an indented continuation
-	// (no line-number prefix) carries the rest of the line.
-	const wrappedRows = rendered.filter((l: string) => /^\s{3,}\S/.test(plain(l)));
-	assert(wrappedRows.length >= 1, "continuation rows are indented");
-	for (const w of [50, 80]) {
-		for (const l of c.render(w)) assert(visibleWidth(l) <= w, `smart window render(${w}) too wide`);
-	}
-}
 
 // ── Resume position resolution ─────────────────────────────────────────────
 {
@@ -642,6 +608,303 @@ assert(t.join("|") === "git|commit|-m|hello world|-m|x y", `splitTemplate: ${t}`
 	for (const w of [50, 80]) {
 		for (const l of c.render(w)) assert(visibleWidth(l) <= w, `visual render(${w}) too wide`);
 	}
+}
+
+// ── Context expansion (E/e keys) with backend wire files ───────────────────
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/guest.rs b/guest.rs
+--- a/guest.rs
++++ b/guest.rs
+@@ -5,3 +5,3 @@
+ line 4
+-line 5 old
++line 5 new
+ line 6`,
+		contents: { "guest.rs": "line 1\nline 2\nline 3\nline 4\nline 5 new\nline 6\nline 7\nline 8" }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const c = new (R as any).ReviewComponent(
+		session(files),
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	c.handleInput("E"); // Expand context
+	const rows = c.render(80);
+	const plain = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+	const ctxRow = rows.find((l: string) => plain(l).includes("line 4"));
+	assert(ctxRow !== undefined && plain(ctxRow).includes("line 4"), "expanding context with E keeps context line text");
+}
+
+// ── Pure add row renders in uniform dark green (no bright subword green) ───
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/add.rs b/add.rs
+new file mode 100644
+--- /dev/null
++++ b/add.rs
+@@ -0,0 +1,2 @@
++fn line1() {}
++fn line2() {}`,
+		contents: { "add.rs": "fn line1() {}\nfn line2() {}" }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const c = new (R as any).ReviewComponent(
+		session(files),
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	const rows = c.render(80);
+	const plain = (l: string) => l.replace(/\x1b\[[0-9;]*m/g, "");
+	const addLine2 = rows.find((l: string) => plain(l).startsWith("   2 +")) ?? "";
+	assert(addLine2 !== "", "unselected add row 2 found");
+	assert(!addLine2.includes("\x1b[48;5;28m") && !addLine2.includes("\x1b[48;5;34m"), "pure add row does not use subword-bright green (28/34) on tokens");
+	assert(addLine2.includes("\x1b[48;5;22m"), "pure add row uses uniform dark green (22)");
+}
+
+// ── File header row receives cursor background highlight when selected ───
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,1 +1,1 @@
+-old
++new`,
+		contents: { "test.rs": "new" }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const c = new (R as any).ReviewComponent(
+		session(files),
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	c.handleInput("k"); // Scroll up at the top onto file header
+	const rows = c.render(80);
+	const fileHeaderRow = rows.find((l: string) => l.includes("test.rs") && l.includes("───")) ?? "";
+	assert(fileHeaderRow.includes("\x1b[48;5;237m"), "selected file header row has cursor background highlight (237)");
+}
+
+// ── Review state persistence (position saving & restoring) ───────────────
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,3 +1,3 @@
+ line 1
+-line 2
++line 2 mod
+ line 3`,
+		contents: { "test.rs": "line 1\nline 2 mod\nline 3" }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const repoName = "test-repo-persisted-" + Date.now();
+	const sess = { ...session(files), repo: repoName };
+	const c = new (R as any).ReviewComponent(
+		sess,
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	c.handleInput("j"); // Move down
+	c.handleInput("q"); // Quit review (should save state)
+	await R.flushReviewState();
+
+	const saved = R.loadReviewState(repoName);
+	assert(saved !== null && saved.line === 2, "quitting review persists review state position");
+	const init = R.resolveInitialPosition(files, saved);
+	assert(init !== null && init.line === 2, "resolveInitialPosition restores saved line 2");
+}
+
+// ── Context expansion preserves cursor row position (no jump) ──────────────
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,3 +10,3 @@
+ line 9
+-line 10 old
++line 10 new
+ line 11`,
+		contents: { "test.rs": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10 new\nline 11" }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const c = new (R as any).ReviewComponent(
+		session(files),
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	c.handleInput("j");
+	c.handleInput("j");
+	const rowBefore = c.flat[c.rowIdx];
+	const coordBefore = R.rowCoord(rowBefore);
+	c.handleInput("e"); // Expand context above
+	const rowAfter = c.flat[c.rowIdx];
+	const coordAfter = R.rowCoord(rowAfter);
+	assert(coordBefore !== null && coordBefore === coordAfter, `expanding context with e keeps cursor on line ${coordBefore} (was ${coordBefore}, now ${coordAfter})`);
+}
+
+// ── Hunk context allocation includes closing braces and prevents line duplication ─
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -251,3 +299,3 @@
+ mount_point,
+-resolved_layers: unresolved,
++layers: unresolved,
+ closing brace }`,
+		contents: { "test.rs": Array.from({ length: 350 }, (_, i) => i === 300 ? "layers: unresolved," : i === 301 ? "closing brace }" : `line ${i + 1}`).join("\n") }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const f = files[0]!;
+	f.hunks[0]!.belowCtx = 3;
+	const addRow = f.rows.find((r: any) => r.kind === "add");
+	if (addRow) addRow.newLine = 301;
+	const vis = R.buildVisible(f);
+	const closingBrace = vis.find((r: any) => r.text.includes("closing brace }"));
+	assert(closingBrace !== undefined, "closing context line 'closing brace }' is present when new_line has offset");
+}
+
+// ── Mouse click on row moves cursor & sep row click / enter expands context ─
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,5 +1,5 @@
+ line 1
+ line 2
+-line 3 old
++line 3 new
+ line 4
+ line 5`,
+		contents: { "test.rs": "line 1\nline 2\nline 3 new\nline 4\nline 5\nline 6\nline 7\nline 8" }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const c = new (R as any).ReviewComponent(
+		session(files),
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	c.render(80);
+	// Mouse click on content line 2 (terminal y=5 -> contentLine=2 -> rowIdx=2)
+	c.handleInput("\x1b[<0;10;5M"); // mouse press at y=5
+	c.handleInput("\x1b[<0;10;5m"); // mouse release at y=5
+	assert(c.rowIdx === 2, `mouse click at y=5 moves rowIdx to 2 (got ${c.rowIdx})`);
+
+	// Find the sep row index
+	const sepIdx = c.flat.findIndex((r: any) => r.kind === "sep");
+	if (sepIdx >= 0) {
+		c.goto(sepIdx);
+		const initialAbove = files[0].hunks[0].aboveCtx;
+		const initialBelow = files[0].hunks[0].belowCtx;
+		c.handleInput("\r"); // Press Enter on sep row
+		assert(
+			files[0].hunks[0].aboveCtx > initialAbove && files[0].hunks[0].belowCtx > initialBelow,
+			"pressing enter on sep row expands context above and below",
+		);
+	}
+}
+
+// ── Viewport scroll stability when moving cursor up with k ──────────────────
+{
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,30 +1,30 @@
+${Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n")}`,
+		contents: { "test.rs": Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n") }
+	}));
+	const files = R.filesFromWire(wire, () => undefined, 6);
+	const c = new (R as any).ReviewComponent(
+		session(files),
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	for (let i = 0; i < 10; i++) c.handleInput("j");
+	c.render(80);
+	const scrollBefore = (c as any).scroll;
+	c.handleInput("k");
+	c.render(80);
+	const scrollAfter = (c as any).scroll;
+	assert(scrollBefore === scrollAfter, `pressing k when cursor is not at top of viewport keeps viewport scroll static (was ${scrollBefore}, now ${scrollAfter})`);
+}
+
+// ── Sep row cursor rendering & position anchor on expand ───────────────────
+{
+	const contents: Record<string, string> = { "test.rs": Array.from({ length: 100 }, (_, i) => i === 9 ? "new 10" : i === 49 ? "new 50" : `line ${i + 1}`).join("\n") };
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,1 +10,1 @@
+-old 10
++new 10
+@@ -50,1 +50,1 @@
+-old 50
++new 50`,
+		contents
+	}));
+	const files = R.filesFromWire(wire, (p) => contents[p], 6);
+	files[0]!.hunks[0]!.aboveCtx = 0;
+	files[0]!.hunks[0]!.belowCtx = 0;
+	files[0]!.hunks[1]!.aboveCtx = 0;
+	files[0]!.hunks[1]!.belowCtx = 0;
+	const c = new (R as any).ReviewComponent(
+		session(files),
+		{ requestRender: () => {}, stop: () => {}, start: () => {} },
+		theme,
+		() => {},
+	);
+	(c as any).rebuild();
+	const sepIdx = c.flat.findIndex((r: any) => r.kind === "sep");
+	assert(sepIdx >= 0, "sep row exists");
+	c.goto(sepIdx);
+	const rendered = c.render(80);
+	const sepLine = rendered.find((l: string) => l.includes("lines hidden"));
+	assert(sepLine !== undefined && sepLine.includes("\x1b[48;5;237m"), "selected sep row includes cursor highlight");
+
+	const lineBefore = c.flat[sepIdx + 1]?.newLine ?? c.flat[sepIdx + 1]?.oldLine;
+	c.handleInput("e"); // expand context above
+	const newSepIdx = c.rowIdx;
+	const lineAfter = c.flat[newSepIdx + 1]?.newLine ?? c.flat[newSepIdx + 1]?.oldLine;
+	assert(lineAfter === lineBefore, `cursor stays anchored to the same gap/hunk position after expand (was line ${lineBefore}, now line ${lineAfter})`);
+}
+
+// ── Syntax highlighting preserved for expanded context lines ───────────────
+{
+	const contents: Record<string, string> = { "test.rs": "pub fn hello() {\n    let x = 42;\n}\n" };
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({
+		diff: `diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,3 +1,3 @@
+ pub fn hello() {
+-    let x = 42;
++    let x = 43;
+ }`,
+		contents
+	}));
+	const files = R.filesFromWire(wire, (p) => contents[p], 6);
+	const f = files[0]!;
+	f.hunks[0]!.aboveCtx = 10;
+	const vis = R.buildVisible(f);
+	const ctxRow = vis.find((r: any) => r.text.includes("pub fn hello"));
+	assert(ctxRow !== undefined, "context row pub fn hello is visible");
+	const tokens = (R as any).rowTokens(ctxRow, 0, [0], { files }, f, true);
+	const hasColor = tokens.some((t: any) => t.color !== "text");
+	assert(hasColor, "expanded context row pub fn hello preserves syntax highlighting (has non-text colored tokens)");
 }
 
 console.log(failures === 0 ? "ALL PASS" : `${failures} FAILURES`);

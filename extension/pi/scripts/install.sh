@@ -10,15 +10,21 @@
 #   INSTALL_DIR=/custom ./scripts/install.sh
 set -e
 cd "$(dirname "$(readlink -f "$0")")/.."     # extension/pi
-DEST="${INSTALL_DIR:-$HOME/.pi/agent/extensions}"
+DEST="${INSTALL_DIR:-$HOME/.pi/agent/extensions/diffuse-review}"
 if [ ! -f bin/diffuse ]; then
 	echo "no bundled binary — run ./scripts/build-bin.sh first" >&2
 	exit 1
 fi
 BUILD="$(git -C ../.. log -1 --format='%h %ad' --date=short 2>/dev/null || echo dev)"
+# Remove old flat installation if it exists
+if [ -z "$INSTALL_DIR" ]; then
+	rm -rf "$HOME/.pi/agent/extensions/review.ts" "$HOME/.pi/agent/extensions/src" "$HOME/.pi/agent/extensions/bin"
+fi
 mkdir -p "$DEST/bin"
+cp -r src "$DEST/"
 sed "s/@BUILD@/$BUILD/g" review.ts > "$DEST/review.ts"
+cp index.ts "$DEST/index.ts"
 cp bin/diffuse "$DEST/bin/diffuse"
 chmod +x "$DEST/bin/diffuse"
-echo "installed: $DEST/review.ts + $DEST/bin/diffuse (build $BUILD)"
+echo "installed: $DEST/review.ts + $DEST/index.ts + $DEST/src/ + $DEST/bin/diffuse (build $BUILD)"
 echo "reload in pi: /reload, then /review"

@@ -20,7 +20,8 @@ import {
 	styleTokens,
 	wireTokens,
 } from "./component_render.ts";
-import { buildVisible, fileCounts, pad4, prefixOf, rowCoord } from "./model.ts";
+import { buildVisible, fileCounts, pad4, prefixOf, styledPrefix, rowCoord } from "./model.ts";
+import { saveReviewState } from "./persistence.ts";
 import { sAdd, sDel, sMod } from "./theme.ts";
 import type { DiffFile, ReviewSession, Row } from "./types.ts";
 
@@ -43,6 +44,7 @@ export class ReviewComponent {
 	private safetyStashes: string[] = [];
 	private dragY: number | null = null;
 	private dragX: number | null = null;
+	private wasDragged = false;
 	private colOffset = 0;
 	private numBuffer = "";
 	private lastMouse: string | null = null;
@@ -108,6 +110,27 @@ export class ReviewComponent {
 	}
 
 	private rebuild(): void {
+		const curRow = this.flat?.[this.rowIdx];
+		const curCoord = curRow ? rowCoord(curRow) : null;
+		const curFile = this.rowFile?.[this.rowIdx] ?? 0;
+		let targetCoord: number | null = curCoord;
+		if (targetCoord === null && this.flat && this.rowIdx >= 0) {
+			for (let i = this.rowIdx + 1; i < this.flat.length; i++) {
+				if (this.rowFile[i] === curFile) {
+					const c = rowCoord(this.flat[i]!);
+					if (c !== null) { targetCoord = c; break; }
+				}
+			}
+			if (targetCoord === null) {
+				for (let i = this.rowIdx - 1; i >= 0; i--) {
+					if (this.rowFile[i] === curFile) {
+						const c = rowCoord(this.flat[i]!);
+						if (c !== null) { targetCoord = c; break; }
+					}
+				}
+			}
+		}
+
 		this.visualCache = null;
 		this.clearRowSegmentsCache();
 		this.flat = [];
@@ -128,6 +151,23 @@ export class ReviewComponent {
 				}
 			});
 		});
+
+		if (curRow) {
+			let newIdx = this.flat.indexOf(curRow);
+			if (newIdx === -1 && targetCoord !== null) {
+				const matchIdx = this.flat.findIndex((r, i) => this.rowFile[i] === curFile && rowCoord(r) === targetCoord);
+				if (matchIdx >= 0) {
+					if (curRow.kind === "sep" && matchIdx > 0 && this.flat[matchIdx - 1]?.kind === "sep") {
+						newIdx = matchIdx - 1;
+					} else {
+						newIdx = matchIdx;
+					}
+				}
+			}
+			if (newIdx >= 0) {
+				this.rowIdx = newIdx;
+			}
+		}
 		if (this.rowIdx >= this.flat.length) this.rowIdx = Math.max(0, this.flat.length - 1);
 	}
 
@@ -246,18 +286,37 @@ export class ReviewComponent {
 			} else if (btn === 0 && mouse[4] === "M") {
 				this.dragX = x;
 				this.dragY = y;
+				this.wasDragged = false;
 			} else if ((btn === 32 || btn === 35) && mouse[4] === "M") {
 				if (this.dragX === null || this.dragY === null) {
 					this.dragX = x;
 					this.dragY = y;
 				} else {
+					if (Math.abs(x - this.dragX) + Math.abs(y - this.dragY) >= 2) {
+						this.wasDragged = true;
+					}
 					this.scrollBy(y - this.dragY);
 					this.dragX = x;
 					this.dragY = y;
 				}
 			} else if (btn === 0 && mouse[4] === "m") {
+				if (!this.wasDragged) {
+					const topOffset = 3 + (this.noteDraft !== null ? this.noteDraft.split("\n").length : 0);
+					const contentLine = y - topOffset;
+					const maxRows = Math.max(8, (process.stdout.rows ?? 24) - 5);
+					if (contentLine >= 0 && contentLine < maxRows) {
+						const { total } = this.visualGeometry(process.stdout.columns ?? 80);
+						const visCoord = Math.max(0, Math.min(total - 1, this.scroll + contentLine));
+						this.setCursorVis(visCoord);
+						const clickedRow = this.flat[this.rowIdx];
+						if (clickedRow && clickedRow.kind === "sep") {
+							this.adjustContext(1, 1);
+						}
+					}
+				}
 				this.dragX = null;
 				this.dragY = null;
+				this.wasDragged = false;
 			}
 			this.lastMouse = `${btn}@${x},${y}${mouse[4]}`;
 			this.requestRender();
@@ -332,6 +391,14 @@ export class ReviewComponent {
 		if (data === "[" || data === "p" || data === "P") return this.gotoHunk(-1);
 		if (matchesKey(data, Key.tab)) return this.switchFile(1);
 		if (matchesKey(data, "shift+tab")) return this.switchFile(-1);
+		if (matchesKey(data, Key.enter) || data === "\r" || data === "\n") {
+			const r = this.flat[this.rowIdx];
+			if (r && r.kind === "sep") {
+				this.adjustContext(1, 1);
+				this.requestRender();
+				return;
+			}
+		}
 
 		if (data === "v" || data === "V") {
 			if (this.anchor === null) {
@@ -384,6 +451,18 @@ export class ReviewComponent {
 		if (data === "x" || data === "X") return void discardAction(this.createActionContext(), data === "X");
 	}
 
+	private saveState(): void {
+		const r = this.flat[this.rowIdx];
+		if (!r) return;
+		const line = r.newLine ?? r.oldLine ?? 1;
+		saveReviewState(this.session.repo, {
+			file: this.file.path,
+			line,
+			col: this.colOffset,
+			text: r.text,
+		});
+	}
+
 	private setCursorVis(v: number): void {
 		const { starts, total } = this.visualGeometry(process.stdout.columns ?? 80);
 		const clamped = Math.max(0, Math.min(total - 1, v));
@@ -394,6 +473,7 @@ export class ReviewComponent {
 		}
 		this.rowIdx = row;
 		this.visLine = Math.max(0, clamped - starts[row]!);
+		this.saveState();
 	}
 
 	private move(delta: number): void {
@@ -420,6 +500,7 @@ export class ReviewComponent {
 	private goto(idx: number): void {
 		this.rowIdx = Math.max(0, Math.min(this.flat.length - 1, idx));
 		this.visLine = 0;
+		this.saveState();
 		this.requestRender();
 	}
 
@@ -518,6 +599,7 @@ export class ReviewComponent {
 	}
 
 	private quit(): void {
+		this.saveState();
 		const stashes = this.safetyStashes.length > 0 ? ` (safety stashes: ${this.safetyStashes.join(" ")})` : "";
 		if (stashes) this.notify?.(stashes, "info");
 		this.done(0);
@@ -593,9 +675,19 @@ export class ReviewComponent {
 			const label = ` ${ff.path}  (${ff.status})  ·  +${fc.adds}${fc.dels > 0 ? ` −${fc.dels}` : ""}${fc.mods > 0 ? ` ~${fc.mods}` : ""}${fc.moved > 0 ? ` ≈${fc.moved}` : ""}`;
 			const styled = theme.fg("accent", label);
 			const fill = Math.max(1, width - visibleWidth(styled) - 1);
-			return [styled + theme.fg("border", "─".repeat(fill))];
+			const line = styled + theme.fg("border", "─".repeat(fill));
+			if (flatIdx === this.rowIdx) {
+				return ["\x1b[48;5;237m" + line + "\x1b[49m"];
+			}
+			return [line];
 		}
-		if (r.kind === "sep") return [theme.fg("muted", `   ${r.text}`)];
+		if (r.kind === "sep") {
+			const line = theme.fg("muted", `   ${r.text}`);
+			if (flatIdx === this.rowIdx) {
+				return ["\x1b[48;5;237m" + line + "\x1b[49m"];
+			}
+			return [line];
+		}
 		const prefix = prefixOf(r);
 		const textCols = Math.max(1, width - prefix.length - 2);
 		const out: string[] = [];
@@ -634,7 +726,7 @@ export class ReviewComponent {
 			let segIdx = 0;
 			const emitBlock = (blockText: string, isDel: boolean) => {
 				const segPrefix = (idx: number): string =>
-					isDel && idx === 0 ? prefix : " ".repeat(prefix.length);
+					isDel && idx === 0 ? styledPrefix(r) : " ".repeat(prefix.length);
 				if (blockText.length === 0) {
 					out.push(
 						(isDel ? `\x1b[48;5;${sDel.tint}m` : `\x1b[48;5;${sAdd.tint}m`) +
@@ -700,14 +792,15 @@ export class ReviewComponent {
 			}
 			return out;
 		}
+		const sPrefix = styledPrefix(r);
 		if (text.length === 0) {
-			emitSeg(0, 0, prefix, 0);
+			emitSeg(0, 0, sPrefix, 0);
 		} else {
 			let start = 0;
 			let segIdx = 0;
 			for (const line of text.split("\n")) {
 				if (line.length === 0) {
-					emitSeg(start, start, start === 0 ? prefix : " ".repeat(prefix.length), segIdx++);
+					emitSeg(start, start, start === 0 ? sPrefix : " ".repeat(prefix.length), segIdx++);
 					start++;
 					continue;
 				}
@@ -715,7 +808,7 @@ export class ReviewComponent {
 				while (ls < line.length) {
 					const le = Math.min(line.length, ls + textCols);
 					if (le <= ls) break;
-					emitSeg(start + ls, start + le, start + ls === 0 ? prefix : " ".repeat(prefix.length), segIdx++);
+					emitSeg(start + ls, start + le, start + ls === 0 ? sPrefix : " ".repeat(prefix.length), segIdx++);
 					ls = le;
 				}
 				start += line.length + 1;
@@ -787,7 +880,7 @@ export class ReviewComponent {
 			rowFile: this.rowFile,
 			hunkStarts: this.hunkStarts,
 		};
-		return renderComponentFrame(
+		const lines = renderComponentFrame(
 			state,
 			this.session,
 			width,
@@ -799,5 +892,7 @@ export class ReviewComponent {
 			(fi) => this.firstRowOfFile(fi),
 			(fi) => this.lastRowOfFile(fi),
 		);
+		this.scroll = state.scroll;
+		return lines;
 	}
 }

@@ -345,9 +345,40 @@ pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
         };
     }
     WordSpans {
-        del: spans_from(old_text, &ot, &matched_old),
-        add: spans_from(new_text, &nt, &matched_new),
+        del: merge_whitespace_gaps(old_text, spans_from(old_text, &ot, &matched_old)),
+        add: merge_whitespace_gaps(new_text, spans_from(new_text, &nt, &matched_new)),
     }
+}
+
+fn merge_whitespace_gaps(text: &str, spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    if spans.is_empty() {
+        return spans;
+    }
+    let mut merged = Vec::new();
+    let mut current = spans[0];
+    let mut merged_any = false;
+
+    for &(next_start, next_end) in spans.iter().skip(1) {
+        let gap = char_slice(text, current.1, next_start);
+        if !gap.is_empty() && gap.chars().all(|c| c.is_whitespace()) {
+            current = (current.0, next_end);
+            merged_any = true;
+        } else {
+            merged.push(current);
+            current = (next_start, next_end);
+        }
+    }
+    merged.push(current);
+
+    if merged_any {
+        for span in &mut merged {
+            let raw = char_slice(text, span.0, span.1);
+            if raw.ends_with(' ') && !raw.trim().is_empty() {
+                span.1 -= 1;
+            }
+        }
+    }
+    merged
 }
 
 #[cfg(test)]

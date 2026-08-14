@@ -52,6 +52,44 @@ fn char_at(s: &str, i: usize) -> Option<char> {
  * plain two rows instead). Shared with the collapse so the two never drift
  * apart.
  */
+/// Exact display position of each del span in the merged (new-text) view.
+///
+/// The merged display is the new text with del runs interspersed. Position
+/// `display_pos[j]` is the new-text character index where del span `j` begins:
+///
+/// ```text
+/// raw_pos[j]     = del_span[j].start − Σ(de−ds for del spans k < j)
+/// as0_common[i]  = add_span[i].start − Σ(ae−as for add spans m < i)
+/// display_pos[j] = raw_pos[j] + Σ(ae−as for add spans where as0_common <= raw_pos[j])
+/// ```
+///
+/// `raw_pos` and `as0_common` project both deletion and addition offsets into
+/// the shared common-subsequence coordinate space. Comparing `as0_common <= raw`
+/// precisely counts all additions that occur at or before this deletion in the
+/// stream, correctly placing trailing and inline deletions.
+pub fn del_display_positions(
+    del_spans: &[(usize, usize)],
+    add_spans: &[(usize, usize)],
+) -> Vec<usize> {
+    let mut positions = Vec::with_capacity(del_spans.len());
+    let mut cum_dels = 0usize;
+    for (ds, de) in del_spans {
+        let raw = ds - cum_dels;
+        let mut cum_adds = 0usize;
+        let mut add_common_offset = 0usize;
+        for (as0, ae) in add_spans {
+            let as0_common = as0 - add_common_offset;
+            if as0_common <= raw {
+                cum_adds += ae - as0;
+            }
+            add_common_offset += ae - as0;
+        }
+        positions.push(raw + cum_adds);
+        cum_dels += de - ds;
+    }
+    positions
+}
+
 pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
     let del_spans: Vec<(usize, usize)> = spans
         .del
@@ -68,103 +106,23 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
     // `Option<`/`>`/`None`, `lowers`+`.rev()` → `below`, `k <`+` {` →
     // `let Some(…)`). Only the split-word check below (a standalone del
     // landing mid-word) is garble — that one stays wholesale.
-    let mut del_pos: Vec<usize> = Vec::new();
-    let mut cum = 0usize;
-    for (ds, de) in &del_spans {
-        del_pos.push(ds - cum);
-        cum += de - ds;
-    }
-    let mut pair: HashMap<usize, usize> = HashMap::new();
-    let mut used_adds: HashSet<usize> = HashSet::new();
-    for (j, (ds, de)) in del_spans.iter().enumerate() {
-        let mut best: Option<usize> = None;
-        let mut best_gap: usize = 8;
-        for (i, (as0, ae)) in add_spans.iter().enumerate() {
-            if used_adds.contains(&i) {
-                continue;
-            }
-            // Overlapping non-identical ranges interleave in the merge —
-            // they stay separate events (same guard as `delPairing`).
-            let del_end = del_pos[j] + (de - ds);
-            let same = del_pos[j] == *as0 && del_end == *ae;
-            let disjoint = del_end <= *as0 || *ae <= del_pos[j];
-            if !same && !disjoint {
-                continue;
-            }
-            // Prefer the CONTENT counterpart over a closer punctuation
-            // fragment (`0` ↔ `None`, never the type syntax `>` — the strike
-            // must read `= ~~0~~None;`).
-            // OPERATOR flips pair operator-to-operator with precedence: a
-            // `<`→`>` comparison flip is either a bug or the logical twin of
-            // another change — it must stand out (`k ~~<~~> floor`), never
-            // bury itself inside a nearer word span. The add's operator
-            // anchors at its own offset inside the span.
-            let del_op = char_slice(del_text, *ds, *de).trim();
-            let mut op_gap = usize::MAX;
-            for c in *as0..*ae {
-                if let Some(ch) = char_at(add_text, c)
-                    && "<>!=+*/-%&|^~".contains(ch)
-                {
-                    op_gap = del_pos[j].abs_diff(c);
-                    break;
-                }
-            }
-            let first = char_at(add_text, *as0);
-            let gap = (del_pos[j].abs_diff(*as0) + if first.is_some_and(is_word) { 0 } else { 5 })
-                .min(op_gap);
-            if gap <= best_gap {
-                best_gap = gap;
-                best = Some(i);
-            }
-            if del_op.len() == 1 && del_op.starts_with(['<', '>']) {
-                let dch = del_op.chars().next().unwrap();
-                for c in *as0..*ae {
-                    if let Some(ch) = char_at(add_text, c)
-                        && (ch == '<' || ch == '>')
-                    {
-                        let g = del_pos[j].abs_diff(c) + if ch == dch { 0 } else { 2 };
-                        if g < best_gap {
-                            best_gap = g;
-                            best = Some(i);
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(b) = best {
-            used_adds.insert(b);
-            pair.insert(j, b);
-        }
-    }
-    // A WORD-led standalone del landing mid-word is garble (the comment
-    // rewrite's `them.` in `m~~them~~ust`); a punctuation-led fragment
-    // (`.rev()`, ` {`) reads fine struck mid-word — `enumer~~.rev()~~ate()`
-    // still reconstructs `enumerate()`. Meaningful identity = subword.
+    let pairing = del_pairing(&del_spans, add_spans, add_text, del_text);
+    // A WORD-led standalone del landing mid-word is garble (e.g. `m~~them~~ust`);
+    // a punctuation-led fragment (`.rev()`, ` {`) reads fine struck mid-word
+    // (`enumer~~.rev()~~ate()` still reconstructs `enumerate()`).
     del_spans.iter().enumerate().any(|(j, (ds, de))| {
-        if pair.contains_key(&j) {
-            return false;
-        }
-        // A multi-line span (a whole deleted block folded into a
-        // reverse-stretch mod) cannot be a split-word garble — the strike
-        // spans the visual lines, the new line fills beside it. The
-        // reverse-stretch of the old `find_mount` body must stay the
-        // subword mod (`self.mount_stack` common + struck chain + filled
-        // `.get(guest_path)`), not fall to the `-`/`+` baseline.
-        if char_slice(del_text, *ds, *de).contains('\n') {
+        if pairing.pair.contains_key(&j) {
             return false;
         }
         let del_span_text = char_slice(del_text, *ds, *de);
         if del_span_text.trim().contains(' ') {
             return false;
         }
-        let ins = del_pos[j].min(add_text.len());
+        let add_len = char_len_of(add_text);
+        let ins = pairing.del_pos[j].min(add_len);
         let left = ins.checked_sub(1).and_then(|i| char_at(add_text, i));
         let right = char_at(add_text, ins);
-        if !(ins > 0
-            && ins < add_text.len()
-            && left.is_some_and(is_word)
-            && right.is_some_and(is_word))
-        {
+        if !(ins > 0 && ins < add_len && left.is_some_and(is_word) && right.is_some_and(is_word)) {
             return false;
         }
         let t = del_span_text.trim_start();
@@ -237,11 +195,17 @@ pub fn del_pairing(
     add_text: &str,
     del_text: &str,
 ) -> DelPairing {
-    let mut del_pos: Vec<usize> = Vec::new();
+    let mut raw_pos: Vec<usize> = Vec::new();
     let mut cum = 0usize;
     for (ds, de) in del_spans {
-        del_pos.push(ds - cum);
+        raw_pos.push(ds - cum);
         cum += de - ds;
+    }
+    let mut add_common_pos: Vec<usize> = Vec::new();
+    let mut add_cum = 0usize;
+    for (as0, ae) in add_spans {
+        add_common_pos.push(as0 - add_cum);
+        add_cum += ae - as0;
     }
     let mut pair: HashMap<usize, usize> = HashMap::new();
     let mut used_adds: HashSet<usize> = HashSet::new();
@@ -253,30 +217,17 @@ pub fn del_pairing(
             if used_adds.contains(&i) {
                 continue;
             }
-            // The aligned replacement occupies the same range; anything
-            // else that overlaps the del's range interleaves in the merge
-            // (`resolved_` at 13 must not pair with `.iter()` at 19 —
-            // that would push the removal past `layers`). Overlapping
-            // non-identical spans stay separate events.
-            let del_end = del_pos[j] + (de - ds);
-            let same = del_pos[j] == *as0 && del_end == *ae;
-            let disjoint = del_end <= *as0 || *ae <= del_pos[j];
-            // Whitespace spans pair despite the overlap — the indent
-            // change is expressed minimally (8 → 12 spaces = 8 common
-            // + 4 added), not as two independent whole runs.
+            let del_start = raw_pos[j];
+            let del_end = del_start + (de - ds);
+            let add_start = add_common_pos[i];
+            let add_end = add_start + (ae - as0);
+            let same_start = del_start == add_start;
+            let disjoint = del_end <= add_start || add_end <= del_start;
             let ws_pair =
                 all_ws(char_slice(del_text, *ds, *de)) && all_ws(char_slice(add_text, *as0, *ae));
-            if !same && !disjoint && !ws_pair {
+            if !same_start && !disjoint && !ws_pair {
                 continue;
             }
-            // Prefer the CONTENT counterpart over a closer punctuation
-            // fragment (`0` ↔ `None`, never the type syntax `>` — the
-            // strike must read `= ~~0~~None;`).
-            // OPERATOR flips pair operator-to-operator with precedence: a
-            // `<`→`>` comparison flip is either a bug or the logical twin
-            // of another change — it must stand out (`k ~~<~~> floor`),
-            // never bury itself inside a nearer word span. The add's
-            // operator anchors at its own offset inside the span.
             let del_op = char_slice(del_text, *ds, *de).trim();
             let op_chars = del_op.chars().collect::<Vec<char>>();
             let is_compare_op = !op_chars.is_empty()
@@ -284,18 +235,13 @@ pub fn del_pairing(
                 && (op_chars[0] == '<' || op_chars[0] == '>')
                 && (op_chars.len() == 1 || op_chars[1] == '=');
             if is_compare_op {
-                // A lone comparison operator pairs with a comparison
-                // operator wherever it appears — this is the counterpart
-                // by definition, so it WINS over the nearest-span rule
-                // (`k <` → `k >` strikes the `<` against the `>`; the
-                // flip must stand out).
                 let mut op_best: Option<usize> = None;
                 let mut op_best_gap = usize::MAX;
                 for c in *as0..*ae {
                     if let Some(ch) = char_at(add_text, c)
                         && (ch == '<' || ch == '>')
                     {
-                        let g = del_pos[j].abs_diff(c) + if ch == op_chars[0] { 0 } else { 2 };
+                        let g = raw_pos[j].abs_diff(c) + if ch == op_chars[0] { 0 } else { 2 };
                         if g < op_best_gap {
                             op_best_gap = g;
                             op_best = Some(i);
@@ -309,23 +255,14 @@ pub fn del_pairing(
                     continue;
                 }
             }
-            // (The TS computes an opGap here but never reads it in
-            // `delPairing` — dead in the reference; the gap formula is the
-            // position distance plus the alnum bonus only.)
             let first = char_at(add_text, *as0);
-            let gap = del_pos[j].abs_diff(*as0) + if first.is_some_and(is_word) { 0 } else { 5 };
-            // Whitespace pairs express the MINIMUM wherever they land —
-            // the old `floor {`'s space before the brace pairs with the
-            // new `floor\n                {`'s newline+indent even across
-            // the run (a big gap): the strike/fill must NOT leak into
-            // the middle of `&& k > floor` as `&&  k`.
+            let gap =
+                del_start.abs_diff(add_start) + if first.is_some_and(is_word) { 0 } else { 5 };
             if ws_pair {
                 best_gap = 0;
                 best = Some(i);
                 continue;
             }
-            // `<=` — ties prefer the LATER span (the value `None` over
-            // the type syntax `Option<`; `= ~~0~~None;` reads).
             if gap <= best_gap {
                 best_gap = gap;
                 best = Some(i);
@@ -337,7 +274,7 @@ pub fn del_pairing(
         }
     }
     DelPairing {
-        del_pos,
+        del_pos: del_display_positions(del_spans, add_spans),
         pair,
         op_anchor,
     }
@@ -387,74 +324,7 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
             },
         ];
     }
-    // The reverse stretch: the delText is a whole deleted block (the old
-    // `find_mount` body) folded against a single add. The shared prefix
-    // reads common (`self.mount_stack`), the block's rest strikes across
-    // the visual lines, the add's rest fills — the del spans' own
-    // positions (the chain's delPos) would interleave the fill into the
-    // middle of the struck block (`…iter` + `get` + `…`), garbling it.
     let del_text = r.del_text.clone().unwrap_or_default();
-    if del_text.contains('\n') {
-        let mut share = 0usize;
-        let dl: Vec<char> = del_text.chars().collect();
-        let al: Vec<char> = r.text.chars().collect();
-        while share < dl.len() && share < al.len() && dl[share] == al[share] {
-            share += 1;
-        }
-        // The shared SUFFIX: the new one-liner's tail may restate the old
-        // block's head (`if !fingerprint.is_valid() {` → the old
-        // `if fingerprint.is_valid() {` — the `fingerprint.is_valid() {`
-        // reads common, not filled-then-struck-again). The longest suffix
-        // of the add's remainder that is also a prefix of the del's
-        // remainder reads common; the insertion fills before it, the old
-        // block's rest strikes after.
-        let mut slen = 0usize;
-        for len in (1..=al
-            .len()
-            .saturating_sub(share)
-            .min(dl.len().saturating_sub(share)))
-            .rev()
-        {
-            let del_sub = &dl[share..share + len];
-            if !del_sub.contains(&'\n') && al[al.len() - len..] == *del_sub {
-                slen = len;
-                break;
-            }
-        }
-
-        // The fill reads FIRST — the new one-liner's insertion
-        // (`!fingerprint.is_valid() {` — the `!` fills, the rest reads
-        // common) — then the struck old block spans the following visual
-        // lines (`~~\n            return self.results…~~`). Empty runs are
-        // skipped (the TS's `classifyTokens("")` emits a phantom token;
-        // the Rust's emits none — the two must stay identical).
-        let mut runs = Vec::new();
-        if share > 0 {
-            runs.push(Run {
-                kind: RunKind::Common,
-                text: dl[..share].iter().collect(),
-            });
-        }
-        if share < al.len() - slen {
-            runs.push(Run {
-                kind: RunKind::Add,
-                text: al[share..al.len() - slen].iter().collect(),
-            });
-        }
-        if slen > 0 {
-            runs.push(Run {
-                kind: RunKind::Common,
-                text: al[al.len() - slen..].iter().collect(),
-            });
-        }
-        if share + slen < dl.len() {
-            runs.push(Run {
-                kind: RunKind::Del,
-                text: dl[share + slen..].iter().collect(),
-            });
-        }
-        return runs;
-    }
     let spans = r.spans.clone().unwrap_or_default();
     let add_spans = spans.add.clone();
     let del_spans = del_spans_to_show(r, Some(&spans.del));
@@ -495,28 +365,10 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
                 add: Some(add_spans[*ai]),
             });
         } else {
-            // A standalone landing mid-word must not glue the strike
-            // inside a surviving token (`enumer~~.rev()~~ate()` is
-            // wrong — "rev" stuck to "enumerate"'s "r"); snap forward
-            // to the end of the enclosing token run so the removal
-            // reads as a unit (`enumerate()~~.rev()~~ {`).
-            let mut ins = del_pos[j];
-            let left = ins.checked_sub(1).and_then(|i| char_at(&r.text, i));
-            let right = char_at(&r.text, ins);
-            if ins > 0
-                && ins < char_len_of(&r.text)
-                && left.is_some_and(is_word)
-                && right.is_some_and(is_word)
-            {
-                while ins < char_len_of(&r.text) {
-                    if let Some(c) = char_at(&r.text, ins)
-                        && c.is_ascii_whitespace()
-                    {
-                        break;
-                    }
-                    ins += 1;
-                }
-            }
+            // del_pos[j] is already the exact display position (del_display_positions
+            // applied the add-correction); just clamp to the new-text length.
+            let add_len = char_len_of(&r.text);
+            let ins = del_pos[j].min(add_len);
             events.push(Ev {
                 pos: ins,
                 del: Some(*dspan),

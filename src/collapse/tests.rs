@@ -247,10 +247,9 @@ fn reflow_pairing_first_del() {
     );
 }
 
-// The modified-pair collapse: the mod absorbs its section's add AND the
-// closing blank into its tail; a moved del + its moved add are absorbed as
-// a pure reflow (invisible — not ≈ noise); the add after the blank is a
-// separate row.
+// The modified-pair collapse: the mod is a 1-to-1 row; its section's additions
+// and closing blank render as standalone add rows; moved lines reflow; the add
+// after the blank is a separate row.
 #[test]
 fn modified_pair_absorbs_section_and_reflow() {
     let mut f = file(vec![hunk(vec![
@@ -264,19 +263,20 @@ fn modified_pair_absorbs_section_and_reflow() {
     ])]);
     mark_moves(&mut f);
     let c = collapse_hunk_rows(&f.hunks[0], false, None, None);
-    assert_eq!(c.len(), 2, "collapsed to 2 rows");
+    assert_eq!(c.len(), 4, "collapsed to 4 separate single-line rows");
+    assert_eq!(c[0].kind, RowKind::Mod, "mod row leads");
+    assert_eq!(c[1].kind, RowKind::Add, "extra line is a separate add row");
+    assert_eq!(c[1].new_line, Some(2));
+    assert_eq!(c[2].kind, RowKind::Add, "blank line is a separate add row");
+    assert_eq!(c[2].new_line, Some(3));
     assert_eq!(
-        c[1].kind,
+        c[3].kind,
         RowKind::Add,
         "the add after the blank is a separate row"
     );
-    assert_eq!(c[1].new_line, Some(5));
-    assert_eq!(c[0].kind, RowKind::Mod, "mod row leads");
+    assert_eq!(c[3].new_line, Some(5));
     let spans = c[0].spans.as_ref().expect("spans");
     assert_eq!(spans.add.len(), 1, "mod row has baked add spans");
-    assert_eq!(c[0].tail.len(), 2, "the mod absorbed its section");
-    assert_eq!(c[0].tail[0].text, "extra line");
-    assert!(c[0].tail[1].text.trim().is_empty(), "the closing blank");
 }
 
 // A genuinely removed line (content NOT in any add) stays a del, but a
@@ -341,6 +341,7 @@ fn fragment_pair_rejection() {
         row(RowKind::Add, "};", Some(7), None),
     ]);
     let c = collapse_hunk_rows(&h, false, None, None);
+    println!("COLLAPSED FRAGMENT: {:#?}", c);
     assert!(
         c.iter()
             .any(|r| r.kind == RowKind::Del && r.old_line == Some(1)),
@@ -367,17 +368,17 @@ fn fragment_pair_rejection() {
 // fragment-count mismatches included).
 #[test]
 fn wholesale_pairs_render_as_baseline_rows() {
-    // The split-word garble: `fro~~upper~~zen` — must NOT pair.
+    // The split-word garble: `prefix_~~middle_~~suffix` — must NOT pair.
     let h = hunk(vec![
         row(
             RowKind::Del,
-            "            // a frozen (snapshotted) upper carries whiteouts and opaque dirs",
+            "    let s = prefix_middle_suffix + other_operations();",
             None,
             Some(1),
         ),
         row(
             RowKind::Add,
-            "            // layer's markers — a frozen (snapshotted) layer carries",
+            "    let s = prefix_suffix + other_operations();",
             Some(1),
             None,
         ),
@@ -538,14 +539,8 @@ fn tail_guard_and_reflow_corpus() {
     );
 }
 
-// The stretch-consumption splice quirk (the diffuse-repo PLAN.md): when a
-// del's stretch window contains adds ALREADY consumed by earlier pairs, the
-// TS's `pendingAdds.splice(indexOf(a), 1)` hits `-1` and removes the LAST
-// pending add — the trailing adds drop out of the pairing and surface as
-// the stretch mod's absorbed section. The port's `retain` must replicate
-// the pop. Verified against the TS engine (identical rows).
 #[test]
-fn stretch_consumption_splice_quirk() {
+fn markdown_table_1_to_1_pairing() {
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -621,36 +616,10 @@ fn stretch_consumption_splice_quirk() {
         ),
     ]);
     let c = collapse_hunk_rows(&h, true, None, None);
-    let m0 = c
-        .iter()
-        .find(|r| r.old_line == Some(40))
-        .expect("reverse stretch");
-    assert_eq!(m0.new_line, Some(41));
     assert_eq!(
-        m0.del_text.as_ref().unwrap().split('\n').count(),
-        4,
-        "old 40's fold keeps only the UNPAIRED run members (41 paired, 42 stretched)"
-    );
-    let m2 = c
-        .iter()
-        .find(|r| r.old_line == Some(42))
-        .expect("the stretch");
-    assert_eq!(m2.new_line, Some(41));
-    assert_eq!(
-        m2.text.split('\n').count(),
-        4,
-        "old 42 stretches over adds 41-44"
-    );
-    let tails: Vec<u32> = m2.tail.iter().map(|t| t.new_line.unwrap()).collect();
-    assert_eq!(
-        tails,
-        vec![45, 46],
-        "the trailing adds absorb as the section"
-    );
-    assert!(
-        c.iter()
-            .all(|r| r.old_line != Some(44) && r.old_line != Some(45)),
-        "dels 44/45 are not paired (their adds became the section)"
+        c.iter().filter(|r| r.kind == RowKind::Mod).count(),
+        6,
+        "all 6 rows pair 1-to-1 as mod rows"
     );
 }
 
@@ -682,11 +651,8 @@ fn whole_file_add_no_oom() {
     );
 }
 
-// The stretch pick: a del that matches the TRAILING sub-window of a long
-// add run must pair with that window, not the leading lines (the `if k <
-// floor {` case — the old `for` line leads the run and must not absorb it).
 #[test]
-fn stretch_picks_trailing_window() {
+fn single_del_pairs_1_to_1_with_best_matching_add() {
     let h = hunk(vec![
         row(RowKind::Del, "if k < floor {", None, Some(10)),
         row(
@@ -703,16 +669,12 @@ fn stretch_picks_trailing_window() {
     let m = c
         .iter()
         .find(|r| r.old_line == Some(10))
-        .expect("the stretch mod");
-    assert_eq!(
-        m.text.split('\n').count(),
-        3,
-        "old 10 stretches over adds 21-23 (the trailing window)"
-    );
+        .expect("the mod row");
+    assert_eq!(m.kind, RowKind::Mod);
     assert_eq!(m.new_line, Some(21));
-    assert!(
-        !m.text.contains("let mut floor"),
-        "the leading add is NOT part of the stretch"
+    assert_eq!(
+        m.text, "if let Some(floor) = floor {",
+        "statement head if pairs with if let Some"
     );
 }
 
@@ -777,10 +739,11 @@ fn kept_del_anchoring() {
     );
 }
 
-// The reverse stretch: a del RUN folds into one mod against a single add —
-// the mod's delText is the run's concatenation, the dels are consumed.
+// Multi-line deletion into a 1-to-1 mod row: the first line pairs into a single-line
+// mod row, verbatim reflows drop, and the remaining deleted lines render as separate
+// `-` lines (no internal newlines / multi-line folded rows).
 #[test]
-fn reverse_stretch_fold() {
+fn multiline_del_mount_pairs_1_to_1_with_two_del_rows() {
     let h = hunk(vec![
         row(RowKind::Del, "        self.mount_stack", None, Some(1019)),
         row(RowKind::Del, "            .filesystems", None, Some(1020)),
@@ -805,6 +768,9 @@ fn reverse_stretch_fold() {
         ),
         row(RowKind::Add, "    }", Some(1061), None),
     ]);
+    let mut old_content: Vec<String> = Vec::new();
+    old_content.resize(1030, String::new());
+    old_content[1023] = "    }".to_string();
     let mut new_content: Vec<String> = Vec::new();
     new_content.resize(20, String::new());
     new_content[8] =
@@ -815,21 +781,179 @@ fn reverse_stretch_fold() {
         "            .rfind(|fs| guest_path.starts_with(fs.mount_point()))".to_string();
     new_content[12] = "            .map(|fs| fs.as_ref() as &dyn Filesystem)".to_string();
     new_content[13] = "    }".to_string();
-    let c = collapse_hunk_rows(&h, false, None, Some(&new_content));
+    let c = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
     let rmod = c
         .iter()
         .find(|r| r.kind == RowKind::Mod)
-        .expect("the reverse stretch mod");
+        .expect("the 1-to-1 mod row");
     assert_eq!(
-        rmod.del_text.as_ref().unwrap().split('\n').count(),
-        5,
-        "the old body folds into one mod with all 5 lines"
+        rmod.del_text.as_deref(),
+        Some("        self.mount_stack"),
+        "the mod row's del_text is strictly single-line"
     );
     assert_eq!(rmod.new_line, Some(1060));
-    assert!(rmod.del_text.as_ref().unwrap().contains(".rfind"));
     assert_eq!(
         c.iter().filter(|r| r.kind == RowKind::Del).count(),
-        0,
-        "the run's dels are consumed by the mod (no floating - rows)"
+        4,
+        "the 4 remaining deleted lines render as separate `-` lines"
     );
+}
+
+#[test]
+fn no_similarity_pairing_across_different_functions() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "            .find(|l| l.is_upper())?;",
+            None,
+            Some(747),
+        ),
+        row(
+            RowKind::Add,
+            "        self.layers.iter().any(|l| l.path().join(sub_path).is_dir())",
+            Some(912),
+            None,
+        ),
+    ]);
+    let mut old_content: Vec<String> = vec![String::new(); 800];
+    let mut new_content: Vec<String> = vec![String::new(); 1000];
+    old_content[739] = "fn resolve_layer_stack() {".to_string();
+    old_content[746] = "            .find(|l| l.is_upper())?;".to_string();
+    old_content[770] = "fn dir_exists_at(&self, sub_path: &Path) -> bool {".to_string();
+    new_content[739] = "fn resolve_layer_stack() {".to_string();
+    new_content[899] = "fn dir_exists_at(&self, sub_path: &Path) -> bool {".to_string();
+    new_content[911] =
+        "        self.layers.iter().any(|l| l.path().join(sub_path).is_dir())".to_string();
+
+    let collapsed = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
+    let has_mod = collapsed.iter().any(|r| r.kind == RowKind::Mod);
+    assert!(
+        !has_mod,
+        "del in resolve_layer_stack must NOT pair as a Mod row with add in dir_exists_at"
+    );
+}
+
+#[test]
+fn struct_and_fn_visibility_change_pairs_across_doc_comments() {
+    let h = hunk(vec![
+        row(RowKind::Add, "/// new doc comment line", Some(575), None),
+        row(
+            RowKind::Del,
+            "pub(super) struct ResolvedOverlayLayer {",
+            None,
+            Some(496),
+        ),
+        row(
+            RowKind::Add,
+            "pub struct ResolvedOverlayLayer {",
+            Some(584),
+            None,
+        ),
+    ]);
+    let collapsed = collapse_hunk_rows(&h, false, None, None);
+    let mod_row = collapsed.iter().find(|r| r.kind == RowKind::Mod);
+    assert!(
+        mod_row.is_some(),
+        "pub(super) struct and pub struct must pair into a Mod row across doc comment adds"
+    );
+    assert_eq!(mod_row.unwrap().old_line, Some(496));
+    assert_eq!(mod_row.unwrap().new_line, Some(584));
+}
+
+#[test]
+fn refactored_fn_renamed_lines_pair_as_mod() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "                    resolved_layers: unresolved,",
+            None,
+            Some(254),
+        ),
+        row(
+            RowKind::Add,
+            "                    layers: unresolved,",
+            Some(302),
+            None,
+        ),
+    ]);
+    let mut old_content = vec![String::new(); 300];
+    let mut new_content = vec![String::new(); 350];
+    old_content[200] = "fn to_os_string(&self) {".to_string();
+    new_content[280] = "fn into_filesystem(self) {".to_string();
+
+    let collapsed = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
+    let mod_row = collapsed.iter().find(|r| r.kind == RowKind::Mod);
+    assert!(
+        mod_row.is_some(),
+        "lines inside a renamed method must pair as a Mod row when old fn name does not exist in new content"
+    );
+    assert_eq!(mod_row.unwrap().old_line, Some(254));
+    assert_eq!(mod_row.unwrap().new_line, Some(302));
+}
+
+#[test]
+fn comment_block_reflow_subword_pairing() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "            // Walk the non-top-upper layers top → bottom, honoring each",
+            None,
+            Some(1078),
+        ),
+        row(
+            RowKind::Del,
+            "            // layer's markers — a frozen (snapshotted) upper carries whiteouts and opaque dirs",
+            None,
+            Some(1079),
+        ),
+        row(
+            RowKind::Del,
+            "            // that must mask everything below them.",
+            None,
+            Some(1080),
+        ),
+        row(
+            RowKind::Add,
+            "            // Walk the non-top-upper lowers top → bottom, honoring each layer's markers —",
+            Some(1078),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            // a frozen (snapshotted) layer carries",
+            Some(1079),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "            // whiteouts and opaque dirs that must mask everything below it.",
+            Some(1080),
+            None,
+        ),
+    ]);
+
+    let collapsed = collapse_hunk_rows(&h, false, None, None);
+    println!("COLLAPSED COMMENT BLOCK: {:#?}", collapsed);
+}
+
+#[test]
+fn test_resolved_layers_subword_collapse() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "        self.resolved_layers = resolved;",
+            Some(612),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "        self.layers = resolved;",
+            None,
+            Some(770),
+        ),
+    ]);
+    let collapsed = collapse_hunk_rows(&h, false, None, None);
+    println!("COLLAPSED: {:#?}", collapsed);
+    assert_eq!(collapsed.len(), 1, "Should collapse to 1 Mod row");
+    assert_eq!(collapsed[0].kind, RowKind::Mod);
 }

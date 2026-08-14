@@ -13,13 +13,22 @@ export function delCount(h: Hunk): number {
 	return h.rows.filter((r) => r.kind === "del" || r.kind === "mod").length;
 }
 
+export function hunkSpanCount(h: Hunk, side: "new" | "old"): number {
+	const headerCount = side === "new" ? h.newCount : h.oldCount;
+	if (headerCount > 0) return headerCount;
+	const start = side === "new" ? h.newStart : h.oldStart;
+	const maxLine = h.rows.reduce((max, r) => Math.max(max, (side === "new" ? r.newLine : r.oldLine) ?? 0), start);
+	return Math.max(1, maxLine - start + 1);
+}
+
 export function allocateContext(f: DiffFile): { above: number; below: number }[] {
 	const alloc: { above: number; below: number; freeBelow: number }[] = [];
 	for (let i = 0; i < f.hunks.length; i++) {
 		const h = f.hunks[i]!;
 		const newSide = addCount(h) > 0;
+		const side = newSide ? "new" : "old";
 		const start = newSide ? h.newStart : h.oldStart;
-		const count = newSide ? addCount(h) : delCount(h);
+		const count = hunkSpanCount(h, side);
 		const total = newSide ? f.newLineCount : f.oldContent.length;
 		if (total === 0) {
 			alloc.push({ above: 0, below: 0, freeBelow: 0 });
@@ -29,8 +38,9 @@ export function allocateContext(f: DiffFile): { above: number; below: number }[]
 		if (i > 0) {
 			const p = f.hunks[i - 1]!;
 			const pNew = addCount(p) > 0;
+			const pSide = pNew ? "new" : "old";
 			if (pNew === newSide) {
-				const pEnd = (pNew ? p.newStart : p.oldStart) + (pNew ? addCount(p) : delCount(p)) - 1;
+				const pEnd = (pNew ? p.newStart : p.oldStart) + hunkSpanCount(p, pSide) - 1;
 				freeAbove = Math.min(freeAbove, Math.max(0, start - pEnd - 1));
 			}
 		}
@@ -38,6 +48,7 @@ export function allocateContext(f: DiffFile): { above: number; below: number }[]
 		if (i < f.hunks.length - 1) {
 			const n = f.hunks[i + 1]!;
 			const nNew = addCount(n) > 0;
+			const nSide = nNew ? "new" : "old";
 			if (nNew === newSide) {
 				const nStart = nNew ? n.newStart : n.oldStart;
 				freeBelow = Math.min(freeBelow, Math.max(0, nStart - (start + count)));
@@ -84,12 +95,13 @@ export function gapBetween(f: DiffFile, i: number): number {
 	const aNew = addCount(a) > 0;
 	const bNew = addCount(b) > 0;
 	if (aNew === bNew) {
-		const aEnd = (aNew ? a.newStart : a.oldStart) + (aNew ? addCount(a) : delCount(a)) - 1;
+		const aSide = aNew ? "new" : "old";
+		const aEnd = (aNew ? a.newStart : a.oldStart) + hunkSpanCount(a, aSide) - 1;
 		const bStart = bNew ? b.newStart : b.oldStart;
 		return Math.max(0, bStart - aEnd - 1);
 	}
-	const newGap = Math.max(0, b.newStart - (a.newStart + addCount(a)) - 1);
-	const oldGap = Math.max(0, b.oldStart - (a.oldStart + delCount(a)) - 1);
+	const newGap = Math.max(0, b.newStart - (a.newStart + hunkSpanCount(a, "new")) - 1);
+	const oldGap = Math.max(0, b.oldStart - (a.oldStart + hunkSpanCount(a, "old")) - 1);
 	const newC = f.newLineCount > 0 ? f.newLineCount : Number.MAX_SAFE_INTEGER;
 	const oldC = f.oldContent.length > 0 ? f.oldContent.length : Number.MAX_SAFE_INTEGER;
 	return Math.max(Math.min(newGap, newC), Math.min(oldGap, oldC));
@@ -172,28 +184,18 @@ export function buildVisible(f: DiffFile): Row[] {
 		}
 		const a = alloc[i]!;
 		const newSide = addCount(h) > 0;
-		const start = newSide ? h.newStart : h.oldStart;
-		const count = newSide ? addCount(h) : delCount(h);
 		const side = newSide ? "new" : "old";
+		const start = newSide ? h.newStart : h.oldStart;
+		const count = hunkSpanCount(h, side);
 		const lead = absorbLeadingContext(f, side, start, a.above, h);
 		rows.push(...lead.above);
 
 		const src = side === "new" ? f.newContent : f.oldContent;
-		const delta = newSide ? h.newStart - h.oldStart : 0;
-		const placed = lead.rows.map((r) => {
-			const at = newSide
-				? (r.newLine !== null
-					? r.newLine
-					: (r.oldLine !== null ? r.oldLine + delta - 0.5 : 0))
-				: (r.oldLine ?? 0);
-			return { r, at };
-		});
-		const rank = (r: { kind: string }) => (r.kind === "del" ? 0 : 1);
-		placed.sort((x, y) => x.at - y.at || rank(x.r) - rank(y.r));
 		let cursor = start - 1;
-		for (const { r, at } of placed) {
-			if (at > cursor + 1) {
-				for (let g = cursor + 1; g < at; g++) {
+		for (const r of lead.rows) {
+			const targetLine = r.newLine ?? (r.kind === "del" ? cursor : null);
+			if (targetLine !== null && targetLine > cursor + 1) {
+				for (let g = cursor + 1; g < targetLine; g++) {
 					rows.push({
 						kind: "ctx",
 						text: src[g - 1] ?? "",
@@ -201,9 +203,12 @@ export function buildVisible(f: DiffFile): Row[] {
 						oldLine: newSide ? null : g,
 					});
 				}
+				cursor = targetLine - 1;
 			}
 			rows.push(r);
-			if (at > cursor) cursor = Math.max(cursor, Math.floor(at));
+			if (r.newLine !== null) {
+				cursor = Math.max(cursor, r.newLine);
+			}
 		}
 		const covEnd = start + count - 1;
 		for (let g = cursor + 1; g <= covEnd; g++) {
@@ -237,6 +242,26 @@ export function prefixOf(r: Row): string {
 	if (r.kind === "del") return r.moved ? `${pad4(r.oldLine)} ${sMov.icon}` : `${pad4(r.oldLine)} ${sDel.icon}`;
 	if (r.kind === "mod") return `${pad4(r.newLine)} ${sMod.icon}`;
 	return `${pad4(r.newLine ?? r.oldLine)}  `;
+}
+
+export function styledPrefix(r: Row): string {
+	const pad = pad4(r.kind === "del" ? r.oldLine : (r.newLine ?? r.oldLine));
+	const reset = "\x1b[39m\x1b[23m";
+	if (r.kind === "del") {
+		const icon = r.moved ? "\x1b[38;5;117m≈" : "\x1b[38;5;203m-";
+		return `\x1b[3;38;5;174m${pad}\x1b[23m ${icon}${reset}`;
+	}
+	if (r.kind === "add") {
+		const icon = r.moved ? "\x1b[38;5;117m≈" : "\x1b[38;5;120m+";
+		return `\x1b[38;5;151m${pad} ${icon}${reset}`;
+	}
+	if (r.kind === "mod") {
+		return `\x1b[38;5;253m${pad} \x1b[38;5;214m~${reset}`;
+	}
+	if (r.moved) {
+		return `\x1b[38;5;147m${pad} \x1b[38;5;117m≈${reset}`;
+	}
+	return `\x1b[38;5;242m${pad}  ${reset}`;
 }
 
 export function prefixLen(r: Row): number {

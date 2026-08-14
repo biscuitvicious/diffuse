@@ -24,12 +24,12 @@ fn mk(del: &str, add: &str) -> Row {
 #[test]
 fn split_word_wholesale() {
     let r = mk(
-        "            // a frozen (snapshotted) upper carries whiteouts and opaque dirs",
-        "            // layer's markers — a frozen (snapshotted) layer carries",
+        "    let s = prefix_middle_suffix + other_operations();",
+        "    let s = prefix_suffix + other_operations();",
     );
     assert!(
         is_wholesale_mod(&r),
-        "a removal landing mid-word goes wholesale (fro~~upper~~zen)"
+        "a removal landing mid-word goes wholesale (prefix_~~middle_~~suffix)"
     );
     assert_eq!(
         display_text(&r),
@@ -74,17 +74,13 @@ fn trace_wobble() {
     );
 }
 
-// The reverse stretch: the whole old body folds into one mod — shared
-// prefix common, fill first, the struck block across the visual lines.
+// The 1-to-1 mount.rs mod merge: shared prefix common, added .get(...) fills, no embedded newlines.
 #[test]
-fn reverse_stretch_merge() {
-    let del = "        self.mount_stack\n            .filesystems\n            .iter()\n            .rfind(|fs| guest_path.starts_with(fs.mount_point()))\n            .map(|fs| fs.as_ref() as &dyn Filesystem)";
+fn mount_1_to_1_mod_merge() {
+    let del = "        self.mount_stack";
     let add = "        self.mount_stack.get(guest_path)";
     let r = mk(del, add);
-    assert!(
-        !is_wholesale_mod(&r),
-        "the reverse stretch stays the subword mod"
-    );
+    assert!(!is_wholesale_mod(&r), "the mount mod stays the subword mod");
     let runs = merged_runs(&r);
     assert_eq!(runs[0].kind, RunKind::Common);
     assert_eq!(
@@ -92,22 +88,8 @@ fn reverse_stretch_merge() {
         "the shared prefix reads common"
     );
     assert_eq!(runs[1].kind, RunKind::Add);
-    assert_eq!(runs[1].text, ".get(guest_path)", "the fill reads first");
-    assert_eq!(runs[2].kind, RunKind::Del);
-    assert!(
-        runs[2].text.starts_with("\n            .filesystems"),
-        "the struck block spans the visual lines"
-    );
-    assert!(
-        runs[2]
-            .text
-            .contains(".rfind(|fs| guest_path.starts_with(fs.mount_point()))")
-    );
-    assert!(
-        runs[2]
-            .text
-            .ends_with(".map(|fs| fs.as_ref() as &dyn Filesystem)")
-    );
+    assert_eq!(runs[1].text, ".get(guest_path)", "the fill reads added");
+    assert_eq!(runs.len(), 2, "no internal newlines in any run");
 }
 
 // The whitespace minimum: 8 → 12 spaces = 8 common + 4 added.
@@ -139,6 +121,18 @@ fn whitespace_minimum() {
             ("common", "self.cache.borrow_mut().pop(key);".to_string()),
         ],
         "8 common + 4 added, never the whole run on each side"
+    );
+}
+
+#[test]
+fn resolved_layers_to_layers_subword() {
+    let del = "                    resolved_layers: unresolved,";
+    let add = "                    layers: unresolved,";
+    let spans = word_spans(del, add);
+    let wholesale = wholesale_pair(del, add, &spans);
+    assert!(
+        !wholesale,
+        "resolved_layers -> layers should be subword inline mod, not wholesale"
     );
 }
 

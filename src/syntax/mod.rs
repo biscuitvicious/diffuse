@@ -689,7 +689,13 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
             if t.color == "text" {
                 t.color = "syntaxComment".into();
             } else if t.color == "syntaxString" {
-                let inner_toks = classify_tokens(&t.text, Some(rust_prof));
+                let parent_sgr = t.sgr;
+                let mut inner_toks = classify_tokens(&t.text, Some(rust_prof));
+                for it in &mut inner_toks {
+                    if it.sgr.is_none() {
+                        it.sgr = parent_sgr;
+                    }
+                }
                 out.extend(inner_toks);
                 continue;
             }
@@ -779,26 +785,45 @@ pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<Fen
     for (i, line) in lines.iter().enumerate() {
         let n = (i + 1) as u32;
         if fence.is_match(line) {
+            let captured_tag = fence
+                .captures(line)
+                .and_then(|c| c.iter().last().flatten())
+                .map(|m| m.as_str().trim())
+                .unwrap_or("");
             match state {
                 None => {
-                    let lang = fence
-                        .captures(line)
-                        .and_then(|c| c.iter().last().flatten())
-                        .map(|m| m.as_str().to_string())
-                        .filter(|l| !l.is_empty())
-                        .or_else(|| profile.unlabeled_fence_lang.map(String::from));
+                    let lang = if captured_tag.is_empty() {
+                        profile.unlabeled_fence_lang.map(String::from)
+                    } else {
+                        Some(captured_tag.to_string())
+                    };
                     state = Some(lang);
                     region_start = n + 1;
                 }
                 Some(_) => {
-                    if region_start < n {
-                        regions.push(FenceRegion {
-                            start: region_start,
-                            end: n - 1,
-                            lang: state.clone().flatten(),
-                        });
+                    if !captured_tag.is_empty() {
+                        // A tagged fence line (`/// ```ignore`) is an opening fence — if a
+                        // previous fence was unclosed, close it at n-1 and start a new region at n+1.
+                        if region_start < n {
+                            regions.push(FenceRegion {
+                                start: region_start,
+                                end: n - 1,
+                                lang: state.clone().flatten(),
+                            });
+                        }
+                        state = Some(Some(captured_tag.to_string()));
+                        region_start = n + 1;
+                    } else {
+                        // A bare fence (`/// ````) closes the open region.
+                        if region_start < n {
+                            regions.push(FenceRegion {
+                                start: region_start,
+                                end: n - 1,
+                                lang: state.clone().flatten(),
+                            });
+                        }
+                        state = None;
                     }
-                    state = None;
                 }
             }
         }
@@ -896,7 +921,7 @@ pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
     }
     let re = MD_INLINE.get_or_init(|| {
         Regex::new(
-            r"(`[^`\n]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\s\n][^*\n]*\*|\[[^\]\n]+\]\([^)\n]+\))",
+            r"(`[^`\n]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\s\n][^*\n]*\*|\[[^\]\n]+\](?:\([^)\n]+\))?)",
         )
         .expect("the md inline")
     });
@@ -960,28 +985,45 @@ pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
                 text: "**".into(),
             });
         } else if tok.starts_with('[') {
-            let close = tok.find("](").unwrap_or(0);
-            out.push(ClassifiedToken {
-                color: "accent".into(),
-                sgr: None,
-                text: "[".into(),
-            });
-            out.extend(md_inner_tokens(&tok[1..close], MD_SGR_UNDERLINE, "mdLink"));
-            out.push(ClassifiedToken {
-                color: "accent".into(),
-                sgr: None,
-                text: "](".into(),
-            });
-            out.push(ClassifiedToken {
-                color: "mdUrl".into(),
-                sgr: Some(MD_SGR_UNDERLINE),
-                text: tok[close + 2..tok.len() - 1].into(),
-            });
-            out.push(ClassifiedToken {
-                color: "accent".into(),
-                sgr: None,
-                text: ")".into(),
-            });
+            if let Some(close) = tok.find("](") {
+                out.push(ClassifiedToken {
+                    color: "accent".into(),
+                    sgr: None,
+                    text: "[".into(),
+                });
+                out.extend(md_inner_tokens(&tok[1..close], MD_SGR_UNDERLINE, "mdLink"));
+                out.push(ClassifiedToken {
+                    color: "accent".into(),
+                    sgr: None,
+                    text: "](".into(),
+                });
+                out.push(ClassifiedToken {
+                    color: "mdUrl".into(),
+                    sgr: Some(MD_SGR_UNDERLINE),
+                    text: tok[close + 2..tok.len() - 1].into(),
+                });
+                out.push(ClassifiedToken {
+                    color: "accent".into(),
+                    sgr: None,
+                    text: ")".into(),
+                });
+            } else {
+                out.push(ClassifiedToken {
+                    color: "accent".into(),
+                    sgr: None,
+                    text: "[".into(),
+                });
+                out.extend(md_inner_tokens(
+                    &tok[1..tok.len() - 1],
+                    MD_SGR_UNDERLINE,
+                    "mdLink",
+                ));
+                out.push(ClassifiedToken {
+                    color: "accent".into(),
+                    sgr: None,
+                    text: "]".into(),
+                });
+            }
         } else {
             out.push(ClassifiedToken {
                 color: "accent".into(),

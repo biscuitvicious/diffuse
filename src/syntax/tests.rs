@@ -277,3 +277,25 @@ fn plain_comment_without_backtick_is_uniform_comment() {
     assert_eq!(toks.len(), 1, "one token");
     assert_eq!(toks[0].0, "syntaxComment");
 }
+
+#[test]
+fn fence_regions_unclosed_ignore_block_does_not_invert_subsequent_prose() {
+    let rs = lang_profile("rs").unwrap();
+    let lines = vec![
+        "/// ```ignore".to_string(),
+        "/// let x = 1;".to_string(),
+        "/// ```ignore".to_string(),
+        "/// let y = 2;".to_string(),
+        "/// ```".to_string(),
+        "/// **Closure / `fn` item (typed handle)** — a single serialized payload in,".to_string(),
+        "/// ```ignore".to_string(),
+        "/// let z = 3;".to_string(),
+        "/// ```".to_string(),
+    ];
+    let regions = fence_regions(&lines, Some(rs));
+    let line6_region = crate::syntax::region_at(&regions, 6);
+    assert!(
+        line6_region.is_none(),
+        "line 6 prose comment is NOT inside a code fence region"
+    );
+}

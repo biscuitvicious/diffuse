@@ -28,8 +28,10 @@ import {
 	rowCoord,
 	rowsCoveredBy,
 } from "./src/model.ts";
+import { rowTokens } from "./src/component_render.ts";
 import {
 	allNotes,
+	flushReviewState,
 	loadNotes,
 	loadReviewState,
 	NOTES_DIR,
@@ -200,9 +202,11 @@ export const reviewInternals = {
 	fileCounts,
 	loadReviewState,
 	saveReviewState,
+	flushReviewState,
 	resolveInitialPosition,
 	diffuseBinPath,
 	runDiffuseBin,
 	runDiffuseBinBatch,
 	filesFromWire,
+	rowTokens,
 };

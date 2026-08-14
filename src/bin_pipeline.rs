@@ -101,6 +101,24 @@ fn classify_ctx_line(
             .any(|rg| n + 1 == rg.start || (n > 0 && n - 1 == rg.end))
     });
     if is_delimiter {
+        if let Some(strip) = profile.and_then(|p| p.fence_strip.as_ref())
+            && let Some(m) = strip.find(text)
+            && m.start() == 0
+            && m.end() > 0
+        {
+            return vec![
+                ClassifiedToken {
+                    color: "syntaxComment".into(),
+                    sgr: None,
+                    text: text[..m.end()].into(),
+                },
+                ClassifiedToken {
+                    color: "muted".into(),
+                    sgr: None,
+                    text: text[m.end()..].into(),
+                },
+            ];
+        }
         return vec![ClassifiedToken {
             color: "muted".into(),
             sgr: None,
@@ -186,6 +204,8 @@ pub fn colored_runs(
         }
         return out;
     }
+    let full_tokens = classify_full(&r.text);
+    let mut add_pos = 0usize;
     for run in merged_runs(r) {
         if run.kind == RunKind::Del {
             out.push(OutputRun {
@@ -195,14 +215,58 @@ pub fn colored_runs(
                 text: run.text,
             });
         } else {
-            for t in classify_frag(&run.text) {
-                out.push(OutputRun {
-                    kind: run.kind,
-                    color: Some(t.color),
-                    sgr: t.sgr,
-                    text: t.text,
-                });
+            let run_len = run.text.chars().count();
+            let end_pos = add_pos + run_len;
+            let frags = slice_classified_tokens(&full_tokens, add_pos, end_pos);
+            add_pos = end_pos;
+            if frags.is_empty() {
+                for t in classify_frag(&run.text) {
+                    out.push(OutputRun {
+                        kind: run.kind,
+                        color: Some(t.color),
+                        sgr: t.sgr,
+                        text: t.text,
+                    });
+                }
+            } else {
+                for t in frags {
+                    out.push(OutputRun {
+                        kind: run.kind,
+                        color: Some(t.color),
+                        sgr: t.sgr,
+                        text: t.text,
+                    });
+                }
             }
+        }
+    }
+    out
+}
+
+fn slice_classified_tokens(
+    tokens: &[ClassifiedToken],
+    start_char: usize,
+    end_char: usize,
+) -> Vec<ClassifiedToken> {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    for tok in tokens {
+        let tok_len = tok.text.chars().count();
+        let tok_start = pos;
+        let tok_end = pos + tok_len;
+        pos = tok_end;
+        if tok_end <= start_char || tok_start >= end_char {
+            continue;
+        }
+        let s = start_char.saturating_sub(tok_start);
+        let e = end_char.min(tok_end) - tok_start;
+        let piece: String = tok.text.chars().skip(s).take(e - s).collect();
+        if !piece.is_empty() {
+            out.push(ClassifiedToken {
+                color: tok.color.clone(),
+                sgr: tok.sgr,
+                text: piece,
+            });
         }
     }
     out
@@ -348,6 +412,8 @@ pub fn run_pipeline_with_notes(
             status: format!("{:?}", f.status).to_lowercase(),
             new_line_count: f.new_line_count,
             old_line_count: f.old_line_count,
+            new_content: f.new_content.clone(),
+            old_content: f.old_content.clone(),
             hunks: hunks_out,
             counts,
             fences: regions
@@ -378,17 +444,34 @@ pub fn run_pipeline_with_notes(
                 f.new_content.is_empty() && f.old_content.is_empty(),
             )
             .into_iter()
-            .map(|r| OutputRow {
-                kind: r.kind,
-                new_line: r.new_line,
-                old_line: r.old_line,
-                text: r.text,
-                del_text: r.del_text,
-                spans: r.spans.unwrap_or_default(),
-                runs: Vec::new(),
-                wholesale: false,
-                moved: r.moved,
-                tail: Vec::new(),
+            .map(|r| {
+                let runs =
+                    if r.kind == RowKind::Mod || r.kind == RowKind::Add || r.kind == RowKind::Del {
+                        colored_runs(&r, profile, &regions)
+                    } else {
+                        classify_ctx_line(&r.text, r.new_line.or(r.old_line), profile, &regions)
+                            .into_iter()
+                            .map(|tk| OutputRun {
+                                kind: RunKind::Ctx,
+                                color: Some(tk.color),
+                                sgr: tk.sgr,
+                                text: tk.text,
+                            })
+                            .collect()
+                    };
+                let wholesale = r.kind == RowKind::Mod && crate::merge::is_wholesale_mod(&r);
+                OutputRow {
+                    kind: r.kind,
+                    new_line: r.new_line,
+                    old_line: r.old_line,
+                    text: r.text,
+                    del_text: r.del_text,
+                    spans: r.spans.unwrap_or_default(),
+                    runs,
+                    wholesale,
+                    moved: r.moved,
+                    tail: Vec::new(),
+                }
             })
             .collect(),
         });
@@ -439,6 +522,10 @@ pub struct OutputFile {
     pub status: String,
     pub new_line_count: usize,
     pub old_line_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub new_content: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub old_content: Vec<String>,
     pub hunks: Vec<OutputHunk>,
     pub counts: crate::counts::FileCounts,
     /// The fence regions (the wire's syntax-region spans — line 1-indexed).
@@ -463,4 +550,115 @@ pub struct PipelineOutput {
     pub branch: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub untracked_skipped: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse::{Row, RowKind};
+
+    #[test]
+    fn test_fence_delimiter_line_preserves_comment_prefix_color() {
+        let profile = crate::syntax::lang_profile("rs");
+        let regions = vec![crate::syntax::FenceRegion {
+            start: 2,
+            end: 3,
+            lang: Some("rs".to_string()),
+        }];
+        let tokens = classify_ctx_line("/// ```ignore", Some(1), profile, &regions);
+        assert_eq!(
+            tokens.len(),
+            2,
+            "delimiter line produces 2 tokens (prefix + fence)"
+        );
+        assert_eq!(
+            tokens[0].color, "syntaxComment",
+            "comment prefix is syntaxComment"
+        );
+        assert_eq!(tokens[0].text, "/// ");
+        assert_eq!(tokens[1].color, "muted", "fence is muted");
+        assert_eq!(tokens[1].text, "```ignore");
+    }
+
+    #[test]
+    fn test_mod_comment_row_preserves_comment_color_after_subword_fill() {
+        let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,1 +1,1 @@\n-// The lowest layer the lower-walk may descend to: a directory found with\n+// The deepest layer the below-walk may descend to: a directory found with\n";
+        let mut contents = std::collections::HashMap::new();
+        contents.insert(
+            "test.rs".to_string(),
+            "// The deepest layer the below-walk may descend to: a directory found with\n"
+                .to_string(),
+        );
+        let output = run_pipeline(diff, &contents);
+        let row = &output.files[0].hunks[0].rows[0];
+        let common_after = row.runs.iter().find(|r| r.text.contains(" layer the "));
+        assert!(common_after.is_some(), "common run ' layer the ' exists");
+        assert_eq!(
+            common_after.unwrap().color.as_deref(),
+            Some("syntaxComment"),
+            "text after fill preserves syntaxComment color"
+        );
+    }
+
+    #[test]
+    fn test_comment_reflow_del_span_positioning() {
+        // Row 1078: `lowers` is deleted before `non-top-upper layers` is added, and trailing `layer's markers —` lands at the end
+        let old_1078 = "// Walk the lowers top → bottom, honoring each layer's markers —";
+        let new_1078 = "// Walk the non-top-upper layers top → bottom, honoring each";
+        let r_1078 = Row {
+            kind: RowKind::Mod,
+            text: new_1078.to_string(),
+            new_line: Some(1078),
+            old_line: Some(1078),
+            spans: Some(crate::lcs::word_spans(old_1078, new_1078)),
+            moved: false,
+            del_text: Some(old_1078.to_string()),
+            tail: Vec::new(),
+        };
+        let runs_1078 = crate::merge::merged_runs(&r_1078);
+        let non_common_1078: Vec<(crate::merge::RunKind, &str)> = runs_1078
+            .iter()
+            .filter(|r| r.kind != crate::merge::RunKind::Common)
+            .map(|r| (r.kind, r.text.as_str()))
+            .collect();
+        assert_eq!(
+            non_common_1078,
+            vec![
+                (crate::merge::RunKind::Del, "lowers"),
+                (crate::merge::RunKind::Add, "non-top-upper layers"),
+                (crate::merge::RunKind::Del, " layer's markers —"),
+            ],
+            "1078: lowers deletes before non-top-upper layers adds, layer's markers strikes at end"
+        );
+
+        // Row 1079: `layer's markers — ` adds at start, `upper`->`layer` pairs, `whiteouts...` strikes at end of `carries` (not inside `ca...rries`)
+        let old_1079 = "// a frozen (snapshotted) upper carries whiteouts and opaque dirs";
+        let new_1079 = "// layer's markers — a frozen (snapshotted) layer carries";
+        let r_1079 = Row {
+            kind: RowKind::Mod,
+            text: new_1079.to_string(),
+            new_line: Some(1079),
+            old_line: Some(1079),
+            spans: Some(crate::lcs::word_spans(old_1079, new_1079)),
+            moved: false,
+            del_text: Some(old_1079.to_string()),
+            tail: Vec::new(),
+        };
+        let runs_1079 = crate::merge::merged_runs(&r_1079);
+        let non_common_1079: Vec<(crate::merge::RunKind, &str)> = runs_1079
+            .iter()
+            .filter(|r| r.kind != crate::merge::RunKind::Common)
+            .map(|r| (r.kind, r.text.as_str()))
+            .collect();
+        assert_eq!(
+            non_common_1079,
+            vec![
+                (crate::merge::RunKind::Add, "layer's markers — "),
+                (crate::merge::RunKind::Del, "upper"),
+                (crate::merge::RunKind::Add, "layer"),
+                (crate::merge::RunKind::Del, " whiteouts and opaque dirs"),
+            ],
+            "1079: layer's markers adds at start, upper->layer pairs, whiteouts strikes at end of carries"
+        );
+    }
 }

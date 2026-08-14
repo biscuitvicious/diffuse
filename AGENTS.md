@@ -23,49 +23,16 @@ the **rust backend** — it spawns the diffuse binary BUNDLED with it
 JSON; **Phase 4's equivalence gate passed** (the rust backend renders the
 byte-identical golden). The TS engine and the reference repo are removed.
 
-## The porting phase — the one-for-one rewrite
+## Engine Development & Specification
 
-The engine did not start here. It grew organically inside another
-project: a terminal review tool whose diff machinery accumulated hundreds
-of hand-tuned edge-case rules. Those rules are the project's real
-specification, captured two ways:
+The engine port from TypeScript to Rust is complete (Phases 1–4 passed with byte-identical equivalence). **The Rust implementation is now the primary engine and canonical specification.**
 
-1. **The reference implementation** — the original engine, written in
-   TypeScript. It lives at `extension/pi/review.ts` in this workspace (the
-   functions `parseDiff`, `markMoves`, `collapseHunkRows`, the merge
-   machinery, the LCS, the similarity scoring). The pristine upstream
-   copy still exists at `~/lab/pi-review` — do not edit it; the workspace
-   copy is the spec. You do not need to know TypeScript or the host tool
-   to work here — you need to be able to *read* that file as the spec,
-   line by line.
-2. **The golden corpus** — `tests/golden/mirage-2025-08.{json,golden.txt}`:
-   a real captured diff and the locked *ideal* output of the engine over
-   it, exercising dozens of the edge cases. The golden is the ground
-   truth. It is the SINGLE canonical copy — the extension's golden walk
-   reads it from here too; never fork a second fixture/golden pair.
+In this active development phase:
 
-**Phase 1 (done) was a behavior-identical port.** While a port is open,
-the TypeScript file is the spec, and the port discipline is:
-
-- Same function names (snake_case), same control flow, same thresholds,
-  same fallbacks, same comments. The comments carry the *why* of every
-  odd rule — port them.
-- **No "improvements"**. No Rust idioms that change behavior: no
-  iterator chains that alter the evaluation order of a tie-break ladder,
-  no enum-shaped rewrites of the pairing logic, no early returns that
-  skip a branch. Break only for syntax (no `undefined`, no dynamic
-  typing) and naming (`camelCase` → `snake_case`).
-- The port map in PLAN.md §3 is the checklist. A task is done when every
-  row is checked and `cargo build` is clean.
-- **If a behavior looks wrong, do not "fix" it.** Check the reference
-  implementation first. If the reference does the same thing, the
-  behavior is intended — the golden encodes it. If the Rust port deviates
-  from the reference, the port is wrong; fix the port.
-
-The Rust-y redesign (PLAN.md Phase 5) is explicitly deferred: first the
-port must prove itself identical to the reference (Phase 3's acceptance +
-Phase 4's byte-identical golden), then the redesign may change internals —
-but never the golden without explicit human sign-off.
+- **Rust is the Canonical Reference**: The Rust codebase (`src/`) is the source of truth for engine behavior.
+- **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust, `review.test.ts` in TS).
+- **Behavior Improvements & Visual Tuning**: Subword boundaries, reflow pairing, move detection, syntax highlighting, and rendering aesthetics are actively refined to deliver the best visual diff experience.
+- **Golden Corpus**: `tests/golden/mirage-2025-08.{json,golden.txt}` serves as the visual acceptance baseline. As rendering and subword improvements land, golden fixtures are regenerated following human review.
 
 ## The golden — the ground truth
 
@@ -113,6 +80,15 @@ the deviation.
 - The corpus: `tests/golden/` — the single canonical copy, shared by the
   Rust acceptance and the extension's walk. Regenerate only when the
   corpus is deliberately changed (rare, and only with human sign-off).
+
+## Test-first bugfix & feature discipline
+
+Every bug fix, behavior adjustment, or new feature must expand the test corpus with a targeted test covering the exact scenario:
+
+1. **Write the test first**: Before editing implementation code, write a unit or component test (in Rust `#[test]` or TS `review.test.ts`) specifying the desired behavior or reproducing the bug.
+2. **Confirm initial failure**: Run the test to verify that it fails in the expected way, proving that the test suite actually catches the bug or missing capability.
+3. **Implement the change**: Write the minimal code needed to fulfill the requirement.
+4. **Verify passing run**: Ensure `cargo test` and `npm test` pass cleanly, permanently expanding the test suite to guard against regressions.
 
 ## Conventions
 

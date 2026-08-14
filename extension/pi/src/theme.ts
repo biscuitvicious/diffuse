@@ -49,11 +49,25 @@ export const THEME_MAGIC: DiffuseTheme = {
 		if (isAdd) {
 			switch (c) {
 				case "mdBold":
+					ansiColor = "\x1b[38;5;172m";
+					break;
 				case "syntaxType":
+				case "syntaxNumber":
 					ansiColor = "\x1b[38;5;221m";
 					break;
-				case "mdItalic":
+				case "syntaxKeyword":
+					ansiColor = "\x1b[38;5;147m";
+					break;
+				case "syntaxFunction":
+					ansiColor = "\x1b[38;5;123m";
+					break;
+				case "syntaxOperator":
+					ansiColor = "\x1b[38;5;117m";
+					break;
 				case "syntaxComment":
+					ansiColor = "\x1b[38;5;150m";
+					break;
+				case "mdItalic":
 				case "muted":
 					ansiColor = "\x1b[38;5;229m";
 					break;
@@ -78,7 +92,17 @@ export const THEME_MAGIC: DiffuseTheme = {
 			switch (c) {
 				case "mdBold":
 				case "syntaxType":
+				case "syntaxNumber":
 					ansiColor = "\x1b[38;5;222m";
+					break;
+				case "syntaxKeyword":
+					ansiColor = "\x1b[38;5;183m";
+					break;
+				case "syntaxFunction":
+					ansiColor = "\x1b[38;5;159m";
+					break;
+				case "syntaxOperator":
+					ansiColor = "\x1b[38;5;153m";
 					break;
 				case "mdItalic":
 				case "syntaxComment":
@@ -105,8 +129,22 @@ export const THEME_MAGIC: DiffuseTheme = {
 		} else {
 			switch (c) {
 				case "mdBold":
+					ansiColor = "\x1b[38;5;172m";
+					break;
 				case "syntaxType":
+					ansiColor = "\x1b[38;5;173m";
+					break;
+				case "syntaxKeyword":
+					ansiColor = "\x1b[38;5;141m";
+					break;
+				case "syntaxFunction":
+					ansiColor = "\x1b[38;5;117m";
+					break;
+				case "syntaxNumber":
 					ansiColor = "\x1b[38;5;179m";
+					break;
+				case "syntaxOperator":
+					ansiColor = "\x1b[38;5;110m";
 					break;
 				case "mdItalic":
 					ansiColor = "\x1b[38;5;187m";
@@ -132,10 +170,21 @@ export const THEME_MAGIC: DiffuseTheme = {
 			}
 		}
 
+		let host = tok.text;
+		if (c) {
+			try {
+				host = hostThemeFg(c, tok.text) ?? tok.text;
+			} catch {
+				host = tok.text;
+			}
+		}
+		if (host !== tok.text) {
+			return host;
+		}
 		if (ansiColor) {
 			return `${ansiColor}${tok.text}${FG_RESET}`;
 		}
-		return hostThemeFg(c, tok.text);
+		return host;
 	},
 };
 
@@ -156,7 +205,12 @@ export const THEME_LEGACY: DiffuseTheme = {
 		if (c === "syntaxType") {
 			return `\x1b[38;5;173m${tok.text}${FG_RESET}`;
 		}
-		return hostThemeFg(c, tok.text);
+		if (!c) return tok.text;
+		try {
+			return hostThemeFg(c, tok.text) ?? tok.text;
+		} catch {
+			return tok.text;
+		}
 	},
 };
 
@@ -168,7 +222,7 @@ export const THEMES: Record<string, DiffuseTheme> = {
 };
 
 export function getActiveTheme(): DiffuseTheme {
-	const name = (process.env.REVIEW_THEME || "legacy").toLowerCase();
+	const name = (process.env.REVIEW_THEME || "magic").toLowerCase();
 	return THEMES[name] || THEME_MAGIC;
 }
 

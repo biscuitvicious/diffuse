@@ -116,12 +116,33 @@ export function filesFromWire(
 	const out: DiffFile[] = [];
 	for (const wf of wire.files) {
 		const src = contentOf(wf.path);
+		const oldContent = src?.oldContent ?? wf.oldContent ?? [];
+		const newContent = src?.newContent ?? wf.newContent ?? [];
+		const contentRuns: { kind?: string; color?: string; sgr?: number; text: string }[][] = [];
+		const recordRuns = (lineNo: number | null, runs: any[]) => {
+			if (lineNo !== null && lineNo > 0 && runs && runs.length > 0) {
+				contentRuns[lineNo - 1] = runs;
+			}
+		};
+		if (wf.rows) {
+			for (const r of wf.rows) {
+				recordRuns(r.newLine ?? r.oldLine, r.runs);
+			}
+		}
+		if (wf.hunks) {
+			for (const h of wf.hunks) {
+				for (const r of h.rows) {
+					recordRuns(r.newLine ?? r.oldLine, r.runs);
+				}
+			}
+		}
 		out.push({
 			path: wf.path,
 			status: wf.status as any,
-			newLineCount: (wf as any).newLineCount ?? 0,
-			oldContent: src?.oldContent ?? [],
-			newContent: src?.newContent ?? [],
+			newLineCount: (wf as any).newLineCount ?? newContent.length ?? 0,
+			oldContent,
+			newContent,
+			contentRuns,
 			hunks: wf.hunks.map((h) => ({
 				oldStart: h.oldStart,
 				oldCount: h.oldCount,

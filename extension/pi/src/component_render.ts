@@ -8,6 +8,15 @@ import { notesFor } from "./persistence.ts";
 import { getActiveTheme, sAdd, sDel, sMod, sMov, SGR_OFF } from "./theme.ts";
 import type { ReviewNote, ReviewSession, Row } from "./types.ts";
 
+export function safeFg(theme: { fg: (c: string, t: string) => string }, color: string, text: string): string {
+	if (!color || !theme || typeof theme.fg !== "function") return text;
+	try {
+		return theme.fg(color, text) ?? text;
+	} catch {
+		return text;
+	}
+}
+
 export function renderNoteRuns(
 	runs: { kind?: string; color?: string; text: string; sgr?: number }[],
 	fg: (c: string, t: string) => string,
@@ -220,6 +229,79 @@ export function wireTokens(
 	}));
 }
 
+export function classifyPlainText(text: string, path: string): { kind?: "ctx"; color: string; text: string }[] {
+	const ext = path.split(".").pop() ?? "";
+	const rustKeywords = new Set([
+		"pub", "fn", "struct", "enum", "impl", "use", "mod", "let", "mut", "const",
+		"return", "if", "else", "match", "for", "while", "loop", "in", "as", "type",
+		"where", "trait", "self", "Self", "super", "crate", "async", "await", "unsafe", "bool", "usize", "isize"
+	]);
+	const tsKeywords = new Set([
+		"function", "const", "let", "var", "import", "export", "from", "return",
+		"if", "else", "switch", "case", "for", "while", "class", "interface", "type",
+		"async", "await", "try", "catch", "throw", "new", "this", "typeof", "boolean", "string", "number"
+	]);
+	const keywords = ext === "rs" ? rustKeywords : tsKeywords;
+
+	const tokens: { kind?: "ctx"; color: string; text: string }[] = [];
+	let i = 0;
+	while (i < text.length) {
+		const rest = text.slice(i);
+		if (rest.startsWith("//") || rest.startsWith("#")) {
+			tokens.push({ kind: "ctx", color: "syntaxComment", text: rest });
+			break;
+		}
+		if (text[i] === '"' || text[i] === "'") {
+			const quote = text[i];
+			let j = i + 1;
+			while (j < text.length && text[j] !== quote) {
+				if (text[j] === "\\") j++;
+				j++;
+			}
+			if (j < text.length) j++;
+			tokens.push({ kind: "ctx", color: "syntaxString", text: text.slice(i, j) });
+			i = j;
+			continue;
+		}
+		const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(rest);
+		if (m) {
+			const word = m[0];
+			if (keywords.has(word)) {
+				tokens.push({ kind: "ctx", color: "syntaxKeyword", text: word });
+			} else {
+				const last = tokens[tokens.length - 1];
+				if (last && last.color === "text") {
+					last.text += word;
+				} else {
+					tokens.push({ kind: "ctx", color: "text", text: word });
+				}
+			}
+			i += word.length;
+			continue;
+		}
+		const numMatch = /^[0-9]+/.exec(rest);
+		if (numMatch) {
+			tokens.push({ kind: "ctx", color: "syntaxNumber", text: numMatch[0] });
+			i += numMatch[0].length;
+			continue;
+		}
+		const opMatch = /^[+\-*\/=<>!%&|^~:;,.]+/.exec(rest);
+		if (opMatch) {
+			tokens.push({ kind: "ctx", color: "syntaxOperator", text: opMatch[0] });
+			i += opMatch[0].length;
+			continue;
+		}
+		const last = tokens[tokens.length - 1];
+		if (last && last.color === "text") {
+			last.text += text[i]!;
+		} else {
+			tokens.push({ kind: "ctx", color: "text", text: text[i]! });
+		}
+		i++;
+	}
+	return tokens;
+}
+
 export function rowTokens(
 	r: Row,
 	flatIdx: number,
@@ -236,7 +318,10 @@ export function rowTokens(
 	if (lineNum !== null && currentFile.contentRuns && currentFile.contentRuns[lineNum - 1]) {
 		return wireTokens(currentFile.contentRuns[lineNum - 1]!, syntaxOn);
 	}
-	return [{ kind: "ctx", color: syntaxOn ? "text" : "text", text: r.text }];
+	if (!syntaxOn) {
+		return [{ kind: "ctx", color: "text", text: r.text }];
+	}
+	return classifyPlainText(r.text, currentFile.path);
 }
 
 export function highlightTokens(
@@ -310,14 +395,14 @@ export function styleTokens(
 	const baseBg = (kind: string | undefined): string => {
 		if (isCtx && !selected) return "";
 		if (kind === "del") return delBg;
-		if (kind === "add" && !isPureDelMod) return wordBg;
+		if (kind === "add" && isModRow && !isPureDelMod) return wordBg;
 		return lineBg;
 	};
 	const text = displayText(r, colOffset, wordDiff);
 	if (isDelRow) {
 		const bg = isCtx ? "" : lineBg;
 		const piece = text.slice(segStart, segEnd);
-		return (selected ? lineBg : "") + prefix + bg + theme.fg(sDel.fg, piece) + lineBg;
+		return (selected ? lineBg : "") + prefix + bg + safeFg(theme, sDel.fg, piece) + lineBg;
 	}
 	const slice = text.slice(segStart, segEnd);
 	if (tokens.length === 0 || tokens.every((t) => t.text.length === 0)) {
@@ -337,14 +422,14 @@ export function styleTokens(
 		if (!piece) continue;
 		const bg = baseBg(tok.kind);
 		if (tok.kind === "del") {
-			out += bg + "\x1b[9m" + theme.fg(sDel.fg, piece) + "\x1b[29m";
+			out += bg + "\x1b[9m" + safeFg(theme, sDel.fg, piece) + "\x1b[29m";
 		} else if (tok.kind === "add") {
 			const sgr = (tok as { sgr?: number }).sgr;
 			const off = sgr !== undefined ? SGR_OFF[sgr] : undefined;
 			const styledPiece = activeTheme.renderToken(
 				{ ...tok, text: piece },
 				r.kind,
-				(c, t) => theme.fg(c, t),
+				(c, t) => safeFg(theme, c, t),
 			);
 			out += bg + (sgr !== undefined ? `\x1b[${sgr}m` : "") + styledPiece + (off !== undefined ? `\x1b[${off}m` : "") + bg;
 		} else {
@@ -353,7 +438,7 @@ export function styleTokens(
 			const styledPiece = activeTheme.renderToken(
 				{ ...tok, text: piece },
 				r.kind,
-				(c, t) => theme.fg(c, t),
+				(c, t) => safeFg(theme, c, t),
 			);
 			out += bg + (sgr !== undefined ? `\x1b[${sgr}m` : "") + styledPiece + (off !== undefined ? `\x1b[${off}m` : "") + bg;
 		}

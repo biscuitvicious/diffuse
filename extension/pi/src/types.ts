@@ -112,6 +112,8 @@ export interface WireFile {
 	status: "modified" | "added" | "deleted" | "renamed" | "untracked";
 	counts: WireCounts;
 	hunks: WireHunk[];
+	newContent?: string[];
+	oldContent?: string[];
 	contentRuns?: WireRun[][];
 	rows?: Row[];
 }

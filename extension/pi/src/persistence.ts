@@ -3,6 +3,7 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { diffuseBinPath, runDiffuseBin } from "./backend.ts";
@@ -88,20 +89,36 @@ export function loadReviewState(repo: string): ReviewState | null {
 	}
 }
 
-export function saveReviewState(repo: string, state: ReviewState): void {
+let saveStateTimer: NodeJS.Timeout | null = null;
+let pendingState: { repo: string; state: ReviewState } | null = null;
+
+export async function flushReviewState(): Promise<void> {
+	if (!pendingState) return;
+	const { repo, state } = pendingState;
+	pendingState = null;
 	try {
-		mkdirSync(NOTES_DIR, { recursive: true });
+		await mkdir(NOTES_DIR, { recursive: true });
 		let all: Record<string, ReviewState> = {};
 		try {
-			all = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+			const data = await readFile(STATE_FILE, "utf8");
+			all = JSON.parse(data);
 		} catch {
 			all = {};
 		}
 		all[repo] = state;
-		writeFileSync(STATE_FILE, JSON.stringify(all, null, 1));
-	} catch (err) {
-		console.error("review: failed to persist position:", err);
+		await writeFile(STATE_FILE, JSON.stringify(all, null, 1));
+	} catch {
+		/* background save error ignored */
 	}
+}
+
+export function saveReviewState(repo: string, state: ReviewState): void {
+	pendingState = { repo, state };
+	if (saveStateTimer) clearTimeout(saveStateTimer);
+	saveStateTimer = setTimeout(() => {
+		saveStateTimer = null;
+		void flushReviewState();
+	}, 300);
 }
 
 export function resolveInitialPosition(
@@ -111,8 +128,9 @@ export function resolveInitialPosition(
 	if (!state) return null;
 	const fi = files.findIndex((f) => f.path === state.file);
 	if (fi < 0) return null;
-	const content = files[fi]!.newContent[state.line - 1];
-	if (content !== undefined && content === state.text) {
+	const file = files[fi]!;
+	const content = file.newContent[state.line - 1] ?? file.oldContent[state.line - 1];
+	if (content !== undefined && (content === state.text || content.trim() === state.text.trim())) {
 		return { fileIdx: fi, line: state.line, col: state.col ?? 0 };
 	}
 	return { fileIdx: fi, line: null, col: 0 };
