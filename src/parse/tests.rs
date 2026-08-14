@@ -80,3 +80,54 @@ fn parse_diff_multi_file_new_deleted_rename() {
     assert_eq!(files[3].status, FileStatus::Renamed);
     assert_eq!(files[3].old_path.as_deref(), Some("renamed.rs"), "rename");
 }
+
+#[test]
+fn test_diff_components_reverse_involution() {
+    let files = parse_diff(DIFF);
+    for f in &files {
+        let rev = f.reverse();
+        assert_eq!(
+            rev.reverse(),
+            *f,
+            "DiffFile reverse is an involution for {}",
+            f.path
+        );
+        for h in &f.hunks {
+            let h_rev = h.reverse();
+            assert_eq!(h_rev.reverse(), *h, "Hunk reverse is an involution");
+            for r in &h.rows {
+                let r_rev = r.reverse();
+                assert_eq!(r_rev.reverse(), *r, "Row reverse is an involution");
+            }
+        }
+    }
+
+    // Spans reverse
+    let spans = Spans {
+        del: vec![(0, 5), (10, 15)],
+        add: vec![(2, 8)],
+    };
+    let rev_spans = spans.reverse();
+    assert_eq!(rev_spans.del, spans.add);
+    assert_eq!(rev_spans.add, spans.del);
+    assert_eq!(rev_spans.reverse(), spans);
+
+    // Mod row reverse
+    let mod_row = Row {
+        kind: RowKind::Mod,
+        text: "new line text".to_string(),
+        new_line: Some(42),
+        old_line: Some(38),
+        spans: Some(spans.clone()),
+        moved: false,
+        del_text: Some("old line text".to_string()),
+        tail: Vec::new(),
+    };
+    let rev_mod = mod_row.reverse();
+    assert_eq!(rev_mod.kind, RowKind::Mod);
+    assert_eq!(rev_mod.text, "old line text");
+    assert_eq!(rev_mod.del_text.as_deref(), Some("new line text"));
+    assert_eq!(rev_mod.new_line, Some(38));
+    assert_eq!(rev_mod.old_line, Some(42));
+    assert_eq!(rev_mod.reverse(), mod_row);
+}

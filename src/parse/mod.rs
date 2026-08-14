@@ -15,8 +15,21 @@ pub enum RowKind {
     Mod,
 }
 
+impl RowKind {
+    pub fn reverse(&self) -> RowKind {
+        match self {
+            RowKind::Add => RowKind::Del,
+            RowKind::Del => RowKind::Add,
+            RowKind::Mod => RowKind::Mod,
+            RowKind::Ctx => RowKind::Ctx,
+            RowKind::Sep => RowKind::Sep,
+            RowKind::File => RowKind::File,
+        }
+    }
+}
+
 /// A diff row. Fields mirror `review.ts`'s `Row` interface.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize)]
 pub struct Row {
     pub kind: RowKind,
     pub text: String,
@@ -56,6 +69,13 @@ impl Spans {
     pub fn add_char_len(&self) -> usize {
         self.add.iter().map(|(s, e)| e.saturating_sub(*s)).sum()
     }
+
+    pub fn reverse(&self) -> Self {
+        Spans {
+            del: self.add.clone(),
+            add: self.del.clone(),
+        }
+    }
 }
 
 impl Row {
@@ -76,10 +96,27 @@ impl Row {
             tail: Vec::new(),
         }
     }
+
+    pub fn reverse(&self) -> Self {
+        Row {
+            kind: self.kind.reverse(),
+            text: self.del_text.clone().unwrap_or_else(|| self.text.clone()),
+            new_line: self.old_line,
+            old_line: self.new_line,
+            spans: self.spans.as_ref().map(|s| s.reverse()),
+            moved: self.moved,
+            del_text: if self.kind == RowKind::Mod || self.del_text.is_some() {
+                Some(self.text.clone())
+            } else {
+                None
+            },
+            tail: self.tail.iter().map(|t| t.reverse()).collect(),
+        }
+    }
 }
 
 /// A hunk: the `@@ -old +new @@` region of a diff.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize)]
 pub struct Hunk {
     pub old_start: u32,
     pub old_count: u32,
@@ -92,6 +129,21 @@ pub struct Hunk {
     pub below_ctx: u32,
 }
 
+impl Hunk {
+    pub fn reverse(&self) -> Self {
+        Hunk {
+            old_start: self.new_start,
+            old_count: self.new_count,
+            new_start: self.old_start,
+            new_count: self.old_count,
+            section: self.section.clone(),
+            rows: self.rows.iter().map(|r| r.reverse()).collect(),
+            above_ctx: self.above_ctx,
+            below_ctx: self.below_ctx,
+        }
+    }
+}
+
 /// Row-derived new-side count: the *extent* from the hunk start to the last
 /// new-side line, not a row count — absorbed reflow lines and tail lines
 /// occupy real positions in between (a restructure that drops two reflowed
@@ -101,12 +153,6 @@ pub fn add_count(h: &Hunk) -> u32 {
     let mut has_new = false;
     let mut scan = |r: &Row| {
         if r.kind == RowKind::Add || r.kind == RowKind::Mod {
-            // A stretched mod's text is its run's concatenation — it spans
-            // its adds' visual lines (`if k < floor {` → the 3-line
-            // `if let Some(floor) = floor` / `&& k > floor` / `{`). The mod
-            // must cover all of them: otherwise the context rows after the
-            // hunk re-emit the mod's own tail lines (the dup `&& k > floor`
-            // + `{` under the mod).
             let lines = r.text.matches('\n').count() as u32;
             max_new = max_new.max(r.new_line.unwrap_or(0) + lines);
             has_new = true;
@@ -140,8 +186,20 @@ pub enum FileStatus {
     Untracked,
 }
 
+impl FileStatus {
+    pub fn reverse(&self) -> FileStatus {
+        match self {
+            FileStatus::Added => FileStatus::Deleted,
+            FileStatus::Deleted => FileStatus::Added,
+            FileStatus::Modified => FileStatus::Modified,
+            FileStatus::Renamed => FileStatus::Renamed,
+            FileStatus::Untracked => FileStatus::Untracked,
+        }
+    }
+}
+
 /// A parsed diff file.
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize)]
 pub struct DiffFile {
     /// Repo-relative path of the NEW side (old path for deletions).
     pub path: String,
@@ -156,6 +214,26 @@ pub struct DiffFile {
     pub hunks: Vec<Hunk>,
     /// True when neither side's content could be loaded (no context source).
     pub no_content: bool,
+}
+
+impl DiffFile {
+    pub fn reverse(&self) -> Self {
+        DiffFile {
+            path: self.old_path.clone().unwrap_or_else(|| self.path.clone()),
+            old_path: if self.old_path.is_some() {
+                Some(self.path.clone())
+            } else {
+                None
+            },
+            status: self.status.reverse(),
+            new_line_count: self.old_line_count,
+            old_line_count: self.new_line_count,
+            new_content: self.old_content.clone(),
+            old_content: self.new_content.clone(),
+            hunks: self.hunks.iter().map(|h| h.reverse()).collect(),
+            no_content: self.no_content,
+        }
+    }
 }
 
 fn unquote_git_path(raw: &str) -> String {
