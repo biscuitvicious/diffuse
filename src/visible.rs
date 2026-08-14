@@ -24,11 +24,31 @@ fn add_count(h: &Hunk) -> usize {
         .count()
 }
 
-fn del_count(h: &Hunk) -> usize {
-    h.rows
-        .iter()
-        .filter(|r| r.kind == RowKind::Del || r.kind == RowKind::Mod)
-        .count()
+pub fn hunk_change_bounds(h: &Hunk, side: Side) -> (usize, usize) {
+    let mut min_line = usize::MAX;
+    let mut max_line = 0;
+    for r in &h.rows {
+        if r.kind == RowKind::Ctx {
+            continue;
+        }
+        let line = match side {
+            Side::New => r.new_line.map(|x| x as usize),
+            Side::Old => r.old_line.map(|x| x as usize),
+        };
+        if let Some(l) = line {
+            min_line = min_line.min(l);
+            max_line = max_line.max(l);
+        }
+    }
+    if min_line == usize::MAX {
+        let start = match side {
+            Side::New => h.new_start as usize,
+            Side::Old => h.old_start as usize,
+        };
+        (start, start)
+    } else {
+        (min_line, max_line)
+    }
 }
 
 pub fn gap_between(
@@ -43,18 +63,20 @@ pub fn gap_between(
     let b_new = add_count(b) > 0;
 
     if a_new == b_new {
-        let a_end = (if a_new { a.new_start } else { a.old_start }) as usize
-            + (if a_new { add_count(a) } else { del_count(a) })
-            - 1;
-        let b_start = (if b_new { b.new_start } else { b.old_start }) as usize;
+        let a_side = if a_new { Side::New } else { Side::Old };
+        let (_, a_end) = hunk_change_bounds(a, a_side);
+        let b_side = if b_new { Side::New } else { Side::Old };
+        let (b_start, _) = hunk_change_bounds(b, b_side);
         return b_start.saturating_sub(a_end + 1);
     }
 
-    let a_new_end = (a.new_start as usize) + add_count(a);
-    let new_gap = (b.new_start as usize).saturating_sub(a_new_end + 1);
+    let (_, a_new_end) = hunk_change_bounds(a, Side::New);
+    let (b_new_start, _) = hunk_change_bounds(b, Side::New);
+    let new_gap = b_new_start.saturating_sub(a_new_end + 1);
 
-    let a_old_end = (a.old_start as usize) + del_count(a);
-    let old_gap = (b.old_start as usize).saturating_sub(a_old_end + 1);
+    let (_, a_old_end) = hunk_change_bounds(a, Side::Old);
+    let (b_old_start, _) = hunk_change_bounds(b, Side::Old);
+    let old_gap = b_old_start.saturating_sub(a_old_end + 1);
 
     let new_c = if new_line_count > 0 {
         new_line_count
@@ -79,8 +101,8 @@ pub fn allocate_context(
 
     for (i, h) in hunks.iter().enumerate() {
         let new_side = add_count(h) > 0;
-        let start = (if new_side { h.new_start } else { h.old_start }) as usize;
-        let count = if new_side { add_count(h) } else { del_count(h) };
+        let side = if new_side { Side::New } else { Side::Old };
+        let (change_start, change_end) = hunk_change_bounds(h, side);
         let total = if new_side {
             new_line_count
         } else {
@@ -92,26 +114,26 @@ pub fn allocate_context(
             continue;
         }
 
-        let mut free_above = start.saturating_sub(1);
+        let mut free_above = change_start.saturating_sub(1);
         if i > 0 {
             let p = &hunks[i - 1];
             let p_new = add_count(p) > 0;
             if p_new == new_side {
-                let p_start = if p_new { p.new_start } else { p.old_start } as usize;
-                let p_count = if p_new { add_count(p) } else { del_count(p) };
-                let p_end = p_start + p_count - 1;
-                let space = start.saturating_sub(p_end + 1);
+                let p_side = if p_new { Side::New } else { Side::Old };
+                let (_, p_end) = hunk_change_bounds(p, p_side);
+                let space = change_start.saturating_sub(p_end + 1);
                 free_above = free_above.min(space);
             }
         }
 
-        let mut free_below = total.saturating_sub(start + count) + 1;
+        let mut free_below = total.saturating_sub(change_end);
         if i < hunks.len() - 1 {
             let n = &hunks[i + 1];
             let n_new = add_count(n) > 0;
             if n_new == new_side {
-                let n_start = (if n_new { n.new_start } else { n.old_start }) as usize;
-                let space = n_start.saturating_sub(start + count);
+                let n_side = if n_new { Side::New } else { Side::Old };
+                let (n_start, _) = hunk_change_bounds(n, n_side);
+                let space = n_start.saturating_sub(change_end + 1);
                 free_below = free_below.min(space);
             }
         }
@@ -171,100 +193,6 @@ pub fn context_rows(side: Side, start: usize, count: usize, src: &[String]) -> V
     rows
 }
 
-fn comment_lead(r: &Row) -> bool {
-    let t = r.text.trim();
-    t.starts_with("//") || t.starts_with("/*") || t.starts_with('*') || t.starts_with('#')
-}
-
-pub fn absorb_leading_context(
-    side: Side,
-    start: usize,
-    above: usize,
-    h: &Hunk,
-    src: &[String],
-) -> (Vec<Row>, Vec<Row>) {
-    let ctx = context_rows(side, start.saturating_sub(above), above, src);
-    let rows = h.rows.clone();
-    if ctx.is_empty() {
-        return (ctx, rows);
-    }
-    let limit = 3.min(rows.len()).min(ctx.len());
-    for k in (1..=limit).rev() {
-        let released = &rows[rows.len() - k..];
-        let absorbed = &ctx[ctx.len() - k..];
-        if comment_lead(&absorbed[0])
-            && released
-                .iter()
-                .zip(absorbed.iter())
-                .all(|(r, a)| r.text == a.text)
-        {
-            let ab = absorbed
-                .iter()
-                .map(|r| Row {
-                    kind: RowKind::Ctx,
-                    text: r.text.clone(),
-                    new_line: r.new_line,
-                    old_line: None,
-                    del_text: None,
-                    spans: None,
-                    moved: false,
-                    tail: Vec::new(),
-                })
-                .collect();
-            let ro = rows[..rows.len() - k].to_vec();
-            return (ab, ro);
-        }
-    }
-    (ctx, rows)
-}
-
-pub fn absorb_closing_context(
-    side: Side,
-    start: usize,
-    count: usize,
-    below: usize,
-    h: &Hunk,
-    src: &[String],
-) -> Vec<Row> {
-    let ctx = context_rows(side, start + count, below, src);
-    if ctx.is_empty() {
-        return ctx;
-    }
-    let Some(last_row) = h.rows.last() else {
-        return ctx;
-    };
-    if last_row.kind != RowKind::Add {
-        return ctx;
-    }
-    let released = h.rows.first().map(|r| &r.tail[..]).unwrap_or(&[]);
-    if released.is_empty() || released.len() > ctx.len() {
-        return ctx;
-    }
-    if released.iter().all(|r| r.text.trim().is_empty()) {
-        return ctx;
-    }
-    for (i, r) in released.iter().enumerate() {
-        if r.text != ctx[i].text {
-            return ctx;
-        }
-    }
-    let mut absorbed: Vec<Row> = ctx[..released.len()]
-        .iter()
-        .map(|r| Row {
-            kind: RowKind::Add,
-            text: r.text.clone(),
-            new_line: r.new_line,
-            old_line: None,
-            del_text: None,
-            spans: None,
-            moved: false,
-            tail: Vec::new(),
-        })
-        .collect();
-    absorbed.extend_from_slice(&ctx[released.len()..]);
-    absorbed
-}
-
 pub fn build_visible(
     hunks: &[Hunk],
     new_line_count: usize,
@@ -306,21 +234,15 @@ pub fn build_visible(
 
         let a = alloc[i];
         let new_side = add_count(h) > 0;
-        let start = if new_side { h.new_start } else { h.old_start } as usize;
-        let count = if new_side { add_count(h) } else { del_count(h) };
         let side = if new_side { Side::New } else { Side::Old };
-        let (lead_above, lead_rows) = absorb_leading_context(
-            side,
-            start,
-            a.above,
-            h,
-            if new_side { new_content } else { old_content },
-        );
+        let (change_start, change_end) = hunk_change_bounds(h, side);
+        let src = if new_side { new_content } else { old_content };
+
+        let lead_above = context_rows(side, change_start.saturating_sub(a.above), a.above, src);
         rows.extend(lead_above);
 
-        let src = if new_side { new_content } else { old_content };
-        let mut cursor = start.saturating_sub(1);
-        for r in lead_rows {
+        let mut cursor = change_start.saturating_sub(1);
+        for r in &h.rows {
             let target_line = if new_side {
                 r.new_line.map(|nl| nl as usize).or_else(|| {
                     r.old_line.map(|ol| {
@@ -352,32 +274,11 @@ pub fn build_visible(
             if let Some(nl) = r.new_line {
                 cursor = cursor.max(nl as usize);
             }
-            rows.push(r);
+            rows.push(r.clone());
         }
 
-        let cov_end = start + count - 1;
-        for g in (cursor + 1)..=cov_end {
-            let text = src.get(g.saturating_sub(1)).cloned().unwrap_or_default();
-            rows.push(Row {
-                kind: RowKind::Ctx,
-                text,
-                new_line: if new_side { Some(g as u32) } else { None },
-                old_line: if !new_side { Some(g as u32) } else { None },
-                del_text: None,
-                spans: None,
-                moved: false,
-                tail: Vec::new(),
-            });
-        }
-
-        rows.extend(absorb_closing_context(
-            side,
-            start,
-            count,
-            a.below,
-            h,
-            if new_side { new_content } else { old_content },
-        ));
+        let below_rows = context_rows(side, change_end + 1, a.below, src);
+        rows.extend(below_rows);
     }
 
     rows
@@ -415,5 +316,39 @@ mod tests {
         assert_eq!(alloc.len(), 1);
         assert_eq!(alloc[0].above, 0);
         assert_eq!(alloc[0].below, 6);
+    }
+
+    #[test]
+    fn test_change_bounds_context_allocation() {
+        let hunk = Hunk {
+            old_start: 60,
+            old_count: 10,
+            new_start: 60,
+            new_count: 20,
+            section: String::new(),
+            rows: vec![
+                Row::new(RowKind::Add, "line 63", Some(63), None),
+                Row::new(RowKind::Mod, "line 76", Some(76), Some(66)),
+            ],
+            above_ctx: 6,
+            below_ctx: 6,
+        };
+        let (min_l, max_l) = hunk_change_bounds(&hunk, Side::New);
+        assert_eq!(min_l, 63);
+        assert_eq!(max_l, 76);
+
+        let hunks = vec![hunk];
+        let alloc = allocate_context(&hunks, 100, 100);
+        assert_eq!(alloc[0].above, 6);
+        assert_eq!(alloc[0].below, 6);
+
+        let new_content: Vec<String> = (1..=100).map(|i| format!("line {}", i)).collect();
+        let old_content: Vec<String> = (1..=100).map(|i| format!("line {}", i)).collect();
+        let vis = build_visible(&hunks, 100, 100, &new_content, &old_content, false);
+        // Above: 6 rows (lines 57..62)
+        // Body: 14 rows (line 63, context 64..75, line 76) -> note context between 63 and 76 is synthesized
+        // Below: 6 rows (lines 77..82)
+        assert_eq!(vis.first().unwrap().new_line, Some(57));
+        assert_eq!(vis.last().unwrap().new_line, Some(82));
     }
 }

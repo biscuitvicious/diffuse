@@ -13,12 +13,22 @@ export function delCount(h: Hunk): number {
 	return h.rows.filter((r) => r.kind === "del" || r.kind === "mod").length;
 }
 
-export function hunkSpanCount(h: Hunk, side: "new" | "old"): number {
-	const headerCount = side === "new" ? h.newCount : h.oldCount;
-	if (headerCount > 0) return headerCount;
-	const start = side === "new" ? h.newStart : h.oldStart;
-	const maxLine = h.rows.reduce((max, r) => Math.max(max, (side === "new" ? r.newLine : r.oldLine) ?? 0), start);
-	return Math.max(1, maxLine - start + 1);
+export function hunkChangeBounds(h: Hunk, side: "new" | "old"): [number, number] {
+	let minLine = Number.MAX_SAFE_INTEGER;
+	let maxLine = 0;
+	for (const r of h.rows) {
+		if (r.kind === "ctx") continue;
+		const line = side === "new" ? r.newLine : r.oldLine;
+		if (line !== null && line !== undefined) {
+			minLine = Math.min(minLine, line);
+			maxLine = Math.max(maxLine, line);
+		}
+	}
+	if (minLine === Number.MAX_SAFE_INTEGER) {
+		const start = side === "new" ? h.newStart : h.oldStart;
+		return [start, start];
+	}
+	return [minLine, maxLine];
 }
 
 export function allocateContext(f: DiffFile): { above: number; below: number }[] {
@@ -27,31 +37,30 @@ export function allocateContext(f: DiffFile): { above: number; below: number }[]
 		const h = f.hunks[i]!;
 		const newSide = addCount(h) > 0;
 		const side = newSide ? "new" : "old";
-		const start = newSide ? h.newStart : h.oldStart;
-		const count = hunkSpanCount(h, side);
+		const [changeStart, changeEnd] = hunkChangeBounds(h, side);
 		const total = newSide ? f.newLineCount : f.oldContent.length;
 		if (total === 0) {
 			alloc.push({ above: 0, below: 0, freeBelow: 0 });
 			continue;
 		}
-		let freeAbove = start - 1;
+		let freeAbove = changeStart - 1;
 		if (i > 0) {
 			const p = f.hunks[i - 1]!;
 			const pNew = addCount(p) > 0;
-			const pSide = pNew ? "new" : "old";
 			if (pNew === newSide) {
-				const pEnd = (pNew ? p.newStart : p.oldStart) + hunkSpanCount(p, pSide) - 1;
-				freeAbove = Math.min(freeAbove, Math.max(0, start - pEnd - 1));
+				const pSide = pNew ? "new" : "old";
+				const [, pEnd] = hunkChangeBounds(p, pSide);
+				freeAbove = Math.min(freeAbove, Math.max(0, changeStart - pEnd - 1));
 			}
 		}
-		let freeBelow = total - (start + count) + 1;
+		let freeBelow = total - changeEnd;
 		if (i < f.hunks.length - 1) {
 			const n = f.hunks[i + 1]!;
 			const nNew = addCount(n) > 0;
-			const nSide = nNew ? "new" : "old";
 			if (nNew === newSide) {
-				const nStart = nNew ? n.newStart : n.oldStart;
-				freeBelow = Math.min(freeBelow, Math.max(0, nStart - (start + count)));
+				const nSide = nNew ? "new" : "old";
+				const [nStart] = hunkChangeBounds(n, nSide);
+				freeBelow = Math.min(freeBelow, Math.max(0, nStart - changeEnd - 1));
 			}
 		}
 		alloc.push({
@@ -96,12 +105,17 @@ export function gapBetween(f: DiffFile, i: number): number {
 	const bNew = addCount(b) > 0;
 	if (aNew === bNew) {
 		const aSide = aNew ? "new" : "old";
-		const aEnd = (aNew ? a.newStart : a.oldStart) + hunkSpanCount(a, aSide) - 1;
-		const bStart = bNew ? b.newStart : b.oldStart;
+		const [, aEnd] = hunkChangeBounds(a, aSide);
+		const bSide = bNew ? "new" : "old";
+		const [bStart] = hunkChangeBounds(b, bSide);
 		return Math.max(0, bStart - aEnd - 1);
 	}
-	const newGap = Math.max(0, b.newStart - (a.newStart + hunkSpanCount(a, "new")) - 1);
-	const oldGap = Math.max(0, b.oldStart - (a.oldStart + hunkSpanCount(a, "old")) - 1);
+	const [, aNewEnd] = hunkChangeBounds(a, "new");
+	const [bNewStart] = hunkChangeBounds(b, "new");
+	const newGap = Math.max(0, bNewStart - aNewEnd - 1);
+	const [, aOldEnd] = hunkChangeBounds(a, "old");
+	const [bOldStart] = hunkChangeBounds(b, "old");
+	const oldGap = Math.max(0, bOldStart - aOldEnd - 1);
 	const newC = f.newLineCount > 0 ? f.newLineCount : Number.MAX_SAFE_INTEGER;
 	const oldC = f.oldContent.length > 0 ? f.oldContent.length : Number.MAX_SAFE_INTEGER;
 	return Math.max(Math.min(newGap, newC), Math.min(oldGap, oldC));
@@ -185,14 +199,13 @@ export function buildVisible(f: DiffFile): Row[] {
 		const a = alloc[i]!;
 		const newSide = addCount(h) > 0;
 		const side = newSide ? "new" : "old";
-		const start = newSide ? h.newStart : h.oldStart;
-		const count = hunkSpanCount(h, side);
-		const lead = absorbLeadingContext(f, side, start, a.above, h);
-		rows.push(...lead.above);
+		const [changeStart, changeEnd] = hunkChangeBounds(h, side);
+		const leadAbove = contextRows(f, side, changeStart - a.above, a.above);
+		rows.push(...leadAbove);
 
 		const src = side === "new" ? f.newContent : f.oldContent;
-		let cursor = start - 1;
-		for (const r of lead.rows) {
+		let cursor = changeStart - 1;
+		for (const r of h.rows) {
 			const targetLine = r.newLine ?? (r.kind === "del" ? cursor : null);
 			if (targetLine !== null && targetLine > cursor + 1) {
 				for (let g = cursor + 1; g < targetLine; g++) {
@@ -210,16 +223,8 @@ export function buildVisible(f: DiffFile): Row[] {
 				cursor = Math.max(cursor, r.newLine);
 			}
 		}
-		const covEnd = start + count - 1;
-		for (let g = cursor + 1; g <= covEnd; g++) {
-			rows.push({
-				kind: "ctx",
-				text: src[g - 1] ?? "",
-				newLine: newSide ? g : null,
-				oldLine: newSide ? null : g,
-			});
-		}
-		rows.push(...absorbClosingContext(f, side, start, count, a.below, h));
+		const belowRows = contextRows(f, side, changeEnd + 1, a.below);
+		rows.push(...belowRows);
 	}
 	return rows;
 }

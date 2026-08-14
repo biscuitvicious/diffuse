@@ -529,14 +529,25 @@ pub fn run_pipeline_with_notes(
                 .collect(),
             notes: notes_out,
             content_runs,
-            rows: crate::visible::build_visible(
-                &f.hunks,
-                f.new_line_count,
-                f.old_line_count,
-                &f.new_content,
-                &f.old_content,
-                f.new_content.is_empty() && f.old_content.is_empty(),
-            )
+            rows: {
+                let mut hunks_with_ctx = f.hunks.clone();
+                for h in &mut hunks_with_ctx {
+                    if h.above_ctx == 0 {
+                        h.above_ctx = 6;
+                    }
+                    if h.below_ctx == 0 {
+                        h.below_ctx = 6;
+                    }
+                }
+                crate::visible::build_visible(
+                    &hunks_with_ctx,
+                    f.new_line_count,
+                    f.old_line_count,
+                    &f.new_content,
+                    &f.old_content,
+                    f.new_content.is_empty() && f.old_content.is_empty(),
+                )
+            }
             .into_iter()
             .map(|r| {
                 let runs =

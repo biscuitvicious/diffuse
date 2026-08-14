@@ -89,8 +89,12 @@ pub fn pass_pairing(
                 is_tail_before_closing(a.new_line, false, old_content, new_content)
                     && fn_of(old_content, r.old_line) == fn_of(new_content, a.new_line)
             });
+        let has_same_hunk_add = pending_adds
+            .iter()
+            .any(|&ai| h.rows[ai].text.trim() == r_trim);
         if !r_trim.is_empty()
             && !tail_candidate
+            && !has_same_hunk_add
             && new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
         {
             continue;
