@@ -362,6 +362,18 @@ pub fn run_pipeline_with_notes(
     notes_db: Option<&NotesDB>,
     repo: Option<&str>,
 ) -> PipelineOutput {
+    run_pipeline_full(diff, contents, None, notes_db, repo)
+}
+
+/// Run the pipeline over a diff + new-file contents + optional old-file
+/// contents + optional notes; produce the wire-contract output.
+pub fn run_pipeline_full(
+    diff: &str,
+    contents: &HashMap<String, String>,
+    old_contents: Option<&HashMap<String, String>>,
+    notes_db: Option<&NotesDB>,
+    repo: Option<&str>,
+) -> PipelineOutput {
     let mut files = parse_diff(diff);
     let mut out_files = Vec::new();
     for f in &mut files {
@@ -373,7 +385,13 @@ pub fn run_pipeline_with_notes(
             .map(|c| c.split('\n').map(String::from).collect())
             .unwrap_or_default();
         f.new_line_count = f.new_content.len();
-        if f.old_content.is_empty() {
+        if let Some(old_map) = old_contents
+            && let Some(oc) = old_map.get(&f.path)
+            && !oc.is_empty()
+        {
+            f.old_content = oc.split('\n').map(String::from).collect();
+            f.old_line_count = f.old_content.len();
+        } else if f.old_content.is_empty() {
             f.old_content = old_content_from_diff(diff, &f.path);
             f.old_line_count = f.old_content.len();
         }
@@ -906,5 +924,32 @@ index 111..222 100644
                 assert_eq!(r1.old_line(), r2.old_line());
             }
         }
+    }
+
+    #[test]
+    fn test_run_pipeline_full_with_old_contents() {
+        let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -250,5 +250,5 @@\n                     origin: Mount::Overlay {\n-                    resolved_layers: unresolved,\n+                    layers: unresolved,\n";
+        let mut contents = HashMap::new();
+        contents.insert(
+            "src/lib.rs".to_string(),
+            "pub fn into_filesystem() {\n    Box::new(OverlayFilesystem {\n        layers: unresolved,\n    })\n}".to_string(),
+        );
+        let mut old_contents = HashMap::new();
+        old_contents.insert(
+            "src/lib.rs".to_string(),
+            "pub fn into_filesystem() {\n    Box::new(OverlayFilesystem {\n        resolved_layers: unresolved,\n    })\n}".to_string(),
+        );
+        let out = run_pipeline_full(diff, &contents, Some(&old_contents), None, None);
+        let mod_row = out.files[0].hunks[0]
+            .rows
+            .iter()
+            .find(|r| r.kind == RowKind::Mod);
+        assert!(
+            mod_row.is_some(),
+            "resolved_layers and layers pair into a Mod row"
+        );
+        let runs = &mod_row.unwrap().runs;
+        let del_run = runs.iter().find(|r| r.kind == RunKind::Del);
+        assert_eq!(del_run.map(|r| r.text.as_str()), Some("resolved_"));
     }
 }

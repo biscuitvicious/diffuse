@@ -101,6 +101,7 @@ pub struct GitFileItem {
 pub struct LoadGitResult {
     pub diff_text: String,
     pub contents: HashMap<String, String>,
+    pub old_contents: HashMap<String, String>,
     pub branch: String,
     pub untracked_skipped: Vec<String>,
 }
@@ -266,13 +267,18 @@ pub fn load_git_repo(
     }
 
     let mut contents: HashMap<String, String> = HashMap::new();
+    let mut old_contents: HashMap<String, String> = HashMap::new();
     for f in &files {
         contents.insert(f.path.clone(), f.new_content.join("\n"));
+        if !f.old_content.is_empty() {
+            old_contents.insert(f.path.clone(), f.old_content.join("\n"));
+        }
     }
 
     Ok(LoadGitResult {
         diff_text,
         contents,
+        old_contents,
         branch,
         untracked_skipped,
     })

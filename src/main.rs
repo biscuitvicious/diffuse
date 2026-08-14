@@ -122,8 +122,13 @@ fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOu
             input.cached,
             context,
         ) {
-            let mut out =
-                run_pipeline_with_notes(&git_res.diff_text, &git_res.contents, db_ref, repo_ref);
+            let mut out = diffuse::bin_pipeline::run_pipeline_full(
+                &git_res.diff_text,
+                &git_res.contents,
+                Some(&git_res.old_contents),
+                db_ref,
+                repo_ref,
+            );
             out.branch = git_res.branch;
             out.untracked_skipped = git_res.untracked_skipped;
             return out;
