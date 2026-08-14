@@ -11,6 +11,7 @@ use diffuse::git::load_git_repo;
 use diffuse::notes::{NotesDB, load_notes};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
 
@@ -131,7 +132,7 @@ fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOu
 fn main() -> io::Result<()> {
     let args = Args::parse();
     let raw = match &args.diff {
-        Some(path) => std::fs::read_to_string(path)?,
+        Some(path) => fs::read_to_string(path)?,
         None => {
             let mut s = String::new();
             io::stdin().read_to_string(&mut s)?;

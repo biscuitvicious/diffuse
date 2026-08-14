@@ -1,6 +1,7 @@
 //! Ports of the syntax-highlighting tests from test/review.test.ts.
 
 use crate::syntax::{LangProfile, classify_tokens, fence_regions, lang_profile, region_at};
+use std::ptr::addr_eq;
 
 // The semantic colors, per the TS test's theme codes.
 fn color_of(tok: &str) -> &str {
@@ -120,7 +121,7 @@ fn region_is(rs: &LangProfile, doc: &[String], want: &str) {
     let resolved = lang_profile(lang).expect("lang resolves to a profile");
     let want_prof = lang_profile(want).unwrap();
     assert!(
-        std::ptr::addr_eq(resolved, want_prof),
+        addr_eq(resolved, want_prof),
         "tag `{lang}` must resolve to the `{want}` profile"
     );
 }
@@ -182,7 +183,7 @@ fn md_fence_with_rust_modifier_opens_rust_region() {
     assert_eq!(regions.len(), 1);
     let lang = regions[0].lang.as_deref().expect("region has a lang");
     assert!(
-        std::ptr::addr_eq(lang_profile(lang).unwrap(), lang_profile("rs").unwrap()),
+        addr_eq(lang_profile(lang).unwrap(), lang_profile("rs").unwrap()),
         "md fence tag `{lang}` must resolve to the rs profile"
     );
 }

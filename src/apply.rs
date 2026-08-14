@@ -16,6 +16,7 @@
 //! is unaffected by a later hunk's net line change.
 
 use crate::parse::{Hunk, Row};
+use std::cmp::Reverse;
 
 /// Apply a single file's unified-diff slice to its old contents.
 ///
@@ -54,7 +55,7 @@ pub fn apply_file_diff(file_diff: &str, old: &[String]) -> Vec<String> {
     }
     // Apply in reverse old-start order so earlier offsets are unaffected by
     // later hunks' net line changes.
-    hunks.sort_by_key(|h| std::cmp::Reverse(h.0));
+    hunks.sort_by_key(|h| Reverse(h.0));
     for (old_start, old_count, body) in hunks {
         let mut new_lines = Vec::new();
         let mut cursor = if old_start == 0 { 0 } else { old_start - 1 };
@@ -109,7 +110,7 @@ pub fn apply_file_diff(file_diff: &str, old: &[String]) -> Vec<String> {
 pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
     let mut out: Vec<String> = old.to_vec();
     let mut sorted_hunks: Vec<&Hunk> = hunks.iter().collect();
-    sorted_hunks.sort_by_key(|h| std::cmp::Reverse(h.old_start as usize));
+    sorted_hunks.sort_by_key(|h| Reverse(h.old_start as usize));
     for h in sorted_hunks {
         let old_start = h.old_start as usize;
         let old_count = h.old_count as usize;

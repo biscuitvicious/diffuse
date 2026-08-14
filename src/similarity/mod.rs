@@ -5,6 +5,7 @@ use crate::lcs::{
     char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
     tokenize_line,
 };
+use std::collections::HashMap;
 
 /// Shared-char ratio between two lines (for the mod pairing). Whitespace
 /// tokens are excluded — an indent-only reflow must not inflate the match
@@ -98,7 +99,7 @@ pub struct LineTokens {
 /// rows, so identical tokens in different lines compare by id.
 #[derive(Default)]
 pub struct TokenInterner {
-    map: std::collections::HashMap<String, u32>,
+    map: HashMap<String, u32>,
     pub ws: Vec<bool>,
     pub alnum: Vec<bool>,
 }

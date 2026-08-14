@@ -9,9 +9,10 @@ use crate::syntax::{
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,14 +47,14 @@ pub struct ReviewNote {
 pub type NotesDB = HashMap<String, HashMap<String, Vec<ReviewNote>>>;
 
 /// Default notes path (`~/.pi/review/notes.json`).
-pub fn default_notes_path() -> std::path::PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        std::path::PathBuf::from(home)
+pub fn default_notes_path() -> PathBuf {
+    if let Some(home) = env::var_os("HOME") {
+        PathBuf::from(home)
             .join(".pi")
             .join("review")
             .join("notes.json")
     } else {
-        std::path::PathBuf::from(".pi/review/notes.json")
+        PathBuf::from(".pi/review/notes.json")
     }
 }
 

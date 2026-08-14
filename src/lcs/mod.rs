@@ -10,6 +10,7 @@
 
 use crate::parse::Spans;
 use regex::Regex;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 /// Slice `s` by char offsets (the port's span convention). The JS
@@ -84,11 +85,11 @@ pub fn token_is_alnum(t: &str) -> bool {
 }
 
 /// LCS backtrace: map of old-token index → matched new-token index.
-pub fn lcs_pairs(a: &[&str], b: &[&str]) -> std::collections::HashMap<usize, usize> {
+pub fn lcs_pairs(a: &[&str], b: &[&str]) -> HashMap<usize, usize> {
     let n = a.len();
     let m = b.len();
     if n == 0 || m == 0 {
-        return std::collections::HashMap::new();
+        return HashMap::new();
     }
     let mut dp = vec![0u32; (n + 1) * (m + 1)];
     let idx = |i: usize, j: usize| i * (m + 1) + j;
@@ -101,7 +102,7 @@ pub fn lcs_pairs(a: &[&str], b: &[&str]) -> std::collections::HashMap<usize, usi
             };
         }
     }
-    let mut pairs = std::collections::HashMap::new();
+    let mut pairs = HashMap::new();
     let mut i = 0;
     let mut j = 0;
     while i < n && j < m {
@@ -141,11 +142,11 @@ pub fn lcs_pairs_ids(
     b: &[u32],
     id_ws: &[bool],
     id_alnum: &[bool],
-) -> std::collections::HashMap<usize, usize> {
+) -> HashMap<usize, usize> {
     let n = a.len();
     let m = b.len();
     if n == 0 || m == 0 {
-        return std::collections::HashMap::new();
+        return HashMap::new();
     }
     let mut dp = vec![0u32; (n + 1) * (m + 1)];
     for i in (0..n).rev() {
@@ -160,7 +161,7 @@ pub fn lcs_pairs_ids(
             };
         }
     }
-    let mut pairs = std::collections::HashMap::new();
+    let mut pairs = HashMap::new();
     let mut i = 0;
     let mut j = 0;
     while i < n && j < m {
@@ -276,11 +277,7 @@ pub fn lcs_matched_chars_ids(
 }
 
 /// Char-offset spans of the UNMATCHED (changed) tokens in `toks`.
-pub fn spans_from(
-    text: &str,
-    toks: &[&str],
-    matched: &std::collections::HashSet<usize>,
-) -> Vec<(usize, usize)> {
+pub fn spans_from(text: &str, toks: &[&str], matched: &HashSet<usize>) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut pos = 0usize;
     let mut run_start: Option<usize> = None;
@@ -319,8 +316,8 @@ pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
         return WordSpans::default();
     }
     let pairs = lcs_pairs(&ot, &nt);
-    let mut matched_old = std::collections::HashSet::new();
-    let mut matched_new = std::collections::HashSet::new();
+    let mut matched_old = HashSet::new();
+    let mut matched_new = HashSet::new();
     for (o, n) in &pairs {
         matched_old.insert(*o);
         matched_new.insert(*n);

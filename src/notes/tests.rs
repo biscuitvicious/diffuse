@@ -1,4 +1,7 @@
 use super::*;
+use std::env;
+use std::fs;
+use std::process;
 
 #[test]
 fn test_notes_add_and_query() {
@@ -58,7 +61,7 @@ fn test_notes_remove() {
 
 #[test]
 fn test_notes_persistence() {
-    let file = std::env::temp_dir().join(format!("diffuse_test_notes_{}.json", std::process::id()));
+    let file = env::temp_dir().join(format!("diffuse_test_notes_{}.json", process::id()));
 
     let mut db = NotesDB::new();
     add_note(
@@ -83,7 +86,7 @@ fn test_notes_persistence() {
     assert_eq!(loaded_notes.len(), 1);
     assert_eq!(loaded_notes[0].text, "**important**");
 
-    let _ = std::fs::remove_file(file);
+    let _ = fs::remove_file(file);
 }
 
 #[test]

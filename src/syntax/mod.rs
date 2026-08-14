@@ -245,7 +245,7 @@ pub fn token_re_for(profile: &LangProfile) -> Regex {
     let key = (u8::from(profile.hash_comment))
         | (u8::from(profile.line_comment) << 1)
         | (u8::from(profile.block_comment) << 2);
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     {
         let guard = cache.lock().unwrap();
         if let Some(re) = guard.get(&key) {

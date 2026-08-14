@@ -12,6 +12,7 @@ use crate::parse::{AddLine, DelLine, Hunk, Row, Spans};
 use crate::scope::{fn_of, is_tail_before_closing};
 use crate::similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens};
 use regex::Regex;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
@@ -595,11 +596,9 @@ pub fn pass_sort_ordered_walk(
         keyed.push((a, (h.rows[ai].new_line().unwrap_or(0), 2.0)));
     }
     keyed.sort_by(|a, b| {
-        a.1.0.cmp(&b.1.0).then(
-            a.1.1
-                .partial_cmp(&b.1.1)
-                .unwrap_or(std::cmp::Ordering::Equal),
-        )
+        a.1.0
+            .cmp(&b.1.0)
+            .then(a.1.1.partial_cmp(&b.1.1).unwrap_or(Ordering::Equal))
     });
     keyed.into_iter().map(|(r, _)| r).collect()
 }

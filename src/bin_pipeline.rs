@@ -18,6 +18,7 @@ use crate::syntax::{
 };
 use crate::visible::{Side as VisibleSide, build_visible};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A row in the wire-contract output: the collapse row + its merged runs.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -354,7 +355,7 @@ fn slice_classified_tokens(
 /// produce the wire-contract output.
 pub fn run_pipeline_with_notes(
     diff: &str,
-    contents: &std::collections::HashMap<String, String>,
+    contents: &HashMap<String, String>,
     notes_db: Option<&NotesDB>,
     repo: Option<&str>,
 ) -> PipelineOutput {
@@ -573,10 +574,7 @@ pub fn run_pipeline_with_notes(
 
 /// Run the pipeline over a diff + the new-file contents; produce the
 /// wire-contract output.
-pub fn run_pipeline(
-    diff: &str,
-    contents: &std::collections::HashMap<String, String>,
-) -> PipelineOutput {
+pub fn run_pipeline(diff: &str, contents: &HashMap<String, String>) -> PipelineOutput {
     run_pipeline_with_notes(diff, contents, None, None)
 }
 
@@ -773,7 +771,7 @@ mod tests {
     #[test]
     fn test_mod_comment_row_preserves_comment_color_after_subword_fill() {
         let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,1 +1,1 @@\n-// The lowest layer the lower-walk may descend to: a directory found with\n+// The deepest layer the below-walk may descend to: a directory found with\n";
-        let mut contents = std::collections::HashMap::new();
+        let mut contents = HashMap::new();
         contents.insert(
             "test.rs".to_string(),
             "// The deepest layer the below-walk may descend to: a directory found with\n"
@@ -859,7 +857,7 @@ index 111..222 100644
 +new line one
 +new line two
 ";
-        let mut contents = std::collections::HashMap::new();
+        let mut contents = HashMap::new();
         contents.insert(
             "src/a.rs".to_string(),
             "new line one\nnew line two".to_string(),

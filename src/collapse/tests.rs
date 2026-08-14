@@ -5,6 +5,7 @@
 use crate::collapse::collapse_hunk_rows;
 use crate::moves::mark_moves;
 use crate::parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind};
+use std::time::Instant;
 
 fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
     match kind {
@@ -666,7 +667,7 @@ fn whole_file_add_no_oom() {
         })
         .collect();
     let h = hunk(adds);
-    let t = std::time::Instant::now();
+    let t = Instant::now();
     let c = collapse_hunk_rows(&h, true, None, None);
     assert_eq!(c.len(), 5000, "all adds survive unpaired");
     assert!(
