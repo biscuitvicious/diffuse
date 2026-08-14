@@ -206,7 +206,11 @@ export function renderComponentFrame(
 }
 
 export function displayText(r: Row, colOffset: number, wordDiff: boolean): string {
-	if ((r.kind !== "mod" && !r.moved) || r.delText === undefined || !wordDiff) {
+	const useMerged =
+		(r.kind === "mod" || r.moved || (r.kind === "add" && r.spans !== undefined)) &&
+		r.delText !== undefined &&
+		wordDiff;
+	if (!useMerged) {
 		return colOffset > 0 ? r.text.slice(colOffset) : r.text;
 	}
 	const out = (r.runs ?? []).map((run) => run.text).join("");
@@ -392,10 +396,11 @@ export function styleTokens(
 	const prefixBg = selected && !isCtx ? lineBg : "";
 	const wordBg = selected ? `\x1b[48;5;${sMod.fillCursor}m` : `\x1b[48;5;${sMod.fill}m`;
 	const delBg = `\x1b[48;5;${sDel.tint}m`;
+	const hasSubwords = tokens.some((t) => t.kind === "add") && tokens.some((t) => t.kind !== "add");
 	const baseBg = (kind: string | undefined): string => {
 		if (isCtx && !selected) return "";
 		if (kind === "del") return delBg;
-		if (kind === "add" && isModRow && !isPureDelMod) return wordBg;
+		if (kind === "add" && (isModRow || hasSubwords) && !isPureDelMod) return wordBg;
 		return lineBg;
 	};
 	const text = displayText(r, colOffset, wordDiff);

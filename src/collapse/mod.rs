@@ -6,9 +6,9 @@
 //! 3. `pass_filter_reflows`: Filtering verbatim reflow dels and adds.
 //! 4. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row stream.
 
-use crate::lcs::{char_slice, word_spans};
+use crate::lcs::{char_slice, tokenize_line, word_spans};
 use crate::merge::wholesale_pair;
-use crate::parse::{Hunk, Row, RowKind};
+use crate::parse::{Hunk, Row, RowKind, Spans};
 use crate::similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens};
 use crate::tail::{fn_of, is_tail_before_closing};
 use std::collections::{HashMap, HashSet};
@@ -211,6 +211,7 @@ pub struct AssembledMods {
     pub out: Vec<Row>,
     pub kept_dels: Vec<usize>,
     pub pure_adds: Vec<usize>,
+    pub add_spans: HashMap<usize, (Spans, String)>,
 }
 
 /// Context holding all pairing maps and sets for assembly.
@@ -226,6 +227,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
     let mut out: Vec<Row> = Vec::new();
     let mut kept_dels: Vec<usize> = Vec::new();
     let mut pure_adds: Vec<usize> = Vec::new();
+    let mut add_spans: HashMap<usize, (Spans, String)> = HashMap::new();
 
     for (ri, r) in h.rows.iter().enumerate() {
         if r.kind == RowKind::Add {
@@ -238,6 +240,92 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
             let add = &h.rows[add_ri];
             let del_text = r.text.clone();
             let mut spans = word_spans(&del_text, &add.text);
+
+            let mut next_adds = Vec::new();
+            let mut k = add_ri + 1;
+            while k < h.rows.len()
+                && h.rows[k].kind == RowKind::Add
+                && !ctx.pair_of.contains_key(&k)
+            {
+                next_adds.push(k);
+                k += 1;
+            }
+
+            if !next_adds.is_empty() {
+                let next_adds_text = next_adds
+                    .iter()
+                    .map(|&idx| h.rows[idx].text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+
+                spans.del.retain(|&(ds, de)| {
+                    let seg = char_slice(&del_text, ds, de);
+                    let tokens: Vec<&str> = tokenize_line(seg)
+                        .into_iter()
+                        .filter(|t| !t.trim().is_empty())
+                        .collect();
+                    let has_alpha = tokens.iter().any(|t| t.chars().any(char::is_alphanumeric));
+                    if has_alpha {
+                        let moved = tokens.iter().any(|t| next_adds_text.contains(t));
+                        !moved
+                    } else {
+                        true // Keep trailing delimiters like "{" struck on the mod line!
+                    }
+                });
+
+                for &nxt_i in &next_adds {
+                    let add_nxt = &h.rows[nxt_i];
+                    let mut donor_spans = word_spans(&del_text, &add_nxt.text);
+                    let tok_count = tokenize_line(&add_nxt.text)
+                        .into_iter()
+                        .filter(|t| !t.trim().is_empty())
+                        .count();
+                    if !donor_spans.add.is_empty() && donor_spans.add.len() < tok_count {
+                        let other_adds_text = format!(
+                            "{}\n{}",
+                            add.text,
+                            next_adds
+                                .iter()
+                                .filter(|&&i| i != nxt_i)
+                                .map(|&idx| h.rows[idx].text.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        );
+                        donor_spans.del.retain(|&(ds, de)| {
+                            let seg = char_slice(&del_text, ds, de);
+                            let tokens: Vec<&str> = tokenize_line(seg)
+                                .into_iter()
+                                .filter(|t| !t.trim().is_empty())
+                                .collect();
+                            let in_other = tokens.iter().any(|t| other_adds_text.contains(t));
+                            !in_other
+                        });
+
+                        let indent_len = add_nxt
+                            .text
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .count();
+                        donor_spans.add = donor_spans
+                            .add
+                            .into_iter()
+                            .map(|(as_, ae)| {
+                                let start = as_;
+                                let mut end = ae;
+                                let chars: Vec<char> = add_nxt.text.chars().collect();
+                                if as_ <= indent_len && end < chars.len() && chars[end] == ' ' {
+                                    end += 1;
+                                }
+                                (start, end)
+                            })
+                            .filter(|(s, e)| s < e)
+                            .collect();
+
+                        add_spans.insert(nxt_i, (donor_spans, del_text.clone()));
+                    }
+                }
+            }
+
             let run = ctx.run_of.get(&ri);
             let reflows: Vec<String> = match run {
                 Some(run) if run.len() > 1 => run
@@ -275,6 +363,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
         out,
         kept_dels,
         pure_adds,
+        add_spans,
     }
 }
 
@@ -361,6 +450,7 @@ pub fn pass_sort_ordered_walk(
     out: Vec<Row>,
     meaningful_dels: &[usize],
     kept_adds: &[usize],
+    add_spans: &HashMap<usize, (Spans, String)>,
 ) -> Vec<Row> {
     let mut anchor_of: HashMap<usize, usize> = HashMap::new();
     for &di in meaningful_dels {
@@ -402,8 +492,12 @@ pub fn pass_sort_ordered_walk(
         keyed.push((h.rows[di].clone(), key));
     }
     for &ai in kept_adds {
-        let a = &h.rows[ai];
-        keyed.push((a.clone(), (a.new_line.unwrap_or(0), 2.0)));
+        let mut a = h.rows[ai].clone();
+        if let Some((spans, del_text)) = add_spans.get(&ai) {
+            a.spans = Some(spans.clone());
+            a.del_text = Some(del_text.clone());
+        }
+        keyed.push((a, (h.rows[ai].new_line.unwrap_or(0), 2.0)));
     }
     keyed.sort_by(|a, b| {
         a.1.0.cmp(&b.1.0).then(
@@ -443,7 +537,14 @@ pub fn collapse_hunk_rows(
     let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &paired_dels);
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
-    pass_sort_ordered_walk(h, hash_comment, p2.out, &p3.meaningful_dels, &p3.kept_adds)
+    pass_sort_ordered_walk(
+        h,
+        hash_comment,
+        p2.out,
+        &p3.meaningful_dels,
+        &p3.kept_adds,
+        &p2.add_spans,
+    )
 }
 
 fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {

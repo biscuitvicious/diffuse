@@ -378,6 +378,16 @@ fn merge_whitespace_gaps(text: &str, spans: Vec<(usize, usize)>) -> Vec<(usize, 
             }
         }
     }
+
+    let total_chars = char_len(text);
+    for span in &mut merged {
+        if span.1 == total_chars && span.0 > 0 {
+            let chars: Vec<char> = text.chars().collect();
+            if chars[span.0 - 1] == ' ' && (span.0 == 1 || !chars[span.0 - 2].is_whitespace()) {
+                span.0 -= 1;
+            }
+        }
+    }
     merged
 }
 

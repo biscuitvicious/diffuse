@@ -170,8 +170,9 @@ pub fn colored_runs(
     // The renderer's token source (the wire runs): a mod row, or a moved
     // row whose delText differs from its text, merges.
     let use_merged = (r.kind == RowKind::Mod
-        || (r.moved && r.del_text.as_deref() != Some(r.text.as_str())))
-        && r.del_text.is_some();
+        || (r.moved && r.del_text.as_deref() != Some(r.text.as_str()))
+        || (r.kind == RowKind::Add && r.spans.is_some()))
+        && (r.del_text.is_some() || r.kind == RowKind::Add);
     if !use_merged {
         if r.kind == RowKind::Add || r.kind == RowKind::Ctx {
             // Add AND ctx rows carry the engine's classified runs — the
@@ -239,6 +240,25 @@ pub fn colored_runs(
                 }
             }
         }
+    }
+    coalesce_output_runs(out)
+}
+
+fn coalesce_output_runs(runs: Vec<OutputRun>) -> Vec<OutputRun> {
+    let mut out: Vec<OutputRun> = Vec::new();
+    for run in runs {
+        if run.text.is_empty() {
+            continue;
+        }
+        if let Some(last) = out.last_mut()
+            && last.kind == run.kind
+            && last.color == run.color
+            && last.sgr == run.sgr
+        {
+            last.text.push_str(&run.text);
+            continue;
+        }
+        out.push(run);
     }
     out
 }

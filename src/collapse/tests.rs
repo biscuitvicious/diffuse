@@ -678,6 +678,60 @@ fn single_del_pairs_1_to_1_with_best_matching_add() {
     );
 }
 
+#[test]
+fn test_multiline_expansion_subword_distribution() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "                if k < floor {",
+            None,
+            Some(1040),
+        ),
+        row(
+            RowKind::Add,
+            "                if let Some(floor) = floor",
+            Some(1082),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "                    && k > floor",
+            Some(1083),
+            None,
+        ),
+        row(RowKind::Add, "                {", Some(1084), None),
+    ]);
+    let c = collapse_hunk_rows(&h, false, None, None);
+    assert_eq!(c.len(), 3);
+    assert_eq!(c[0].kind, RowKind::Mod);
+    assert_eq!(c[0].new_line, Some(1082));
+    assert_eq!(c[0].text, "                if let Some(floor) = floor");
+    let spans1 = c[0].spans.as_ref().expect("spans1");
+    assert_eq!(
+        spans1.del,
+        vec![(28, 30)],
+        "trailing space and brace ' {{' are struck on line 1082"
+    );
+
+    assert_eq!(c[1].kind, RowKind::Add);
+    assert_eq!(c[1].new_line, Some(1083));
+    assert_eq!(c[1].text, "                    && k > floor");
+    let spans2 = c[1].spans.as_ref().expect("spans2");
+    assert_eq!(
+        spans2.del,
+        vec![(21, 22)],
+        "< is struck on line 1083 preceding >"
+    );
+    assert_eq!(
+        spans2.add,
+        vec![(0, 23), (25, 26)],
+        "add2 highlights full leading indentation prefix && and >"
+    );
+
+    assert_eq!(c[2].kind, RowKind::Add);
+    assert_eq!(c[2].new_line, Some(1084));
+}
+
 // Kept-del anchoring: a genuinely removed line renders right after the mod
 // whose old position preceded it, never interrupting the adds.
 #[test]

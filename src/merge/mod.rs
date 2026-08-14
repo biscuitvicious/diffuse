@@ -448,7 +448,25 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
     if pos < char_len_of(&r.text) {
         emit_range(&mut runs, pos, char_len_of(&r.text));
     }
-    runs
+    coalesce_runs(runs)
+}
+
+/// Compress adjacent runs of the same kind into a single run with joined text.
+pub fn coalesce_runs(runs: Vec<Run>) -> Vec<Run> {
+    let mut out: Vec<Run> = Vec::new();
+    for run in runs {
+        if run.text.is_empty() {
+            continue;
+        }
+        if let Some(last) = out.last_mut()
+            && last.kind == run.kind
+        {
+            last.text.push_str(&run.text);
+            continue;
+        }
+        out.push(run);
+    }
+    out
 }
 
 fn char_len_of(s: &str) -> usize {
@@ -458,7 +476,11 @@ fn char_len_of(s: &str) -> usize {
 /// The merged display string of a row (the runs joined; a wholesale mod is
 /// the whole-old + whole-new pair).
 pub fn display_text(r: &Row) -> String {
-    if (r.kind != crate::parse::RowKind::Mod && !r.moved) || r.del_text.is_none() {
+    let use_merged = (r.kind == crate::parse::RowKind::Mod
+        || r.moved
+        || (r.kind == crate::parse::RowKind::Add && r.spans.is_some()))
+        && r.del_text.is_some();
+    if !use_merged {
         return r.text.clone();
     }
     if is_wholesale_mod(r) {
