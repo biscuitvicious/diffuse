@@ -637,6 +637,62 @@ fn test_moved_line_duplicate_in_added_block_stays_add() {
 }
 
 #[test]
+fn test_fn_signature_pairs_with_same_fn_name() {
+    let old_content: Vec<String> = vec![
+        "    pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {".into(),
+        "        None".into(),
+        "    }".into(),
+    ];
+    let new_content: Vec<String> = vec![
+        "    pub fn epoch(&self) -> u64 {".into(),
+        "        0".into(),
+        "    }".into(),
+        "".into(),
+        "    pub fn lookup(&self, key: &CacheKey, epoch: u64) -> Option<ResolutionResult> {".into(),
+        "        None".into(),
+        "    }".into(),
+    ];
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "    pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {",
+            None,
+            Some(1),
+        ),
+        row(
+            RowKind::Add,
+            "    pub fn epoch(&self) -> u64 {",
+            Some(1),
+            None,
+        ),
+        row(RowKind::Add, "        0", Some(2), None),
+        row(RowKind::Add, "    }", Some(3), None),
+        row(RowKind::Add, "", Some(4), None),
+        row(
+            RowKind::Add,
+            "    pub fn lookup(&self, key: &CacheKey, epoch: u64) -> Option<ResolutionResult> {",
+            Some(5),
+            None,
+        ),
+    ]);
+    let c = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
+    let mod_row = c
+        .iter()
+        .find(|r| r.kind() == RowKind::Mod)
+        .expect("mod row");
+    assert_eq!(
+        mod_row.new_line(),
+        Some(5),
+        "old lookup pairs with new lookup signature, not epoch"
+    );
+    let epoch_row = c
+        .iter()
+        .find(|r| r.new_line() == Some(1))
+        .expect("epoch row");
+    assert_eq!(epoch_row.kind(), RowKind::Add, "epoch is an added fn");
+}
+
+#[test]
 fn markdown_table_1_to_1_pairing() {
     let h = hunk(vec![
         row(

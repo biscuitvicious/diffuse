@@ -42,17 +42,27 @@ fn fn_of_finds_the_nearest_preceding_fn() {
         "    pub fn insert(&self, key: &CacheKey) {".into(),
     ];
     assert_eq!(
+        fn_of(Some(&content), Some(1)),
+        Some("lookup".to_string()),
+        "the signature itself belongs to lookup"
+    );
+    assert_eq!(
         fn_of(Some(&content), Some(2)),
+        Some("lookup".to_string()),
+        "the body line belongs to lookup"
+    );
+    assert_eq!(
+        fn_of(Some(&content), Some(3)),
         Some("lookup".to_string()),
         "the tail belongs to lookup"
     );
     assert_eq!(
-        fn_of(Some(&content), Some(5)),
-        Some("lookup".to_string()),
-        "the nearest preceding fn, not the one at the line itself"
+        fn_of(Some(&content), Some(6)),
+        Some("insert".to_string()),
+        "the next signature belongs to insert"
     );
     assert_eq!(fn_of(Some(&content), Some(0)), None);
-    assert_eq!(fn_of(Some(&content), Some(1)), None);
+    assert_eq!(fn_of(Some(&content), Some(5)), None);
     assert_eq!(fn_of(None, Some(2)), None);
     assert_eq!(fn_of(Some(&content), None), None);
     let bare: Vec<String> = vec!["let x = 1;".into()];

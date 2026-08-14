@@ -43,19 +43,21 @@ pub fn fn_of(content: Option<&[String]>, line: Option<u32>) -> Option<String> {
     let re = RE.get_or_init(|| {
         Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)").expect("fn regex")
     });
-    for i in (0..line.saturating_sub(1)).rev() {
+    for i in (0..line).rev() {
         let raw = content.get(i).map_or("", |s| s.as_str());
         let l = raw.trim();
-        if raw.starts_with('}')
-            || l.starts_with("struct ")
-            || l.starts_with("pub struct ")
-            || l.starts_with("pub(super) struct ")
-            || l.starts_with("enum ")
-            || l.starts_with("pub enum ")
-            || l.starts_with("impl ")
-            || l.starts_with("pub impl ")
-            || l.starts_with("type ")
-            || l.starts_with("pub type ")
+        if Some(i) != line.checked_sub(1)
+            && (l == "}"
+                || raw.starts_with('}')
+                || l.starts_with("struct ")
+                || l.starts_with("pub struct ")
+                || l.starts_with("pub(super) struct ")
+                || l.starts_with("enum ")
+                || l.starts_with("pub enum ")
+                || l.starts_with("impl ")
+                || l.starts_with("pub impl ")
+                || l.starts_with("type ")
+                || l.starts_with("pub type "))
         {
             return None;
         }
