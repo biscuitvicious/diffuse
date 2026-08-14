@@ -45,5 +45,16 @@ pub struct FileCounts {
     pub moved: usize,
 }
 
+impl FileCounts {
+    pub fn reverse(&self) -> Self {
+        FileCounts {
+            adds: self.dels,
+            dels: self.adds,
+            mods: self.mods,
+            moved: self.moved,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

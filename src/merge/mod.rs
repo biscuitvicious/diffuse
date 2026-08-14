@@ -8,10 +8,19 @@ use crate::parse::{Row, Spans};
 use std::collections::{HashMap, HashSet};
 
 /// A merged run of a mod row's display.
-#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Run {
     pub kind: RunKind,
     pub text: String,
+}
+
+impl Run {
+    pub fn reverse(&self) -> Self {
+        Run {
+            kind: self.kind.reverse(),
+            text: self.text.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
@@ -21,6 +30,17 @@ pub enum RunKind {
     Del,
     Add,
     Ctx,
+}
+
+impl RunKind {
+    pub fn reverse(&self) -> RunKind {
+        match self {
+            RunKind::Add => RunKind::Del,
+            RunKind::Del => RunKind::Add,
+            RunKind::Common => RunKind::Common,
+            RunKind::Ctx => RunKind::Ctx,
+        }
+    }
 }
 
 /// The Unicode White_Space property plus the zero-width space — the

@@ -14,7 +14,7 @@ use crate::syntax::{
 use serde::{Deserialize, Serialize};
 
 /// A row in the wire-contract output: the collapse row + its merged runs.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputRow {
     pub kind: RowKind,
@@ -39,8 +39,46 @@ pub struct OutputRow {
     pub tail: Vec<OutputTailRow>,
 }
 
+impl OutputRow {
+    pub fn reverse(&self) -> Self {
+        OutputRow {
+            kind: self.kind.reverse(),
+            text: self.del_text.clone().unwrap_or_else(|| self.text.clone()),
+            new_line: self.old_line,
+            old_line: self.new_line,
+            del_text: if self.kind == RowKind::Mod || self.del_text.is_some() {
+                Some(self.text.clone())
+            } else {
+                None
+            },
+            spans: self.spans.reverse(),
+            runs: self.runs.iter().map(|r| r.reverse()).collect(),
+            wholesale: self.wholesale,
+            moved: self.moved,
+            tail: self.tail.iter().map(|t| t.reverse()).collect(),
+        }
+    }
+
+    pub fn reconstruct(&self) -> crate::parse::Row {
+        crate::parse::Row {
+            kind: self.kind,
+            text: self.text.clone(),
+            new_line: self.new_line,
+            old_line: self.old_line,
+            spans: if self.spans.is_empty() {
+                None
+            } else {
+                Some(self.spans.clone())
+            },
+            moved: self.moved,
+            del_text: self.del_text.clone(),
+            tail: self.tail.iter().map(|t| t.reconstruct()).collect(),
+        }
+    }
+}
+
 /// One absorbed line of a mod's tail.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputTailRow {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,7 +96,32 @@ pub struct OutputTailRow {
     pub runs: Vec<OutputRun>,
 }
 
-#[derive(Serialize, Deserialize)]
+impl OutputTailRow {
+    pub fn reverse(&self) -> Self {
+        OutputTailRow {
+            new_line: self.old_line,
+            old_line: self.new_line,
+            text: self.text.clone(),
+            moved: self.moved,
+            runs: self.runs.iter().map(|r| r.reverse()).collect(),
+        }
+    }
+
+    pub fn reconstruct(&self) -> crate::parse::Row {
+        crate::parse::Row {
+            kind: RowKind::Ctx,
+            text: self.text.clone(),
+            new_line: self.new_line,
+            old_line: self.old_line,
+            spans: None,
+            moved: self.moved,
+            del_text: None,
+            tail: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputRun {
     pub kind: RunKind,
@@ -71,11 +134,22 @@ pub struct OutputRun {
     pub text: String,
 }
 
+impl OutputRun {
+    pub fn reverse(&self) -> Self {
+        OutputRun {
+            kind: self.kind.reverse(),
+            color: self.color.clone(),
+            sgr: self.sgr,
+            text: self.text.clone(),
+        }
+    }
+}
+
 /// A fenced syntax region in a file: the span of lines whose content
 /// classifies with a different language than the file's. `lang` empty =
 /// the plain "code" style. The delimiter lines (start-1 / end+1) render
 /// in the file's default, muted.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputFence {
     pub start: u32,
@@ -512,7 +586,7 @@ pub fn run_pipeline(
     run_pipeline_with_notes(diff, contents, None, None)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputNote {
     pub id: String,
@@ -525,7 +599,22 @@ pub struct OutputNote {
     pub runs: Vec<OutputRun>,
 }
 
-#[derive(Serialize, Deserialize)]
+impl OutputNote {
+    pub fn reverse(&self) -> Self {
+        OutputNote {
+            id: self.id.clone(),
+            file: self.file.clone(),
+            side: self.side.reverse(),
+            start: self.start,
+            end: self.end,
+            text: self.text.clone(),
+            created_at: self.created_at,
+            runs: self.runs.iter().map(|r| r.reverse()).collect(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputHunk {
     pub old_start: u32,
@@ -535,7 +624,32 @@ pub struct OutputHunk {
     pub rows: Vec<OutputRow>,
 }
 
-#[derive(Serialize, Deserialize)]
+impl OutputHunk {
+    pub fn reverse(&self) -> Self {
+        OutputHunk {
+            old_start: self.new_start,
+            old_count: self.new_count,
+            new_start: self.old_start,
+            new_count: self.old_count,
+            rows: self.rows.iter().map(|r| r.reverse()).collect(),
+        }
+    }
+
+    pub fn reconstruct(&self) -> crate::parse::Hunk {
+        crate::parse::Hunk {
+            old_start: self.old_start,
+            old_count: self.old_count,
+            new_start: self.new_start,
+            new_count: self.new_count,
+            section: String::new(),
+            rows: self.rows.iter().map(|r| r.reconstruct()).collect(),
+            above_ctx: 0,
+            below_ctx: 0,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputFile {
     pub path: String,
@@ -562,7 +676,56 @@ pub struct OutputFile {
     pub rows: Vec<OutputRow>,
 }
 
-#[derive(Serialize, Deserialize)]
+impl OutputFile {
+    pub fn reverse(&self) -> Self {
+        let status = match self.status.as_str() {
+            "added" => "deleted",
+            "deleted" => "added",
+            s => s,
+        };
+        OutputFile {
+            path: self.path.clone(),
+            status: status.to_string(),
+            new_line_count: self.old_line_count,
+            old_line_count: self.new_line_count,
+            new_content: self.old_content.clone(),
+            old_content: self.new_content.clone(),
+            hunks: self.hunks.iter().map(|h| h.reverse()).collect(),
+            counts: self.counts.reverse(),
+            fences: self.fences.clone(),
+            notes: self.notes.iter().map(|n| n.reverse()).collect(),
+            content_runs: self
+                .content_runs
+                .iter()
+                .map(|runs| runs.iter().map(|r| r.reverse()).collect())
+                .collect(),
+            rows: self.rows.iter().map(|r| r.reverse()).collect(),
+        }
+    }
+
+    pub fn reconstruct(&self) -> crate::parse::DiffFile {
+        let status = match self.status.as_str() {
+            "added" => crate::parse::FileStatus::Added,
+            "deleted" => crate::parse::FileStatus::Deleted,
+            "renamed" => crate::parse::FileStatus::Renamed,
+            "untracked" => crate::parse::FileStatus::Untracked,
+            _ => crate::parse::FileStatus::Modified,
+        };
+        crate::parse::DiffFile {
+            path: self.path.clone(),
+            old_path: None,
+            status,
+            new_line_count: self.new_line_count,
+            old_line_count: self.old_line_count,
+            new_content: self.new_content.clone(),
+            old_content: self.old_content.clone(),
+            hunks: self.hunks.iter().map(|h| h.reconstruct()).collect(),
+            no_content: self.new_content.is_empty() && self.old_content.is_empty(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PipelineOutput {
     pub files: Vec<OutputFile>,
@@ -570,6 +733,20 @@ pub struct PipelineOutput {
     pub branch: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub untracked_skipped: Vec<String>,
+}
+
+impl PipelineOutput {
+    pub fn reverse(&self) -> Self {
+        PipelineOutput {
+            files: self.files.iter().map(|f| f.reverse()).collect(),
+            branch: self.branch.clone(),
+            untracked_skipped: self.untracked_skipped.clone(),
+        }
+    }
+
+    pub fn reconstruct(&self) -> Vec<crate::parse::DiffFile> {
+        self.files.iter().map(|f| f.reconstruct()).collect()
+    }
 }
 
 #[cfg(test)]
@@ -680,5 +857,57 @@ mod tests {
             ],
             "1079: layer's markers adds at start, upper->layer pairs, whiteouts strikes at end of carries"
         );
+    }
+
+    #[test]
+    fn test_wire_reconstruct_and_reverse() {
+        let diff = "diff --git a/src/a.rs b/src/a.rs
+index 111..222 100644
+--- a/src/a.rs
++++ b/src/a.rs
+@@ -10,1 +10,2 @@ fn old() {
+-old line one
++new line one
++new line two
+";
+        let mut contents = std::collections::HashMap::new();
+        contents.insert(
+            "src/a.rs".to_string(),
+            "new line one\nnew line two".to_string(),
+        );
+
+        let wire = run_pipeline(diff, &contents);
+        let reconstructed_files = wire.reconstruct();
+        assert_eq!(reconstructed_files.len(), 1);
+        assert_eq!(reconstructed_files[0].path, "src/a.rs");
+
+        // Involution on wire output: wire.reverse().reverse() == wire
+        let wire_rev = wire.reverse();
+        assert_eq!(wire_rev.reverse(), wire);
+
+        // Reconstruct from reverse wire matches reversed AST files
+        let rev_files_from_wire = wire_rev.reconstruct();
+        let rev_files_direct: Vec<crate::parse::DiffFile> =
+            reconstructed_files.iter().map(|f| f.reverse()).collect();
+        assert_eq!(rev_files_from_wire[0].path, rev_files_direct[0].path);
+        assert_eq!(
+            rev_files_from_wire[0].hunks.len(),
+            rev_files_direct[0].hunks.len()
+        );
+        for (h1, h2) in rev_files_from_wire[0]
+            .hunks
+            .iter()
+            .zip(rev_files_direct[0].hunks.iter())
+        {
+            assert_eq!(h1.old_start, h2.old_start);
+            assert_eq!(h1.new_start, h2.new_start);
+            assert_eq!(h1.rows.len(), h2.rows.len());
+            for (r1, r2) in h1.rows.iter().zip(h2.rows.iter()) {
+                assert_eq!(r1.kind, r2.kind);
+                assert_eq!(r1.text, r2.text);
+                assert_eq!(r1.new_line, r2.new_line);
+                assert_eq!(r1.old_line, r2.old_line);
+            }
+        }
     }
 }

@@ -20,6 +20,15 @@ pub enum Side {
     Old,
 }
 
+impl Side {
+    pub fn reverse(&self) -> Side {
+        match self {
+            Side::New => Side::Old,
+            Side::Old => Side::New,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewNote {
