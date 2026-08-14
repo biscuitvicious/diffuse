@@ -197,3 +197,18 @@ fn test_add_span_covers_let_some_floor_equals() {
         "del spans cover 'k < ' (including trailing space) and ' {{'"
     );
 }
+
+#[test]
+fn test_recursive_patience_anchoring() {
+    let old_text = "fn transform(user: User, profile: Profile, db: Database) -> Result<Output>";
+    let new_text = "pub async fn transform(ctx: Context, user: User, metadata: Metadata, profile: Profile, db: Database) -> Result<Output, Error>";
+    let ot = tokenize_line(old_text);
+    let nt = tokenize_line(new_text);
+    let pairs = lcs_pairs(&ot, &nt);
+    assert!(!pairs.is_empty());
+    let ws = word_spans(old_text, new_text);
+    assert!(
+        ws.add.len() >= 3,
+        "isolated adds across multiple sub-intervals"
+    );
+}

@@ -1247,3 +1247,59 @@ fn test_closing_brace_released_from_add_block() {
     assert_eq!(collapsed[collapsed.len() - 2].text(), "    }");
     assert_eq!(collapsed[collapsed.len() - 2].new_line(), Some(1066));
 }
+
+#[test]
+fn test_hunk_patience_anchoring_prevents_cross_block_mispairing() {
+    let h = hunk(vec![
+        // Function alpha
+        row(RowKind::Del, "pub fn alpha() -> u32 {", None, Some(10)),
+        row(RowKind::Del, "    let val = 42;", None, Some(11)),
+        row(RowKind::Del, "    val", None, Some(12)),
+        row(RowKind::Del, "}", None, Some(13)),
+        // Function beta
+        row(RowKind::Del, "pub fn beta() -> u32 {", None, Some(20)),
+        row(RowKind::Del, "    let val = 99;", None, Some(21)),
+        row(RowKind::Del, "    val", None, Some(22)),
+        row(RowKind::Del, "}", None, Some(23)),
+        // New adds
+        row(RowKind::Add, "pub fn alpha() -> u64 {", Some(10), None),
+        row(RowKind::Add, "    let val = 4200;", Some(11), None),
+        row(RowKind::Add, "    val", Some(12), None),
+        row(RowKind::Add, "}", Some(13), None),
+        row(RowKind::Add, "pub fn beta() -> u64 {", Some(20), None),
+        row(RowKind::Add, "    let val = 9900;", Some(21), None),
+        row(RowKind::Add, "    val", Some(22), None),
+        row(RowKind::Add, "}", Some(23), None),
+    ]);
+
+    let collapsed = collapse_hunk_rows(&h, false, None, None);
+    let alpha_head = collapsed
+        .iter()
+        .find(|r| r.text().contains("pub fn alpha()"))
+        .expect("alpha head");
+    assert_eq!(alpha_head.kind(), RowKind::Mod);
+    assert_eq!(alpha_head.new_line(), Some(10));
+
+    let beta_head = collapsed
+        .iter()
+        .find(|r| r.text().contains("pub fn beta()"))
+        .expect("beta head");
+    assert_eq!(beta_head.kind(), RowKind::Mod);
+    assert_eq!(beta_head.new_line(), Some(20));
+
+    // let val = 42 (old 11) must pair with let val = 4200 (new 11)
+    let val_4200 = collapsed
+        .iter()
+        .find(|r| r.text().contains("let val = 4200"))
+        .expect("val 4200");
+    assert_eq!(val_4200.kind(), RowKind::Mod);
+    assert_eq!(val_4200.old_line(), Some(11));
+
+    // let val = 99 (old 21) must pair with let val = 9900 (new 21)
+    let val_9900 = collapsed
+        .iter()
+        .find(|r| r.text().contains("let val = 9900"))
+        .expect("val 9900");
+    assert_eq!(val_9900.kind(), RowKind::Mod);
+    assert_eq!(val_9900.old_line(), Some(21));
+}

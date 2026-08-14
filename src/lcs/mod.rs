@@ -231,13 +231,48 @@ pub fn raw_lcs_pairs_with_lookahead(
 }
 
 /// LCS backtrace: map of old-token index → matched new-token index.
-/// Combines Patience unique token anchoring with run-continuation LCS.
+/// Combines recursive Patience unique token anchoring with run-continuation
+/// LCS.
 pub fn lcs_pairs(a: &[&str], b: &[&str]) -> HashMap<usize, usize> {
+    lcs_pairs_recursive(a, b, None, None)
+}
+
+/// Recursive Patience LCS backtrace with anchor lookahead context.
+pub fn lcs_pairs_recursive(
+    a: &[&str],
+    b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
+) -> HashMap<usize, usize> {
+    if a.is_empty() || b.is_empty() {
+        return HashMap::new();
+    }
     let anchors = unique_token_anchors(a, b);
     if anchors.is_empty() {
-        return raw_lcs_pairs(a, b);
+        return raw_lcs_pairs_with_lookahead(a, b, next_a, next_b);
     }
-    lcs_pairs_anchored(a, b, &anchors)
+    let mut pairs = HashMap::new();
+    let mut a_prev = 0;
+    let mut b_prev = 0;
+    for &(ai, bi) in &anchors {
+        if ai > a_prev && bi > b_prev {
+            let sub_pairs =
+                lcs_pairs_recursive(&a[a_prev..ai], &b[b_prev..bi], Some(a[ai]), Some(b[bi]));
+            for (si, sj) in sub_pairs {
+                pairs.insert(a_prev + si, b_prev + sj);
+            }
+        }
+        pairs.insert(ai, bi);
+        a_prev = ai + 1;
+        b_prev = bi + 1;
+    }
+    if a_prev < a.len() && b_prev < b.len() {
+        let sub_pairs = lcs_pairs_recursive(&a[a_prev..], &b[b_prev..], next_a, next_b);
+        for (si, sj) in sub_pairs {
+            pairs.insert(a_prev + si, b_prev + sj);
+        }
+    }
+    pairs
 }
 
 pub fn lcs_pairs_anchored(
