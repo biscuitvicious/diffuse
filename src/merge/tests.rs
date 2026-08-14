@@ -309,3 +309,21 @@ fn test_del_position_with_filtered_intermediate_spans() {
         "Option<ResolutionResult> at offset 44 in old text must map to offset 27 (start of u64) in new text"
     );
 }
+
+#[test]
+fn test_trailing_deletion_placed_at_end_of_add_text() {
+    let del_text = "                if k < floor {";
+    let add_text = "                if let Some(floor) = floor";
+    let spans = word_spans(del_text, add_text);
+    let pos = del_display_positions(&spans.del, &spans.add, del_text, add_text);
+    let brace_del_idx = spans
+        .del
+        .iter()
+        .position(|&(ds, de)| char_slice(del_text, ds, de).contains('{'))
+        .expect("brace del span exists");
+    assert_eq!(
+        pos[brace_del_idx],
+        crate::lcs::char_len(add_text),
+        "trailing deletion ' {{' must be placed at the end of add_text"
+    );
+}
