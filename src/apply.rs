@@ -54,14 +54,50 @@ pub fn apply_file_diff(file_diff: &str, old: &[String]) -> Vec<String> {
     // later hunks' net line changes.
     hunks.sort_by_key(|h| std::cmp::Reverse(h.0));
     for (old_start, old_count, body) in hunks {
-        if old_start == 0 {
-            // A new file's `@@ -0,0 +1,N @@` — nothing to delete; insert at 0.
-            out.splice(0..0, body.iter().filter_map(new_block_line));
-            continue;
+        let mut new_lines = Vec::new();
+        let mut cursor = if old_start == 0 { 0 } else { old_start - 1 };
+        for line in &body {
+            if let Some(ctx) = line.strip_prefix(' ') {
+                if cursor < out.len() {
+                    assert_eq!(
+                        &out[cursor],
+                        ctx,
+                        "apply_file_diff: context mismatch at line {}",
+                        cursor + 1
+                    );
+                }
+                new_lines.push(ctx.to_string());
+                cursor += 1;
+            } else if let Some(add) = line.strip_prefix('+') {
+                new_lines.push(add.to_string());
+            } else if let Some(del) = line.strip_prefix('-') {
+                if cursor < out.len() {
+                    assert_eq!(
+                        &out[cursor],
+                        del,
+                        "apply_file_diff: deletion mismatch at line {}",
+                        cursor + 1
+                    );
+                }
+                cursor += 1;
+            }
         }
-        let lo = old_start - 1;
-        let hi = (lo + old_count).min(out.len());
-        out.splice(lo..hi, body.iter().filter_map(new_block_line));
+        if old_start == 0 {
+            assert_eq!(
+                cursor, 0,
+                "apply_file_diff: old_start is 0 but consumed {cursor} lines"
+            );
+            out.splice(0..0, new_lines);
+        } else {
+            let lo = old_start - 1;
+            let consumed = cursor - lo;
+            assert_eq!(
+                consumed, old_count,
+                "apply_file_diff: hunk old_count ({old_count}) != consumed lines ({consumed}) at old_start {old_start}"
+            );
+            let hi = (lo + old_count).min(out.len());
+            out.splice(lo..hi, new_lines);
+        }
     }
     out
 }
@@ -76,12 +112,41 @@ pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<Stri
         let old_start = h.old_start as usize;
         let old_count = h.old_count as usize;
         let mut new_lines = Vec::new();
+        let mut cursor = if old_start == 0 { 0 } else { old_start - 1 };
         for r in &h.rows {
             match r.kind {
-                crate::parse::RowKind::Ctx | crate::parse::RowKind::Add => {
+                crate::parse::RowKind::Ctx => {
+                    if cursor < out.len() {
+                        assert_eq!(
+                            &out[cursor],
+                            &r.text,
+                            "Ctx line mismatch at line {}: expected {:?}, got {:?}",
+                            cursor + 1,
+                            r.text,
+                            out[cursor]
+                        );
+                    }
+                    new_lines.push(r.text.clone());
+                    cursor += 1;
+                }
+                crate::parse::RowKind::Add => {
                     new_lines.push(r.text.clone());
                 }
                 crate::parse::RowKind::Mod => {
+                    let del = r.del_text.as_deref().unwrap_or(&r.text);
+                    for line in del.split('\n') {
+                        if cursor < out.len() {
+                            assert_eq!(
+                                &out[cursor],
+                                line,
+                                "Mod del line mismatch at line {}: expected {:?}, got {:?}",
+                                cursor + 1,
+                                line,
+                                out[cursor]
+                            );
+                        }
+                        cursor += 1;
+                    }
                     for line in r.text.split('\n') {
                         new_lines.push(line.to_string());
                     }
@@ -89,15 +154,32 @@ pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<Stri
                         new_lines.push(t.text.clone());
                     }
                 }
-                crate::parse::RowKind::Del
-                | crate::parse::RowKind::Sep
-                | crate::parse::RowKind::File => {}
+                crate::parse::RowKind::Del => {
+                    if cursor < out.len() {
+                        assert_eq!(
+                            &out[cursor],
+                            &r.text,
+                            "Del line mismatch at line {}: expected {:?}, got {:?}",
+                            cursor + 1,
+                            r.text,
+                            out[cursor]
+                        );
+                    }
+                    cursor += 1;
+                }
+                crate::parse::RowKind::Sep | crate::parse::RowKind::File => {}
             }
         }
         if old_start == 0 {
+            assert_eq!(cursor, 0, "old_start is 0 but consumed {cursor} lines");
             out.splice(0..0, new_lines);
         } else {
             let lo = old_start - 1;
+            let consumed = cursor - lo;
+            assert_eq!(
+                consumed, old_count,
+                "hunk old_count ({old_count}) != consumed lines ({consumed}) at old_start {old_start}"
+            );
             let hi = (lo + old_count).min(out.len());
             out.splice(lo..hi, new_lines);
         }
@@ -123,21 +205,6 @@ fn is_body_line(s: &str) -> bool {
         s.as_bytes().first(),
         Some(b' ') | Some(b'+') | Some(b'-') | Some(b'\\')
     )
-}
-
-/// The new block's lines from a body line: context (` `) and add (`+`),
-/// in order; del (`-`) and the no-newline marker (`\`) dropped. The `++`/`--`
-/// file headers never appear inside a hunk body (they sit before the first
-/// `@@`), so a leading `+`/`-` is always a real add/del.
-fn new_block_line(line: &&str) -> Option<String> {
-    let l = *line;
-    if let Some(rest) = l.strip_prefix('+') {
-        Some(rest.to_string())
-    } else if l.starts_with('-') || l.starts_with('\\') {
-        None
-    } else {
-        l.strip_prefix(' ').map(String::from)
-    }
 }
 
 #[cfg(test)]
