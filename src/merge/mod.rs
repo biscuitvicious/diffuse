@@ -489,5 +489,21 @@ pub fn display_text(r: &Row) -> String {
     merged_runs(r).iter().map(|x| x.text.as_str()).collect()
 }
 
+/// Project the row runs forward to reconstruct the new line (stripping Del runs).
+pub fn project_forward(runs: &[Run]) -> String {
+    runs.iter()
+        .filter(|r| r.kind != RunKind::Del)
+        .map(|r| r.text.as_str())
+        .collect()
+}
+
+/// Project the row runs backward to reconstruct the old line (stripping Add runs).
+pub fn project_reverse(runs: &[Run]) -> String {
+    runs.iter()
+        .filter(|r| r.kind != RunKind::Add)
+        .map(|r| r.text.as_str())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests;

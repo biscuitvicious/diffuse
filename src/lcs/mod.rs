@@ -345,12 +345,24 @@ pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
         };
     }
     WordSpans {
-        del: merge_whitespace_gaps(old_text, spans_from(old_text, &ot, &matched_old)),
-        add: merge_whitespace_gaps(new_text, spans_from(new_text, &nt, &matched_new)),
+        del: merge_whitespace_gaps(
+            old_text,
+            spans_from(old_text, &ot, &matched_old),
+            Some(new_text),
+        ),
+        add: merge_whitespace_gaps(
+            new_text,
+            spans_from(new_text, &nt, &matched_new),
+            Some(old_text),
+        ),
     }
 }
 
-fn merge_whitespace_gaps(text: &str, spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+fn merge_whitespace_gaps(
+    text: &str,
+    spans: Vec<(usize, usize)>,
+    other_text: Option<&str>,
+) -> Vec<(usize, usize)> {
     if spans.is_empty() {
         return spans;
     }
@@ -374,7 +386,25 @@ fn merge_whitespace_gaps(text: &str, spans: Vec<(usize, usize)>) -> Vec<(usize, 
         for span in &mut merged {
             let raw = char_slice(text, span.0, span.1);
             if raw.ends_with(' ') && !raw.trim().is_empty() {
-                span.1 -= 1;
+                let should_trim = match other_text {
+                    Some(other) => {
+                        let rem = char_slice(text, span.1, char_len(text));
+                        let next_word = rem.trim_start();
+                        if let Some(first_char) = next_word.chars().next() {
+                            other.chars().enumerate().any(|(idx, ch)| {
+                                ch == first_char
+                                    && idx > 0
+                                    && other.chars().nth(idx - 1) == Some(' ')
+                            })
+                        } else {
+                            true
+                        }
+                    }
+                    None => true,
+                };
+                if should_trim {
+                    span.1 -= 1;
+                }
             }
         }
     }

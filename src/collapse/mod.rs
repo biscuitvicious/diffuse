@@ -243,12 +243,41 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
 
             let mut next_adds = Vec::new();
             let mut k = add_ri + 1;
-            while k < h.rows.len()
-                && h.rows[k].kind == RowKind::Add
-                && !ctx.pair_of.contains_key(&k)
-            {
-                next_adds.push(k);
-                k += 1;
+            let is_potential_expansion = statement_head_keyword(&del_text).is_some()
+                || del_text.trim_end().ends_with('{')
+                || del_text.trim_end().ends_with('(');
+
+            if is_potential_expansion {
+                while k < h.rows.len()
+                    && h.rows[k].kind == RowKind::Add
+                    && !ctx.pair_of.contains_key(&k)
+                {
+                    let nxt_t = h.rows[k].text.trim();
+                    if nxt_t.starts_with("///")
+                        || nxt_t.starts_with("#[")
+                        || nxt_t.starts_with("pub ")
+                        || nxt_t.starts_with("fn ")
+                    {
+                        break;
+                    }
+                    let is_continuation = nxt_t.starts_with("&&")
+                        || nxt_t.starts_with("||")
+                        || nxt_t.starts_with('.')
+                        || nxt_t == "{"
+                        || nxt_t == "}"
+                        || tokenize_line(nxt_t).into_iter().any(|tok| {
+                            !tok.trim().is_empty()
+                                && tok.chars().any(char::is_alphanumeric)
+                                && del_text.contains(tok)
+                        });
+
+                    if is_continuation {
+                        next_adds.push(k);
+                        k += 1;
+                    } else {
+                        break;
+                    }
+                }
             }
 
             if !next_adds.is_empty() {

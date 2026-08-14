@@ -222,3 +222,42 @@ fn unicode_whitespace_merged_runs() {
         );
     }
 }
+
+#[test]
+fn test_bidirectional_run_projection() {
+    let cases = [
+        (
+            "        self.mount_stack",
+            "        self.mount_stack.get(guest_path)",
+        ),
+        (
+            "        self.cache.borrow_mut().pop(key);",
+            "            self.cache.borrow_mut().pop(key);",
+        ),
+        (
+            "    let s = prefix_middle_suffix + other();",
+            "    let s = prefix_suffix + other();",
+        ),
+        (
+            "        self.resolved_layers = resolved;",
+            "        self.layers = layers;",
+        ),
+    ];
+
+    for (del, add) in cases {
+        let r = mk(del, add);
+        let runs = merged_runs(&r);
+        assert_eq!(
+            project_forward(&runs),
+            add,
+            "project_forward(runs) must equal new text"
+        );
+        if !is_wholesale_mod(&r) {
+            assert_eq!(
+                project_reverse(&runs),
+                del,
+                "project_reverse(runs) must equal old text"
+            );
+        }
+    }
+}
