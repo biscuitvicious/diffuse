@@ -866,10 +866,20 @@ fn test_multiline_expansion_subword_distribution() {
         vec![(28, 30)],
         "trailing space and brace ' {{' are struck on line 1082"
     );
+    assert_eq!(
+        spans1.add,
+        vec![(19, 37)],
+        "let Some(floor) = with trailing space is added on line 1082"
+    );
 
     assert_eq!(c[1].kind(), RowKind::Add);
     assert_eq!(c[1].new_line(), Some(1083));
     assert_eq!(c[1].text(), "                    && k > floor");
+    assert_eq!(
+        c[1].del_text(),
+        Some("                if k < floor {"),
+        "donor line attached to line 1083"
+    );
     let spans2 = c[1].spans().expect("spans2");
     assert_eq!(
         spans2.del,

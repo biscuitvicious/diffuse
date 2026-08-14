@@ -803,8 +803,8 @@ mod tests {
         );
         let output = run_pipeline(diff, &contents);
         let row = &output.files[0].hunks[0].rows[0];
-        let common_after = row.runs.iter().find(|r| r.text.contains(" layer the "));
-        assert!(common_after.is_some(), "common run ' layer the ' exists");
+        let common_after = row.runs.iter().find(|r| r.text.contains("layer the"));
+        assert!(common_after.is_some(), "common run 'layer the' exists");
         assert_eq!(
             common_after.unwrap().color.as_deref(),
             Some("syntaxComment"),

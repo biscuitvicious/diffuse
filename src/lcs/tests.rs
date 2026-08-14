@@ -45,10 +45,9 @@ fn one_changed_word_each_side() {
 
 #[test]
 fn operator_token_granularity() {
-    let op = word_spans("a -> b", "a => b");
-    let op_text = "a => b";
+    let ws = word_spans("a => b", "a -> b");
     assert_eq!(
-        char_slice(op_text, op.add[0].0, op.add[0].1),
+        char_slice("a => b", ws.del[0].0, ws.del[0].1),
         "=>",
         "operator token span"
     );
@@ -153,4 +152,48 @@ fn unicode_whitespace_subwords() {
             "unicode whitespace subwords: {del:?} vs {add:?}"
         );
     }
+}
+
+#[test]
+fn test_lcs_tie_break_minimizes_span_fragmentation() {
+    let old_line = "if k < floor {";
+    let new_line = "if let Some(floor) = floor";
+    let ot = tokenize_line(old_line);
+    let nt = tokenize_line(new_line);
+    let pairs = lcs_pairs(&ot, &nt);
+    assert_eq!(
+        pairs.get(&6),
+        Some(&11),
+        "old floor pairs with RHS floor at index 11"
+    );
+}
+
+#[test]
+fn test_patience_unique_token_anchors() {
+    let old_line = "fn handle_request(&self, req: Request) -> Response";
+    let new_line = "async fn handle_request(&self, cx: Context, req: Request) -> Result<Response>";
+    let ot = tokenize_line(old_line);
+    let nt = tokenize_line(new_line);
+    let anchors = unique_token_anchors(&ot, &nt);
+    assert!(!anchors.is_empty(), "patience anchors found");
+    let _pairs = lcs_pairs(&ot, &nt);
+    let spans = word_spans(old_line, new_line);
+    assert!(spans.add.len() >= 2, "adds isolated by patience anchors");
+}
+
+#[test]
+fn test_add_span_covers_let_some_floor_equals() {
+    let old_line = "                if k < floor {";
+    let new_line = "                if let Some(floor) = floor";
+    let spans = word_spans(old_line, new_line);
+    assert_eq!(
+        spans.add,
+        vec![(19, 37)],
+        "addition span covers 'let Some(floor) = ' including trailing space"
+    );
+    assert_eq!(
+        spans.del,
+        vec![(19, 23), (28, 30)],
+        "del spans cover 'k < ' (including trailing space) and ' {{'"
+    );
 }
