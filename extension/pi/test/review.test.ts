@@ -907,5 +907,96 @@ ${Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n")}`,
 	assert(hasColor, "expanded context row pub fn hello preserves syntax highlighting (has non-text colored tokens)");
 }
 
+// ── Client model bidirectional row projection & apply invariants ───────────
+{
+	const oldCode = "fn calc(a: i32, b: i32) -> i32 {\n    let sum = a + b;\n    sum * 2\n}\n";
+	const newCode = "pub fn calc(a: i32, b: i32, c: i32) -> i32 {\n    let sum = a + b + c;\n    sum * 3\n}\n";
+	const diff = `diff --git a/calc.rs b/calc.rs
+--- a/calc.rs
++++ b/calc.rs
+@@ -1,3 +1,3 @@
+-fn calc(a: i32, b: i32) -> i32 {
+-    let sum = a + b;
+-    sum * 2
++pub fn calc(a: i32, b: i32, c: i32) -> i32 {
++    let sum = a + b + c;
++    sum * 3`;
+	const contents = { "calc.rs": newCode };
+	const wire = await R.runDiffuseBin(R.diffuseBinPath(), JSON.stringify({ diff, contents }));
+	const files = R.filesFromWire(
+		wire,
+		() => ({
+			newContent: newCode.split("\n"),
+			oldContent: oldCode.split("\n"),
+			oldPath: null,
+		}),
+		6,
+	);
+	const f = files[0]!;
+
+	// 1. Forward and reverse projection on every row's wire runs
+	for (const h of f.hunks) {
+		for (const r of h.rows) {
+			if (r.runs && r.runs.length > 0) {
+				// Forward projection: stripping del runs reconstructs the new side text
+				const forward = r.runs.filter((rn: any) => rn.kind !== "del").map((rn: any) => rn.text).join("");
+				assert(forward === r.text, `row ${r.newLine ?? r.oldLine} forward projection equals new text: ${JSON.stringify(forward)} === ${JSON.stringify(r.text)}`);
+
+				// Reverse projection on 1-to-1 mod rows: stripping add runs reconstructs delText
+				if (r.kind === "mod" && !r.wholesale && r.delText !== undefined) {
+					const reverse = r.runs.filter((rn: any) => rn.kind !== "add").map((rn: any) => rn.text).join("");
+					assert(reverse === r.delText, `row ${r.newLine ?? r.oldLine} reverse projection equals delText: ${JSON.stringify(reverse)} === ${JSON.stringify(r.delText)}`);
+				}
+			}
+		}
+	}
+
+	// 2. Client-side hunk apply: consuming strikeouts from oldContent reproduces newContent
+	function applyHunkRowsClient(hunks: any[], old: string[]): string[] {
+		const out = [...old];
+		const sorted = [...hunks].sort((a, b) => (b.oldStart ?? 0) - (a.oldStart ?? 0));
+		for (const h of sorted) {
+			const oldStart = h.oldStart ?? 0;
+			const oldCount = h.oldCount ?? 0;
+			let cursor = oldStart === 0 ? 0 : oldStart - 1;
+			const newLines: string[] = [];
+			for (const r of h.rows) {
+				if (r.kind === "ctx") {
+					assert(out[cursor] === r.text, `client apply: ctx mismatch at line ${cursor + 1}: expected ${JSON.stringify(r.text)}, got ${JSON.stringify(out[cursor])}`);
+					newLines.push(r.text);
+					cursor++;
+				} else if (r.kind === "add") {
+					newLines.push(r.text);
+				} else if (r.kind === "mod") {
+					const del = r.delText ?? r.text;
+					for (const line of del.split("\n")) {
+						assert(out[cursor] === line, `client apply: mod del mismatch at line ${cursor + 1}: expected ${JSON.stringify(line)}, got ${JSON.stringify(out[cursor])}`);
+						cursor++;
+					}
+					for (const line of r.text.split("\n")) {
+						newLines.push(line);
+					}
+					for (const t of (r.tail ?? [])) {
+						newLines.push(t.text);
+					}
+				} else if (r.kind === "del") {
+					assert(out[cursor] === r.text, `client apply: del mismatch at line ${cursor + 1}: expected ${JSON.stringify(r.text)}, got ${JSON.stringify(out[cursor])}`);
+					cursor++;
+				}
+			}
+			const lo = oldStart === 0 ? 0 : oldStart - 1;
+			const consumed = cursor - lo;
+			assert(consumed === oldCount, `client apply: consumed lines ${consumed} !== oldCount ${oldCount}`);
+			out.splice(lo, oldCount, ...newLines);
+		}
+		return out;
+	}
+
+	const oldLines = oldCode.split("\n");
+	const expectedNewLines = newCode.split("\n");
+	const applied = applyHunkRowsClient(f.hunks, oldLines);
+	assert(JSON.stringify(applied) === JSON.stringify(expectedNewLines), "client-side apply(hunks, oldLines) strictly matches expectedNewLines");
+}
+
 console.log(failures === 0 ? "ALL PASS" : `${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);
