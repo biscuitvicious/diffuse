@@ -103,10 +103,6 @@ fn similarity_pairing_and_section_stop() {
     );
     assert!(mod_idx > 0, "mod sits after its preceding additions");
     assert!(
-        c[0].tail.is_empty(),
-        "no doc tail — the epoch docs are separate adds"
-    );
-    assert!(
         c.iter()
             .any(|r| r.kind == RowKind::Add && r.text.contains("pub fn epoch")),
         "the epoch method is its own section"
@@ -513,10 +509,6 @@ fn tail_guard_and_reflow_corpus() {
     let mod3 = c.iter().find(|r| r.kind == RowKind::Mod).expect("the mod");
     assert_eq!(mod3.new_line, Some(153), "pairs old None with return None;");
     assert_eq!(mod3.del_text.as_deref(), Some("        None"));
-    assert!(
-        mod3.tail.is_empty(),
-        "no tail absorbed ahead of the mod's own line"
-    );
     assert!(
         c.iter()
             .any(|r| r.kind == RowKind::Add && r.new_line == Some(151)),

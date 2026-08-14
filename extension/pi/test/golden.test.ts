@@ -359,14 +359,6 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 					console.error(`   disk: ${JSON.stringify(newContent[r.newLine - 1]?.slice(0, 60))}`);
 					console.error(`   row : ${JSON.stringify(r.text.slice(0, 60))}`);
 				}
-				// The mod's absorbed tail — pure context, each line on disk.
-				for (const tl of (r as any).tail ?? []) {
-					const disk = newContent[(tl.newLine ?? 0) - 1] ?? "";
-					if (tl.text !== disk) {
-						failures++;
-						console.error(`${corpus.name}: ${file.path}:${tl.newLine}: tail row differs from the file on disk`);
-					}
-				}
 			}
 			if (r.newLine === null && r.oldLine !== null && (r.kind === "del" || r.kind === "ctx")) {
 				// The old-side rows (the removed lines + a del-only hunk's
@@ -462,15 +454,11 @@ async function walkCorpus(corpus: { name: string; minFiles: number }) {
 					continue;
 				}
 				if (r.newLine !== null) {
-					// A mod's multi-line text covers its whole span; its tail
-					// rows cover their lines too (they render as context).
+					// A mod's multi-line text covers its whole span.
 					nls.push(r.newLine);
 					if (r.kind === "mod") {
 						const segs = r.text.split("\n").length;
 						for (let j = 1; j < segs; j++) nls.push(r.newLine + j);
-						for (const tl of (r as any).tail ?? []) {
-							if (tl.newLine !== null) nls.push(tl.newLine);
-						}
 					}
 				}
 			}

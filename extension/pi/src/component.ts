@@ -611,18 +611,15 @@ export class ReviewComponent {
 		const cols = Math.max(1, width - prefix.length - 2);
 		const wrap = (t: string): number =>
 			t.split("\n").reduce((sum, line) => sum + (line.length === 0 ? 1 : Math.max(1, Math.ceil(line.length / cols))), 0);
-		const tailSegs = (r.tail ?? []).reduce((sum, t) => sum + wrap(t.text), 0);
 		if (r.kind === "mod" && r.wholesale === true) {
-			return wrap(r.delText ?? "") + wrap(r.text) + tailSegs;
+			return wrap(r.delText ?? "") + wrap(r.text);
 		}
 		const len = displayText(r, this.colOffset, this.wordDiff).length;
-		const multi =
-			len === 0
-				? 1
-				: displayText(r, this.colOffset, this.wordDiff)
-						.split("\n")
-						.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / cols)), 0);
-		return multi + tailSegs;
+		return len === 0
+			? 1
+			: displayText(r, this.colOffset, this.wordDiff)
+					.split("\n")
+					.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / cols)), 0);
 	}
 
 	private visualGeometry(width: number): { starts: number[]; counts: number[]; total: number } {
@@ -672,7 +669,7 @@ export class ReviewComponent {
 		if (r.kind === "file") {
 			const ff = this.session.files[this.rowFile[flatIdx]!]!;
 			const fc = fileCounts(ff);
-			const label = ` ${ff.path}  (${ff.status})  ·  +${fc.adds}${fc.dels > 0 ? ` −${fc.dels}` : ""}${fc.mods > 0 ? ` ~${fc.mods}` : ""}${fc.moved > 0 ? ` ≈${fc.moved}` : ""}`;
+			const label = ` ${ff.path}  (${ff.status})  ·  +${fc.adds}${fc.dels > 0 ? ` −${fc.dels}` : ""}${fc.mods > 0 ? ` ~${fc.mods}` : ""}${fc.movs > 0 ? ` ≈${fc.movs}` : ""}`;
 			const styled = theme.fg("accent", label);
 			const fill = Math.max(1, width - visibleWidth(styled) - 1);
 			const line = styled + theme.fg("border", "─".repeat(fill));
@@ -772,24 +769,6 @@ export class ReviewComponent {
 			};
 			emitBlock(delText, true);
 			emitBlock(this.colOffset > 0 ? r.text.slice(this.colOffset) : r.text, false);
-			for (const tl of r.tail ?? []) {
-				const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
-				const tlTokens = tl.runs
-					? wireTokens(tl.runs, this.syntaxOn)
-					: wireTokens([{ kind: "ctx", text: tlText }], this.syntaxOn);
-				const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `;
-				if (tlText.length === 0) {
-					emitSeg(0, 0, tlPrefix, -1);
-					continue;
-				}
-				let start = 0;
-				while (start < tlText.length) {
-					const end = Math.min(tlText.length, start + textCols);
-					if (end <= start) break;
-					out.push(tlPrefix + highlightTokens(tlTokens, start, end, this.theme, ""));
-					start = end;
-				}
-			}
 			return out;
 		}
 		const sPrefix = styledPrefix(r);
@@ -812,24 +791,6 @@ export class ReviewComponent {
 					ls = le;
 				}
 				start += line.length + 1;
-			}
-		}
-		for (const tl of r.tail ?? []) {
-			const tlText = this.colOffset > 0 ? tl.text.slice(this.colOffset) : tl.text;
-			const tlTokens = tl.runs
-				? wireTokens(tl.runs, this.syntaxOn)
-				: wireTokens([{ kind: "ctx", text: tlText }], this.syntaxOn);
-			const tlPrefix = `${pad4(tl.newLine ?? tl.oldLine)}  `;
-			if (tlText.length === 0) {
-				out.push(tlPrefix);
-				continue;
-			}
-			let start = 0;
-			while (start < tlText.length) {
-				const end = Math.min(tlText.length, start + textCols);
-				if (end <= start) break;
-				out.push(tlPrefix + highlightTokens(tlTokens, start, end, this.theme, ""));
-				start = end;
 			}
 		}
 

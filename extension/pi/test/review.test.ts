@@ -976,9 +976,6 @@ ${Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n")}`,
 					for (const line of r.text.split("\n")) {
 						newLines.push(line);
 					}
-					for (const t of (r.tail ?? [])) {
-						newLines.push(t.text);
-					}
 				} else if (r.kind === "del") {
 					assert(out[cursor] === r.text, `client apply: del mismatch at line ${cursor + 1}: expected ${JSON.stringify(r.text)}, got ${JSON.stringify(out[cursor])}`);
 					cursor++;

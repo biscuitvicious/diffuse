@@ -15,7 +15,6 @@ fn mk(del: &str, add: &str) -> Row {
         spans: Some(word_spans(del, add)),
         moved: false,
         del_text: Some(del.to_string()),
-        tail: Vec::new(),
     }
 }
 

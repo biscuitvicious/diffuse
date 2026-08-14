@@ -1,12 +1,11 @@
-//! One-for-one port of `review.ts`'s `isTailBeforeClosing` and `fnOf`
-//! (PLAN.md §3) — the brace-anchor helpers. Comments ported verbatim.
+//! Function scope and block-ending brace anchor helpers for diff pairing.
 
 use regex::Regex;
 use std::sync::OnceLock;
 
 /// True when the row is the last expression of its block: the next line
 /// on its side is a closing brace at a LOWER indent (the fn's `}` after the
-/// tail `None`/`Some(result)` — not the inner if's `}`).
+/// return `None`/`Some(result)` — not the inner if's `}`).
 pub fn is_tail_before_closing(
     line: Option<u32>,
     old_side: bool,
@@ -25,7 +24,7 @@ pub fn is_tail_before_closing(
     if content.get(line).is_none() {
         return false;
     }
-    // The tail's closing brace sits one indent level down from the fn's own
+    // The closing brace sits one indent level down from the fn's own
     // body lines (`    }` after `        None` / `        Some(result)`) —
     // not the inner block's brace after a nested statement.
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -36,7 +35,7 @@ pub fn is_tail_before_closing(
 /// The name of the fn that contains `line` — the nearest preceding `fn`
 /// signature. The blank line between fn bodies is the section boundary: the
 /// `None` belongs to `lookup`, so it pairs with an add inside `lookup`, not
-/// another fn's tail.
+/// another fn's return expression.
 pub fn fn_of(content: Option<&[String]>, line: Option<u32>) -> Option<String> {
     let content = content?;
     let line = line? as usize;
@@ -66,3 +65,6 @@ pub fn fn_of(content: Option<&[String]>, line: Option<u32>) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests;

@@ -20,9 +20,9 @@ pub mod lcs; // tokenizeLine, lcsPairs, spansFrom, wordSpans
 pub mod merge; // mergedRuns, delPairing, delSpansToShow, wholesalePair
 pub mod moves; // markMoves, the block-move rule
 pub mod parse; // parseDiff, hunks, rows
+pub mod scope; // is_tail_before_closing, fn_of
 pub mod similarity; // lineSimilarity, lineSimilarityParts
-pub mod syntax;
-pub mod tail; // isTailBeforeClosing, fnOf // langProfile, classifyTokens
+pub mod syntax; // lang_profile, classify_tokens
 
 pub mod apply; // apply_file_diff: the Phase 6 apply-oracle primitive
 pub mod bin_pipeline;

@@ -158,7 +158,6 @@ export function filesFromWire(
 					wholesale: (r as any).wholesale,
 					spans: (r as any).spans,
 					runs: r.runs,
-					tail: (r as any).tail,
 				})),
 				aboveCtx: context,
 				belowCtx: context,

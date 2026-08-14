@@ -61,7 +61,7 @@ fn counts_after_modified_pair_collapse() {
             adds: 3,
             dels: 0,
             mods: 1,
-            moved: 0,
+            movs: 0,
         },
         "counts +3 ~1 — the absorbed reflow leaves no moved rows, the tail lines count as adds"
     );
@@ -81,7 +81,7 @@ fn counts_plain_del_and_add() {
     assert_eq!(counts.adds, 1, "one add");
     assert_eq!(counts.dels, 1, "one del");
     assert_eq!(counts.mods, 0);
-    assert_eq!(counts.moved, 0);
+    assert_eq!(counts.movs, 0);
 }
 
 // A moved pair counts as moved, not as an add or a del.
@@ -103,7 +103,7 @@ fn counts_moved_pair_is_neither_add_nor_del() {
             adds: 0,
             dels: 0,
             mods: 0,
-            moved: 0,
+            movs: 0,
         },
         "a pure reflow is invisible"
     );

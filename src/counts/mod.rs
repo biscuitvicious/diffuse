@@ -8,22 +8,15 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
     let mut adds = 0usize;
     let mut dels = 0usize;
     let mut mods = 0usize;
-    let mut moved = 0usize;
+    let mut movs = 0usize;
     for h in &f.hunks {
         for r in &h.rows {
             match r.kind {
-                RowKind::Add if r.moved => moved += 1,
+                RowKind::Add if r.moved => movs += 1,
                 RowKind::Add => adds += 1,
                 RowKind::Del => dels += 1,
                 RowKind::Mod => mods += 1,
                 _ => {}
-            }
-            for t in &r.tail {
-                if t.moved {
-                    moved += 1;
-                } else {
-                    adds += 1;
-                }
             }
         }
     }
@@ -33,7 +26,7 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
         adds,
         dels,
         mods,
-        moved,
+        movs,
     }
 }
 
@@ -42,7 +35,7 @@ pub struct FileCounts {
     pub adds: usize,
     pub dels: usize,
     pub mods: usize,
-    pub moved: usize,
+    pub movs: usize,
 }
 
 impl FileCounts {
@@ -51,7 +44,7 @@ impl FileCounts {
             adds: self.dels,
             dels: self.adds,
             mods: self.mods,
-            moved: self.moved,
+            movs: self.movs,
         }
     }
 }

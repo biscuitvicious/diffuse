@@ -121,7 +121,6 @@ fn test_diff_components_reverse_involution() {
         spans: Some(spans.clone()),
         moved: false,
         del_text: Some("old line text".to_string()),
-        tail: Vec::new(),
     };
     let rev_mod = mod_row.reverse();
     assert_eq!(rev_mod.kind, RowKind::Mod);

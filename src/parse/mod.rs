@@ -43,8 +43,6 @@ pub struct Row {
     pub moved: bool,
     /// The paired old text (mod rows) — for the struck-through removed words.
     pub del_text: Option<String>,
-    /// Pure-add lines absorbed into a mod row's section (until the next blank).
-    pub tail: Vec<Row>,
 }
 
 /// Word-level change spans: char-offset ranges into the del/add text.
@@ -93,7 +91,6 @@ impl Row {
             spans: None,
             moved: false,
             del_text: None,
-            tail: Vec::new(),
         }
     }
 
@@ -110,7 +107,6 @@ impl Row {
             } else {
                 None
             },
-            tail: self.tail.iter().map(|t| t.reverse()).collect(),
         }
     }
 }
@@ -145,9 +141,7 @@ impl Hunk {
 }
 
 /// Row-derived new-side count: the *extent* from the hunk start to the last
-/// new-side line, not a row count — absorbed reflow lines and tail lines
-/// occupy real positions in between (a restructure that drops two reflowed
-/// lines still spans them). Accurate for the @ header counts too.
+/// new-side line, not a row count. Accurate for the @ header counts too.
 pub fn add_count(h: &Hunk) -> u32 {
     let mut max_new = h.new_start;
     let mut has_new = false;
@@ -155,10 +149,6 @@ pub fn add_count(h: &Hunk) -> u32 {
         if r.kind == RowKind::Add || r.kind == RowKind::Mod {
             let lines = r.text.matches('\n').count() as u32;
             max_new = max_new.max(r.new_line.unwrap_or(0) + lines);
-            has_new = true;
-        }
-        for t in &r.tail {
-            max_new = max_new.max(t.new_line.unwrap_or(0));
             has_new = true;
         }
     };

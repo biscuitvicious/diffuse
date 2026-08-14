@@ -20,7 +20,6 @@ export interface Row {
 	wholesale?: boolean;
 	spans?: { add?: [number, number][]; del?: [number, number][] };
 	runs?: { kind?: "common" | "del" | "add" | "ctx"; color?: string; sgr?: number; text: string }[];
-	tail?: { text: string; newLine: number | null }[];
 }
 
 export interface Hunk {
@@ -89,7 +88,6 @@ export interface WireRow {
 	moved?: boolean;
 	wholesale?: boolean;
 	runs?: WireRun[];
-	tail?: { text: string; newLine: number | null }[];
 }
 
 export interface WireHunk {
@@ -104,7 +102,7 @@ export interface WireCounts {
 	adds: number;
 	dels: number;
 	mods: number;
-	moved: number;
+	movs: number;
 }
 
 export interface WireFile {

@@ -150,9 +150,6 @@ pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<Stri
                     for line in r.text.split('\n') {
                         new_lines.push(line.to_string());
                     }
-                    for t in &r.tail {
-                        new_lines.push(t.text.clone());
-                    }
                 }
                 crate::parse::RowKind::Del => {
                     if cursor < out.len() {
@@ -235,9 +232,6 @@ pub fn apply_stream(rows: &[crate::parse::Row], old: &[String]) -> Vec<String> {
                 }
                 for line in r.text.split('\n') {
                     out.push(line.to_string());
-                }
-                for t in &r.tail {
-                    out.push(t.text.clone());
                 }
             }
             crate::parse::RowKind::Sep | crate::parse::RowKind::File => {}

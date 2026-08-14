@@ -187,7 +187,6 @@ pub fn context_rows(side: Side, start: usize, count: usize, src: &[String]) -> V
             del_text: None,
             spans: None,
             moved: false,
-            tail: Vec::new(),
         });
     }
     rows
@@ -227,7 +226,6 @@ pub fn build_visible(
                     del_text: None,
                     spans: None,
                     moved: false,
-                    tail: Vec::new(),
                 });
             }
         }
@@ -266,7 +264,6 @@ pub fn build_visible(
                         del_text: None,
                         spans: None,
                         moved: false,
-                        tail: Vec::new(),
                     });
                 }
                 cursor = target - 1;
@@ -305,7 +302,6 @@ mod tests {
                 del_text: None,
                 spans: None,
                 moved: false,
-                tail: vec![],
             }],
             above_ctx: 6,
             below_ctx: 6,

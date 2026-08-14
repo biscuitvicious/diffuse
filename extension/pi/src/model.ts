@@ -152,33 +152,6 @@ function absorbLeadingContext(
 	return { above: ctx, rows };
 }
 
-function absorbClosingContext(
-	f: DiffFile,
-	side: "new" | "old",
-	start: number,
-	count: number,
-	below: number,
-	h: Hunk,
-): Row[] {
-	const ctx = contextRows(f, side, start + count, below);
-	if (ctx.length === 0) return ctx;
-	const lastRow = h.rows[h.rows.length - 1];
-	if (!lastRow || lastRow.kind !== "add") return ctx;
-	const released = h.rows[0]?.tail ?? [];
-	if (released.length === 0 || released.length > ctx.length) return ctx;
-	if (released.every((r) => r.text.trim().length === 0)) return ctx;
-	for (let i = 0; i < released.length; i++) {
-		if (released[i]!.text !== ctx[i]!.text) return ctx;
-	}
-	const absorbed = ctx.slice(0, released.length).map((r) => ({
-		kind: "add" as const,
-		text: r.text,
-		newLine: r.newLine,
-		oldLine: null,
-	}));
-	return [...absorbed, ...ctx.slice(released.length)];
-}
-
 export function buildVisible(f: DiffFile): Row[] {
 	if (f.rows && f.rows.length > 0) {
 		const isDefault = f.hunks.every((h) => h.aboveCtx === 6 && h.belowCtx === 6);
@@ -282,22 +255,18 @@ export function rowsCoveredBy(note: ReviewNote, rows: Row[]): number[] {
 	return idx;
 }
 
-export function fileCounts(f: DiffFile): { adds: number; dels: number; mods: number; moved: number } {
+export function fileCounts(f: DiffFile): { adds: number; dels: number; mods: number; movs: number } {
 	let adds = 0;
 	let dels = 0;
 	let mods = 0;
-	let moved = 0;
+	let movs = 0;
 	for (const h of f.hunks) {
 		for (const r of h.rows) {
-			if (r.kind === "add" && r.moved) moved++;
+			if (r.kind === "add" && r.moved) movs++;
 			else if (r.kind === "add") adds++;
 			else if (r.kind === "del") dels++;
 			else if (r.kind === "mod") mods++;
-			for (const t of r.tail ?? []) {
-				if ((t as any).moved) moved++;
-				else adds++;
-			}
 		}
 	}
-	return { adds, dels, mods, moved };
+	return { adds, dels, mods, movs };
 }

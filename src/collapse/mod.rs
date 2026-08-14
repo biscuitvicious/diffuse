@@ -2,15 +2,15 @@
 //! Phase 6 into composable passes over a hunk's diff AST:
 //!
 //! 1. `pass_pairing`: Similarity and brace-anchor pairing (1-to-1).
-//! 2. `pass_assemble_mods`: Ordered walk creating `Mod` rows, subword spans, and tails.
+//! 2. `pass_assemble_mods`: Assemble 1-to-1 `Mod` rows, multiline subword distribution, and reflow suppression.
 //! 3. `pass_filter_reflows`: Filtering verbatim reflow dels and adds.
 //! 4. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row stream.
 
 use crate::lcs::{char_slice, tokenize_line, word_spans};
 use crate::merge::wholesale_pair;
 use crate::parse::{Hunk, Row, RowKind, Spans};
+use crate::scope::{fn_of, is_tail_before_closing};
 use crate::similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens};
-use crate::tail::{fn_of, is_tail_before_closing};
 use std::collections::{HashMap, HashSet};
 
 /// Results of the initial pairing pass.
@@ -226,7 +226,7 @@ pub struct PairingContext<'a> {
     pub paired_dels: &'a HashSet<usize>,
 }
 
-/// Pass 2: Assemble 1-to-1 Mod rows, subword spans, and section tails.
+/// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow suppression.
 pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -> AssembledMods {
     let mut out: Vec<Row> = Vec::new();
     let mut kept_dels: Vec<usize> = Vec::new();
@@ -384,7 +384,6 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                 spans: Some(spans),
                 moved: false,
                 del_text: Some(del_text),
-                tail: Vec::new(),
             };
             out.push(mod_row);
         } else if !r.moved {
@@ -557,7 +556,7 @@ pub fn collapse_hunk_rows(
     let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
 
-    // Pass 2: Assemble Mod rows, subword spans, and section tails
+    // Pass 2: Assemble Mod rows and subword spans
     let pairing_ctx = PairingContext {
         pair_of: &p1.pair_of,
         add_of: &add_of,

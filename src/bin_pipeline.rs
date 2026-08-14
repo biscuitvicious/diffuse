@@ -31,12 +31,24 @@ pub struct OutputRow {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wholesale: bool,
     pub moved: bool,
-    /// The mod's absorbed section lines — the renderer draws them as pure
-    /// context (newLine + text, no tint). Added when the renderer began
-    /// consuming the contract (PLAN.md §4); also lets the acceptance walk
-    /// verify the header counts (tail rows count as adds/moves).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tail: Vec<OutputTailRow>,
+}
+
+impl From<&OutputRow> for crate::parse::Row {
+    fn from(r: &OutputRow) -> Self {
+        crate::parse::Row {
+            kind: r.kind,
+            text: r.text.clone(),
+            new_line: r.new_line,
+            old_line: r.old_line,
+            spans: if r.spans.is_empty() {
+                None
+            } else {
+                Some(r.spans.clone())
+            },
+            moved: r.moved,
+            del_text: r.del_text.clone(),
+        }
+    }
 }
 
 impl OutputRow {
@@ -55,69 +67,12 @@ impl OutputRow {
             runs: self.runs.iter().map(|r| r.reverse()).collect(),
             wholesale: self.wholesale,
             moved: self.moved,
-            tail: self.tail.iter().map(|t| t.reverse()).collect(),
         }
     }
 
+    #[inline]
     pub fn reconstruct(&self) -> crate::parse::Row {
-        crate::parse::Row {
-            kind: self.kind,
-            text: self.text.clone(),
-            new_line: self.new_line,
-            old_line: self.old_line,
-            spans: if self.spans.is_empty() {
-                None
-            } else {
-                Some(self.spans.clone())
-            },
-            moved: self.moved,
-            del_text: self.del_text.clone(),
-            tail: self.tail.iter().map(|t| t.reconstruct()).collect(),
-        }
-    }
-}
-
-/// One absorbed line of a mod's tail.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct OutputTailRow {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub new_line: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_line: Option<u32>,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub moved: bool,
-    /// The engine's classified tokens for this absorbed line (it renders as
-    /// ctx — the engine classifies it with the file's fence regions, same
-    /// as a ctx row). The renderer reads these straight off the wire — no
-    /// TS-side re-tokenization. Empty when there's nothing to classify.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub runs: Vec<OutputRun>,
-}
-
-impl OutputTailRow {
-    pub fn reverse(&self) -> Self {
-        OutputTailRow {
-            new_line: self.old_line,
-            old_line: self.new_line,
-            text: self.text.clone(),
-            moved: self.moved,
-            runs: self.runs.iter().map(|r| r.reverse()).collect(),
-        }
-    }
-
-    pub fn reconstruct(&self) -> crate::parse::Row {
-        crate::parse::Row {
-            kind: RowKind::Ctx,
-            text: self.text.clone(),
-            new_line: self.new_line,
-            old_line: self.old_line,
-            spans: None,
-            moved: self.moved,
-            del_text: None,
-            tail: Vec::new(),
-        }
+        self.into()
     }
 }
 
@@ -430,28 +385,6 @@ pub fn run_pipeline_with_notes(
                     runs: colored_runs(r, profile, &regions),
                     wholesale: r.kind == RowKind::Mod && crate::merge::is_wholesale_mod(r),
                     moved: r.moved,
-                    tail: r
-                        .tail
-                        .iter()
-                        .map(|t| {
-                            let runs = classify_ctx_line(&t.text, t.new_line, profile, &regions);
-                            OutputTailRow {
-                                new_line: t.new_line,
-                                old_line: t.old_line,
-                                text: t.text.clone(),
-                                moved: t.moved,
-                                runs: runs
-                                    .into_iter()
-                                    .map(|tk| OutputRun {
-                                        kind: RunKind::Ctx,
-                                        color: Some(tk.color),
-                                        sgr: tk.sgr,
-                                        text: tk.text,
-                                    })
-                                    .collect(),
-                            }
-                        })
-                        .collect(),
                 });
             }
             hunks_out.push(OutputHunk {
@@ -575,7 +508,6 @@ pub fn run_pipeline_with_notes(
                     runs,
                     wholesale,
                     moved: r.moved,
-                    tail: Vec::new(),
                 }
             })
             .collect(),
@@ -821,7 +753,6 @@ mod tests {
             spans: Some(crate::lcs::word_spans(old_1078, new_1078)),
             moved: false,
             del_text: Some(old_1078.to_string()),
-            tail: Vec::new(),
         };
         let runs_1078 = crate::merge::merged_runs(&r_1078);
         let non_common_1078: Vec<(crate::merge::RunKind, &str)> = runs_1078
@@ -850,7 +781,6 @@ mod tests {
             spans: Some(crate::lcs::word_spans(old_1079, new_1079)),
             moved: false,
             del_text: Some(old_1079.to_string()),
-            tail: Vec::new(),
         };
         let runs_1079 = crate::merge::merged_runs(&r_1079);
         let non_common_1079: Vec<(crate::merge::RunKind, &str)> = runs_1079

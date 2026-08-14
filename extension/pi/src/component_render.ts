@@ -75,9 +75,9 @@ export function renderComponentFrame(
 		return theme.bg(bg, text + " ".repeat(pad));
 	};
 
-	const { adds, dels, mods, moved } = fileCounts(f);
+	const { adds, dels, mods, movs } = fileCounts(f);
 	const noteS = `${notes.length} note${notes.length === 1 ? "" : "s"}`;
-	const counts = `+${adds}${dels > 0 ? ` −${dels}` : ""}${mods > 0 ? ` ~${mods}` : ""}${moved > 0 ? ` ≈${moved} moved` : ""} · ${noteS}`;
+	const counts = `+${adds}${dels > 0 ? ` −${dels}` : ""}${mods > 0 ? ` ~${mods}` : ""}${movs > 0 ? ` ≈${movs} moved` : ""} · ${noteS}`;
 	const avail = width - 2;
 	let headRaw = `${f.path} (${f.status}) · ${counts}`;
 	const full = ` Review: ${session.repo}  ·  ${headRaw}`;
