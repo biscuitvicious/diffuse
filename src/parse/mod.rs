@@ -1,7 +1,9 @@
-//! One-for-one port of `review.ts`'s `parseDiff` machinery (PLAN.md §3):
-//! `RowKind`/`Row`/`Hunk`/`DiffFile`, `unquoteGitPath`, `hunkPath`,
-//! `parseDiff`, `addCount`, `delCount`. The comments carry the *why* —
-//! ported verbatim from the TypeScript.
+use regex::Regex;
+use std::num::NonZero;
+use std::sync::OnceLock;
+
+/// A 1-based source line number.
+pub type LineNum = NonZero<u32>;
 
 /// A diff row kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
@@ -28,25 +30,110 @@ impl RowKind {
     }
 }
 
-/// A diff row. Fields mirror `review.ts`'s `Row` interface.
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize)]
-pub struct Row {
-    pub kind: RowKind,
+/// A line deletion: (line_num, text).
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DelLine {
+    pub num: LineNum,
     pub text: String,
-    /// Line in the NEW file (None for pure-deletion rows).
-    pub new_line: Option<u32>,
-    /// Line in the OLD file (None for pure-addition rows).
-    pub old_line: Option<u32>,
-    /// Cached word-level change spans (char offsets into `text`).
-    pub spans: Option<Spans>,
-    /// Exact-content match on the other side: the line moved, it did not change.
-    pub moved: bool,
-    /// The paired old text (mod rows) — for the struck-through removed words.
-    pub del_text: Option<String>,
 }
 
-/// Word-level change spans: char-offset ranges into the del/add text.
-#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+impl DelLine {
+    #[inline]
+    pub fn new(num: LineNum, text: impl Into<String>) -> Self {
+        Self {
+            num,
+            text: text.into(),
+        }
+    }
+}
+
+/// A line addition: (line_num, text, spans, optional donor del_text).
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct AddLine {
+    pub num: LineNum,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub del_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Spans::is_empty")]
+    pub spans: Spans,
+}
+
+impl AddLine {
+    #[inline]
+    pub fn new(num: LineNum, text: impl Into<String>) -> Self {
+        Self {
+            num,
+            text: text.into(),
+            del_text: None,
+            spans: Spans::default(),
+        }
+    }
+
+    #[inline]
+    pub fn with_spans(num: LineNum, text: impl Into<String>, spans: Spans) -> Self {
+        Self {
+            num,
+            text: text.into(),
+            del_text: None,
+            spans,
+        }
+    }
+
+    #[inline]
+    pub fn with_donor(
+        num: LineNum,
+        text: impl Into<String>,
+        del_text: impl Into<String>,
+        spans: Spans,
+    ) -> Self {
+        Self {
+            num,
+            text: text.into(),
+            del_text: Some(del_text.into()),
+            spans,
+        }
+    }
+}
+
+/// A context line: (old_pos, new_pos, text).
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CtxLine {
+    pub old_pos: LineNum,
+    pub new_pos: LineNum,
+    pub text: String,
+}
+
+impl CtxLine {
+    #[inline]
+    pub fn new(old_pos: LineNum, new_pos: LineNum, text: impl Into<String>) -> Self {
+        Self {
+            old_pos,
+            new_pos,
+            text: text.into(),
+        }
+    }
+}
+
+/// A diff row.
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Row {
+    Ctx(CtxLine),
+    Del(DelLine),
+    Add(AddLine),
+    Mod {
+        old_line: DelLine,
+        new_line: AddLine,
+    },
+    Mov {
+        old_line: DelLine,
+        new_line: AddLine,
+    },
+    Sep(String),
+}
+
+/// Change spans between old and new lines.
+#[derive(Clone, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct Spans {
     pub del: Vec<(usize, usize)>,
     pub add: Vec<(usize, usize)>,
@@ -77,36 +164,122 @@ impl Spans {
 }
 
 impl Row {
-    pub fn new(
-        kind: RowKind,
-        text: impl Into<String>,
-        new_line: Option<u32>,
-        old_line: Option<u32>,
-    ) -> Self {
-        Row {
-            kind,
-            text: text.into(),
-            new_line,
-            old_line,
-            spans: None,
-            moved: false,
-            del_text: None,
+    #[inline]
+    pub fn kind(&self) -> RowKind {
+        match self {
+            Row::Ctx(_) => RowKind::Ctx,
+            Row::Del(_) => RowKind::Del,
+            Row::Add(_) => RowKind::Add,
+            Row::Mod { .. } => RowKind::Mod,
+            Row::Mov { .. } => RowKind::Add,
+            Row::Sep(_) => RowKind::Sep,
         }
     }
 
+    #[inline]
+    pub fn text(&self) -> &str {
+        match self {
+            Row::Ctx(ctx_line) => &ctx_line.text,
+            Row::Del(del_line) => &del_line.text,
+            Row::Add(add_line) => &add_line.text,
+            Row::Mod { new_line, .. } => &new_line.text,
+            Row::Mov { new_line, .. } => &new_line.text,
+            Row::Sep(text) => text.as_str(),
+        }
+    }
+
+    #[inline]
+    pub fn del_text(&self) -> Option<&str> {
+        match self {
+            Row::Ctx(ctx_line) => Some(&ctx_line.text),
+            Row::Del(del_line) => Some(&del_line.text),
+            Row::Add(add_line) => add_line.del_text.as_deref(),
+            Row::Mod { old_line, .. } => Some(&old_line.text),
+            Row::Mov { old_line, .. } => Some(&old_line.text),
+            Row::Sep(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn old_line_num(&self) -> Option<LineNum> {
+        match self {
+            Row::Ctx(ctx_line) => Some(ctx_line.old_pos),
+            Row::Del(del_line) => Some(del_line.num),
+            Row::Mod { old_line, .. } => Some(old_line.num),
+            Row::Mov { old_line, .. } => Some(old_line.num),
+            Row::Add(_) | Row::Sep(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn new_line_num(&self) -> Option<LineNum> {
+        match self {
+            Row::Ctx(ctx_line) => Some(ctx_line.new_pos),
+            Row::Add(add_line) => Some(add_line.num),
+            Row::Mod { new_line, .. } => Some(new_line.num),
+            Row::Mov { new_line, .. } => Some(new_line.num),
+            Row::Del(_) | Row::Sep(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn old_line(&self) -> Option<u32> {
+        self.old_line_num().map(|l| l.get())
+    }
+
+    #[inline]
+    pub fn new_line(&self) -> Option<u32> {
+        self.new_line_num().map(|l| l.get())
+    }
+
+    #[inline]
+    pub fn spans(&self) -> Option<&Spans> {
+        match self {
+            Row::Add(add_line) if !add_line.spans.is_empty() => Some(&add_line.spans),
+            Row::Mod { new_line, .. } => Some(&new_line.spans),
+            Row::Mov { new_line, .. } if !new_line.spans.is_empty() => Some(&new_line.spans),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn is_moved(&self) -> bool {
+        matches!(self, Row::Mov { .. })
+    }
+
     pub fn reverse(&self) -> Self {
-        Row {
-            kind: self.kind.reverse(),
-            text: self.del_text.clone().unwrap_or_else(|| self.text.clone()),
-            new_line: self.old_line,
-            old_line: self.new_line,
-            spans: self.spans.as_ref().map(|s| s.reverse()),
-            moved: self.moved,
-            del_text: if self.kind == RowKind::Mod || self.del_text.is_some() {
-                Some(self.text.clone())
-            } else {
-                None
+        match self {
+            Row::Ctx(ctx_line) => Row::Ctx(CtxLine {
+                old_pos: ctx_line.new_pos,
+                new_pos: ctx_line.old_pos,
+                text: ctx_line.text.clone(),
+            }),
+            Row::Del(del_line) => Row::Add(AddLine::new(del_line.num, del_line.text.clone())),
+            Row::Add(add_line) => Row::Del(DelLine::new(
+                add_line.num,
+                add_line
+                    .del_text
+                    .as_deref()
+                    .unwrap_or(&add_line.text)
+                    .to_string(),
+            )),
+            Row::Mod { old_line, new_line } => Row::Mod {
+                old_line: DelLine::new(new_line.num, new_line.text.clone()),
+                new_line: AddLine::with_spans(
+                    old_line.num,
+                    old_line.text.clone(),
+                    new_line.spans.reverse(),
+                ),
             },
+            Row::Mov { old_line, new_line } => Row::Mov {
+                old_line: DelLine::new(new_line.num, new_line.text.clone()),
+                new_line: AddLine::with_spans(
+                    old_line.num,
+                    old_line.text.clone(),
+                    new_line.spans.reverse(),
+                ),
+            },
+            Row::Sep(s) => Row::Sep(s.clone()),
         }
     }
 }
@@ -145,15 +318,20 @@ impl Hunk {
 pub fn add_count(h: &Hunk) -> u32 {
     let mut max_new = h.new_start;
     let mut has_new = false;
-    let mut scan = |r: &Row| {
-        if r.kind == RowKind::Add || r.kind == RowKind::Mod {
-            let lines = r.text.matches('\n').count() as u32;
-            max_new = max_new.max(r.new_line.unwrap_or(0) + lines);
-            has_new = true;
-        }
-    };
     for r in &h.rows {
-        scan(r);
+        match r {
+            Row::Add(add_line) => {
+                let lines = add_line.text.matches('\n').count() as u32;
+                max_new = max_new.max(add_line.num.get() + lines);
+                has_new = true;
+            }
+            Row::Mod { new_line, .. } | Row::Mov { new_line, .. } => {
+                let lines = new_line.text.matches('\n').count() as u32;
+                max_new = max_new.max(new_line.num.get() + lines);
+                has_new = true;
+            }
+            _ => {}
+        }
     }
     if has_new {
         (max_new - h.new_start + 1).max(1)
@@ -163,7 +341,7 @@ pub fn add_count(h: &Hunk) -> u32 {
 }
 
 pub fn del_count(h: &Hunk) -> u32 {
-    h.rows.iter().filter(|r| r.kind == RowKind::Del).count() as u32
+    h.rows.iter().filter(|r| matches!(r, Row::Del(_))).count() as u32
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
@@ -261,10 +439,9 @@ fn hunk_path(sign: &str, line: &str) -> Option<String> {
 /// Parse a `git diff` into files, hunks, and rows. The `git diff -U0`
 /// flavor: hunks carry only add/del rows; the context is synthesized later.
 pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
-    static HUNK_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let hunk_re = HUNK_RE.get_or_init(|| {
-        regex::Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$").unwrap()
-    });
+    static HUNK_RE: OnceLock<Regex> = OnceLock::new();
+    let hunk_re = HUNK_RE
+        .get_or_init(|| Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$").unwrap());
     let mut files: Vec<DiffFile> = Vec::new();
     let mut cur: Option<DiffFile> = None;
     let mut oi: u32 = 1;
@@ -357,10 +534,12 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
                 None => continue,
             };
             if let Some(rest) = line.strip_prefix('+') {
-                hunk.rows.push(Row::new(RowKind::Add, rest, Some(ni), None));
+                let num = LineNum::new(ni).unwrap_or(LineNum::MIN);
+                hunk.rows.push(Row::Add(AddLine::new(num, rest)));
                 ni += 1;
             } else if let Some(rest) = line.strip_prefix('-') {
-                hunk.rows.push(Row::new(RowKind::Del, rest, None, Some(oi)));
+                let num = LineNum::new(oi).unwrap_or(LineNum::MIN);
+                hunk.rows.push(Row::Del(DelLine::new(num, rest)));
                 oi += 1;
             } else if line.starts_with(' ') {
                 oi += 1;

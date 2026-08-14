@@ -154,12 +154,12 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
 pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Vec<(usize, usize)> {
     let del_spans: Vec<(usize, usize)> = match del_spans_in {
         Some(s) => s.to_vec(),
-        None => r.spans.as_ref().map_or(Vec::new(), |s| s.del.clone()),
+        None => r.spans().map_or(Vec::new(), |s| s.del.clone()),
     };
-    if r.del_text.is_none() {
+    if r.del_text().is_none() {
         return Vec::new();
     }
-    let del_text = r.del_text.as_ref().expect("del_text");
+    let del_text = r.del_text().expect("del_text");
     del_spans
         .iter()
         .filter(|(ds, de)| {
@@ -170,7 +170,7 @@ pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Ve
             // start. Drop it only when the add's leading run is identical.
             if t.is_empty() {
                 let leading = r
-                    .text
+                    .text()
                     .chars()
                     .take_while(|c| c.is_ascii_whitespace())
                     .collect::<String>();
@@ -190,7 +190,7 @@ pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Ve
             if del_spans.len() <= 1 {
                 return true;
             }
-            char_slice(&r.text, *ds, *de) != t
+            char_slice(r.text(), *ds, *de) != t
         })
         .copied()
         .collect()
@@ -303,11 +303,11 @@ pub fn del_pairing(
 /// True when a mod row renders as the whole-old + whole-new pair (the
 /// split-word garble gate).
 pub fn is_wholesale_mod(r: &Row) -> bool {
-    if r.del_text.is_none() {
+    let Some(del_text) = r.del_text() else {
         return false;
-    }
-    let spans = r.spans.clone().unwrap_or_default();
-    wholesale_pair(r.del_text.as_ref().expect("del_text"), &r.text, &spans)
+    };
+    let spans = r.spans().cloned().unwrap_or_default();
+    wholesale_pair(del_text, r.text(), &spans)
 }
 
 /// A mod whose change is purely a removal: every add span is whitespace —
@@ -317,12 +317,12 @@ pub fn is_wholesale_mod(r: &Row) -> bool {
 /// (like a moved line — the line survives) with the red strikes carrying
 /// the removal.
 pub fn is_pure_deletion_mod(r: &Row) -> bool {
-    match &r.spans {
+    match r.spans() {
         None => true,
         Some(spans) => spans
             .add
             .iter()
-            .all(|(s, e)| char_slice(&r.text, *s, *e).trim().is_empty()),
+            .all(|(s, e)| char_slice(r.text(), *s, *e).trim().is_empty()),
     }
 }
 
@@ -336,29 +336,29 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
         return vec![
             Run {
                 kind: RunKind::Del,
-                text: r.del_text.clone().unwrap_or_default(),
+                text: r.del_text().unwrap_or_default().to_string(),
             },
             Run {
                 kind: RunKind::Add,
-                text: r.text.clone(),
+                text: r.text().to_string(),
             },
         ];
     }
-    let del_text = r.del_text.clone().unwrap_or_default();
-    let spans = r.spans.clone().unwrap_or_default();
+    let del_text = r.del_text().unwrap_or_default().to_string();
+    let spans = r.spans().cloned().unwrap_or_default();
     let add_spans = spans.add.clone();
     let del_spans = del_spans_to_show(r, Some(&spans.del));
     let DelPairing {
         del_pos,
         pair,
         op_anchor,
-    } = del_pairing(&del_spans, &add_spans, &r.text, &del_text);
+    } = del_pairing(&del_spans, &add_spans, r.text(), &del_text);
     let mut runs: Vec<Run> = Vec::new();
     let emit_range = |runs: &mut Vec<Run>, from: usize, to: usize| {
         if to > from {
             runs.push(Run {
                 kind: RunKind::Common,
-                text: char_slice(&r.text, from, to).to_string(),
+                text: char_slice(r.text(), from, to).to_string(),
             });
         }
     };
@@ -387,7 +387,7 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
         } else {
             // del_pos[j] is already the exact display position (del_display_positions
             // applied the add-correction); just clamp to the new-text length.
-            let add_len = char_len_of(&r.text);
+            let add_len = char_len_of(r.text());
             let ins = del_pos[j].min(add_len);
             events.push(Ev {
                 pos: ins,
@@ -418,7 +418,7 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
             // whole run on each side).
             let del_text_span = char_slice(&del_text, dspan.0, dspan.1);
             if let Some(aspan) = ev.add {
-                let add_text_span = char_slice(&r.text, aspan.0, aspan.1);
+                let add_text_span = char_slice(r.text(), aspan.0, aspan.1);
                 if all_ws(del_text_span) && all_ws(add_text_span) {
                     // The shared prefix is the ACTUAL matching chars — a
                     // type change (`\t` vs 4 spaces) shares nothing: the
@@ -460,13 +460,13 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
         if let Some(aspan) = ev.add {
             runs.push(Run {
                 kind: RunKind::Add,
-                text: char_slice(&r.text, aspan.0, aspan.1).to_string(),
+                text: char_slice(r.text(), aspan.0, aspan.1).to_string(),
             });
             pos = aspan.1;
         }
     }
-    if pos < char_len_of(&r.text) {
-        emit_range(&mut runs, pos, char_len_of(&r.text));
+    if pos < char_len_of(r.text()) {
+        emit_range(&mut runs, pos, char_len_of(r.text()));
     }
     coalesce_runs(runs)
 }
@@ -496,15 +496,15 @@ fn char_len_of(s: &str) -> usize {
 /// The merged display string of a row (the runs joined; a wholesale mod is
 /// the whole-old + whole-new pair).
 pub fn display_text(r: &Row) -> String {
-    let use_merged = (r.kind == crate::parse::RowKind::Mod
-        || r.moved
-        || (r.kind == crate::parse::RowKind::Add && r.spans.is_some()))
-        && r.del_text.is_some();
+    let use_merged = (matches!(r, Row::Mod { .. })
+        || r.is_moved()
+        || (matches!(r, Row::Add(_)) && r.del_text().is_some()))
+        && r.del_text().is_some();
     if !use_merged {
-        return r.text.clone();
+        return r.text().to_string();
     }
     if is_wholesale_mod(r) {
-        return format!("{}{}", r.del_text.clone().unwrap_or_default(), r.text);
+        return format!("{}{}", r.del_text().unwrap_or_default(), r.text());
     }
     merged_runs(r).iter().map(|x| x.text.as_str()).collect()
 }

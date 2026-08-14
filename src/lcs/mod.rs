@@ -8,6 +8,7 @@
 //! renderer receives, so behavior is identical; only the raw offset
 //! values differ for non-ASCII lines.
 
+use crate::parse::Spans;
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -303,7 +304,7 @@ pub fn spans_from(
 
 /// A pair of change-span sets: char ranges into the old/new text. The
 /// row's span type (parse::Spans) — one type for the whole pipeline.
-pub type WordSpans = crate::parse::Spans;
+pub type WordSpans = Spans;
 
 /**
  * Word-level change spans between an old and a new line. Both sides get the

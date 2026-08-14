@@ -4,8 +4,8 @@
 //! maps them to theme colors.
 
 use regex::Regex;
-use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 
 /// A per-language syntax profile.
 #[derive(Clone, Debug)]
@@ -208,10 +208,8 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
     // canonical ext: build once, leak the Box, hand out a 'static ref so
     // no caller clones or rebuilds (the fence-region classify was the
     // remaining classify cost).
-    static CACHE: std::sync::OnceLock<
-        std::sync::Mutex<std::collections::HashMap<String, &'static LangProfile>>,
-    > = std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static LangProfile>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = cache.lock().unwrap();
     if let Some(p) = guard.get(ext) {
         return Some(*p);
@@ -239,8 +237,7 @@ const RE_OTHER: &str = ".";
 /// The token regex for a profile: the comment/string/number/id/ws/other
 /// alternation in the TS's fixed order.
 pub fn token_re_for(profile: &LangProfile) -> Regex {
-    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<u8, Regex>>> =
-        OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<u8, Regex>>> = OnceLock::new();
     // The key: the profile's feature flags (the regex depends on them —
     // comment kinds). The TS caches per profile; a per-flags code works the
     // same. THE CACHE MUST BE USED — the regex compile is expensive and the

@@ -4,16 +4,45 @@
 
 use crate::collapse::collapse_hunk_rows;
 use crate::moves::mark_moves;
-use crate::parse::{DiffFile, FileStatus, Hunk, Row, RowKind};
+use crate::parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind};
 
 fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
-    Row::new(kind, text, new_line, old_line)
+    match kind {
+        RowKind::Del => {
+            let num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            Row::Del(DelLine::new(num, text))
+        }
+        RowKind::Add => {
+            let num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            Row::Add(AddLine::new(num, text))
+        }
+        RowKind::Mod => {
+            let old_num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            Row::Mod {
+                old_line: DelLine::new(old_num, text),
+                new_line: AddLine::new(new_num, text),
+            }
+        }
+        RowKind::Ctx => {
+            let old_num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            Row::Ctx(CtxLine::new(old_num, new_num, text))
+        }
+        RowKind::Sep | RowKind::File => Row::Sep(text.to_string()),
+    }
 }
 
 fn moved_row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
-    let mut r = Row::new(kind, text, new_line, old_line);
-    r.moved = true;
-    r
+    let old_num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+    let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+    match kind {
+        RowKind::Del => Row::Del(DelLine::new(old_num, text)),
+        _ => Row::Mov {
+            old_line: DelLine::new(old_num, text),
+            new_line: AddLine::new(new_num, text),
+        },
+    }
 }
 
 fn hunk(rows: Vec<Row>) -> Hunk {
@@ -91,25 +120,25 @@ fn similarity_pairing_and_section_stop() {
     let c = collapse_hunk_rows(&h, false, None, None);
     let mod_idx = c
         .iter()
-        .position(|r| r.kind == RowKind::Mod)
+        .position(|r| r.kind() == RowKind::Mod)
         .expect("lookup pairs with lookup");
     assert!(
-        c[mod_idx].text.contains("epoch: u64"),
+        c[mod_idx].text().contains("epoch: u64"),
         "the mod's add is the new lookup"
     );
     assert!(
-        c[0].kind == RowKind::Add && c[0].new_line == Some(134),
+        c[0].kind() == RowKind::Add && c[0].new_line() == Some(134),
         "adds lead the block"
     );
     assert!(mod_idx > 0, "mod sits after its preceding additions");
     assert!(
         c.iter()
-            .any(|r| r.kind == RowKind::Add && r.text.contains("pub fn epoch")),
+            .any(|r| r.kind() == RowKind::Add && r.text().contains("pub fn epoch")),
         "the epoch method is its own section"
     );
     assert_eq!(
         c.iter()
-            .filter(|r| r.kind == RowKind::Add && r.text.contains("///"))
+            .filter(|r| r.kind() == RowKind::Add && r.text().contains("///"))
             .count(),
         2,
         "the doc comment lines are separate adds"
@@ -160,10 +189,10 @@ fn brace_anchor_none_some_result() {
     let c = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
     let none_mod = c
         .iter()
-        .find(|r| r.kind == RowKind::Mod && r.del_text.as_deref() == Some("        None"))
+        .find(|r| r.kind() == RowKind::Mod && r.del_text() == Some("        None"))
         .expect("the None mod");
     assert_eq!(
-        none_mod.new_line,
+        none_mod.new_line(),
         Some(155),
         "the brace-anchor pairs None with Some(result) despite the verbatim None in the new file"
     );
@@ -197,13 +226,13 @@ fn reflow_pairing_first_del() {
     let c = collapse_hunk_rows(&h, false, None, None);
     assert_eq!(c.len(), 1, "one mod");
     let m = &c[0];
-    assert_eq!(m.kind, RowKind::Mod);
+    assert_eq!(m.kind(), RowKind::Mod);
     assert_eq!(
-        m.del_text.as_deref(),
+        m.del_text(),
         Some("        self.resolved_layers"),
         "the first del pairs"
     );
-    let spans = m.spans.as_ref().expect("spans");
+    let spans = m.spans().expect("spans");
     assert_eq!(spans.del, vec![(13, 22)], "the resolved_ strike only");
     assert!(
         spans.add.is_empty(),
@@ -235,7 +264,7 @@ fn reflow_pairing_first_del() {
     let c2 = collapse_hunk_rows(&h2, false, None, None);
     assert_eq!(c2.len(), 1, "one mod");
     let m2 = &c2[0];
-    let spans2 = m2.spans.as_ref().expect("spans");
+    let spans2 = m2.spans().expect("spans");
     assert_eq!(spans2.del, vec![(22, 31)], "the resolved_ strike");
     assert!(
         spans2.add.is_empty(),
@@ -260,18 +289,26 @@ fn modified_pair_absorbs_section_and_reflow() {
     mark_moves(&mut f);
     let c = collapse_hunk_rows(&f.hunks[0], false, None, None);
     assert_eq!(c.len(), 4, "collapsed to 4 separate single-line rows");
-    assert_eq!(c[0].kind, RowKind::Mod, "mod row leads");
-    assert_eq!(c[1].kind, RowKind::Add, "extra line is a separate add row");
-    assert_eq!(c[1].new_line, Some(2));
-    assert_eq!(c[2].kind, RowKind::Add, "blank line is a separate add row");
-    assert_eq!(c[2].new_line, Some(3));
+    assert_eq!(c[0].kind(), RowKind::Mod, "mod row leads");
     assert_eq!(
-        c[3].kind,
+        c[1].kind(),
+        RowKind::Add,
+        "extra line is a separate add row"
+    );
+    assert_eq!(c[1].new_line(), Some(2));
+    assert_eq!(
+        c[2].kind(),
+        RowKind::Add,
+        "blank line is a separate add row"
+    );
+    assert_eq!(c[2].new_line(), Some(3));
+    assert_eq!(
+        c[3].kind(),
         RowKind::Add,
         "the add after the blank is a separate row"
     );
-    assert_eq!(c[3].new_line, Some(5));
-    let spans = c[0].spans.as_ref().expect("spans");
+    assert_eq!(c[3].new_line(), Some(5));
+    let spans = c[0].spans().expect("spans");
     assert_eq!(spans.add.len(), 1, "mod row has baked add spans");
 }
 
@@ -302,7 +339,7 @@ fn del_only_run_folds_into_one_mod() {
     ]);
     let c = collapse_hunk_rows(&h2, false, None, None);
     assert_eq!(c.len(), 1, "one mod row");
-    assert_eq!(c[0].kind, RowKind::Mod);
+    assert_eq!(c[0].kind(), RowKind::Mod);
 }
 
 // Fragment-pair rejection: a one-line `use` split into a 7-line block —
@@ -340,22 +377,22 @@ fn fragment_pair_rejection() {
     println!("COLLAPSED FRAGMENT: {:#?}", c);
     assert!(
         c.iter()
-            .any(|r| r.kind == RowKind::Del && r.old_line == Some(1)),
+            .any(|r| r.kind() == RowKind::Del && r.old_line() == Some(1)),
         "the split old line stays a removal"
     );
     assert_eq!(
-        c.iter().filter(|r| r.kind == RowKind::Mod).count(),
+        c.iter().filter(|r| r.kind() == RowKind::Mod).count(),
         0,
         "no fragment mod (whole old vs one new fragment)"
     );
     assert_eq!(
-        c.iter().filter(|r| r.kind == RowKind::Add).count(),
+        c.iter().filter(|r| r.kind() == RowKind::Add).count(),
         7,
         "all seven split lines survive"
     );
-    assert_eq!(c[0].kind, RowKind::Del, "removal leads the block");
-    assert_eq!(c[1].kind, RowKind::Add);
-    assert_eq!(c[1].new_line, Some(1));
+    assert_eq!(c[0].kind(), RowKind::Del, "removal leads the block");
+    assert_eq!(c[1].kind(), RowKind::Add);
+    assert_eq!(c[1].new_line(), Some(1));
 }
 
 // Wholesale pairs render as the -/+ baseline rows: a WORD-led removal
@@ -382,16 +419,16 @@ fn wholesale_pairs_render_as_baseline_rows() {
     let c = collapse_hunk_rows(&h, false, None, None);
     assert!(
         c.iter()
-            .any(|r| r.kind == RowKind::Del && r.old_line == Some(1)),
+            .any(|r| r.kind() == RowKind::Del && r.old_line() == Some(1)),
         "the old line stays a removal"
     );
     assert!(
         c.iter()
-            .any(|r| r.kind == RowKind::Add && r.new_line == Some(1)),
+            .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(1)),
         "the new line stays an addition"
     );
     assert_eq!(
-        c.iter().filter(|r| r.kind == RowKind::Mod).count(),
+        c.iter().filter(|r| r.kind() == RowKind::Mod).count(),
         0,
         "no mod row"
     );
@@ -408,7 +445,7 @@ fn wholesale_pairs_render_as_baseline_rows() {
     assert!(
         collapse_hunk_rows(&g, false, None, None)
             .iter()
-            .any(|r| r.kind == RowKind::Mod),
+            .any(|r| r.kind() == RowKind::Mod),
         "single-del floor pairs into a mod"
     );
     // A clean rename still pairs.
@@ -419,7 +456,7 @@ fn wholesale_pairs_render_as_baseline_rows() {
     assert!(
         collapse_hunk_rows(&h2, false, None, None)
             .iter()
-            .any(|r| r.kind == RowKind::Mod),
+            .any(|r| r.kind() == RowKind::Mod),
         "a clean rename still pairs"
     );
     // The if-cross subwords too (meaningful identity).
@@ -440,7 +477,7 @@ fn wholesale_pairs_render_as_baseline_rows() {
     assert!(
         collapse_hunk_rows(&i, false, None, None)
             .iter()
-            .any(|r| r.kind == RowKind::Mod),
+            .any(|r| r.kind() == RowKind::Mod),
         "the if-cross subwords too (meaningful identity)"
     );
 }
@@ -452,18 +489,6 @@ fn wholesale_pairs_render_as_baseline_rows() {
 #[test]
 fn tail_guard_and_reflow_corpus() {
     let h3 = hunk(vec![
-        moved_row(
-            RowKind::Del,
-            "        self.cache.borrow_mut().pop(key);",
-            None,
-            Some(111),
-        ),
-        moved_row(
-            RowKind::Del,
-            "        self.results.borrow_mut().pop(key);",
-            None,
-            Some(112),
-        ),
         row(RowKind::Del, "        None", None, Some(113)),
         row(
             RowKind::Add,
@@ -505,24 +530,32 @@ fn tail_guard_and_reflow_corpus() {
         row(RowKind::Add, "        }", Some(154), None),
         row(RowKind::Add, "        Some(result)", Some(155), None),
     ]);
+
     let c = collapse_hunk_rows(&h3, false, None, None);
-    let mod3 = c.iter().find(|r| r.kind == RowKind::Mod).expect("the mod");
-    assert_eq!(mod3.new_line, Some(153), "pairs old None with return None;");
-    assert_eq!(mod3.del_text.as_deref(), Some("        None"));
+    let mod3 = c
+        .iter()
+        .find(|r| r.kind() == RowKind::Mod)
+        .expect("the mod");
+    assert_eq!(
+        mod3.new_line(),
+        Some(153),
+        "pairs old None with return None;"
+    );
+    assert_eq!(mod3.del_text(), Some("        None"));
     assert!(
         c.iter()
-            .any(|r| r.kind == RowKind::Add && r.new_line == Some(151)),
+            .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(151)),
         "the duplicate pop pair survives (not reflow-absorbed)"
     );
     assert!(
         c.iter()
-            .any(|r| r.kind == RowKind::Add && r.new_line == Some(147)),
+            .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(147)),
         "the block's earlier lines are adds, not tail"
     );
     let seq: Vec<u32> = c
         .iter()
-        .filter(|r| r.kind == RowKind::Add || r.kind == RowKind::Mod)
-        .map(|r| r.new_line.unwrap())
+        .filter(|r| r.kind() == RowKind::Add || r.kind() == RowKind::Mod)
+        .map(|r| r.new_line().unwrap())
         .collect();
     assert_eq!(
         seq,
@@ -609,7 +642,7 @@ fn markdown_table_1_to_1_pairing() {
     ]);
     let c = collapse_hunk_rows(&h, true, None, None);
     assert_eq!(
-        c.iter().filter(|r| r.kind == RowKind::Mod).count(),
+        c.iter().filter(|r| r.kind() == RowKind::Mod).count(),
         6,
         "all 6 rows pair 1-to-1 as mod rows"
     );
@@ -660,12 +693,13 @@ fn single_del_pairs_1_to_1_with_best_matching_add() {
     let c = collapse_hunk_rows(&h, true, None, None);
     let m = c
         .iter()
-        .find(|r| r.old_line == Some(10))
+        .find(|r| r.old_line() == Some(10))
         .expect("the mod row");
-    assert_eq!(m.kind, RowKind::Mod);
-    assert_eq!(m.new_line, Some(21));
+    assert_eq!(m.kind(), RowKind::Mod);
+    assert_eq!(m.new_line(), Some(21));
     assert_eq!(
-        m.text, "if let Some(floor) = floor {",
+        m.text(),
+        "if let Some(floor) = floor {",
         "statement head if pairs with if let Some"
     );
 }
@@ -695,20 +729,20 @@ fn test_multiline_expansion_subword_distribution() {
     ]);
     let c = collapse_hunk_rows(&h, false, None, None);
     assert_eq!(c.len(), 3);
-    assert_eq!(c[0].kind, RowKind::Mod);
-    assert_eq!(c[0].new_line, Some(1082));
-    assert_eq!(c[0].text, "                if let Some(floor) = floor");
-    let spans1 = c[0].spans.as_ref().expect("spans1");
+    assert_eq!(c[0].kind(), RowKind::Mod);
+    assert_eq!(c[0].new_line(), Some(1082));
+    assert_eq!(c[0].text(), "                if let Some(floor) = floor");
+    let spans1 = c[0].spans().expect("spans1");
     assert_eq!(
         spans1.del,
         vec![(28, 30)],
         "trailing space and brace ' {{' are struck on line 1082"
     );
 
-    assert_eq!(c[1].kind, RowKind::Add);
-    assert_eq!(c[1].new_line, Some(1083));
-    assert_eq!(c[1].text, "                    && k > floor");
-    let spans2 = c[1].spans.as_ref().expect("spans2");
+    assert_eq!(c[1].kind(), RowKind::Add);
+    assert_eq!(c[1].new_line(), Some(1083));
+    assert_eq!(c[1].text(), "                    && k > floor");
+    let spans2 = c[1].spans().expect("spans2");
     assert_eq!(
         spans2.del,
         vec![(21, 22)],
@@ -720,8 +754,8 @@ fn test_multiline_expansion_subword_distribution() {
         "add2 highlights full leading indentation prefix && and >"
     );
 
-    assert_eq!(c[2].kind, RowKind::Add);
-    assert_eq!(c[2].new_line, Some(1084));
+    assert_eq!(c[2].kind(), RowKind::Add);
+    assert_eq!(c[2].new_line(), Some(1084));
 }
 
 // Kept-del anchoring: a genuinely removed line renders right after the mod
@@ -762,25 +796,22 @@ fn kept_del_anchoring() {
         row(RowKind::Add, "            return None;", Some(145), None),
     ]);
     let c = collapse_hunk_rows(&h2, false, None, None);
-    assert_eq!(c[0].kind, RowKind::Mod, "mod leads");
-    assert_eq!(c[0].new_line, Some(142));
-    assert_eq!(c[1].kind, RowKind::Add, "then the moves");
-    assert_eq!(c[1].new_line, Some(143));
-    assert!(c[1].moved);
-    assert_eq!(c[2].kind, RowKind::Add, "then the moves");
-    assert_eq!(c[2].new_line, Some(144));
-    assert!(c[2].moved);
+    assert_eq!(c[0].kind(), RowKind::Mod, "mod leads");
+    assert_eq!(c[0].new_line(), Some(142));
+    assert_eq!(c[1].kind(), RowKind::Add, "then the moves");
+    assert_eq!(c[1].new_line(), Some(143));
+    assert!(c[1].is_moved());
+    assert_eq!(c[2].kind(), RowKind::Add, "then the moves");
+    assert_eq!(c[2].new_line(), Some(144));
+    assert!(c[2].is_moved());
     assert_eq!(
-        c[3].kind,
+        c[3].kind(),
         RowKind::Mod,
         "the return pairs with return None;"
     );
-    assert_eq!(c[3].new_line, Some(145));
+    assert_eq!(c[3].new_line(), Some(145));
     assert!(
-        c[3].del_text
-            .as_deref()
-            .unwrap()
-            .contains("return self.results"),
+        c[3].del_text().unwrap().contains("return self.results"),
         "the kept del anchors the second mod"
     );
 }
@@ -830,16 +861,16 @@ fn multiline_del_mount_pairs_1_to_1_with_two_del_rows() {
     let c = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
     let rmod = c
         .iter()
-        .find(|r| r.kind == RowKind::Mod)
+        .find(|r| r.kind() == RowKind::Mod)
         .expect("the 1-to-1 mod row");
     assert_eq!(
-        rmod.del_text.as_deref(),
+        rmod.del_text(),
         Some("        self.mount_stack"),
         "the mod row's del_text is strictly single-line"
     );
-    assert_eq!(rmod.new_line, Some(1060));
+    assert_eq!(rmod.new_line(), Some(1060));
     assert_eq!(
-        c.iter().filter(|r| r.kind == RowKind::Del).count(),
+        c.iter().filter(|r| r.kind() == RowKind::Del).count(),
         4,
         "the 4 remaining deleted lines render as separate `-` lines"
     );
@@ -872,7 +903,7 @@ fn no_similarity_pairing_across_different_functions() {
         "        self.layers.iter().any(|l| l.path().join(sub_path).is_dir())".to_string();
 
     let collapsed = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
-    let has_mod = collapsed.iter().any(|r| r.kind == RowKind::Mod);
+    let has_mod = collapsed.iter().any(|r| r.kind() == RowKind::Mod);
     assert!(
         !has_mod,
         "del in resolve_layer_stack must NOT pair as a Mod row with add in dir_exists_at"
@@ -897,13 +928,13 @@ fn struct_and_fn_visibility_change_pairs_across_doc_comments() {
         ),
     ]);
     let collapsed = collapse_hunk_rows(&h, false, None, None);
-    let mod_row = collapsed.iter().find(|r| r.kind == RowKind::Mod);
+    let mod_row = collapsed.iter().find(|r| r.kind() == RowKind::Mod);
     assert!(
         mod_row.is_some(),
         "pub(super) struct and pub struct must pair into a Mod row across doc comment adds"
     );
-    assert_eq!(mod_row.unwrap().old_line, Some(496));
-    assert_eq!(mod_row.unwrap().new_line, Some(584));
+    assert_eq!(mod_row.unwrap().old_line(), Some(496));
+    assert_eq!(mod_row.unwrap().new_line(), Some(584));
 }
 
 #[test]
@@ -928,13 +959,13 @@ fn refactored_fn_renamed_lines_pair_as_mod() {
     new_content[280] = "fn into_filesystem(self) {".to_string();
 
     let collapsed = collapse_hunk_rows(&h, false, Some(&old_content), Some(&new_content));
-    let mod_row = collapsed.iter().find(|r| r.kind == RowKind::Mod);
+    let mod_row = collapsed.iter().find(|r| r.kind() == RowKind::Mod);
     assert!(
         mod_row.is_some(),
         "lines inside a renamed method must pair as a Mod row when old fn name does not exist in new content"
     );
-    assert_eq!(mod_row.unwrap().old_line, Some(254));
-    assert_eq!(mod_row.unwrap().new_line, Some(302));
+    assert_eq!(mod_row.unwrap().old_line(), Some(254));
+    assert_eq!(mod_row.unwrap().new_line(), Some(302));
 }
 
 #[test]
@@ -1001,5 +1032,5 @@ fn test_resolved_layers_subword_collapse() {
     let collapsed = collapse_hunk_rows(&h, false, None, None);
     println!("COLLAPSED: {:#?}", collapsed);
     assert_eq!(collapsed.len(), 1, "Should collapse to 1 Mod row");
-    assert_eq!(collapsed[0].kind, RowKind::Mod);
+    assert_eq!(collapsed[0].kind(), RowKind::Mod);
 }

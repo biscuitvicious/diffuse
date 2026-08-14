@@ -1,7 +1,4 @@
-//! One-for-one port of `review.ts`'s `fileCounts` (PLAN.md §3) — the
-//! header counts. Moves are neither added nor removed; mods are one row.
-
-use crate::parse::{DiffFile, RowKind};
+use crate::parse::{DiffFile, Row};
 
 /// Display counts: moves are neither added nor removed; mods are one row.
 pub fn file_counts(f: &DiffFile) -> FileCounts {
@@ -11,12 +8,12 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
     let mut movs = 0usize;
     for h in &f.hunks {
         for r in &h.rows {
-            match r.kind {
-                RowKind::Add if r.moved => movs += 1,
-                RowKind::Add => adds += 1,
-                RowKind::Del => dels += 1,
-                RowKind::Mod => mods += 1,
-                _ => {}
+            match r {
+                Row::Add(_) => adds += 1,
+                Row::Del(_) => dels += 1,
+                Row::Mod { .. } => mods += 1,
+                Row::Mov { .. } => movs += 1,
+                Row::Ctx(_) | Row::Sep(_) => {}
             }
         }
     }

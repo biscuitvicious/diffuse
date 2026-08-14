@@ -1,20 +1,11 @@
-//! Ports of the merge machinery tests from test/review.test.ts: the
-//! split-word wholesale, the trace wobble, the reverse-stretch, the
-//! whitespace-minimum, the pure-deletion mod.
-
 use crate::lcs::{char_slice, word_spans};
 use crate::merge::*;
-use crate::parse::{Row, RowKind};
+use crate::parse::{AddLine, DelLine, LineNum, Row};
 
 fn mk(del: &str, add: &str) -> Row {
-    Row {
-        kind: RowKind::Mod,
-        text: add.to_string(),
-        new_line: Some(1),
-        old_line: Some(1),
-        spans: Some(word_spans(del, add)),
-        moved: false,
-        del_text: Some(del.to_string()),
+    Row::Mod {
+        old_line: DelLine::new(LineNum::new(1).unwrap(), del),
+        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, word_spans(del, add)),
     }
 }
 
@@ -32,7 +23,7 @@ fn split_word_wholesale() {
     );
     assert_eq!(
         display_text(&r),
-        r.del_text.clone().unwrap() + &r.text,
+        r.del_text().unwrap().to_string() + r.text(),
         "wholesale displayText is the whole-old + whole-new pair"
     );
 }
@@ -204,10 +195,10 @@ fn unicode_whitespace_merged_runs() {
         ("\u{3000}self.x", "   self.x"),
     ];
     for (del, add) in cases {
-        let mut r = mk(del, add);
-        // The TS block drives mergedRuns on a moved add row (spans baked).
-        r.kind = RowKind::Add;
-        r.moved = true;
+        let r = Row::Mov {
+            old_line: DelLine::new(LineNum::new(1).unwrap(), del),
+            new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, word_spans(del, add)),
+        };
         let runs = merged_runs(&r);
         let kinds: Vec<RunKind> = runs.iter().map(|x| x.kind).collect();
         assert!(

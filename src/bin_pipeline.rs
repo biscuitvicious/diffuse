@@ -3,14 +3,20 @@
 //! wire contract (PLAN.md §2).
 
 use crate::collapse::collapse_hunk_rows;
-use crate::counts::file_counts;
-use crate::merge::{RunKind, merged_runs};
+use crate::counts::{FileCounts, file_counts};
+use crate::lcs::word_spans;
+use crate::merge::{RunKind, is_wholesale_mod, merged_runs};
 use crate::moves::mark_moves;
+use crate::notes::{NotesDB, Side as NoteSide, note_runs, notes_for_file};
 use crate::old_content::old_content_from_diff;
-use crate::parse::{RowKind, parse_diff};
-use crate::syntax::{
-    ClassifiedToken, classify_tokens, fence_regions, lang_profile, markdown_tokens,
+use crate::parse::{
+    AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind, Spans, parse_diff,
 };
+use crate::syntax::{
+    ClassifiedToken, FenceRegion, LangProfile, classify_line, classify_tokens, fence_lang_ext,
+    fence_regions, lang_profile, markdown_tokens, region_at,
+};
+use crate::visible::{Side as VisibleSide, build_visible};
 use serde::{Deserialize, Serialize};
 
 /// A row in the wire-contract output: the collapse row + its merged runs.
@@ -23,7 +29,7 @@ pub struct OutputRow {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub del_text: Option<String>,
-    pub spans: crate::parse::Spans,
+    pub spans: Spans,
     pub runs: Vec<OutputRun>,
     /// The mod is wholesale (the del block + the add block render as two
     /// separate blocks, never merged) — the renderer's old isWholesaleMod
@@ -33,20 +39,45 @@ pub struct OutputRow {
     pub moved: bool,
 }
 
-impl From<&OutputRow> for crate::parse::Row {
+impl From<&OutputRow> for Row {
     fn from(r: &OutputRow) -> Self {
-        crate::parse::Row {
-            kind: r.kind,
-            text: r.text.clone(),
-            new_line: r.new_line,
-            old_line: r.old_line,
-            spans: if r.spans.is_empty() {
-                None
-            } else {
-                Some(r.spans.clone())
-            },
-            moved: r.moved,
-            del_text: r.del_text.clone(),
+        match r.kind {
+            RowKind::Ctx => {
+                let old_pos = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                let new_pos = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                Row::Ctx(CtxLine::new(old_pos, new_pos, &r.text))
+            }
+            RowKind::Del => {
+                let num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                Row::Del(DelLine::new(num, &r.text))
+            }
+            RowKind::Add if r.moved => {
+                let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                let del_text = r.del_text.as_deref().unwrap_or(&r.text);
+                Row::Mov {
+                    old_line: DelLine::new(old_num, del_text),
+                    new_line: AddLine::with_spans(new_num, &r.text, r.spans.clone()),
+                }
+            }
+            RowKind::Add => {
+                let num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                if let Some(ref dt) = r.del_text {
+                    Row::Add(AddLine::with_donor(num, &r.text, dt, r.spans.clone()))
+                } else {
+                    Row::Add(AddLine::with_spans(num, &r.text, r.spans.clone()))
+                }
+            }
+            RowKind::Mod => {
+                let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                let del_text = r.del_text.as_deref().unwrap_or(&r.text);
+                Row::Mod {
+                    old_line: DelLine::new(old_num, del_text),
+                    new_line: AddLine::with_spans(new_num, &r.text, r.spans.clone()),
+                }
+            }
+            RowKind::Sep | RowKind::File => Row::Sep(r.text.clone()),
         }
     }
 }
@@ -71,7 +102,7 @@ impl OutputRow {
     }
 
     #[inline]
-    pub fn reconstruct(&self) -> crate::parse::Row {
+    pub fn reconstruct(&self) -> Row {
         self.into()
     }
 }
@@ -121,8 +152,8 @@ pub struct OutputFence {
 fn classify_ctx_line(
     text: &str,
     new_line: Option<u32>,
-    profile: Option<&crate::syntax::LangProfile>,
-    regions: &[crate::syntax::FenceRegion],
+    profile: Option<&LangProfile>,
+    regions: &[FenceRegion],
 ) -> Vec<ClassifiedToken> {
     let is_delimiter = new_line.is_some_and(|n| {
         regions
@@ -154,8 +185,8 @@ fn classify_ctx_line(
             text: text.into(),
         }];
     }
-    let region = new_line.and_then(|n| crate::syntax::region_at(regions, n));
-    crate::syntax::classify_line(text, profile, region)
+    let region = new_line.and_then(|n| region_at(regions, n));
+    classify_line(text, profile, region)
 }
 
 /// The merged runs with the semantic syntax colors on the common/add runs
@@ -168,12 +199,12 @@ fn classify_ctx_line(
 /// file's default (md → the markdown tokens) — and a fence DELIMITER line
 /// renders muted.
 pub fn colored_runs(
-    r: &crate::parse::Row,
-    profile: Option<&crate::syntax::LangProfile>,
-    regions: &[crate::syntax::FenceRegion],
+    r: &Row,
+    profile: Option<&LangProfile>,
+    regions: &[FenceRegion],
 ) -> Vec<OutputRun> {
     let mut out = Vec::new();
-    let new_line = r.new_line;
+    let new_line = r.new_line();
     // The FULL-line classifier (an add row — the strip + the delimiter
     // + the region/md default all apply), and the FRAGMENT classifier (a
     // merged common/add run — the strip is a full-line concern, the
@@ -183,7 +214,7 @@ pub fn colored_runs(
     };
     // A merged common/add fragment classifies in the row's region (no
     // delimiter-muted path — a fragment is never a whole delimiter line).
-    let region = new_line.and_then(|n| crate::syntax::region_at(regions, n));
+    let region = new_line.and_then(|n| region_at(regions, n));
     let classify_frag = |text: &str| -> Vec<ClassifiedToken> {
         match region {
             Some(rg) => classify_tokens(text, rg.lang.as_deref().and_then(lang_profile)),
@@ -196,14 +227,12 @@ pub fn colored_runs(
             }
         }
     };
-    // The renderer's token source (the wire runs): a mod row, or a moved
-    // row whose delText differs from its text, merges.
-    let use_merged = (r.kind == RowKind::Mod
-        || (r.moved && r.del_text.as_deref() != Some(r.text.as_str()))
-        || (r.kind == RowKind::Add && r.spans.is_some()))
-        && (r.del_text.is_some() || r.kind == RowKind::Add);
+    let use_merged = (matches!(r, Row::Mod { .. })
+        || (r.is_moved() && r.del_text() != Some(r.text()))
+        || (matches!(r, Row::Add(_)) && r.del_text().is_some()))
+        && r.del_text().is_some();
     if !use_merged {
-        if r.kind == RowKind::Add || r.kind == RowKind::Ctx {
+        if matches!(r, Row::Add(_) | Row::Mov { .. } | Row::Ctx(_)) {
             // Add AND ctx rows carry the engine's classified runs — the
             // renderer reads them straight off the wire for both row
             // kinds (no TS-side re-tokenization). A del stays plain (the
@@ -211,12 +240,12 @@ pub fn colored_runs(
             // renderer's strike/fill hint: add → Add, ctx → Ctx (a ctx
             // row is neither struck nor filled — Ctx falls through to
             // the line tint in styleTokens).
-            let kind = if r.kind == RowKind::Add {
+            let kind = if matches!(r, Row::Add(_) | Row::Mov { .. }) {
                 RunKind::Add
             } else {
                 RunKind::Ctx
             };
-            for t in classify_full(&r.text) {
+            for t in classify_full(r.text()) {
                 out.push(OutputRun {
                     kind,
                     color: Some(t.color),
@@ -229,12 +258,12 @@ pub fn colored_runs(
                 kind: RunKind::Del,
                 color: None,
                 sgr: None,
-                text: r.text.clone(),
+                text: r.text().to_string(),
             });
         }
         return out;
     }
-    let full_tokens = classify_full(&r.text);
+    let full_tokens = classify_full(r.text());
     let mut add_pos = 0usize;
     for run in merged_runs(r) {
         if run.kind == RunKind::Del {
@@ -326,7 +355,7 @@ fn slice_classified_tokens(
 pub fn run_pipeline_with_notes(
     diff: &str,
     contents: &std::collections::HashMap<String, String>,
-    notes_db: Option<&crate::notes::NotesDB>,
+    notes_db: Option<&NotesDB>,
     repo: Option<&str>,
 ) -> PipelineOutput {
     let mut files = parse_diff(diff);
@@ -357,13 +386,11 @@ pub fn run_pipeline_with_notes(
         // them (the TS engine computed them on the fly).
         for h in &mut f.hunks {
             for r in &mut h.rows {
-                if r.moved
-                    && r.del_text.is_some()
-                    && r.del_text.as_deref() != Some(r.text.as_str())
-                    && r.spans.is_none()
+                if let Row::Mov { old_line, new_line } = r
+                    && old_line.text != new_line.text
+                    && new_line.spans.is_empty()
                 {
-                    let del = r.del_text.clone().unwrap_or_default();
-                    r.spans = Some(crate::lcs::word_spans(&del, &r.text));
+                    new_line.spans = word_spans(&old_line.text, &new_line.text);
                 }
             }
         }
@@ -376,15 +403,19 @@ pub fn run_pipeline_with_notes(
             let mut rows_out = Vec::new();
             for r in &h.rows {
                 rows_out.push(OutputRow {
-                    kind: r.kind,
-                    new_line: r.new_line,
-                    old_line: r.old_line,
-                    text: r.text.clone(),
-                    del_text: r.del_text.clone(),
-                    spans: r.spans.clone().unwrap_or_default(),
+                    kind: r.kind(),
+                    new_line: r.new_line(),
+                    old_line: if matches!(r, Row::Add(_) | Row::Mov { .. }) {
+                        None
+                    } else {
+                        r.old_line()
+                    },
+                    text: r.text().to_string(),
+                    del_text: r.del_text().map(String::from),
+                    spans: r.spans().cloned().unwrap_or_default(),
                     runs: colored_runs(r, profile, &regions),
-                    wholesale: r.kind == RowKind::Mod && crate::merge::is_wholesale_mod(r),
-                    moved: r.moved,
+                    wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
+                    moved: r.is_moved(),
                 });
             }
             hunks_out.push(OutputHunk {
@@ -396,7 +427,7 @@ pub fn run_pipeline_with_notes(
             });
         }
         let notes_out = match (notes_db, repo) {
-            (Some(db), Some(r)) => crate::notes::notes_for_file(db, r, &f.path)
+            (Some(db), Some(r)) => notes_for_file(db, r, &f.path)
                 .into_iter()
                 .map(|n| OutputNote {
                     id: n.id.clone(),
@@ -406,7 +437,7 @@ pub fn run_pipeline_with_notes(
                     end: n.end,
                     text: n.text.clone(),
                     created_at: n.created_at,
-                    runs: crate::notes::note_runs(&n.text),
+                    runs: note_runs(&n.text),
                 })
                 .collect(),
             _ => Vec::new(),
@@ -456,8 +487,7 @@ pub fn run_pipeline_with_notes(
                     // attribute grammar (a single source of truth: the
                     // engine owns language resolution, the renderer just
                     // consumes the key).
-                    lang: crate::syntax::fence_lang_ext(&r.lang.clone().unwrap_or_default())
-                        .to_string(),
+                    lang: fence_lang_ext(&r.lang.clone().unwrap_or_default()).to_string(),
                 })
                 .collect(),
             notes: notes_out,
@@ -472,7 +502,7 @@ pub fn run_pipeline_with_notes(
                         h.below_ctx = 6;
                     }
                 }
-                crate::visible::build_visible(
+                build_visible(
                     &hunks_with_ctx,
                     f.new_line_count,
                     f.old_line_count,
@@ -482,32 +512,53 @@ pub fn run_pipeline_with_notes(
                 )
             }
             .into_iter()
-            .map(|r| {
-                let runs =
-                    if r.kind == RowKind::Mod || r.kind == RowKind::Add || r.kind == RowKind::Del {
-                        colored_runs(&r, profile, &regions)
-                    } else {
-                        classify_ctx_line(&r.text, r.new_line.or(r.old_line), profile, &regions)
-                            .into_iter()
-                            .map(|tk| OutputRun {
-                                kind: RunKind::Ctx,
-                                color: Some(tk.color),
-                                sgr: tk.sgr,
-                                text: tk.text,
-                            })
-                            .collect()
-                    };
-                let wholesale = r.kind == RowKind::Mod && crate::merge::is_wholesale_mod(&r);
+            .map(|vis| {
+                let r = vis.row;
+                let runs = if matches!(
+                    r,
+                    Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
+                ) {
+                    colored_runs(&r, profile, &regions)
+                } else {
+                    classify_ctx_line(
+                        r.text(),
+                        match vis.side {
+                            Some(VisibleSide::New) => r.new_line(),
+                            Some(VisibleSide::Old) => None,
+                            None => r.new_line().or_else(|| r.old_line()),
+                        },
+                        profile,
+                        &regions,
+                    )
+                    .into_iter()
+                    .map(|tk| OutputRun {
+                        kind: RunKind::Ctx,
+                        color: Some(tk.color),
+                        sgr: tk.sgr,
+                        text: tk.text,
+                    })
+                    .collect()
+                };
+                let (new_line, old_line) = match (&r, vis.side) {
+                    (Row::Ctx(_), Some(VisibleSide::New)) => (r.new_line(), None),
+                    (Row::Ctx(_), Some(VisibleSide::Old)) => (None, r.old_line()),
+                    (Row::Ctx(_), None) => (r.new_line(), r.old_line()),
+                    (Row::Del(_), _) => (None, r.old_line()),
+                    (Row::Add(_) | Row::Mov { .. }, _) => (r.new_line(), None),
+                    (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
+                    (Row::Sep(_), _) => (None, None),
+                };
+                let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
                 OutputRow {
-                    kind: r.kind,
-                    new_line: r.new_line,
-                    old_line: r.old_line,
-                    text: r.text,
-                    del_text: r.del_text,
-                    spans: r.spans.unwrap_or_default(),
+                    kind: r.kind(),
+                    new_line,
+                    old_line,
+                    text: r.text().to_string(),
+                    del_text: r.del_text().map(String::from),
+                    spans: r.spans().cloned().unwrap_or_default(),
                     runs,
                     wholesale,
-                    moved: r.moved,
+                    moved: r.is_moved(),
                 }
             })
             .collect(),
@@ -534,7 +585,7 @@ pub fn run_pipeline(
 pub struct OutputNote {
     pub id: String,
     pub file: String,
-    pub side: crate::notes::Side,
+    pub side: NoteSide,
     pub start: u32,
     pub end: u32,
     pub text: String,
@@ -578,8 +629,8 @@ impl OutputHunk {
         }
     }
 
-    pub fn reconstruct(&self) -> crate::parse::Hunk {
-        crate::parse::Hunk {
+    pub fn reconstruct(&self) -> Hunk {
+        Hunk {
             old_start: self.old_start,
             old_count: self.old_count,
             new_start: self.new_start,
@@ -604,7 +655,7 @@ pub struct OutputFile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub old_content: Vec<String>,
     pub hunks: Vec<OutputHunk>,
-    pub counts: crate::counts::FileCounts,
+    pub counts: FileCounts,
     /// The fence regions (the wire's syntax-region spans — line 1-indexed).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fences: Vec<OutputFence>,
@@ -646,15 +697,15 @@ impl OutputFile {
         }
     }
 
-    pub fn reconstruct(&self) -> crate::parse::DiffFile {
+    pub fn reconstruct(&self) -> DiffFile {
         let status = match self.status.as_str() {
-            "added" => crate::parse::FileStatus::Added,
-            "deleted" => crate::parse::FileStatus::Deleted,
-            "renamed" => crate::parse::FileStatus::Renamed,
-            "untracked" => crate::parse::FileStatus::Untracked,
-            _ => crate::parse::FileStatus::Modified,
+            "added" => FileStatus::Added,
+            "deleted" => FileStatus::Deleted,
+            "renamed" => FileStatus::Renamed,
+            "untracked" => FileStatus::Untracked,
+            _ => FileStatus::Modified,
         };
-        crate::parse::DiffFile {
+        DiffFile {
             path: self.path.clone(),
             old_path: None,
             status,
@@ -687,7 +738,7 @@ impl PipelineOutput {
         }
     }
 
-    pub fn reconstruct(&self) -> Vec<crate::parse::DiffFile> {
+    pub fn reconstruct(&self) -> Vec<DiffFile> {
         self.files.iter().map(|f| f.reconstruct()).collect()
     }
 }
@@ -695,12 +746,11 @@ impl PipelineOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::{Row, RowKind};
 
     #[test]
     fn test_fence_delimiter_line_preserves_comment_prefix_color() {
-        let profile = crate::syntax::lang_profile("rs");
-        let regions = vec![crate::syntax::FenceRegion {
+        let profile = lang_profile("rs");
+        let regions = vec![FenceRegion {
             start: 2,
             end: 3,
             lang: Some("rs".to_string()),
@@ -745,27 +795,26 @@ mod tests {
         // Row 1078: `lowers` is deleted before `non-top-upper layers` is added, and trailing `layer's markers —` lands at the end
         let old_1078 = "// Walk the lowers top → bottom, honoring each layer's markers —";
         let new_1078 = "// Walk the non-top-upper layers top → bottom, honoring each";
-        let r_1078 = Row {
-            kind: RowKind::Mod,
-            text: new_1078.to_string(),
-            new_line: Some(1078),
-            old_line: Some(1078),
-            spans: Some(crate::lcs::word_spans(old_1078, new_1078)),
-            moved: false,
-            del_text: Some(old_1078.to_string()),
+        let r_1078 = Row::Mod {
+            old_line: DelLine::new(LineNum::new(1078).unwrap(), old_1078),
+            new_line: AddLine::with_spans(
+                LineNum::new(1078).unwrap(),
+                new_1078,
+                word_spans(old_1078, new_1078),
+            ),
         };
-        let runs_1078 = crate::merge::merged_runs(&r_1078);
-        let non_common_1078: Vec<(crate::merge::RunKind, &str)> = runs_1078
+        let runs_1078 = merged_runs(&r_1078);
+        let non_common_1078: Vec<(RunKind, &str)> = runs_1078
             .iter()
-            .filter(|r| r.kind != crate::merge::RunKind::Common)
+            .filter(|r| r.kind != RunKind::Common)
             .map(|r| (r.kind, r.text.as_str()))
             .collect();
         assert_eq!(
             non_common_1078,
             vec![
-                (crate::merge::RunKind::Del, "lowers"),
-                (crate::merge::RunKind::Add, "non-top-upper layers"),
-                (crate::merge::RunKind::Del, " layer's markers —"),
+                (RunKind::Del, "lowers"),
+                (RunKind::Add, "non-top-upper layers"),
+                (RunKind::Del, " layer's markers —"),
             ],
             "1078: lowers deletes before non-top-upper layers adds, layer's markers strikes at end"
         );
@@ -773,28 +822,27 @@ mod tests {
         // Row 1079: `layer's markers — ` adds at start, `upper`->`layer` pairs, `whiteouts...` strikes at end of `carries` (not inside `ca...rries`)
         let old_1079 = "// a frozen (snapshotted) upper carries whiteouts and opaque dirs";
         let new_1079 = "// layer's markers — a frozen (snapshotted) layer carries";
-        let r_1079 = Row {
-            kind: RowKind::Mod,
-            text: new_1079.to_string(),
-            new_line: Some(1079),
-            old_line: Some(1079),
-            spans: Some(crate::lcs::word_spans(old_1079, new_1079)),
-            moved: false,
-            del_text: Some(old_1079.to_string()),
+        let r_1079 = Row::Mod {
+            old_line: DelLine::new(LineNum::new(1079).unwrap(), old_1079),
+            new_line: AddLine::with_spans(
+                LineNum::new(1079).unwrap(),
+                new_1079,
+                word_spans(old_1079, new_1079),
+            ),
         };
-        let runs_1079 = crate::merge::merged_runs(&r_1079);
-        let non_common_1079: Vec<(crate::merge::RunKind, &str)> = runs_1079
+        let runs_1079 = merged_runs(&r_1079);
+        let non_common_1079: Vec<(RunKind, &str)> = runs_1079
             .iter()
-            .filter(|r| r.kind != crate::merge::RunKind::Common)
+            .filter(|r| r.kind != RunKind::Common)
             .map(|r| (r.kind, r.text.as_str()))
             .collect();
         assert_eq!(
             non_common_1079,
             vec![
-                (crate::merge::RunKind::Add, "layer's markers — "),
-                (crate::merge::RunKind::Del, "upper"),
-                (crate::merge::RunKind::Add, "layer"),
-                (crate::merge::RunKind::Del, " whiteouts and opaque dirs"),
+                (RunKind::Add, "layer's markers — "),
+                (RunKind::Del, "upper"),
+                (RunKind::Add, "layer"),
+                (RunKind::Del, " whiteouts and opaque dirs"),
             ],
             "1079: layer's markers adds at start, upper->layer pairs, whiteouts strikes at end of carries"
         );
@@ -828,7 +876,7 @@ index 111..222 100644
 
         // Reconstruct from reverse wire matches reversed AST files
         let rev_files_from_wire = wire_rev.reconstruct();
-        let rev_files_direct: Vec<crate::parse::DiffFile> =
+        let rev_files_direct: Vec<DiffFile> =
             reconstructed_files.iter().map(|f| f.reverse()).collect();
         assert_eq!(rev_files_from_wire[0].path, rev_files_direct[0].path);
         assert_eq!(
@@ -844,10 +892,10 @@ index 111..222 100644
             assert_eq!(h1.new_start, h2.new_start);
             assert_eq!(h1.rows.len(), h2.rows.len());
             for (r1, r2) in h1.rows.iter().zip(h2.rows.iter()) {
-                assert_eq!(r1.kind, r2.kind);
-                assert_eq!(r1.text, r2.text);
-                assert_eq!(r1.new_line, r2.new_line);
-                assert_eq!(r1.old_line, r2.old_line);
+                assert_eq!(r1.kind(), r2.kind());
+                assert_eq!(r1.text(), r2.text());
+                assert_eq!(r1.new_line(), r2.new_line());
+                assert_eq!(r1.old_line(), r2.old_line());
             }
         }
     }

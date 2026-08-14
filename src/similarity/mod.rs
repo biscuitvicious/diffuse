@@ -1,7 +1,10 @@
 //! One-for-one port of `review.ts`'s `lineSimilarity`/`lineSimilarityParts`
 //! (PLAN.md §3). The comments carry the *why* — ported verbatim.
 
-use crate::lcs::{char_len, lcs_pairs, tokenize_line};
+use crate::lcs::{
+    char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
+    tokenize_line,
+};
 
 /// Shared-char ratio between two lines (for the mod pairing). Whitespace
 /// tokens are excluded — an indent-only reflow must not inflate the match
@@ -111,8 +114,8 @@ impl TokenInterner {
         }
         let id = self.map.len() as u32;
         self.map.insert(token.to_string(), id);
-        self.ws.push(crate::lcs::token_is_ws(token));
-        self.alnum.push(crate::lcs::token_is_alnum(token));
+        self.ws.push(token_is_ws(token));
+        self.alnum.push(token_is_alnum(token));
         id
     }
 
@@ -153,7 +156,7 @@ pub fn line_similarity_parts_tokens(
             add_total: 0,
         };
     }
-    let pairs = crate::lcs::lcs_pairs_ids(&ot.ids, &nt.ids, ws, alnum);
+    let pairs = lcs_pairs_ids(&ot.ids, &nt.ids, ws, alnum);
     let mut matched: usize = 0;
     for j in pairs.values() {
         matched += char_len(&nt.tokens[*j]);
@@ -191,8 +194,7 @@ pub fn sim_window(
     if ot.tokens.is_empty() || nt_ids.is_empty() {
         return if ot.trimmed == nt_trimmed { 1.0 } else { 0.0 };
     }
-    let matched =
-        crate::lcs::lcs_matched_chars_ids(&ot.ids, nt_ids, ws, alnum, nt_token_chars, scratch);
+    let matched = lcs_matched_chars_ids(&ot.ids, nt_ids, ws, alnum, nt_token_chars, scratch);
     let total = ot.chars.max(nt_chars);
     if total > 0 {
         matched as f64 / total as f64

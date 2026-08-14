@@ -1,15 +1,19 @@
 use super::*;
-use crate::parse::{Hunk, Row};
+use crate::parse::{AddLine, DelLine, FileStatus, Hunk, LineNum, Row};
 
-fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
-    Row::new(kind, text, new_line, old_line)
+fn del(num: u32, text: &str) -> Row {
+    Row::Del(DelLine::new(LineNum::new(num).unwrap(), text))
+}
+
+fn add(num: u32, text: &str) -> Row {
+    Row::Add(AddLine::new(LineNum::new(num).unwrap(), text))
 }
 
 fn file(hunks: Vec<Hunk>) -> DiffFile {
     DiffFile {
         path: "m.rs".into(),
         old_path: None,
-        status: crate::parse::FileStatus::Modified,
+        status: FileStatus::Modified,
         new_line_count: 20,
         old_line_count: 20,
         new_content: Vec::new(),
@@ -36,27 +40,25 @@ fn hunk(rows: Vec<Row>) -> Hunk {
 #[test]
 fn exact_content_pair_marked_moved() {
     let mut f = file(vec![hunk(vec![
-        row(RowKind::Del, "old one", None, Some(1)),
-        row(RowKind::Add, "new one", Some(1), None),
-        row(RowKind::Add, "extra line", Some(2), None),
-        row(RowKind::Add, "", Some(3), None),
-        row(RowKind::Del, "moved line", None, Some(4)),
-        row(RowKind::Add, "moved line", Some(4), None),
-        row(RowKind::Add, "after the blank", Some(5), None),
+        del(1, "old one"),
+        add(1, "new one"),
+        add(2, "extra line"),
+        add(3, ""),
+        del(4, "moved line"),
+        add(4, "moved line"),
+        add(5, "after the blank"),
     ])]);
     mark_moves(&mut f);
-    let moved_del = f.hunks[0]
-        .rows
-        .iter()
-        .find(|r| r.kind == RowKind::Del && r.text == "moved line")
-        .expect("del");
     let moved_add = f.hunks[0]
         .rows
         .iter()
-        .find(|r| r.kind == RowKind::Add && r.text == "moved line")
+        .find(|r| r.new_line() == Some(4) && r.text() == "moved line")
         .expect("add");
-    assert!(moved_del.moved, "exact-content pair marked moved (del)");
-    assert!(moved_add.moved, "exact-content pair marked moved (add)");
+    assert!(
+        moved_add.is_moved(),
+        "exact-content pair marked moved (add)"
+    );
+    assert_eq!(moved_add.old_line(), Some(4), "paired with old_line 4");
 }
 
 // Port of the block-move rule test: the old find_mount chain
@@ -65,74 +67,50 @@ fn exact_content_pair_marked_moved() {
 fn block_move_rule_interior_matches_are_not_moves() {
     let mut f = file(vec![
         hunk(vec![
-            row(RowKind::Del, "        self.mount_stack", None, Some(1019)),
-            row(RowKind::Del, "            .filesystems", None, Some(1020)),
-            row(RowKind::Del, "            .iter()", None, Some(1021)),
-            row(
-                RowKind::Del,
+            del(1019, "        self.mount_stack"),
+            del(1020, "            .filesystems"),
+            del(1021, "            .iter()"),
+            del(
+                1022,
                 "            .rfind(|fs| guest_path.starts_with(fs.mount_point()))",
-                None,
-                Some(1022),
             ),
-            row(
-                RowKind::Del,
+            del(
+                1023,
                 "            .map(|fs| fs.as_ref() as &dyn Filesystem)",
-                None,
-                Some(1023),
             ),
-            row(
-                RowKind::Add,
-                "        self.mount_stack.get(guest_path)",
-                Some(1060),
-                None,
-            ),
-            row(RowKind::Add, "    }", Some(1061), None),
+            add(1060, "        self.mount_stack.get(guest_path)"),
+            add(1061, "    }"),
         ]),
         hunk(vec![
-            row(
-                RowKind::Add,
+            add(
+                771,
                 "    pub fn get(&self, guest_path: &Path) -> Option<&dyn Filesystem> {",
-                Some(771),
-                None,
             ),
-            row(RowKind::Add, "        self.filesystems", Some(772), None),
-            row(RowKind::Add, "            .iter()", Some(773), None),
-            row(
-                RowKind::Add,
+            add(772, "        self.filesystems"),
+            add(773, "            .iter()"),
+            add(
+                774,
                 "            .rfind(|fs| guest_path.starts_with(fs.mount_point()))",
-                Some(774),
-                None,
             ),
-            row(
-                RowKind::Add,
-                "            .map(|fs| fs.as_ref() as &dyn Filesystem)",
-                Some(775),
-                None,
-            ),
-            row(RowKind::Add, "    }", Some(776), None),
+            add(775, "            .map(|fs| fs.as_ref() as &dyn Filesystem)"),
+            add(776, "    }"),
         ]),
     ]);
     mark_moves(&mut f);
     let del_iter = f.hunks[0]
         .rows
         .iter()
-        .find(|r| r.kind == RowKind::Del && r.text.trim() == ".iter()");
+        .find(|r| matches!(r, Row::Del(d) if d.text.trim() == ".iter()"));
     assert!(
-        del_iter.is_none() || !del_iter.unwrap().moved,
+        del_iter.is_some() && !del_iter.unwrap().is_moved(),
         "the interior chain del is NOT a move (the run's first del didn't move)"
     );
     let add_iter = f.hunks[1]
         .rows
         .iter()
-        .find(|r| r.kind == RowKind::Add && r.text.trim() == ".iter()");
+        .find(|r| matches!(r, Row::Add(a) if a.text.trim() == ".iter()"));
     assert!(
-        add_iter.is_none() || !add_iter.unwrap().moved,
+        add_iter.is_some() && !add_iter.unwrap().is_moved(),
         "the get method's chain add is NOT marked moved"
     );
-    if let Some(a) = add_iter {
-        assert!(
-            a.del_text.is_none(),
-            "the paired delText is dropped with the move"
-        );
-    }
 }

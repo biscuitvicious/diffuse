@@ -1,6 +1,7 @@
 //! Note storage, persistence, and markdown rendering for review notes.
 
 use crate::bin_pipeline::OutputRun;
+use crate::merge::RunKind;
 use crate::syntax::{
     ClassifiedToken, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE, classify_tokens,
     lang_profile, md_inner_tokens,
@@ -302,7 +303,7 @@ pub fn note_runs(text: &str) -> Vec<OutputRun> {
     render_note_markdown(text)
         .into_iter()
         .map(|t| OutputRun {
-            kind: crate::merge::RunKind::Ctx,
+            kind: RunKind::Ctx,
             color: Some(t.color),
             sgr: t.sgr,
             text: t.text,

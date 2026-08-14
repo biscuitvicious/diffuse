@@ -49,7 +49,7 @@ fn parse_diff_multi_file_new_deleted_rename() {
         a.hunks[0]
             .rows
             .iter()
-            .filter(|r| r.kind == RowKind::Add)
+            .filter(|r| matches!(r, Row::Add(_)))
             .count(),
         2,
         "2 adds"
@@ -58,7 +58,7 @@ fn parse_diff_multi_file_new_deleted_rename() {
         a.hunks[0]
             .rows
             .iter()
-            .filter(|r| r.kind == RowKind::Del)
+            .filter(|r| matches!(r, Row::Del(_)))
             .count(),
         1,
         "1 del"
@@ -66,15 +66,15 @@ fn parse_diff_multi_file_new_deleted_rename() {
     let add_row = a.hunks[0]
         .rows
         .iter()
-        .find(|r| r.kind == RowKind::Add && r.text == "new line one")
+        .find(|r| matches!(r, Row::Add(add_line) if add_line.text == "new line one"))
         .expect("add row");
-    assert_eq!(add_row.new_line, Some(10), "add row newLine 10");
+    assert_eq!(add_row.new_line(), Some(10), "add row newLine 10");
     let del_row = a.hunks[0]
         .rows
         .iter()
-        .find(|r| r.kind == RowKind::Del)
+        .find(|r| matches!(r, Row::Del(_)))
         .expect("del row");
-    assert_eq!(del_row.old_line, Some(10), "del row oldLine 10");
+    assert_eq!(del_row.old_line(), Some(10), "del row oldLine 10");
     assert_eq!(files[1].status, FileStatus::Added, "README added");
     assert_eq!(files[2].status, FileStatus::Deleted, "old.txt deleted");
     assert_eq!(files[3].status, FileStatus::Renamed);
@@ -113,20 +113,15 @@ fn test_diff_components_reverse_involution() {
     assert_eq!(rev_spans.reverse(), spans);
 
     // Mod row reverse
-    let mod_row = Row {
-        kind: RowKind::Mod,
-        text: "new line text".to_string(),
-        new_line: Some(42),
-        old_line: Some(38),
-        spans: Some(spans.clone()),
-        moved: false,
-        del_text: Some("old line text".to_string()),
+    let mod_row = Row::Mod {
+        old_line: DelLine::new(LineNum::new(38).unwrap(), "old line text"),
+        new_line: AddLine::with_spans(LineNum::new(42).unwrap(), "new line text", spans.clone()),
     };
     let rev_mod = mod_row.reverse();
-    assert_eq!(rev_mod.kind, RowKind::Mod);
-    assert_eq!(rev_mod.text, "old line text");
-    assert_eq!(rev_mod.del_text.as_deref(), Some("new line text"));
-    assert_eq!(rev_mod.new_line, Some(38));
-    assert_eq!(rev_mod.old_line, Some(42));
+    assert_eq!(rev_mod.kind(), RowKind::Mod);
+    assert_eq!(rev_mod.text(), "old line text");
+    assert_eq!(rev_mod.del_text(), Some("new line text"));
+    assert_eq!(rev_mod.new_line(), Some(38));
+    assert_eq!(rev_mod.old_line(), Some(42));
     assert_eq!(rev_mod.reverse(), mod_row);
 }

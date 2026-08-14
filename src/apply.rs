@@ -15,6 +15,8 @@
 //! Hunks apply in **reverse old-start order** so an earlier hunk's offset
 //! is unaffected by a later hunk's net line change.
 
+use crate::parse::{Hunk, Row};
+
 /// Apply a single file's unified-diff slice to its old contents.
 ///
 /// `file_diff` is the slice of the full diff for ONE path — from the
@@ -104,9 +106,9 @@ pub fn apply_file_diff(file_diff: &str, old: &[String]) -> Vec<String> {
 
 /// Apply a parsed file's hunks and rows (at any stage of transformation in
 /// Phase 6) to its old contents → producing the new contents.
-pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<String> {
+pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
     let mut out: Vec<String> = old.to_vec();
-    let mut sorted_hunks: Vec<&crate::parse::Hunk> = hunks.iter().collect();
+    let mut sorted_hunks: Vec<&Hunk> = hunks.iter().collect();
     sorted_hunks.sort_by_key(|h| std::cmp::Reverse(h.old_start as usize));
     for h in sorted_hunks {
         let old_start = h.old_start as usize;
@@ -114,27 +116,39 @@ pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<Stri
         let mut new_lines = Vec::new();
         let mut cursor = if old_start == 0 { 0 } else { old_start - 1 };
         for r in &h.rows {
-            match r.kind {
-                crate::parse::RowKind::Ctx => {
+            match r {
+                Row::Ctx(ctx_line) => {
                     if cursor < out.len() {
                         assert_eq!(
                             &out[cursor],
-                            &r.text,
+                            &ctx_line.text,
                             "Ctx line mismatch at line {}: expected {:?}, got {:?}",
                             cursor + 1,
-                            r.text,
+                            ctx_line.text,
                             out[cursor]
                         );
                     }
-                    new_lines.push(r.text.clone());
+                    new_lines.push(ctx_line.text.clone());
                     cursor += 1;
                 }
-                crate::parse::RowKind::Add => {
-                    new_lines.push(r.text.clone());
+                Row::Add(add_line) => {
+                    new_lines.push(add_line.text.clone());
                 }
-                crate::parse::RowKind::Mod => {
-                    let del = r.del_text.as_deref().unwrap_or(&r.text);
-                    for line in del.split('\n') {
+                Row::Del(del_line) => {
+                    if cursor < out.len() {
+                        assert_eq!(
+                            &out[cursor],
+                            &del_line.text,
+                            "Del line mismatch at line {}: expected {:?}, got {:?}",
+                            cursor + 1,
+                            del_line.text,
+                            out[cursor]
+                        );
+                    }
+                    cursor += 1;
+                }
+                Row::Mod { old_line, new_line } | Row::Mov { old_line, new_line } => {
+                    for line in old_line.text.split('\n') {
                         if cursor < out.len() {
                             assert_eq!(
                                 &out[cursor],
@@ -147,24 +161,11 @@ pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<Stri
                         }
                         cursor += 1;
                     }
-                    for line in r.text.split('\n') {
+                    for line in new_line.text.split('\n') {
                         new_lines.push(line.to_string());
                     }
                 }
-                crate::parse::RowKind::Del => {
-                    if cursor < out.len() {
-                        assert_eq!(
-                            &out[cursor],
-                            &r.text,
-                            "Del line mismatch at line {}: expected {:?}, got {:?}",
-                            cursor + 1,
-                            r.text,
-                            out[cursor]
-                        );
-                    }
-                    cursor += 1;
-                }
-                crate::parse::RowKind::Sep | crate::parse::RowKind::File => {}
+                Row::Sep(_) => {}
             }
         }
         if old_start == 0 {
@@ -186,40 +187,39 @@ pub fn apply_hunk_rows(hunks: &[crate::parse::Hunk], old: &[String]) -> Vec<Stri
 
 /// Single-stream mapping: transforms `old` lines via a sequence of rows into `new` lines.
 /// `read(old_file).map(diff).collect() === new_file`
-pub fn apply_stream(rows: &[crate::parse::Row], old: &[String]) -> Vec<String> {
+pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     let mut cursor = 0;
     for r in rows {
-        match r.kind {
-            crate::parse::RowKind::Ctx => {
+        match r {
+            Row::Ctx(ctx_line) => {
                 if cursor < old.len() {
                     assert_eq!(
                         &old[cursor],
-                        &r.text,
+                        &ctx_line.text,
                         "apply_stream: context mismatch at line {}",
                         cursor + 1
                     );
                 }
-                out.push(r.text.clone());
+                out.push(ctx_line.text.clone());
                 cursor += 1;
             }
-            crate::parse::RowKind::Add => {
-                out.push(r.text.clone());
+            Row::Add(add_line) => {
+                out.push(add_line.text.clone());
             }
-            crate::parse::RowKind::Del => {
+            Row::Del(del_line) => {
                 if cursor < old.len() {
                     assert_eq!(
                         &old[cursor],
-                        &r.text,
+                        &del_line.text,
                         "apply_stream: deletion mismatch at line {}",
                         cursor + 1
                     );
                 }
                 cursor += 1;
             }
-            crate::parse::RowKind::Mod => {
-                let del = r.del_text.as_deref().unwrap_or(&r.text);
-                for line in del.split('\n') {
+            Row::Mod { old_line, new_line } | Row::Mov { old_line, new_line } => {
+                for line in old_line.text.split('\n') {
                     if cursor < old.len() {
                         assert_eq!(
                             &old[cursor],
@@ -230,11 +230,11 @@ pub fn apply_stream(rows: &[crate::parse::Row], old: &[String]) -> Vec<String> {
                     }
                     cursor += 1;
                 }
-                for line in r.text.split('\n') {
+                for line in new_line.text.split('\n') {
                     out.push(line.to_string());
                 }
             }
-            crate::parse::RowKind::Sep | crate::parse::RowKind::File => {}
+            Row::Sep(_) => {}
         }
     }
     out

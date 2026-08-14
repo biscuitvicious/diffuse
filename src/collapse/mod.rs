@@ -8,10 +8,12 @@
 
 use crate::lcs::{char_slice, tokenize_line, word_spans};
 use crate::merge::wholesale_pair;
-use crate::parse::{Hunk, Row, RowKind, Spans};
+use crate::parse::{AddLine, DelLine, Hunk, Row, Spans};
 use crate::scope::{fn_of, is_tail_before_closing};
 use crate::similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens};
+use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 /// Results of the initial pairing pass.
 pub struct PairingResults {
@@ -32,19 +34,19 @@ pub fn pass_pairing(
         .rows
         .iter()
         .enumerate()
-        .filter(|(_, r)| r.kind == RowKind::Add && !r.moved)
+        .filter(|(_, r)| matches!(r, Row::Add(_)))
         .map(|(i, _)| i)
         .collect();
 
     let mut del_runs: Vec<Vec<usize>> = Vec::new();
     let mut i = 0;
     while i < h.rows.len() {
-        if h.rows[i].kind != RowKind::Del || h.rows[i].moved {
+        if !matches!(h.rows[i], Row::Del(_)) {
             i += 1;
             continue;
         }
         let mut run = vec![i];
-        while i + 1 < h.rows.len() && h.rows[i + 1].kind == RowKind::Del && !h.rows[i + 1].moved {
+        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_)) {
             i += 1;
             run.push(i);
         }
@@ -60,7 +62,7 @@ pub fn pass_pairing(
         .rows
         .iter()
         .enumerate()
-        .filter(|(_, r)| r.kind == RowKind::Del)
+        .filter(|(_, r)| matches!(r, Row::Del(_)))
         .map(|(i, _)| i)
         .collect();
 
@@ -68,46 +70,49 @@ pub fn pass_pairing(
     let mut del_tokens: HashMap<usize, LineTokens> = HashMap::new();
     let mut add_tokens: HashMap<usize, LineTokens> = HashMap::new();
     for &ri in &del_ids {
-        del_tokens.insert(ri, interner.line_tokens(&h.rows[ri].text));
+        del_tokens.insert(ri, interner.line_tokens(h.rows[ri].text()));
     }
     for &ai in &pending_adds {
-        add_tokens.insert(ai, interner.line_tokens(&h.rows[ai].text));
+        add_tokens.insert(ai, interner.line_tokens(h.rows[ai].text()));
     }
 
     let mut pair_of: HashMap<usize, usize> = HashMap::new();
 
     for &ri in &del_ids {
         let r = &h.rows[ri];
-        if r.moved {
+        if r.is_moved() {
             continue;
         }
-        let r_trim = r.text.trim();
-        let del_is_tail = is_tail_before_closing(r.old_line, true, old_content, new_content);
+        let r_trim = r.text().trim();
+        let del_is_tail = is_tail_before_closing(r.old_line(), true, old_content, new_content);
         let tail_candidate = del_is_tail
             && pending_adds.iter().any(|&ai| {
                 let a = &h.rows[ai];
-                is_tail_before_closing(a.new_line, false, old_content, new_content)
-                    && fn_of(old_content, r.old_line) == fn_of(new_content, a.new_line)
+                is_tail_before_closing(a.new_line(), false, old_content, new_content)
+                    && fn_of(old_content, r.old_line()) == fn_of(new_content, a.new_line())
             });
         let has_same_hunk_add = pending_adds
             .iter()
-            .any(|&ai| h.rows[ai].text.trim() == r_trim);
+            .any(|&ai| h.rows[ai].text().trim() == r_trim);
         if !r_trim.is_empty()
             && !tail_candidate
             && !has_same_hunk_add
-            && new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
+            && (new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
+                || h.rows
+                    .iter()
+                    .any(|a| a.is_moved() && a.text().trim() == r_trim))
         {
             continue;
         }
 
-        let del_fn = fn_of(old_content, r.old_line);
+        let del_fn = fn_of(old_content, r.old_line());
         let mut best: Option<usize> = None;
         let mut best_score = 0.15;
         let del_set: HashSet<u32> = del_tokens[&ri].ids.iter().copied().collect();
 
         for &ai in &pending_adds {
             let a = &h.rows[ai];
-            let add_fn = fn_of(new_content, a.new_line);
+            let add_fn = fn_of(new_content, a.new_line());
             if let (Some(dfn), Some(afn)) = (&del_fn, &add_fn)
                 && dfn != afn
                 && (fn_exists(new_content, dfn) || fn_exists(old_content, afn))
@@ -115,19 +120,19 @@ pub fn pass_pairing(
                 continue;
             }
             if let Some(run) = run_of.get(&ri) {
-                let trimmed = r.text.trim();
+                let trimmed = r.text().trim();
                 if run.len() > 1
                     && run[0] != ri
                     && !trimmed.is_empty()
-                    && a.text.trim().contains(trimmed)
+                    && a.text().trim().contains(trimmed)
                 {
                     continue;
                 }
             }
 
             let head_bonus = {
-                let kw_del = statement_head_keyword(r.text.trim_start());
-                let kw_add = statement_head_keyword(a.text.trim_start());
+                let kw_del = statement_head_keyword(r.text().trim_start());
+                let kw_add = statement_head_keyword(a.text().trim_start());
                 if let (Some(kd), Some(ka)) = (kw_del, kw_add)
                     && kd == ka
                 {
@@ -139,8 +144,8 @@ pub fn pass_pairing(
             let dt = &del_tokens[&ri];
             let at = &add_tokens[&ai];
             let brace_bonus = if del_is_tail
-                && is_tail_before_closing(a.new_line, false, old_content, new_content)
-                && del_fn == fn_of(new_content, a.new_line)
+                && is_tail_before_closing(a.new_line(), false, old_content, new_content)
+                && del_fn == fn_of(new_content, a.new_line())
             {
                 1.0
             } else {
@@ -186,6 +191,11 @@ pub fn pass_pairing(
                 continue;
             }
 
+            let spans = word_spans(r.text(), a.text());
+            if wholesale_pair(r.text(), a.text(), &spans) {
+                continue;
+            }
+
             let score = head_bonus + brace_bonus + parts.sim;
             if score > best_score {
                 best_score = score;
@@ -194,8 +204,8 @@ pub fn pass_pairing(
         }
 
         if let Some(b) = best {
-            let spans = word_spans(&r.text, &h.rows[b].text);
-            if !wholesale_pair(&r.text, &h.rows[b].text, &spans) {
+            let spans = word_spans(r.text(), h.rows[b].text());
+            if !wholesale_pair(r.text(), h.rows[b].text(), &spans) {
                 pair_of.insert(b, ri);
                 pending_adds.retain(|&x| x != b);
             }
@@ -210,7 +220,33 @@ pub fn pass_pairing(
     }
 }
 
-/// Assembly product of the ordered walk.
+fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {
+    let Some(content) = content else { return false };
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)").expect("fn regex")
+    });
+    content
+        .iter()
+        .any(|l| re.captures(l.trim()).is_some_and(|c| c[1] == *fn_name))
+}
+
+/// Helper recognizing statement head keywords for pairing.
+fn statement_head_keyword(s: &str) -> Option<&str> {
+    const KEYWORDS: &[&str] = &[
+        "if", "let", "return", "match", "for", "while", "loop", "fn", "pub", "struct", "enum",
+        "impl", "type", "use", "const", "static",
+    ];
+    let word = s.split_whitespace().next()?;
+    let word = word.trim_end_matches('(');
+    if KEYWORDS.contains(&word) {
+        Some(word)
+    } else {
+        None
+    }
+}
+
+/// Products of the assembly pass.
 pub struct AssembledMods {
     pub out: Vec<Row>,
     pub kept_dels: Vec<usize>,
@@ -234,7 +270,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
     let mut add_spans: HashMap<usize, (Spans, String)> = HashMap::new();
 
     for (ri, r) in h.rows.iter().enumerate() {
-        if r.kind == RowKind::Add {
+        if matches!(r, Row::Add(_) | Row::Mov { .. }) {
             if ctx.pair_of.contains_key(&ri) {
                 continue;
             }
@@ -242,8 +278,8 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
         } else if ctx.paired_dels.contains(&ri) {
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
-            let del_text = r.text.clone();
-            let mut spans = word_spans(&del_text, &add.text);
+            let del_text = r.text().to_string();
+            let mut spans = word_spans(&del_text, add.text());
 
             let mut next_adds = Vec::new();
             let mut k = add_ri + 1;
@@ -253,10 +289,10 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
 
             if is_potential_expansion {
                 while k < h.rows.len()
-                    && h.rows[k].kind == RowKind::Add
+                    && matches!(h.rows[k], Row::Add(_))
                     && !ctx.pair_of.contains_key(&k)
                 {
-                    let nxt_t = h.rows[k].text.trim();
+                    let nxt_t = h.rows[k].text().trim();
                     if nxt_t.starts_with("///")
                         || nxt_t.starts_with("#[")
                         || nxt_t.starts_with("pub ")
@@ -287,7 +323,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
             if !next_adds.is_empty() {
                 let next_adds_text = next_adds
                     .iter()
-                    .map(|&idx| h.rows[idx].text.as_str())
+                    .map(|&idx| h.rows[idx].text())
                     .collect::<Vec<_>>()
                     .join("\n");
 
@@ -302,25 +338,25 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         let moved = tokens.iter().any(|t| next_adds_text.contains(t));
                         !moved
                     } else {
-                        true // Keep trailing delimiters like "{" struck on the mod line!
+                        true
                     }
                 });
 
                 for &nxt_i in &next_adds {
                     let add_nxt = &h.rows[nxt_i];
-                    let mut donor_spans = word_spans(&del_text, &add_nxt.text);
-                    let tok_count = tokenize_line(&add_nxt.text)
+                    let mut donor_spans = word_spans(&del_text, add_nxt.text());
+                    let tok_count = tokenize_line(add_nxt.text())
                         .into_iter()
                         .filter(|t| !t.trim().is_empty())
                         .count();
                     if !donor_spans.add.is_empty() && donor_spans.add.len() < tok_count {
                         let other_adds_text = format!(
                             "{}\n{}",
-                            add.text,
+                            add.text(),
                             next_adds
                                 .iter()
                                 .filter(|&&i| i != nxt_i)
-                                .map(|&idx| h.rows[idx].text.as_str())
+                                .map(|&idx| h.rows[idx].text())
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         );
@@ -335,7 +371,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         });
 
                         let indent_len = add_nxt
-                            .text
+                            .text()
                             .chars()
                             .take_while(|c| c.is_whitespace())
                             .count();
@@ -345,7 +381,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                             .map(|(as_, ae)| {
                                 let start = as_;
                                 let mut end = ae;
-                                let chars: Vec<char> = add_nxt.text.chars().collect();
+                                let chars: Vec<char> = add_nxt.text().chars().collect();
                                 if as_ <= indent_len && end < chars.len() && chars[end] == ' ' {
                                     end += 1;
                                 }
@@ -364,29 +400,24 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                 Some(run) if run.len() > 1 => run
                     .iter()
                     .skip(1)
-                    .map(|&d| h.rows[d].text.trim().to_string())
+                    .map(|&d| h.rows[d].text().trim().to_string())
                     .collect(),
                 _ => Vec::new(),
             };
             if !reflows.is_empty() {
                 spans.add.retain(|(as_, ae)| {
-                    let seg = char_slice(&add.text, *as_, *ae);
+                    let seg = char_slice(add.text(), *as_, *ae);
                     !reflows
                         .iter()
                         .any(|t| !t.is_empty() && seg.contains(t.as_str()))
                 });
             }
-            let mod_row = Row {
-                kind: RowKind::Mod,
-                text: add.text.clone(),
-                new_line: add.new_line,
-                old_line: r.old_line,
-                spans: Some(spans),
-                moved: false,
-                del_text: Some(del_text),
+            let mod_row = Row::Mod {
+                old_line: DelLine::new(r.old_line_num().unwrap(), del_text),
+                new_line: AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans),
             };
             out.push(mod_row);
-        } else if !r.moved {
+        } else if !r.is_moved() {
             kept_dels.push(ri);
         }
     }
@@ -415,8 +446,8 @@ pub fn pass_filter_reflows(
 ) -> ReflowFilter {
     let add_text = out
         .iter()
-        .map(|m| m.text.as_str())
-        .chain(pure_adds.iter().map(|&ri| h.rows[ri].text.as_str()))
+        .map(|m| m.text())
+        .chain(pure_adds.iter().map(|&ri| h.rows[ri].text()))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -424,7 +455,7 @@ pub fn pass_filter_reflows(
         .iter()
         .copied()
         .filter(|&di| {
-            let t = h.rows[di].text.trim();
+            let t = h.rows[di].text().trim();
             t.is_empty() || !add_text.contains(t)
         })
         .collect();
@@ -432,8 +463,8 @@ pub fn pass_filter_reflows(
     let del_text_all = h
         .rows
         .iter()
-        .filter(|r| r.kind == RowKind::Del)
-        .map(|d| d.text.trim())
+        .filter(|r| matches!(r, Row::Del(_)))
+        .map(|d| d.text().trim())
         .collect::<Vec<_>>()
         .join("\n");
     let shown_dels: HashSet<usize> = meaningful.iter().copied().collect();
@@ -442,12 +473,12 @@ pub fn pass_filter_reflows(
         .iter()
         .enumerate()
         .filter(|(i, r)| {
-            r.kind == RowKind::Del
-                && !r.moved
+            matches!(r, Row::Del(_))
+                && !r.is_moved()
                 && !paired_dels.contains(i)
                 && !shown_dels.contains(i)
         })
-        .map(|(_, d)| d.text.trim())
+        .map(|(_, d)| d.text().trim())
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -456,11 +487,11 @@ pub fn pass_filter_reflows(
         .copied()
         .filter(|&ai| {
             let a = &h.rows[ai];
-            if a.moved && a.del_text.as_deref().is_some_and(|dt| dt != a.text) {
+            if a.is_moved() && a.del_text().is_some_and(|dt| dt != a.text()) {
                 return true;
             }
-            let t = a.text.trim();
-            let corpus = if a.moved {
+            let t = a.text().trim();
+            let corpus = if a.is_moved() {
                 &del_text_all
             } else {
                 &del_text_live
@@ -486,16 +517,17 @@ pub fn pass_sort_ordered_walk(
 ) -> Vec<Row> {
     let mut anchor_of: HashMap<usize, usize> = HashMap::new();
     for &di in meaningful_dels {
-        let Some(dold) = h.rows[di].old_line else {
+        let Some(dold) = h.rows[di].old_line() else {
             continue;
         };
         let mut anchor: Option<usize> = None;
         for (mi, m) in out.iter().enumerate() {
-            if m.kind != RowKind::Mod || m.old_line.is_none() {
+            if !matches!(m, Row::Mod { .. }) || m.old_line().is_none() {
                 continue;
             }
-            let mold = m.old_line.unwrap();
-            if mold <= dold && (anchor.is_none() || mold > out[anchor.unwrap()].old_line.unwrap()) {
+            let mold = m.old_line().unwrap();
+            if mold <= dold && (anchor.is_none() || mold > out[anchor.unwrap()].old_line().unwrap())
+            {
                 anchor = Some(mi);
             }
         }
@@ -507,15 +539,19 @@ pub fn pass_sort_ordered_walk(
     let mut keyed: Vec<(Row, (u32, f64))> = Vec::new();
     for r in out.into_iter() {
         let key = (
-            r.new_line.unwrap_or(0),
-            if r.kind == RowKind::Mod { 1.0 } else { 2.0 },
+            r.new_line().unwrap_or(0),
+            if matches!(r, Row::Mod { .. }) {
+                1.0
+            } else {
+                2.0
+            },
         );
         keyed.push((r, key));
     }
     for &di in meaningful_dels {
         let d = &h.rows[di];
         let key = match anchor_of.get(&di) {
-            None => (0, d.old_line.unwrap_or(0) as f64),
+            None => (0, d.old_line().unwrap_or(0) as f64),
             Some(&mi) => {
                 let base = keyed[mi].1.0;
                 (base, 1.5)
@@ -524,12 +560,39 @@ pub fn pass_sort_ordered_walk(
         keyed.push((h.rows[di].clone(), key));
     }
     for &ai in kept_adds {
-        let mut a = h.rows[ai].clone();
-        if let Some((spans, del_text)) = add_spans.get(&ai) {
-            a.spans = Some(spans.clone());
-            a.del_text = Some(del_text.clone());
-        }
-        keyed.push((a, (h.rows[ai].new_line.unwrap_or(0), 2.0)));
+        let a = match &h.rows[ai] {
+            Row::Add(add_line) => {
+                if let Some((spans, del_text)) = add_spans.get(&ai) {
+                    Row::Add(AddLine::with_donor(
+                        add_line.num,
+                        add_line.text.clone(),
+                        del_text.clone(),
+                        spans.clone(),
+                    ))
+                } else {
+                    Row::Add(add_line.clone())
+                }
+            }
+            Row::Mov { old_line, new_line } => {
+                if let Some((spans, _)) = add_spans.get(&ai) {
+                    Row::Mov {
+                        old_line: old_line.clone(),
+                        new_line: AddLine::with_spans(
+                            new_line.num,
+                            new_line.text.clone(),
+                            spans.clone(),
+                        ),
+                    }
+                } else {
+                    Row::Mov {
+                        old_line: old_line.clone(),
+                        new_line: new_line.clone(),
+                    }
+                }
+            }
+            _ => h.rows[ai].clone(),
+        };
+        keyed.push((a, (h.rows[ai].new_line().unwrap_or(0), 2.0)));
     }
     keyed.sort_by(|a, b| {
         a.1.0.cmp(&b.1.0).then(
@@ -577,31 +640,6 @@ pub fn collapse_hunk_rows(
         &p3.kept_adds,
         &p2.add_spans,
     )
-}
-
-fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {
-    let Some(content) = content else { return false };
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)")
-            .expect("fn regex")
-    });
-    content
-        .iter()
-        .any(|l| re.captures(l.trim()).is_some_and(|c| c[1] == *fn_name))
-}
-
-fn statement_head_keyword(s: &str) -> Option<&str> {
-    const KEYWORDS: &[&str] = &[
-        "if", "let", "return", "match", "for", "while", "loop", "fn", "pub", "struct", "enum",
-        "impl", "type", "use", "const", "static",
-    ];
-    let word = s.split_whitespace().next()?;
-    if KEYWORDS.contains(&word) {
-        Some(word)
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]

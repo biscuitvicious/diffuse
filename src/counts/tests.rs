@@ -1,14 +1,14 @@
-//! Port of the `fileCounts` assertions from test/review.test.ts: the
-//! header counts. Moves are neither added nor removed; mods are one row;
-//! a mod's absorbed tail lines count as adds.
-
 use crate::collapse::collapse_hunk_rows;
-use crate::counts::file_counts;
+use crate::counts::{FileCounts, file_counts};
 use crate::moves::mark_moves;
-use crate::parse::{DiffFile, FileStatus, Hunk, Row, RowKind};
+use crate::parse::{AddLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row};
 
-fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
-    Row::new(kind, text, new_line, old_line)
+fn del(num: u32, text: &str) -> Row {
+    Row::Del(DelLine::new(LineNum::new(num).unwrap(), text))
+}
+
+fn add(num: u32, text: &str) -> Row {
+    Row::Add(AddLine::new(LineNum::new(num).unwrap(), text))
 }
 
 fn hunk(rows: Vec<Row>) -> Hunk {
@@ -44,20 +44,20 @@ fn file(hunks: Vec<Hunk>) -> DiffFile {
 #[test]
 fn counts_after_modified_pair_collapse() {
     let mut f = file(vec![hunk(vec![
-        row(RowKind::Del, "old one", None, Some(1)),
-        row(RowKind::Add, "new one", Some(1), None),
-        row(RowKind::Add, "extra line", Some(2), None),
-        row(RowKind::Add, "", Some(3), None), // section break
-        row(RowKind::Del, "moved line", None, Some(4)),
-        row(RowKind::Add, "moved line", Some(4), None),
-        row(RowKind::Add, "after the blank", Some(5), None),
+        del(1, "old one"),
+        add(1, "new one"),
+        add(2, "extra line"),
+        add(3, ""), // section break
+        del(4, "moved line"),
+        add(4, "moved line"),
+        add(5, "after the blank"),
     ])]);
     mark_moves(&mut f);
     f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], false, None, None);
     let counts = file_counts(&f);
     assert_eq!(
         counts,
-        crate::counts::FileCounts {
+        FileCounts {
             adds: 3,
             dels: 0,
             mods: 1,
@@ -72,8 +72,8 @@ fn counts_after_modified_pair_collapse() {
 #[test]
 fn counts_plain_del_and_add() {
     let mut f = file(vec![hunk(vec![
-        row(RowKind::Del, "old one", None, Some(1)),
-        row(RowKind::Add, "completely different", Some(1), None),
+        del(1, "old one"),
+        add(1, "completely different"),
     ])]);
     mark_moves(&mut f);
     f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], false, None, None);
@@ -87,10 +87,7 @@ fn counts_plain_del_and_add() {
 // A moved pair counts as moved, not as an add or a del.
 #[test]
 fn counts_moved_pair_is_neither_add_nor_del() {
-    let mut f = file(vec![hunk(vec![
-        row(RowKind::Del, "moved line", None, Some(1)),
-        row(RowKind::Add, "moved line", Some(1), None),
-    ])]);
+    let mut f = file(vec![hunk(vec![del(1, "moved line"), add(1, "moved line")])]);
     mark_moves(&mut f);
     f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], false, None, None);
     let counts = file_counts(&f);
@@ -99,7 +96,7 @@ fn counts_moved_pair_is_neither_add_nor_del() {
     // TS engine: same all-zero counts).
     assert_eq!(
         counts,
-        crate::counts::FileCounts {
+        FileCounts {
             adds: 0,
             dels: 0,
             mods: 0,

@@ -3,7 +3,7 @@
 //! Port of TypeScript's `allocateContext`, `gapBetween`, `hiddenGap`,
 //! `absorbLeadingContext`, `absorbClosingContext`, and `buildVisible`.
 
-use crate::parse::{Hunk, Row, RowKind};
+use crate::parse::{CtxLine, Hunk, LineNum, Row};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContextAlloc {
@@ -20,7 +20,7 @@ pub enum Side {
 fn add_count(h: &Hunk) -> usize {
     h.rows
         .iter()
-        .filter(|r| r.kind == RowKind::Add || r.kind == RowKind::Mod)
+        .filter(|r| matches!(r, Row::Add(_) | Row::Mod { .. } | Row::Mov { .. }))
         .count()
 }
 
@@ -28,12 +28,12 @@ pub fn hunk_change_bounds(h: &Hunk, side: Side) -> (usize, usize) {
     let mut min_line = usize::MAX;
     let mut max_line = 0;
     for r in &h.rows {
-        if r.kind == RowKind::Ctx {
+        if matches!(r, Row::Ctx(_)) {
             continue;
         }
         let line = match side {
-            Side::New => r.new_line.map(|x| x as usize),
-            Side::Old => r.old_line.map(|x| x as usize),
+            Side::New => r.new_line().map(|x| x as usize),
+            Side::Old => r.old_line().map(|x| x as usize),
         };
         if let Some(l) = line {
             min_line = min_line.min(l);
@@ -118,38 +118,35 @@ pub fn allocate_context(
         if i > 0 {
             let p = &hunks[i - 1];
             let p_new = add_count(p) > 0;
-            if p_new == new_side {
-                let p_side = if p_new { Side::New } else { Side::Old };
-                let (_, p_end) = hunk_change_bounds(p, p_side);
-                let space = change_start.saturating_sub(p_end + 1);
-                free_above = free_above.min(space);
+            if new_side == p_new {
+                let (_, p_end) = hunk_change_bounds(p, side);
+                free_above = change_start.saturating_sub(p_end + 1);
             }
         }
 
         let mut free_below = total.saturating_sub(change_end);
-        if i < hunks.len() - 1 {
+        if i + 1 < hunks.len() {
             let n = &hunks[i + 1];
             let n_new = add_count(n) > 0;
-            if n_new == new_side {
-                let n_side = if n_new { Side::New } else { Side::Old };
-                let (n_start, _) = hunk_change_bounds(n, n_side);
-                let space = n_start.saturating_sub(change_end + 1);
-                free_below = free_below.min(space);
+            if new_side == n_new {
+                let (n_start, _) = hunk_change_bounds(n, side);
+                free_below = n_start.saturating_sub(change_end + 1);
             }
         }
 
-        alloc.push(ContextAlloc {
-            above: (h.above_ctx as usize).min(free_above),
-            below: (h.below_ctx as usize).min(free_below),
-        });
+        let above = free_above.min(h.above_ctx as usize);
+        let below = free_below.min(h.below_ctx as usize);
+        alloc.push(ContextAlloc { above, below });
     }
 
-    for i in 0..hunks.len().saturating_sub(1) {
-        let a = &hunks[i];
-        let b = &hunks[i + 1];
-        if (add_count(a) > 0) == (add_count(b) > 0) {
-            let gap = gap_between(hunks, i, new_line_count, old_line_count);
-            alloc[i + 1].above = alloc[i + 1].above.min(gap.saturating_sub(alloc[i].below));
+    if hunks.len() > 1 {
+        for i in 0..hunks.len() - 1 {
+            let a = &hunks[i];
+            let b = &hunks[i + 1];
+            if (add_count(a) > 0) == (add_count(b) > 0) {
+                let gap = gap_between(hunks, i, new_line_count, old_line_count);
+                alloc[i + 1].above = alloc[i + 1].above.min(gap.saturating_sub(alloc[i].below));
+            }
         }
     }
 
@@ -163,30 +160,33 @@ pub fn hidden_gap(
     new_line_count: usize,
     old_line_count: usize,
 ) -> usize {
-    let gap = gap_between(hunks, i, new_line_count, old_line_count);
-    gap.saturating_sub(alloc[i].below + alloc[i + 1].above)
+    let raw = gap_between(hunks, i, new_line_count, old_line_count);
+    let consumed = alloc[i].below + alloc[i + 1].above;
+    raw.saturating_sub(consumed)
 }
 
-pub fn context_rows(side: Side, start: usize, count: usize, src: &[String]) -> Vec<Row> {
-    let mut rows = Vec::with_capacity(count);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VisibleRow {
+    pub row: Row,
+    pub side: Option<Side>,
+}
+
+fn context_rows(side: Side, start_line: usize, count: usize, src: &[String]) -> Vec<VisibleRow> {
+    let mut rows = Vec::new();
     for i in 0..count {
-        let line_no = start + i;
+        let line_no = start_line + i;
         let text = src
             .get(line_no.saturating_sub(1))
             .cloned()
             .unwrap_or_default();
-        let (new_line, old_line) = match side {
-            Side::New => (Some(line_no as u32), None),
-            Side::Old => (None, Some(line_no as u32)),
+        let num = LineNum::new(line_no as u32).unwrap_or(LineNum::MIN);
+        let ctx_line = match side {
+            Side::New => CtxLine::new(num, num, text),
+            Side::Old => CtxLine::new(num, num, text),
         };
-        rows.push(Row {
-            kind: RowKind::Ctx,
-            text,
-            old_line,
-            new_line,
-            del_text: None,
-            spans: None,
-            moved: false,
+        rows.push(VisibleRow {
+            row: Row::Ctx(ctx_line),
+            side: Some(side),
         });
     }
     rows
@@ -199,7 +199,7 @@ pub fn build_visible(
     new_content: &[String],
     old_content: &[String],
     no_content: bool,
-) -> Vec<Row> {
+) -> Vec<VisibleRow> {
     let alloc = allocate_context(hunks, new_line_count, old_line_count);
     let mut rows = Vec::new();
 
@@ -218,14 +218,11 @@ pub fn build_visible(
                     ""
                 };
                 let hidden_s = if hidden == 1 { "" } else { "s" };
-                rows.push(Row {
-                    kind: RowKind::Sep,
-                    text: format!("⋯ {hidden} line{hidden_s} hidden{collapsed}{unavailable}"),
-                    old_line: None,
-                    new_line: None,
-                    del_text: None,
-                    spans: None,
-                    moved: false,
+                rows.push(VisibleRow {
+                    row: Row::Sep(format!(
+                        "⋯ {hidden} line{hidden_s} hidden{collapsed}{unavailable}"
+                    )),
+                    side: None,
                 });
             }
         }
@@ -242,36 +239,41 @@ pub fn build_visible(
         let mut cursor = change_start.saturating_sub(1);
         for r in &h.rows {
             let target_line = if new_side {
-                r.new_line.map(|nl| nl as usize).or_else(|| {
-                    r.old_line.map(|ol| {
-                        ((ol as isize) + ((h.new_start as isize) - (h.old_start as isize))) as usize
-                    })
-                })
+                r.new_line().map(|nl| nl as usize)
             } else {
-                r.old_line.map(|ol| ol as usize)
+                r.old_line().map(|ol| ol as usize)
             };
             if let Some(target) = target_line
                 && target > cursor + 1
-                && r.kind != RowKind::Del
             {
                 for g in (cursor + 1)..target {
                     let text = src.get(g.saturating_sub(1)).cloned().unwrap_or_default();
-                    rows.push(Row {
-                        kind: RowKind::Ctx,
-                        text,
-                        new_line: if new_side { Some(g as u32) } else { None },
-                        old_line: if !new_side { Some(g as u32) } else { None },
-                        del_text: None,
-                        spans: None,
-                        moved: false,
+                    let num = LineNum::new(g as u32).unwrap_or(LineNum::MIN);
+                    let ctx_line = match side {
+                        Side::New => CtxLine::new(num, num, text),
+                        Side::Old => CtxLine::new(num, num, text),
+                    };
+                    rows.push(VisibleRow {
+                        row: Row::Ctx(ctx_line),
+                        side: Some(side),
                     });
                 }
                 cursor = target - 1;
             }
-            if let Some(nl) = r.new_line {
-                cursor = cursor.max(nl as usize);
+            if let Some(l) = match side {
+                Side::New => r.new_line(),
+                Side::Old => r.old_line(),
+            } {
+                cursor = cursor.max(l as usize);
             }
-            rows.push(r.clone());
+            rows.push(VisibleRow {
+                row: r.clone(),
+                side: if matches!(r, Row::Ctx(_)) {
+                    Some(side)
+                } else {
+                    None
+                },
+            });
         }
 
         let below_rows = context_rows(side, change_end + 1, a.below, src);
@@ -284,7 +286,7 @@ pub fn build_visible(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::{Hunk, Row, RowKind};
+    use crate::parse::{AddLine, DelLine};
 
     #[test]
     fn test_allocate_context_basic() {
@@ -294,15 +296,7 @@ mod tests {
             new_start: 1,
             new_count: 5,
             section: String::new(),
-            rows: vec![Row {
-                kind: RowKind::Add,
-                text: "hello".into(),
-                old_line: None,
-                new_line: Some(1),
-                del_text: None,
-                spans: None,
-                moved: false,
-            }],
+            rows: vec![Row::Add(AddLine::new(LineNum::new(1).unwrap(), "hello"))],
             above_ctx: 6,
             below_ctx: 6,
         };
@@ -323,8 +317,11 @@ mod tests {
             new_count: 20,
             section: String::new(),
             rows: vec![
-                Row::new(RowKind::Add, "line 63", Some(63), None),
-                Row::new(RowKind::Mod, "line 76", Some(76), Some(66)),
+                Row::Add(AddLine::new(LineNum::new(63).unwrap(), "line 63")),
+                Row::Mod {
+                    old_line: DelLine::new(LineNum::new(66).unwrap(), "line 66"),
+                    new_line: AddLine::new(LineNum::new(76).unwrap(), "line 76"),
+                },
             ],
             above_ctx: 6,
             below_ctx: 6,
@@ -344,7 +341,7 @@ mod tests {
         // Above: 6 rows (lines 57..62)
         // Body: 14 rows (line 63, context 64..75, line 76) -> note context between 63 and 76 is synthesized
         // Below: 6 rows (lines 77..82)
-        assert_eq!(vis.first().unwrap().new_line, Some(57));
-        assert_eq!(vis.last().unwrap().new_line, Some(82));
+        assert_eq!(vis.first().unwrap().row.new_line(), Some(57));
+        assert_eq!(vis.last().unwrap().row.new_line(), Some(82));
     }
 }

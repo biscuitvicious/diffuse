@@ -1,6 +1,6 @@
 //! Ports of the syntax-highlighting tests from test/review.test.ts.
 
-use crate::syntax::{classify_tokens, fence_regions, lang_profile};
+use crate::syntax::{LangProfile, classify_tokens, fence_regions, lang_profile, region_at};
 
 // The semantic colors, per the TS test's theme codes.
 fn color_of(tok: &str) -> &str {
@@ -17,12 +17,7 @@ fn color_of(tok: &str) -> &str {
     }
 }
 
-fn has_color(
-    text: &str,
-    profile: Option<&crate::syntax::LangProfile>,
-    code: &str,
-    needle: &str,
-) -> bool {
+fn has_color(text: &str, profile: Option<&LangProfile>, code: &str, needle: &str) -> bool {
     classify_tokens(text, profile)
         .iter()
         .any(|t| t.text == needle && color_of(&t.color) == code)
@@ -118,7 +113,7 @@ fn lines(v: &[&str]) -> Vec<String> {
 }
 
 /// Assert the region's tag resolves to a target profile key.
-fn region_is(rs: &crate::syntax::LangProfile, doc: &[String], want: &str) {
+fn region_is(rs: &LangProfile, doc: &[String], want: &str) {
     let regions = fence_regions(doc, Some(rs));
     assert_eq!(regions.len(), 1, "should open exactly one region");
     let lang = regions[0].lang.as_deref().expect("region has a lang");
@@ -196,8 +191,8 @@ fn md_fence_with_rust_modifier_opens_rust_region() {
 // spans render (accent backticks + Rust-classified inner); no `**bold**`,
 // `*italic*`, `~~strike~~`, `[link](url)`. Doc comments (`///`, `//!`) ARE
 // markdown — full emphasis. The split lives in `tokenize_comment_with_backticks`.
-fn colors_of(text: &str, profile: Option<&crate::syntax::LangProfile>) -> Vec<(String, String)> {
-    crate::syntax::classify_tokens(text, profile)
+fn colors_of(text: &str, profile: Option<&LangProfile>) -> Vec<(String, String)> {
+    classify_tokens(text, profile)
         .into_iter()
         .map(|t| (t.color, t.text))
         .collect()
@@ -293,7 +288,7 @@ fn fence_regions_unclosed_ignore_block_does_not_invert_subsequent_prose() {
         "/// ```".to_string(),
     ];
     let regions = fence_regions(&lines, Some(rs));
-    let line6_region = crate::syntax::region_at(&regions, 6);
+    let line6_region = region_at(&regions, 6);
     assert!(
         line6_region.is_none(),
         "line 6 prose comment is NOT inside a code fence region"

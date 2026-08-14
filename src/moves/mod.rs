@@ -3,7 +3,7 @@
 //! ported verbatim. The TS mutates rows via references; the port collects
 //! the decisions first (row positions), then applies them.
 
-use crate::parse::{DiffFile, RowKind};
+use crate::parse::{DiffFile, Row};
 use std::collections::{HashMap, HashSet};
 
 type RowPos = (usize, usize);
@@ -21,8 +21,8 @@ pub fn mark_moves(f: &mut DiffFile) {
     let mut counts: HashMap<String, usize> = HashMap::new();
     for h in &f.hunks {
         for r in &h.rows {
-            if r.kind == RowKind::Add {
-                *counts.entry(key(&r.text)).or_insert(0) += 1;
+            if let Row::Add(add_line) = r {
+                *counts.entry(key(&add_line.text)).or_insert(0) += 1;
             }
         }
     }
@@ -32,7 +32,7 @@ pub fn mark_moves(f: &mut DiffFile) {
     let mut add_positions: Vec<RowPos> = Vec::new();
     for (hi, h) in f.hunks.iter().enumerate() {
         for (ri, r) in h.rows.iter().enumerate() {
-            if r.kind == RowKind::Add {
+            if matches!(r, Row::Add(_)) {
                 add_positions.push((hi, ri));
             }
         }
@@ -40,14 +40,15 @@ pub fn mark_moves(f: &mut DiffFile) {
 
     // The pairing decisions: (del, paired add, moved). The reflow check and
     // the count consume read-only state; the mutation is applied after.
-    let mut decisions: Vec<(RowPos, Option<RowPos>, bool)> = Vec::new();
+    let mut decisions: Vec<(RowPos, Option<RowPos>)> = Vec::new();
     let mut used_adds: HashSet<RowPos> = HashSet::new();
     for (hi, h) in f.hunks.iter().enumerate() {
         for (ri, r) in h.rows.iter().enumerate() {
-            if r.kind != RowKind::Del || r.moved {
-                continue;
-            }
-            let t = key(&r.text);
+            let del_line = match r {
+                Row::Del(d) => d,
+                _ => continue,
+            };
+            let t = key(&del_line.text);
             // A del whose content survives INSIDE a different add (a
             // restructured line — the old `.iter()` of the `let up` chain
             // folded into the one-liner mod) is a reflow the collapse
@@ -55,9 +56,9 @@ pub fn mark_moves(f: &mut DiffFile) {
             // same-text add (the new `below` block's `.iter()`) as relocated.
             let reflow = !t.is_empty()
                 && f.hunks.iter().any(|h2| {
-                    h2.rows
-                        .iter()
-                        .any(|a| a.kind == RowKind::Add && key(&a.text) != t && a.text.contains(&t))
+                    h2.rows.iter().any(|a| {
+                        matches!(a, Row::Add(add_line) if key(&add_line.text) != t && add_line.text.contains(&t))
+                    })
                 });
             if reflow {
                 continue;
@@ -72,33 +73,43 @@ pub fn mark_moves(f: &mut DiffFile) {
             let paired = add_positions.iter().copied().find(|&pos| {
                 !used_adds.contains(&pos) && {
                     let (ph, pr) = pos;
-                    f.hunks[ph].rows[pr].kind == RowKind::Add
-                        && !f.hunks[ph].rows[pr].moved
-                        && key(&f.hunks[ph].rows[pr].text) == t
+                    match &f.hunks[ph].rows[pr] {
+                        Row::Add(add_line) => key(&add_line.text) == t,
+                        _ => false,
+                    }
                 }
             });
             if let Some(pos) = paired {
                 used_adds.insert(pos);
-                decisions.push(((hi, ri), Some(pos), true));
+                decisions.push(((hi, ri), Some(pos)));
             } else {
-                decisions.push(((hi, ri), None, true));
+                decisions.push(((hi, ri), None));
             }
         }
     }
 
-    // Apply: mark the dels and their paired adds moved, carry the del text.
+    // Apply: convert paired adds into Row::Mov.
     let mut pair_of: HashMap<RowPos, RowPos> = HashMap::new(); // del -> paired add
-    for (del_pos, add_pos, moved) in decisions {
+    let mut moved_dels: HashSet<RowPos> = HashSet::new();
+    for (del_pos, add_pos) in decisions {
         let (hi, ri) = del_pos;
-        f.hunks[hi].rows[ri].moved = moved;
         if let Some(pos) = add_pos {
             let (ah, ar) = pos;
-            f.hunks[ah].rows[ar].moved = true;
-            // The paired old text: the moved row can subword the
-            // indentation change (8 → 12 spaces is a real semantic move)
-            // instead of hiding it in the ≈.
-            f.hunks[ah].rows[ar].del_text = Some(f.hunks[hi].rows[ri].text.clone());
+            let del_line = match &f.hunks[hi].rows[ri] {
+                Row::Del(d) => d.clone(),
+                _ => continue,
+            };
+            let add_line = match &f.hunks[ah].rows[ar] {
+                Row::Add(a) => a.clone(),
+                Row::Mov { new_line, .. } => new_line.clone(),
+                _ => continue,
+            };
+            f.hunks[ah].rows[ar] = Row::Mov {
+                old_line: del_line,
+                new_line: add_line,
+            };
             pair_of.insert(del_pos, pos);
+            moved_dels.insert(del_pos);
         }
     }
 
@@ -113,27 +124,27 @@ pub fn mark_moves(f: &mut DiffFile) {
     for (hi, h) in f.hunks.iter().enumerate() {
         let mut run: Vec<RowPos> = Vec::new();
         for (ri, r) in h.rows.iter().enumerate() {
-            if r.kind == RowKind::Del {
+            if matches!(r, Row::Del(_)) {
                 run.push((hi, ri));
             } else {
                 // flush the run
-                if !run.is_empty() && !h.rows[run[0].1].moved {
-                    unmark_positions.extend(run.iter().copied().filter(|&pos| h.rows[pos.1].moved));
+                if !run.is_empty() && !moved_dels.contains(&run[0]) {
+                    unmark_positions
+                        .extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));
                 }
                 run.clear();
             }
         }
-        if !run.is_empty() && !h.rows[run[0].1].moved {
-            unmark_positions.extend(run.iter().copied().filter(|&pos| h.rows[pos.1].moved));
+        if !run.is_empty() && !moved_dels.contains(&run[0]) {
+            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));
         }
     }
-    // Un-mark a moved del AND its paired add (the TS clears both).
+    // Un-mark a moved del's paired add (revert back to Row::Add).
     for pos in unmark_positions {
-        let (hi, ri) = pos;
-        f.hunks[hi].rows[ri].moved = false;
-        if let Some(&(ah, ar)) = pair_of.get(&pos) {
-            f.hunks[ah].rows[ar].moved = false;
-            f.hunks[ah].rows[ar].del_text = None;
+        if let Some(&(ah, ar)) = pair_of.get(&pos)
+            && let Row::Mov { new_line, .. } = &f.hunks[ah].rows[ar]
+        {
+            f.hunks[ah].rows[ar] = Row::Add(new_line.clone());
         }
     }
 }
