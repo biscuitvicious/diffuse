@@ -6,10 +6,10 @@
   - [x] Implement dynamic context line expansion from `old_content`/`new_content` when sliding past initial hunk boundaries.
   - [x] Implement inline hunk merging when adjacent hunks overlap or touch within the context budget.
   - [x] Implement context normalization to enforce standard context budgets ($N=6$).
-- [ ] **Phase 2: Syntax-Delimited Section Partitioning**
-  - [ ] Implement syntax section classifier (doc comments, attributes, function boundaries, statement blocks).
-  - [ ] Partition change runs by syntax sections to enforce hard semantic barriers.
-  - [ ] Decompose hunks into isolated, context-bounded $(M \text{ dels}, N \text{ adds})$ change clusters.
+- [x] **Phase 2: Syntax-Delimited Section Partitioning**
+  - [x] Implement syntax section classifier (doc comments, attributes, function boundaries, statement blocks).
+  - [x] Partition change runs by syntax sections to enforce hard semantic barriers.
+  - [x] Decompose hunks into isolated, context-bounded $(M \text{ dels}, N \text{ adds})$ change clusters.
 - [ ] **Phase 3: Cluster Dynamic Programming (DP) Transformation Engine**
   - [ ] Define cluster DP table and transition state model ($\text{DP}[i][j]$).
   - [ ] Implement 1-to-1 `Mod`, 1-to-$K$ expansion, $K$-to-1 collapse, `Del`, `Add`, and `Mov` transitions.
