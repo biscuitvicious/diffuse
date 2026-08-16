@@ -1303,3 +1303,87 @@ fn test_hunk_patience_anchoring_prevents_cross_block_mispairing() {
     assert_eq!(val_9900.kind(), RowKind::Mod);
     assert_eq!(val_9900.old_line(), Some(21));
 }
+
+#[test]
+fn test_unpaired_del_anchors_after_intermediate_context() {
+    let h = hunk(vec![
+        row(
+            RowKind::Ctx,
+            "        let prefix = true;",
+            Some(300),
+            Some(200),
+        ),
+        row(
+            RowKind::Ctx,
+            "        let stats = self.stats();",
+            Some(301),
+            Some(201),
+        ),
+        row(
+            RowKind::Del,
+            "        dropped_legacy_cleanup();",
+            None,
+            Some(202),
+        ),
+        row(RowKind::Add, "        let alpha = 100;", Some(302), None),
+        row(RowKind::Add, "        let beta = 200;", Some(303), None),
+    ]);
+
+    let collapsed = collapse_hunk_rows(&h, false, None, None);
+
+    // Row 0: let prefix Ctx at line 300
+    assert_eq!(collapsed[0].kind(), RowKind::Ctx);
+    assert_eq!(collapsed[0].new_line(), Some(300));
+
+    // Row 1: let stats Ctx at line 301
+    assert_eq!(collapsed[1].kind(), RowKind::Ctx);
+    assert_eq!(collapsed[1].new_line(), Some(301));
+
+    // Row 2: dropped_legacy_cleanup Del at old line 202 (must anchor AFTER let
+    // stats Ctx, NOT at top of hunk)
+    assert_eq!(collapsed[2].kind(), RowKind::Del);
+    assert_eq!(collapsed[2].old_line(), Some(202));
+
+    // Row 3: let alpha Add at line 302
+    assert_eq!(collapsed[3].kind(), RowKind::Add);
+    assert_eq!(collapsed[3].new_line(), Some(302));
+
+    // Row 4: let beta Add at line 303
+    assert_eq!(collapsed[4].kind(), RowKind::Add);
+    assert_eq!(collapsed[4].new_line(), Some(303));
+}
+
+#[test]
+fn test_comment_lines_do_not_pair_with_code_lines() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "    /// The `env` field uses `Arc<RefCell<ProcessEnvironment>>`.",
+            None,
+            Some(70),
+        ),
+        row(
+            RowKind::Del,
+            "            env: Arc::new(RefCell::new(ProcessEnvironment::new(identity))),",
+            None,
+            Some(87),
+        ),
+        row(
+            RowKind::Add,
+            "            env: Shared::new(ProcessEnvironment::new(identity)),",
+            Some(79),
+            None,
+        ),
+    ]);
+
+    let collapsed = collapse_hunk_rows(&h, false, None, None);
+
+    // Row 0: Deleted doc comment stays Del (does not pair with code line)
+    assert_eq!(collapsed[0].kind(), RowKind::Del);
+    assert_eq!(collapsed[0].old_line(), Some(70));
+
+    // Row 1: Code replacement pairs as Mod with the code line
+    assert_eq!(collapsed[1].kind(), RowKind::Mod);
+    assert_eq!(collapsed[1].old_line(), Some(87));
+    assert_eq!(collapsed[1].new_line(), Some(79));
+}

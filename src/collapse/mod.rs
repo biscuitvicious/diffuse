@@ -22,7 +22,7 @@ use crate::{
     parse::{AddLine, DelLine, Hunk, Row, Spans},
     scope::{fn_of, is_tail_before_closing},
     shift::pass_shift_hunk,
-    similarity::{LineTokens, TokenInterner, line_similarity_parts_tokens},
+    similarity::{LineTokens, TokenInterner, is_comment_line, line_similarity_parts_tokens},
 };
 
 /// Results of the initial pairing pass.
@@ -36,7 +36,7 @@ pub struct PairingResults {
 /// Pass 1: Similarity and brace-anchor 1-to-1 pairing.
 pub fn pass_pairing(
     h: &Hunk,
-    _hash_comment: bool,
+    hash_comment: bool,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
 ) -> PairingResults {
@@ -142,6 +142,12 @@ pub fn pass_pairing(
                 {
                     continue;
                 }
+            }
+
+            let is_del_comment = is_comment_line(r.text(), hash_comment);
+            let is_add_comment = is_comment_line(a.text(), hash_comment);
+            if is_del_comment != is_add_comment {
+                continue;
             }
 
             let head_bonus = {
@@ -543,10 +549,9 @@ pub fn pass_sort_ordered_walk(
         };
         let mut anchor: Option<usize> = None;
         for (mi, m) in out.iter().enumerate() {
-            if !matches!(m, Row::Mod { .. }) || m.old_line().is_none() {
+            let Some(mold) = m.old_line() else {
                 continue;
-            }
-            let mold = m.old_line().unwrap();
+            };
             if mold <= dold && (anchor.is_none() || mold > out[anchor.unwrap()].old_line().unwrap())
             {
                 anchor = Some(mi);
@@ -561,7 +566,7 @@ pub fn pass_sort_ordered_walk(
     for r in out.into_iter() {
         let key = (
             r.new_line().unwrap_or(0),
-            if matches!(r, Row::Mod { .. }) {
+            if matches!(r, Row::Mod { .. }) || matches!(r, Row::Ctx(_)) {
                 1.0
             } else {
                 2.0

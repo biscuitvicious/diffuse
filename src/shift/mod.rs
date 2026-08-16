@@ -60,7 +60,7 @@ pub fn max_shift_down_rows(
             break;
         };
         let hunk_text = hunk.rows[split_idx + offset].text();
-        if candidate_text.trim() == hunk_text.trim() {
+        if candidate_text == hunk_text {
             count += 1;
         } else {
             break;
