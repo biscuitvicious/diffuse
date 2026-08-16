@@ -76,6 +76,17 @@ pub fn pass_pairing(
         .map(|(i, _)| i)
         .collect();
 
+    let mut cluster_id: Vec<usize> = Vec::with_capacity(h.rows.len());
+    let mut cur_cluster = 0;
+    for r in &h.rows {
+        if matches!(r, Row::Ctx(_)) {
+            cur_cluster += 1;
+            cluster_id.push(usize::MAX);
+        } else {
+            cluster_id.push(cur_cluster);
+        }
+    }
+
     let mut interner = TokenInterner::new();
     let mut del_tokens: HashMap<usize, LineTokens> = HashMap::new();
     let mut add_tokens: HashMap<usize, LineTokens> = HashMap::new();
@@ -124,7 +135,11 @@ pub fn pass_pairing(
         let mut best_score = 0.15;
         let del_set: HashSet<u32> = del_tokens[&ri].ids.iter().copied().collect();
 
+        let del_cluster = cluster_id[ri];
         for &ai in &pending_adds {
+            if cluster_id[ai] != del_cluster {
+                continue;
+            }
             let a = &h.rows[ai];
             let add_fn = fn_of(new_content, a.new_line());
             if let (Some(dfn), Some(afn)) = (&del_fn, &add_fn)

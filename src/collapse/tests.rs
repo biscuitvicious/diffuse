@@ -1387,3 +1387,44 @@ fn test_comment_lines_do_not_pair_with_code_lines() {
     assert_eq!(collapsed[1].old_line(), Some(87));
     assert_eq!(collapsed[1].new_line(), Some(79));
 }
+
+#[test]
+fn test_cross_context_pairing_is_forbidden() {
+    let h = hunk(vec![
+        // Cluster 0
+        row(
+            RowKind::Del,
+            "        let old_result = compute_total(a, b);",
+            None,
+            Some(10),
+        ),
+        // Context barrier
+        row(
+            RowKind::Ctx,
+            "        let unchanged_barrier = step();",
+            Some(20),
+            Some(11),
+        ),
+        // Cluster 1
+        row(
+            RowKind::Add,
+            "        let new_result = compute_total(a, b);",
+            Some(21),
+            None,
+        ),
+    ]);
+
+    let collapsed = collapse_hunk_rows(&h, false, None, None);
+
+    // Row 0 in Cluster 0 remains a Del
+    assert_eq!(collapsed[0].kind(), RowKind::Del);
+    assert_eq!(collapsed[0].old_line(), Some(10));
+
+    // Row 1 is the Context barrier
+    assert_eq!(collapsed[1].kind(), RowKind::Ctx);
+    assert_eq!(collapsed[1].new_line(), Some(20));
+
+    // Row 2 in Cluster 1 remains an Add (not paired across the context barrier)
+    assert_eq!(collapsed[2].kind(), RowKind::Add);
+    assert_eq!(collapsed[2].new_line(), Some(21));
+}
