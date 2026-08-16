@@ -13,6 +13,36 @@ Every plan document in `plan/` must follow this structure:
 - Covers the core deliverables across the entire plan.
 - Gives human reviewers and agents an instant status dashboard of remaining work.
 
+#### Phase status markers
+
+Phase (and step) checkboxes use three states:
+
+- `- [ ]` — not started.
+- `- [·]` — **in progress** (center dot, U+00B7; copy it from here — it is
+  not typeable on most keyboards). Applied when work on the phase has
+  begun but has not yet completed review.
+- `- [x]` — **complete**, meaning the work is done *and reviewed* — never
+  merely "code written".
+
+#### Checkoff & signoff discipline
+
+- A phase is marked `[x]` **only after review, just before committing**
+  (per the repo's commit policy). Normally that review is the human's
+  visual review of the change — including any golden/wire output diffs
+  (humans catch "duh" problems mechanical checks can't).
+- If the user has instructed the agent to commit automatically, the agent
+  may mark the phase `[x]` after performing the **agent review** of the
+  wire/golden output described in
+  [`tests/AGENTS.md`](../tests/AGENTS.md) — asserting the changes are
+  strictly better or at least equivalently good than the previous
+  representation.
+- Even when explicitly asked to auto-commit, the agent must **highlight
+  anything that looks suspicious and pause for review** rather than
+  commit a questionable golden change. Questionable changes always
+  require human review & signoff.
+- While work is underway (implemented but not yet reviewed/committed), the
+  phase keeps the `- [·]` marker.
+
 ### 2. Executive Summary
 - A concise summary explaining:
   - What the plan achieves.

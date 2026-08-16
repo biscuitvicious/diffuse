@@ -32,39 +32,32 @@ In this active development phase:
 - **Rust is the Canonical Reference**: The Rust codebase (`src/`) is the source of truth for engine behavior.
 - **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust, `review.test.ts` in TS).
 - **Behavior Improvements & Visual Tuning**: Subword boundaries, reflow pairing, move detection, syntax highlighting, and rendering aesthetics are actively refined to deliver the best visual diff experience.
-- **Golden Corpus**: `tests/golden/mirage-2025-08.{json,golden.txt}` serves as the visual acceptance baseline. As rendering and subword improvements land, golden fixtures are regenerated following human review.
+- **Golden Corpus**: `tests/golden/` serves as the acceptance baseline
+  (7 frozen corpora). As rendering and subword improvements land, fixtures
+  change only after review — see [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).
 
 ## The golden — the ground truth
 
-`tests/golden/mirage-2025-08.golden.txt` is the locked ideal output of
-the engine over the frozen corpus. It encodes the hand-tuned preferences:
-the exact strike/fill minimums, which anchor pairings win, how moved
-blocks read, the reverse-stretch shape.
-
-The golden is a **rendered** output — the TUI's colored scrolldown — so
-it lives where the renderer lives: the extension's
-`test/golden.test.ts` (at `extension/pi/test/`). Its rust leg (Phase 4's
-equivalence proof) feeds the diffuse backend's JSON into the renderer and
-must produce the byte-identical golden — it does, and it ALSO walks every
-wire run asserting the engine's per-file classification equals the TS
-tokenizer's (the renderer re-derives
-colors with its own profile, so the gate proves the structure AND the
-classification separately).
+The golden corpora are the locked, reviewed ideal output of the engine.
+They encode the hand-tuned preferences: the exact strike/fill minimums,
+which anchor pairings win, how moved blocks read, the reverse-stretch
+shape.
 
 The Rust acceptance (`tests/golden.rs`) proves the engine + the wire
-contract over the same corpus, twice:
+contract over the frozen corpora in two legs — the **lib leg** (embed the
+engine, run the full pipeline) and the **bin leg** (spawn the built binary,
+feed it the same input, decode its JSON, run the same walk). Both must
+match byte-for-byte; the bin leg exists because the wire contract
+(PLAN.md §2) is itself part of the spec. The rendered golden (the TUI's
+colored scrolldown) is walked by the extension's
+`extension/pi/test/golden.test.ts`, which needs the TS renderer.
 
-1. **lib leg** — embed the engine, run the full pipeline, walk the output.
-2. **bin leg** — spawn the built binary, feed it the same input, decode
-   its JSON, run the same walk, compare.
-
-Both must match byte-for-byte. The bin leg exists because the wire
-contract (PLAN.md §2) is itself part of the spec — a change to the JSON
-schema breaks the bin leg even if the engine's semantics are unchanged.
-
-**The golden changes only when a rendering preference is deliberately
-changed** — by a human, after review. Never regenerate it to make a test
-pass. A failing golden means the port deviates from the reference; find
+**Fixture types, corpus inventory, regeneration commands, and the review
+signoff gate for any golden change live in
+[`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).**
+The essentials: the golden changes only when behavior is deliberately
+changed, after review — never regenerate it to make a test pass. A
+failing golden means the engine deviates from the reviewed ideal; find
 the deviation.
 
 ## Working with the reference
@@ -76,10 +69,10 @@ the deviation.
   same inputs and expectations; the renderer-side blocks stay in TS and
   run with the extension).
 - The reference's golden walk: `extension/pi/test/golden.test.ts` — the
-  rendered acceptance walk; its rust leg is Phase 4's equivalence gate.
+  rendered acceptance walk over the shared corpora in `tests/golden/`.
 - The corpus: `tests/golden/` — the single canonical copy, shared by the
-  Rust acceptance and the extension's walk. Regenerate only when the
-  corpus is deliberately changed (rare, and only with human sign-off).
+  Rust acceptance and the extension's walk. Fixture types, regeneration
+  mechanics, and change policy: [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).
 
 ## Test-first bugfix & feature discipline
 
@@ -107,5 +100,8 @@ Every bug fix, behavior adjustment, or new feature must expand the test corpus w
 - Engineering Plans: Follow [`plan/Plan Guidelines.md`](file:///home/daniel/lab/diffuse/plan/Plan%20Guidelines.md)
   when authoring or updating architectural plans in `plan/`. When a major plan completes,
   move it to `plan/done/<Plan Name>.md`.
-- When a phase ends, update the active plan in `plan/` (check off the phase, note what
-  changed) and this file if the conventions changed.
+- When a phase ends, update the active plan in `plan/` (see the phase
+  status conventions in [`plan/Plan Guidelines.md`](file:///home/daniel/lab/diffuse/plan/Plan%20Guidelines.md)),
+  and this file if the conventions changed. Golden-output changes that land
+  with a phase follow the review gate in
+  [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).
