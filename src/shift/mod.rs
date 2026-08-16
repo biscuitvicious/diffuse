@@ -6,7 +6,188 @@
 //! absorbed.text`), the transformation is a pure mathematical identity on the
 //! reconstructed file.
 
-use crate::parse::{AddLine, Hunk, LineNum, Row};
+use crate::parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row};
+
+/// Evaluates the semantic quality of a boundary between `prev_line` and
+/// `next_line`.
+///
+/// Higher scores indicate natural code boundary splits (e.g. function starts,
+/// doc comments, scope closing braces, blank lines).
+pub fn semantic_boundary_score(prev_line: Option<&str>, next_line: Option<&str>) -> i32 {
+    let mut score = 0;
+
+    // Blank line boundary
+    if prev_line.is_some_and(|l| l.trim().is_empty())
+        || next_line.is_some_and(|l| l.trim().is_empty())
+    {
+        score += 15;
+    }
+
+    // Function/type/doc declaration head
+    if let Some(next) = next_line
+        && is_decl_or_comment(next)
+    {
+        score += 25;
+    }
+
+    // Scope closing delimiter
+    if let Some(prev) = prev_line
+        && is_closing_delimiter(prev)
+    {
+        score += 20;
+    }
+
+    // Indented continuation penalty (mid-expression)
+    if let (Some(prev), Some(next)) = (prev_line, next_line) {
+        let pt = prev.trim();
+        let nt = next.trim();
+        if !pt.is_empty()
+            && !nt.is_empty()
+            && !pt.ends_with(';')
+            && !pt.ends_with('}')
+            && !pt.ends_with('{')
+        {
+            score -= 10;
+        }
+    }
+
+    score
+}
+
+/// Normalizes context lines to the target `budget` (e.g. standard $N=6$) and
+/// merges adjacent hunks whose expanded context windows touch or overlap
+/// (gap <= 2 * budget).
+pub fn normalize_and_merge_hunks(file: &mut DiffFile, budget: usize) {
+    if file.hunks.is_empty() {
+        return;
+    }
+    normalize_file_context_budget(file, budget);
+    merge_adjacent_hunks(file, budget);
+    normalize_file_context_budget(file, budget);
+}
+
+/// Merges adjacent hunks within a `DiffFile` if their line ranges overlap or if
+/// the gap between them is smaller than `2 * context_budget`.
+///
+/// Synthesizes intermediate `Row::Ctx` rows from `old_content` and
+/// `new_content`.
+pub fn merge_adjacent_hunks(file: &mut DiffFile, context_budget: usize) {
+    if file.hunks.len() <= 1 {
+        return;
+    }
+
+    let mut merged: Vec<Hunk> = Vec::with_capacity(file.hunks.len());
+    let mut cur = file.hunks[0].clone();
+
+    for next in file.hunks.iter().skip(1) {
+        let cur_old_end = cur.old_start + cur.old_count.saturating_sub(1);
+        let next_old_start = next.old_start;
+
+        if next_old_start <= cur_old_end + (2 * context_budget as u32) + 1 {
+            // Merge `next` into `cur`
+            // If there is a gap between `cur_old_end` and `next_old_start`, fill with Ctx
+            // lines
+            if next_old_start > cur_old_end + 1 {
+                for line_idx in (cur_old_end + 1)..next_old_start {
+                    let old_text = file
+                        .old_content
+                        .get((line_idx as usize).saturating_sub(1))
+                        .cloned()
+                        .unwrap_or_default();
+                    let new_line_idx = (cur.new_start + cur.new_count.saturating_sub(1) + 1)
+                        + (line_idx - cur_old_end - 1);
+                    cur.rows.push(Row::Ctx(CtxLine::new(
+                        LineNum::new(line_idx).unwrap_or(LineNum::MIN),
+                        LineNum::new(new_line_idx).unwrap_or(LineNum::MIN),
+                        old_text,
+                    )));
+                }
+            }
+
+            // Append `next` rows
+            cur.rows.extend(next.rows.iter().cloned());
+            let new_old_end = next.old_start + next.old_count.saturating_sub(1);
+            let new_new_end = next.new_start + next.new_count.saturating_sub(1);
+            cur.old_count = new_old_end.saturating_sub(cur.old_start) + 1;
+            cur.new_count = new_new_end.saturating_sub(cur.new_start) + 1;
+            cur.below_ctx = next.below_ctx;
+        } else {
+            merged.push(cur);
+            cur = next.clone();
+        }
+    }
+    merged.push(cur);
+    file.hunks = merged;
+}
+
+/// Normalizes leading and trailing context lines for all hunks in a `DiffFile`
+/// to the target `budget` (e.g. standard $N=6$).
+pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
+    for h in &mut file.hunks {
+        // Expand leading context if needed
+        if (h.above_ctx as usize) < budget && h.old_start > 1 && h.new_start > 1 {
+            let needed = (budget - (h.above_ctx as usize))
+                .min((h.old_start as usize) - 1)
+                .min((h.new_start as usize) - 1);
+            if needed > 0 {
+                let mut leading = Vec::with_capacity(needed);
+                for offset in (1..=needed).rev() {
+                    let old_ln = h.old_start - (offset as u32);
+                    let new_ln = h.new_start - (offset as u32);
+                    let text = file
+                        .old_content
+                        .get((old_ln as usize).saturating_sub(1))
+                        .cloned()
+                        .unwrap_or_default();
+                    leading.push(Row::Ctx(CtxLine::new(
+                        LineNum::new(old_ln).unwrap_or(LineNum::MIN),
+                        LineNum::new(new_ln).unwrap_or(LineNum::MIN),
+                        text,
+                    )));
+                }
+                leading.extend(std::mem::take(&mut h.rows));
+                h.rows = leading;
+                h.old_start -= needed as u32;
+                h.new_start -= needed as u32;
+                h.old_count += needed as u32;
+                h.new_count += needed as u32;
+                h.above_ctx += needed as u32;
+            }
+        }
+
+        // Expand trailing context if needed
+        if (h.below_ctx as usize) < budget {
+            let cur_old_end = h.old_start + h.old_count.saturating_sub(1);
+            let cur_new_end = h.new_start + h.new_count.saturating_sub(1);
+            let old_total = file.old_line_count;
+            let new_total = file.new_line_count;
+            let avail_old = old_total.saturating_sub(cur_old_end as usize);
+            let avail_new = new_total.saturating_sub(cur_new_end as usize);
+            let needed = (budget - (h.below_ctx as usize))
+                .min(avail_old)
+                .min(avail_new);
+            if needed > 0 {
+                for offset in 1..=needed {
+                    let old_ln = cur_old_end + (offset as u32);
+                    let new_ln = cur_new_end + (offset as u32);
+                    let text = file
+                        .old_content
+                        .get((old_ln as usize).saturating_sub(1))
+                        .cloned()
+                        .unwrap_or_default();
+                    h.rows.push(Row::Ctx(CtxLine::new(
+                        LineNum::new(old_ln).unwrap_or(LineNum::MIN),
+                        LineNum::new(new_ln).unwrap_or(LineNum::MIN),
+                        text,
+                    )));
+                }
+                h.old_count += needed as u32;
+                h.new_count += needed as u32;
+                h.below_ctx += needed as u32;
+            }
+        }
+    }
+}
 
 /// Helper recognizing statement, declaration, or doc-comment heads.
 pub fn is_decl_or_comment(s: &str) -> bool {
@@ -78,7 +259,7 @@ pub fn calculate_needed_shift_down(
     end_idx: usize,
     split_idx: usize,
 ) -> usize {
-    if split_idx <= start_idx || split_idx >= end_idx {
+    if split_idx < start_idx || split_idx >= end_idx {
         return 0;
     }
 
@@ -155,9 +336,9 @@ pub fn pass_shift_hunk(h: &Hunk, new_content: Option<&[String]>) -> Hunk {
             continue;
         }
 
-        // Look for an interior closing delimiter inside the additions that precedes a
-        // declaration
-        for k in 1..add_count {
+        // Look for an interior or leading closing delimiter inside the additions that
+        // precedes a declaration
+        for k in 0..add_count {
             let row_idx = start + k;
             let needed = calculate_needed_shift_down(&new_hunk, start, end, row_idx);
             if needed > 0 {

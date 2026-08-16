@@ -1,11 +1,11 @@
 # diffuse — Atomic Cluster Transformation Plan
 
 ## Global TODO
-- [ ] **Phase 1: Semantic Sliding, Dynamic Context & Hunk Merging**
-  - [ ] Implement bidirectional identity sliding with semantic score weighting (functions, comments, scope braces, blank lines).
-  - [ ] Implement dynamic context line expansion from `old_content`/`new_content` when sliding past initial hunk boundaries.
-  - [ ] Implement inline hunk merging when adjacent hunks overlap or touch within the context budget.
-  - [ ] Implement context normalization to enforce standard context budgets ($N=6$).
+- [x] **Phase 1: Semantic Sliding, Dynamic Context & Hunk Merging**
+  - [x] Implement bidirectional identity sliding with semantic score weighting (functions, comments, scope braces, blank lines).
+  - [x] Implement dynamic context line expansion from `old_content`/`new_content` when sliding past initial hunk boundaries.
+  - [x] Implement inline hunk merging when adjacent hunks overlap or touch within the context budget.
+  - [x] Implement context normalization to enforce standard context budgets ($N=6$).
 - [ ] **Phase 2: Syntax-Delimited Section Partitioning**
   - [ ] Implement syntax section classifier (doc comments, attributes, function boundaries, statement blocks).
   - [ ] Partition change runs by syntax sections to enforce hard semantic barriers.
