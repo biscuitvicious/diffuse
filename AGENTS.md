@@ -83,6 +83,30 @@ Every bug fix, behavior adjustment, or new feature must expand the test corpus w
 3. **Implement the change**: Write the minimal code needed to fulfill the requirement.
 4. **Verify passing run**: Ensure `cargo test` and `npm test` pass cleanly, permanently expanding the test suite to guard against regressions.
 
+## Standard workflow
+
+Every bug fix, behavior change, or feature follows this loop (steps 1–2
+are the test-first discipline above):
+
+1. **Failing test** — write the test demonstrating the missing feature,
+   change, or fix; confirm it fails in the expected way.
+2. **Implement/fix** — make the minimal change; fix any tests broken by
+   the new behavior (an old expectation breaking is a spec change — review
+   it consciously, don't just update it).
+3. **`./scripts/check.sh`** — nightly fmt + clippy `--fix` (both
+   auto-apply), the full cargo test suite, and the extension's `npm test`.
+   Everything must pass cleanly.
+4. **Agent review of golden changes** — walk any wire/golden diffs per
+   [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md):
+   assert strictly-better-or-equivalent, flag and pause on anything
+   suspicious.
+5. **Install the extension** — `extension/pi/scripts/install.sh`
+   (bundles the release binary + review.ts into
+   `~/.pi/agent/extensions/`; `/reload` in pi, then `/review`).
+6. **HUMAN REVIEW** — pause for the human's visual & code review of the
+   rendered result. The human may instruct auto-commit — in that case
+   just install the extension (step 5, if not already done) and commit.
+
 ## Conventions
 
 - Rust edition 2024; the toolchain is pinned in `rust-toolchain.toml`

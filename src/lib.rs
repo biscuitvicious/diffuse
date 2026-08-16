@@ -20,7 +20,8 @@
     clippy::match_same_arms
 )]
 
-pub mod cluster; // Context-delimited change clusters and syntax section partitioning
+pub mod cluster; // Context-delimited change clusters, syntax section partitioning
+// and the cluster DP transformation engine
 pub mod collapse; // collapseHunkRows: pairing, stretch, reverse-stretch, reflow, ordered walk
 pub mod counts; // fileCounts
 pub mod lcs; // tokenizeLine, lcsPairs, spansFrom, wordSpans

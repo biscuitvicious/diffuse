@@ -153,3 +153,5 @@ pub fn partition_hunk_segments(hunk: &Hunk, hash_comment: bool) -> Vec<HunkSegme
 
 #[cfg(test)]
 mod tests;
+
+pub mod dp;

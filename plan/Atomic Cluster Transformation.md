@@ -10,12 +10,12 @@
   - [x] Implement syntax section classifier (doc comments, attributes, function boundaries, statement blocks).
   - [x] Partition change runs by syntax sections to enforce hard semantic barriers.
   - [x] Decompose hunks into isolated, context-bounded $(M \text{ dels}, N \text{ adds})$ change clusters.
-- [ ] **Phase 3: Cluster Dynamic Programming (DP) Transformation Engine**
-  - [ ] Define cluster DP table and transition state model ($\text{DP}[i][j]$).
-  - [ ] Implement 1-to-1 `Mod`, 1-to-$K$ expansion, $K$-to-1 collapse, `Del`, `Add`, and `Mov` transitions.
-  - [ ] Implement subline `Mov` span detection for cross-line token reflows (e.g. comment text shifting across line breaks).
-  - [ ] Formulate multi-objective cost function (common tokens, syntax alignment, minimal sprawl, mid-word penalty).
-  - [ ] Implement DP optimal path traceback with bidirectional string verification ($\Pi_{\text{old}} \equiv \text{old} \land \Pi_{\text{new}} \equiv \text{new}$).
+- [·] **Phase 3: Cluster Dynamic Programming (DP) Transformation Engine** (implemented & agent-verified; awaiting review before commit)
+  - [x] Define cluster DP table and transition state model ($\text{DP}[i][j]$).
+  - [x] Implement 1-to-1 `Mod`, 1-to-$K$ expansion, $K$-to-1 collapse, `Del`, `Add`, and `Mov` transitions.
+  - [x] Implement subline `Mov` span detection for cross-line token reflows (e.g. comment text shifting across line breaks).
+  - [x] Formulate multi-objective cost function (common tokens, syntax alignment, minimal sprawl, mid-word penalty).
+  - [x] Implement DP optimal path traceback with bidirectional string verification ($\Pi_{\text{old}} \equiv \text{old} \land \Pi_{\text{new}} \equiv \text{new}$).
 - [ ] **Phase 4: Universal Subword Token Stream & Multi-Line Markup**
   - [ ] Extend subword run generation to all row kinds (`Mod`, `Del`, `Add`, `Mov`).
   - [ ] Implement `RunKind::Mov` subline spans for moved text fragments (source struck-moved, target filled-moved).
