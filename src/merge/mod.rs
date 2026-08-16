@@ -25,6 +25,28 @@ impl Run {
     }
 }
 
+/// Project the old side of a run sequence (Common + Del + Ctx).
+pub fn project_old_runs(runs: &[Run]) -> String {
+    let mut s = String::new();
+    for r in runs {
+        if matches!(r.kind, RunKind::Common | RunKind::Del | RunKind::Ctx) {
+            s.push_str(&r.text);
+        }
+    }
+    s
+}
+
+/// Project the new side of a run sequence (Common + Add + Ctx).
+pub fn project_new_runs(runs: &[Run]) -> String {
+    let mut s = String::new();
+    for r in runs {
+        if matches!(r.kind, RunKind::Common | RunKind::Add | RunKind::Ctx) {
+            s.push_str(&r.text);
+        }
+    }
+    s
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RunKind {

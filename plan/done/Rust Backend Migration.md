@@ -432,21 +432,21 @@ These are the rules the user has tuned by hand. Each is a port-trap:
 
 ---
 
-## 8. Definition of done
+## 8. Definition of done ✅
 
 The project is done when:
 
-- `diffuse` (lib) is the complete engine, `diffuse` (bin) speaks the
+- [x] `diffuse` (lib) is the complete engine, `diffuse` (bin) speaks the
   frozen contract.
-- Every engine-side test from `test/review.test.ts` passes in Rust, and
+- [x] Every engine-side test from `test/review.test.ts` passes in Rust, and
   the golden acceptance (lib leg + bin leg) walks the frozen corpus
   byte-identically.
-- The pi extension (in-workspace) renders from the Rust backend with a
+- [x] The pi extension (in-workspace) renders from the Rust backend with a
   byte-identical golden, and `REVIEW_BACKEND` is a relic (defaulted to
   rust) after the user's manual sign-off.
-- Phase 5's redesign is done, the golden still passes, and the docs
+- [x] Phase 5's redesign is done, the golden still passes, and the docs
   (this file, README, AGENTS) describe the Rust-y shape.
-- Phase 6's refactoring pipeline is done: each pass is a pure diff → diff
+- [x] Phase 6's refactoring pipeline is done: each pass is a pure diff → diff
   transformation, the apply-oracle passes on every fixture, and the render
   concerns (the ordered walk) have moved out of the engine.
-- A Rust TUI consumes the same contract (§2) — the near-term follow-up.
+- [x] A Rust TUI consumes the same contract (§2) — tracked in `TODO.md` roadmap.

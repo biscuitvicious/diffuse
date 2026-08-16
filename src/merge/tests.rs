@@ -327,3 +327,38 @@ fn test_trailing_deletion_placed_at_end_of_add_text() {
         "trailing deletion ' {{' must be placed at the end of add_text"
     );
 }
+
+#[test]
+fn test_mod_row_subline_transformation_invariants() {
+    let cases = vec![
+        ("    let x = 1;", "    let x = 2;"),
+        (
+            "pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {",
+            "pub fn epoch(&self) -> u64 {",
+        ),
+        (
+            "                if k < floor {",
+            "                if let Some(floor) = floor",
+        ),
+        (
+            "    let s = prefix_middle_suffix + other_operations();",
+            "    let s = prefix_suffix + other_operations();",
+        ),
+        (
+            "trace!(host_path = ?next_lower, \"Found in lower layer\");",
+            "trace!(host_path = ?next_lower, \"Found in layer below the top upper\");",
+        ),
+    ];
+
+    for (old, new) in cases {
+        let r = mk(old, new);
+        let runs = merged_runs(&r);
+        assert_eq!(
+            project_new_runs(&runs),
+            new,
+            "project_new(runs) must equal new text"
+        );
+        // Note: For non-wholesale mods, del spans reflect the deleted portions
+        // and common spans reflect preserved portions.
+    }
+}

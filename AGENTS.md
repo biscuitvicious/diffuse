@@ -104,5 +104,8 @@ Every bug fix, behavior adjustment, or new feature must expand the test corpus w
   binary into `~/.pi/agent/extensions/` for pi (`/reload` to pick it up).
 - Commit policy: do not commit without explicit instruction — present a
   summary and ask.
-- When a phase ends, update PLAN.md (check off the phase, note what
+- Engineering Plans: Follow [`plan/Plan Guidelines.md`](file:///home/daniel/lab/diffuse/plan/Plan%20Guidelines.md)
+  when authoring or updating architectural plans in `plan/`. When a major plan completes,
+  move it to `plan/done/<Plan Name>.md`.
+- When a phase ends, update the active plan in `plan/` (check off the phase, note what
   changed) and this file if the conventions changed.
