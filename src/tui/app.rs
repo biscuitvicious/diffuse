@@ -3,10 +3,7 @@
 use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
-    render::{
-        DiffuseTheme, display_text, render_raw_row, render_row_segment,
-        styled_prefix,
-    },
+    render::{DiffuseTheme, display_text, render_raw_row, render_row_segment, styled_prefix},
 };
 use std::{collections::HashMap, path::PathBuf};
 use unicode_segmentation::UnicodeSegmentation;
@@ -2289,6 +2286,13 @@ index 1111111..2222222 100644
         assert!(
             frame_ctx.contains("\x1b[48;5;237m\x1b[38;5;"),
             "selected context row must start with cursor background before the gutter numbers"
+        );
+
+        // Unselected addition row starts with addition background before the gutter
+        // numbers
+        assert!(
+            frame_ctx.contains("\x1b[48;5;22m\x1b[38;5;151m"),
+            "addition row must start with green tint before gutter numbers"
         );
     }
 }

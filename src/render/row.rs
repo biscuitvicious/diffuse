@@ -250,12 +250,19 @@ pub fn render_row_segment(
     let e_idx = seg_end.min(total_len);
     let piece: String = slice_graphemes[s_idx..e_idx].concat();
 
+    let has_styled_prefix = prefix.starts_with("\x1b[") || selected || band;
+    let lead_bg = if has_styled_prefix { &line_bg } else { "" };
+    let trail_bg = if selected || band || !is_ctx {
+        &line_bg
+    } else {
+        ""
+    };
+
     if is_del_row {
         let bg = if is_ctx { "" } else { &line_bg };
-        let sel_lead = if selected || band { &line_bg } else { "" };
         let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
         let reset = "\x1b[39m";
-        return format!("{sel_lead}{prefix}{bg}{del_fg}{piece}{reset}{line_bg}");
+        return format!("{lead_bg}{prefix}{bg}{del_fg}{piece}{reset}{trail_bg}");
     }
 
     if runs.is_empty() {
@@ -270,8 +277,7 @@ pub fn render_row_segment(
         } else {
             &line_bg
         };
-        let sel_lead = if selected || band { &line_bg } else { "" };
-        return format!("{sel_lead}{prefix}{bg}{piece}{bg}");
+        return format!("{lead_bg}{prefix}{bg}{piece}{trail_bg}");
     }
 
     let mut out = String::new();
@@ -332,12 +338,6 @@ pub fn render_row_segment(
         }
     }
 
-    let trail_bg = if selected || band || !is_ctx {
-        &line_bg
-    } else {
-        ""
-    };
-    let lead_bg = if selected || band { &line_bg } else { "" };
     format!("{lead_bg}{prefix}{out}{trail_bg}")
 }
 

@@ -307,10 +307,14 @@ mod tests {
 
     fn setup_test_git_repo() -> (std::path::PathBuf, std::path::PathBuf) {
         let count = TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let dir = std::env::temp_dir().join(format!(
             "diffuse-git-actions-{}-{}-{}",
             std::process::id(),
-            crate::notes::now_millis(),
+            nanos,
             count
         ));
         let _ = fs::remove_dir_all(&dir);
