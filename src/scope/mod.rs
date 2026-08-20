@@ -1,17 +1,24 @@
-//! Function scope and block-ending brace anchor helpers for diff pairing.
+//! Function scope and block-ending delimiter anchor helpers for diff pairing.
 
-use regex::Regex;
-use std::sync::OnceLock;
+use crate::syntax::LangProfile;
 
 /// True when the row is the last expression of its block: the next line
-/// on its side is a closing brace at a LOWER indent (the fn's `}` after the
+/// on its side is a closing delimiter at a LOWER indent (the fn's `}` after the
 /// return `None`/`Some(result)` — not the inner if's `}`).
+///
+/// For brace languages: the next line is a lone `}` at 4 fewer spaces of indent
+/// than the current line (the canonical 4-space fn-body indent). For other
+/// block styles the same logic applies via `profile.is_block_close`.
 pub fn is_tail_before_closing(
     line: Option<u32>,
     old_side: bool,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
+    profile: Option<&LangProfile>,
 ) -> bool {
+    let Some(profile) = profile else {
+        return false;
+    };
     let content = if old_side { old_content } else { new_content };
     let line = match line {
         Some(l) => l as usize,
@@ -24,48 +31,80 @@ pub fn is_tail_before_closing(
     if content.get(line).is_none() {
         return false;
     }
-    // The closing brace sits one indent level down from the fn's own
-    // body lines (`    }` after `        None` / `        Some(result)`) —
-    // not the inner block's brace after a nested statement.
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r"^\s{4}\}\s*$").expect("tail brace regex"));
-    re.is_match(&content[line])
+    let next = &content[line];
+    match profile.block_style {
+        crate::syntax::BlockDelimStyle::Braces => {
+            static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+            let re =
+                RE.get_or_init(|| regex::Regex::new(r"^\s{4}\}\s*$").expect("tail brace regex"));
+            re.is_match(next)
+        }
+        crate::syntax::BlockDelimStyle::Keywords => profile.is_block_close(next),
+        crate::syntax::BlockDelimStyle::IndentColon => false,
+    }
 }
 
-/// The name of the fn that contains `line` — the nearest preceding `fn`
-/// signature. The blank line between fn bodies is the section boundary: the
-/// `None` belongs to `lookup`, so it pairs with an add inside `lookup`, not
-/// another fn's return expression.
-pub fn fn_of(content: Option<&[String]>, line: Option<u32>) -> Option<String> {
+/// The name of the function that contains `line` — the nearest preceding
+/// function signature found by scanning backward through `content`.
+///
+/// The search is driven by `profile`:
+/// - `profile.fn_decl` (if set) is the regex whose first capture group is the
+///   function name.
+/// - `profile.scope_stop_prefixes` list declaration-starting strings that act
+///   as hard boundaries.
+///
+/// If `profile` or `profile.fn_decl` is `None`, returns `None` (plain text, no
+/// scope detection).
+pub fn fn_of(
+    content: Option<&[String]>,
+    line: Option<u32>,
+    profile: Option<&LangProfile>,
+) -> Option<String> {
+    let profile = profile?;
+    let fn_re = profile.fn_decl.as_ref()?;
     let content = content?;
     let line = line? as usize;
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)").expect("fn regex")
-    });
+
+    let stop_prefixes = profile.scope_stop_prefixes;
+
     for i in (0..line).rev() {
         let raw = content.get(i).map_or("", |s| s.as_str());
         let l = raw.trim();
         if Some(i) != line.checked_sub(1)
             && (l == "}"
                 || raw.starts_with('}')
-                || l.starts_with("struct ")
-                || l.starts_with("pub struct ")
-                || l.starts_with("pub(super) struct ")
-                || l.starts_with("enum ")
-                || l.starts_with("pub enum ")
-                || l.starts_with("impl ")
-                || l.starts_with("pub impl ")
-                || l.starts_with("type ")
-                || l.starts_with("pub type "))
+                || stop_prefixes.iter().any(|&pf| l.starts_with(pf)))
         {
             return None;
         }
-        if let Some(caps) = re.captures(l) {
+        if let Some(caps) = fn_re.captures(l) {
             return Some(caps[1].to_string());
         }
     }
     None
+}
+
+/// Return `true` if any line in `content` declares a function named `fn_name`,
+/// using `profile.fn_decl`. If no profile or `fn_decl` exists, returns `false`.
+pub fn fn_of_exists(
+    content: Option<&[String]>,
+    fn_name: &str,
+    profile: Option<&LangProfile>,
+) -> bool {
+    let Some(profile) = profile else {
+        return false;
+    };
+    let Some(fn_re) = profile.fn_decl.as_ref() else {
+        return false;
+    };
+    let Some(content) = content else {
+        return false;
+    };
+    content.iter().any(|l| {
+        fn_re
+            .captures(l.trim())
+            .is_some_and(|c| c.get(1).is_some_and(|m| m.as_str() == fn_name))
+    })
 }
 
 #[cfg(test)]

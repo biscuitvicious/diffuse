@@ -2,7 +2,7 @@
 //! pairing metric). The TS suite exercises these through `collapseHunkRows`;
 //! these are direct sanity checks of the scoring functions themselves.
 
-use crate::similarity::{is_comment_line, line_similarity, line_similarity_parts};
+use crate::similarity::{line_similarity, line_similarity_parts};
 
 // Identical content → sim 1; the add is fully matched.
 #[test]
@@ -42,21 +42,18 @@ fn fragment_vs_growth_parts() {
     );
 }
 
-// Comment markers: the `///`/`//`/`/*`/`*` markers are language-agnostic;
-// `#` depends on the profile (hash-comment languages only — never Rust
-// attrs).
 #[test]
 fn comment_line_markers() {
-    assert!(is_comment_line("// a comment", false));
-    assert!(is_comment_line("/// doc", false));
-    assert!(is_comment_line("/* block", false));
-    assert!(is_comment_line("* continuation", false));
-    assert!(is_comment_line("# derive", true), "py hash comment");
-    assert!(
-        !is_comment_line("#[derive]", false),
-        "rust # is not a comment"
-    );
-    assert!(!is_comment_line("let x = 1;", false));
+    let rs = crate::syntax::lang_profile("rs").unwrap();
+    let py = crate::syntax::lang_profile("py").unwrap();
+
+    assert!(rs.is_comment_line("// a comment"));
+    assert!(rs.is_comment_line("/// doc"));
+    assert!(rs.is_comment_line("/* block"));
+    assert!(rs.is_comment_line("* continuation"));
+    assert!(py.is_comment_line("# derive"), "py hash comment");
+    assert!(!rs.is_comment_line("#[derive]"), "rust # is not a comment");
+    assert!(!rs.is_comment_line("let x = 1;"));
 }
 
 #[test]

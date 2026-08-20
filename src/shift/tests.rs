@@ -71,15 +71,21 @@ fn test_apply_shift_down_identity() {
 
 #[test]
 fn test_semantic_boundary_score() {
+    let rs = crate::syntax::lang_profile("rs");
     // Boundary before a function declaration
-    let score_fn = semantic_boundary_score(Some("    }"), Some("    pub fn compute() {"));
+    let score_fn = semantic_boundary_score(Some("    }"), Some("    pub fn compute() {"), rs);
     // Boundary inside function body
-    let score_mid = semantic_boundary_score(Some("        let x = 1;"), Some("        let y = 2;"));
+    let score_mid =
+        semantic_boundary_score(Some("        let x = 1;"), Some("        let y = 2;"), rs);
 
     assert!(
         score_fn > score_mid,
         "Boundary before function declaration should score higher than mid-expression boundary"
     );
+
+    // When profile is None, no syntax bonuses are added
+    let score_none = semantic_boundary_score(Some("    }"), Some("    pub fn compute() {"), None);
+    assert_eq!(score_none, 0);
 }
 
 #[test]
@@ -213,7 +219,8 @@ fn test_semantic_slide_addition_to_function_header() {
     new_content[24] = "    }".to_string();
     new_content[25] = "".to_string();
 
-    let shifted = pass_shift_hunk(&h, Some(&new_content));
+    let profile = crate::syntax::lang_profile("rs");
+    let shifted = pass_shift_hunk(&h, Some(&new_content), profile);
 
     assert_eq!(shifted.rows[0].text(), "    pub fn new_func() {");
     assert_eq!(shifted.rows[0].new_line(), Some(23));

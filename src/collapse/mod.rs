@@ -11,15 +11,13 @@
 use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    sync::OnceLock,
 };
-
-use regex::Regex;
 
 use crate::{
     lcs::{char_slice, tokenize_line, word_spans},
     parse::{AddLine, DelLine, Hunk, Row, Spans},
     shift::pass_shift_hunk,
+    syntax::LangProfile,
 };
 
 /// Results of the initial pairing pass.
@@ -28,17 +26,6 @@ pub struct PairingResults {
     pub del_runs: Vec<Vec<usize>>,
     pub run_of: HashMap<usize, Vec<usize>>,
     pub del_ids: Vec<usize>,
-}
-
-pub(crate) fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {
-    let Some(content) = content else { return false };
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)").expect("fn regex")
-    });
-    content
-        .iter()
-        .any(|l| re.captures(l.trim()).is_some_and(|c| c[1] == *fn_name))
 }
 
 /// Products of the assembly pass.
@@ -59,7 +46,11 @@ pub struct PairingContext<'a> {
 
 /// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow
 /// suppression.
-pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -> AssembledMods {
+pub fn pass_assemble_mods(
+    h: &Hunk,
+    ctx: &PairingContext,
+    profile: Option<&LangProfile>,
+) -> AssembledMods {
     let mut out: Vec<Row> = Vec::new();
     let mut kept_dels: Vec<usize> = Vec::new();
     let mut pure_adds: Vec<usize> = Vec::new();
@@ -71,6 +62,8 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                 continue;
             }
             pure_adds.push(ri);
+        } else if matches!(r, Row::Ctx(_)) {
+            out.push(r.clone());
         } else if ctx.paired_dels.contains(&ri) {
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
@@ -86,30 +79,17 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                     .any(|tok| !tok.trim().is_empty() && tok.chars().any(char::is_alphanumeric))
             });
 
-            if has_deleted_content {
+            if has_deleted_content && let Some(p) = profile {
                 while k < h.rows.len()
                     && matches!(h.rows[k], Row::Add(_))
                     && !ctx.pair_of.contains_key(&k)
                 {
                     let nxt_t = h.rows[k].text().trim();
-                    if nxt_t.starts_with("///")
-                        || nxt_t.starts_with("#[")
-                        || nxt_t.starts_with("pub ")
-                        || nxt_t.starts_with("fn ")
-                    {
+                    if p.is_decl_break(nxt_t) {
                         break;
                     }
-                    let is_continuation = nxt_t.starts_with("&&")
-                        || nxt_t.starts_with("||")
-                        || nxt_t.starts_with('.')
-                        || nxt_t == "{"
-                        || nxt_t == "}";
-                    let is_closing = nxt_t == "};"
-                        || nxt_t == "},"
-                        || nxt_t == "}"
-                        || nxt_t == ");"
-                        || nxt_t == "),"
-                        || nxt_t == ")";
+                    let is_continuation = p.is_continuation_line(nxt_t);
+                    let is_closing = p.is_expression_close(nxt_t);
                     let matches_del = tokenize_line(nxt_t).into_iter().any(|tok| {
                         !tok.trim().is_empty()
                             && tok.chars().any(char::is_alphanumeric)
@@ -125,9 +105,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         if is_closing {
                             break;
                         }
-                    } else if (del_text.starts_with("use ") || del_text.contains('{'))
-                        && del_text.trim_end().ends_with(';')
-                    {
+                    } else if p.is_import_statement(&del_text) {
                         let has_closing = (k..h.rows.len())
                             .take_while(|&idx| {
                                 matches!(h.rows[idx], Row::Add(_))
@@ -135,7 +113,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                             })
                             .any(|idx| {
                                 let t = h.rows[idx].text().trim();
-                                t == "};" || t == "}" || del_text.trim_end().ends_with(t)
+                                p.is_block_close(t) || del_text.trim_end().ends_with(t)
                             });
                         if has_closing {
                             next_adds.push(k);
@@ -438,7 +416,6 @@ pub fn pass_filter_reflows(
 /// Pass 4: Keyed anchor sorting into the final visual row stream.
 pub fn pass_sort_ordered_walk(
     h: &Hunk,
-    _hash_comment: bool,
     out: Vec<Row>,
     meaningful_dels: &[usize],
     kept_adds: &[usize],
@@ -520,13 +497,20 @@ pub fn pass_sort_ordered_walk(
             }
             _ => h.rows[ai].clone(),
         };
-        keyed.push((a, (h.rows[ai].new_line().unwrap_or(0), 2.0)));
+        let key = (h.rows[ai].new_line().unwrap_or(0), 1.0);
+        keyed.push((a, key));
     }
+
     keyed.sort_by(|a, b| {
-        a.1.0
-            .cmp(&b.1.0)
-            .then(a.1.1.partial_cmp(&b.1.1).unwrap_or(Ordering::Equal))
+        let (num_a, sub_a) = a.1;
+        let (num_b, sub_b) = b.1;
+        if num_a != num_b {
+            num_a.cmp(&num_b)
+        } else {
+            sub_a.partial_cmp(&sub_b).unwrap_or(Ordering::Equal)
+        }
     });
+
     keyed.into_iter().map(|(r, _)| r).collect()
 }
 
@@ -536,15 +520,15 @@ pub fn pass_sort_ordered_walk(
 /// Composed of 4 pure passes over the diff AST.
 pub fn collapse_hunk_rows(
     h: &Hunk,
-    hash_comment: bool,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
+    profile: Option<&LangProfile>,
 ) -> Vec<Row> {
-    let h_norm = pass_shift_hunk(h, new_content);
+    let h_norm = pass_shift_hunk(h, new_content, profile);
     let h = &h_norm;
 
     // Pass 1: DP cluster pairing engine
-    let p1 = crate::cluster::pairing::dp_pairing(h, hash_comment, old_content, new_content);
+    let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
     let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
 
@@ -555,20 +539,13 @@ pub fn collapse_hunk_rows(
         run_of: &p1.run_of,
         paired_dels: &paired_dels,
     };
-    let p2 = pass_assemble_mods(h, hash_comment, &pairing_ctx);
+    let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
 
     // Pass 3: Filter verbatim reflow dels and adds
     let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &paired_dels);
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
-    pass_sort_ordered_walk(
-        h,
-        hash_comment,
-        p2.out,
-        &p3.meaningful_dels,
-        &p3.kept_adds,
-        &p2.add_spans,
-    )
+    pass_sort_ordered_walk(h, p2.out, &p3.meaningful_dels, &p3.kept_adds, &p2.add_spans)
 }
 
 #[cfg(test)]

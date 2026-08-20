@@ -379,7 +379,6 @@ pub fn run_pipeline_full(
     for f in &mut files {
         let ext = f.path.rsplit('.').next().unwrap_or("");
         let profile = lang_profile(ext);
-        let hash_comment = profile.as_ref().is_some_and(|p| p.hash_comment);
         f.new_content = contents
             .get(&f.path)
             .map(|c| c.split('\n').map(String::from).collect())
@@ -399,7 +398,7 @@ pub fn run_pipeline_full(
         let old_content = f.old_content.clone();
         let new_content = f.new_content.clone();
         for h in &mut f.hunks {
-            h.rows = collapse_hunk_rows(h, hash_comment, Some(&old_content), Some(&new_content));
+            h.rows = collapse_hunk_rows(h, Some(&old_content), Some(&new_content), profile);
         }
         // A moved row's own spans: the collapse marks the move (delText =
         // the paired del) but bakes no spans — the renderer needs the

@@ -44,34 +44,31 @@ impl SyntaxSectionKind {
 }
 
 /// Classify the syntax section of a line.
-pub fn classify_syntax_section(line: &str, hash_comment: bool) -> SyntaxSectionKind {
+pub fn classify_syntax_section(
+    line: &str,
+    profile: Option<&crate::syntax::LangProfile>,
+) -> SyntaxSectionKind {
     let t = line.trim();
     if t.is_empty() {
         return SyntaxSectionKind::Blank;
     }
-    if t.starts_with("///") || t.starts_with("//!") {
+    let Some(p) = profile else {
+        return SyntaxSectionKind::Code;
+    };
+    if p.line_comment && (t.starts_with("///") || t.starts_with("//!")) {
         return SyntaxSectionKind::DocComment;
     }
-    if t.starts_with("//") || (hash_comment && t.starts_with('#')) {
+    if (p.line_comment && t.starts_with("//")) || (p.hash_comment && t.starts_with('#')) {
         return SyntaxSectionKind::LineComment;
     }
-    if t.starts_with("/*") || t.starts_with('*') {
+    if p.block_comment && (t.starts_with("/*") || t.starts_with('*')) {
         return SyntaxSectionKind::BlockComment;
     }
     if t.starts_with("#[") || t.starts_with('@') {
         return SyntaxSectionKind::Attribute;
     }
-    if t.starts_with("pub ")
-        || t.starts_with("fn ")
-        || t.starts_with("async fn ")
-        || t.starts_with("impl ")
-        || t.starts_with("struct ")
-        || t.starts_with("enum ")
-        || t.starts_with("trait ")
-        || t.starts_with("mod ")
-        || t.starts_with("type ")
-        || t.starts_with("class ")
-        || t.starts_with("def ")
+    if p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
+        || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
     {
         return SyntaxSectionKind::Declaration;
     }
@@ -130,9 +127,9 @@ pub enum HunkSegment {
 /// Partitions a hunk into context rows and atomic change clusters.
 pub fn partition_hunk_segments(
     hunk: &Hunk,
-    hash_comment: bool,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
+    profile: Option<&crate::syntax::LangProfile>,
 ) -> Vec<HunkSegment> {
     let mut segments = Vec::new();
     let mut i = 0;
@@ -156,7 +153,7 @@ pub fn partition_hunk_segments(
         }
         preceding_ctx.reverse();
 
-        let first_kind = classify_syntax_section(hunk.rows[i].text(), hash_comment);
+        let first_kind = classify_syntax_section(hunk.rows[i].text(), profile);
         let mut old_rows = Vec::new();
         let mut new_rows = Vec::new();
 
@@ -165,7 +162,7 @@ pub fn partition_hunk_segments(
                 break;
             }
             let row = &hunk.rows[i];
-            let _row_kind = classify_syntax_section(row.text(), hash_comment);
+            let _row_kind = classify_syntax_section(row.text(), profile);
 
             match row {
                 Row::Del(_) => old_rows.push(row.clone()),

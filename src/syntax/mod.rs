@@ -43,6 +43,17 @@ pub struct LangProfile {
     pub markdown: bool,
     /// The block delimiter style (braces, colon + indentation, or keywords).
     pub block_style: BlockDelimStyle,
+    /// Regex capturing the function name (group 1) from a function declaration
+    /// line.
+    pub fn_decl: Option<Regex>,
+    /// Prefixes that introduce declarations/items in this language.
+    /// Used to break multi-line statement expansion in `pass_assemble_mods`.
+    pub decl_prefixes: &'static [&'static str],
+    /// Structural scope-boundary prefixes — items that delimit top-level scopes
+    /// and act as hard stops in `fn_of`'s backward scan (class, struct, impl,
+    /// …). Distinct from `decl_prefixes` which may include variable
+    /// declarations (`const`, `let`) that are valid inside function bodies.
+    pub scope_stop_prefixes: &'static [&'static str],
 }
 
 /// The block boundary delimiter style for a programming language.
@@ -78,6 +89,63 @@ impl LangProfile {
             BlockDelimStyle::IndentColon => false,
             BlockDelimStyle::Keywords => t == "fi" || t == "done" || t == "esac" || t == "}",
         }
+    }
+
+    /// Whether a line acts as a closing delimiter for expressions or statements
+    /// (parentheses, brackets, braces).
+    pub fn is_expression_close(&self, line: &str) -> bool {
+        let t = line.trim();
+        match self.block_style {
+            BlockDelimStyle::Braces => {
+                t == "};" || t == "}," || t == "}" || t == ");" || t == ")," || t == ")"
+            }
+            BlockDelimStyle::IndentColon => t == ")" || t == "]",
+            BlockDelimStyle::Keywords => {
+                t == "fi" || t == "done" || t == "esac" || t == "}" || t == ")" || t == "]"
+            }
+        }
+    }
+
+    /// Whether a line is a declaration start or item boundary that breaks a
+    /// multi-line continuation.
+    pub fn is_decl_break(&self, line: &str) -> bool {
+        let t = line.trim();
+        if t.starts_with("///") || t.starts_with("//!") || t.starts_with("#[") {
+            return true;
+        }
+        self.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
+    }
+
+    /// Whether a line is a continuation expression (e.g. operator lead or
+    /// compound block start).
+    pub fn is_continuation_line(&self, line: &str) -> bool {
+        let t = line.trim();
+        t.starts_with("&&") || t.starts_with("||") || t.starts_with('.') || t == "{" || t == "}"
+    }
+
+    /// Whether a line is an import/use statement that can reflow multi-line
+    /// braces.
+    pub fn is_import_statement(&self, line: &str) -> bool {
+        let t = line.trim();
+        (t.starts_with("use ") || t.starts_with("import ") || t.contains('{'))
+            && t.trim_end().ends_with(';')
+    }
+
+    /// Whether a line starts a comment in this language.
+    pub fn is_comment_line(&self, line: &str) -> bool {
+        let t = line.trim();
+        if self.line_comment
+            && (t.starts_with("//") || t.starts_with("///") || t.starts_with("//!"))
+        {
+            return true;
+        }
+        if self.block_comment && (t.starts_with("/*") || t.starts_with('*')) {
+            return true;
+        }
+        if self.hash_comment && t.starts_with('#') {
+            return true;
+        }
+        false
     }
 }
 
@@ -148,6 +216,32 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: Some(Regex::new(r"^\s*(///|//!)?\s*").expect("the doc prefix")),
             markdown: false,
             block_style: BlockDelimStyle::Braces,
+            fn_decl: Some(
+                Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)")
+                    .expect("rs fn_decl"),
+            ),
+            decl_prefixes: &[
+                "pub ",
+                "fn ",
+                "async fn ",
+                "impl ",
+                "struct ",
+                "enum ",
+                "trait ",
+                "mod ",
+                "type ",
+            ],
+            scope_stop_prefixes: &[
+                "struct ",
+                "pub struct ",
+                "pub(super) struct ",
+                "enum ",
+                "pub enum ",
+                "impl ",
+                "pub impl ",
+                "type ",
+                "pub type ",
+            ],
         },
         "ts" | "tsx" | "js" | "jsx" | "mjs" => LangProfile {
             keywords: kw(KEYWORDS_TS),
@@ -160,6 +254,42 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: false,
             block_style: BlockDelimStyle::Braces,
+            fn_decl: Some(
+                Regex::new(
+                    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)",
+                )
+                .expect("ts fn_decl"),
+            ),
+            decl_prefixes: &[
+                "function ",
+                "async function ",
+                "class ",
+                "interface ",
+                "type ",
+                "enum ",
+                "const ",
+                "let ",
+                "var ",
+                "export ",
+                "export default ",
+                "export async function ",
+                "export class ",
+                "export interface ",
+                "export type ",
+                "export enum ",
+                "export const ",
+                "export let ",
+            ],
+            scope_stop_prefixes: &[
+                "class ",
+                "interface ",
+                "type ",
+                "enum ",
+                "export class ",
+                "export interface ",
+                "export type ",
+                "export enum ",
+            ],
         },
         "py" => LangProfile {
             keywords: kw(KEYWORDS_PY),
@@ -172,6 +302,11 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: false,
             block_style: BlockDelimStyle::IndentColon,
+            fn_decl: Some(
+                Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z0-9_]+)").expect("py fn_decl"),
+            ),
+            decl_prefixes: &["def ", "async def ", "class "],
+            scope_stop_prefixes: &["class "],
         },
         "sh" | "bash" => LangProfile {
             keywords: kw(KEYWORDS_SH),
@@ -184,6 +319,11 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: false,
             block_style: BlockDelimStyle::Keywords,
+            fn_decl: Some(
+                Regex::new(r"^\s*(?:function\s+)?([A-Za-z0-9_]+)\s*\(\)").expect("sh fn_decl"),
+            ),
+            decl_prefixes: &["function "],
+            scope_stop_prefixes: &[],
         },
         "c" | "h" | "cpp" | "hpp" | "java" => LangProfile {
             keywords: kw(KEYWORDS_C),
@@ -196,6 +336,23 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: false,
             block_style: BlockDelimStyle::Braces,
+            // C/C++ function definitions are hard to distinguish from declarations;
+            // capture the name from the last word-token before the opening paren.
+            fn_decl: Some(
+                Regex::new(
+                    r"^\s*(?:[A-Za-z0-9_<>:*&\s]+\s+)+([A-Za-z0-9_]+)\s*\([^;]*\)\s*\{?\s*$",
+                )
+                .expect("c fn_decl"),
+            ),
+            decl_prefixes: &[
+                "class ",
+                "struct ",
+                "enum ",
+                "typedef ",
+                "template ",
+                "namespace ",
+            ],
+            scope_stop_prefixes: &["class ", "struct ", "enum ", "namespace "],
         },
         "go" => LangProfile {
             keywords: kw(KEYWORDS_GO),
@@ -208,6 +365,11 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: false,
             block_style: BlockDelimStyle::Braces,
+            fn_decl: Some(
+                Regex::new(r"^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z0-9_]+)").expect("go fn_decl"),
+            ),
+            decl_prefixes: &["func ", "type ", "var ", "const ", "package ", "import "],
+            scope_stop_prefixes: &["type ", "package ", "import "],
         },
         "md" | "markdown" => LangProfile {
             keywords: HashSet::new(),
@@ -223,6 +385,9 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: true,
             block_style: BlockDelimStyle::Braces,
+            fn_decl: None,
+            decl_prefixes: &[],
+            scope_stop_prefixes: &[],
         },
         // toml/yaml share the token set but not the prose classifier.
         "toml" | "yaml" | "yml" => LangProfile {
@@ -236,6 +401,9 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: false,
             block_style: BlockDelimStyle::IndentColon,
+            fn_decl: None,
+            decl_prefixes: &[],
+            scope_stop_prefixes: &[],
         },
         "json" => LangProfile {
             keywords: HashSet::new(),
@@ -248,6 +416,9 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             fence_strip: None,
             markdown: false,
             block_style: BlockDelimStyle::Braces,
+            fn_decl: None,
+            decl_prefixes: &[],
+            scope_stop_prefixes: &[],
         },
         _ => return None,
     };
@@ -707,7 +878,7 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
         }];
     }
 
-    let rust_prof = lang_profile("rs").unwrap_or(profile);
+    let inner_prof = profile;
     let prefix_len = if is_doc {
         3
     } else if tok.starts_with("//") || tok.starts_with("/*") {
@@ -736,7 +907,7 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
                 t.color = "syntaxComment".into();
             } else if t.color == "syntaxString" {
                 let parent_sgr = t.sgr;
-                let mut inner_toks = classify_tokens(&t.text, Some(rust_prof));
+                let mut inner_toks = classify_tokens(&t.text, Some(inner_prof));
                 for it in &mut inner_toks {
                     if it.sgr.is_none() {
                         it.sgr = parent_sgr;
@@ -749,17 +920,17 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
         }
     } else {
         // Plain comments: backtick-only. Everything outside `` `code` `` is
-        // comment-color; inside, the Rust classification.
-        out.extend(backtick_tokens(body, rust_prof));
+        // comment-color; inside, the language's classification.
+        out.extend(backtick_tokens(body, inner_prof));
     }
     out
 }
 
 /// Backtick-only extraction for plain (`//`, `/*`, `#`) comments: only
-/// inline `` `code` `` spans render — accent backticks + Rust-classified
+/// inline `` `code` `` spans render — accent backticks + language-classified
 /// inner content; the surrounding comment text stays `syntaxComment`. No
 /// markdown emphasis/link/strike (plain comments aren't markdown).
-fn backtick_tokens(body: &str, rust_prof: &LangProfile) -> Vec<ClassifiedToken> {
+fn backtick_tokens(body: &str, profile: &LangProfile) -> Vec<ClassifiedToken> {
     static BACKTICK: OnceLock<Regex> = OnceLock::new();
     let re = BACKTICK.get_or_init(|| Regex::new(r"`[^`\n]+`").expect("the comment backtick"));
     let mut out = Vec::new();
@@ -778,7 +949,7 @@ fn backtick_tokens(body: &str, rust_prof: &LangProfile) -> Vec<ClassifiedToken> 
             text: "`".into(),
         });
         let inner = &m.as_str()[1..m.as_str().len() - 1];
-        out.extend(classify_tokens(inner, Some(rust_prof)));
+        out.extend(classify_tokens(inner, Some(profile)));
         out.push(ClassifiedToken {
             color: "accent".into(),
             sgr: None,

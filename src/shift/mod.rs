@@ -13,7 +13,11 @@ use crate::parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row};
 ///
 /// Higher scores indicate natural code boundary splits (e.g. function starts,
 /// doc comments, scope closing braces, blank lines).
-pub fn semantic_boundary_score(prev_line: Option<&str>, next_line: Option<&str>) -> i32 {
+pub fn semantic_boundary_score(
+    prev_line: Option<&str>,
+    next_line: Option<&str>,
+    profile: Option<&crate::syntax::LangProfile>,
+) -> i32 {
     let mut score = 0;
 
     // Blank line boundary
@@ -23,31 +27,33 @@ pub fn semantic_boundary_score(prev_line: Option<&str>, next_line: Option<&str>)
         score += 15;
     }
 
-    // Function/type/doc declaration head
-    if let Some(next) = next_line
-        && is_decl_or_comment(next)
-    {
-        score += 25;
-    }
-
-    // Scope closing delimiter
-    if let Some(prev) = prev_line
-        && is_closing_delimiter(prev)
-    {
-        score += 20;
-    }
-
-    // Indented continuation penalty (mid-expression)
-    if let (Some(prev), Some(next)) = (prev_line, next_line) {
-        let pt = prev.trim();
-        let nt = next.trim();
-        if !pt.is_empty()
-            && !nt.is_empty()
-            && !pt.ends_with(';')
-            && !pt.ends_with('}')
-            && !pt.ends_with('{')
+    if let Some(p) = profile {
+        // Function/type/doc declaration head
+        if let Some(next) = next_line
+            && (p.is_decl_break(next) || p.is_comment_line(next))
         {
-            score -= 10;
+            score += 25;
+        }
+
+        // Scope closing delimiter
+        if let Some(prev) = prev_line
+            && (p.is_block_close(prev) || p.is_expression_close(prev))
+        {
+            score += 20;
+        }
+
+        // Indented continuation penalty (mid-expression)
+        if let (Some(prev), Some(next)) = (prev_line, next_line) {
+            let pt = prev.trim();
+            let nt = next.trim();
+            if !pt.is_empty()
+                && !nt.is_empty()
+                && !pt.ends_with(';')
+                && !pt.ends_with('}')
+                && !pt.ends_with('{')
+            {
+                score -= 10;
+            }
         }
     }
 
@@ -189,34 +195,6 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
     }
 }
 
-/// Helper recognizing statement, declaration, or doc-comment heads.
-pub fn is_decl_or_comment(s: &str) -> bool {
-    let t = s.trim_start();
-    t.starts_with("///")
-        || t.starts_with("//!")
-        || t.starts_with("/*")
-        || t.starts_with("#[")
-        || t.starts_with("pub ")
-        || t.starts_with("fn ")
-        || t.starts_with("async fn ")
-        || t.starts_with("impl ")
-        || t.starts_with("struct ")
-        || t.starts_with("enum ")
-        || t.starts_with("trait ")
-        || t.starts_with("mod ")
-        || t.starts_with("type ")
-        || t.starts_with("const ")
-        || t.starts_with("static ")
-        || t.starts_with("def ")
-        || t.starts_with("class ")
-}
-
-/// Helper recognizing closing delimiters (`}`, `};`, `)`).
-pub fn is_closing_delimiter(s: &str) -> bool {
-    let t = s.trim();
-    t == "}" || t == "};" || t == ")"
-}
-
 /// Calculates the maximum number of rows that an addition block can shift down
 /// as an exact content-neutral identity transformation against `new_content`.
 pub fn max_shift_down_rows(
@@ -258,25 +236,38 @@ pub fn calculate_needed_shift_down(
     start_idx: usize,
     end_idx: usize,
     split_idx: usize,
+    profile: Option<&crate::syntax::LangProfile>,
 ) -> usize {
+    let Some(p) = profile else {
+        return 0;
+    };
     if split_idx < start_idx || split_idx >= end_idx {
         return 0;
     }
 
     let text = hunk.rows[split_idx].text().trim();
-    if !is_closing_delimiter(text) {
+    if text != "}" && text != "};" && text != ")" {
         return 0;
     }
 
     let add_count = end_idx - start_idx;
     let k = split_idx - start_idx;
 
+    let is_boundary = |s: &str| {
+        let t = s.trim();
+        p.is_comment_line(t)
+            || t.starts_with("#[")
+            || t.starts_with('@')
+            || p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
+            || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
+    };
+
     // Check if what follows split_idx is a declaration / doc comment boundary
-    if k + 1 < add_count && is_decl_or_comment(hunk.rows[split_idx + 1].text()) {
+    if k + 1 < add_count && is_boundary(hunk.rows[split_idx + 1].text()) {
         1 // Closing delimiter only
     } else if k + 2 < add_count
         && hunk.rows[split_idx + 1].text().trim().is_empty()
-        && is_decl_or_comment(hunk.rows[split_idx + 2].text())
+        && is_boundary(hunk.rows[split_idx + 2].text())
     {
         2 // Closing delimiter + trailing blank line
     } else {
@@ -318,7 +309,11 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
 /// Scans addition blocks for interior delimiters/blank lines preceding
 /// declarations, checks the available identity-shift capacity against
 /// `new_content`, and executes the shift.
-pub fn pass_shift_hunk(h: &Hunk, new_content: Option<&[String]>) -> Hunk {
+pub fn pass_shift_hunk(
+    h: &Hunk,
+    new_content: Option<&[String]>,
+    profile: Option<&crate::syntax::LangProfile>,
+) -> Hunk {
     let mut new_hunk = h.clone();
     let mut i = 0;
     while i < new_hunk.rows.len() {
@@ -340,7 +335,7 @@ pub fn pass_shift_hunk(h: &Hunk, new_content: Option<&[String]>) -> Hunk {
         // precedes a declaration
         for k in 0..add_count {
             let row_idx = start + k;
-            let needed = calculate_needed_shift_down(&new_hunk, start, end, row_idx);
+            let needed = calculate_needed_shift_down(&new_hunk, start, end, row_idx, profile);
             if needed > 0 {
                 let possible = max_shift_down_rows(&new_hunk, row_idx, end, new_content);
                 if possible >= needed {

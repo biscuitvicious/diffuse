@@ -24,7 +24,8 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     collapse::PairingResults,
     parse::{Hunk, Row},
-    scope::{fn_of, is_tail_before_closing},
+    scope::{fn_of, fn_of_exists, is_tail_before_closing},
+    syntax::LangProfile,
 };
 
 use super::{HunkSegment, dp, partition_hunk_segments};
@@ -70,6 +71,7 @@ fn guarded_dels(
     h: &Hunk,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
+    profile: Option<&LangProfile>,
 ) -> HashSet<usize> {
     let mut skip = HashSet::new();
     for (ri, r) in h.rows.iter().enumerate() {
@@ -89,13 +91,21 @@ fn guarded_dels(
             skip.insert(ri);
             continue;
         }
-        let del_is_tail = is_tail_before_closing(r.old_line(), true, old_content, new_content);
+        let del_is_tail =
+            is_tail_before_closing(r.old_line(), true, old_content, new_content, profile);
         let tail_candidate = del_is_tail
             && h.rows.iter().any(|a| {
                 a.kind() == crate::parse::RowKind::Add
-                    && is_tail_before_closing(a.new_line(), false, old_content, new_content)
-                    && (fn_of(old_content, r.old_line()).is_none()
-                        || fn_of(old_content, r.old_line()) == fn_of(new_content, a.new_line()))
+                    && is_tail_before_closing(
+                        a.new_line(),
+                        false,
+                        old_content,
+                        new_content,
+                        profile,
+                    )
+                    && (fn_of(old_content, r.old_line(), profile).is_none()
+                        || fn_of(old_content, r.old_line(), profile)
+                            == fn_of(new_content, a.new_line(), profile))
             });
         let has_same_hunk_add = h
             .rows
@@ -118,16 +128,16 @@ fn is_fragment_pair_rejected(
     h: &Hunk,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
+    profile: Option<&LangProfile>,
 ) -> bool {
     let r = &h.rows[gd];
     let a = &h.rows[ga];
 
-    let del_fn = fn_of(old_content, r.old_line());
-    let add_fn = fn_of(new_content, a.new_line());
+    let del_fn = fn_of(old_content, r.old_line(), profile);
+    let add_fn = fn_of(new_content, a.new_line(), profile);
     if let (Some(dfn), Some(afn)) = (&del_fn, &add_fn)
         && dfn != afn
-        && (crate::collapse::fn_exists(new_content, dfn)
-            || crate::collapse::fn_exists(old_content, afn))
+        && (fn_of_exists(new_content, dfn, profile) || fn_of_exists(old_content, afn, profile))
     {
         return true;
     }
@@ -142,12 +152,12 @@ fn is_fragment_pair_rejected(
 /// pair; guarded dels never pair.
 pub fn dp_pairing(
     h: &Hunk,
-    hash_comment: bool,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
+    profile: Option<&LangProfile>,
 ) -> PairingResults {
     let (del_runs, run_of, del_ids) = legacy_index_maps(h);
-    let guards = guarded_dels(h, old_content, new_content);
+    let guards = guarded_dels(h, old_content, new_content, profile);
 
     // Global row indices by line number (unique per hunk side).
     let del_by_num: HashMap<u32, usize> = h
@@ -171,12 +181,12 @@ pub fn dp_pairing(
 
     let mut pair_of: HashMap<usize, usize> = HashMap::new();
 
-    for seg in partition_hunk_segments(h, hash_comment, old_content, new_content) {
+    for seg in partition_hunk_segments(h, old_content, new_content, profile) {
         let cluster = match seg {
             HunkSegment::Cluster(c) => c,
             HunkSegment::Context(_) => continue,
         };
-        let sol = super::dp::solve_cluster(&cluster, hash_comment);
+        let sol = super::dp::solve_cluster(&cluster, profile);
 
         // Walk the DP's consumption of cluster sides, mapping transitions
         // to global indices via line numbers.
@@ -208,7 +218,7 @@ pub fn dp_pairing(
                     if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni))
                         && !guards.contains(&gd)
                         && !pair_of.contains_key(&ga)
-                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content)
+                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
                     {
                         pair_of.insert(ga, gd);
                     }
@@ -219,7 +229,7 @@ pub fn dp_pairing(
                     if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni + anchor))
                         && !guards.contains(&gd)
                         && !pair_of.contains_key(&ga)
-                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content)
+                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
                     {
                         pair_of.insert(ga, gd);
                     }
@@ -230,7 +240,7 @@ pub fn dp_pairing(
                     if let (Some(gd), Some(ga)) = (global_del(oi + anchor), global_add(ni))
                         && !guards.contains(&gd)
                         && !pair_of.contains_key(&ga)
-                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content)
+                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
                     {
                         pair_of.insert(ga, gd);
                     }

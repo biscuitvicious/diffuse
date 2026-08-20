@@ -1,9 +1,9 @@
 # Language-Agnostic Engine Generalization
 
-- [ ] 1. [Phase 1 — Extended Language Specification (`LangProfile`)](#1-phase-1--extended-language-specification-langprofile)
-- [ ] 2. [Phase 2 — Generic Scope Extraction & Boundary Detection (`src/scope/`)](#2-phase-2--generic-scope-extraction--boundary-detection-srcscope)
-- [ ] 3. [Phase 3 — Generic Cluster Continuation & Delimiter Matching (`src/collapse/` & `src/cluster/`)](#3-phase-3--generic-cluster-continuation--delimiter-matching-srccollapse--srccluster)
-- [ ] 4. [Phase 4 — Universal Verification & Multi-Language Test Corpus](#4-phase-4--universal-verification--multi-language-test-corpus)
+- [x] 1. [Phase 1 — Extended Language Specification (`LangProfile`)](#1-phase-1--extended-language-specification-langprofile)
+- [x] 2. [Phase 2 — Generic Scope Extraction & Boundary Detection (`src/scope/`)](#2-phase-2--generic-scope-extraction--boundary-detection-srcscope)
+- [x] 3. [Phase 3 — Generic Cluster Continuation & Delimiter Matching (`src/collapse/` & `src/cluster/`)](#3-phase-3--generic-cluster-continuation--delimiter-matching-srccollapse--srccluster)
+- [x] 4. [Phase 4 — Universal Verification & Multi-Language Test Corpus](#4-phase-4--universal-verification--multi-language-test-corpus)
 
 ---
 

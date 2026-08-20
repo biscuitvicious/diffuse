@@ -46,7 +46,7 @@
 use crate::{
     lcs::{lcs_pairs_ids, tokenize_line},
     parse::Row,
-    similarity::{TokenInterner, is_comment_line},
+    similarity::TokenInterner,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -275,13 +275,20 @@ pub fn subline_moves(bm: &BlockMatch, anchor: usize) -> Vec<SublineMove> {
 }
 
 /// Solve one cluster with the default weights.
-pub fn solve_cluster(cluster: &ChangeCluster, hash_comment: bool) -> DpSolution {
-    solve_cluster_with(cluster, hash_comment, &Weights::default())
+pub fn solve_cluster(
+    cluster: &ChangeCluster,
+    profile: Option<&crate::syntax::LangProfile>,
+) -> DpSolution {
+    solve_cluster_with(cluster, profile, &Weights::default())
 }
 
 /// Solve with explicit weights (the tuning surface for tests and Phase 5
 /// preference experiments).
-pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weights) -> DpSolution {
+pub fn solve_cluster_with(
+    cluster: &ChangeCluster,
+    profile: Option<&crate::syntax::LangProfile>,
+    w: &Weights,
+) -> DpSolution {
     let m = cluster.old_rows.len();
     let n = cluster.new_rows.len();
 
@@ -299,38 +306,37 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
     let old_comment: Vec<bool> = cluster
         .old_rows
         .iter()
-        .map(|r| is_comment_line(r.text(), hash_comment))
+        .map(|r| profile.is_some_and(|p| p.is_comment_line(r.text())))
         .collect();
     let new_comment: Vec<bool> = cluster
         .new_rows
         .iter()
-        .map(|r| is_comment_line(r.text(), hash_comment))
+        .map(|r| profile.is_some_and(|p| p.is_comment_line(r.text())))
         .collect();
     let old_kind: Vec<SyntaxSectionKind> = cluster
         .old_rows
         .iter()
-        .map(|r| classify_syntax_section(r.text(), hash_comment))
+        .map(|r| classify_syntax_section(r.text(), profile))
         .collect();
     let new_kind: Vec<SyntaxSectionKind> = cluster
         .new_rows
         .iter()
-        .map(|r| classify_syntax_section(r.text(), hash_comment))
+        .map(|r| classify_syntax_section(r.text(), profile))
         .collect();
 
     let is_open_line = |t: &str| -> bool {
-        let tr = t.trim();
-        tr.ends_with('{') || tr.ends_with(':') || tr.ends_with("then") || tr.ends_with("do")
+        if let Some(p) = profile {
+            p.is_block_open(t)
+        } else {
+            false
+        }
     };
     let is_close_line = |t: &str| -> bool {
-        let tr = t.trim();
-        tr == "}"
-            || tr == "};"
-            || tr == "},"
-            || tr == "fi"
-            || tr == "done"
-            || tr == "esac"
-            || tr == ")"
-            || tr == ");"
+        if let Some(p) = profile {
+            p.is_block_close(t) || p.is_expression_close(t)
+        } else {
+            false
+        }
     };
     let indent_of = |t: &str| -> usize { t.len() - t.trim_start().len() };
 

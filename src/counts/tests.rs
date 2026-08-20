@@ -57,7 +57,7 @@ fn counts_after_modified_pair_collapse() {
         add(5, "after the blank"),
     ])]);
     mark_moves(&mut f);
-    f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], false, None, None);
+    f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], None, None, None);
     let counts = file_counts(&f);
     assert_eq!(
         counts,
@@ -80,7 +80,7 @@ fn counts_plain_del_and_add() {
         add(1, "completely different"),
     ])]);
     mark_moves(&mut f);
-    f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], false, None, None);
+    f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], None, None, None);
     let counts = file_counts(&f);
     assert_eq!(counts.adds, 1, "one add");
     assert_eq!(counts.dels, 1, "one del");
@@ -93,7 +93,7 @@ fn counts_plain_del_and_add() {
 fn counts_moved_pair_is_neither_add_nor_del() {
     let mut f = file(vec![hunk(vec![del(1, "moved line"), add(1, "moved line")])]);
     mark_moves(&mut f);
-    f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], false, None, None);
+    f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], None, None, None);
     let counts = file_counts(&f);
     // The moved pair is a pure reflow — fully absorbed: the del drops with
     // its paired add, nothing survives the collapse (verified against the

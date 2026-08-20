@@ -204,22 +204,5 @@ pub fn sim_window(
     }
 }
 
-/// A line that starts a comment (per-language): `///`, `//`, `/*`, `*`
-/// continuations, and `#` for hash-comment languages. A comment run is its
-/// own section — the mod's tail stops at one instead of gluing an unrelated
-/// doc block onto the changed lines.
-pub fn is_comment_line(text: &str, hash_comment: bool) -> bool {
-    let t = text.trim();
-    // The `///`/`//`/`/*`/`*` markers are language-agnostic; `#` depends on
-    // the language profile (hash-comment languages only — never Rust attrs).
-    if t.starts_with("/*") || t.starts_with("*") || t.starts_with("///") || t.starts_with("//") {
-        return true;
-    }
-    if hash_comment && t.starts_with('#') {
-        return true;
-    }
-    false
-}
-
 #[cfg(test)]
 mod tests;
