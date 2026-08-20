@@ -21,6 +21,7 @@ regex = "1"
 difflib = "0.4"
 crossterm = "0.29"
 unicode-segmentation = "1.13.2"
+unicode-width = "0.2"
 
 [dev-dependencies]
 

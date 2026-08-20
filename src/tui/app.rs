@@ -862,8 +862,8 @@ impl AppState {
             lines.push(String::new());
         }
 
-        // Visual Scrollbar overlay on viewport lines
-        if has_scrollbar {
+        // Visual Scrollbar overlay and line padding across all viewport lines
+        let (thumb_size, thumb_offset) = if has_scrollbar {
             let thumb_size = ((vh as f64 / total_vis_lines as f64) * vh as f64)
                 .round()
                 .clamp(1.0, (vh.saturating_sub(1)) as f64) as usize;
@@ -874,20 +874,25 @@ impl AppState {
                 ((self.scroll as f64 / max_scroll as f64) * (vh.saturating_sub(thumb_size)) as f64)
                     .round() as usize
             };
+            (thumb_size, thumb_offset)
+        } else {
+            (0, 0)
+        };
 
-            for row_i in 0..vh {
-                let line_idx = viewport_start_line + row_i;
-                if line_idx < lines.len() {
+        for row_i in 0..vh {
+            let line_idx = viewport_start_line + row_i;
+            if line_idx < lines.len() {
+                let vis_w = visible_width(&lines[line_idx]);
+                if vis_w < content_width {
+                    lines[line_idx].push_str(&" ".repeat(content_width - vis_w));
+                }
+                lines[line_idx].push_str("\x1b[0m");
+                if has_scrollbar {
                     let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size {
                         "\x1b[38;5;248m█\x1b[0m"
                     } else {
                         "\x1b[38;5;236m│\x1b[0m"
                     };
-                    let vis_w = visible_width(&lines[line_idx]);
-                    if vis_w < content_width {
-                        lines[line_idx].push_str(&" ".repeat(content_width - vis_w));
-                    }
-                    lines[line_idx].push_str("\x1b[0m");
                     lines[line_idx].push_str(sb_char);
                 }
             }
@@ -1116,10 +1121,12 @@ impl AppState {
             }
             let r = &item.row;
             if self.raw_diff {
+                use unicode_width::UnicodeWidthStr;
                 let cols = content_width.max(1);
-                let len = r.text.graphemes(true).count();
+                let len = r.text.width();
                 if len == 0 { 1 } else { len.div_ceil(cols) }
             } else {
+                use unicode_width::UnicodeWidthStr;
                 let text_cols = content_width.saturating_sub(6).max(1);
                 let disp = display_text(
                     &r.text,
@@ -1130,7 +1137,7 @@ impl AppState {
                     self.col_offset,
                     self.word_diff,
                 );
-                let len = disp.graphemes(true).count();
+                let len = disp.width();
                 if len == 0 { 1 } else { len.div_ceil(text_cols) }
             }
         } else {
@@ -1679,8 +1686,9 @@ impl AppState {
 }
 
 /// Calculate the visible column width of a string by ignoring ANSI escape
-/// sequences.
+/// sequences and using unicode-width for wide chars (emojis, CJK, etc.).
 fn visible_width(s: &str) -> usize {
+    use unicode_width::UnicodeWidthChar;
     let mut in_escape = false;
     let mut count = 0;
     for c in s.chars() {
@@ -1691,24 +1699,31 @@ fn visible_width(s: &str) -> usize {
                 in_escape = false;
             }
         } else {
-            count += 1;
+            count += c.width().unwrap_or(0);
         }
     }
     count
 }
 
 /// Truncate or right-pad a string with spaces to exactly `target_width`
-/// graphemes.
+/// terminal columns (accounting for wide characters/emojis).
 fn truncate_pad(s: &str, target_width: usize) -> String {
     use unicode_segmentation::UnicodeSegmentation;
-    let graphemes: Vec<&str> = s.graphemes(true).collect();
-    if graphemes.len() >= target_width {
-        graphemes[..target_width].concat()
-    } else {
-        let mut out = s.to_string();
-        out.push_str(&" ".repeat(target_width - graphemes.len()));
-        out
+    use unicode_width::UnicodeWidthStr;
+    let mut current_width = 0;
+    let mut out = String::new();
+    for g in s.graphemes(true) {
+        let gw = g.width();
+        if current_width + gw > target_width {
+            break;
+        }
+        out.push_str(g);
+        current_width += gw;
     }
+    if current_width < target_width {
+        out.push_str(&" ".repeat(target_width - current_width));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -2348,5 +2363,15 @@ index 1111111..2222222 100644
             frame_ctx.contains("\x1b[48;5;22m\x1b[38;5;151m"),
             "addition row must start with green tint before gutter numbers"
         );
+    }
+
+    #[test]
+    fn test_emoji_and_wide_char_visual_width() {
+        assert_eq!(visible_width("🦀"), 2);
+        assert_eq!(visible_width("\x1b[38;5;120m🦀\x1b[0m"), 2);
+        assert_eq!(visible_width("hello 🦀 world"), 14);
+
+        let padded = truncate_pad("🦀", 4);
+        assert_eq!(visible_width(&padded), 4);
     }
 }
