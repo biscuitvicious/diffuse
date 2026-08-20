@@ -38,4 +38,6 @@ pub mod bin_pipeline;
 pub mod git;
 pub mod notes;
 pub mod old_content;
+pub mod render;
+pub mod tui;
 pub mod visible;

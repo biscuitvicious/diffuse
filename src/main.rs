@@ -21,7 +21,11 @@ use std::{
 
 /// The diffuse diff-engine CLI.
 #[derive(Parser, Debug)]
-#[command(name = "diffuse", version, about = "diff-engine token-stream backend")]
+#[command(
+    name = "diffuse",
+    version,
+    about = "diff-engine token-stream & terminal renderer"
+)]
 struct Args {
     /// Read the diff from this file instead of stdin.
     #[arg(long)]
@@ -32,6 +36,16 @@ struct Args {
     /// Repository name key for notes lookup.
     #[arg(long)]
     repo: Option<String>,
+    /// Emit raw token-stream JSON (for machine/extension integration).
+    #[arg(long)]
+    json: bool,
+    /// Disable interactive TUI mode and print colored diff to terminal.
+    #[arg(long)]
+    no_tui: bool,
+    /// Git diff arguments (e.g. `diffuse HEAD~1`, `diffuse --cached`, `diffuse
+    /// path/to/file`).
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    git_args: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +154,61 @@ fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOu
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+
+    // Direct standalone CLI mode: `diffuse` invoked with git arguments or
+    // explicitly asked not to emit json
+    if !args.json
+        && args.diff.is_none()
+        && (!args.git_args.is_empty() || std::io::IsTerminal::is_terminal(&std::io::stdin()))
+    {
+        let repo_root = std::env::current_dir()?;
+        let git_res = load_git_repo(&repo_root, &args.git_args, &[], false, 6);
+
+        let git_res = match git_res {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("diffuse: {e}");
+                std::process::exit(2);
+            }
+        };
+
+        let notes_path = args
+            .notes_file
+            .as_ref()
+            .map(Path::new)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(diffuse::notes::default_notes_path);
+        let loaded_db = load_notes(&notes_path);
+        let db_ref = Some(&loaded_db);
+        let repo_ref = args.repo.as_deref();
+
+        let mut out = diffuse::bin_pipeline::run_pipeline_full(
+            &git_res.diff_text,
+            &git_res.contents,
+            Some(&git_res.old_contents),
+            db_ref,
+            repo_ref,
+        );
+        out.branch = git_res.branch;
+        out.untracked_skipped = git_res.untracked_skipped;
+
+        let repo_name = args.repo.clone().unwrap_or_else(|| {
+            repo_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "diffuse".to_string())
+        });
+
+        if !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+            diffuse::tui::run_interactive_tui(out, repo_name)?;
+        } else {
+            let theme = diffuse::render::default_theme();
+            let rendered = diffuse::render::render_pipeline_output(&out, &theme, true);
+            print!("{rendered}");
+        }
+        return Ok(());
+    }
+
     let raw = match &args.diff {
         Some(path) => fs::read_to_string(path)?,
         None => {

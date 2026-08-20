@@ -113,6 +113,13 @@ pub fn load_git_repo(
     cached: bool,
     context: usize,
 ) -> Result<LoadGitResult, String> {
+    if run_git(repo_root, &["rev-parse", "--is-inside-work-tree"]).is_none() {
+        return Err(format!(
+            "not a git repository (or any of the parent directories): {}",
+            repo_root.display()
+        ));
+    }
+
     let branch = run_git(repo_root, &["branch", "--show-current"])
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
@@ -287,6 +294,18 @@ pub fn load_git_repo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_load_git_repo_non_repo_errors() {
+        let dir = std::env::temp_dir().join(format!("diffuse-nonrepo-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let result = load_git_repo(&dir, &[], &[], false, 6);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            result.is_err(),
+            "a non-git directory must error instead of silently yielding an empty diff"
+        );
+    }
 
     #[test]
     fn test_resolve_refs_two_dot() {
