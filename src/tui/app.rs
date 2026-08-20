@@ -600,10 +600,9 @@ impl AppState {
             " Review: {} · {} ({}) · {}",
             self.repo, f.path, f.status, counts_str
         );
+        let head_str = truncate_pad(&head_raw, width);
         lines.push(format!(
-            "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{:<width$}\x1b[0m",
-            head_raw,
-            width = width
+            "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{head_str}\x1b[0m"
         ));
 
         // Secondary status bar
@@ -641,7 +640,8 @@ impl AppState {
             go_txt,
             branch_txt
         );
-        lines.push(format!("\x1b[38;5;244m{status_raw}\x1b[39m"));
+        let status_str = truncate_pad(&status_raw, width);
+        lines.push(format!("\x1b[38;5;244m{status_str}\x1b[39m"));
 
         // Ephemeral action feedback (note saved/deleted, git ops, ...)
         if let Some((msg, is_ok)) = self.status_message.clone() {
@@ -674,6 +674,14 @@ impl AppState {
         }
 
         let viewport_start_line = lines.len();
+        let vh = height.saturating_sub(viewport_start_line + 2);
+        let has_scrollbar = self.flat.len() > vh && vh > 2;
+        let content_width = if has_scrollbar {
+            width.saturating_sub(1)
+        } else {
+            width
+        };
+
         let callouts = self.note_callouts();
         let band = self.band_rows();
         let hunk_extent = self.hunk_ctx_extent_rows();
@@ -716,14 +724,11 @@ impl AppState {
                     ctx.0,
                     ctx.1
                 );
+                let txt_str = truncate_pad(&txt, content_width);
                 let styled = if is_cur {
-                    format!(
-                        "\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{:<width$}\x1b[0m",
-                        txt,
-                        width = width
-                    )
+                    format!("\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{txt_str}\x1b[0m")
                 } else {
-                    format!("\x1b[38;5;240m{txt}\x1b[39m")
+                    format!("\x1b[38;5;240m{txt_str}\x1b[39m")
                 };
                 lines.push(styled);
             }
@@ -744,20 +749,13 @@ impl AppState {
                     f_counts.mods,
                     collapse_tag
                 );
+                let bar_str = truncate_pad(&bar, content_width);
                 let styled_bar = if is_selected {
-                    format!(
-                        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{:<width$}\x1b[0m",
-                        bar,
-                        width = width
-                    )
+                    format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
                 } else if in_band {
-                    format!(
-                        "\x1b[48;5;240m\x1b[1m\x1b[38;5;231m{:<width$}\x1b[0m",
-                        bar,
-                        width = width
-                    )
+                    format!("\x1b[48;5;240m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
                 } else {
-                    format!("\x1b[38;5;244m{bar}\x1b[39m")
+                    format!("\x1b[38;5;244m{bar_str}\x1b[39m")
                 };
                 lines.push(styled_bar);
                 continue;
@@ -775,7 +773,7 @@ impl AppState {
                     r.moved,
                     &r.runs,
                     0,
-                    width.saturating_sub(6),
+                    content_width.saturating_sub(6),
                     &pfx,
                     is_selected,
                     in_band,
@@ -811,9 +809,8 @@ impl AppState {
             lines.push(String::new());
         }
 
-        // Phase 3: Visual Scrollbar overlay on viewport lines
-        let vh = height.saturating_sub(viewport_start_line + 2);
-        if self.flat.len() > vh && vh > 2 {
+        // Visual Scrollbar overlay on viewport lines
+        if has_scrollbar {
             let thumb_size = ((vh as f64 / self.flat.len() as f64) * vh as f64)
                 .round()
                 .clamp(1.0, (vh.saturating_sub(1)) as f64) as usize;
@@ -833,7 +830,11 @@ impl AppState {
                     } else {
                         "\x1b[38;5;236m│\x1b[0m"
                     };
-                    lines[line_idx].push(' ');
+                    let vis_w = visible_width(&lines[line_idx]);
+                    if vis_w < content_width {
+                        lines[line_idx].push_str(&" ".repeat(content_width - vis_w));
+                    }
+                    lines[line_idx].push_str("\x1b[0m");
                     lines[line_idx].push_str(sb_char);
                 }
             }
@@ -843,7 +844,11 @@ impl AppState {
             "\x1b[38;5;244m {}\x1b[39m",
             "─".repeat(width.saturating_sub(2).min(60))
         ));
-        lines.push("\x1b[38;5;244m [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help\x1b[39m".to_string());
+        let ribbon = truncate_pad(
+            " [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help",
+            width,
+        );
+        lines.push(format!("\x1b[38;5;244m{ribbon}\x1b[39m"));
 
         // Help modal overlays the frame when toggled on.
         if self.show_help {
@@ -1493,6 +1498,39 @@ impl AppState {
     }
 }
 
+/// Calculate the visible column width of a string by ignoring ANSI escape
+/// sequences.
+fn visible_width(s: &str) -> usize {
+    let mut in_escape = false;
+    let mut count = 0;
+    for c in s.chars() {
+        if c == '\x1b' {
+            in_escape = true;
+        } else if in_escape {
+            if c.is_ascii_alphabetic() {
+                in_escape = false;
+            }
+        } else {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// Truncate or right-pad a string with spaces to exactly `target_width`
+/// graphemes.
+fn truncate_pad(s: &str, target_width: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    let graphemes: Vec<&str> = s.graphemes(true).collect();
+    if graphemes.len() >= target_width {
+        graphemes[..target_width].concat()
+    } else {
+        let mut out = s.to_string();
+        out.push_str(&" ".repeat(target_width - graphemes.len()));
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2046,5 +2084,26 @@ index 1111111..2222222 100644
             frame_expanded.contains("▾ untracked.rs (untracked)"),
             "frame shows expanded indicator"
         );
+    }
+
+    #[test]
+    fn test_render_frame_lines_do_not_overflow_width() {
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-overflow.json"),
+        );
+        for width in [40, 60, 80, 100, 120] {
+            for height in [15, 24, 30, 40] {
+                let frame = state.render_frame(width, height);
+                for line in frame.lines() {
+                    let vis = visible_width(line);
+                    assert!(
+                        vis <= width,
+                        "line visible width {vis} exceeds terminal width {width}: {line:?}"
+                    );
+                }
+            }
+        }
     }
 }
