@@ -38,21 +38,25 @@ export default function (pi: ExtensionAPI) {
 				NOTES_FILE,
 			];
 
-			ctx.tui.stop();
-			try {
-				await new Promise<number>((resolve, reject) => {
-					const p = spawn(bin, argv, {
-						cwd: repoRoot,
-						stdio: "inherit",
-						env: process.env,
-					});
-					p.on("error", reject);
-					p.on("close", (code) => resolve(code ?? 0));
+			await ctx.ui.custom<number>((tui, _theme, _kb, done) => {
+				tui.stop();
+				const p = spawn(bin, argv, {
+					cwd: repoRoot,
+					stdio: "inherit",
+					env: process.env,
 				});
-			} finally {
-				ctx.tui.start();
-				ctx.tui.requestRender(true);
-			}
+				p.on("error", (_err) => {
+					tui.start();
+					tui.requestRender(true);
+					done(1);
+				});
+				p.on("close", (code) => {
+					tui.start();
+					tui.requestRender(true);
+					done(code ?? 0);
+				});
+				return { render: () => [], invalidate: () => {} };
+			});
 
 			const notes = loadNotes();
 			const total = allNotes(notes, repoName).length;
