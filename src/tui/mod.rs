@@ -1,10 +1,14 @@
 //! Native Diffuse Interactive TUI Engine.
 
+pub mod actions;
 pub mod app;
+pub mod editor;
 pub mod event;
 pub mod terminal;
 
+pub use actions::{discard_action, reload_diff, stage_action, unstage_action};
 pub use app::AppState;
+pub use editor::{open_editor, resolve_editor_args};
 pub use event::handle_event;
 pub use terminal::TerminalGuard;
 
@@ -16,9 +20,11 @@ pub fn run_interactive_tui(
     output: PipelineOutput,
     repo: String,
     notes_path: PathBuf,
+    repo_root: PathBuf,
+    git_args: Vec<String>,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
-    let mut state = AppState::new(output, repo, notes_path);
+    let mut state = AppState::new(output, repo, notes_path).with_repo_context(repo_root, git_args);
 
     while !state.should_quit {
         let (width, height) = guard.size();
@@ -27,6 +33,15 @@ pub fn run_interactive_tui(
 
         if let Some(event) = guard.poll_event(Duration::from_millis(50))? {
             handle_event(&mut state, event);
+        }
+
+        if let Some(req) = state.pending_editor.take() {
+            let repo_root = state.repo_root.clone();
+            let git_args = state.git_args.clone();
+            let _ = guard.suspend();
+            let _ = editor::open_editor(&req.file, req.line, req.range, &repo_root);
+            let _ = guard.resume();
+            let _ = actions::reload_diff(&mut state, &repo_root, &git_args);
         }
     }
 

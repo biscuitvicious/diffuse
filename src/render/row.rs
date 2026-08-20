@@ -377,7 +377,7 @@ pub fn render_raw_row(
             } else {
                 S_ADD.tint_bg()
             };
-            ("+ ", "\x1b[38;5;120m", bg)
+            ("+", "\x1b[38;5;120m", bg)
         }
         RowKind::Del => {
             let bg = if selected {
@@ -387,7 +387,7 @@ pub fn render_raw_row(
             } else {
                 S_DEL.tint_bg()
             };
-            ("- ", "\x1b[38;5;203m", bg)
+            ("-", "\x1b[38;5;203m", bg)
         }
         RowKind::Sep => (
             "",
@@ -408,7 +408,7 @@ pub fn render_raw_row(
             } else {
                 String::new()
             };
-            ("  ", "\x1b[38;5;244m", bg)
+            (" ", "\x1b[38;5;255m", bg)
         }
     };
     let mut out = format!("{bg}{fg}{marker}{text}");
@@ -650,5 +650,17 @@ mod tests {
         // Should not panic on multibyte character boundary
         let res = is_pure_deletion_mod(&spans, text);
         assert!(!res);
+    }
+
+    #[test]
+    fn test_render_raw_row_colors() {
+        let add = render_raw_row(RowKind::Add, "added_line", false, false, false);
+        assert!(add.contains("\x1b[38;5;120m+added_line"));
+
+        let del = render_raw_row(RowKind::Del, "deleted_line", false, false, false);
+        assert!(del.contains("\x1b[38;5;203m-deleted_line"));
+
+        let ctx = render_raw_row(RowKind::Ctx, "context_line", false, false, false);
+        assert!(ctx.contains("\x1b[38;5;255m context_line"));
     }
 }

@@ -69,6 +69,9 @@ pub struct AppState {
     pub hunk_starts: Vec<HunkStart>,
     hunk_meta: Vec<Vec<HunkMeta>>,
     note_id_counter: u64,
+    pub repo_root: PathBuf,
+    pub git_args: Vec<String>,
+    pub pending_editor: Option<crate::tui::editor::EditorRequest>,
 }
 
 impl AppState {
@@ -108,7 +111,16 @@ impl AppState {
             hunk_starts,
             hunk_meta,
             note_id_counter: 0,
+            repo_root: PathBuf::from("."),
+            git_args: Vec::new(),
+            pending_editor: None,
         }
+    }
+
+    pub fn with_repo_context(mut self, repo_root: PathBuf, git_args: Vec<String>) -> Self {
+        self.repo_root = repo_root;
+        self.git_args = git_args;
+        self
     }
 
     /// The visual (reflowed) flat sequence: per file a header banner, then the
@@ -365,7 +377,12 @@ impl AppState {
         if text.is_empty() {
             return;
         }
-        let (file, coord, is_new) = {
+        let (file, start, end, is_new) = if let Some(sel) = self.compute_selection() {
+            let Some(file) = self.output.files.get(sel.file_idx) else {
+                return;
+            };
+            (file.path.clone(), sel.start, sel.end, sel.side_is_new)
+        } else {
             let Some(file) = self.current_file() else {
                 return;
             };
@@ -375,7 +392,7 @@ impl AppState {
             let Some(c) = Self::row_coord(&row.row) else {
                 return;
             };
-            (file.path.clone(), c, row.row.new_line.is_some())
+            (file.path.clone(), c, c, row.row.new_line.is_some())
         };
         self.note_id_counter += 1;
         let created_at = crate::notes::now_millis();
@@ -388,20 +405,26 @@ impl AppState {
             ),
             file,
             side: if is_new { Side::New } else { Side::Old },
-            start: coord,
-            end: coord,
+            start,
+            end,
             text,
             created_at,
         };
         crate::notes::add_note(&mut self.notes, &self.repo, note);
         let _ = crate::notes::save_notes(&self.notes_path, &self.notes);
         self.confirmed_sel = None;
+        self.anchor = None;
     }
 
-    /// Delete notes overlapping the current row (both sides, like the
-    /// reference `deleteNotesAction` on a line). Persists immediately.
+    /// Delete notes overlapping the current row or active selection.
+    /// Persists immediately.
     pub fn delete_notes(&mut self) {
-        let (file, coord) = {
+        let (file, start, end) = if let Some(sel) = self.compute_selection() {
+            let Some(file) = self.output.files.get(sel.file_idx) else {
+                return;
+            };
+            (file.path.clone(), sel.start, sel.end)
+        } else {
             let Some(file) = self.current_file() else {
                 return;
             };
@@ -411,14 +434,16 @@ impl AppState {
             let Some(c) = Self::row_coord(&row.row) else {
                 return;
             };
-            (file.path.clone(), c)
+            (file.path.clone(), c, c)
         };
         let new_removed =
-            crate::notes::remove_notes(&mut self.notes, &self.repo, &file, Side::New, coord, coord);
+            crate::notes::remove_notes(&mut self.notes, &self.repo, &file, Side::New, start, end);
         let old_removed =
-            crate::notes::remove_notes(&mut self.notes, &self.repo, &file, Side::Old, coord, coord);
+            crate::notes::remove_notes(&mut self.notes, &self.repo, &file, Side::Old, start, end);
         let removed = new_removed + old_removed;
         let _ = crate::notes::save_notes(&self.notes_path, &self.notes);
+        self.confirmed_sel = None;
+        self.anchor = None;
         self.status_message = Some((
             if removed > 0 {
                 format!(
@@ -430,6 +455,28 @@ impl AppState {
             },
             removed > 0,
         ));
+    }
+
+    /// Jump to the line in the current file closest to `line_num`.
+    pub fn goto_line(&mut self, line_num: u32) {
+        let cur_fi = self.current_file_idx();
+        let mut best: Option<(usize, u32)> = None;
+        for (i, item) in self.flat.iter().enumerate() {
+            if item.file_idx != cur_fi {
+                continue;
+            }
+            if let Some(c) = Self::row_coord(&item.row) {
+                let dist = c.abs_diff(line_num);
+                match best {
+                    None => best = Some((i, dist)),
+                    Some((_, best_dist)) if dist < best_dist => best = Some((i, dist)),
+                    _ => {}
+                }
+            }
+        }
+        if let Some((idx, _)) = best {
+            self.row_idx = idx;
+        }
     }
 
     /// Map of flat-row index → pre-rendered note callout lines for the
@@ -826,15 +873,19 @@ impl AppState {
         self.row_idx = target;
     }
 
-    /// The hunk whose start line the cursor's coordinate is at or past —
-    /// mirroring the reference `currentHunkIdx` (coordinate-based, robust to
-    /// the merged visible rows).
     pub fn current_hunk(&self) -> Option<usize> {
-        let row = self.current_flat_row()?;
-        let coord = Self::row_coord(&row.row)?;
         let fi = self.current_file_idx();
         let f = self.output.files.get(fi)?;
-        let mut idx = None;
+        if f.hunks.is_empty() {
+            return None;
+        }
+        let Some(row) = self.current_flat_row() else {
+            return Some(0);
+        };
+        let Some(coord) = Self::row_coord(&row.row) else {
+            return Some(0);
+        };
+        let mut idx = Some(0);
         for (i, h) in f.hunks.iter().enumerate() {
             let hs = if h.new_count > 0 {
                 h.new_start
@@ -911,6 +962,48 @@ impl AppState {
         self.raw_diff = !self.raw_diff;
         self.anchor = None;
         self.goto_coord(file, coord, prefer_new);
+    }
+
+    pub fn reload(&mut self, output: PipelineOutput) {
+        let (file_path, coord, prefer_new) = {
+            let cur_path = self
+                .current_file()
+                .map(|f| f.path.clone())
+                .unwrap_or_default();
+            let row = self.current_flat_row();
+            let c = row.and_then(|r| Self::row_coord(&r.row)).unwrap_or(0);
+            let prefer = row.map(|r| r.row.new_line.is_some()).unwrap_or(true);
+            (cur_path, c, prefer)
+        };
+
+        self.output = output;
+        if self.output.files.is_empty() {
+            self.flat.clear();
+            self.hunk_starts.clear();
+            self.hunk_meta.clear();
+            self.should_quit = true;
+            return;
+        }
+
+        self.hunk_meta = Self::build_hunk_meta(&self.output);
+        let (flat, hunk_starts) = if self.raw_diff {
+            Self::build_raw_flat(&self.output)
+        } else {
+            Self::build_visual_flat(&self.output)
+        };
+        self.flat = flat;
+        self.hunk_starts = hunk_starts;
+        self.anchor = None;
+        self.confirmed_sel = None;
+
+        let target_fi = self
+            .output
+            .files
+            .iter()
+            .position(|f| f.path == file_path)
+            .unwrap_or(0);
+
+        self.goto_coord(target_fi, coord, prefer_new);
     }
 
     /// Jump to the first flat row in `file` carrying `coord` (preferring the

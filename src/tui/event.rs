@@ -77,16 +77,40 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         | (KeyModifiers::CONTROL, KeyCode::Char('b')) => {
             state.page_up();
         }
+        (KeyModifiers::NONE, KeyCode::Char(c @ '0'..='9')) => {
+            state.num_buffer.push(c);
+        }
         (KeyModifiers::NONE, KeyCode::Home) | (KeyModifiers::NONE, KeyCode::Char('g')) => {
-            state.move_top();
+            if !state.num_buffer.is_empty() {
+                let line = state.num_buffer.parse::<u32>().ok();
+                state.num_buffer.clear();
+                if let Some(l) = line {
+                    state.goto_line(l);
+                }
+            } else {
+                state.move_top();
+            }
         }
         (KeyModifiers::NONE, KeyCode::End) | (KeyModifiers::SHIFT, KeyCode::Char('G')) => {
-            state.move_bottom();
+            if !state.num_buffer.is_empty() {
+                let line = state.num_buffer.parse::<u32>().ok();
+                state.num_buffer.clear();
+                if let Some(l) = line {
+                    state.goto_line(l);
+                }
+            } else {
+                state.move_bottom();
+            }
         }
-        (KeyModifiers::NONE, KeyCode::Char('n')) | (KeyModifiers::NONE, KeyCode::Char(']')) => {
+        (KeyModifiers::NONE, KeyCode::Char('n'))
+        | (KeyModifiers::NONE, KeyCode::Char(']'))
+        | (KeyModifiers::NONE, KeyCode::Tab) => {
             state.next_file();
         }
-        (KeyModifiers::NONE, KeyCode::Char('p')) | (KeyModifiers::NONE, KeyCode::Char('[')) => {
+        (KeyModifiers::NONE, KeyCode::Char('p'))
+        | (KeyModifiers::NONE, KeyCode::Char('['))
+        | (KeyModifiers::SHIFT, KeyCode::BackTab)
+        | (KeyModifiers::NONE, KeyCode::BackTab) => {
             state.prev_file();
         }
         (KeyModifiers::NONE, KeyCode::Char('h')) | (KeyModifiers::NONE, KeyCode::Left) => {
@@ -94,6 +118,12 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         }
         (KeyModifiers::NONE, KeyCode::Char('l')) | (KeyModifiers::NONE, KeyCode::Right) => {
             state.col_offset += 4;
+        }
+        (KeyModifiers::NONE, KeyCode::Char('^')) => {
+            state.col_offset = 0;
+        }
+        (KeyModifiers::NONE, KeyCode::Char('$')) => {
+            state.col_offset += 16;
         }
         (KeyModifiers::NONE, KeyCode::Char('w')) => {
             state.word_diff = !state.word_diff;
@@ -116,11 +146,107 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('d')) | (KeyModifiers::NONE, KeyCode::Char('D')) => {
             state.delete_notes();
         }
+        (KeyModifiers::NONE, KeyCode::Char('o')) | (KeyModifiers::SHIFT, KeyCode::Char('O')) => {
+            if let Some(file) = state.current_file()
+                && let Some(row) = state.current_flat_row()
+                && let Some(c) = AppState::row_coord(&row.row)
+            {
+                let range = state.compute_selection().and_then(|sel| {
+                    if sel.side_is_new {
+                        Some((sel.start, sel.end))
+                    } else {
+                        None
+                    }
+                });
+                state.pending_editor = Some(super::editor::EditorRequest {
+                    file: file.path.clone(),
+                    line: c,
+                    range,
+                });
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char('s')) => {
+            let repo_root = state.repo_root.clone();
+            let git_args = state.git_args.clone();
+            match super::actions::stage_action(state, &repo_root, &git_args, false) {
+                Ok(()) => {
+                    state.status_message = Some(("staged hunk".into(), true));
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                }
+                Err(e) => state.status_message = Some((e, false)),
+            }
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
+            let repo_root = state.repo_root.clone();
+            let git_args = state.git_args.clone();
+            match super::actions::stage_action(state, &repo_root, &git_args, true) {
+                Ok(()) => {
+                    state.status_message = Some(("staged file".into(), true));
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                }
+                Err(e) => state.status_message = Some((e, false)),
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char('u')) => {
+            let repo_root = state.repo_root.clone();
+            let git_args = state.git_args.clone();
+            match super::actions::unstage_action(state, &repo_root, &git_args, false) {
+                Ok(()) => {
+                    state.status_message = Some(("unstaged hunk".into(), true));
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                }
+                Err(e) => state.status_message = Some((e, false)),
+            }
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('U')) => {
+            let repo_root = state.repo_root.clone();
+            let git_args = state.git_args.clone();
+            match super::actions::unstage_action(state, &repo_root, &git_args, true) {
+                Ok(()) => {
+                    state.status_message = Some(("unstaged file".into(), true));
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                }
+                Err(e) => state.status_message = Some((e, false)),
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Char('x')) => {
+            let repo_root = state.repo_root.clone();
+            let git_args = state.git_args.clone();
+            match super::actions::discard_action(state, &repo_root, &git_args, false) {
+                Ok(stash_ref) => {
+                    let msg = if let Some(sr) = stash_ref {
+                        format!("discarded hunk (stash: {sr})")
+                    } else {
+                        "discarded hunk".into()
+                    };
+                    state.status_message = Some((msg, true));
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                }
+                Err(e) => state.status_message = Some((e, false)),
+            }
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('X')) => {
+            let repo_root = state.repo_root.clone();
+            let git_args = state.git_args.clone();
+            match super::actions::discard_action(state, &repo_root, &git_args, true) {
+                Ok(stash_ref) => {
+                    let msg = if let Some(sr) = stash_ref {
+                        format!("discarded file (stash: {sr})")
+                    } else {
+                        "discarded file".into()
+                    };
+                    state.status_message = Some((msg, true));
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                }
+                Err(e) => state.status_message = Some((e, false)),
+            }
+        }
         _ => {}
     }
 }
 
 fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
+    use crossterm::event::MouseButton;
     match mouse.kind {
         MouseEventKind::ScrollDown => {
             state.move_down();
@@ -132,6 +258,27 @@ fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
             state.move_up();
             state.move_up();
         }
+        MouseEventKind::Down(MouseButton::Left) => {
+            let header_offset = 2 + if state.status_message.is_some() { 1 } else { 0 };
+            if (mouse.row as usize) >= header_offset {
+                let target = state.scroll + (mouse.row as usize - header_offset);
+                if target < state.flat.len() {
+                    state.row_idx = target;
+                }
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if state.anchor.is_none() {
+                state.anchor = Some(state.row_idx);
+            }
+            let header_offset = 2 + if state.status_message.is_some() { 1 } else { 0 };
+            if (mouse.row as usize) >= header_offset {
+                let target = state.scroll + (mouse.row as usize - header_offset);
+                if target < state.flat.len() {
+                    state.row_idx = target;
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -141,6 +288,14 @@ mod tests {
     use super::*;
     use crate::bin_pipeline::PipelineOutput;
 
+    fn unique_notes_path() -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "diffuse-test-notes-{}-{}.json",
+            std::process::id(),
+            crate::notes::now_millis()
+        ))
+    }
+
     fn state_with_draft() -> AppState {
         let mut s = AppState::new(
             PipelineOutput {
@@ -149,7 +304,7 @@ mod tests {
                 untracked_skipped: Vec::new(),
             },
             "test".into(),
-            std::env::temp_dir().join("diffuse-test-notes.json"),
+            unique_notes_path(),
         );
         s.note_draft = Some("hello".into());
         s
@@ -189,7 +344,7 @@ index 1111111..2222222 100644
                 None,
             ),
             "test_repo".into(),
-            std::env::temp_dir().join("diffuse-test-notes.json"),
+            unique_notes_path(),
         )
     }
 
@@ -283,5 +438,136 @@ index 1111111..2222222 100644
             Event::Key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE)),
         );
         assert!(!s.raw_diff, "R returns to the visual view");
+    }
+
+    #[test]
+    fn test_note_commit_on_range_selection() {
+        let mut s = state_with_rows();
+        for _ in 0..5 {
+            s.move_down();
+        }
+        s.start_or_confirm_selection(); // anchor at 1025
+        s.move_down();
+        s.move_down();
+        s.start_or_confirm_selection(); // confirm 1025..1027
+
+        s.note_draft = Some("Range note test".into());
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        );
+
+        let empty = Vec::new();
+        let notes = s
+            .notes
+            .get(&s.repo)
+            .and_then(|m| m.get("filesystem.rs"))
+            .unwrap_or(&empty);
+        assert_eq!(notes.len(), 1, "note must be saved");
+        assert_eq!(notes[0].start, 1025);
+        assert_eq!(notes[0].end, 1027);
+        assert_eq!(notes[0].text, "Range note test");
+    }
+
+    #[test]
+    fn test_note_delete_on_range_selection() {
+        let mut s = state_with_rows();
+        for _ in 0..5 {
+            s.move_down();
+        }
+        s.start_or_confirm_selection(); // anchor at 1025
+        s.move_down();
+        s.move_down();
+        s.start_or_confirm_selection(); // confirm 1025..1027
+
+        s.note_draft = Some("To be deleted".into());
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        );
+
+        // Delete with range selection
+        s.start_or_confirm_selection(); // anchor at 1027
+        s.move_up();
+        s.move_up();
+        s.start_or_confirm_selection(); // confirm 1025..1027
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)),
+        );
+
+        let empty = Vec::new();
+        let notes = s
+            .notes
+            .get(&s.repo)
+            .and_then(|m| m.get("filesystem.rs"))
+            .unwrap_or(&empty);
+        assert_eq!(notes.len(), 0, "note must be deleted by range selection");
+    }
+
+    #[test]
+    fn test_numeric_goto_buffer() {
+        let mut s = state_with_rows();
+        // Type '1', '0', '2', '6', 'g'
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE)),
+        );
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE)),
+        );
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE)),
+        );
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('6'), KeyModifiers::NONE)),
+        );
+        assert_eq!(s.num_buffer, "1026");
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE)),
+        );
+        assert_eq!(s.num_buffer, "");
+        let cur_row = s.current_flat_row().expect("cur row");
+        assert_eq!(AppState::row_coord(&cur_row.row), Some(1026));
+    }
+
+    #[test]
+    fn test_tab_and_backtab_file_navigation() {
+        let mut s = state_with_rows();
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+        );
+        // Only one file in test repo, so it stays on file 0
+        assert_eq!(s.current_file_idx(), 0);
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
+        );
+        assert_eq!(s.current_file_idx(), 0);
+    }
+
+    #[test]
+    fn test_caret_and_dollar_col_scroll() {
+        let mut s = state_with_rows();
+        s.col_offset = 20;
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('^'), KeyModifiers::NONE)),
+        );
+        assert_eq!(s.col_offset, 0, "^ must reset col_offset to 0");
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE)),
+        );
+        assert!(s.col_offset > 0, "$ must advance col_offset");
     }
 }

@@ -8,10 +8,11 @@
 - [·] **Phase 2 — Native Interactive TUI Engine (`src/tui/`)**
   - [x] Step 2.1: Terminal Raw Mode, Event Loop, Crossterm/Terminal Abstraction (`src/tui/terminal.rs`)
   - [x] Step 2.2: TUI Layout & Visual Frame Geometry (`src/tui/app.rs` — header, status, viewport, footer ribbon, help modal)
-  - [·] Step 2.3: Keyboard & Mouse Navigation (`src/tui/event.rs`) — core keys done; mouse partial (wheel only), `NG` goto, Tab file switch, `^`/`$`, sep expansion pending
-  - [·] Step 2.4: Selection, Note Editing & Inline Prompts (`src/tui/`) — draft input + note persistence (XDG-state `notes.json`), callouts, delete, visual selection (`v`/`V`), selection band done; hunk structure/highlight + raw unified-diff view mode pending (TODO)
-  - [ ] Step 2.5: Interactive Git Actions (`s`/`S` stage, `u`/`U` unstage, `x`/`X` discard, `o` editor) (`src/tui/`, `src/git.rs`)
-  - [ ] Step 2.6: Extension Thin-Client Migration & Native `/review` Invocation Gate
+  - [x] Step 2.3: Keyboard & Mouse Navigation (`src/tui/event.rs`) — core keys, mouse clicks & drags, `NG` goto, Tab/BackTab file switch, `^`/`$` col scroll ends
+  - [x] Step 2.4: Selection, Note Editing & Inline Prompts (`src/tui/`) — draft input + note persistence (XDG-state `notes.json`), callouts, delete, visual selection (`v`/`V`), selection band, hunk structure/highlight + raw unified-diff view with custom ANSI colors, range-fed `m`/`d`/`o`
+  - [x] Step 2.5: Interactive Git Actions (`s`/`S` stage, `u`/`U` unstage, `x`/`X` discard, `o` editor) (`src/tui/`, `src/git.rs`)
+  - [ ] Step 2.6: Interactive File Finder (`@` dialog with smart search fragments and live jump/tracking)
+  - [ ] Step 2.7: Extension Thin-Client Migration & Native `/review` Invocation Gate
 
 ---
 
@@ -98,15 +99,25 @@ Phase 1 shipped the renderer (row styles via the single `S_ADD/S_DEL/S_MOD/S_MOV
 - **Verification**: `test_note_commit_persists_and_deletes`, `notes::tests` state-dir resolution tests; note lifecycle (add → saved → reloaded → delete); `test_selection_anchor_span_snaps_to_coord_rows`, `test_selection_v_confirm_clears_anchor_and_band_renders`, `test_selection_requires_coord_rows`, `test_v_starts_and_confirms_selection`, `test_esc_cancels_anchor_before_quit`; new raw-mode render tests (red/green ANSI, `@@` header, un-collapsed mod rows) and hunk-attribution tests; view-toggle tests proving the cursor lands on the equivalent coordinate in both directions (visual→raw→visual round-trips to the same line).
 
 ### Step 2.5: Interactive Git Actions (`src/tui/`, `src/git.rs`)
-- **Affected Files**: `src/tui/event.rs`, `src/tui/app.rs`, `src/git.rs`, `src/main.rs`
-- **Status**: not started. Sub-steps:
-  1. **Reload**: after any git op, re-run `load_git_repo` + pipeline and swap `AppState.output`/`flat` (keep cursor anchored by line number).
-  2. **Stage/unstage** (`s`/`S`/`u`/`U`): hunk patch (`git diff -M --no-color -U<ctx> <base> -- <path>`, sliced at `@@`), whole file (`git add`/`git reset`); guards mirror the TS (stage needs default worktree review; unstage needs `--cached`).
-  3. **Discard** (`x`/`X`): safety stash (`git stash create review-checkpoint`) then `git checkout --` / reverse apply; confirmation prompt before discard.
-  4. **Open editor** (`o`): `TerminalGuard::suspend` → spawn `$VISUAL`/`$EDITOR`/pattern table at `file:line` → `resume` → reload.
-- **Verification**: integration tests on a scratch git repo (stage → status changes → reload → unstage → discard with stash ref returned).
+- **Affected Files**: `src/tui/event.rs`, `src/tui/app.rs`, `src/tui/actions.rs`, `src/tui/editor.rs`, `src/git.rs`, `src/main.rs`
+- **Status**: done.
+  1. **Reload**: `reload_diff` + `AppState::reload` re-runs pipeline and anchors cursor coordinate across git ops.
+  2. **Stage/unstage** (`s`/`S`/`u`/`U`): `stage_action` / `unstage_action` with `hunk_patch` and `git apply`.
+  3. **Discard** (`x`/`X`): `discard_action` with safety stash checkpoint (`git stash create review-checkpoint`).
+  4. **Open editor** (`o`/`O`): `TerminalGuard::suspend` → `open_editor` (`$REVIEW_EDITOR`/`$VISUAL`/`$EDITOR` with line & range) → `resume` → reload.
+- **Verification**: unit & integration tests on temporary git repos in `src/tui/actions.rs` and `src/tui/editor.rs`.
 
-### Step 2.6: Extension Thin-Client Migration & Native `/review` Invocation Gate
+### Step 2.6: Interactive File Finder (`@`)
+- **Affected Files**: `src/tui/app.rs`, `src/tui/event.rs`, `src/tui/finder.rs`
+- **Status**: not started.
+- **Specification**:
+  - Typing `@` enters an interactive file chooser dialog overlay.
+  - Smart fragment-based fuzzy search across the opened diff's files (`output.files`).
+  - Live cursor jumping: as the user types queries or navigates up/down in the filtered matches list, the reviewer immediately tracks and jumps to the first/selected matching file in real-time.
+  - `Enter` confirms the selection and keeps the viewer at that file; `Esc` cancels the search and restores the original file position.
+- **Verification**: unit tests covering search fragment matching/ranking across diff files, interactive key events in finder modal, and live viewport tracking.
+
+### Step 2.7: Extension Thin-Client Migration & Native `/review` Invocation Gate
 - **Affected Files**: `extension/pi/review.ts`, `extension/pi/src/*` (delete renderer), `tests/AGENTS.md`, `extension/pi/AGENTS.md`, root `AGENTS.md`, `tests/golden.rs`
 - **Status**: not started. Sub-steps:
   1. **Thin wrapper**: `/review` = TUI guard → `git rev-parse` root/prefix → `parseReviewArgs` → `ctx.tui.stop()` → spawn `bin/diffuse` (`stdio: "inherit"`, `cwd: repoRoot`, argv = base/paths + `--repo <name>` [+ `--notes-file` if custom]) → await exit → `ctx.tui.start()` → summary notify (count notes in `~/.pi/review/notes.json`). Mouse-tracking escapes and the `ctx.ui.custom` overlay are gone — the binary owns the terminal, exactly like the editor flow.
