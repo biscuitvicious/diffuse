@@ -82,6 +82,7 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
                 usize::MAX,
                 &pfx,
                 false,
+                false,
                 0,
                 true,
                 true,

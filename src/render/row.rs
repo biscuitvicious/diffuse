@@ -151,6 +151,7 @@ pub fn render_row_segment(
     seg_end: usize,
     prefix: &str,
     selected: bool,
+    band: bool,
     col_offset: usize,
     word_diff: bool,
     syntax_on: bool,
@@ -161,33 +162,47 @@ pub fn render_row_segment(
     let is_mod_row = kind == RowKind::Mod;
     let is_pure_del_mod = is_mod_row && is_pure_deletion_mod(spans, text);
 
+    // The visual-selection band: one neutral shade applied across the whole
+    // row (distinct from the cursor's per-style lift).
+    let band_bg = "\x1b[48;5;240m";
+
     let line_bg = if is_ctx {
         if selected {
             "\x1b[48;5;237m".to_string()
+        } else if band {
+            band_bg.to_string()
         } else {
             String::new()
         }
     } else if moved {
         if selected {
             S_MOV.cursor_bg()
+        } else if band {
+            band_bg.to_string()
         } else {
             S_MOV.tint_bg()
         }
     } else if is_mod_row {
         if selected {
             S_MOD.cursor_bg()
+        } else if band {
+            band_bg.to_string()
         } else {
             S_MOD.tint_bg()
         }
     } else if is_del_row {
         if selected {
             S_DEL.cursor_bg()
+        } else if band {
+            band_bg.to_string()
         } else {
             S_DEL.tint_bg()
         }
     } else {
         if selected {
             S_ADD.cursor_bg()
+        } else if band {
+            band_bg.to_string()
         } else {
             S_ADD.tint_bg()
         }
@@ -236,7 +251,13 @@ pub fn render_row_segment(
 
     if runs.is_empty() {
         let bg = if is_ctx {
-            if selected { "\x1b[48;5;237m" } else { "" }
+            if selected {
+                "\x1b[48;5;237m"
+            } else if band {
+                band_bg
+            } else {
+                ""
+            }
         } else {
             &line_bg
         };
@@ -353,6 +374,7 @@ mod tests {
             13,
             prefix,
             false,
+            false,
             0,
             true,
             true,
@@ -387,6 +409,7 @@ mod tests {
             1,
             prefix,
             false,
+            false,
             0,
             true,
             true,
@@ -409,6 +432,7 @@ mod tests {
             0,
             1,
             prefix,
+            false,
             false,
             1,
             true,
@@ -443,6 +467,7 @@ mod tests {
             2,
             prefix,
             false,
+            false,
             0,
             true,
             true,
@@ -462,6 +487,7 @@ mod tests {
             0,
             2,
             prefix,
+            false,
             false,
             0,
             true,
@@ -502,6 +528,7 @@ mod tests {
             0,
             13,
             prefix,
+            false,
             false,
             4, // col_offset skips "pub "
             true,

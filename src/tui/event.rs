@@ -46,7 +46,13 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             state.should_quit = true;
         }
         (KeyModifiers::NONE, KeyCode::Esc) => {
-            state.show_help = false;
+            if state.show_help {
+                state.show_help = false;
+            } else if state.anchor.is_some() {
+                state.anchor = None;
+            } else {
+                state.should_quit = true;
+            }
         }
         (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
             state.move_down();
@@ -101,6 +107,9 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
             state.note_draft = Some(String::new());
         }
+        (KeyModifiers::NONE, KeyCode::Char('v')) | (KeyModifiers::NONE, KeyCode::Char('V')) => {
+            state.start_or_confirm_selection();
+        }
         (KeyModifiers::NONE, KeyCode::Char('d')) | (KeyModifiers::NONE, KeyCode::Char('D')) => {
             state.delete_notes();
         }
@@ -143,6 +152,44 @@ mod tests {
         s
     }
 
+    fn state_with_rows() -> AppState {
+        let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
+index 1111111..2222222 100644
+--- a/filesystem.rs
++++ b/filesystem.rs
+@@ -1025,6 +1025,8 @@ fn test() {
+     let x = 1;
+-    // old comment — em dash
++    // new comment — em dash updated
++    let y = 2;
+ }
+"#;
+        let contents = [(
+            "filesystem.rs".to_string(),
+            "fn test() {\n    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}\n"
+                .to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let old_contents = [(
+            "filesystem.rs".to_string(),
+            "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        AppState::new(
+            crate::bin_pipeline::run_pipeline_full(
+                diff,
+                &contents,
+                Some(&old_contents),
+                None,
+                None,
+            ),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        )
+    }
+
     #[test]
     fn test_note_draft_enter_commits_without_newline() {
         let mut s = state_with_draft();
@@ -175,5 +222,47 @@ mod tests {
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
         );
         assert!(s.note_draft.is_none());
+    }
+
+    #[test]
+    fn test_esc_cancels_anchor_before_quit() {
+        let mut s = state_with_rows();
+        s.move_down();
+        s.start_or_confirm_selection();
+        assert!(s.anchor.is_some());
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        );
+        assert!(s.anchor.is_none(), "Esc must cancel the active anchor");
+        assert!(!s.should_quit, "Esc must not quit while anchoring");
+    }
+
+    #[test]
+    fn test_v_starts_and_confirms_selection() {
+        let mut s = state_with_rows();
+        // Walk past the file header + the engine's padded above-context rows
+        // (1020-1024) onto the real content (1025+).
+        for _ in 0..5 {
+            s.move_down();
+        }
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE)),
+        );
+        assert!(s.anchor.is_some(), "first v starts the anchor");
+
+        s.move_down();
+        s.move_down();
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('V'), KeyModifiers::NONE)),
+        );
+        assert!(s.anchor.is_none(), "second v confirms and clears");
+        let sel = s.confirmed_sel.expect("confirmed selection recorded");
+        assert_eq!(sel.start, 1025);
+        assert_eq!(sel.end, 1027);
     }
 }
