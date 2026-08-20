@@ -13,7 +13,54 @@ pub fn handle_event(state: &mut AppState, event: Event) {
 }
 
 fn handle_key_event(state: &mut AppState, key: KeyEvent) {
-    // Handling note draft typing
+    // File Finder Dialog Mode
+    if state.file_finder.is_some() {
+        match (key.modifiers, key.code) {
+            (_, KeyCode::Esc) => {
+                state.cancel_file_finder();
+            }
+            (_, KeyCode::Enter) => {
+                state.confirm_file_finder();
+            }
+            (_, KeyCode::Up)
+            | (KeyModifiers::CONTROL, KeyCode::Char('p'))
+            | (KeyModifiers::SHIFT, KeyCode::BackTab)
+            | (KeyModifiers::NONE, KeyCode::BackTab) => {
+                if let Some(finder) = &mut state.file_finder {
+                    finder.move_up();
+                }
+                state.track_finder_selection();
+            }
+            (_, KeyCode::Down)
+            | (KeyModifiers::CONTROL, KeyCode::Char('n'))
+            | (KeyModifiers::NONE, KeyCode::Tab) => {
+                if let Some(finder) = &mut state.file_finder {
+                    finder.move_down();
+                }
+                state.track_finder_selection();
+            }
+            (_, KeyCode::Backspace) => {
+                let files = state.output.files.clone();
+                if let Some(finder) = &mut state.file_finder {
+                    finder.query.pop();
+                    finder.update_matches(&files);
+                }
+                state.track_finder_selection();
+            }
+            (KeyModifiers::NONE, KeyCode::Char(c)) | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                let files = state.output.files.clone();
+                if let Some(finder) = &mut state.file_finder {
+                    finder.query.push(c);
+                    finder.update_matches(&files);
+                }
+                state.track_finder_selection();
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Note Draft Editing Mode draft typing
     if let Some(ref mut draft) = state.note_draft {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
             state.commit_note_draft();
@@ -136,6 +183,9 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         }
         (KeyModifiers::NONE, KeyCode::Char('?')) => {
             state.show_help = !state.show_help;
+        }
+        (KeyModifiers::NONE, KeyCode::Char('@')) | (KeyModifiers::SHIFT, KeyCode::Char('@')) => {
+            state.open_file_finder();
         }
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
             state.note_draft = Some(String::new());
@@ -569,5 +619,101 @@ index 1111111..2222222 100644
             Event::Key(KeyEvent::new(KeyCode::Char('$'), KeyModifiers::NONE)),
         );
         assert!(s.col_offset > 0, "$ must advance col_offset");
+    }
+
+    #[test]
+    fn test_file_finder_live_jump_and_cancel() {
+        let diff = r#"diff --git a/apple.rs b/apple.rs
+index 1111111..2222222 100644
+--- a/apple.rs
++++ b/apple.rs
+@@ -1,2 +1,3 @@
+ fn apple() {}
++fn apple_extra() {}
+diff --git a/banana.rs b/banana.rs
+index 3333333..4444444 100644
+--- a/banana.rs
++++ b/banana.rs
+@@ -1,2 +1,3 @@
+ fn banana() {}
++fn banana_extra() {}
+"#;
+        let contents = [
+            (
+                "apple.rs".to_string(),
+                "fn apple() {}\nfn apple_extra() {}\n".to_string(),
+            ),
+            (
+                "banana.rs".to_string(),
+                "fn banana() {}\nfn banana_extra() {}\n".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut s = AppState::new(
+            crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None),
+            "test_repo".into(),
+            unique_notes_path(),
+        );
+
+        assert_eq!(s.current_file_idx(), 0, "starts on file 0 (apple.rs)");
+        let initial_row = s.row_idx;
+
+        // Open file finder with '@'
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE)),
+        );
+        assert!(s.file_finder.is_some(), "file finder must be open");
+
+        // Type 'b', 'a', 'n' -> matches banana.rs
+        for c in ['b', 'a', 'n'] {
+            handle_event(
+                &mut s,
+                Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+            );
+        }
+
+        let finder = s.file_finder.as_ref().unwrap();
+        assert_eq!(finder.query, "ban");
+        assert_eq!(finder.matches.len(), 1);
+        assert_eq!(finder.matches[0].path, "banana.rs");
+        assert_eq!(
+            s.current_file_idx(),
+            1,
+            "immediately jumped to banana.rs live"
+        );
+
+        // Esc cancels and restores initial position
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        );
+        assert!(s.file_finder.is_none(), "file finder is closed");
+        assert_eq!(s.current_file_idx(), 0, "restored to file 0 (apple.rs)");
+        assert_eq!(s.row_idx, initial_row, "restored to initial row");
+
+        // Open again, search, and press Enter to confirm
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE)),
+        );
+        for c in ['b', 'a', 'n'] {
+            handle_event(
+                &mut s,
+                Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
+            );
+        }
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        );
+        assert!(s.file_finder.is_none(), "file finder confirmed and closed");
+        assert_eq!(
+            s.current_file_idx(),
+            1,
+            "stays on banana.rs after confirmation"
+        );
     }
 }

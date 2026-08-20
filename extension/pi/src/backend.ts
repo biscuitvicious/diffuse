@@ -1,23 +1,11 @@
 /**
- * Diff loading, git plumbing & Rust backend execution for pi-review
+ * Diffuse binary resolution & arg parsing for pi-review
  */
 
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { NOTES_FILE } from "./persistence.ts";
-import type { DiffFile, ReviewArgs, WireOutput } from "./types.ts";
-
-export type GitRunner = (args: string[]) => Promise<{ stdout: string; stderr: string; code: number }>;
-
-export function makeGitRunner(pi: ExtensionAPI, cwd: string): GitRunner {
-	return async (args) => {
-		const res = await pi.exec("git", args, { cwd });
-		return { stdout: res.stdout, stderr: res.stderr, code: res.code ?? 1 };
-	};
-}
 
 export interface ReviewBase {
 	baseArgs: string[];
@@ -62,9 +50,9 @@ export function diffuseBinPath(): string {
 	return join(here, "..", "..", "..", "target", profile, "diffuse");
 }
 
-export function runDiffuseBin(bin: string, input: string): Promise<WireOutput> {
+export function runDiffuseBin(bin: string, input: string): Promise<any> {
 	return new Promise((resolve, reject) => {
-		const p = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
+		const p = spawn(bin, ["--json"], { stdio: ["pipe", "pipe", "pipe"] });
 		let out = "";
 		let err = "";
 		p.stdout.on("data", (d: Buffer) => (out += d.toString("utf8")));
@@ -74,7 +62,7 @@ export function runDiffuseBin(bin: string, input: string): Promise<WireOutput> {
 			if (code !== 0) reject(new Error(`diffuse exited ${code}: ${err}`));
 			else {
 				try {
-					resolve(JSON.parse(out) as WireOutput);
+					resolve(JSON.parse(out));
 				} catch (e) {
 					reject(new Error(`diffuse output was not JSON: ${String(e)}`));
 				}
@@ -83,111 +71,4 @@ export function runDiffuseBin(bin: string, input: string): Promise<WireOutput> {
 		p.stdin.write(input);
 		p.stdin.end();
 	});
-}
-
-export function runDiffuseBinBatch(bin: string, input: string): Promise<WireOutput[]> {
-	return new Promise((resolve, reject) => {
-		const p = spawn(bin, [], { stdio: ["pipe", "pipe", "pipe"] });
-		let out = "";
-		let err = "";
-		p.stdout.on("data", (d: Buffer) => (out += d.toString("utf8")));
-		p.stderr.on("data", (d: Buffer) => (err += d.toString("utf8")));
-		p.on("error", reject);
-		p.on("close", (code) => {
-			if (code !== 0) reject(new Error(`diffuse exited ${code}: ${err}`));
-			else {
-				try {
-					resolve(JSON.parse(out) as WireOutput[]);
-				} catch (e) {
-					reject(new Error(`diffuse output was not JSON: ${String(e)}`));
-				}
-			}
-		});
-		p.stdin.write(input);
-		p.stdin.end();
-	});
-}
-
-export function filesFromWire(
-	wire: WireOutput,
-	contentOf: (path: string) => { newContent: string[]; oldContent: string[]; oldPath: string | null } | undefined,
-	context: number,
-): DiffFile[] {
-	const out: DiffFile[] = [];
-	for (const wf of wire.files) {
-		const src = contentOf(wf.path);
-		const oldContent = src?.oldContent ?? wf.oldContent ?? [];
-		const newContent = src?.newContent ?? wf.newContent ?? [];
-		const contentRuns: { kind?: string; color?: string; sgr?: number; text: string }[][] = [];
-		const recordRuns = (lineNo: number | null, runs: any[]) => {
-			if (lineNo !== null && lineNo > 0 && runs && runs.length > 0) {
-				contentRuns[lineNo - 1] = runs;
-			}
-		};
-		if (wf.rows) {
-			for (const r of wf.rows) {
-				recordRuns(r.newLine ?? r.oldLine, r.runs);
-			}
-		}
-		if (wf.hunks) {
-			for (const h of wf.hunks) {
-				for (const r of h.rows) {
-					recordRuns(r.newLine ?? r.oldLine, r.runs);
-				}
-			}
-		}
-		out.push({
-			path: wf.path,
-			status: wf.status as any,
-			newLineCount: (wf as any).newLineCount ?? newContent.length ?? 0,
-			oldContent,
-			newContent,
-			contentRuns,
-			hunks: wf.hunks.map((h) => ({
-				oldStart: h.oldStart,
-				oldCount: h.oldCount,
-				newStart: h.newStart,
-				newCount: h.newCount,
-				rows: h.rows.map((r) => ({
-					kind: r.kind,
-					text: r.text,
-					newLine: r.newLine,
-					oldLine: r.oldLine,
-					delText: r.delText,
-					moved: (r as any).moved,
-					wholesale: (r as any).wholesale,
-					spans: (r as any).spans,
-					runs: r.runs,
-				})),
-				aboveCtx: context,
-				belowCtx: context,
-			})),
-			noContent: !src?.newContent?.length && !src?.oldContent?.length,
-			notes: wf.notes ?? [],
-			rows: wf.rows,
-		});
-	}
-	return out;
-}
-
-export async function loadReview(
-	_git: GitRunner,
-	repoRoot: string,
-	base: ReviewBase,
-	context: number,
-): Promise<{ files: DiffFile[]; branch: string; untrackedSkipped: string[] }> {
-	const payload = {
-		repoRoot,
-		baseArgs: base.baseArgs,
-		paths: base.paths,
-		cached: base.cached,
-		context,
-		notesFile: NOTES_FILE,
-		repo: base.repo,
-	};
-	const wire = await runDiffuseBin(diffuseBinPath(), JSON.stringify(payload));
-	const files = filesFromWire(wire, () => undefined, context);
-	const branch = (wire as any).branch ?? "";
-	const untrackedSkipped = (wire as any).untrackedSkipped ?? [];
-	return { files, branch, untrackedSkipped };
 }

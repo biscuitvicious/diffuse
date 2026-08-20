@@ -16,25 +16,24 @@ over a frozen JSON contract (PLAN.md §2). The crate ships as a library
 token-stream JSON).
 
 The workspace also holds the engine's first consumer: **`extension/pi/`** —
-the pi review extension (TypeScript renderer + TUI), moved in at PLAN.md
-Phase 2 so the engine and its consumer change together. The extension runs
-the **rust backend** — it spawns the diffuse binary BUNDLED with it
-(`bin/diffuse`, resolved next to review.ts) and renders its token-stream
-JSON; **Phase 4's equivalence gate passed** (the rust backend renders the
-byte-identical golden). The TS engine and the reference repo are removed.
+the pi review extension. The extension is a **thin client**: `/review`
+resolves the git repository, stops the pi TUI, and spawns the bundled
+`diffuse` binary (`bin/diffuse`) in interactive TUI mode with `stdio: "inherit"`.
+All diff parsing, rendering, TUI interaction, note persistence, and git actions
+are owned entirely by the native Rust implementation in `src/`.
 
 ## Engine Development & Specification
 
-The engine port from TypeScript to Rust is complete (Phases 1–4 passed with byte-identical equivalence). **The Rust implementation is now the primary engine and canonical specification.**
+The engine, terminal renderer, and interactive reviewer TUI are all natively implemented in Rust. **The Rust implementation is the primary engine and canonical specification.**
 
 In this active development phase:
 
-- **Rust is the Canonical Reference**: The Rust codebase (`src/`) is the source of truth for engine behavior.
-- **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust, `review.test.ts` in TS).
+- **Rust is the Canonical Reference**: The Rust codebase (`src/`) is the source of truth for all engine, render, and TUI behavior.
+- **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust) and the smoke suite in `extension/pi/`.
 - **Behavior Improvements & Visual Tuning**: Subword boundaries, reflow pairing, move detection, syntax highlighting, and rendering aesthetics are actively refined to deliver the best visual diff experience.
 - **Golden Corpus**: `tests/golden/` serves as the acceptance baseline
   (7 frozen corpora). As rendering and subword improvements land, fixtures
-  change only after review — see [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).
+  change only after review — see [`tests/AGENTS.md`](tests/AGENTS.md).
 
 ## The golden — the ground truth
 
@@ -112,7 +111,10 @@ are the test-first discipline above):
 - Rust edition 2024; the toolchain is pinned in `rust-toolchain.toml`
   (same pin as the broader workspace it was born from).
 - `cargo clippy -- -D warnings` and `cargo +nightly fmt --all -- --check`
-  must be clean after every change (see [`CODE_STYLE.md`](file:///home/daniel/lab/diffuse/CODE_STYLE.md)).
+  must be clean after every change. Code style, import conventions, and
+  top-down file component layout (public/high-level abstraction at the top
+  down to internal detail and tests at the bottom) are specified in
+  [`CODE_STYLE.md`](file:///home/daniel/lab/diffuse/CODE_STYLE.md).
 - `target/`, `extension/*/node_modules/`, and `extension/pi/bin/` are
   gitignored (build artifacts).
 - The extension's suite runs with `npm test` in `extension/pi/` (rust-only:

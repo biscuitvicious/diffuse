@@ -30,9 +30,9 @@ discipline for any change in golden output.
 | `opt-4-manual-scanner-prefilter` | ✅ | ✅ | perf commit captured as fixture |
 | `diffuse-history-mid` | ✅ | ❌ | huge (wire-only; too slow for the TS render walk) |
 
-The rendered walk (`extension/pi/test/golden.test.ts`) covers the same
-corpora minus `diffuse-history-mid`; it must never fork its own fixtures —
-`tests/golden/` is the single canonical copy.
+The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)
+covers the corpora; it locks `.render.txt` golden renders. `tests/golden/` is
+the single canonical copy.
 
 ## Fixture file types per corpus
 

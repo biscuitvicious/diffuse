@@ -59,7 +59,23 @@ Avoid inline fully-qualified paths such as `crate::parse::Row`, `crate::lcs::*`,
 
 ---
 
-## 3. Data Modeling & Type Safety
+## 3. File Component Layout (Top-Down Organization)
+
+We order components of a file, e.g. structs, impls, traits, its impls, etc and so on, strictly in order of [most externally facing/highest level abstraction] at the *top* of the file and continuing along the spectrum all the way down to the [most internally facing/highest level detail] at the very *bottom* of the file.
+
+### Structural Ordering
+1. **Module Doc Comment & Imports**: `//!` module summary, followed by grouped `use` declarations.
+2. **Public API Types**: Primary public structs, enums, type aliases, and public constants.
+3. **Public Trait Definitions**: Primary trait contracts exposed by the module.
+4. **Primary Inherent `impl` Blocks**: Constructors (`new`, `with_*`) and high-level public methods.
+5. **Trait Implementation Blocks**: Standard trait impls (`Display`, `From`, `Serialize`, etc.) implementing behavior for the primary types.
+6. **Internal / Private Types**: Supporting data structures, internal state structs, and private enums.
+7. **Internal / Helper Inherent `impl` Blocks & Private Free Functions**: Low-level helper functions and execution algorithms.
+8. **Unit Tests**: `#[cfg(test)] mod tests { use super::*; ... }` at the very bottom of the file.
+
+---
+
+## 4. Data Modeling & Type Safety
 
 ### Strongly-Typed Data Over Primitive Flags
 - Prefer expressive enums and dedicated structs over boolean flags or loose tuples.
@@ -93,14 +109,14 @@ Pattern matching variables should mirror the type names they destructure:
 
 ---
 
-## 4. Documentation & Doc Comments
+## 5. Documentation & Doc Comments
 
 - **Top-Level Module Comments**: Every `.rs` file under `src/` must maintain a top-level module doc comment (`//!`) summarizing its role in the pipeline.
 - **Markdown Identifiers**: Wrap all types, variable names, and code tokens in backticks inside doc comments (enforced by `clippy::doc_markdown`).
 
 ---
 
-## 5. Verification & Tooling
+## 6. Verification & Tooling
 
 ### All-in-One Check Script
 Run [`scripts/check.sh`](file:///home/daniel/lab/diffuse/scripts/check.sh) to format, auto-fix clippy lints, run tests, and verify extension equivalence:

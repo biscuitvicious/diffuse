@@ -88,6 +88,8 @@ cargo clippy -- -D warnings
 cargo fmt --all -- --check
 ```
 
+See [`CODE_STYLE.md`](CODE_STYLE.md) for code style, formatting, import conventions, and file component layout.
+
 ### The golden acceptance test
 
 `tests/golden/mirage-2025-08.golden.txt` is a locked snapshot of the

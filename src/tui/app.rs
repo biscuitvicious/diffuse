@@ -72,6 +72,7 @@ pub struct AppState {
     pub repo_root: PathBuf,
     pub git_args: Vec<String>,
     pub pending_editor: Option<crate::tui::editor::EditorRequest>,
+    pub file_finder: Option<crate::tui::finder::FileFinderState>,
 }
 
 impl AppState {
@@ -114,6 +115,7 @@ impl AppState {
             repo_root: PathBuf::from("."),
             git_args: Vec::new(),
             pending_editor: None,
+            file_finder: None,
         }
     }
 
@@ -793,6 +795,18 @@ impl AppState {
             }
         }
 
+        // File finder dialog overlays the frame when active.
+        if let Some(finder) = &self.file_finder {
+            let modal = self.render_finder_modal(width, finder);
+            let start = lines.len().saturating_sub(modal.len()) / 2;
+            for (i, mline) in modal.iter().enumerate() {
+                let idx = start + i;
+                if idx < lines.len() {
+                    lines[idx] = mline.clone();
+                }
+            }
+        }
+
         lines.truncate(height);
 
         let mut out = String::new();
@@ -806,6 +820,146 @@ impl AppState {
         out
     }
 
+    fn render_finder_modal(
+        &self,
+        width: usize,
+        finder: &crate::tui::finder::FileFinderState,
+    ) -> Vec<String> {
+        let w = width.saturating_sub(4).clamp(36, 76);
+        let mut lines = Vec::new();
+
+        let prompt = format!(" @ {}█", finder.query);
+        lines.push(format!(
+            "\x1b[48;5;238m\x1b[1m\x1b[38;5;231m {:<w$}\x1b[0m",
+            prompt,
+            w = w.saturating_sub(1)
+        ));
+
+        let header_info = format!(
+            " FIND FILE ({}/{}) · ↑/↓ nav · Enter jump · Esc close",
+            if finder.matches.is_empty() {
+                0
+            } else {
+                finder.selected_idx + 1
+            },
+            finder.matches.len()
+        );
+        lines.push(format!(
+            "\x1b[48;5;236m\x1b[38;5;244m {:<w$}\x1b[0m",
+            header_info,
+            w = w.saturating_sub(1)
+        ));
+
+        if finder.matches.is_empty() {
+            lines.push(format!(
+                "\x1b[48;5;235m\x1b[38;5;240m {:<w$}\x1b[0m",
+                "  No matching files in diff",
+                w = w.saturating_sub(1)
+            ));
+        } else {
+            let max_visible = 8;
+            let total = finder.matches.len();
+            let start = if total <= max_visible || finder.selected_idx < max_visible / 2 {
+                0
+            } else if finder.selected_idx + max_visible / 2 >= total {
+                total - max_visible
+            } else {
+                finder.selected_idx - max_visible / 2
+            };
+            let end = (start + max_visible).min(total);
+
+            for (i, m) in finder.matches[start..end].iter().enumerate() {
+                let actual_idx = start + i;
+                let is_sel = actual_idx == finder.selected_idx;
+                let f = &self.output.files[m.file_idx];
+                let prefix = if is_sel { "▶ " } else { "  " };
+                let stats = format!("+{} -{} ~{}", f.counts.adds, f.counts.dels, f.counts.mods);
+
+                let path_display = Self::highlight_path_matches(&m.path, &m.match_indices, is_sel);
+                let bg_code = if is_sel {
+                    "\x1b[48;5;239m"
+                } else {
+                    "\x1b[48;5;235m"
+                };
+                let stats_color = if is_sel {
+                    "\x1b[38;5;248m"
+                } else {
+                    "\x1b[38;5;242m"
+                };
+                let prefix_color = if is_sel {
+                    "\x1b[1m\x1b[38;5;120m"
+                } else {
+                    "\x1b[38;5;244m"
+                };
+
+                lines.push(format!(
+                    "{bg_code}{prefix_color}{prefix}\x1b[0m{bg_code}{path_display} {stats_color}{stats:<8}\x1b[0m"
+                ));
+            }
+        }
+
+        lines
+    }
+
+    fn highlight_path_matches(path: &str, indices: &[usize], selected: bool) -> String {
+        let mut out = String::new();
+        let default_color = if selected {
+            "\x1b[1m\x1b[38;5;231m"
+        } else {
+            "\x1b[38;5;250m"
+        };
+        let match_color = "\x1b[1m\x1b[38;5;51m";
+
+        for (i, ch) in path.char_indices() {
+            if indices.contains(&i) {
+                out.push_str(match_color);
+            } else {
+                out.push_str(default_color);
+            }
+            out.push(ch);
+        }
+        out.push_str("\x1b[0m");
+        out
+    }
+
+    pub fn open_file_finder(&mut self) {
+        let mut finder =
+            crate::tui::finder::FileFinderState::new(&self.output.files, self.row_idx, self.scroll);
+        // Default selected match to the current file
+        let cur_fi = self.current_file_idx();
+        if let Some(pos) = finder.matches.iter().position(|m| m.file_idx == cur_fi) {
+            finder.selected_idx = pos;
+        }
+        self.file_finder = Some(finder);
+    }
+
+    pub fn cancel_file_finder(&mut self) {
+        if let Some(finder) = self.file_finder.take() {
+            self.row_idx = finder.initial_row_idx;
+            self.scroll = finder.initial_scroll;
+        }
+    }
+
+    pub fn confirm_file_finder(&mut self) {
+        self.file_finder = None;
+    }
+
+    pub fn track_finder_selection(&mut self) {
+        if let Some(fi) = self
+            .file_finder
+            .as_ref()
+            .and_then(super::finder::FileFinderState::selected_file_idx)
+        {
+            self.goto_file_idx(fi);
+        }
+    }
+
+    pub fn goto_file_idx(&mut self, fi: usize) {
+        let first = self.first_row_of_file(fi);
+        let target = self.next_coord_row(first);
+        self.row_idx = target;
+    }
+
     /// Render the `?` key-bindings modal as full-width overlay lines.
     fn render_help_modal(width: usize) -> Vec<String> {
         let entries: &[(&str, &str)] = &[
@@ -814,6 +968,7 @@ impl AppState {
             ("Space · PgDn/PgUp · Ctrl+d f u b", "page up/down"),
             ("g / G / Home / End", "top / bottom"),
             ("n / p / ] / [", "next / prev file"),
+            ("@", "find file in diff"),
             ("h / l / ← / →", "horizontal scroll"),
             ("w", "toggle word diff"),
             ("y", "toggle syntax highlighting"),
