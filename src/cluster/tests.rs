@@ -65,7 +65,7 @@ fn test_partition_hunk_segments_with_syntax_barriers() {
         below_ctx: 0,
     };
 
-    let segments = partition_hunk_segments(&h, false);
+    let segments = partition_hunk_segments(&h, false, None, None);
     assert_eq!(segments.len(), 3);
 
     // Segment 0: Doc comment deletion cluster
@@ -360,7 +360,7 @@ fn dp_corpus_projection_oracle() {
             let ext = f.path.rsplit('.').next().unwrap_or("");
             let hash_comment = lang_profile(ext).is_some_and(|p| p.hash_comment);
             for h in &f.hunks {
-                for seg in partition_hunk_segments(h, hash_comment) {
+                for seg in partition_hunk_segments(h, hash_comment, None, None) {
                     if let HunkSegment::Cluster(c) = seg {
                         let sol = solve_cluster(&c, hash_comment);
                         verify_projection(&sol, &c).unwrap_or_else(|e| {

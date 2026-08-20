@@ -493,12 +493,11 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                     }
                     let total = ot.chars.max(nt.chars);
                     let unmatched = total.saturating_sub(matched);
-                    let similarity_ratio = matched as f64 / total as f64;
-                    let syntax = if similarity_ratio >= 0.35
-                        && statement_heads_agree(
-                            cluster.old_rows[i].text(),
-                            cluster.new_rows[j].text(),
-                        ) {
+                    let statement_head_match = statement_heads_agree(
+                        cluster.old_rows[i].text(),
+                        cluster.new_rows[j].text(),
+                    );
+                    let syntax = if statement_head_match {
                         w.head_agree_bonus
                     } else {
                         0.0
@@ -548,7 +547,10 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                     } else {
                         close_bonus
                     };
-                    let proximity_gate = if similarity_ratio >= 0.25 || is_direct_tail_pair {
+                    let proximity_gate = if similarity_ratio >= 0.25
+                        || is_direct_tail_pair
+                        || statement_head_match
+                    {
                         1.0
                     } else {
                         0.0

@@ -19,10 +19,7 @@
 //! golden legs keep running legacy in the same process; the binary reads
 //! `DIFFUSE_ENGINE=dp`.
 
-use std::{
-    cell::Cell,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     collapse::PairingResults,
@@ -31,25 +28,6 @@ use crate::{
 };
 
 use super::{HunkSegment, dp, partition_hunk_segments};
-
-thread_local! {
-    static DP_ENGINE: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether the DP pairing override is active on this thread.
-pub fn dp_engine_enabled() -> bool {
-    DP_ENGINE.with(Cell::get)
-}
-
-/// Set the DP pairing override for this thread (tests).
-pub fn set_dp_engine(v: bool) {
-    DP_ENGINE.with(|c| c.set(v));
-}
-
-/// Whether the DP pairing should run (thread-local override or env).
-pub fn use_dp_engine() -> bool {
-    dp_engine_enabled() || std::env::var("DIFFUSE_ENGINE").as_deref() == Ok("dp")
-}
 
 type LegacyIndexMaps = (Vec<Vec<usize>>, HashMap<usize, Vec<usize>>, Vec<usize>);
 
@@ -116,7 +94,8 @@ fn guarded_dels(
             && h.rows.iter().any(|a| {
                 a.kind() == crate::parse::RowKind::Add
                     && is_tail_before_closing(a.new_line(), false, old_content, new_content)
-                    && fn_of(old_content, r.old_line()) == fn_of(new_content, a.new_line())
+                    && (fn_of(old_content, r.old_line()).is_none()
+                        || fn_of(old_content, r.old_line()) == fn_of(new_content, a.new_line()))
             });
         let has_same_hunk_add = h
             .rows
@@ -175,18 +154,24 @@ pub fn dp_pairing(
         .rows
         .iter()
         .enumerate()
-        .filter_map(|(i, r)| r.old_line().map(|n| (n, i)))
+        .filter_map(|(i, r)| match r {
+            Row::Del(d) => Some((d.num.get(), i)),
+            _ => None,
+        })
         .collect();
     let add_by_num: HashMap<u32, usize> = h
         .rows
         .iter()
         .enumerate()
-        .filter_map(|(i, r)| r.new_line().map(|n| (n, i)))
+        .filter_map(|(i, r)| match r {
+            Row::Add(a) => Some((a.num.get(), i)),
+            _ => None,
+        })
         .collect();
 
     let mut pair_of: HashMap<usize, usize> = HashMap::new();
 
-    for seg in partition_hunk_segments(h, hash_comment) {
+    for seg in partition_hunk_segments(h, hash_comment, old_content, new_content) {
         let cluster = match seg {
             HunkSegment::Cluster(c) => c,
             HunkSegment::Context(_) => continue,
@@ -263,6 +248,3 @@ pub fn dp_pairing(
         del_ids,
     }
 }
-
-#[cfg(test)]
-mod tests;

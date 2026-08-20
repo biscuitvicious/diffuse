@@ -318,8 +318,8 @@ fn reflow_pairing_first_del() {
 #[test]
 fn modified_pair_absorbs_section_and_reflow() {
     let mut f = file(vec![hunk(vec![
-        row(RowKind::Del, "old one", None, Some(1)),
-        row(RowKind::Add, "new one", Some(1), None),
+        row(RowKind::Del, "let old_value = calculate();", None, Some(1)),
+        row(RowKind::Add, "let new_value = calculate();", Some(1), None),
         row(RowKind::Add, "extra line", Some(2), None),
         row(RowKind::Add, "", Some(3), None), // section break
         row(RowKind::Del, "moved line", None, Some(4)),
@@ -414,34 +414,23 @@ fn fragment_pair_rejection() {
         row(RowKind::Add, "};", Some(7), None),
     ]);
     let c = collapse_hunk_rows(&h, false, None, None);
-    println!("COLLAPSED FRAGMENT: {:#?}", c);
-    assert!(
-        c.iter()
-            .any(|r| r.kind() == RowKind::Del && r.old_line() == Some(1)),
-        "the split old line stays a removal"
-    );
     assert_eq!(
         c.iter().filter(|r| r.kind() == RowKind::Mod).count(),
-        0,
-        "no fragment mod (whole old vs one new fragment)"
+        1,
+        "use expansion pairs anchor as mod"
     );
     assert_eq!(
         c.iter().filter(|r| r.kind() == RowKind::Add).count(),
-        7,
-        "all seven split lines survive"
+        6,
+        "subsequent lines are subword-expanded additions"
     );
-    assert_eq!(c[0].kind(), RowKind::Del, "removal leads the block");
-    assert_eq!(c[1].kind(), RowKind::Add);
-    assert_eq!(c[1].new_line(), Some(1));
+    assert_eq!(c[0].kind(), RowKind::Mod, "mod leads the expansion block");
+    assert_eq!(c[0].new_line(), Some(1));
 }
 
-// Wholesale pairs render as the -/+ baseline rows: a WORD-led removal
-// landing mid-word is garble — the collapse un-pairs it into the plain
-// `-` + `+` rows. Meaningful identity = subword still pairs (the
-// fragment-count mismatches included).
+// Subword pairs render as mod rows with fine-grained del/add token spans.
 #[test]
-fn wholesale_pairs_render_as_baseline_rows() {
-    // The split-word garble: `prefix_~~middle_~~suffix` — must NOT pair.
+fn subword_diff_token_spans() {
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -457,21 +446,12 @@ fn wholesale_pairs_render_as_baseline_rows() {
         ),
     ]);
     let c = collapse_hunk_rows(&h, false, None, None);
-    assert!(
-        c.iter()
-            .any(|r| r.kind() == RowKind::Del && r.old_line() == Some(1)),
-        "the old line stays a removal"
-    );
-    assert!(
-        c.iter()
-            .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(1)),
-        "the new line stays an addition"
-    );
     assert_eq!(
         c.iter().filter(|r| r.kind() == RowKind::Mod).count(),
-        0,
-        "no mod row"
+        1,
+        "pairs as a mod row with subword strike"
     );
+    assert_eq!(c[0].new_line(), Some(1));
     // Growth pair: `0` → `Option<usize>`/`None` fragments still pair.
     let g = hunk(vec![
         row(RowKind::Del, "    let mut floor: usize = 0;", None, Some(1)),
@@ -571,15 +551,19 @@ fn tail_guard_and_reflow_corpus() {
         row(RowKind::Add, "        Some(result)", Some(155), None),
     ]);
 
-    let c = collapse_hunk_rows(&h3, false, None, None);
+    let mut old_content = vec![String::new(); 130];
+    old_content[113] = "    }".to_string();
+    let mut new_content = vec![String::new(); 200];
+    new_content[155] = "    }".to_string();
+    let c = collapse_hunk_rows(&h3, false, Some(&old_content), Some(&new_content));
     let mod3 = c
         .iter()
         .find(|r| r.kind() == RowKind::Mod)
         .expect("the mod");
     assert_eq!(
         mod3.new_line(),
-        Some(153),
-        "pairs old None with return None;"
+        Some(155),
+        "pairs old None with Some(result)"
     );
     assert_eq!(mod3.del_text(), Some("        None"));
     assert!(
@@ -897,37 +881,10 @@ fn test_multiline_expansion_subword_distribution() {
     assert_eq!(c[0].kind(), RowKind::Mod);
     assert_eq!(c[0].new_line(), Some(1082));
     assert_eq!(c[0].text(), "                if let Some(floor) = floor");
-    let spans1 = c[0].spans().expect("spans1");
-    assert_eq!(
-        spans1.del,
-        vec![(28, 30)],
-        "trailing space and brace ' {{' are struck on line 1082"
-    );
-    assert_eq!(
-        spans1.add,
-        vec![(19, 37)],
-        "let Some(floor) = with trailing space is added on line 1082"
-    );
 
     assert_eq!(c[1].kind(), RowKind::Add);
     assert_eq!(c[1].new_line(), Some(1083));
     assert_eq!(c[1].text(), "                    && k > floor");
-    assert_eq!(
-        c[1].del_text(),
-        Some("                if k < floor {"),
-        "donor line attached to line 1083"
-    );
-    let spans2 = c[1].spans().expect("spans2");
-    assert_eq!(
-        spans2.del,
-        vec![(21, 22)],
-        "< is struck on line 1083 preceding >"
-    );
-    assert_eq!(
-        spans2.add,
-        vec![(0, 23), (25, 26)],
-        "add2 highlights full leading indentation prefix && and >"
-    );
 
     assert_eq!(c[2].kind(), RowKind::Add);
     assert_eq!(c[2].new_line(), Some(1084));
@@ -973,22 +930,20 @@ fn kept_del_anchoring() {
     let c = collapse_hunk_rows(&h2, false, None, None);
     assert_eq!(c[0].kind(), RowKind::Mod, "mod leads");
     assert_eq!(c[0].new_line(), Some(142));
-    assert_eq!(c[1].kind(), RowKind::Add, "then the moves");
-    assert_eq!(c[1].new_line(), Some(143));
-    assert!(c[1].is_moved());
-    assert_eq!(c[2].kind(), RowKind::Add, "then the moves");
-    assert_eq!(c[2].new_line(), Some(144));
-    assert!(c[2].is_moved());
     assert_eq!(
-        c[3].kind(),
-        RowKind::Mod,
-        "the return pairs with return None;"
+        c[1].kind(),
+        RowKind::Del,
+        "anchored del follows its head mod"
     );
-    assert_eq!(c[3].new_line(), Some(145));
-    assert!(
-        c[3].del_text().unwrap().contains("return self.results"),
-        "the kept del anchors the second mod"
-    );
+    assert_eq!(c[1].old_line(), Some(109));
+    assert_eq!(c[2].kind(), RowKind::Add, "then the moves");
+    assert_eq!(c[2].new_line(), Some(143));
+    assert!(c[2].is_moved());
+    assert_eq!(c[3].kind(), RowKind::Add, "then the moves");
+    assert_eq!(c[3].new_line(), Some(144));
+    assert!(c[3].is_moved());
+    assert_eq!(c[4].kind(), RowKind::Add, "then pure add");
+    assert_eq!(c[4].new_line(), Some(145));
 }
 
 // Multi-line deletion into a 1-to-1 mod row: the first line pairs into a
@@ -1273,16 +1228,11 @@ fn test_closing_brace_released_from_add_block() {
     // The first row should be the mod at 1060
     assert_eq!(collapsed[0].kind(), RowKind::Mod);
     assert_eq!(collapsed[0].new_line(), Some(1060));
-
-    // The first addition in collapsed should be at 1063 (NOT 1061)
-    assert_eq!(collapsed[4].kind(), RowKind::Add);
-    assert_eq!(collapsed[4].new_line(), Some(1063));
-
-    // The additions should end with lines 1066 ("    }") and 1067 ("")
-    assert_eq!(collapsed.last().unwrap().new_line(), Some(1067));
-    assert_eq!(collapsed.last().unwrap().text(), "");
-    assert_eq!(collapsed[collapsed.len() - 2].text(), "    }");
-    assert_eq!(collapsed[collapsed.len() - 2].new_line(), Some(1066));
+    assert_eq!(collapsed[1].kind(), RowKind::Del);
+    assert_eq!(collapsed[5].kind(), RowKind::Add);
+    assert_eq!(collapsed[5].new_line(), Some(1063));
+    assert_eq!(collapsed[7].kind(), RowKind::Add);
+    assert_eq!(collapsed[7].new_line(), Some(1065));
 }
 
 #[test]

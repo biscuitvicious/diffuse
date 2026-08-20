@@ -18,11 +18,8 @@ use regex::Regex;
 
 use crate::{
     lcs::{char_slice, tokenize_line, word_spans},
-    merge::wholesale_pair,
     parse::{AddLine, DelLine, Hunk, Row, Spans},
-    scope::{fn_of, is_tail_before_closing},
     shift::pass_shift_hunk,
-    similarity::{LineTokens, TokenInterner, is_comment_line, line_similarity_parts_tokens},
 };
 
 /// Results of the initial pairing pass.
@@ -31,228 +28,6 @@ pub struct PairingResults {
     pub del_runs: Vec<Vec<usize>>,
     pub run_of: HashMap<usize, Vec<usize>>,
     pub del_ids: Vec<usize>,
-}
-
-/// Pass 1: Similarity and brace-anchor 1-to-1 pairing.
-pub fn pass_pairing(
-    h: &Hunk,
-    hash_comment: bool,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
-) -> PairingResults {
-    let mut pending_adds: Vec<usize> = h
-        .rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| matches!(r, Row::Add(_)))
-        .map(|(i, _)| i)
-        .collect();
-
-    let mut del_runs: Vec<Vec<usize>> = Vec::new();
-    let mut i = 0;
-    while i < h.rows.len() {
-        if !matches!(h.rows[i], Row::Del(_)) {
-            i += 1;
-            continue;
-        }
-        let mut run = vec![i];
-        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_)) {
-            i += 1;
-            run.push(i);
-        }
-        del_runs.push(run);
-        i += 1;
-    }
-    let run_of: HashMap<usize, Vec<usize>> = del_runs
-        .iter()
-        .flat_map(|run| run.iter().map(|&ri| (ri, run.clone())))
-        .collect();
-
-    let del_ids: Vec<usize> = h
-        .rows
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| matches!(r, Row::Del(_)))
-        .map(|(i, _)| i)
-        .collect();
-
-    let mut cluster_id: Vec<usize> = Vec::with_capacity(h.rows.len());
-    let mut cur_cluster = 0;
-    for r in &h.rows {
-        if matches!(r, Row::Ctx(_)) {
-            cur_cluster += 1;
-            cluster_id.push(usize::MAX);
-        } else {
-            cluster_id.push(cur_cluster);
-        }
-    }
-
-    let mut interner = TokenInterner::new();
-    let mut del_tokens: HashMap<usize, LineTokens> = HashMap::new();
-    let mut add_tokens: HashMap<usize, LineTokens> = HashMap::new();
-    for &ri in &del_ids {
-        del_tokens.insert(ri, interner.line_tokens(h.rows[ri].text()));
-    }
-    for &ai in &pending_adds {
-        add_tokens.insert(ai, interner.line_tokens(h.rows[ai].text()));
-    }
-
-    let mut pair_of: HashMap<usize, usize> = HashMap::new();
-
-    for &ri in &del_ids {
-        let r = &h.rows[ri];
-        if r.is_moved() {
-            continue;
-        }
-        let r_trim = r.text().trim();
-        let was_moved = !r_trim.is_empty()
-            && h.rows.iter().any(|a| {
-                a.is_moved() && (a.old_line() == r.old_line() || a.text().trim() == r_trim)
-            });
-        if was_moved {
-            continue;
-        }
-        let del_is_tail = is_tail_before_closing(r.old_line(), true, old_content, new_content);
-        let tail_candidate = del_is_tail
-            && pending_adds.iter().any(|&ai| {
-                let a = &h.rows[ai];
-                is_tail_before_closing(a.new_line(), false, old_content, new_content)
-                    && fn_of(old_content, r.old_line()) == fn_of(new_content, a.new_line())
-            });
-        let has_same_hunk_add = pending_adds
-            .iter()
-            .any(|&ai| h.rows[ai].text().trim() == r_trim);
-        if !r_trim.is_empty()
-            && !tail_candidate
-            && !has_same_hunk_add
-            && new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
-        {
-            continue;
-        }
-
-        let del_fn = fn_of(old_content, r.old_line());
-        let mut best: Option<usize> = None;
-        let mut best_score = 0.15;
-        let del_set: HashSet<u32> = del_tokens[&ri].ids.iter().copied().collect();
-
-        let del_cluster = cluster_id[ri];
-        for &ai in &pending_adds {
-            if cluster_id[ai] != del_cluster {
-                continue;
-            }
-            let a = &h.rows[ai];
-            let add_fn = fn_of(new_content, a.new_line());
-            if let (Some(dfn), Some(afn)) = (&del_fn, &add_fn)
-                && dfn != afn
-                && (fn_exists(new_content, dfn) || fn_exists(old_content, afn))
-            {
-                continue;
-            }
-            if let Some(run) = run_of.get(&ri) {
-                let trimmed = r.text().trim();
-                if run.len() > 1
-                    && run[0] != ri
-                    && !trimmed.is_empty()
-                    && a.text().trim().contains(trimmed)
-                {
-                    continue;
-                }
-            }
-
-            let is_del_comment = is_comment_line(r.text(), hash_comment);
-            let is_add_comment = is_comment_line(a.text(), hash_comment);
-            if is_del_comment != is_add_comment {
-                continue;
-            }
-
-            let head_bonus = {
-                let kw_del = statement_head_keyword(r.text().trim_start());
-                let kw_add = statement_head_keyword(a.text().trim_start());
-                if let (Some(kd), Some(ka)) = (kw_del, kw_add)
-                    && kd == ka
-                {
-                    1.0
-                } else {
-                    0.0
-                }
-            };
-            let dt = &del_tokens[&ri];
-            let at = &add_tokens[&ai];
-            let brace_bonus = if del_is_tail
-                && is_tail_before_closing(a.new_line(), false, old_content, new_content)
-                && del_fn == fn_of(new_content, a.new_line())
-            {
-                1.0
-            } else {
-                0.0
-            };
-            let bonus = head_bonus + brace_bonus;
-            let sim_max = if dt.tokens.is_empty() && at.tokens.is_empty() {
-                1.0
-            } else if dt.chars == 0 || at.chars == 0 {
-                0.0
-            } else {
-                let add_common: usize = at
-                    .ids
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, id)| del_set.contains(id))
-                    .map(|(i, _)| at.token_chars[i])
-                    .sum();
-                let add_set: HashSet<u32> = at.ids.iter().copied().collect();
-                let del_common: usize = dt
-                    .ids
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, id)| add_set.contains(id))
-                    .map(|(i, _)| dt.token_chars[i])
-                    .sum();
-                add_common.min(del_common) as f64 / dt.chars.max(at.chars) as f64
-            };
-            if bonus + sim_max <= best_score {
-                continue;
-            }
-            let parts = line_similarity_parts_tokens(dt, at, &interner.ws, &interner.alnum);
-            let min_sim = if pending_adds.first() == Some(&ai) {
-                0.3
-            } else {
-                0.4
-            };
-            if parts.add_total > 0
-                && parts.add_matched as f64 >= parts.add_total as f64 * 0.8
-                && parts.sim < min_sim
-                && pending_adds.len() > 1
-            {
-                continue;
-            }
-
-            let spans = word_spans(r.text(), a.text());
-            if wholesale_pair(r.text(), a.text(), &spans) {
-                continue;
-            }
-
-            let score = head_bonus + brace_bonus + parts.sim;
-            if score > best_score {
-                best_score = score;
-                best = Some(ai);
-            }
-        }
-
-        if let Some(b) = best {
-            let spans = word_spans(r.text(), h.rows[b].text());
-            if !wholesale_pair(r.text(), h.rows[b].text(), &spans) {
-                pair_of.insert(b, ri);
-                pending_adds.retain(|&x| x != b);
-            }
-        }
-    }
-
-    PairingResults {
-        pair_of,
-        del_runs,
-        run_of,
-        del_ids,
-    }
 }
 
 pub(crate) fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {
@@ -264,21 +39,6 @@ pub(crate) fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {
     content
         .iter()
         .any(|l| re.captures(l.trim()).is_some_and(|c| c[1] == *fn_name))
-}
-
-/// Helper recognizing statement head keywords for pairing.
-fn statement_head_keyword(s: &str) -> Option<&str> {
-    const KEYWORDS: &[&str] = &[
-        "if", "let", "return", "match", "for", "while", "loop", "fn", "pub", "struct", "enum",
-        "impl", "type", "use", "const", "static",
-    ];
-    let word = s.split_whitespace().next()?;
-    let word = word.trim_end_matches('(');
-    if KEYWORDS.contains(&word) {
-        Some(word)
-    } else {
-        None
-    }
 }
 
 /// Products of the assembly pass.
@@ -319,11 +79,14 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
 
             let mut next_adds = Vec::new();
             let mut k = add_ri + 1;
-            let is_potential_expansion = statement_head_keyword(&del_text).is_some()
-                || del_text.trim_end().ends_with('{')
-                || del_text.trim_end().ends_with('(');
+            let has_deleted_content = spans.del.iter().any(|&(ds, de)| {
+                let seg = char_slice(&del_text, ds, de);
+                tokenize_line(seg)
+                    .into_iter()
+                    .any(|tok| !tok.trim().is_empty() && tok.chars().any(char::is_alphanumeric))
+            });
 
-            if is_potential_expansion {
+            if has_deleted_content {
                 while k < h.rows.len()
                     && matches!(h.rows[k], Row::Add(_))
                     && !ctx.pair_of.contains_key(&k)
@@ -350,7 +113,10 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                     let matches_del = tokenize_line(nxt_t).into_iter().any(|tok| {
                         !tok.trim().is_empty()
                             && tok.chars().any(char::is_alphanumeric)
-                            && del_text.contains(tok)
+                            && spans.del.iter().any(|&(ds, de)| {
+                                let seg = char_slice(&del_text, ds, de);
+                                seg.contains(tok)
+                            })
                     });
 
                     if is_closing || is_continuation || matches_del {
@@ -390,20 +156,48 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                spans.del.retain(|&(ds, de)| {
+                let mut moved_token_pos = None;
+                for &(ds, de) in &spans.del {
                     let seg = char_slice(&del_text, ds, de);
-                    let tokens: Vec<&str> = tokenize_line(seg)
-                        .into_iter()
-                        .filter(|t| !t.trim().is_empty())
-                        .collect();
-                    let has_alpha = tokens.iter().any(|t| t.chars().any(char::is_alphanumeric));
-                    if has_alpha {
-                        let moved = tokens.iter().any(|t| next_adds_text.contains(t));
-                        !moved
-                    } else {
-                        true // Keep trailing delimiters like "{" struck on the mod line!
+                    let mut pos = ds;
+                    for tok in tokenize_line(seg) {
+                        let start = seg[pos - ds..]
+                            .find(tok)
+                            .map(|off| pos + off)
+                            .unwrap_or(pos);
+                        pos = start + tok.len();
+                        if !tok.trim().is_empty()
+                            && tok.chars().any(char::is_alphanumeric)
+                            && next_adds_text.contains(tok)
+                        {
+                            moved_token_pos = Some(start);
+                            break;
+                        }
                     }
-                });
+                    if moved_token_pos.is_some() {
+                        break;
+                    }
+                }
+
+                if let Some(sp) = moved_token_pos {
+                    let del_head = &del_text[..sp];
+                    spans = word_spans(del_head, add.text());
+                } else {
+                    spans.del.retain(|&(ds, de)| {
+                        let seg = char_slice(&del_text, ds, de);
+                        let tokens: Vec<&str> = tokenize_line(seg)
+                            .into_iter()
+                            .filter(|t| !t.trim().is_empty())
+                            .collect();
+                        let has_alpha = tokens.iter().any(|t| t.chars().any(char::is_alphanumeric));
+                        if has_alpha {
+                            let moved = tokens.iter().any(|t| next_adds_text.contains(t));
+                            !moved
+                        } else {
+                            true
+                        }
+                    });
+                }
 
                 for &nxt_i in &next_adds {
                     let add_nxt = &h.rows[nxt_i];
@@ -414,8 +208,33 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         .count();
                     let nxt_trim = add_nxt.text().trim();
                     let is_closing_row = nxt_trim == "};" || nxt_trim == "}" || nxt_trim == ");";
+                    let is_opening_row = nxt_trim == "{" || nxt_trim == "(";
 
-                    if (!donor_spans.add.is_empty() || is_closing_row)
+                    if is_opening_row {
+                        let text_len = add_nxt.text().chars().count();
+                        let indent_len = add_nxt
+                            .text()
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .count();
+                        if del_text.trim_end().ends_with(nxt_trim) {
+                            let spans = Spans {
+                                del: Vec::new(),
+                                add: if indent_len > 0 {
+                                    vec![(0, indent_len)]
+                                } else {
+                                    Vec::new()
+                                },
+                            };
+                            add_spans.insert(nxt_i, (spans, del_text.clone()));
+                        } else if text_len > 0 {
+                            let spans = Spans {
+                                del: Vec::new(),
+                                add: vec![(0, text_len)],
+                            };
+                            add_spans.insert(nxt_i, (spans, del_text.clone()));
+                        }
+                    } else if (!donor_spans.add.is_empty() || is_closing_row)
                         && donor_spans.add.len() < tok_count
                     {
                         let other_adds_text = format!(
@@ -428,15 +247,35 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                                 .collect::<Vec<_>>()
                                 .join("\n")
                         );
-                        donor_spans.del.retain(|&(ds, de)| {
-                            let seg = char_slice(&del_text, ds, de);
-                            let tokens: Vec<&str> = tokenize_line(seg)
-                                .into_iter()
-                                .filter(|t| !t.trim().is_empty())
-                                .collect();
-                            let in_other = tokens.iter().any(|t| other_adds_text.contains(t));
-                            !in_other
-                        });
+                        donor_spans.del = donor_spans
+                            .del
+                            .into_iter()
+                            .flat_map(|(ds, de)| {
+                                let seg = char_slice(&del_text, ds, de);
+                                let tokens: Vec<&str> = tokenize_line(seg)
+                                    .into_iter()
+                                    .filter(|t| !t.trim().is_empty())
+                                    .collect();
+                                let in_other = tokens.iter().any(|t| other_adds_text.contains(t));
+                                if in_other {
+                                    let is_trailing_open_delim = de == del_text.len()
+                                        && (seg.ends_with('{') || seg.ends_with('('));
+                                    if is_trailing_open_delim {
+                                        let ws_len =
+                                            seg.chars().take_while(|c| c.is_whitespace()).count();
+                                        if ws_len > 0 {
+                                            vec![(ds, ds + ws_len)]
+                                        } else {
+                                            Vec::new()
+                                        }
+                                    } else {
+                                        Vec::new()
+                                    }
+                                } else {
+                                    vec![(ds, de)]
+                                }
+                            })
+                            .collect();
 
                         let indent_len = add_nxt
                             .text()
@@ -461,15 +300,10 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         add_spans.insert(nxt_i, (donor_spans, del_text.clone()));
                     } else {
                         let text_len = add_nxt.text().chars().count();
-                        let indent_len = add_nxt
-                            .text()
-                            .chars()
-                            .take_while(|c| c.is_whitespace())
-                            .count();
-                        if text_len > indent_len {
+                        if text_len > 0 {
                             let spans = Spans {
                                 del: Vec::new(),
-                                add: vec![(indent_len, text_len)],
+                                add: vec![(0, text_len)],
                             };
                             add_spans.insert(nxt_i, (spans, del_text.clone()));
                         }
@@ -499,8 +333,16 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                 new_line: AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans),
             };
             out.push(mod_row);
-        } else if !r.is_moved() {
-            kept_dels.push(ri);
+        } else {
+            let is_was_moved = r.is_moved()
+                || r.old_line().is_some_and(|ol| {
+                    h.rows
+                        .iter()
+                        .any(|other| other.old_line() == Some(ol) && other.is_moved())
+                });
+            if !is_was_moved {
+                kept_dels.push(ri);
+            }
         }
     }
 
@@ -569,7 +411,6 @@ pub fn pass_filter_reflows(
         .map(|(_, d)| d.text().trim())
         .collect::<Vec<_>>()
         .join("\n");
-
     let kept_adds: Vec<usize> = pure_adds
         .iter()
         .copied()
@@ -702,14 +543,8 @@ pub fn collapse_hunk_rows(
     let h_norm = pass_shift_hunk(h, new_content);
     let h = &h_norm;
 
-    // Pass 1: Similarity and brace-anchor pairing — the DP engine under
-    // `DIFFUSE_ENGINE=dp` / `set_dp_engine` (fidelity target: the frozen
-    // mirage wire, byte-identical; see cluster::pairing).
-    let p1 = if crate::cluster::pairing::use_dp_engine() {
-        crate::cluster::pairing::dp_pairing(h, hash_comment, old_content, new_content)
-    } else {
-        pass_pairing(h, hash_comment, old_content, new_content)
-    };
+    // Pass 1: DP cluster pairing engine
+    let p1 = crate::cluster::pairing::dp_pairing(h, hash_comment, old_content, new_content);
     let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
 

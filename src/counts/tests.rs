@@ -48,8 +48,8 @@ fn file(hunks: Vec<Hunk>) -> DiffFile {
 #[test]
 fn counts_after_modified_pair_collapse() {
     let mut f = file(vec![hunk(vec![
-        del(1, "old one"),
-        add(1, "new one"),
+        del(1, "let old_result = calculate();"),
+        add(1, "let new_result = calculate();"),
         add(2, "extra line"),
         add(3, ""), // section break
         del(4, "moved line"),

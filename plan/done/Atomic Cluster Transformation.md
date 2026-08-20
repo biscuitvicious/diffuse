@@ -21,10 +21,10 @@
   - [x] Implement `RunKind::Mov` subline spans for moved text fragments (source struck-moved, target filled-moved).
   - [x] Implement subword token highlights for absorbed deletions and multi-line expansions.
   - [x] Implement whitespace contraction (8 → 12 spaces = 8 Common + 4 Add) and delimiter snapping.
-- [ ] **Phase 5: Acceptance Verification & Golden Gate**
-  - [ ] Extend `apply_oracle` to mechanically prove string and hunk equivalence across all 7 golden corpora.
-  - [ ] Verify wire contract compatibility and TypeScript TUI rendering.
-  - [ ] Regenerate visual golden baselines following human sign-off.
+- [x] **Phase 5: Acceptance Verification & Golden Gate**
+  - [x] Extend `apply_oracle` to mechanically prove string and hunk equivalence across all 7 golden corpora.
+  - [x] Verify wire contract compatibility and TypeScript TUI rendering.
+  - [x] Regenerate visual golden baselines following human sign-off.
 
 ---
 

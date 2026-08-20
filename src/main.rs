@@ -32,16 +32,11 @@ struct Args {
     /// Repository name key for notes lookup.
     #[arg(long)]
     repo: Option<String>,
-    /// Engine to use: "legacy" or "dp" (overrides DIFFUSE_ENGINE env).
-    #[arg(long)]
-    engine: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Input {
-    #[serde(default)]
-    engine: Option<String>,
     #[serde(default)]
     action: Option<String>,
     #[serde(default)]
@@ -85,9 +80,6 @@ enum InputPayload {
 }
 
 fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOutput {
-    if let Some(eng) = args.engine.as_deref().or(input.engine.as_deref()) {
-        diffuse::cluster::pairing::set_dp_engine(eng == "dp");
-    }
     let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
     let notes_path = notes_file_path
         .as_ref()
@@ -159,7 +151,6 @@ fn main() -> io::Result<()> {
 
     let payload: InputPayload = serde_json::from_str(&raw).unwrap_or_else(|_| {
         InputPayload::Single(Box::new(Input {
-            engine: None,
             action: None,
             note: None,
             file: None,

@@ -128,9 +128,15 @@ pub enum HunkSegment {
 }
 
 /// Partitions a hunk into context rows and atomic change clusters.
-pub fn partition_hunk_segments(hunk: &Hunk, hash_comment: bool) -> Vec<HunkSegment> {
-    let mut segments: Vec<HunkSegment> = Vec::new();
+pub fn partition_hunk_segments(
+    hunk: &Hunk,
+    hash_comment: bool,
+    old_content: Option<&[String]>,
+    new_content: Option<&[String]>,
+) -> Vec<HunkSegment> {
+    let mut segments = Vec::new();
     let mut i = 0;
+
     while i < hunk.rows.len() {
         if matches!(hunk.rows[i], Row::Ctx(_)) {
             segments.push(HunkSegment::Context(hunk.rows[i].clone()));
@@ -176,6 +182,34 @@ pub fn partition_hunk_segments(hunk: &Hunk, hash_comment: bool) -> Vec<HunkSegme
             i += 1;
         }
 
+        if preceding_ctx.is_empty() {
+            if let Some(ol) = old_rows
+                .first()
+                .and_then(Row::old_line)
+                .or_else(|| hunk.rows.first().and_then(Row::old_line))
+                && let Some(oc) = old_content
+                && (ol as usize) > 1
+            {
+                let end = ((ol as usize) - 1).min(oc.len());
+                let start = end.saturating_sub(6).min(oc.len());
+                for l in &oc[start..end] {
+                    preceding_ctx.push(l.clone());
+                }
+            } else if let Some(nl) = new_rows
+                .first()
+                .and_then(Row::new_line)
+                .or_else(|| hunk.rows.first().and_then(Row::new_line))
+                && let Some(nc) = new_content
+                && (nl as usize) > 1
+            {
+                let end = ((nl as usize) - 1).min(nc.len());
+                let start = end.saturating_sub(6).min(nc.len());
+                for l in &nc[start..end] {
+                    preceding_ctx.push(l.clone());
+                }
+            }
+        }
+
         // Collect following context lines from immediately following Ctx rows (up to 6)
         let mut following_ctx = Vec::new();
         let mut f_idx = i;
@@ -185,6 +219,34 @@ pub fn partition_hunk_segments(hunk: &Hunk, hash_comment: bool) -> Vec<HunkSegme
         {
             following_ctx.push(hunk.rows[f_idx].text().to_string());
             f_idx += 1;
+        }
+
+        if following_ctx.is_empty() {
+            if let Some(nl) = new_rows
+                .last()
+                .and_then(Row::new_line)
+                .or_else(|| hunk.rows.last().and_then(Row::new_line))
+                && let Some(nc) = new_content
+                && (nl as usize) < nc.len()
+            {
+                let start = (nl as usize).min(nc.len());
+                let end = (start + 6).min(nc.len());
+                for l in &nc[start..end] {
+                    following_ctx.push(l.clone());
+                }
+            } else if let Some(ol) = old_rows
+                .last()
+                .and_then(Row::old_line)
+                .or_else(|| hunk.rows.last().and_then(Row::old_line))
+                && let Some(oc) = old_content
+                && (ol as usize) < oc.len()
+            {
+                let start = (ol as usize).min(oc.len());
+                let end = (start + 6).min(oc.len());
+                for l in &oc[start..end] {
+                    following_ctx.push(l.clone());
+                }
+            }
         }
 
         if !old_rows.is_empty() || !new_rows.is_empty() {
