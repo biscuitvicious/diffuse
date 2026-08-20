@@ -152,6 +152,7 @@ pub fn render_row_segment(
     prefix: &str,
     selected: bool,
     band: bool,
+    hunk_ctx: bool,
     col_offset: usize,
     word_diff: bool,
     syntax_on: bool,
@@ -163,14 +164,18 @@ pub fn render_row_segment(
     let is_pure_del_mod = is_mod_row && is_pure_deletion_mod(spans, text);
 
     // The visual-selection band: one neutral shade applied across the whole
-    // row (distinct from the cursor's per-style lift).
+    // row (distinct from the cursor's per-style lift). The hunk-extent lift
+    // is a subtler shade applied to context rows only.
     let band_bg = "\x1b[48;5;240m";
+    let hunk_ctx_bg = "\x1b[48;5;238m";
 
     let line_bg = if is_ctx {
         if selected {
             "\x1b[48;5;237m".to_string()
         } else if band {
             band_bg.to_string()
+        } else if hunk_ctx {
+            hunk_ctx_bg.to_string()
         } else {
             String::new()
         }
@@ -220,8 +225,16 @@ pub fn render_row_segment(
     let is_expansion_add = kind == RowKind::Add && del_text.is_some();
 
     let base_bg = |tok_kind: crate::merge::RunKind| -> &str {
-        if is_ctx && !selected {
-            ""
+        if is_ctx {
+            if selected {
+                "\x1b[48;5;237m"
+            } else if band {
+                band_bg
+            } else if hunk_ctx {
+                hunk_ctx_bg
+            } else {
+                ""
+            }
         } else if tok_kind == crate::merge::RunKind::Del {
             &del_bg
         } else if tok_kind == crate::merge::RunKind::Add
@@ -255,6 +268,8 @@ pub fn render_row_segment(
                 "\x1b[48;5;237m"
             } else if band {
                 band_bg
+            } else if hunk_ctx {
+                hunk_ctx_bg
             } else {
                 ""
             }
@@ -323,8 +338,20 @@ pub fn render_row_segment(
         }
     }
 
-    let trail_bg = if selected || !is_ctx { &line_bg } else { "" };
-    let lead_bg = if selected && !is_ctx { &line_bg } else { "" };
+    let trail_bg = if selected || !is_ctx {
+        &line_bg
+    } else if hunk_ctx {
+        hunk_ctx_bg
+    } else {
+        ""
+    };
+    let lead_bg = if selected && !is_ctx {
+        &line_bg
+    } else if is_ctx && hunk_ctx && !band {
+        hunk_ctx_bg
+    } else {
+        ""
+    };
     format!("{lead_bg}{prefix}{out}{trail_bg}")
 }
 
@@ -375,6 +402,7 @@ mod tests {
             prefix,
             false,
             false,
+            false,
             0,
             true,
             true,
@@ -410,6 +438,7 @@ mod tests {
             prefix,
             false,
             false,
+            false,
             0,
             true,
             true,
@@ -432,6 +461,7 @@ mod tests {
             0,
             1,
             prefix,
+            false,
             false,
             false,
             1,
@@ -468,6 +498,7 @@ mod tests {
             prefix,
             false,
             false,
+            false,
             0,
             true,
             true,
@@ -487,6 +518,7 @@ mod tests {
             0,
             2,
             prefix,
+            false,
             false,
             false,
             0,
@@ -528,6 +560,7 @@ mod tests {
             0,
             13,
             prefix,
+            false,
             false,
             false,
             4, // col_offset skips "pub "

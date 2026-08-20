@@ -15,6 +15,26 @@ pub struct Selection {
     pub side_is_new: bool,
 }
 
+/// The first flat row of a hunk's content region (the jump target for hunk
+/// navigation, mirroring the reference `hunkStarts`).
+#[derive(Clone, Copy, Debug)]
+pub struct HunkStart {
+    pub flat: usize,
+    pub file: usize,
+    pub hunk: usize,
+}
+
+/// A hunk's allocated context envelope and change bounds (line coordinates),
+/// used for the divider `ctx N▴ M▾` counters and the current-hunk extent.
+#[derive(Clone, Copy, Debug)]
+pub struct HunkMeta {
+    pub above: usize,
+    pub below: usize,
+    pub change_start: usize,
+    pub change_end: usize,
+    pub side_is_new: bool,
+}
+
 pub struct FlatRow {
     pub file_idx: usize,
     pub hunk_idx: usize,
@@ -43,6 +63,8 @@ pub struct AppState {
     pub viewport_height: usize,
     pub notes: NotesDB,
     pub notes_path: PathBuf,
+    pub hunk_starts: Vec<HunkStart>,
+    hunk_meta: Vec<Vec<HunkMeta>>,
     note_id_counter: u64,
 }
 
@@ -98,6 +120,9 @@ impl AppState {
             .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
             .unwrap_or(0);
 
+        let hunk_starts = Self::build_hunk_starts(&output, &flat);
+        let hunk_meta = Self::build_hunk_meta(&output);
+
         Self {
             output,
             flat,
@@ -119,8 +144,90 @@ impl AppState {
             viewport_height: 20,
             notes: crate::notes::load_notes(&notes_path),
             notes_path,
+            hunk_starts,
+            hunk_meta,
             note_id_counter: 0,
         }
+    }
+
+    /// Locate each hunk's first content row in the flat sequence, matching by
+    /// (`kind`, `new_line`, `old_line`, `text`) — the visible rows and the
+    /// hunk rows are separate `OutputRow` conversions, so value equality is
+    /// not stable.
+    fn build_hunk_starts(output: &PipelineOutput, flat: &[FlatRow]) -> Vec<HunkStart> {
+        let mut starts = Vec::new();
+        for (fi, f) in output.files.iter().enumerate() {
+            for (hi, h) in f.hunks.iter().enumerate() {
+                let Some(first) = h.rows.first() else {
+                    continue;
+                };
+                let Some(idx) = flat.iter().position(|fr| {
+                    !fr.is_file_header
+                        && fr.file_idx == fi
+                        && fr.row.kind == first.kind
+                        && fr.row.new_line == first.new_line
+                        && fr.row.old_line == first.old_line
+                        && fr.row.text == first.text
+                }) else {
+                    continue;
+                };
+                starts.push(HunkStart {
+                    flat: idx,
+                    file: fi,
+                    hunk: hi,
+                });
+            }
+        }
+        starts
+    }
+
+    /// Per-file per-hunk context allocation. The wire carries no ctx counts,
+    /// so recompute them over the hunks the same way `f.rows` was built
+    /// (forced 6/6 above/below).
+    fn build_hunk_meta(output: &PipelineOutput) -> Vec<Vec<HunkMeta>> {
+        use crate::{
+            parse::RowKind,
+            visible::{Side, allocate_context, hunk_change_bounds},
+        };
+        output
+            .files
+            .iter()
+            .map(|f| {
+                let mut hunks: Vec<crate::parse::Hunk> = f
+                    .hunks
+                    .iter()
+                    .map(crate::bin_pipeline::OutputHunk::reconstruct)
+                    .collect();
+                for h in &mut hunks {
+                    if h.above_ctx == 0 {
+                        h.above_ctx = 6;
+                    }
+                    if h.below_ctx == 0 {
+                        h.below_ctx = 6;
+                    }
+                }
+                let alloc = allocate_context(&hunks, f.new_line_count, f.old_line_count);
+                f.hunks
+                    .iter()
+                    .enumerate()
+                    .map(|(i, h)| {
+                        let side_is_new = h
+                            .rows
+                            .iter()
+                            .any(|r| matches!(r.kind, RowKind::Add | RowKind::Mod));
+                        let side = if side_is_new { Side::New } else { Side::Old };
+                        let (change_start, change_end) = hunk_change_bounds(&hunks[i], side);
+                        HunkMeta {
+                            above: alloc[i].above,
+                            below: alloc[i].below,
+                            change_start,
+                            change_end,
+                            side_is_new,
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     pub fn current_file_idx(&self) -> usize {
@@ -381,6 +488,13 @@ impl AppState {
 
         let callouts = self.note_callouts();
         let band = self.band_rows();
+        let hunk_extent = self.hunk_ctx_extent_rows();
+        let cur_hunk = self.current_hunk();
+        let div_at: HashMap<usize, (usize, usize)> = self
+            .hunk_starts
+            .iter()
+            .map(|h| (h.flat, (h.file, h.hunk)))
+            .collect();
 
         let total_rows = self.flat.len();
         let from = self.scroll;
@@ -389,7 +503,39 @@ impl AppState {
         for (idx, item) in self.flat.iter().enumerate().skip(from).take(to - from) {
             let is_selected = idx == self.row_idx;
             let in_band = !is_selected && band[idx];
+            let in_hunk_extent = !is_selected && !in_band && hunk_extent[idx];
             let r = &item.row;
+
+            if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
+                let h = &self.output.files[div_fi].hunks[div_hi];
+                let ctx = self
+                    .hunk_meta
+                    .get(div_fi)
+                    .and_then(|v| v.get(div_hi))
+                    .map(|m| (m.above, m.below))
+                    .unwrap_or((0, 0));
+                let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
+                let span = format!(
+                    "−{},{} +{},{}",
+                    h.old_start, h.old_count, h.new_start, h.new_count
+                );
+                let txt = format!(
+                    "───── H{} · {span} · ctx {}▴ {}▾ ─────",
+                    div_hi + 1,
+                    ctx.0,
+                    ctx.1
+                );
+                let styled = if is_cur {
+                    format!(
+                        "\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{:<width$}\x1b[0m",
+                        txt,
+                        width = width
+                    )
+                } else {
+                    format!("\x1b[38;5;240m{txt}\x1b[39m")
+                };
+                lines.push(styled);
+            }
 
             if item.is_file_header {
                 let file_obj = &self.output.files[item.file_idx];
@@ -430,6 +576,7 @@ impl AppState {
                 &pfx,
                 is_selected,
                 in_band,
+                in_hunk_extent,
                 self.col_offset,
                 self.word_diff,
                 self.syntax_on,
@@ -446,6 +593,8 @@ impl AppState {
                 rendered_row.push_str(&sel_bg);
             } else if in_band {
                 rendered_row.push_str("\x1b[48;5;240m");
+            } else if in_hunk_extent {
+                rendered_row.push_str("\x1b[48;5;238m");
             }
             lines.push(rendered_row);
             if let Some(note_lines) = callouts.get(&idx) {
@@ -529,25 +678,89 @@ impl AppState {
     }
 
     pub fn next_hunk(&mut self) {
-        let cur_hunk = self.current_flat_row().map(|r| r.hunk_idx).unwrap_or(0);
-        let cur_fi = self.current_file_idx();
-        for i in self.row_idx + 1..self.flat.len() {
-            if self.flat[i].file_idx != cur_fi || self.flat[i].hunk_idx != cur_hunk {
-                self.row_idx = i;
-                return;
-            }
+        if self.hunk_starts.is_empty() {
+            return;
         }
+        let target = self
+            .hunk_starts
+            .iter()
+            .find(|h| h.flat > self.row_idx)
+            .map(|h| h.flat)
+            .unwrap_or(self.hunk_starts[0].flat);
+        self.row_idx = target;
     }
 
     pub fn prev_hunk(&mut self) {
-        let cur_hunk = self.current_flat_row().map(|r| r.hunk_idx).unwrap_or(0);
-        let cur_fi = self.current_file_idx();
-        for i in (0..self.row_idx).rev() {
-            if self.flat[i].file_idx != cur_fi || self.flat[i].hunk_idx != cur_hunk {
-                self.row_idx = i;
-                return;
+        if self.hunk_starts.is_empty() {
+            return;
+        }
+        let target = self
+            .hunk_starts
+            .iter()
+            .rev()
+            .find(|h| h.flat < self.row_idx)
+            .map(|h| h.flat)
+            .unwrap_or(self.hunk_starts[self.hunk_starts.len() - 1].flat);
+        self.row_idx = target;
+    }
+
+    /// The hunk whose start line the cursor's coordinate is at or past —
+    /// mirroring the reference `currentHunkIdx` (coordinate-based, robust to
+    /// the merged visible rows).
+    pub fn current_hunk(&self) -> Option<usize> {
+        let row = self.current_flat_row()?;
+        let coord = Self::row_coord(&row.row)?;
+        let fi = self.current_file_idx();
+        let f = self.output.files.get(fi)?;
+        let mut idx = None;
+        for (i, h) in f.hunks.iter().enumerate() {
+            let hs = if h.new_count > 0 {
+                h.new_start
+            } else {
+                h.old_start
+            };
+            if coord >= hs {
+                idx = Some(i);
             }
         }
+        idx
+    }
+
+    /// Ctx rows inside the current hunk's allocated context envelope — the
+    /// soft extent lift that shows where the hunk at the cursor runs. Content
+    /// rows keep their own tints; the selection band wins where they overlap.
+    fn hunk_ctx_extent_rows(&self) -> Vec<bool> {
+        let mut set = vec![false; self.flat.len()];
+        let Some(hi) = self.current_hunk() else {
+            return set;
+        };
+        let fi = self.current_file_idx();
+        let Some(meta) = self.hunk_meta.get(fi).and_then(|v| v.get(hi)) else {
+            return set;
+        };
+        let lo = meta.change_start.saturating_sub(meta.above);
+        let hi_line = meta.change_end + meta.below;
+        for (i, item) in self.flat.iter().enumerate() {
+            if item.file_idx != fi {
+                continue;
+            }
+            let r = &item.row;
+            if !matches!(r.kind, crate::parse::RowKind::Ctx) {
+                continue;
+            }
+            let (side_ok, c) = if meta.side_is_new {
+                (r.new_line.is_some(), r.new_line)
+            } else {
+                (r.old_line.is_some(), r.old_line)
+            };
+            if side_ok && let Some(c) = c {
+                let c = c as usize;
+                if (lo..=hi_line).contains(&c) {
+                    set[i] = true;
+                }
+            }
+        }
+        set
     }
 
     pub fn next_file(&mut self) {
@@ -806,7 +1019,7 @@ index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
 @@ -1025,6 +1025,8 @@ fn test() {
-      let x = 1;
+     let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
 +    let y = 2;
@@ -819,6 +1032,55 @@ index 1111111..2222222 100644
         )]
         .into_iter()
         .collect();
+        crate::bin_pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None)
+    }
+
+    fn sample_output_two_hunks() -> PipelineOutput {
+        let diff = r#"diff --git a/foo.rs b/foo.rs
+index 1111111..2222222 100644
+--- a/foo.rs
++++ b/foo.rs
+@@ -1,3 +1,4 @@
+ fn a() {
++    let x = 1;
+     return 1;
+ }
+@@ -12,3 +13,4 @@ fn b() {
+ fn b() {
++    let y = 2;
+     return 2;
+ }
+"#;
+        let mut old_lines = Vec::new();
+        old_lines.push("fn a() {".to_string());
+        old_lines.push("    return 1;".to_string());
+        old_lines.push("}".to_string());
+        for i in 4..=11 {
+            old_lines.push(format!("    // filler {i}"));
+        }
+        old_lines.push("fn b() {".to_string());
+        old_lines.push("    return 2;".to_string());
+        old_lines.push("}".to_string());
+
+        let mut new_lines = Vec::new();
+        new_lines.push("fn a() {".to_string());
+        new_lines.push("    let x = 1;".to_string());
+        new_lines.push("    return 1;".to_string());
+        new_lines.push("}".to_string());
+        for i in 5..=12 {
+            new_lines.push(format!("    // filler {i}"));
+        }
+        new_lines.push("fn b() {".to_string());
+        new_lines.push("    let y = 2;".to_string());
+        new_lines.push("    return 2;".to_string());
+        new_lines.push("}".to_string());
+
+        let contents = [("foo.rs".to_string(), new_lines.join("\n") + "\n")]
+            .into_iter()
+            .collect();
+        let old_contents = [("foo.rs".to_string(), old_lines.join("\n") + "\n")]
+            .into_iter()
+            .collect();
         crate::bin_pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None)
     }
 
@@ -992,5 +1254,72 @@ index 1111111..2222222 100644
             .expect("anchor over the header must snap to a coordinate row");
         assert_eq!(sel.start, 1020, "snap to the first padded ctx row");
         assert_eq!(sel.end, 1020);
+    }
+
+    #[test]
+    fn test_hunk_starts_and_navigation() {
+        let mut state = AppState::new(
+            sample_output_two_hunks(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+        assert_eq!(state.hunk_starts.len(), 2, "both hunks must be located");
+        assert_eq!(state.current_hunk(), Some(0));
+
+        // From above hunk 1, next jumps to hunk 1's start (reference
+        // gotoHunk = first hunk start after the cursor).
+        state.next_hunk();
+        assert_eq!(state.current_hunk(), Some(0));
+
+        state.next_hunk();
+        let at = state.row_idx;
+        assert_eq!(
+            state.current_hunk(),
+            Some(1),
+            "next_hunk must land in hunk 2"
+        );
+        assert!(
+            at > state.hunk_starts[0].flat,
+            "next_hunk must jump past hunk 1"
+        );
+
+        state.prev_hunk();
+        assert_eq!(state.current_hunk(), Some(0), "prev_hunk returns to hunk 1");
+    }
+
+    #[test]
+    fn test_hunk_divider_renders_and_extent_lift() {
+        let mut state = AppState::new(
+            sample_output_two_hunks(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+
+        let frame = state.render_frame(120, 40);
+        assert!(
+            frame.contains("H1"),
+            "the first hunk needs a divider: {:.300}",
+            frame
+        );
+        assert!(frame.contains("H2"), "the second hunk needs a divider");
+        assert!(
+            frame.contains("−1,3 +1,4"),
+            "the divider carries the hunk span"
+        );
+        assert!(
+            frame.contains("\x1b[48;5;236m"),
+            "the current hunk's divider is the bright bar"
+        );
+        assert!(
+            frame.contains("\x1b[48;5;238m"),
+            "ctx rows in the current hunk's envelope get the extent lift"
+        );
+
+        state.next_hunk();
+        let frame2 = state.render_frame(120, 40);
+        assert!(
+            frame2.contains("H2"),
+            "the second hunk keeps its divider in hunk 2"
+        );
     }
 }
