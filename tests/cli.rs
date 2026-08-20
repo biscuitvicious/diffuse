@@ -1,0 +1,102 @@
+//! CLI routing integration tests: piped/redirected invocations must never
+//! fall into the extension JSON contract, and non-interactive output must
+//! never try to open the interactive TUI.
+
+use std::process::{Command, Stdio};
+
+/// `diffuse < /dev/null | cat` with no git args and no JSON payload must
+/// route to the standalone reviewer (git repo resolution), never to the
+/// JSON contract — which would silently swallow the empty stdin and emit an
+/// empty JSON document with exit 0.
+#[test]
+fn empty_piped_stdin_routes_to_standalone_reviewer() {
+    // A provably NON-git dir: the standalone path fails with the repo error
+    // (exit 2); the JSON path would exit 0 with `{"files":[]}`.
+    let dir = std::env::temp_dir().join(format!("diffuse-cli-route-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdin.take()); // close stdin immediately: EOF, no payload
+    let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "standalone routing must exit 2 on a non-repo dir (stdout: {})",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("not a git repository"),
+        "stderr must report the repo error, got: {err}"
+    );
+}
+
+/// `diffuse | prog` on a real repo: piped stdout must produce the full ANSI
+/// render — never the JSON contract and never the alternate-screen TUI.
+#[test]
+fn piped_stdout_renders_not_json_and_not_tui() {
+    let dir = setup_repo();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(&dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert_eq!(out.status.code(), Some(0), "render must succeed");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.trim_start().starts_with('{'),
+        "must not emit the JSON contract, got: {:.200}",
+        stdout
+    );
+    assert!(
+        stdout.contains("\x1b["),
+        "must emit an ANSI-styled render, got: {:.200}",
+        stdout
+    );
+    assert!(
+        !stdout.contains("?1049"),
+        "must not enter the alternate screen (no TUI when piped)"
+    );
+}
+
+fn setup_repo() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("diffuse-cli-repo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init"]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    dir
+}

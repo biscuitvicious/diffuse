@@ -15,7 +15,7 @@ use serde::Deserialize;
 use std::{
     collections::HashMap,
     fs,
-    io::{self, Read},
+    io::{self, IsTerminal, Read},
     path::Path,
 };
 
@@ -93,6 +93,51 @@ enum InputPayload {
     Single(Box<Input>),
 }
 
+#[cfg(test)]
+mod tests {
+    use super::route_mode;
+
+    #[test]
+    fn extension_json_payload_is_json_mode() {
+        // The pi extension pipes a JSON payload with no git args.
+        assert!(route_mode(false, None, &[], false, "{\"diff\":\"x\"}"));
+    }
+
+    #[test]
+    fn piped_raw_diff_stays_json_mode() {
+        // `git diff | diffuse` — a raw (non-JSON) payload piped in.
+        assert!(route_mode(false, None, &[], false, "diff --git a b\n"));
+    }
+
+    #[test]
+    fn empty_piped_stdin_is_standalone() {
+        // `diffuse < /dev/null | cat` — no payload, must route to the
+        // standalone reviewer, never the JSON contract.
+        assert!(!route_mode(false, None, &[], false, ""));
+    }
+
+    #[test]
+    fn interactive_stdin_is_standalone() {
+        assert!(!route_mode(false, None, &[], true, ""));
+    }
+
+    #[test]
+    fn explicit_json_flag_is_json_mode() {
+        assert!(route_mode(true, None, &[], true, ""));
+    }
+
+    #[test]
+    fn diff_file_flag_is_json_mode() {
+        assert!(route_mode(false, Some("x.diff"), &[], true, ""));
+    }
+
+    #[test]
+    fn git_args_are_always_standalone() {
+        // `diffuse HEAD < file` — git args win over piped stdin content.
+        assert!(!route_mode(false, None, &["HEAD".into()], false, "noise"));
+    }
+}
+
 fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOutput {
     let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
     let notes_path = notes_file_path
@@ -152,15 +197,50 @@ fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOu
     run_pipeline_with_notes(&input.diff, &input.contents, db_ref, repo_ref)
 }
 
+/// Decide between the machine/extension JSON contract (`true`) and the
+/// standalone reviewer producing terminal output (`false`).
+///
+/// The extension pipes a JSON payload on stdin (a non-terminal stdin with
+/// content). A standalone run has git arguments, an interactive stdin, or
+/// an empty piped stdin (e.g. `diffuse < /dev/null | cat`). Routing on the
+/// *content* of a piped stdin keeps the extension contract intact while
+/// letting fully-piped invocations fall through to the full render — and
+/// the TUI is only ever entered when both ends are real terminals (see
+/// `main`).
+fn route_mode(
+    json: bool,
+    diff: Option<&str>,
+    git_args: &[String],
+    stdin_tty: bool,
+    piped_stdin: &str,
+) -> bool {
+    json || diff.is_some() || (git_args.is_empty() && !stdin_tty && !piped_stdin.trim().is_empty())
+}
+
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    // Direct standalone CLI mode: `diffuse` invoked with git arguments or
-    // explicitly asked not to emit json
-    if !args.json
-        && args.diff.is_none()
-        && (!args.git_args.is_empty() || std::io::IsTerminal::is_terminal(&std::io::stdin()))
-    {
+    let stdin_tty = std::io::stdin().is_terminal();
+    let stdout_tty = std::io::stdout().is_terminal();
+
+    // Peek a piped stdin only when the routing decision depends on its
+    // content (no git args, no explicit contract flags). Never block a
+    // long-running pipe for a repo review (`diffuse HEAD < <(tail -f …)`).
+    let mut piped_stdin = String::new();
+    if !stdin_tty && args.git_args.is_empty() && !args.json && args.diff.is_none() {
+        io::stdin().read_to_string(&mut piped_stdin)?;
+    }
+
+    // Standalone reviewer: `diffuse [git-args...]` from a terminal or with
+    // an empty/closed piped stdin. When either end is non-interactive
+    // (piped/redirected), render the full ANSI diff instead of the TUI.
+    if !route_mode(
+        args.json,
+        args.diff.as_deref(),
+        &args.git_args,
+        stdin_tty,
+        &piped_stdin,
+    ) {
         let repo_root = std::env::current_dir()?;
         let git_res = load_git_repo(&repo_root, &args.git_args, &[], false, 6);
 
@@ -199,7 +279,9 @@ fn main() -> io::Result<()> {
                 .unwrap_or_else(|| "diffuse".to_string())
         });
 
-        if !args.no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        // Interactive TUI only when both ends are real terminals; any
+        // piped or redirected end falls back to the full ANSI render.
+        if !args.no_tui && stdin_tty && stdout_tty {
             diffuse::tui::run_interactive_tui(out, repo_name)?;
         } else {
             let theme = diffuse::render::default_theme();
@@ -212,9 +294,13 @@ fn main() -> io::Result<()> {
     let raw = match &args.diff {
         Some(path) => fs::read_to_string(path)?,
         None => {
-            let mut s = String::new();
-            io::stdin().read_to_string(&mut s)?;
-            s
+            if piped_stdin.is_empty() {
+                let mut s = String::new();
+                io::stdin().read_to_string(&mut s)?;
+                s
+            } else {
+                piped_stdin
+            }
         }
     };
 
