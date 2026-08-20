@@ -1,7 +1,38 @@
 //! Unit tests for note persistence, markdown formatting, and querying.
 
 use super::*;
-use std::{env, fs, process};
+use std::{env, ffi::OsString, fs, path::PathBuf, process};
+
+#[test]
+fn test_state_dir_prefers_xdg_state_home() {
+    assert_eq!(
+        state_dir_from(
+            Some(OsString::from("/xdg")),
+            Some(OsString::from("/home/u"))
+        ),
+        PathBuf::from("/xdg/diffuse")
+    );
+}
+
+#[test]
+fn test_state_dir_falls_back_to_local_state() {
+    assert_eq!(
+        state_dir_from(None, Some(OsString::from("/home/u"))),
+        PathBuf::from("/home/u/.local/state/diffuse")
+    );
+}
+
+#[test]
+fn test_state_dir_last_resort_is_cwd() {
+    assert_eq!(state_dir_from(None, None), PathBuf::from(".diffuse"));
+}
+
+#[test]
+fn test_default_notes_path_lives_in_state_dir() {
+    let dir = default_state_dir();
+    assert_eq!(default_notes_path(), dir.join("notes.json"));
+    assert_eq!(default_state_path(), dir.join("state.json"));
+}
 
 #[test]
 fn test_notes_add_and_query() {

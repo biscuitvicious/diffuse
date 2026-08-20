@@ -2,8 +2,10 @@
 
 use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
+    notes::{NotesDB, Side},
     render::{DiffuseTheme, S_ADD, S_DEL, S_MOD, render_row_segment, styled_prefix},
 };
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -39,10 +41,13 @@ pub struct AppState {
     pub should_quit: bool,
     pub status_message: Option<(String, bool)>, // (message, is_error)
     pub viewport_height: usize,
+    pub notes: NotesDB,
+    pub notes_path: PathBuf,
+    note_id_counter: u64,
 }
 
 impl AppState {
-    pub fn new(output: PipelineOutput, repo: String) -> Self {
+    pub fn new(output: PipelineOutput, repo: String, notes_path: PathBuf) -> Self {
         let mut flat = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
             // File header banner row
@@ -112,6 +117,9 @@ impl AppState {
             should_quit: false,
             status_message: None,
             viewport_height: 20,
+            notes: crate::notes::load_notes(&notes_path),
+            notes_path,
+            note_id_counter: 0,
         }
     }
 
@@ -129,6 +137,133 @@ impl AppState {
 
     pub fn row_coord(row: &OutputRow) -> Option<u32> {
         row.new_line.or(row.old_line)
+    }
+
+    /// Commit the note draft onto the current row (or active selection) and
+    /// persist it through the notes DB. Mirrors the reference
+    /// `commitNoteAction`.
+    pub fn commit_note_draft(&mut self) {
+        let text = match self.note_draft.take() {
+            Some(t) => t.trim().to_string(),
+            None => return,
+        };
+        if text.is_empty() {
+            return;
+        }
+        let (file, coord, is_new) = {
+            let Some(file) = self.current_file() else {
+                return;
+            };
+            let Some(row) = self.current_flat_row() else {
+                return;
+            };
+            let Some(c) = Self::row_coord(&row.row) else {
+                return;
+            };
+            (file.path.clone(), c, row.row.new_line.is_some())
+        };
+        self.note_id_counter += 1;
+        let created_at = crate::notes::now_millis();
+        let note = crate::notes::ReviewNote {
+            id: format!(
+                "{:x}-{:x}-{:x}",
+                created_at,
+                std::process::id(),
+                self.note_id_counter
+            ),
+            file,
+            side: if is_new { Side::New } else { Side::Old },
+            start: coord,
+            end: coord,
+            text,
+            created_at,
+        };
+        crate::notes::add_note(&mut self.notes, &self.repo, note);
+        let _ = crate::notes::save_notes(&self.notes_path, &self.notes);
+        self.confirmed_sel = None;
+    }
+
+    /// Delete notes overlapping the current row (both sides, like the
+    /// reference `deleteNotesAction` on a line). Persists immediately.
+    pub fn delete_notes(&mut self) {
+        let (file, coord) = {
+            let Some(file) = self.current_file() else {
+                return;
+            };
+            let Some(row) = self.current_flat_row() else {
+                return;
+            };
+            let Some(c) = Self::row_coord(&row.row) else {
+                return;
+            };
+            (file.path.clone(), c)
+        };
+        let new_removed =
+            crate::notes::remove_notes(&mut self.notes, &self.repo, &file, Side::New, coord, coord);
+        let old_removed =
+            crate::notes::remove_notes(&mut self.notes, &self.repo, &file, Side::Old, coord, coord);
+        let removed = new_removed + old_removed;
+        let _ = crate::notes::save_notes(&self.notes_path, &self.notes);
+        self.status_message = Some((
+            if removed > 0 {
+                format!(
+                    "deleted {removed} note{}",
+                    if removed == 1 { "" } else { "s" }
+                )
+            } else {
+                "no note here".to_string()
+            },
+            removed > 0,
+        ));
+    }
+
+    /// Map of flat-row index → pre-rendered note callout lines for the
+    /// current file (`💬 [start-end] <markdown>`). A note anchors to the
+    /// LAST row whose coordinate falls in its range, else the file's first
+    /// row — mirroring the reference `noteByRow`.
+    fn note_callouts(&self) -> HashMap<usize, Vec<String>> {
+        let Some(f) = self.current_file() else {
+            return HashMap::new();
+        };
+        let notes = crate::notes::notes_for_file(&self.notes, &self.repo, &f.path);
+        if notes.is_empty() {
+            return HashMap::new();
+        }
+        let file_idx = self.current_file_idx();
+        let mut out: HashMap<usize, Vec<String>> = HashMap::new();
+        for n in notes {
+            let mut at: Option<usize> = None;
+            for (i, item) in self.flat.iter().enumerate() {
+                if item.file_idx != file_idx {
+                    continue;
+                }
+                if let Some(c) = Self::row_coord(&item.row)
+                    && c >= n.start
+                    && c <= n.end
+                {
+                    at = Some(i);
+                }
+            }
+            let at = at.unwrap_or_else(|| {
+                self.flat
+                    .iter()
+                    .position(|it| it.file_idx == file_idx)
+                    .unwrap_or(0)
+            });
+            let where_str = if n.end == n.start {
+                format!("{}", n.start)
+            } else {
+                format!("{}-{}", n.start, n.end)
+            };
+            let mut body = String::new();
+            for r in crate::notes::note_runs(&n.text) {
+                let color = r.color.as_deref().unwrap_or("warning");
+                body.push_str(&self.theme.render_token(color, &r.text, "ctx", None, r.sgr));
+            }
+            let line = format!("\x1b[38;5;220m   💬 [{}] \x1b[39m{}", where_str, body);
+            out.entry(at).or_default().push(line);
+        }
+        out
     }
 
     /// Render full visual screen frame as a String of ANSI terminal lines.
@@ -214,6 +349,14 @@ impl AppState {
         );
         lines.push(format!("\x1b[38;5;244m{status_raw}\x1b[39m"));
 
+        // Ephemeral action feedback (note saved/deleted, git ops, ...)
+        if let Some((msg, is_ok)) = self.status_message.clone() {
+            lines.push(format!(
+                "\x1b[{}m {msg}\x1b[39m",
+                if is_ok { "38;5;120" } else { "38;5;203" }
+            ));
+        }
+
         // Inline note draft if active
         if let Some(ref draft) = self.note_draft {
             let loc = format!(
@@ -235,6 +378,8 @@ impl AppState {
         if self.row_idx >= self.scroll + max_rows {
             self.scroll = self.row_idx.saturating_sub(max_rows - 1);
         }
+
+        let callouts = self.note_callouts();
 
         let total_rows = self.flat.len();
         let from = self.scroll;
@@ -293,6 +438,9 @@ impl AppState {
                 rendered_row.push_str(&sel_bg);
             }
             lines.push(rendered_row);
+            if let Some(note_lines) = callouts.get(&idx) {
+                lines.extend(note_lines.iter().cloned());
+            }
         }
 
         // Fill remaining height with empty rows if total rows < max_rows
@@ -497,7 +645,11 @@ index 1111111..2222222 100644
             None,
             None,
         );
-        let mut state = AppState::new(out, "test_repo".into());
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
 
         // Step down through every single row and verify render_frame never panics
         for _ in 0..state.flat.len() + 5 {
@@ -537,8 +689,62 @@ index 1111111..2222222 100644
     }
 
     #[test]
+    fn test_note_commit_persists_and_deletes() {
+        let notes_path = std::env::temp_dir().join(format!(
+            "diffuse-test-note-lifecycle-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&notes_path);
+        let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+
+        let file = state.current_file().unwrap().path.clone();
+        state.note_draft = Some("check this **carefully**".into());
+        state.commit_note_draft();
+        assert!(state.note_draft.is_none());
+
+        let notes = crate::notes::notes_for_file(&state.notes, "test_repo", &file);
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].text, "check this **carefully**");
+        assert!(
+            notes[0].start > 0,
+            "note must anchor to a real row coordinate"
+        );
+
+        let on_disk = crate::notes::load_notes(&notes_path);
+        assert_eq!(
+            crate::notes::notes_for_file(&on_disk, "test_repo", &file).len(),
+            1,
+            "commit must persist through the notes DB file"
+        );
+
+        let frame = state.render_frame(100, 30);
+        assert!(
+            frame.contains("💬"),
+            "a committed note must render a callout: {:.200}",
+            frame
+        );
+
+        state.delete_notes();
+        assert!(
+            crate::notes::notes_for_file(&state.notes, "test_repo", &file).is_empty(),
+            "delete must remove the note from the DB"
+        );
+        let on_disk2 = crate::notes::load_notes(&notes_path);
+        assert!(
+            crate::notes::notes_for_file(&on_disk2, "test_repo", &file).is_empty(),
+            "delete must persist the removal"
+        );
+
+        let _ = std::fs::remove_file(notes_path);
+    }
+
+    #[test]
     fn test_help_modal_toggles_and_renders() {
-        let mut state = AppState::new(sample_output(), "test_repo".into());
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
 
         let plain = state.render_frame(100, 30);
         assert!(

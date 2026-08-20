@@ -12,7 +12,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
-    env, fs, io,
+    env,
+    ffi::OsString,
+    fs, io,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
@@ -48,16 +50,46 @@ pub struct ReviewNote {
 /// The notes database: repo -> (`file_path` -> list of notes).
 pub type NotesDB = HashMap<String, HashMap<String, Vec<ReviewNote>>>;
 
-/// Default notes path (`~/.pi/review/notes.json`).
-pub fn default_notes_path() -> PathBuf {
-    if let Some(home) = env::var_os("HOME") {
-        PathBuf::from(home)
-            .join(".pi")
-            .join("review")
-            .join("notes.json")
-    } else {
-        PathBuf::from(".pi/review/notes.json")
+/// Extension-agnostic state directory for diffuse: `$XDG_STATE_HOME/diffuse`,
+/// else `~/.local/state/diffuse`, else `.diffuse` relative to the cwd.
+///
+/// The engine is consumer-agnostic (see the root AGENTS.md) — its default
+/// state never lives under a consumer's directory (e.g. `~/.pi/review/`). A
+/// consumer may point diffuse anywhere it likes via `--notes-file`; the
+/// binary's own default stays its own.
+pub fn default_state_dir() -> PathBuf {
+    state_dir_from(env::var_os("XDG_STATE_HOME"), env::var_os("HOME"))
+}
+
+fn state_dir_from(xdg_state_home: Option<OsString>, home: Option<OsString>) -> PathBuf {
+    if let Some(x) = xdg_state_home {
+        return PathBuf::from(x).join("diffuse");
     }
+    if let Some(h) = home {
+        return PathBuf::from(h)
+            .join(".local")
+            .join("state")
+            .join("diffuse");
+    }
+    PathBuf::from(".diffuse")
+}
+
+/// Default notes database path (`$XDG_STATE_HOME/diffuse/notes.json`).
+pub fn default_notes_path() -> PathBuf {
+    default_state_dir().join("notes.json")
+}
+
+/// Default TUI resume-position path (`$XDG_STATE_HOME/diffuse/state.json`).
+pub fn default_state_path() -> PathBuf {
+    default_state_dir().join("state.json")
+}
+
+/// Current Unix time in milliseconds, for note `created_at`.
+pub fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Load notes from disk. Returns an empty DB if the file does not exist or

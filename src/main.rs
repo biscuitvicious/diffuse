@@ -282,7 +282,7 @@ fn main() -> io::Result<()> {
         // Interactive TUI only when both ends are real terminals; any
         // piped or redirected end falls back to the full ANSI render.
         if !args.no_tui && stdin_tty && stdout_tty {
-            diffuse::tui::run_interactive_tui(out, repo_name)?;
+            diffuse::tui::run_interactive_tui(out, repo_name, notes_path)?;
         } else {
             let theme = diffuse::render::default_theme();
             let rendered = diffuse::render::render_pipeline_output(&out, &theme, true);

@@ -9,12 +9,16 @@ pub use event::handle_event;
 pub use terminal::TerminalGuard;
 
 use crate::bin_pipeline::PipelineOutput;
-use std::{io, time::Duration};
+use std::{io, path::PathBuf, time::Duration};
 
 /// Launch and run the interactive TUI application.
-pub fn run_interactive_tui(output: PipelineOutput, repo: String) -> io::Result<()> {
+pub fn run_interactive_tui(
+    output: PipelineOutput,
+    repo: String,
+    notes_path: PathBuf,
+) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
-    let mut state = AppState::new(output, repo);
+    let mut state = AppState::new(output, repo, notes_path);
 
     while !state.should_quit {
         let (width, height) = guard.size();

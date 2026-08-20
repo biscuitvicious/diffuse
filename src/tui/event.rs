@@ -16,11 +16,7 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
     // Handling note draft typing
     if let Some(ref mut draft) = state.note_draft {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
-            let text = draft.trim().to_string();
-            state.note_draft = None;
-            if !text.is_empty() {
-                // Note saving action placeholder
-            }
+            state.commit_note_draft();
             return;
         }
 
@@ -31,11 +27,7 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             KeyCode::Enter => {
                 // One-line draft: Enter commits. A literal '\n' would break the
                 // single-line status rendering.
-                let text = draft.trim().to_string();
-                state.note_draft = None;
-                if !text.is_empty() {
-                    // Note saving action placeholder
-                }
+                state.commit_note_draft();
             }
             KeyCode::Backspace => {
                 draft.pop();
@@ -109,6 +101,9 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
             state.note_draft = Some(String::new());
         }
+        (KeyModifiers::NONE, KeyCode::Char('d')) | (KeyModifiers::NONE, KeyCode::Char('D')) => {
+            state.delete_notes();
+        }
         _ => {}
     }
 }
@@ -142,6 +137,7 @@ mod tests {
                 untracked_skipped: Vec::new(),
             },
             "test".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
         );
         s.note_draft = Some("hello".into());
         s

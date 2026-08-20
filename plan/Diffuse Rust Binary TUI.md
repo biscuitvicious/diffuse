@@ -9,7 +9,7 @@
   - [x] Step 2.1: Terminal Raw Mode, Event Loop, Crossterm/Terminal Abstraction (`src/tui/terminal.rs`)
   - [x] Step 2.2: TUI Layout & Visual Frame Geometry (`src/tui/app.rs` — header, status, viewport, footer ribbon, help modal)
   - [·] Step 2.3: Keyboard & Mouse Navigation (`src/tui/event.rs`) — core keys done; mouse partial (wheel only), `NG` goto, Tab file switch, `^`/`$`, sep expansion pending
-  - [·] Step 2.4: Selection, Note Editing & Inline Prompts (`src/tui/`) — draft input done; note persistence (NotesDB), visual selection (`v`/`V`), note delete (`d`/`D`), callout rendering pending
+  - [·] Step 2.4: Selection, Note Editing & Inline Prompts (`src/tui/`) — draft input + note persistence (XDG-state `notes.json`), callouts, delete done; visual selection (`v`/`V`) pending
   - [ ] Step 2.5: Interactive Git Actions (`s`/`S` stage, `u`/`U` unstage, `x`/`X` discard, `o` editor) (`src/tui/`, `src/git.rs`)
   - [ ] Step 2.6: Extension Thin-Client Migration & Native `/review` Invocation Gate
 
@@ -89,10 +89,10 @@ Phase 1 shipped the renderer (row styles via the single `S_ADD/S_DEL/S_MOD/S_MOV
 
 ### Step 2.4: Selection, Note Editing & Inline Prompts
 - **Affected Files**: `src/tui/app.rs`, `src/tui/event.rs`, `src/notes/mod.rs`, `src/main.rs`
-- **Status**: in progress. Draft input done (`m`, Enter/Ctrl+Enter commit, Esc cancel). Pending sub-steps:
-  1. **Note persistence**: `AppState` gains the `NotesDB` + notes path + repo; commit actually `add_note` + `save_notes`; delete (`d`/`D`) `remove_notes` + save; `run_interactive_tui` passes the notes path. Notes render as `💬 [start-end] <markdown runs>` callouts (engine `note_runs`/`render_note_markdown`).
+- **Status**: in progress. Draft input + **note persistence done** (`m` draft, Enter/Ctrl+Enter commits via `commit_note_draft`, `d`/`D` deletes via `delete_notes`, 💬 callouts rendered from `AppState.notes`). Pending sub-steps:
+  1. ~~**Note persistence**~~ done: `AppState` owns the `NotesDB` + path; commit `add_note` + `save_notes`; delete `remove_notes` + save; callouts render `💬 [start-end] <markdown runs>`. **Storage decision (design review):** state lives in an **extension-agnostic** location — `$XDG_STATE_HOME/diffuse/` (default `~/.local/state/diffuse/`), `notes.json` + `state.json` — never under a consumer's dir (`~/.pi/review/`). The pi thin client passes `--notes-file` for its own continuity; diffuse's default stays its own (one-way dependency: pi → diffuse).
   2. **Visual selection** (`v`/`V`): `anchor`/`confirmed_sel` wired; selection band render (prefix + line lift); selection feeds note commit (`m` on a range), delete (`d`), and editor (`o`).
-- **Verification**: note lifecycle tests (add → saved → reloaded → delete), selection state-machine tests, render tests for callouts and the selection band.
+- **Verification**: `test_note_commit_persists_and_deletes`, `notes::tests` state-dir resolution tests; note lifecycle (add → saved → reloaded → delete).
 
 ### Step 2.5: Interactive Git Actions (`src/tui/`, `src/git.rs`)
 - **Affected Files**: `src/tui/event.rs`, `src/tui/app.rs`, `src/git.rs`, `src/main.rs`
