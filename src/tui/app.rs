@@ -71,6 +71,8 @@ pub struct AppState {
     pub file_finder: Option<crate::tui::finder::FileFinderState>,
     pub collapsed_files: std::collections::HashSet<usize>,
     pub last_content_width: usize,
+    pub is_dragging_scrollbar: bool,
+    pub last_viewport_start: usize,
 }
 
 impl AppState {
@@ -123,6 +125,8 @@ impl AppState {
             file_finder: None,
             collapsed_files,
             last_content_width: 80,
+            is_dragging_scrollbar: false,
+            last_viewport_start: 2,
         }
     }
 
@@ -652,6 +656,8 @@ impl AppState {
         let viewport_start_line = lines.len();
         let vh = height.saturating_sub(viewport_start_line + 2);
         let max_rows = vh.max(4);
+        self.last_viewport_start = viewport_start_line;
+        self.viewport_height = vh;
 
         let callouts = self.note_callouts();
         let band = self.band_rows();
@@ -668,26 +674,8 @@ impl AppState {
 
         // Compute visual geometry with content_width
         let est_content_width = width.saturating_sub(1);
-        let mut starts = Vec::with_capacity(self.flat.len());
-        let mut counts = Vec::with_capacity(self.flat.len());
-        let mut seg_counts = Vec::with_capacity(self.flat.len());
-        let mut total_vis_lines = 0;
-
-        for (idx, item) in self.flat.iter().enumerate() {
-            starts.push(total_vis_lines);
-            let div_lines = if div_at.contains_key(&idx) { 1 } else { 0 };
-            let header_lines = if item.is_file_header { 1 } else { 0 };
-            let row_segs = if item.is_file_header {
-                0
-            } else {
-                self.row_seg_count(idx, est_content_width)
-            };
-            let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
-            let item_total = div_lines + header_lines + row_segs + note_lines;
-            counts.push(item_total);
-            seg_counts.push(row_segs.max(1));
-            total_vis_lines += item_total;
-        }
+        let (mut starts, mut counts, mut seg_counts, mut total_vis_lines) =
+            self.visual_geometry(est_content_width);
 
         let has_scrollbar = total_vis_lines > vh && vh > 2;
         let content_width = if has_scrollbar {
@@ -698,25 +686,11 @@ impl AppState {
         self.last_content_width = content_width;
 
         if !has_scrollbar && content_width != est_content_width {
-            total_vis_lines = 0;
-            starts.clear();
-            counts.clear();
-            seg_counts.clear();
-            for (idx, item) in self.flat.iter().enumerate() {
-                starts.push(total_vis_lines);
-                let div_lines = if div_at.contains_key(&idx) { 1 } else { 0 };
-                let header_lines = if item.is_file_header { 1 } else { 0 };
-                let row_segs = if item.is_file_header {
-                    0
-                } else {
-                    self.row_seg_count(idx, content_width)
-                };
-                let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
-                let item_total = div_lines + header_lines + row_segs + note_lines;
-                counts.push(item_total);
-                seg_counts.push(row_segs.max(1));
-                total_vis_lines += item_total;
-            }
+            let res = self.visual_geometry(content_width);
+            starts = res.0;
+            counts = res.1;
+            seg_counts = res.2;
+            total_vis_lines = res.3;
         }
 
         // Adjust scroll based on cursor visual position
@@ -1196,6 +1170,86 @@ impl AppState {
             .unwrap_or(self.hunk_starts[0].flat);
         self.row_idx = target;
         self.vis_line = 0;
+    }
+
+    /// Computes full visual layout mapping: starts, counts, `seg_counts`, and
+    /// total visual lines.
+    pub fn visual_geometry(
+        &self,
+        content_width: usize,
+    ) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
+        let callouts = self.note_callouts();
+        let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
+            HashMap::new()
+        } else {
+            self.hunk_starts
+                .iter()
+                .map(|h| (h.flat, (h.file, h.hunk)))
+                .collect()
+        };
+
+        let mut starts = Vec::with_capacity(self.flat.len());
+        let mut counts = Vec::with_capacity(self.flat.len());
+        let mut seg_counts = Vec::with_capacity(self.flat.len());
+        let mut total_vis_lines = 0;
+
+        for (idx, item) in self.flat.iter().enumerate() {
+            starts.push(total_vis_lines);
+            let div_lines = if div_at.contains_key(&idx) { 1 } else { 0 };
+            let header_lines = if item.is_file_header { 1 } else { 0 };
+            let row_segs = if item.is_file_header {
+                0
+            } else {
+                self.row_seg_count(idx, content_width)
+            };
+            let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
+            let item_total = div_lines + header_lines + row_segs + note_lines;
+            counts.push(item_total);
+            seg_counts.push(row_segs.max(1));
+            total_vis_lines += item_total;
+        }
+
+        (starts, counts, seg_counts, total_vis_lines)
+    }
+
+    /// Scroll to a specific visual line offset (used by scrollbar dragging).
+    pub fn scroll_to_visual(&mut self, target_vis: usize) {
+        let (starts, counts, _seg_counts, total_vis_lines) =
+            self.visual_geometry(self.last_content_width);
+        let max_rows = self.viewport_height.max(4);
+        let max_scroll = total_vis_lines.saturating_sub(max_rows);
+        self.scroll = target_vis.min(max_scroll);
+
+        // Keep cursor in view
+        let cursor_flat = self.row_idx;
+        let hunk_div_offset = if self.hunk_starts.iter().any(|h| h.flat == cursor_flat) {
+            1
+        } else {
+            0
+        };
+        let cursor_vis =
+            starts.get(cursor_flat).copied().unwrap_or(0) + hunk_div_offset + self.vis_line;
+
+        if cursor_vis < self.scroll {
+            for (i, &s) in starts.iter().enumerate() {
+                if s + counts[i] > self.scroll {
+                    self.row_idx = i;
+                    self.vis_line = 0;
+                    break;
+                }
+            }
+        } else if cursor_vis >= self.scroll + max_rows {
+            let bottom_vis = (self.scroll + max_rows).saturating_sub(1);
+            let mut target_row = self.row_idx;
+            for (i, &s) in starts.iter().enumerate().rev() {
+                if s <= bottom_vis {
+                    target_row = i;
+                    break;
+                }
+            }
+            self.row_idx = target_row;
+            self.vis_line = 0;
+        }
     }
 
     pub fn prev_hunk(&mut self) {

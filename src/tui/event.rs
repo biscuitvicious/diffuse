@@ -300,6 +300,12 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
 
 fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
     use crossterm::event::MouseButton;
+    let header_offset = state.last_viewport_start;
+    let vh = state.viewport_height;
+    let col = mouse.column as usize;
+    let row = mouse.row as usize;
+    let is_on_scrollbar = col >= state.last_content_width;
+
     match mouse.kind {
         MouseEventKind::ScrollDown => {
             state.move_down();
@@ -312,25 +318,61 @@ fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
             state.move_up();
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            let header_offset = 2 + if state.status_message.is_some() { 1 } else { 0 };
-            if (mouse.row as usize) >= header_offset {
-                let target = state.scroll + (mouse.row as usize - header_offset);
-                if target < state.flat.len() {
-                    state.row_idx = target;
+            if is_on_scrollbar && row >= header_offset && row < header_offset + vh {
+                state.is_dragging_scrollbar = true;
+                let row_in_vh = row - header_offset;
+                let (_starts, _counts, _seg, total_vis) =
+                    state.visual_geometry(state.last_content_width);
+                let max_scroll = total_vis.saturating_sub(vh);
+                if max_scroll > 0 && vh > 1 {
+                    let target_vis =
+                        ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64).round() as usize;
+                    state.scroll_to_visual(target_vis);
+                }
+            } else if row >= header_offset && row < header_offset + vh {
+                state.is_dragging_scrollbar = false;
+                let target_vis = state.scroll + (row - header_offset);
+                let (starts, counts, _seg, _total_vis) =
+                    state.visual_geometry(state.last_content_width);
+                for (i, &s) in starts.iter().enumerate() {
+                    if target_vis >= s && target_vis < s + counts[i] {
+                        state.row_idx = i;
+                        state.vis_line = 0;
+                        break;
+                    }
                 }
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            if state.anchor.is_none() {
-                state.anchor = Some(state.row_idx);
-            }
-            let header_offset = 2 + if state.status_message.is_some() { 1 } else { 0 };
-            if (mouse.row as usize) >= header_offset {
-                let target = state.scroll + (mouse.row as usize - header_offset);
-                if target < state.flat.len() {
-                    state.row_idx = target;
+            if state.is_dragging_scrollbar {
+                let clamped_row = row.clamp(header_offset, header_offset + vh.saturating_sub(1));
+                let row_in_vh = clamped_row - header_offset;
+                let (_starts, _counts, _seg, total_vis) =
+                    state.visual_geometry(state.last_content_width);
+                let max_scroll = total_vis.saturating_sub(vh);
+                if max_scroll > 0 && vh > 1 {
+                    let target_vis =
+                        ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64).round() as usize;
+                    state.scroll_to_visual(target_vis);
+                }
+            } else if row >= header_offset && row < header_offset + vh {
+                if state.anchor.is_none() {
+                    state.anchor = Some(state.row_idx);
+                }
+                let target_vis = state.scroll + (row - header_offset);
+                let (starts, counts, _seg, _total_vis) =
+                    state.visual_geometry(state.last_content_width);
+                for (i, &s) in starts.iter().enumerate() {
+                    if target_vis >= s && target_vis < s + counts[i] {
+                        state.row_idx = i;
+                        state.vis_line = 0;
+                        break;
+                    }
                 }
             }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            state.is_dragging_scrollbar = false;
         }
         _ => {}
     }
@@ -747,5 +789,50 @@ index 3333333..4444444 100644
             initial_len,
             "restored original flat row count"
         );
+    }
+
+    #[test]
+    fn test_mouse_scrollbar_drag() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut s = state_with_rows();
+        // Render once to populate viewport geometry
+        s.render_frame(80, 10);
+        assert!(s.viewport_height > 0);
+
+        // Click on scrollbar column (col 79, row 5)
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 79,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(s.is_dragging_scrollbar, "dragging flag should be active");
+
+        // Drag down to row 8
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 79,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(s.is_dragging_scrollbar);
+
+        // Release mouse
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 79,
+                row: 8,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(!s.is_dragging_scrollbar, "dragging flag should be cleared");
     }
 }
