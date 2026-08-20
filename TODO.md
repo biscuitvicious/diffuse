@@ -1,11 +1,11 @@
 # diffuse — TODO & Future Roadmap
 
 ## 1. Rust Binary & Standalone TUI
-- [ ] **Standalone Rust TUI**: Full terminal user interface in the `diffuse` binary equivalent to the Pi extension's interactive review UI.
-- [ ] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
+- [x] **Standalone Rust TUI**: Full terminal user interface in the `diffuse` binary equivalent to the Pi extension's interactive review UI.
+- [x] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
 - [ ] **CLI UX & subcommands**: Remove raw `JSON | stdin` default mode in favor of explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse --pager`).
-- [ ] **Automatic repository discovery**: If invoked without a repository path parameter, discover the git repository root in the current working directory or its ancestors.
+- [x] **Automatic repository discovery**: If invoked without a repository path parameter, discover the git repository root in the current working directory or its ancestors.
 
 ## 2. Streaming Pipeline & Incremental Loading (Pi Extension & Engine)
 - [ ] **Incremental file streaming**: Append and render each file as it arrives from the backend rather than waiting for the entire multi-file diff to finish processing.
@@ -13,7 +13,7 @@
 
 ## 3. UI, Navigation & Display Features
 - [ ] **Expand / collapse entire files**: Toggle file visibility on/off by pressing Enter on the file header row.
-- [ ] **Non-wrapping mode with horizontal scrolling**: Option to disable line wrapping and horizontally scroll wide rows.
+- [x] **Non-wrapping mode with horizontal scrolling**: Option to disable line wrapping and horizontally scroll wide rows (`h`/`l`, `^`/`$`).
 - [ ] **Scrollbar(s)**: Visual scrollbar indicators for both file navigation and viewport position.
 - [ ] **Untracked files support**: Detect and display untracked files in the repository (collapsed by default).
 
