@@ -18,6 +18,7 @@ if [ -z "$INSTALL_DIR" ]; then
 	rm -rf "$HOME/.pi/agent/extensions/review.ts" "$HOME/.pi/agent/extensions/src" "$HOME/.pi/agent/extensions/bin"
 fi
 mkdir -p "$DEST/bin"
+rm -rf "$DEST/src"
 cp -r src "$DEST/"
 sed "s/@BUILD@/$BUILD/g" review.ts > "$DEST/review.ts"
 cp index.ts "$DEST/index.ts"

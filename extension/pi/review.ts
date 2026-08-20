@@ -30,12 +30,12 @@ export default function (pi: ExtensionAPI) {
 
 			const bin = diffuseBinPath();
 			const argv: string[] = [
-				...parsed.baseArgs,
-				...parsed.paths,
 				"--repo",
 				repoName,
 				"--notes-file",
 				NOTES_FILE,
+				...parsed.baseArgs,
+				...(parsed.paths.length > 0 ? ["--", ...parsed.paths] : []),
 			];
 
 			await ctx.ui.custom<number>((tui, _theme, _kb, done) => {
