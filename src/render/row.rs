@@ -69,11 +69,13 @@ pub fn styled_prefix(
     old_line: Option<u32>,
     moved: bool,
     runs: &[OutputRun],
+    in_hunk: bool,
 ) -> String {
     let fg_reset = "\x1b[39m\x1b[23m";
     if is_common_only_row(kind, runs) {
         let pad = pad4(new_line);
-        return format!("\x1b[38;5;242m{pad}  {fg_reset}");
+        let color = if in_hunk { "38;5;252" } else { "38;5;242" };
+        return format!("\x1b[{color}m{pad}  {fg_reset}");
     }
     match kind {
         RowKind::Del => {
@@ -104,7 +106,8 @@ pub fn styled_prefix(
                 format!("\x1b[38;5;147m{pad} \x1b[38;5;117m{}{fg_reset}", S_MOV.icon)
             } else {
                 let pad = pad4(new_line.or(old_line));
-                format!("\x1b[38;5;242m{pad}  {fg_reset}")
+                let color = if in_hunk { "38;5;252" } else { "38;5;242" };
+                format!("\x1b[{color}m{pad}  {fg_reset}")
             }
         }
     }
@@ -152,7 +155,6 @@ pub fn render_row_segment(
     prefix: &str,
     selected: bool,
     band: bool,
-    hunk_ctx: bool,
     col_offset: usize,
     word_diff: bool,
     syntax_on: bool,
@@ -164,18 +166,14 @@ pub fn render_row_segment(
     let is_pure_del_mod = is_mod_row && is_pure_deletion_mod(spans, text);
 
     // The visual-selection band: one neutral shade applied across the whole
-    // row (distinct from the cursor's per-style lift). The hunk-extent lift
-    // is a subtler shade applied to context rows only.
+    // row (distinct from the cursor's per-style lift).
     let band_bg = "\x1b[48;5;240m";
-    let hunk_ctx_bg = "\x1b[48;5;238m";
 
     let line_bg = if is_ctx {
         if selected {
             "\x1b[48;5;237m".to_string()
         } else if band {
             band_bg.to_string()
-        } else if hunk_ctx {
-            hunk_ctx_bg.to_string()
         } else {
             String::new()
         }
@@ -230,8 +228,6 @@ pub fn render_row_segment(
                 "\x1b[48;5;237m"
             } else if band {
                 band_bg
-            } else if hunk_ctx {
-                hunk_ctx_bg
             } else {
                 ""
             }
@@ -268,8 +264,6 @@ pub fn render_row_segment(
                 "\x1b[48;5;237m"
             } else if band {
                 band_bg
-            } else if hunk_ctx {
-                hunk_ctx_bg
             } else {
                 ""
             }
@@ -338,36 +332,17 @@ pub fn render_row_segment(
         }
     }
 
-    let trail_bg = if selected || !is_ctx {
-        &line_bg
-    } else if hunk_ctx {
-        hunk_ctx_bg
-    } else {
-        ""
-    };
-    let lead_bg = if selected && !is_ctx {
-        &line_bg
-    } else if is_ctx && hunk_ctx && !band {
-        hunk_ctx_bg
-    } else {
-        ""
-    };
+    let trail_bg = if selected || !is_ctx { &line_bg } else { "" };
+    let lead_bg = if selected && !is_ctx { &line_bg } else { "" };
     format!("{lead_bg}{prefix}{out}{trail_bg}")
 }
 
 /// Render a row in the raw unified-diff representation: a plain marker
 /// (`+ ` / `- ` / two spaces) plus the line text in a flat green/red/muted
 /// color — no gutter, no word-level spans. `Sep` rows are `@@` hunk headers.
-/// Backgrounds follow the same selected/band/extent precedence as the visual
+/// Backgrounds follow the same selected/band precedence as the visual
 /// renderer so the UI shell (navigation, selection, notes) reads identically.
-pub fn render_raw_row(
-    kind: RowKind,
-    text: &str,
-    selected: bool,
-    band: bool,
-    hunk_ctx: bool,
-) -> String {
-    let is_ctx = matches!(kind, RowKind::Ctx | RowKind::Sep);
+pub fn render_raw_row(kind: RowKind, text: &str, selected: bool, band: bool) -> String {
     let (marker, fg, bg) = match kind {
         RowKind::Add => {
             let bg = if selected {
@@ -403,8 +378,6 @@ pub fn render_raw_row(
                 "\x1b[48;5;237m".to_string()
             } else if band {
                 "\x1b[48;5;240m".to_string()
-            } else if hunk_ctx {
-                "\x1b[48;5;238m".to_string()
             } else {
                 String::new()
             };
@@ -412,7 +385,7 @@ pub fn render_raw_row(
         }
     };
     let mut out = format!("{bg}{fg}{marker}{text}");
-    if selected || band || (hunk_ctx && is_ctx) {
+    if selected || band {
         out.push_str(&bg);
     }
     out.push_str("\x1b[39m\x1b[22m");
@@ -466,7 +439,6 @@ mod tests {
             prefix,
             false,
             false,
-            false,
             0,
             true,
             true,
@@ -502,7 +474,6 @@ mod tests {
             prefix,
             false,
             false,
-            false,
             0,
             true,
             true,
@@ -525,7 +496,6 @@ mod tests {
             0,
             1,
             prefix,
-            false,
             false,
             false,
             1,
@@ -562,7 +532,6 @@ mod tests {
             prefix,
             false,
             false,
-            false,
             0,
             true,
             true,
@@ -582,7 +551,6 @@ mod tests {
             0,
             2,
             prefix,
-            false,
             false,
             false,
             0,
@@ -626,7 +594,6 @@ mod tests {
             prefix,
             false,
             false,
-            false,
             4, // col_offset skips "pub "
             true,
             true,
@@ -654,13 +621,15 @@ mod tests {
 
     #[test]
     fn test_render_raw_row_colors() {
-        let add = render_raw_row(RowKind::Add, "added_line", false, false, false);
-        assert!(add.contains("\x1b[38;5;120m+added_line"));
+        let add = render_raw_row(RowKind::Add, "added_line", false, false);
+        assert!(add.contains("+added_line"));
+        assert!(add.contains("\x1b[38;5;120m"));
 
-        let del = render_raw_row(RowKind::Del, "deleted_line", false, false, false);
-        assert!(del.contains("\x1b[38;5;203m-deleted_line"));
+        let del = render_raw_row(RowKind::Del, "deleted_line", false, false);
+        assert!(del.contains("-deleted_line"));
+        assert!(del.contains("\x1b[38;5;203m"));
 
-        let ctx = render_raw_row(RowKind::Ctx, "context_line", false, false, false);
-        assert!(ctx.contains("\x1b[38;5;255m context_line"));
+        let ctx = render_raw_row(RowKind::Ctx, "context_line", false, false);
+        assert!(ctx.contains(" context_line"));
     }
 }

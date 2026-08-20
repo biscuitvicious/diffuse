@@ -28,15 +28,12 @@ pub struct HunkStart {
     pub hunk: usize,
 }
 
-/// A hunk's allocated context envelope and change bounds (line coordinates),
-/// used for the divider `ctx N▴ M▾` counters and the current-hunk extent.
+/// A hunk's allocated context envelope (above/below counts),
+/// used for the divider `ctx N▴ M▾` counters.
 #[derive(Clone, Copy, Debug)]
 pub struct HunkMeta {
     pub above: usize,
     pub below: usize,
-    pub change_start: usize,
-    pub change_end: usize,
-    pub side_is_new: bool,
 }
 
 pub struct FlatRow {
@@ -335,10 +332,7 @@ impl AppState {
     /// so recompute them over the hunks the same way `f.rows` was built
     /// (forced 6/6 above/below).
     fn build_hunk_meta(output: &PipelineOutput) -> Vec<Vec<HunkMeta>> {
-        use crate::{
-            parse::RowKind,
-            visible::{Side, allocate_context, hunk_change_bounds},
-        };
+        use crate::visible::allocate_context;
         output
             .files
             .iter()
@@ -360,20 +354,9 @@ impl AppState {
                 f.hunks
                     .iter()
                     .enumerate()
-                    .map(|(i, h)| {
-                        let side_is_new = h
-                            .rows
-                            .iter()
-                            .any(|r| matches!(r.kind, RowKind::Add | RowKind::Mod));
-                        let side = if side_is_new { Side::New } else { Side::Old };
-                        let (change_start, change_end) = hunk_change_bounds(&hunks[i], side);
-                        HunkMeta {
-                            above: alloc[i].above,
-                            below: alloc[i].below,
-                            change_start,
-                            change_end,
-                            side_is_new,
-                        }
+                    .map(|(i, _h)| HunkMeta {
+                        above: alloc[i].above,
+                        below: alloc[i].below,
                     })
                     .collect()
             })
@@ -842,6 +825,18 @@ impl AppState {
                 for s_idx in 0..seg_count {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                        let pfx = if s_idx == 0 {
+                            styled_prefix(
+                                r.kind,
+                                r.new_line,
+                                r.old_line,
+                                r.moved,
+                                &r.runs,
+                                in_hunk_extent,
+                            )
+                        } else {
+                            "\x1b[38;5;242m      \x1b[39m".to_string()
+                        };
                         let mut rendered_row = if self.raw_diff {
                             let text_cols = content_width.max(1);
                             let seg_start = s_idx * text_cols;
@@ -852,22 +847,11 @@ impl AppState {
                             } else {
                                 String::new()
                             };
-                            render_raw_row(
-                                r.kind,
-                                &piece,
-                                is_selected,
-                                in_band && !is_selected,
-                                in_hunk_extent && !is_selected,
-                            )
+                            render_raw_row(r.kind, &piece, is_selected, in_band && !is_selected)
                         } else {
                             let text_cols = content_width.saturating_sub(6).max(1);
                             let seg_start = s_idx * text_cols;
                             let seg_end = seg_start + text_cols;
-                            let pfx = if s_idx == 0 {
-                                styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs)
-                            } else {
-                                "\x1b[38;5;242m      \x1b[39m".to_string()
-                            };
                             render_row_segment(
                                 &r.text,
                                 r.del_text.as_deref(),
@@ -880,7 +864,6 @@ impl AppState {
                                 &pfx,
                                 is_selected,
                                 in_band && !is_selected,
-                                in_hunk_extent && !is_selected,
                                 self.col_offset,
                                 self.word_diff,
                                 self.syntax_on,
@@ -896,8 +879,6 @@ impl AppState {
                             rendered_row.push_str(&sel_bg);
                         } else if in_band {
                             rendered_row.push_str("\x1b[48;5;240m");
-                        } else if in_hunk_extent {
-                            rendered_row.push_str("\x1b[48;5;238m");
                         }
                         lines.push(rendered_row);
                     }
@@ -1189,11 +1170,7 @@ impl AppState {
                     self.word_diff,
                 );
                 let len = disp.graphemes(true).count();
-                if len == 0 {
-                    1
-                } else {
-                    len.div_ceil(text_cols)
-                }
+                if len == 0 { 1 } else { len.div_ceil(text_cols) }
             }
         } else {
             1
@@ -1275,39 +1252,39 @@ impl AppState {
         idx
     }
 
-    /// Ctx rows inside the current hunk's allocated context envelope — the
-    /// soft extent lift that shows where the hunk at the cursor runs. Content
-    /// rows keep their own tints; the selection band wins where they overlap.
+    /// Marks all rows belonging to the current hunk envelope for gutter
+    /// highlight.
     fn hunk_ctx_extent_rows(&self) -> Vec<bool> {
         let mut set = vec![false; self.flat.len()];
         let Some(hi) = self.current_hunk() else {
             return set;
         };
         let fi = self.current_file_idx();
-        let Some(meta) = self.hunk_meta.get(fi).and_then(|v| v.get(hi)) else {
+        let Some(f) = self.output.files.get(fi) else {
             return set;
         };
-        let lo = meta.change_start.saturating_sub(meta.above);
-        let hi_line = meta.change_end + meta.below;
+        let Some(h) = f.hunks.get(hi) else {
+            return set;
+        };
+        let old_lo = h.old_start;
+        let old_hi = h.old_start + h.old_count;
+        let new_lo = h.new_start;
+        let new_hi = h.new_start + h.new_count;
+
         for (i, item) in self.flat.iter().enumerate() {
-            if item.file_idx != fi {
+            if item.file_idx != fi || item.is_file_header {
                 continue;
             }
             let r = &item.row;
-            if !matches!(r.kind, crate::parse::RowKind::Ctx) {
-                continue;
-            }
-            let (side_ok, c) = if meta.side_is_new {
-                (r.new_line.is_some(), r.new_line)
-            } else {
-                (r.old_line.is_some(), r.old_line)
-            };
-            if side_ok && let Some(c) = c {
-                let c = c as usize;
-                if (lo..=hi_line).contains(&c) {
+            if let Some(nl) = r.new_line
+                && nl >= new_lo && nl < new_hi {
+                    set[i] = true;
+                    continue;
+                }
+            if let Some(ol) = r.old_line
+                && ol >= old_lo && ol < old_hi {
                     set[i] = true;
                 }
-            }
         }
         set
     }
@@ -2042,8 +2019,12 @@ index 1111111..2222222 100644
             "the current hunk's divider is the bright bar"
         );
         assert!(
-            frame.contains("\x1b[48;5;238m"),
-            "ctx rows in the current hunk's envelope get the extent lift"
+            frame.contains("\x1b[38;5;252m"),
+            "number gutter in the current hunk's envelope gets the highlighted color"
+        );
+        assert!(
+            !frame.contains("\x1b[48;5;238m"),
+            "ctx rows should not have distracting background tinting"
         );
 
         state.next_hunk();

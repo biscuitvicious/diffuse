@@ -65,7 +65,7 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
     for h in &file.hunks {
         for r in &h.rows {
             let pfx = if styled_prefixes {
-                styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs)
+                styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, false)
             } else {
                 let plain = prefix_of(r.kind, r.new_line, r.old_line, r.moved, &r.runs);
                 format!("{plain} ")
@@ -81,7 +81,6 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
                 0,
                 usize::MAX,
                 &pfx,
-                false,
                 false,
                 false,
                 0,
