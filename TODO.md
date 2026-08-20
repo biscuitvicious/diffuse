@@ -12,10 +12,10 @@
 - [ ] **Incremental diff line streaming (JSONL)**: Stream and render individual tokenized rows/lines progressively over a JSON Lines protocol.
 
 ## 3. UI, Navigation & Display Features
-- [ ] **Expand / collapse entire files**: Toggle file visibility on/off by pressing Enter on the file header row.
+- [x] **Expand / collapse entire files**: Toggle file visibility on/off by pressing Enter on the file header row.
 - [x] **Non-wrapping mode with horizontal scrolling**: Option to disable line wrapping and horizontally scroll wide rows (`h`/`l`, `^`/`$`).
-- [ ] **Scrollbar(s)**: Visual scrollbar indicators for both file navigation and viewport position.
-- [ ] **Untracked files support**: Detect and display untracked files in the repository (collapsed by default).
+- [x] **Scrollbar(s)**: Visual scrollbar indicators for both file navigation and viewport position.
+- [x] **Untracked files support**: Detect and display untracked files in the repository (collapsed by default).
 
 ## 4. Notes & Review State
 - [ ] **Mark notes as done / resolved**: Ability to mark review notes as done and display them collapsed.

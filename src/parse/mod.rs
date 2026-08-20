@@ -467,6 +467,10 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
             if let Some(c) = cur.as_mut() {
                 c.status = FileStatus::Added;
             }
+        } else if line.starts_with("untracked file mode") {
+            if let Some(c) = cur.as_mut() {
+                c.status = FileStatus::Untracked;
+            }
         } else if line.starts_with("deleted file mode") {
             if let Some(c) = cur.as_mut() {
                 c.status = FileStatus::Deleted;

@@ -28,7 +28,8 @@ discipline for any change in golden output.
 | `opt-2-cache-markdown-regex` | ✅ | ✅ | perf commit captured as fixture |
 | `opt-3-cache-lang-profile` | ✅ | ✅ | perf commit captured as fixture |
 | `opt-4-manual-scanner-prefilter` | ✅ | ✅ | perf commit captured as fixture |
-| `diffuse-history-mid` | ✅ | ❌ | huge (wire-only; too slow for the TS render walk) |
+| `diffuse-history-mid` | ✅ | ❌ | huge (wire-only) |
+| `untracked-files` | ✅ | ✅ | untracked additions & status representation |
 
 The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.txt` golden renders. `tests/golden/` is

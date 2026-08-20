@@ -73,13 +73,21 @@ pub struct AppState {
     pub git_args: Vec<String>,
     pub pending_editor: Option<crate::tui::editor::EditorRequest>,
     pub file_finder: Option<crate::tui::finder::FileFinderState>,
+    pub collapsed_files: std::collections::HashSet<usize>,
 }
 
 impl AppState {
     pub fn new(output: PipelineOutput, repo: String, notes_path: PathBuf) -> Self {
-        let (flat, hunk_starts) = Self::build_visual_flat(&output);
+        let mut collapsed_files = std::collections::HashSet::new();
+        for (fi, f) in output.files.iter().enumerate() {
+            if f.status == "untracked" {
+                collapsed_files.insert(fi);
+            }
+        }
 
-        // Start on first coordinate row if available
+        let (flat, hunk_starts) = Self::build_visual_flat(&output, &collapsed_files);
+
+        // Start on first coordinate row if available, or first row (e.g. header)
         let start_row = flat
             .iter()
             .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
@@ -116,6 +124,7 @@ impl AppState {
             git_args: Vec::new(),
             pending_editor: None,
             file_finder: None,
+            collapsed_files,
         }
     }
 
@@ -127,8 +136,11 @@ impl AppState {
 
     /// The visual (reflowed) flat sequence: per file a header banner, then the
     /// engine's pre-assembled visible rows (padded context, merged mod pairs).
-    fn build_visual_flat(output: &PipelineOutput) -> (Vec<FlatRow>, Vec<HunkStart>) {
-        let flat = Self::build_flat(output);
+    fn build_visual_flat(
+        output: &PipelineOutput,
+        collapsed_files: &std::collections::HashSet<usize>,
+    ) -> (Vec<FlatRow>, Vec<HunkStart>) {
+        let flat = Self::build_flat(output, collapsed_files);
         let hunk_starts = Self::build_hunk_starts(output, &flat);
         (flat, hunk_starts)
     }
@@ -136,11 +148,17 @@ impl AppState {
     /// The raw unified-diff flat sequence: per file a header banner, then per
     /// hunk an `@@` header row and its rows with mod/move pairs un-collapsed
     /// into separate `-`/`+` lines. Hunk navigation jumps to the `@@` rows.
-    fn build_raw_flat(output: &PipelineOutput) -> (Vec<FlatRow>, Vec<HunkStart>) {
+    fn build_raw_flat(
+        output: &PipelineOutput,
+        collapsed_files: &std::collections::HashSet<usize>,
+    ) -> (Vec<FlatRow>, Vec<HunkStart>) {
         let mut flat = Vec::new();
         let mut hunk_starts = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
             flat.push(Self::file_header_row(fi, &f.path));
+            if collapsed_files.contains(&fi) {
+                continue;
+            }
             for (hi, h) in f.hunks.iter().enumerate() {
                 flat.push(FlatRow {
                     file_idx: fi,
@@ -224,10 +242,16 @@ impl AppState {
     }
 
     /// Build the flat row list (shared by the visual and raw representations).
-    fn build_flat(output: &PipelineOutput) -> Vec<FlatRow> {
+    fn build_flat(
+        output: &PipelineOutput,
+        collapsed_files: &std::collections::HashSet<usize>,
+    ) -> Vec<FlatRow> {
         let mut flat = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
             flat.push(Self::file_header_row(fi, &f.path));
+            if collapsed_files.contains(&fi) {
+                continue;
+            }
             if !f.rows.is_empty() {
                 for r in &f.rows {
                     flat.push(FlatRow {
@@ -649,6 +673,7 @@ impl AppState {
             self.scroll = self.row_idx.saturating_sub(max_rows - 1);
         }
 
+        let viewport_start_line = lines.len();
         let callouts = self.note_callouts();
         let band = self.band_rows();
         let hunk_extent = self.hunk_ctx_extent_rows();
@@ -706,9 +731,18 @@ impl AppState {
             if item.is_file_header {
                 let file_obj = &self.output.files[item.file_idx];
                 let f_counts = &file_obj.counts;
+                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
+                let indicator = if is_collapsed { "▸" } else { "▾" };
+                let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
                 let bar = format!(
-                    "─── {} ({}) +{} -{} ~{} ───",
-                    file_obj.path, file_obj.status, f_counts.adds, f_counts.dels, f_counts.mods
+                    "─── {} {} ({}) +{} -{} ~{}{} ───",
+                    indicator,
+                    file_obj.path,
+                    file_obj.status,
+                    f_counts.adds,
+                    f_counts.dels,
+                    f_counts.mods,
+                    collapse_tag
                 );
                 let styled_bar = if is_selected {
                     format!(
@@ -777,11 +811,39 @@ impl AppState {
             lines.push(String::new());
         }
 
+        // Phase 3: Visual Scrollbar overlay on viewport lines
+        let vh = height.saturating_sub(viewport_start_line + 2);
+        if self.flat.len() > vh && vh > 2 {
+            let thumb_size = ((vh as f64 / self.flat.len() as f64) * vh as f64)
+                .round()
+                .clamp(1.0, (vh.saturating_sub(1)) as f64) as usize;
+            let max_scroll = self.flat.len().saturating_sub(vh);
+            let thumb_offset = if max_scroll == 0 {
+                0
+            } else {
+                ((self.scroll as f64 / max_scroll as f64) * (vh.saturating_sub(thumb_size)) as f64)
+                    .round() as usize
+            };
+
+            for row_i in 0..vh {
+                let line_idx = viewport_start_line + row_i;
+                if line_idx < lines.len() {
+                    let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size {
+                        "\x1b[38;5;248m█\x1b[0m"
+                    } else {
+                        "\x1b[38;5;236m│\x1b[0m"
+                    };
+                    lines[line_idx].push(' ');
+                    lines[line_idx].push_str(sb_char);
+                }
+            }
+        }
+
         lines.push(format!(
             "\x1b[38;5;244m {}\x1b[39m",
             "─".repeat(width.saturating_sub(2).min(60))
         ));
-        lines.push("\x1b[38;5;244m [j/k]move [n/p]file [J/K]hunk [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help\x1b[39m".to_string());
+        lines.push("\x1b[38;5;244m [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help\x1b[39m".to_string());
 
         // Help modal overlays the frame when toggled on.
         if self.show_help {
@@ -1108,15 +1170,57 @@ impl AppState {
             )
         };
         let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_visual_flat(&self.output)
+            Self::build_visual_flat(&self.output, &self.collapsed_files)
         } else {
-            Self::build_raw_flat(&self.output)
+            Self::build_raw_flat(&self.output, &self.collapsed_files)
         };
         self.flat = flat;
         self.hunk_starts = hunk_starts;
         self.raw_diff = !self.raw_diff;
         self.anchor = None;
         self.goto_coord(file, coord, prefer_new);
+    }
+
+    pub fn toggle_file_collapse(&mut self, fi: usize) {
+        if self.collapsed_files.contains(&fi) {
+            self.collapsed_files.remove(&fi);
+        } else {
+            self.collapsed_files.insert(fi);
+        }
+        self.rebuild_flat_preserving_cursor(fi);
+    }
+
+    pub fn toggle_current_file_collapse(&mut self) {
+        let fi = self.current_file_idx();
+        self.toggle_file_collapse(fi);
+    }
+
+    fn rebuild_flat_preserving_cursor(&mut self, target_fi: usize) {
+        let (flat, hunk_starts) = if self.raw_diff {
+            Self::build_raw_flat(&self.output, &self.collapsed_files)
+        } else {
+            Self::build_visual_flat(&self.output, &self.collapsed_files)
+        };
+        self.flat = flat;
+        self.hunk_starts = hunk_starts;
+
+        // If target file is now collapsed, jump to its header row
+        if self.collapsed_files.contains(&target_fi) {
+            self.row_idx = self.first_row_of_file(target_fi);
+        } else if self.row_idx >= self.flat.len() {
+            self.row_idx = self.flat.len().saturating_sub(1);
+        }
+        self.adjust_scroll();
+    }
+
+    fn adjust_scroll(&mut self) {
+        let max_rows = self.viewport_height.saturating_sub(2);
+        if self.row_idx < self.scroll {
+            self.scroll = self.row_idx;
+        }
+        if self.row_idx >= self.scroll + max_rows {
+            self.scroll = self.row_idx.saturating_sub(max_rows.saturating_sub(1));
+        }
     }
 
     pub fn reload(&mut self, output: PipelineOutput) {
@@ -1131,6 +1235,12 @@ impl AppState {
             (cur_path, c, prefer)
         };
 
+        for (fi, f) in output.files.iter().enumerate() {
+            if f.status == "untracked" && !self.output.files.iter().any(|old| old.path == f.path) {
+                self.collapsed_files.insert(fi);
+            }
+        }
+
         self.output = output;
         if self.output.files.is_empty() {
             self.flat.clear();
@@ -1142,9 +1252,9 @@ impl AppState {
 
         self.hunk_meta = Self::build_hunk_meta(&self.output);
         let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_raw_flat(&self.output)
+            Self::build_raw_flat(&self.output, &self.collapsed_files)
         } else {
-            Self::build_visual_flat(&self.output)
+            Self::build_visual_flat(&self.output, &self.collapsed_files)
         };
         self.flat = flat;
         self.hunk_starts = hunk_starts;
@@ -1825,5 +1935,116 @@ index 1111111..2222222 100644
             "round-tripping lands back on the same line"
         );
         assert!(!state.raw_diff);
+    }
+
+    #[test]
+    fn test_untracked_files_collapsed_by_default() {
+        let diff = r#"diff --git a/tracked.rs b/tracked.rs
+index 1111111..2222222 100644
+--- a/tracked.rs
++++ b/tracked.rs
+@@ -1 +1,2 @@
+ fn main() {}
++fn extra() {}
+"#;
+        let contents = [
+            (
+                "tracked.rs".to_string(),
+                "fn main() {}\nfn extra() {}\n".to_string(),
+            ),
+            (
+                "untracked.rs".to_string(),
+                "fn new_untracked() {}\n".to_string(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        // Add an untracked file to output
+        out.files.push(crate::bin_pipeline::OutputFile {
+            path: "untracked.rs".to_string(),
+            status: "untracked".to_string(),
+            new_line_count: 1,
+            old_line_count: 0,
+            new_content: vec!["fn new_untracked() {}".to_string()],
+            old_content: Vec::new(),
+            hunks: vec![crate::bin_pipeline::OutputHunk {
+                old_start: 0,
+                old_count: 0,
+                new_start: 1,
+                new_count: 1,
+                rows: vec![crate::bin_pipeline::OutputRow {
+                    kind: crate::parse::RowKind::Add,
+                    new_line: Some(1),
+                    old_line: None,
+                    text: "fn new_untracked() {}".to_string(),
+                    del_text: None,
+                    spans: Default::default(),
+                    runs: Vec::new(),
+                    wholesale: false,
+                    moved: false,
+                }],
+            }],
+            counts: crate::counts::FileCounts {
+                adds: 1,
+                dels: 0,
+                mods: 0,
+                movs: 0,
+            },
+            fences: Vec::new(),
+            notes: Vec::new(),
+            content_runs: Vec::new(),
+            rows: Vec::new(),
+        });
+
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-untracked.json"),
+        );
+
+        assert!(
+            state.collapsed_files.contains(&1),
+            "untracked file (index 1) must be collapsed by default"
+        );
+        assert!(
+            !state.collapsed_files.contains(&0),
+            "tracked file (index 0) must be expanded by default"
+        );
+
+        // The flat sequence must contain rows for file 0, but only the header row for
+        // file 1
+        let file_1_rows: Vec<_> = state.flat.iter().filter(|r| r.file_idx == 1).collect();
+        assert_eq!(
+            file_1_rows.len(),
+            1,
+            "collapsed file only has 1 flat row (header)"
+        );
+        assert!(file_1_rows[0].is_file_header);
+
+        let frame = state.render_frame(100, 30);
+        assert!(
+            frame.contains("▸ untracked.rs (untracked)"),
+            "frame shows collapsed indicator"
+        );
+
+        // Toggle collapse on file 1 to expand it
+        state.toggle_file_collapse(1);
+        assert!(
+            !state.collapsed_files.contains(&1),
+            "untracked file is now expanded"
+        );
+        let file_1_rows_expanded: Vec<_> = state.flat.iter().filter(|r| r.file_idx == 1).collect();
+        assert!(
+            file_1_rows_expanded.len() > 1,
+            "expanded file has header and content rows"
+        );
+
+        let frame_expanded = state.render_frame(100, 30);
+        assert!(
+            frame_expanded.contains("▾ untracked.rs (untracked)"),
+            "frame shows expanded indicator"
+        );
     }
 }

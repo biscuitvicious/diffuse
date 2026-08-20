@@ -101,6 +101,9 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                 state.should_quit = true;
             }
         }
+        (KeyModifiers::NONE, KeyCode::Enter) => {
+            state.toggle_current_file_collapse();
+        }
         (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
             state.move_down();
         }
@@ -714,6 +717,35 @@ index 3333333..4444444 100644
             s.current_file_idx(),
             1,
             "stays on banana.rs after confirmation"
+        );
+    }
+
+    #[test]
+    fn test_enter_key_toggles_file_collapse() {
+        let mut s = state_with_rows();
+        assert!(!s.collapsed_files.contains(&0), "starts expanded");
+        let initial_len = s.flat.len();
+        assert!(initial_len > 1);
+
+        // Press Enter to collapse current file
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        );
+        assert!(s.collapsed_files.contains(&0), "now collapsed");
+        assert_eq!(s.flat.len(), 1, "collapsed file has 1 row (header)");
+        assert_eq!(s.row_idx, 0, "cursor on header row");
+
+        // Press Enter again to expand
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        );
+        assert!(!s.collapsed_files.contains(&0), "expanded again");
+        assert_eq!(
+            s.flat.len(),
+            initial_len,
+            "restored original flat row count"
         );
     }
 }
