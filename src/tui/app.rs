@@ -4,10 +4,12 @@ use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
     render::{
-        DiffuseTheme, S_ADD, S_DEL, S_MOD, render_raw_row, render_row_segment, styled_prefix,
+        DiffuseTheme, S_ADD, S_DEL, S_MOD, display_text, render_raw_row, render_row_segment,
+        styled_prefix,
     },
 };
 use std::{collections::HashMap, path::PathBuf};
+use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -74,6 +76,7 @@ pub struct AppState {
     pub pending_editor: Option<crate::tui::editor::EditorRequest>,
     pub file_finder: Option<crate::tui::finder::FileFinderState>,
     pub collapsed_files: std::collections::HashSet<usize>,
+    pub last_content_width: usize,
 }
 
 impl AppState {
@@ -125,6 +128,7 @@ impl AppState {
             pending_editor: None,
             file_finder: None,
             collapsed_files,
+            last_content_width: 80,
         }
     }
 
@@ -665,22 +669,9 @@ impl AppState {
             ));
         }
 
-        // Global flat rows display
-        if self.row_idx < self.scroll {
-            self.scroll = self.row_idx;
-        }
-        if self.row_idx >= self.scroll + max_rows {
-            self.scroll = self.row_idx.saturating_sub(max_rows - 1);
-        }
-
         let viewport_start_line = lines.len();
         let vh = height.saturating_sub(viewport_start_line + 2);
-        let has_scrollbar = self.flat.len() > vh && vh > 2;
-        let content_width = if has_scrollbar {
-            width.saturating_sub(1)
-        } else {
-            width
-        };
+        let max_rows = vh.max(4);
 
         let callouts = self.note_callouts();
         let band = self.band_rows();
@@ -695,112 +686,232 @@ impl AppState {
                 .collect()
         };
 
-        let total_rows = self.flat.len();
-        let from = self.scroll;
-        let to = (self.scroll + max_rows).min(total_rows);
+        // Compute visual geometry with content_width
+        let est_content_width = width.saturating_sub(1);
+        let mut starts = Vec::with_capacity(self.flat.len());
+        let mut counts = Vec::with_capacity(self.flat.len());
+        let mut seg_counts = Vec::with_capacity(self.flat.len());
+        let mut total_vis_lines = 0;
 
-        for (idx, item) in self.flat.iter().enumerate().skip(from).take(to - from) {
-            let is_selected = idx == self.row_idx;
-            let in_band = !is_selected && band[idx];
-            let in_hunk_extent = !is_selected && !in_band && hunk_extent[idx];
+        for (idx, item) in self.flat.iter().enumerate() {
+            starts.push(total_vis_lines);
+            let div_lines = if div_at.contains_key(&idx) { 1 } else { 0 };
+            let header_lines = if item.is_file_header { 1 } else { 0 };
+            let row_segs = if item.is_file_header {
+                0
+            } else {
+                self.row_seg_count(idx, est_content_width)
+            };
+            let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
+            let item_total = div_lines + header_lines + row_segs + note_lines;
+            counts.push(item_total);
+            seg_counts.push(row_segs.max(1));
+            total_vis_lines += item_total;
+        }
+
+        let has_scrollbar = total_vis_lines > vh && vh > 2;
+        let content_width = if has_scrollbar {
+            width.saturating_sub(1)
+        } else {
+            width
+        };
+        self.last_content_width = content_width;
+
+        if !has_scrollbar && content_width != est_content_width {
+            total_vis_lines = 0;
+            starts.clear();
+            counts.clear();
+            seg_counts.clear();
+            for (idx, item) in self.flat.iter().enumerate() {
+                starts.push(total_vis_lines);
+                let div_lines = if div_at.contains_key(&idx) { 1 } else { 0 };
+                let header_lines = if item.is_file_header { 1 } else { 0 };
+                let row_segs = if item.is_file_header {
+                    0
+                } else {
+                    self.row_seg_count(idx, content_width)
+                };
+                let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
+                let item_total = div_lines + header_lines + row_segs + note_lines;
+                counts.push(item_total);
+                seg_counts.push(row_segs.max(1));
+                total_vis_lines += item_total;
+            }
+        }
+
+        // Adjust scroll based on cursor visual position
+        let hunk_div_offset = if div_at.contains_key(&self.row_idx) {
+            1
+        } else {
+            0
+        };
+        let cur_row_segs = seg_counts.get(self.row_idx).copied().unwrap_or(1);
+        if self.vis_line >= cur_row_segs {
+            self.vis_line = cur_row_segs.saturating_sub(1);
+        }
+        let cursor_vis =
+            starts.get(self.row_idx).copied().unwrap_or(0) + hunk_div_offset + self.vis_line;
+
+        if cursor_vis < self.scroll {
+            self.scroll = cursor_vis;
+        }
+        if cursor_vis >= self.scroll + max_rows {
+            self.scroll = cursor_vis.saturating_sub(max_rows.saturating_sub(1));
+        }
+        let max_scroll = total_vis_lines.saturating_sub(max_rows);
+        self.scroll = self.scroll.min(max_scroll);
+
+        // Viewport iteration
+        let mut vis_i = 0;
+        for (idx, item) in self.flat.iter().enumerate() {
+            let count = counts[idx];
+            if vis_i + count <= self.scroll {
+                vis_i += count;
+                continue;
+            }
+            if vis_i >= self.scroll + max_rows {
+                break;
+            }
+
+            let in_band = band[idx];
+            let in_hunk_extent = !in_band && hunk_extent[idx];
             let r = &item.row;
 
             if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
-                let h = &self.output.files[div_fi].hunks[div_hi];
-                let ctx = self
-                    .hunk_meta
-                    .get(div_fi)
-                    .and_then(|v| v.get(div_hi))
-                    .map(|m| (m.above, m.below))
-                    .unwrap_or((0, 0));
-                let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
-                let span = format!(
-                    "−{},{} +{},{}",
-                    h.old_start, h.old_count, h.new_start, h.new_count
-                );
-                let txt = format!(
-                    "───── H{} · {span} · ctx {}▴ {}▾ ─────",
-                    div_hi + 1,
-                    ctx.0,
-                    ctx.1
-                );
-                let txt_str = truncate_pad(&txt, content_width);
-                let styled = if is_cur {
-                    format!("\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{txt_str}\x1b[0m")
-                } else {
-                    format!("\x1b[38;5;240m{txt_str}\x1b[39m")
-                };
-                lines.push(styled);
+                if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    let h = &self.output.files[div_fi].hunks[div_hi];
+                    let ctx = self
+                        .hunk_meta
+                        .get(div_fi)
+                        .and_then(|v| v.get(div_hi))
+                        .map(|m| (m.above, m.below))
+                        .unwrap_or((0, 0));
+                    let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
+                    let span = format!(
+                        "−{},{} +{},{}",
+                        h.old_start, h.old_count, h.new_start, h.new_count
+                    );
+                    let txt = format!(
+                        "───── H{} · {span} · ctx {}▴ {}▾ ─────",
+                        div_hi + 1,
+                        ctx.0,
+                        ctx.1
+                    );
+                    let txt_str = truncate_pad(&txt, content_width);
+                    let styled = if is_cur {
+                        format!("\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{txt_str}\x1b[0m")
+                    } else {
+                        format!("\x1b[38;5;240m{txt_str}\x1b[39m")
+                    };
+                    lines.push(styled);
+                }
+                vis_i += 1;
             }
 
             if item.is_file_header {
-                let file_obj = &self.output.files[item.file_idx];
-                let f_counts = &file_obj.counts;
-                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-                let indicator = if is_collapsed { "▸" } else { "▾" };
-                let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
-                let bar = format!(
-                    "─── {} {} ({}) +{} -{} ~{}{} ───",
-                    indicator,
-                    file_obj.path,
-                    file_obj.status,
-                    f_counts.adds,
-                    f_counts.dels,
-                    f_counts.mods,
-                    collapse_tag
-                );
-                let bar_str = truncate_pad(&bar, content_width);
-                let styled_bar = if is_selected {
-                    format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
-                } else if in_band {
-                    format!("\x1b[48;5;240m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
-                } else {
-                    format!("\x1b[38;5;244m{bar_str}\x1b[39m")
-                };
-                lines.push(styled_bar);
-                continue;
+                if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    let file_obj = &self.output.files[item.file_idx];
+                    let f_counts = &file_obj.counts;
+                    let is_collapsed = self.collapsed_files.contains(&item.file_idx);
+                    let indicator = if is_collapsed { "▸" } else { "▾" };
+                    let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
+                    let bar = format!(
+                        "─── {} {} ({}) +{} -{} ~{}{} ───",
+                        indicator,
+                        file_obj.path,
+                        file_obj.status,
+                        f_counts.adds,
+                        f_counts.dels,
+                        f_counts.mods,
+                        collapse_tag
+                    );
+                    let bar_str = truncate_pad(&bar, content_width);
+                    let is_selected = idx == self.row_idx;
+                    let styled_bar = if is_selected {
+                        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
+                    } else if in_band {
+                        format!("\x1b[48;5;240m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
+                    } else {
+                        format!("\x1b[38;5;244m{bar_str}\x1b[39m")
+                    };
+                    lines.push(styled_bar);
+                }
+                vis_i += 1;
+            } else {
+                let seg_count = seg_counts[idx];
+                for s_idx in 0..seg_count {
+                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                        let mut rendered_row = if self.raw_diff {
+                            let text_cols = content_width.max(1);
+                            let seg_start = s_idx * text_cols;
+                            let graphemes: Vec<&str> = r.text.graphemes(true).collect();
+                            let piece = if seg_start < graphemes.len() {
+                                let seg_end = (seg_start + text_cols).min(graphemes.len());
+                                graphemes[seg_start..seg_end].concat()
+                            } else {
+                                String::new()
+                            };
+                            render_raw_row(
+                                r.kind,
+                                &piece,
+                                is_selected,
+                                in_band && !is_selected,
+                                in_hunk_extent && !is_selected,
+                            )
+                        } else {
+                            let text_cols = content_width.saturating_sub(6).max(1);
+                            let seg_start = s_idx * text_cols;
+                            let seg_end = seg_start + text_cols;
+                            let pfx = if s_idx == 0 {
+                                styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs)
+                            } else {
+                                "\x1b[38;5;242m      \x1b[39m".to_string()
+                            };
+                            render_row_segment(
+                                &r.text,
+                                r.del_text.as_deref(),
+                                &r.spans,
+                                r.kind,
+                                r.moved,
+                                &r.runs,
+                                seg_start,
+                                seg_end,
+                                &pfx,
+                                is_selected,
+                                in_band && !is_selected,
+                                in_hunk_extent && !is_selected,
+                                self.col_offset,
+                                self.word_diff,
+                                self.syntax_on,
+                                &self.theme,
+                            )
+                        };
+                        if is_selected {
+                            let sel_bg = match r.kind {
+                                crate::parse::RowKind::Del => S_DEL.cursor_bg(),
+                                crate::parse::RowKind::Add if !r.moved => S_ADD.cursor_bg(),
+                                _ => S_MOD.cursor_bg(),
+                            };
+                            rendered_row.push_str(&sel_bg);
+                        } else if in_band {
+                            rendered_row.push_str("\x1b[48;5;240m");
+                        } else if in_hunk_extent {
+                            rendered_row.push_str("\x1b[48;5;238m");
+                        }
+                        lines.push(rendered_row);
+                    }
+                    vis_i += 1;
+                }
             }
 
-            let mut rendered_row = if self.raw_diff {
-                render_raw_row(r.kind, &r.text, is_selected, in_band, in_hunk_extent)
-            } else {
-                let pfx = styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs);
-                render_row_segment(
-                    &r.text,
-                    r.del_text.as_deref(),
-                    &r.spans,
-                    r.kind,
-                    r.moved,
-                    &r.runs,
-                    0,
-                    content_width.saturating_sub(6),
-                    &pfx,
-                    is_selected,
-                    in_band,
-                    in_hunk_extent,
-                    self.col_offset,
-                    self.word_diff,
-                    self.syntax_on,
-                    &self.theme,
-                )
-            };
-            if is_selected {
-                // Ensure the background color remains active into the trailing
-                // Erase-to-EOL (resolved through the row-style table).
-                let sel_bg = match r.kind {
-                    crate::parse::RowKind::Del => S_DEL.cursor_bg(),
-                    crate::parse::RowKind::Add if !r.moved => S_ADD.cursor_bg(),
-                    _ => S_MOD.cursor_bg(),
-                };
-                rendered_row.push_str(&sel_bg);
-            } else if in_band {
-                rendered_row.push_str("\x1b[48;5;240m");
-            } else if in_hunk_extent {
-                rendered_row.push_str("\x1b[48;5;238m");
-            }
-            lines.push(rendered_row);
             if let Some(note_lines) = callouts.get(&idx) {
-                lines.extend(note_lines.iter().cloned());
+                for nline in note_lines {
+                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        lines.push(nline.clone());
+                    }
+                    vis_i += 1;
+                }
             }
         }
 
@@ -811,10 +922,10 @@ impl AppState {
 
         // Visual Scrollbar overlay on viewport lines
         if has_scrollbar {
-            let thumb_size = ((vh as f64 / self.flat.len() as f64) * vh as f64)
+            let thumb_size = ((vh as f64 / total_vis_lines as f64) * vh as f64)
                 .round()
                 .clamp(1.0, (vh.saturating_sub(1)) as f64) as usize;
-            let max_scroll = self.flat.len().saturating_sub(vh);
+            let max_scroll = total_vis_lines.saturating_sub(vh);
             let thumb_offset = if max_scroll == 0 {
                 0
             } else {
@@ -1056,15 +1167,56 @@ impl AppState {
             .collect()
     }
 
+    pub fn row_seg_count(&self, idx: usize, content_width: usize) -> usize {
+        if let Some(item) = self.flat.get(idx) {
+            if item.is_file_header {
+                return 1;
+            }
+            let r = &item.row;
+            if self.raw_diff {
+                let cols = content_width.max(1);
+                let len = r.text.graphemes(true).count();
+                if len == 0 { 1 } else { len.div_ceil(cols) }
+            } else {
+                let text_cols = content_width.saturating_sub(6).max(1);
+                let disp = display_text(
+                    &r.text,
+                    r.del_text.as_deref(),
+                    r.kind,
+                    r.moved,
+                    &r.runs,
+                    self.col_offset,
+                    self.word_diff,
+                );
+                let len = disp.graphemes(true).count();
+                if len == 0 {
+                    1
+                } else {
+                    len.div_ceil(text_cols)
+                }
+            }
+        } else {
+            1
+        }
+    }
+
     pub fn move_down(&mut self) {
-        if self.row_idx + 1 < self.flat.len() {
+        let seg_count = self.row_seg_count(self.row_idx, self.last_content_width);
+        if self.vis_line + 1 < seg_count {
+            self.vis_line += 1;
+        } else if self.row_idx + 1 < self.flat.len() {
             self.row_idx += 1;
+            self.vis_line = 0;
         }
     }
 
     pub fn move_up(&mut self) {
-        if self.row_idx > 0 {
+        if self.vis_line > 0 {
+            self.vis_line -= 1;
+        } else if self.row_idx > 0 {
             self.row_idx -= 1;
+            let prev_seg_count = self.row_seg_count(self.row_idx, self.last_content_width);
+            self.vis_line = prev_seg_count.saturating_sub(1);
         }
     }
 
@@ -1079,6 +1231,7 @@ impl AppState {
             .map(|h| h.flat)
             .unwrap_or(self.hunk_starts[0].flat);
         self.row_idx = target;
+        self.vis_line = 0;
     }
 
     pub fn prev_hunk(&mut self) {
@@ -1093,6 +1246,7 @@ impl AppState {
             .map(|h| h.flat)
             .unwrap_or(self.hunk_starts[self.hunk_starts.len() - 1].flat);
         self.row_idx = target;
+        self.vis_line = 0;
     }
 
     pub fn current_hunk(&self) -> Option<usize> {
@@ -1468,6 +1622,7 @@ impl AppState {
             let step = ((self.viewport_height * 2 + 3) / 6).max(1);
             self.row_idx = (self.row_idx + step).min(max_idx);
         }
+        self.vis_line = 0;
     }
 
     pub fn page_up(&mut self) {
@@ -1484,16 +1639,19 @@ impl AppState {
             let step = ((self.viewport_height * 2 + 3) / 6).max(1);
             self.row_idx = self.row_idx.saturating_sub(step);
         }
+        self.vis_line = 0;
     }
 
     pub fn move_top(&mut self) {
         self.row_idx = 0;
+        self.vis_line = 0;
         self.scroll = 0;
     }
 
     pub fn move_bottom(&mut self) {
         if !self.flat.is_empty() {
             self.row_idx = self.flat.len() - 1;
+            self.vis_line = 0;
         }
     }
 }
@@ -2105,5 +2263,41 @@ index 1111111..2222222 100644
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_word_wrap_and_visual_subline_navigation() {
+        let mut out = sample_output();
+        // Add a very long line to file 0
+        out.files[0].rows[0].text = "A".repeat(150);
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-wrap.json"),
+        );
+        // content_width = 80 - 1 (sb) = 79. text_cols = 79 - 6 = 73.
+        // 150 chars -> 3 segments (73 + 73 + 4).
+        let seg_count = state.row_seg_count(state.row_idx, 79);
+        assert_eq!(seg_count, 3, "150 chars should produce 3 visual segments");
+
+        state.last_content_width = 79;
+        assert_eq!(state.vis_line, 0);
+
+        // move_down advances vis_line within row
+        state.move_down();
+        assert_eq!(state.vis_line, 1);
+        state.move_down();
+        assert_eq!(state.vis_line, 2);
+
+        // next move_down moves to next row and resets vis_line
+        let start_row = state.row_idx;
+        state.move_down();
+        assert_eq!(state.row_idx, start_row + 1);
+        assert_eq!(state.vis_line, 0);
+
+        // move_up moves back to previous row and lands on its last visual segment
+        state.move_up();
+        assert_eq!(state.row_idx, start_row);
+        assert_eq!(state.vis_line, 2);
     }
 }
