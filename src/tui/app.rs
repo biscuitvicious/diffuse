@@ -3,7 +3,9 @@
 use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
-    render::{DiffuseTheme, S_ADD, S_DEL, S_MOD, render_row_segment, styled_prefix},
+    render::{
+        DiffuseTheme, S_ADD, S_DEL, S_MOD, render_raw_row, render_row_segment, styled_prefix,
+    },
 };
 use std::{collections::HashMap, path::PathBuf};
 
@@ -52,6 +54,7 @@ pub struct AppState {
     pub num_buffer: String,
     pub syntax_on: bool,
     pub word_diff: bool,
+    pub raw_diff: bool,
     pub show_help: bool,
     pub note_draft: Option<String>,
     pub anchor: Option<usize>,
@@ -70,27 +73,147 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(output: PipelineOutput, repo: String, notes_path: PathBuf) -> Self {
+        let (flat, hunk_starts) = Self::build_visual_flat(&output);
+
+        // Start on first coordinate row if available
+        let start_row = flat
+            .iter()
+            .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
+            .unwrap_or(0);
+
+        let hunk_meta = Self::build_hunk_meta(&output);
+
+        Self {
+            output,
+            flat,
+            row_idx: start_row,
+            vis_line: 0,
+            scroll: 0,
+            col_offset: 0,
+            num_buffer: String::new(),
+            syntax_on: true,
+            word_diff: true,
+            raw_diff: false,
+            show_help: false,
+            note_draft: None,
+            anchor: None,
+            confirmed_sel: None,
+            theme: DiffuseTheme::MAGIC,
+            repo,
+            should_quit: false,
+            status_message: None,
+            viewport_height: 20,
+            notes: crate::notes::load_notes(&notes_path),
+            notes_path,
+            hunk_starts,
+            hunk_meta,
+            note_id_counter: 0,
+        }
+    }
+
+    /// The visual (reflowed) flat sequence: per file a header banner, then the
+    /// engine's pre-assembled visible rows (padded context, merged mod pairs).
+    fn build_visual_flat(output: &PipelineOutput) -> (Vec<FlatRow>, Vec<HunkStart>) {
+        let flat = Self::build_flat(output);
+        let hunk_starts = Self::build_hunk_starts(output, &flat);
+        (flat, hunk_starts)
+    }
+
+    /// The raw unified-diff flat sequence: per file a header banner, then per
+    /// hunk an `@@` header row and its rows with mod/move pairs un-collapsed
+    /// into separate `-`/`+` lines. Hunk navigation jumps to the `@@` rows.
+    fn build_raw_flat(output: &PipelineOutput) -> (Vec<FlatRow>, Vec<HunkStart>) {
+        let mut flat = Vec::new();
+        let mut hunk_starts = Vec::new();
+        for (fi, f) in output.files.iter().enumerate() {
+            flat.push(Self::file_header_row(fi, &f.path));
+            for (hi, h) in f.hunks.iter().enumerate() {
+                flat.push(FlatRow {
+                    file_idx: fi,
+                    hunk_idx: hi,
+                    is_file_header: false,
+                    row: OutputRow {
+                        kind: crate::parse::RowKind::Sep,
+                        new_line: None,
+                        old_line: None,
+                        text: format!(
+                            "@@ -{},{} +{},{} @@",
+                            h.old_start, h.old_count, h.new_start, h.new_count
+                        ),
+                        del_text: None,
+                        spans: Default::default(),
+                        runs: Vec::new(),
+                        wholesale: false,
+                        moved: false,
+                    },
+                });
+                hunk_starts.push(HunkStart {
+                    flat: flat.len() - 1,
+                    file: fi,
+                    hunk: hi,
+                });
+                for r in &h.rows {
+                    for r in Self::raw_row_expansion(r) {
+                        flat.push(FlatRow {
+                            file_idx: fi,
+                            hunk_idx: hi,
+                            is_file_header: false,
+                            row: r,
+                        });
+                    }
+                }
+            }
+        }
+        (flat, hunk_starts)
+    }
+
+    /// Split a collapsed hunk row into raw unified-diff lines: a mod or move
+    /// becomes a `-` del line plus a `+` add line; everything else passes
+    /// through.
+    fn raw_row_expansion(r: &OutputRow) -> Vec<OutputRow> {
+        let del_line = |old_line: Option<u32>, text: String| OutputRow {
+            kind: crate::parse::RowKind::Del,
+            new_line: None,
+            old_line,
+            text,
+            del_text: None,
+            spans: Default::default(),
+            runs: Vec::new(),
+            wholesale: false,
+            moved: false,
+        };
+        let add_line = |new_line: Option<u32>, text: String| OutputRow {
+            kind: crate::parse::RowKind::Add,
+            new_line,
+            old_line: None,
+            text,
+            del_text: None,
+            spans: Default::default(),
+            runs: Vec::new(),
+            wholesale: false,
+            moved: false,
+        };
+        match r.kind {
+            crate::parse::RowKind::Mod => {
+                let old = r.del_text.clone().unwrap_or_default();
+                vec![
+                    del_line(r.old_line, old),
+                    add_line(r.new_line, r.text.clone()),
+                ]
+            }
+            crate::parse::RowKind::Add if r.moved => {
+                let old = r.del_text.clone().unwrap_or_default();
+                vec![del_line(None, old), add_line(r.new_line, r.text.clone())]
+            }
+            _ => vec![r.clone()],
+        }
+    }
+
+    /// Build the flat row list (shared by the visual and raw representations).
+    fn build_flat(output: &PipelineOutput) -> Vec<FlatRow> {
         let mut flat = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
-            // File header banner row
-            flat.push(FlatRow {
-                file_idx: fi,
-                hunk_idx: 0,
-                is_file_header: true,
-                row: OutputRow {
-                    kind: crate::parse::RowKind::File,
-                    new_line: None,
-                    old_line: None,
-                    text: f.path.clone(),
-                    del_text: None,
-                    spans: Default::default(),
-                    runs: Vec::new(),
-                    wholesale: false,
-                    moved: false,
-                },
-            });
-
-            // Flatten rows from file's precomputed visible rows or hunks
+            flat.push(Self::file_header_row(fi, &f.path));
             if !f.rows.is_empty() {
                 for r in &f.rows {
                     flat.push(FlatRow {
@@ -113,40 +236,25 @@ impl AppState {
                 }
             }
         }
+        flat
+    }
 
-        // Start on first coordinate row if available
-        let start_row = flat
-            .iter()
-            .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
-            .unwrap_or(0);
-
-        let hunk_starts = Self::build_hunk_starts(&output, &flat);
-        let hunk_meta = Self::build_hunk_meta(&output);
-
-        Self {
-            output,
-            flat,
-            row_idx: start_row,
-            vis_line: 0,
-            scroll: 0,
-            col_offset: 0,
-            num_buffer: String::new(),
-            syntax_on: true,
-            word_diff: true,
-            show_help: false,
-            note_draft: None,
-            anchor: None,
-            confirmed_sel: None,
-            theme: DiffuseTheme::MAGIC,
-            repo,
-            should_quit: false,
-            status_message: None,
-            viewport_height: 20,
-            notes: crate::notes::load_notes(&notes_path),
-            notes_path,
-            hunk_starts,
-            hunk_meta,
-            note_id_counter: 0,
+    fn file_header_row(fi: usize, path: &str) -> FlatRow {
+        FlatRow {
+            file_idx: fi,
+            hunk_idx: 0,
+            is_file_header: true,
+            row: OutputRow {
+                kind: crate::parse::RowKind::File,
+                new_line: None,
+                old_line: None,
+                text: path.to_string(),
+                del_text: None,
+                spans: Default::default(),
+                runs: Vec::new(),
+                wholesale: false,
+                moved: false,
+            },
         }
     }
 
@@ -427,8 +535,13 @@ impl AppState {
 
         // Secondary status bar
         let total_files = self.output.files.len();
-        let cur_hunk = self.current_flat_row().map(|r| r.hunk_idx).unwrap_or(0);
+        let cur_hunk = self.current_hunk().unwrap_or(0);
         let total_hunks = f.hunks.len().max(1);
+        let mode_txt = if self.raw_diff {
+            " · raw diff".to_string()
+        } else {
+            String::new()
+        };
         let go_txt = if !self.num_buffer.is_empty() {
             format!(" · go {}", self.num_buffer)
         } else {
@@ -445,11 +558,12 @@ impl AppState {
             String::new()
         };
         let status_raw = format!(
-            " {}/{} files · hunk {}/{}{}{}{}",
+            " {}/{} files · hunk {}/{}{}{}{}{}",
             cur_fi + 1,
             total_files,
             cur_hunk + 1,
             total_hunks,
+            mode_txt,
             col_txt,
             go_txt,
             branch_txt
@@ -490,11 +604,14 @@ impl AppState {
         let band = self.band_rows();
         let hunk_extent = self.hunk_ctx_extent_rows();
         let cur_hunk = self.current_hunk();
-        let div_at: HashMap<usize, (usize, usize)> = self
-            .hunk_starts
-            .iter()
-            .map(|h| (h.flat, (h.file, h.hunk)))
-            .collect();
+        let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
+            HashMap::new()
+        } else {
+            self.hunk_starts
+                .iter()
+                .map(|h| (h.flat, (h.file, h.hunk)))
+                .collect()
+        };
 
         let total_rows = self.flat.len();
         let from = self.scroll;
@@ -563,25 +680,29 @@ impl AppState {
                 continue;
             }
 
-            let pfx = styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs);
-            let mut rendered_row = render_row_segment(
-                &r.text,
-                r.del_text.as_deref(),
-                &r.spans,
-                r.kind,
-                r.moved,
-                &r.runs,
-                0,
-                width.saturating_sub(6),
-                &pfx,
-                is_selected,
-                in_band,
-                in_hunk_extent,
-                self.col_offset,
-                self.word_diff,
-                self.syntax_on,
-                &self.theme,
-            );
+            let mut rendered_row = if self.raw_diff {
+                render_raw_row(r.kind, &r.text, is_selected, in_band, in_hunk_extent)
+            } else {
+                let pfx = styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs);
+                render_row_segment(
+                    &r.text,
+                    r.del_text.as_deref(),
+                    &r.spans,
+                    r.kind,
+                    r.moved,
+                    &r.runs,
+                    0,
+                    width.saturating_sub(6),
+                    &pfx,
+                    is_selected,
+                    in_band,
+                    in_hunk_extent,
+                    self.col_offset,
+                    self.word_diff,
+                    self.syntax_on,
+                    &self.theme,
+                )
+            };
             if is_selected {
                 // Ensure the background color remains active into the trailing
                 // Erase-to-EOL (resolved through the row-style table).
@@ -649,6 +770,7 @@ impl AppState {
             ("h / l / ← / →", "horizontal scroll"),
             ("w", "toggle word diff"),
             ("y", "toggle syntax highlighting"),
+            ("R", "toggle raw unified-diff view"),
             ("m", "new note (ctrl+enter save, esc cancel)"),
             ("?", "toggle help"),
             ("q / Ctrl+c", "quit"),
@@ -761,6 +883,59 @@ impl AppState {
             }
         }
         set
+    }
+
+    /// Switch between the visual (reflowed) and raw unified-diff
+    /// representations, anchoring the cursor at its exact line: capture
+    /// `(file, coord, side)`, rebuild the other view, then jump to the
+    /// equivalent row (same coordinate, preferring the same side).
+    pub fn toggle_raw_diff(&mut self) {
+        let (file, coord, prefer_new) = {
+            let Some(row) = self.current_flat_row() else {
+                return;
+            };
+            let r = &row.row;
+            (
+                row.file_idx,
+                Self::row_coord(r).unwrap_or(0),
+                r.new_line.is_some(),
+            )
+        };
+        let (flat, hunk_starts) = if self.raw_diff {
+            Self::build_visual_flat(&self.output)
+        } else {
+            Self::build_raw_flat(&self.output)
+        };
+        self.flat = flat;
+        self.hunk_starts = hunk_starts;
+        self.raw_diff = !self.raw_diff;
+        self.anchor = None;
+        self.goto_coord(file, coord, prefer_new);
+    }
+
+    /// Jump to the first flat row in `file` carrying `coord` (preferring the
+    /// given side); fall back to the file's first coordinate row — the
+    /// reference's coordinate-resume behavior.
+    fn goto_coord(&mut self, file: usize, coord: u32, prefer_new: bool) {
+        let mut idx = None;
+        for (i, item) in self.flat.iter().enumerate() {
+            if item.file_idx != file {
+                continue;
+            }
+            let r = &item.row;
+            let side_ok = if prefer_new {
+                r.new_line.is_some()
+            } else {
+                r.old_line.is_some()
+            };
+            if Self::row_coord(r) == Some(coord) && side_ok {
+                idx = Some(i);
+                break;
+            }
+        }
+        let idx = idx.unwrap_or_else(|| self.first_row_of_file(file));
+        self.row_idx = idx;
+        self.scroll = 0;
     }
 
     pub fn next_file(&mut self) {
@@ -1051,10 +1226,11 @@ index 1111111..2222222 100644
      return 2;
  }
 "#;
-        let mut old_lines = Vec::new();
-        old_lines.push("fn a() {".to_string());
-        old_lines.push("    return 1;".to_string());
-        old_lines.push("}".to_string());
+        let mut old_lines = vec![
+            "fn a() {".to_string(),
+            "    return 1;".to_string(),
+            "}".to_string(),
+        ];
         for i in 4..=11 {
             old_lines.push(format!("    // filler {i}"));
         }
@@ -1062,11 +1238,12 @@ index 1111111..2222222 100644
         old_lines.push("    return 2;".to_string());
         old_lines.push("}".to_string());
 
-        let mut new_lines = Vec::new();
-        new_lines.push("fn a() {".to_string());
-        new_lines.push("    let x = 1;".to_string());
-        new_lines.push("    return 1;".to_string());
-        new_lines.push("}".to_string());
+        let mut new_lines = vec![
+            "fn a() {".to_string(),
+            "    let x = 1;".to_string(),
+            "    return 1;".to_string(),
+            "}".to_string(),
+        ];
         for i in 5..=12 {
             new_lines.push(format!("    // filler {i}"));
         }
@@ -1321,5 +1498,84 @@ index 1111111..2222222 100644
             frame2.contains("H2"),
             "the second hunk keeps its divider in hunk 2"
         );
+    }
+
+    #[test]
+    fn test_raw_diff_uncollapses_mod_and_renders() {
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+        assert!(!state.raw_diff);
+        state.toggle_raw_diff();
+        assert!(state.raw_diff);
+
+        let del = state
+            .flat
+            .iter()
+            .find(|fr| fr.row.kind == crate::parse::RowKind::Del);
+        assert!(
+            del.is_some() && del.unwrap().row.text.contains("old comment"),
+            "the mod pair must un-collapse into a - line"
+        );
+        let add = state.flat.iter().find(|fr| {
+            fr.row.kind == crate::parse::RowKind::Add && fr.row.text.contains("new comment")
+        });
+        assert!(add.is_some(), "the mod pair must un-collapse into a + line");
+
+        let sep = state
+            .flat
+            .iter()
+            .find(|fr| fr.row.kind == crate::parse::RowKind::Sep);
+        assert_eq!(
+            sep.map(|fr| fr.row.text.as_str()),
+            Some("@@ -1025,6 +1025,8 @@")
+        );
+
+        let frame = state.render_frame(120, 40);
+        assert!(frame.contains("@@ -1025,6 +1025,8 @@"), "raw @@ header");
+        assert!(
+            frame.contains("\x1b[38;5;203m- "),
+            "raw deleted lines render red"
+        );
+        assert!(
+            frame.contains("\x1b[38;5;120m+ "),
+            "raw added lines render green"
+        );
+    }
+
+    #[test]
+    fn test_raw_diff_toggle_anchors_cursor() {
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+        // flat[7] is the mod pair (new 1026); walk onto it.
+        for _ in 0..6 {
+            state.move_down();
+        }
+        let r = &state.flat[state.row_idx].row;
+        assert_eq!(r.kind, crate::parse::RowKind::Mod);
+        assert_eq!(r.new_line, Some(1026));
+
+        state.toggle_raw_diff();
+        let r = &state.flat[state.row_idx].row;
+        assert_eq!(
+            r.kind,
+            crate::parse::RowKind::Add,
+            "the cursor resolves to the + line of the pair"
+        );
+        assert_eq!(r.new_line, Some(1026), "same coordinate after the switch");
+
+        state.toggle_raw_diff();
+        let r = &state.flat[state.row_idx].row;
+        assert_eq!(
+            AppState::row_coord(r),
+            Some(1026),
+            "round-tripping lands back on the same line"
+        );
+        assert!(!state.raw_diff);
     }
 }

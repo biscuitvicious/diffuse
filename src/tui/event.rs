@@ -101,6 +101,9 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('y')) => {
             state.syntax_on = !state.syntax_on;
         }
+        (KeyModifiers::NONE, KeyCode::Char('R')) | (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
+            state.toggle_raw_diff();
+        }
         (KeyModifiers::NONE, KeyCode::Char('?')) => {
             state.show_help = !state.show_help;
         }
@@ -264,5 +267,21 @@ index 1111111..2222222 100644
         let sel = s.confirmed_sel.expect("confirmed selection recorded");
         assert_eq!(sel.start, 1025);
         assert_eq!(sel.end, 1027);
+    }
+
+    #[test]
+    fn test_r_toggles_raw_diff() {
+        let mut s = state_with_rows();
+        assert!(!s.raw_diff);
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT)),
+        );
+        assert!(s.raw_diff, "Shift+R enters raw diff view");
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::NONE)),
+        );
+        assert!(!s.raw_diff, "R returns to the visual view");
     }
 }

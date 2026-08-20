@@ -355,6 +355,70 @@ pub fn render_row_segment(
     format!("{lead_bg}{prefix}{out}{trail_bg}")
 }
 
+/// Render a row in the raw unified-diff representation: a plain marker
+/// (`+ ` / `- ` / two spaces) plus the line text in a flat green/red/muted
+/// color — no gutter, no word-level spans. `Sep` rows are `@@` hunk headers.
+/// Backgrounds follow the same selected/band/extent precedence as the visual
+/// renderer so the UI shell (navigation, selection, notes) reads identically.
+pub fn render_raw_row(
+    kind: RowKind,
+    text: &str,
+    selected: bool,
+    band: bool,
+    hunk_ctx: bool,
+) -> String {
+    let is_ctx = matches!(kind, RowKind::Ctx | RowKind::Sep);
+    let (marker, fg, bg) = match kind {
+        RowKind::Add => {
+            let bg = if selected {
+                S_ADD.cursor_bg()
+            } else if band {
+                "\x1b[48;5;240m".to_string()
+            } else {
+                S_ADD.tint_bg()
+            };
+            ("+ ", "\x1b[38;5;120m", bg)
+        }
+        RowKind::Del => {
+            let bg = if selected {
+                S_DEL.cursor_bg()
+            } else if band {
+                "\x1b[48;5;240m".to_string()
+            } else {
+                S_DEL.tint_bg()
+            };
+            ("- ", "\x1b[38;5;203m", bg)
+        }
+        RowKind::Sep => (
+            "",
+            "\x1b[1m\x1b[38;5;214m",
+            if selected {
+                "\x1b[48;5;237m".to_string()
+            } else {
+                String::new()
+            },
+        ),
+        _ => {
+            let bg = if selected {
+                "\x1b[48;5;237m".to_string()
+            } else if band {
+                "\x1b[48;5;240m".to_string()
+            } else if hunk_ctx {
+                "\x1b[48;5;238m".to_string()
+            } else {
+                String::new()
+            };
+            ("  ", "\x1b[38;5;244m", bg)
+        }
+    };
+    let mut out = format!("{bg}{fg}{marker}{text}");
+    if selected || band || (hunk_ctx && is_ctx) {
+        out.push_str(&bg);
+    }
+    out.push_str("\x1b[39m\x1b[22m");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
