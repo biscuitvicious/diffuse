@@ -4,7 +4,7 @@ use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
     render::{
-        DiffuseTheme, S_ADD, S_DEL, S_MOD, display_text, render_raw_row, render_row_segment,
+        DiffuseTheme, display_text, render_raw_row, render_row_segment,
         styled_prefix,
     },
 };
@@ -837,7 +837,7 @@ impl AppState {
                         } else {
                             "\x1b[38;5;242m      \x1b[39m".to_string()
                         };
-                        let mut rendered_row = if self.raw_diff {
+                        let rendered_row = if self.raw_diff {
                             let text_cols = content_width.max(1);
                             let seg_start = s_idx * text_cols;
                             let graphemes: Vec<&str> = r.text.graphemes(true).collect();
@@ -870,16 +870,6 @@ impl AppState {
                                 &self.theme,
                             )
                         };
-                        if is_selected {
-                            let sel_bg = match r.kind {
-                                crate::parse::RowKind::Del => S_DEL.cursor_bg(),
-                                crate::parse::RowKind::Add if !r.moved => S_ADD.cursor_bg(),
-                                _ => S_MOD.cursor_bg(),
-                            };
-                            rendered_row.push_str(&sel_bg);
-                        } else if in_band {
-                            rendered_row.push_str("\x1b[48;5;240m");
-                        }
                         lines.push(rendered_row);
                     }
                     vis_i += 1;
@@ -1277,14 +1267,18 @@ impl AppState {
             }
             let r = &item.row;
             if let Some(nl) = r.new_line
-                && nl >= new_lo && nl < new_hi {
-                    set[i] = true;
-                    continue;
-                }
+                && nl >= new_lo
+                && nl < new_hi
+            {
+                set[i] = true;
+                continue;
+            }
             if let Some(ol) = r.old_line
-                && ol >= old_lo && ol < old_hi {
-                    set[i] = true;
-                }
+                && ol >= old_lo
+                && ol < old_hi
+            {
+                set[i] = true;
+            }
         }
         set
     }
@@ -2280,5 +2274,21 @@ index 1111111..2222222 100644
         state.move_up();
         assert_eq!(state.row_idx, start_row);
         assert_eq!(state.vis_line, 2);
+    }
+
+    #[test]
+    fn test_current_line_highlight_covers_gutter() {
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-gutter.json"),
+        );
+        // Context row selected
+        state.row_idx = 1;
+        let frame_ctx = state.render_frame(80, 24);
+        assert!(
+            frame_ctx.contains("\x1b[48;5;237m\x1b[38;5;"),
+            "selected context row must start with cursor background before the gutter numbers"
+        );
     }
 }

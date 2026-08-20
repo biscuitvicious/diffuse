@@ -252,7 +252,7 @@ pub fn render_row_segment(
 
     if is_del_row {
         let bg = if is_ctx { "" } else { &line_bg };
-        let sel_lead = if selected { &line_bg } else { "" };
+        let sel_lead = if selected || band { &line_bg } else { "" };
         let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
         let reset = "\x1b[39m";
         return format!("{sel_lead}{prefix}{bg}{del_fg}{piece}{reset}{line_bg}");
@@ -270,7 +270,7 @@ pub fn render_row_segment(
         } else {
             &line_bg
         };
-        let sel_lead = if selected { &line_bg } else { "" };
+        let sel_lead = if selected || band { &line_bg } else { "" };
         return format!("{sel_lead}{prefix}{bg}{piece}{bg}");
     }
 
@@ -332,8 +332,12 @@ pub fn render_row_segment(
         }
     }
 
-    let trail_bg = if selected || !is_ctx { &line_bg } else { "" };
-    let lead_bg = if selected && !is_ctx { &line_bg } else { "" };
+    let trail_bg = if selected || band || !is_ctx {
+        &line_bg
+    } else {
+        ""
+    };
+    let lead_bg = if selected || band { &line_bg } else { "" };
     format!("{lead_bg}{prefix}{out}{trail_bg}")
 }
 
