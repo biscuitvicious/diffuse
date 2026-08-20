@@ -201,6 +201,43 @@ fn brace_anchor_none_some_result() {
     );
 }
 
+// In indentation-based languages like Python, the block close is defined by a
+// dedent boundary. Tail statements right before the dedent pair appropriately.
+#[test]
+fn python_block_tail_anchor_none_some_result() {
+    let mut old_content: Vec<String> = Vec::new();
+    old_content.resize(130, String::new());
+    old_content[113] = "def next_fn():".to_string(); // dedent boundary after return None
+    let mut new_content: Vec<String> = Vec::new();
+    new_content.resize(320, String::new());
+    new_content[155] = "def next_fn():".to_string(); // dedent boundary after return result
+    new_content[299] = "        return None".to_string(); // a verbatim return None elsewhere
+    let h = hunk(vec![
+        row(RowKind::Del, "    self.cache.pop(key)", None, Some(111)),
+        row(RowKind::Del, "    self.results.pop(key)", None, Some(112)),
+        row(RowKind::Del, "    return None", None, Some(113)),
+        row(
+            RowKind::Add,
+            "    result = self.results.get(key)",
+            Some(147),
+            None,
+        ),
+        row(RowKind::Add, "    if not result:", Some(148), None),
+        row(RowKind::Add, "        return None", Some(153), None),
+        row(RowKind::Add, "    return result", Some(155), None),
+    ]);
+    let c = collapse_hunk_rows(&h, true, Some(&old_content), Some(&new_content));
+    let none_mod = c
+        .iter()
+        .find(|r| r.kind() == RowKind::Mod && r.del_text() == Some("    return None"))
+        .expect("the None mod in python");
+    assert_eq!(
+        none_mod.new_line(),
+        Some(155),
+        "the python dedent anchor pairs return None with return result"
+    );
+}
+
 // The reflow pairing: the first del carries the change, the reflows drop —
 // the `resolved_layers` / `.iter()` / `.any(…)` one-liner fold.
 #[test]

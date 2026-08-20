@@ -53,7 +53,7 @@ use std::collections::{HashMap, HashSet};
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
-pub const MAX_BLOCK_K: usize = 4;
+pub const MAX_BLOCK_K: usize = 10;
 
 /// The multi-objective weights (plan §3.3). Initial tuning; golden review
 /// gates any change.
@@ -68,16 +68,29 @@ pub struct Weights {
     pub gamma: f64,
     /// δ — statement-head syntax agreement (and verbatim-pair) bonus.
     pub delta: f64,
+    /// ε — closing-brace proximity bonus for lines near a block end.
+    pub epsilon: f64,
+    /// Bonus for statement head keyword agreement when similarity is
+    /// sufficient.
+    pub head_agree_bonus: f64,
+    /// Bonus for matching compound block closing delimiters (e.g. `};` or `}`).
+    pub close_agree_bonus: f64,
+    /// Multiplier on line indentation differences.
+    pub indent_penalty_factor: f64,
 }
 
 impl Default for Weights {
     fn default() -> Self {
         Self {
-            alpha: 1.0,
-            mu: 0.5,
-            beta: 1.0,
+            alpha: 15.0,
+            mu: 8.0,
+            beta: 5.0,
             gamma: 2.0,
-            delta: 3.0,
+            delta: 800.0,
+            epsilon: 500.0,
+            head_agree_bonus: 80.0,
+            close_agree_bonus: 250.0,
+            indent_penalty_factor: 5.0,
         }
     }
 }
@@ -89,13 +102,16 @@ impl Default for Weights {
 /// rendering consumes these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SublineMove {
-    /// Token index within the anchor line (old side for an `Expand`, old
-    /// side per-line for a `Collapse`).
-    pub old_token: usize,
     /// 0-based line offset of the target within the block (0 = anchor).
-    pub new_line: usize,
-    /// Token index within the target line.
-    pub new_token: usize,
+    /// For an Expand: which NEW line (in the block) received reflowed content
+    /// from the anchor line. For a Collapse: which OLD line (in the block)
+    /// had content absorbed into the anchor line.
+    pub line: usize,
+    /// Character span in the anchor line (the reference line) that was moved.
+    pub anchor_span: (usize, usize),
+    /// Character span in the target line (at index `line`) that received/was
+    /// the moved content.
+    pub line_span: (usize, usize),
 }
 
 /// One DP transition on the traceback path.
@@ -109,12 +125,14 @@ pub enum DpOp {
     Expand {
         k: usize,
         matched: usize,
+        anchor: usize,
         spans: Vec<SublineMove>,
     },
     /// K-to-1 collapse: old lines i..i+k folded into new line j.
     Collapse {
         k: usize,
         matched: usize,
+        anchor: usize,
         spans: Vec<SublineMove>,
     },
     /// Standalone deletion of old line i.
@@ -135,7 +153,7 @@ pub struct DpSolution {
 /// The per-line tokenized form the DP works on: interned token ids, char
 /// lengths, and each content token's byte offset within the raw line (for
 /// later subword-span mapping in Phase 4).
-struct DpTokens {
+pub struct DpTokens {
     ids: Vec<u32>,
     chars: usize,
     token_chars: Vec<usize>,
@@ -147,7 +165,7 @@ struct DpTokens {
     trimmed: String,
 }
 
-fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
+pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
     let lt = interner.line_tokens(text);
     // Byte offsets: walk the raw tokens, skipping whitespace-only ones in
     // lockstep with the content tokens.
@@ -171,15 +189,15 @@ fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
 
 /// The block LCS: `old`'s tokens vs the concatenation of `block`'s lines.
 #[derive(Default)]
-struct BlockMatch {
+pub struct BlockMatch {
     matched: usize,
     /// Per block line: its matched token indices.
-    per_line: Vec<HashSet<usize>>,
+    pub per_line: Vec<HashSet<usize>>,
     /// (block line, token) -> old-side token index.
-    pair_of: HashMap<(usize, usize), usize>,
+    pub pair_of: HashMap<(usize, usize), usize>,
 }
 
-fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -> BlockMatch {
+pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -> BlockMatch {
     let mut ids = Vec::new();
     let mut coords = Vec::new();
     for (li, lt) in block.iter().enumerate() {
@@ -205,13 +223,17 @@ fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -> Bl
     bm
 }
 
+fn is_reflow_candidate(text: &str) -> bool {
+    !text.trim().is_empty()
+}
+
 /// The block line carrying the transition's anchor `Mod`: the line that
 /// continues the SOURCE line's head (its first matched token), falling
 /// back to the line with the most matched tokens. The plan's §4.2 renders
 /// block transitions as the anchor `Mod` followed by the remaining
 /// `Add`/`Del` rows — the anchor owns the head, the tail reads as
 /// absorbed/reflowed.
-fn block_anchor(bm: &BlockMatch) -> usize {
+pub fn block_anchor(bm: &BlockMatch) -> usize {
     let mut head = None;
     let mut most = 0usize;
     let mut most_n = 0usize;
@@ -231,7 +253,7 @@ fn block_anchor(bm: &BlockMatch) -> usize {
 
 /// Subline move spans for a block transition: matched tokens landing on
 /// non-anchor lines.
-fn subline_moves(bm: &BlockMatch, anchor: usize) -> Vec<SublineMove> {
+pub fn subline_moves(bm: &BlockMatch, anchor: usize) -> Vec<SublineMove> {
     let mut spans = Vec::new();
     for (li, s) in bm.per_line.iter().enumerate() {
         if li == anchor {
@@ -240,11 +262,11 @@ fn subline_moves(bm: &BlockMatch, anchor: usize) -> Vec<SublineMove> {
         let mut tis: Vec<usize> = s.iter().copied().collect();
         tis.sort_unstable();
         for ti in tis {
-            if let Some(&oi) = bm.pair_of.get(&(li, ti)) {
+            if bm.pair_of.contains_key(&(li, ti)) {
                 spans.push(SublineMove {
-                    old_token: oi,
-                    new_line: li,
-                    new_token: ti,
+                    line: li,
+                    anchor_span: (0, 0),
+                    line_span: (0, 0),
                 });
             }
         }
@@ -274,10 +296,6 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
         .iter()
         .map(|r| dp_tokens(&mut interner, r.text()))
         .collect();
-
-    // Guards: comments pair only with comments; syntax sections must be
-    // modification-compatible. (Phase 2's partitioner enforces this at the
-    // cluster level; these are the DP's own defense for mixed clusters.)
     let old_comment: Vec<bool> = cluster
         .old_rows
         .iter()
@@ -298,6 +316,95 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
         .iter()
         .map(|r| classify_syntax_section(r.text(), hash_comment))
         .collect();
+
+    let is_open_line = |t: &str| -> bool {
+        let tr = t.trim();
+        tr.ends_with('{') || tr.ends_with(':') || tr.ends_with("then") || tr.ends_with("do")
+    };
+    let is_close_line = |t: &str| -> bool {
+        let tr = t.trim();
+        tr == "}"
+            || tr == "};"
+            || tr == "},"
+            || tr == "fi"
+            || tr == "done"
+            || tr == "esac"
+            || tr == ")"
+            || tr == ");"
+    };
+    let indent_of = |t: &str| -> usize { t.len() - t.trim_start().len() };
+
+    let compute_close_dist = |rows: &[crate::parse::Row], following: &[String]| -> Vec<usize> {
+        let count = rows.len();
+        (0..count)
+            .map(|i| {
+                let txt = rows[i].text().trim();
+                if is_close_line(txt) {
+                    return 0;
+                }
+                let cur_ind = indent_of(rows[i].text());
+                for d in 1..(count - i) {
+                    let next_t = rows[i + d].text().trim();
+                    if next_t.is_empty() {
+                        continue;
+                    }
+                    if is_close_line(next_t) {
+                        return d;
+                    }
+                    let next_ind = indent_of(rows[i + d].text());
+                    if next_ind < cur_ind {
+                        return d;
+                    }
+                }
+                for (idx, line) in following.iter().enumerate() {
+                    let next_t = line.trim();
+                    if next_t.is_empty() {
+                        continue;
+                    }
+                    if is_close_line(next_t) {
+                        return count - i + idx;
+                    }
+                    let next_ind = indent_of(line);
+                    if next_ind < cur_ind {
+                        return count - i + idx;
+                    }
+                }
+                usize::MAX
+            })
+            .collect()
+    };
+
+    let compute_open_dist = |rows: &[crate::parse::Row], preceding: &[String]| -> Vec<usize> {
+        let count = rows.len();
+        (0..count)
+            .map(|i| {
+                if let Some(k) = (0..=i).rev().find(|&k| is_open_line(rows[k].text())) {
+                    i - k
+                } else {
+                    preceding
+                        .iter()
+                        .rev()
+                        .enumerate()
+                        .find_map(|(idx, line)| {
+                            if is_open_line(line) {
+                                Some(i + 1 + idx)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(usize::MAX)
+                }
+            })
+            .collect()
+    };
+
+    // Proximity to a block end / closing delimiter / unindent.
+    let old_close_dist = compute_close_dist(&cluster.old_rows, &cluster.following_ctx);
+    let new_close_dist = compute_close_dist(&cluster.new_rows, &cluster.following_ctx);
+
+    // Proximity to a block start / opening delimiter.
+    let old_open_dist = compute_open_dist(&cluster.old_rows, &cluster.preceding_ctx);
+    let new_open_dist = compute_open_dist(&cluster.new_rows, &cluster.preceding_ctx);
 
     #[derive(Clone)]
     struct Cell {
@@ -359,7 +466,10 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                 let (ot, nt) = (&old[i], &new[j]);
                 if ot.trimmed == nt.trimmed {
                     // Verbatim (trim-insensitive) — a Mov.
-                    let s = base + w.alpha * ot.chars.max(nt.chars) as f64 + w.delta * 0.5 - w.beta;
+                    let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
+                    let s = base + w.alpha * ot.chars.max(nt.chars) as f64
+                        - w.beta
+                        - w.gamma * length_diff;
                     if s > dp[i + 1][j + 1].score {
                         dp[i + 1][j + 1] = Cell {
                             score: s,
@@ -383,12 +493,71 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                     }
                     let total = ot.chars.max(nt.chars);
                     let unmatched = total.saturating_sub(matched);
-                    let syntax = f64::from(statement_heads_agree(
-                        cluster.old_rows[i].text(),
-                        cluster.new_rows[j].text(),
-                    )) * w.delta;
-                    let s =
-                        base + w.alpha * matched as f64 - w.mu * unmatched as f64 - w.beta + syntax;
+                    let similarity_ratio = matched as f64 / total as f64;
+                    let syntax = if similarity_ratio >= 0.35
+                        && statement_heads_agree(
+                            cluster.old_rows[i].text(),
+                            cluster.new_rows[j].text(),
+                        ) {
+                        w.head_agree_bonus
+                    } else {
+                        0.0
+                    };
+                    // Distance-based closing-brace proximity bonus, tapering with distance
+                    let d_old_close = old_close_dist[i];
+                    let d_new_close = new_close_dist[j];
+                    let proximity_old_close = if d_old_close == usize::MAX {
+                        0.0
+                    } else {
+                        1.0 / (1.0 + (d_old_close as f64).powi(2))
+                    };
+                    let proximity_new_close = if d_new_close == usize::MAX {
+                        0.0
+                    } else {
+                        1.0 / (1.0 + (d_new_close as f64).powi(2))
+                    };
+                    let close_bonus = w.epsilon * proximity_old_close * proximity_new_close;
+                    // Distance-based opening-brace proximity bonus
+                    let d_old_open = old_open_dist[i];
+                    let d_new_open = new_open_dist[j];
+                    let proximity_old_open = if d_old_open == usize::MAX {
+                        0.0
+                    } else {
+                        1.0 / (1.0 + (d_old_open as f64).powi(2))
+                    };
+                    let proximity_new_open = if d_new_open == usize::MAX {
+                        0.0
+                    } else {
+                        1.0 / (1.0 + (d_new_open as f64).powi(2))
+                    };
+                    let open_bonus = w.epsilon * proximity_old_open * proximity_new_open;
+
+                    let indent_old = cluster.old_rows[i].text().len()
+                        - cluster.old_rows[i].text().trim_start().len();
+                    let indent_new = cluster.new_rows[j].text().len()
+                        - cluster.new_rows[j].text().trim_start().len();
+                    let indent_diff =
+                        (indent_old as isize - indent_new as isize).unsigned_abs() as f64;
+                    let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
+
+                    let similarity_ratio = matched as f64 / total as f64;
+                    let is_direct_tail_pair =
+                        d_old_close == 1 && d_new_close == 1 && indent_diff == 0.0;
+                    let effective_close_bonus = if is_direct_tail_pair {
+                        w.delta
+                    } else {
+                        close_bonus
+                    };
+                    let proximity_gate = if similarity_ratio >= 0.25 || is_direct_tail_pair {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    let penalty = w.mu * unmatched as f64;
+
+                    let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
+                        + syntax
+                        + (effective_close_bonus + open_bonus) * proximity_gate;
                     if s > dp[i + 1][j + 1].score {
                         dp[i + 1][j + 1] = Cell {
                             score: s,
@@ -398,13 +567,56 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                 }
             }
             // Expand: old i vs new block j..j+k (k >= 2).
-            if i < m && j + 2 <= n && old_comment[i] == new_comment[j] {
+            if i < m
+                && j + 2 <= n
+                && is_reflow_candidate(cluster.old_rows[i].text())
+                && old_comment[i] == new_comment[j]
+            {
                 let max_k = MAX_BLOCK_K.min(n - j);
                 for k in 2..=max_k {
                     let block = &new[j..j + k];
+                    if !new[j..j + k].iter().enumerate().all(|(idx, _)| {
+                        let text = cluster.new_rows[j + idx].text();
+                        let ok = is_reflow_candidate(text);
+                        let no_mid_semi = idx == k - 1 || !text.trim().ends_with(';');
+                        ok && no_mid_semi && new_comment[j + idx] == old_comment[i]
+                    }) {
+                        break;
+                    }
                     let bm = block_lcs(&old[i], block, &interner);
                     let block_chars: usize = block.iter().map(|t| t.chars).sum();
-                    let s = base + block_score(&bm, old[i].chars, block_chars, k);
+                    let total = old[i].chars.max(block_chars);
+                    if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
+                    let anchor = block_anchor(&bm);
+                    let syntax = if statement_heads_agree(
+                        cluster.old_rows[i].text(),
+                        cluster.new_rows[j].text(),
+                    ) || statement_heads_agree(
+                        cluster.old_rows[i].text(),
+                        cluster.new_rows[j + anchor].text(),
+                    ) {
+                        w.delta
+                    } else {
+                        0.0
+                    };
+                    let old_trimmed = cluster.old_rows[i].text().trim();
+                    let last_new_trimmed = cluster.new_rows[j + k - 1].text().trim();
+                    let close_agree = (old_trimmed.ends_with("};") && last_new_trimmed == "};")
+                        || (old_trimmed.ends_with('}') && last_new_trimmed == "}")
+                        || (old_trimmed.ends_with(");") && last_new_trimmed == ");")
+                        || (old_trimmed.ends_with(')') && last_new_trimmed == ")");
+                    let close_bonus = if close_agree {
+                        w.close_agree_bonus
+                    } else {
+                        0.0
+                    };
+
+                    let s = base
+                        + block_score(&bm, old[i].chars, block_chars, k)
+                        + syntax
+                        + close_bonus;
                     if s > dp[i + 1][j + k].score {
                         dp[i + 1][j + k] = Cell {
                             score: s,
@@ -414,13 +626,56 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                 }
             }
             // Collapse: old block i..i+k vs new j (k >= 2).
-            if j < n && i + 2 <= m && old_comment[i] == new_comment[j] {
+            if j < n
+                && i + 2 <= m
+                && is_reflow_candidate(cluster.new_rows[j].text())
+                && old_comment[i] == new_comment[j]
+            {
                 let max_k = MAX_BLOCK_K.min(m - i);
                 for k in 2..=max_k {
                     let block = &old[i..i + k];
+                    if !old[i..i + k].iter().enumerate().all(|(idx, _)| {
+                        let text = cluster.old_rows[i + idx].text();
+                        let ok = is_reflow_candidate(text);
+                        let no_mid_semi = idx == k - 1 || !text.trim().ends_with(';');
+                        ok && no_mid_semi && old_comment[i + idx] == new_comment[j]
+                    }) {
+                        break;
+                    }
                     let bm = block_lcs(&new[j], block, &interner);
                     let block_chars: usize = block.iter().map(|t| t.chars).sum();
-                    let s = base + block_score(&bm, new[j].chars, block_chars, k);
+                    let total = new[j].chars.max(block_chars);
+                    if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
+                    let anchor = block_anchor(&bm);
+                    let syntax = if statement_heads_agree(
+                        cluster.old_rows[i].text(),
+                        cluster.new_rows[j].text(),
+                    ) || statement_heads_agree(
+                        cluster.old_rows[i + anchor].text(),
+                        cluster.new_rows[j].text(),
+                    ) {
+                        w.delta
+                    } else {
+                        0.0
+                    };
+                    let new_trimmed = cluster.new_rows[j].text().trim();
+                    let last_old_trimmed = cluster.old_rows[i + k - 1].text().trim();
+                    let close_agree = (new_trimmed.ends_with("};") && last_old_trimmed == "};")
+                        || (new_trimmed.ends_with('}') && last_old_trimmed == "}")
+                        || (new_trimmed.ends_with(");") && last_old_trimmed == ");")
+                        || (new_trimmed.ends_with(')') && last_old_trimmed == ")");
+                    let close_bonus = if close_agree {
+                        w.close_agree_bonus
+                    } else {
+                        0.0
+                    };
+
+                    let s = base
+                        + block_score(&bm, new[j].chars, block_chars, k)
+                        + syntax
+                        + close_bonus;
                     if s > dp[i + k][j + 1].score {
                         dp[i + k][j + 1] = Cell {
                             score: s,
@@ -492,6 +747,7 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                 transitions.push(DpOp::Expand {
                     k,
                     matched: bm.matched,
+                    anchor,
                     spans: subline_moves(&bm, anchor),
                 });
                 for li in 0..k {
@@ -513,6 +769,7 @@ pub fn solve_cluster_with(cluster: &ChangeCluster, hash_comment: bool, w: &Weigh
                 transitions.push(DpOp::Collapse {
                     k,
                     matched: bm.matched,
+                    anchor,
                     spans: subline_moves(&bm, anchor),
                 });
                 for li in 0..k {
@@ -587,15 +844,21 @@ pub fn verify_projection(sol: &DpSolution, cluster: &ChangeCluster) -> Result<()
     Ok(())
 }
 
-/// Whether two statements share their head word (`let`, `fn`, `return`, …)
-/// — the syntax-alignment bonus.
+/// Whether two statements share their leading word token (`c.is_alphanumeric()
+/// || c == '_'`) — the language-agnostic syntax-alignment bonus.
 fn statement_heads_agree(a: &str, b: &str) -> bool {
-    fn head(t: &str) -> Option<&str> {
-        t.trim_start()
-            .split(|c: char| c.is_whitespace() || c == '(')
-            .next()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
+    fn first_word(t: &str) -> Option<&str> {
+        let trimmed = t.trim_start();
+        let word_len: usize = trimmed
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .map(char::len_utf8)
+            .sum();
+        if word_len > 0 {
+            Some(&trimmed[..word_len])
+        } else {
+            None
+        }
     }
-    matches!((head(a), head(b)), (Some(x), Some(y)) if x == y)
+    matches!((first_word(a), first_word(b)), (Some(x), Some(y)) if x == y)
 }

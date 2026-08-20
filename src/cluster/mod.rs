@@ -82,9 +82,41 @@ pub fn classify_syntax_section(line: &str, hash_comment: bool) -> SyntaxSectionK
 /// transitions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChangeCluster {
+    /// Preceding context lines immediately before this cluster (for
+    /// brace/syntax anchor proximity).
+    pub preceding_ctx: Vec<String>,
+    /// Old-side rows (dels, in original hunk order).
     pub old_rows: Vec<Row>,
+    /// New-side rows (adds, in original hunk order).
     pub new_rows: Vec<Row>,
+    /// Following context lines immediately after this cluster (for brace/syntax
+    /// anchor proximity).
+    pub following_ctx: Vec<String>,
     pub section: SyntaxSectionKind,
+}
+
+impl ChangeCluster {
+    #[inline]
+    pub fn m(&self) -> usize {
+        self.old_rows.len()
+    }
+    #[inline]
+    pub fn n(&self) -> usize {
+        self.new_rows.len()
+    }
+
+    pub fn old_iter(&self) -> impl Iterator<Item = &Row> {
+        self.old_rows.iter()
+    }
+    pub fn new_iter(&self) -> impl Iterator<Item = &Row> {
+        self.new_rows.iter()
+    }
+    pub fn old_texts(&self) -> impl Iterator<Item = &str> {
+        self.old_iter().map(super::parse::Row::text)
+    }
+    pub fn new_texts(&self) -> impl Iterator<Item = &str> {
+        self.new_iter().map(super::parse::Row::text)
+    }
 }
 
 /// Decomposes a hunk into a sequence of isolated change clusters and context
@@ -100,50 +132,67 @@ pub fn partition_hunk_segments(hunk: &Hunk, hash_comment: bool) -> Vec<HunkSegme
     let mut segments: Vec<HunkSegment> = Vec::new();
     let mut i = 0;
     while i < hunk.rows.len() {
-        if let Row::Ctx(_) = &hunk.rows[i] {
+        if matches!(hunk.rows[i], Row::Ctx(_)) {
             segments.push(HunkSegment::Context(hunk.rows[i].clone()));
             i += 1;
             continue;
         }
 
-        // Change cluster run
+        // Collect preceding context lines from immediately preceding Ctx rows (up to 6)
+        let mut preceding_ctx = Vec::new();
+        let mut ctx_idx = i;
+        while ctx_idx > 0
+            && matches!(hunk.rows[ctx_idx - 1], Row::Ctx(_))
+            && preceding_ctx.len() < 6
+        {
+            ctx_idx -= 1;
+            preceding_ctx.push(hunk.rows[ctx_idx].text().to_string());
+        }
+        preceding_ctx.reverse();
+
+        let first_kind = classify_syntax_section(hunk.rows[i].text(), hash_comment);
         let mut old_rows = Vec::new();
         let mut new_rows = Vec::new();
-        let first_kind = classify_syntax_section(hunk.rows[i].text(), hash_comment);
 
         while i < hunk.rows.len() {
             if matches!(hunk.rows[i], Row::Ctx(_)) {
                 break;
             }
             let row = &hunk.rows[i];
-            let row_kind = classify_syntax_section(row.text(), hash_comment);
-
-            // If syntax construct is incompatible with this cluster and we already
-            // collected rows, break cluster
-            if (!old_rows.is_empty() || !new_rows.is_empty())
-                && !first_kind.is_compatible(row_kind)
-                && row_kind != SyntaxSectionKind::Blank
-            {
-                break;
-            }
+            let _row_kind = classify_syntax_section(row.text(), hash_comment);
 
             match row {
                 Row::Del(_) => old_rows.push(row.clone()),
                 Row::Add(_) => new_rows.push(row.clone()),
-                Row::Mod { old_line, new_line } | Row::Mov { old_line, new_line } => {
+                Row::Mod { old_line, new_line } => {
                     old_rows.push(Row::Del(old_line.clone()));
                     new_rows.push(Row::Add(new_line.clone()));
                 }
-                Row::Sep(_) => {}
-                Row::Ctx(_) => unreachable!(),
+                Row::Mov { new_line, .. } => {
+                    new_rows.push(Row::Add(new_line.clone()));
+                }
+                Row::Sep(_) | Row::Ctx(_) => {}
             }
             i += 1;
         }
 
+        // Collect following context lines from immediately following Ctx rows (up to 6)
+        let mut following_ctx = Vec::new();
+        let mut f_idx = i;
+        while f_idx < hunk.rows.len()
+            && matches!(hunk.rows[f_idx], Row::Ctx(_))
+            && following_ctx.len() < 6
+        {
+            following_ctx.push(hunk.rows[f_idx].text().to_string());
+            f_idx += 1;
+        }
+
         if !old_rows.is_empty() || !new_rows.is_empty() {
             segments.push(HunkSegment::Cluster(ChangeCluster {
+                preceding_ctx,
                 old_rows,
                 new_rows,
+                following_ctx,
                 section: first_kind,
             }));
         }
@@ -155,3 +204,5 @@ pub fn partition_hunk_segments(hunk: &Hunk, hash_comment: bool) -> Vec<HunkSegme
 mod tests;
 
 pub mod dp;
+pub mod pairing;
+pub mod render;

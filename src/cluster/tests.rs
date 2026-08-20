@@ -104,7 +104,9 @@ fn test_partition_hunk_segments_with_syntax_barriers() {
 // chosen decomposition AND the bidirectional projection invariant
 // (Π_old ≡ old ∧ Π_new ≡ new) — the invariant is not optional.
 
-use super::dp::{DpOp, DpSolution, solve_cluster, verify_projection};
+use super::dp::{
+    DpOp, DpSolution, block_anchor, block_lcs, dp_tokens, solve_cluster, verify_projection,
+};
 // (Row, DelLine, AddLine, LineNum already imported at the top of this file)
 
 fn del_row(n: u32, text: &str) -> Row {
@@ -117,8 +119,10 @@ fn add_row(n: u32, text: &str) -> Row {
 
 fn code_cluster(old: Vec<Row>, new: Vec<Row>) -> ChangeCluster {
     ChangeCluster {
+        preceding_ctx: Vec::new(),
         old_rows: old,
         new_rows: new,
+        following_ctx: Vec::new(),
         section: SyntaxSectionKind::Code,
     }
 }
@@ -315,7 +319,7 @@ fn dp_subline_moves_recorded_for_reflow_expansion() {
     verify_projection(&sol, &c).expect("projection invariant holds");
     if let DpOp::Expand { spans, .. } = &sol.transitions[0] {
         assert!(
-            spans.iter().all(|s| s.new_line > 0),
+            spans.iter().all(|s| s.line > 0),
             "subline moves must target lines beyond the anchor: {spans:?}"
         );
     }
@@ -372,4 +376,210 @@ fn dp_corpus_projection_oracle() {
         clusters > 100,
         "expected a real corpus sweep, got {clusters} clusters"
     );
+}
+
+// ---- Head-anchor detection (Phase 4 validation) ----
+//
+// The block anchor must favor the line that continues the source line's
+// head (its first matched token), so a 1-to-K expansion lays the `Mod` on
+// the `use std::{` line and reflows the tail — matching the legacy wire.
+
+use crate::similarity::TokenInterner;
+
+#[test]
+fn block_anchor_fires_for_use_std_brace() {
+    let old = "use std::{ return self.name.clone(); }";
+    let new_lines = ["use std::{", "    return self.name.clone(); }"];
+
+    let mut interner = TokenInterner::new();
+    let old_tokens = dp_tokens(&mut interner, old);
+    let new_tokens: Vec<_> = new_lines
+        .iter()
+        .map(|s| dp_tokens(&mut interner, s))
+        .collect();
+
+    let bm = block_lcs(&old_tokens, &new_tokens, &interner);
+
+    // Diagnostics: show which lines have the head token (old index 0) matched.
+    for (li, s) in bm.per_line.iter().enumerate() {
+        for &ti in s {
+            if bm.pair_of.get(&(li, ti)) == Some(&0) {
+                eprintln!("head token 0 matched on block line {li}");
+            }
+        }
+    }
+    eprintln!("per_line match counts: {:?}", bm.per_line);
+    eprintln!("pair_of: {:?}", bm.pair_of);
+
+    let anchor = block_anchor(&bm);
+    eprintln!("block_anchor -> {anchor}");
+
+    assert_eq!(
+        anchor, 0,
+        "anchor should be line 0 (the `use std::{{` head), got {anchor}"
+    );
+}
+
+#[test]
+fn block_anchor_fires_for_fn_signature() {
+    let old = "fn render(&self) -> String { return self.name.clone(); }";
+    let new_lines = [
+        "fn render(&self) -> String {",
+        "    return self.name.clone(); }",
+    ];
+
+    let mut interner = TokenInterner::new();
+    let old_tokens = dp_tokens(&mut interner, old);
+    let new_tokens: Vec<_> = new_lines
+        .iter()
+        .map(|s| dp_tokens(&mut interner, s))
+        .collect();
+
+    let bm = block_lcs(&old_tokens, &new_tokens, &interner);
+    let anchor = block_anchor(&bm);
+    eprintln!("fn block_anchor -> {anchor}");
+    assert_eq!(
+        anchor, 0,
+        "anchor should be line 0 (the `fn` head), got {anchor}"
+    );
+}
+
+#[test]
+fn test_mirage_cache_cluster() {
+    let old =
+        "use std::{cell::RefCell, num::NonZeroUsize, os::unix::fs::MetadataExt, path::PathBuf};";
+    let new_lines = [
+        "use std::{",
+        "    cell::RefCell,",
+        "    num::NonZeroUsize,",
+        "    os::unix::fs::MetadataExt,",
+        "    path::PathBuf,",
+        "    sync::atomic::{AtomicU64, Ordering},",
+        "};",
+    ];
+
+    use crate::{
+        cluster::{ChangeCluster, dp},
+        parse::{AddLine, DelLine, LineNum},
+    };
+
+    let old_rows = vec![Row::Del(DelLine::new(LineNum::new(1).unwrap(), old))];
+    let new_rows = new_lines
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| Row::Add(AddLine::new(LineNum::new(i as u32 + 1).unwrap(), s)))
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows,
+        new_rows,
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, false);
+    eprintln!("SOL ROWS:");
+    for r in &sol.rows {
+        eprintln!(
+            "  {:?} (old={:?}, new={:?}): {:?}",
+            r.kind(),
+            r.old_line(),
+            r.new_line(),
+            r.text()
+        );
+    }
+    eprintln!("SOL TRANSITIONS: {:?}", sol.transitions);
+    eprintln!("SOL SCORE: {}", sol.score);
+}
+
+#[test]
+fn test_mirage_lookup_cluster() {
+    use crate::{
+        cluster::{ChangeCluster, dp},
+        parse::{AddLine, DelLine, LineNum},
+    };
+
+    let old_rows = vec![
+        Row::Del(DelLine::new(
+            LineNum::new(109).unwrap(),
+            "            return self.results.borrow_mut().get(key).cloned();",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(111).unwrap(),
+            "        self.cache.borrow_mut().pop(key);",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(112).unwrap(),
+            "        self.results.borrow_mut().pop(key);",
+        )),
+        Row::Del(DelLine::new(LineNum::new(113).unwrap(), "        None")),
+    ];
+    let new_rows = vec![
+        Row::Add(AddLine::new(
+            LineNum::new(143).unwrap(),
+            "            self.cache.borrow_mut().pop(key);",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(144).unwrap(),
+            "            self.results.borrow_mut().pop(key);",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(145).unwrap(),
+            "            return None;",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(147).unwrap(),
+            "        let (entry_epoch, result) = self.results.borrow_mut().get(key)?.clone();",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(148).unwrap(),
+            "        if entry_epoch != epoch {",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(149).unwrap(),
+            "            // Computed under an older mount state: the epoch bump (mode flip,",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(150).unwrap(),
+            "            // mount mutation) invalidated it.",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(151).unwrap(),
+            "            self.cache.borrow_mut().pop(key);",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(152).unwrap(),
+            "            self.results.borrow_mut().pop(key);",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(153).unwrap(),
+            "            return None;",
+        )),
+        Row::Add(AddLine::new(LineNum::new(154).unwrap(), "        }")),
+        Row::Add(AddLine::new(
+            LineNum::new(155).unwrap(),
+            "        Some(result)",
+        )),
+    ];
+
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["        if !fingerprint.is_valid() {".to_string()],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["    }".to_string()],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, false);
+    eprintln!("LOOKUP SOL ROWS:");
+    for r in &sol.rows {
+        eprintln!(
+            "  {:?} (old={:?}, new={:?}): {:?}",
+            r.kind(),
+            r.old_line(),
+            r.new_line(),
+            r.text()
+        );
+    }
+    eprintln!("LOOKUP SOL TRANSITIONS: {:?}", sol.transitions);
+    eprintln!("LOOKUP SOL SCORE: {}", sol.score);
 }

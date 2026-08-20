@@ -215,7 +215,17 @@ export function truncateMiddle(text: string, max: number): string {
 
 export const pad4 = (n: number | null): string => (n === null ? "    " : String(n).padStart(4));
 
+export function isCommonOnlyRow(r: Row): boolean {
+	return (
+		r.kind === "add" &&
+		r.runs !== undefined &&
+		r.runs.length > 0 &&
+		r.runs.every((x) => x.kind === "common" || x.kind === "ctx")
+	);
+}
+
 export function prefixOf(r: Row): string {
+	if (isCommonOnlyRow(r)) return `${pad4(r.newLine)}  `;
 	if (r.kind === "add") return r.moved ? `${pad4(r.newLine)} ${sMov.icon}` : `${pad4(r.newLine)} ${sAdd.icon}`;
 	if (r.kind === "del") return r.moved ? `${pad4(r.oldLine)} ${sMov.icon}` : `${pad4(r.oldLine)} ${sDel.icon}`;
 	if (r.kind === "mod") return `${pad4(r.newLine)} ${sMod.icon}`;
@@ -225,6 +235,9 @@ export function prefixOf(r: Row): string {
 export function styledPrefix(r: Row): string {
 	const pad = pad4(r.kind === "del" ? r.oldLine : (r.newLine ?? r.oldLine));
 	const reset = "\x1b[39m\x1b[23m";
+	if (isCommonOnlyRow(r)) {
+		return `\x1b[38;5;242m${pad}  ${reset}`;
+	}
 	if (r.kind === "del") {
 		const icon = r.moved ? "\x1b[38;5;117m≈" : "\x1b[38;5;203m-";
 		return `\x1b[3;38;5;174m${pad}\x1b[23m ${icon}${reset}`;

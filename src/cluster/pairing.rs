@@ -1,0 +1,268 @@
+//! The DP pairing bridge: `solve_cluster` as a drop-in replacement for the
+//! legacy `pass_pairing`'s greedy scoring — the switchover's fidelity-first
+//! step. Legacy passes 2–4 (span assembly, reflow filtering, ordered walk)
+//! run UNCHANGED on top. The target: the frozen `mirage-2025-08` wire,
+//! byte-identical; other corpora are allowed drift while the DP replaces
+//! the greedy heuristics.
+//!
+//! Fidelity rules:
+//! - The legacy guard set (moved rows, was-moved dels, dels whose content
+//!   survives elsewhere in the file, tail-before-closing candidates, …) filters
+//!   the DP's pairs exactly as it filtered the greedy candidates — a guarded
+//!   del renders as a pure del under both engines.
+//! - A DP block transition (expand/collapse) contributes its ANCHOR pairing to
+//!   `pair_of` (the legacy 1-to-1 shape passes 2–4 expect); its absorbed rows
+//!   stay unpaired adds/dels, which passes 2–4 already handle (the
+//!   expansion-tail logic in `pass_assemble_mods`).
+//!
+//! The engine override is thread-local (`set_dp_engine`) so the frozen
+//! golden legs keep running legacy in the same process; the binary reads
+//! `DIFFUSE_ENGINE=dp`.
+
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+};
+
+use crate::{
+    collapse::PairingResults,
+    parse::{Hunk, Row},
+    scope::{fn_of, is_tail_before_closing},
+};
+
+use super::{HunkSegment, dp, partition_hunk_segments};
+
+thread_local! {
+    static DP_ENGINE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether the DP pairing override is active on this thread.
+pub fn dp_engine_enabled() -> bool {
+    DP_ENGINE.with(Cell::get)
+}
+
+/// Set the DP pairing override for this thread (tests).
+pub fn set_dp_engine(v: bool) {
+    DP_ENGINE.with(|c| c.set(v));
+}
+
+/// Whether the DP pairing should run (thread-local override or env).
+pub fn use_dp_engine() -> bool {
+    dp_engine_enabled() || std::env::var("DIFFUSE_ENGINE").as_deref() == Ok("dp")
+}
+
+type LegacyIndexMaps = (Vec<Vec<usize>>, HashMap<usize, Vec<usize>>, Vec<usize>);
+
+/// The legacy run/del-index construction (identical for both engines —
+/// passes 2–4 consume it).
+fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
+    let mut del_runs: Vec<Vec<usize>> = Vec::new();
+    let mut i = 0;
+    while i < h.rows.len() {
+        if !matches!(h.rows[i], Row::Del(_)) {
+            i += 1;
+            continue;
+        }
+        let mut run = vec![i];
+        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_)) {
+            i += 1;
+            run.push(i);
+        }
+        del_runs.push(run);
+        i += 1;
+    }
+    let run_of: HashMap<usize, Vec<usize>> = del_runs
+        .iter()
+        .flat_map(|run| run.iter().map(|&ri| (ri, run.clone())))
+        .collect();
+    let del_ids: Vec<usize> = h
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| matches!(r, Row::Del(_)))
+        .map(|(i, _)| i)
+        .collect();
+    (del_runs, run_of, del_ids)
+}
+
+/// The dels the legacy `pass_pairing` refuses to pair (its top-of-loop
+/// guards), computed identically — the DP's pairs over these dels are
+/// dropped so both engines leave the same rows standalone.
+fn guarded_dels(
+    h: &Hunk,
+    old_content: Option<&[String]>,
+    new_content: Option<&[String]>,
+) -> HashSet<usize> {
+    let mut skip = HashSet::new();
+    for (ri, r) in h.rows.iter().enumerate() {
+        if !matches!(r, Row::Del(_)) {
+            continue;
+        }
+        if r.is_moved() {
+            skip.insert(ri);
+            continue;
+        }
+        let r_trim = r.text().trim();
+        let was_moved = !r_trim.is_empty()
+            && h.rows.iter().any(|a| {
+                a.is_moved() && (a.old_line() == r.old_line() || a.text().trim() == r_trim)
+            });
+        if was_moved {
+            skip.insert(ri);
+            continue;
+        }
+        let del_is_tail = is_tail_before_closing(r.old_line(), true, old_content, new_content);
+        let tail_candidate = del_is_tail
+            && h.rows.iter().any(|a| {
+                a.kind() == crate::parse::RowKind::Add
+                    && is_tail_before_closing(a.new_line(), false, old_content, new_content)
+                    && fn_of(old_content, r.old_line()) == fn_of(new_content, a.new_line())
+            });
+        let has_same_hunk_add = h
+            .rows
+            .iter()
+            .any(|a| a.kind() == crate::parse::RowKind::Add && a.text().trim() == r_trim);
+        if !r_trim.is_empty()
+            && !tail_candidate
+            && !has_same_hunk_add
+            && new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
+        {
+            skip.insert(ri);
+        }
+    }
+    skip
+}
+
+fn is_fragment_pair_rejected(
+    gd: usize,
+    ga: usize,
+    h: &Hunk,
+    old_content: Option<&[String]>,
+    new_content: Option<&[String]>,
+) -> bool {
+    let r = &h.rows[gd];
+    let a = &h.rows[ga];
+
+    let del_fn = fn_of(old_content, r.old_line());
+    let add_fn = fn_of(new_content, a.new_line());
+    if let (Some(dfn), Some(afn)) = (&del_fn, &add_fn)
+        && dfn != afn
+        && (crate::collapse::fn_exists(new_content, dfn)
+            || crate::collapse::fn_exists(old_content, afn))
+    {
+        return true;
+    }
+
+    false
+}
+
+/// DP pairing: partition the hunk's change runs into clusters, solve each
+/// with the DP, and convert the transitions into the legacy `pair_of` map
+/// (global add row index -> global del row index). 1-to-1 `Mod`/`Mov`
+/// transitions pair directly; block transitions contribute their anchor
+/// pair; guarded dels never pair.
+pub fn dp_pairing(
+    h: &Hunk,
+    hash_comment: bool,
+    old_content: Option<&[String]>,
+    new_content: Option<&[String]>,
+) -> PairingResults {
+    let (del_runs, run_of, del_ids) = legacy_index_maps(h);
+    let guards = guarded_dels(h, old_content, new_content);
+
+    // Global row indices by line number (unique per hunk side).
+    let del_by_num: HashMap<u32, usize> = h
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| r.old_line().map(|n| (n, i)))
+        .collect();
+    let add_by_num: HashMap<u32, usize> = h
+        .rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| r.new_line().map(|n| (n, i)))
+        .collect();
+
+    let mut pair_of: HashMap<usize, usize> = HashMap::new();
+
+    for seg in partition_hunk_segments(h, hash_comment) {
+        let cluster = match seg {
+            HunkSegment::Cluster(c) => c,
+            HunkSegment::Context(_) => continue,
+        };
+        let sol = super::dp::solve_cluster(&cluster, hash_comment);
+
+        // Walk the DP's consumption of cluster sides, mapping transitions
+        // to global indices via line numbers.
+        let mut oi = 0usize;
+        let mut ni = 0usize;
+        let global_del = |oi: usize| -> Option<usize> {
+            cluster
+                .old_rows
+                .get(oi)
+                .and_then(Row::old_line)
+                .and_then(|n| del_by_num.get(&n).copied())
+        };
+        let global_add = |ni: usize| -> Option<usize> {
+            cluster
+                .new_rows
+                .get(ni)
+                .and_then(Row::new_line)
+                .and_then(|n| add_by_num.get(&n).copied())
+        };
+        for t in &sol.transitions {
+            match t {
+                dp::DpOp::Del => {
+                    oi += 1;
+                }
+                dp::DpOp::Add => {
+                    ni += 1;
+                }
+                dp::DpOp::Mod { .. } | dp::DpOp::Mov => {
+                    if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni))
+                        && !guards.contains(&gd)
+                        && !pair_of.contains_key(&ga)
+                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content)
+                    {
+                        pair_of.insert(ga, gd);
+                    }
+                    oi += 1;
+                    ni += 1;
+                }
+                dp::DpOp::Expand { anchor, k, .. } => {
+                    if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni + anchor))
+                        && !guards.contains(&gd)
+                        && !pair_of.contains_key(&ga)
+                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content)
+                    {
+                        pair_of.insert(ga, gd);
+                    }
+                    oi += 1;
+                    ni += k;
+                }
+                dp::DpOp::Collapse { anchor, k, .. } => {
+                    if let (Some(gd), Some(ga)) = (global_del(oi + anchor), global_add(ni))
+                        && !guards.contains(&gd)
+                        && !pair_of.contains_key(&ga)
+                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content)
+                    {
+                        pair_of.insert(ga, gd);
+                    }
+                    oi += k;
+                    ni += 1;
+                }
+            }
+        }
+    }
+
+    PairingResults {
+        pair_of,
+        del_runs,
+        run_of,
+        del_ids,
+    }
+}
+
+#[cfg(test)]
+mod tests;

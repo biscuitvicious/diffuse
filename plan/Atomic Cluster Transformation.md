@@ -10,17 +10,17 @@
   - [x] Implement syntax section classifier (doc comments, attributes, function boundaries, statement blocks).
   - [x] Partition change runs by syntax sections to enforce hard semantic barriers.
   - [x] Decompose hunks into isolated, context-bounded $(M \text{ dels}, N \text{ adds})$ change clusters.
-- [·] **Phase 3: Cluster Dynamic Programming (DP) Transformation Engine** (implemented & agent-verified; awaiting review before commit)
+- [x] **Phase 3: Cluster Dynamic Programming (DP) Transformation Engine**
   - [x] Define cluster DP table and transition state model ($\text{DP}[i][j]$).
   - [x] Implement 1-to-1 `Mod`, 1-to-$K$ expansion, $K$-to-1 collapse, `Del`, `Add`, and `Mov` transitions.
   - [x] Implement subline `Mov` span detection for cross-line token reflows (e.g. comment text shifting across line breaks).
   - [x] Formulate multi-objective cost function (common tokens, syntax alignment, minimal sprawl, mid-word penalty).
   - [x] Implement DP optimal path traceback with bidirectional string verification ($\Pi_{\text{old}} \equiv \text{old} \land \Pi_{\text{new}} \equiv \text{new}$).
-- [ ] **Phase 4: Universal Subword Token Stream & Multi-Line Markup**
-  - [ ] Extend subword run generation to all row kinds (`Mod`, `Del`, `Add`, `Mov`).
-  - [ ] Implement `RunKind::Mov` subline spans for moved text fragments (source struck-moved, target filled-moved).
-  - [ ] Implement subword token highlights for absorbed deletions and multi-line expansions.
-  - [ ] Implement whitespace contraction (8 → 12 spaces = 8 Common + 4 Add) and delimiter snapping.
+- [x] **Phase 4: Universal Subword Token Stream & Multi-Line Markup**
+  - [x] Extend subword run generation to all row kinds (`Mod`, `Del`, `Add`, `Mov`).
+  - [x] Implement `RunKind::Mov` subline spans for moved text fragments (source struck-moved, target filled-moved).
+  - [x] Implement subword token highlights for absorbed deletions and multi-line expansions.
+  - [x] Implement whitespace contraction (8 → 12 spaces = 8 Common + 4 Add) and delimiter snapping.
 - [ ] **Phase 5: Acceptance Verification & Golden Gate**
   - [ ] Extend `apply_oracle` to mechanically prove string and hunk equivalence across all 7 golden corpora.
   - [ ] Verify wire contract compatibility and TypeScript TUI rendering.
@@ -152,6 +152,14 @@ Extends subword token diffing and highlight metadata across all diff row kinds.
 - Snap delimiter and comparison operator flips (`<` vs `>`) to their exact token offsets.
 
 ---
+
+### Step 4.4: Mov Span Rendering Contract
+- `RunKind::Mov` runs render via THEME KEYS (not hardcoded): the renderer's
+  palette gains `toolDiffMovedAdded` / `toolDiffMovedRemoved`, defaulting to
+  the same muted green/red as added/removed lines (add tint 22 / del tint 52
+  in the default theme) — filled-moved (new side) green, struck-moved (old
+  side) red. NO subline highlighting: the mov run's text renders one solid
+  color (the run's semantic syntax color is ignored for mov runs).
 
 ## 5. Phase 5 — Acceptance Verification & Golden Gate
 

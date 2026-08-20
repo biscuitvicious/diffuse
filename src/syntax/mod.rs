@@ -41,6 +41,44 @@ pub struct LangProfile {
     /// `markdown_tokens` classifier). True only for the md family proper —
     /// toml/yaml share the profile's token set but not the prose tokens.
     pub markdown: bool,
+    /// The block delimiter style (braces, colon + indentation, or keywords).
+    pub block_style: BlockDelimStyle,
+}
+
+/// The block boundary delimiter style for a programming language.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BlockDelimStyle {
+    /// Braces (`{` and `}`) like Rust, TS/JS, C/C++, Go, Java.
+    #[default]
+    Braces,
+    /// Indentation + colon (`:` and dedent) like Python, YAML.
+    IndentColon,
+    /// Shell keywords (`then`/`do` and `fi`/`done`/`esac`).
+    Keywords,
+}
+
+impl LangProfile {
+    /// Whether a line acts as an opening delimiter of a syntactic block.
+    pub fn is_block_open(&self, line: &str) -> bool {
+        let t = line.trim();
+        match self.block_style {
+            BlockDelimStyle::Braces => t.ends_with('{'),
+            BlockDelimStyle::IndentColon => t.ends_with(':'),
+            BlockDelimStyle::Keywords => {
+                t.ends_with("then") || t.ends_with("do") || t.ends_with("in") || t.ends_with('{')
+            }
+        }
+    }
+
+    /// Whether a line acts as an explicit closing delimiter of a block.
+    pub fn is_block_close(&self, line: &str) -> bool {
+        let t = line.trim();
+        match self.block_style {
+            BlockDelimStyle::Braces => t == "}" || t == "};" || t == "},",
+            BlockDelimStyle::IndentColon => false,
+            BlockDelimStyle::Keywords => t == "fi" || t == "done" || t == "esac" || t == "}",
+        }
+    }
 }
 
 const KEYWORDS_RUST: &str = "as async await break const continue crate dyn else enum extern fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait type unsafe use where while macro_rules yield";
@@ -109,6 +147,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             // — strip the prefix, classify the remainder.
             fence_strip: Some(Regex::new(r"^\s*(///|//!)?\s*").expect("the doc prefix")),
             markdown: false,
+            block_style: BlockDelimStyle::Braces,
         },
         "ts" | "tsx" | "js" | "jsx" | "mjs" => LangProfile {
             keywords: kw(KEYWORDS_TS),
@@ -120,6 +159,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: false,
+            block_style: BlockDelimStyle::Braces,
         },
         "py" => LangProfile {
             keywords: kw(KEYWORDS_PY),
@@ -131,6 +171,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: false,
+            block_style: BlockDelimStyle::IndentColon,
         },
         "sh" | "bash" => LangProfile {
             keywords: kw(KEYWORDS_SH),
@@ -142,6 +183,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: false,
+            block_style: BlockDelimStyle::Keywords,
         },
         "c" | "h" | "cpp" | "hpp" | "java" => LangProfile {
             keywords: kw(KEYWORDS_C),
@@ -153,6 +195,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: false,
+            block_style: BlockDelimStyle::Braces,
         },
         "go" => LangProfile {
             keywords: kw(KEYWORDS_GO),
@@ -164,6 +207,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: false,
+            block_style: BlockDelimStyle::Braces,
         },
         "md" | "markdown" => LangProfile {
             keywords: HashSet::new(),
@@ -178,6 +222,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: true,
+            block_style: BlockDelimStyle::Braces,
         },
         // toml/yaml share the token set but not the prose classifier.
         "toml" | "yaml" | "yml" => LangProfile {
@@ -190,6 +235,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: false,
+            block_style: BlockDelimStyle::IndentColon,
         },
         "json" => LangProfile {
             keywords: HashSet::new(),
@@ -201,6 +247,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
             unlabeled_fence_lang: None,
             fence_strip: None,
             markdown: false,
+            block_style: BlockDelimStyle::Braces,
         },
         _ => return None,
     };

@@ -3,7 +3,7 @@
  */
 
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { fileCounts, pad4, prefixOf, rowCoord, truncateMiddle } from "./model.ts";
+import { fileCounts, isCommonOnlyRow, pad4, prefixOf, rowCoord, truncateMiddle } from "./model.ts";
 import { notesFor } from "./persistence.ts";
 import { getActiveTheme, sAdd, sDel, sMod, sMov, SGR_OFF } from "./theme.ts";
 import type { ReviewNote, ReviewSession, Row } from "./types.ts";
@@ -369,7 +369,7 @@ export function styleTokens(
 	theme: { fg: (c: string, t: string) => string },
 ): string {
 	const activeTheme = getActiveTheme();
-	const isCtx = r.kind === "ctx" || r.kind === "sep";
+	const isCtx = r.kind === "ctx" || r.kind === "sep" || isCommonOnlyRow(r);
 	const isMov = r.moved === true;
 	const isDelRow = r.kind === "del";
 	const isPureDelMod = r.kind === "mod" && isPureDeletionMod(r);
@@ -396,11 +396,12 @@ export function styleTokens(
 	const prefixBg = selected && !isCtx ? lineBg : "";
 	const wordBg = selected ? `\x1b[48;5;${sMod.fillCursor}m` : `\x1b[48;5;${sMod.fill}m`;
 	const delBg = `\x1b[48;5;${sDel.tint}m`;
+	const isExpansionAdd = r.kind === "add" && r.delText !== undefined;
 	const hasSubwords = tokens.some((t) => t.kind === "add") && tokens.some((t) => t.kind !== "add");
 	const baseBg = (kind: string | undefined): string => {
 		if (isCtx && !selected) return "";
 		if (kind === "del") return delBg;
-		if (kind === "add" && (isModRow || hasSubwords) && !isPureDelMod) return wordBg;
+		if (kind === "add" && (isModRow || hasSubwords || isExpansionAdd) && !isPureDelMod) return wordBg;
 		return lineBg;
 	};
 	const text = displayText(r, colOffset, wordDiff);

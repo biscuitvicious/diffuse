@@ -255,7 +255,7 @@ pub fn pass_pairing(
     }
 }
 
-fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {
+pub(crate) fn fn_exists(content: Option<&[String]>, fn_name: &str) -> bool {
     let Some(content) = content else { return false };
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
@@ -340,16 +340,43 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         || nxt_t.starts_with("||")
                         || nxt_t.starts_with('.')
                         || nxt_t == "{"
+                        || nxt_t == "}";
+                    let is_closing = nxt_t == "};"
+                        || nxt_t == "},"
                         || nxt_t == "}"
-                        || tokenize_line(nxt_t).into_iter().any(|tok| {
-                            !tok.trim().is_empty()
-                                && tok.chars().any(char::is_alphanumeric)
-                                && del_text.contains(tok)
-                        });
+                        || nxt_t == ");"
+                        || nxt_t == "),"
+                        || nxt_t == ")";
+                    let matches_del = tokenize_line(nxt_t).into_iter().any(|tok| {
+                        !tok.trim().is_empty()
+                            && tok.chars().any(char::is_alphanumeric)
+                            && del_text.contains(tok)
+                    });
 
-                    if is_continuation {
+                    if is_closing || is_continuation || matches_del {
                         next_adds.push(k);
                         k += 1;
+                        if is_closing {
+                            break;
+                        }
+                    } else if (del_text.starts_with("use ") || del_text.contains('{'))
+                        && del_text.trim_end().ends_with(';')
+                    {
+                        let has_closing = (k..h.rows.len())
+                            .take_while(|&idx| {
+                                matches!(h.rows[idx], Row::Add(_))
+                                    && !ctx.pair_of.contains_key(&idx)
+                            })
+                            .any(|idx| {
+                                let t = h.rows[idx].text().trim();
+                                t == "};" || t == "}" || del_text.trim_end().ends_with(t)
+                            });
+                        if has_closing {
+                            next_adds.push(k);
+                            k += 1;
+                        } else {
+                            break;
+                        }
                     } else {
                         break;
                     }
@@ -374,7 +401,7 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         let moved = tokens.iter().any(|t| next_adds_text.contains(t));
                         !moved
                     } else {
-                        true
+                        true // Keep trailing delimiters like "{" struck on the mod line!
                     }
                 });
 
@@ -385,7 +412,12 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                         .into_iter()
                         .filter(|t| !t.trim().is_empty())
                         .count();
-                    if !donor_spans.add.is_empty() && donor_spans.add.len() < tok_count {
+                    let nxt_trim = add_nxt.text().trim();
+                    let is_closing_row = nxt_trim == "};" || nxt_trim == "}" || nxt_trim == ");";
+
+                    if (!donor_spans.add.is_empty() || is_closing_row)
+                        && donor_spans.add.len() < tok_count
+                    {
                         let other_adds_text = format!(
                             "{}\n{}",
                             add.text(),
@@ -427,6 +459,20 @@ pub fn pass_assemble_mods(h: &Hunk, _hash_comment: bool, ctx: &PairingContext) -
                             .collect();
 
                         add_spans.insert(nxt_i, (donor_spans, del_text.clone()));
+                    } else {
+                        let text_len = add_nxt.text().chars().count();
+                        let indent_len = add_nxt
+                            .text()
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .count();
+                        if text_len > indent_len {
+                            let spans = Spans {
+                                del: Vec::new(),
+                                add: vec![(indent_len, text_len)],
+                            };
+                            add_spans.insert(nxt_i, (spans, del_text.clone()));
+                        }
                     }
                 }
             }
@@ -656,8 +702,14 @@ pub fn collapse_hunk_rows(
     let h_norm = pass_shift_hunk(h, new_content);
     let h = &h_norm;
 
-    // Pass 1: Similarity and brace-anchor pairing
-    let p1 = pass_pairing(h, hash_comment, old_content, new_content);
+    // Pass 1: Similarity and brace-anchor pairing — the DP engine under
+    // `DIFFUSE_ENGINE=dp` / `set_dp_engine` (fidelity target: the frozen
+    // mirage wire, byte-identical; see cluster::pairing).
+    let p1 = if crate::cluster::pairing::use_dp_engine() {
+        crate::cluster::pairing::dp_pairing(h, hash_comment, old_content, new_content)
+    } else {
+        pass_pairing(h, hash_comment, old_content, new_content)
+    };
     let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
 

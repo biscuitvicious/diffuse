@@ -54,6 +54,10 @@ pub enum RunKind {
     Del,
     Add,
     Ctx,
+    /// Moved text: verbatim relocation (a whole `Mov` row) or a reflowed
+    /// fragment (struck-moved on the source side, filled-moved on the target).
+    /// Renders muted-connected rather than struck/filled.
+    Mov,
 }
 
 impl RunKind {
@@ -63,10 +67,10 @@ impl RunKind {
             RunKind::Del => RunKind::Add,
             RunKind::Common => RunKind::Common,
             RunKind::Ctx => RunKind::Ctx,
+            RunKind::Mov => RunKind::Mov,
         }
     }
 }
-
 /// The Unicode `White_Space` property plus the zero-width space — the
 /// tokenizer's whitespace class.
 fn is_ws_class(c: char) -> bool {

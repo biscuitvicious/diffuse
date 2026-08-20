@@ -56,6 +56,7 @@ fn trace_wobble() {
                     RunKind::Add => "add",
                     RunKind::Common => "common",
                     RunKind::Ctx => "ctx",
+                    RunKind::Mov => "mov",
                 },
                 x.text.as_str(),
             )
@@ -103,6 +104,7 @@ fn whitespace_minimum() {
                     RunKind::Del => "del",
                     RunKind::Add => "add",
                     RunKind::Ctx => "ctx",
+                    RunKind::Mov => "mov",
                 },
                 x.text.clone(),
             )
