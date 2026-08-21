@@ -39,22 +39,41 @@ Imports are organized into distinct groups separated by a single blank line, ord
 
 Within each group, `rustfmt` alphabetizes and merges imports from the same crate into a single `use` block (`imports_granularity = "Crate"`).
 
-### No Inline Qualified References
-Avoid inline fully-qualified paths such as `crate::parse::Row`, `crate::lcs::*`, or `std::collections::HashMap` in function signatures, struct fields, or function bodies.
+### Top-Level Imports & Inline Qualification
 
-- **Do**: Import the item at the top of the file:
-  ```rust
-  use crate::parse::{AddLine, DelLine, Row, RowKind};
-  use std::collections::{HashMap, HashSet};
-  ```
-- **Don't**: Write inline qualified paths:
-  ```rust
-  fn process(row: &crate::parse::Row) -> std::collections::HashMap<usize, usize> { ... }
-  ```
-- **Exception**: Serde attribute string paths that require absolute paths (e.g. `#[serde(skip_serializing_if = "std::ops::Not::not")]`).
+As a general rule of thumb, always aim to import types, traits, and functions at the top of the file rather than writing long inline qualified paths. However, apply this with common sense in favor of idiomatic, clean Rust style:
+
+- **Never directly reference root `std::` inline**: Always import at least one level down from `std` at the top of the file (e.g. `use std::collections::HashMap;`, `use std::{fs, io};`). Never write `std::collections::HashMap` or `std::io::Result` inline in signatures, structs, or function bodies.
+- **Parent Module Imports for Disambiguation & Idiomatic Context**: For common modules or generic leaf names, import the parent module at the top level and qualify by the module name inline. This is preferred for:
+  - Disambiguating types: `use std::io;` → `io::Result<T>`, `io::Error` (avoids clashing with the standard `Result` or other error types).
+  - Module-namespaced functions: `use std::fs;` → `fs::create_dir_all(path)`, `fs::read_to_string(path)` (much clearer than importing bare `read_to_string`).
+  - Formatting / serialization traits: `use std::fmt;` → `fmt::Formatter`, `fmt::Result`.
+  - Atomics / memory orderings: `use std::sync::atomic::{AtomicU64, Ordering};` → `Ordering::Relaxed`.
+- **Direct Leaf Imports**: For distinctive, domain-specific types, structs, and traits, import the leaf item directly:
+  - **Do**:
+    ```rust
+    use crate::parse::{AddLine, DelLine, Row, RowKind};
+    use std::collections::{HashMap, HashSet};
+    use std::path::{Path, PathBuf};
+    use std::{fs, io};
+
+    fn process_file(path: &Path) -> io::Result<HashMap<String, Row>> {
+        let content = fs::read_to_string(path)?;
+        ...
+    }
+    ```
+  - **Don't**:
+    ```rust
+    // Root std:: and full inline paths in signatures/bodies
+    fn process_file(path: &std::path::Path) -> std::io::Result<std::collections::HashMap<String, crate::parse::Row>> {
+        let content = std::fs::read_to_string(path)?;
+        ...
+    }
+    ```
+- **Exceptions**: Serde attribute string paths and macro invocations that require absolute paths (e.g. `#[serde(skip_serializing_if = "std::ops::Not::not")]`).
 
 ### No Wildcard Imports in Production Code
-- Avoid `use some_module::*;` in production code. Explicitly name imported types and functions.
+- Avoid `use some_module::*;` in production code. Explicitly name imported types, modules, and functions.
 - Test submodules (`#[cfg(test)] mod tests`) should use `use super::*;` to bring outer module items into scope.
 
 ---
