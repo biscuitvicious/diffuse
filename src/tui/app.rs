@@ -1242,9 +1242,10 @@ impl AppState {
         (starts, counts, seg_counts, total_vis_lines)
     }
 
-    /// Scroll to a specific visual line offset (used by scrollbar dragging).
+    /// Scroll to a specific visual line offset (used by scrollbar dragging and
+    /// paging).
     pub fn scroll_to_visual(&mut self, target_vis: usize) {
-        let (starts, counts, _seg_counts, total_vis_lines) =
+        let (starts, counts, seg_counts, total_vis_lines) =
             self.visual_geometry(self.last_content_width);
         let max_rows = self.viewport_height.max(4);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
@@ -1264,21 +1265,35 @@ impl AppState {
             for (i, &s) in starts.iter().enumerate() {
                 if s + counts[i] > self.scroll {
                     self.row_idx = i;
-                    self.vis_line = 0;
+                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
+                        1
+                    } else {
+                        0
+                    };
+                    let offset = self.scroll.saturating_sub(s + hunk_div);
+                    self.vis_line = offset.min(seg_counts[i].saturating_sub(1));
                     break;
                 }
             }
         } else if cursor_vis >= self.scroll + max_rows {
             let bottom_vis = (self.scroll + max_rows).saturating_sub(1);
             let mut target_row = self.row_idx;
+            let mut target_vis_line = 0;
             for (i, &s) in starts.iter().enumerate().rev() {
                 if s <= bottom_vis {
                     target_row = i;
+                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
+                        1
+                    } else {
+                        0
+                    };
+                    let offset = bottom_vis.saturating_sub(s + hunk_div);
+                    target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
                     break;
                 }
             }
             self.row_idx = target_row;
-            self.vis_line = 0;
+            self.vis_line = target_vis_line;
         }
     }
 
@@ -1662,16 +1677,113 @@ impl AppState {
         if self.flat.is_empty() {
             return;
         }
-        let step = ((self.viewport_height * 2 + 3) / 6).max(1);
-        self.scroll_to_visual(self.scroll + step);
+        let (starts, _counts, seg_counts, total_vis_lines) =
+            self.visual_geometry(self.last_content_width);
+        let max_rows = self.viewport_height.max(4);
+        let bottom_vis = (self.scroll + max_rows)
+            .saturating_sub(1)
+            .min(total_vis_lines.saturating_sub(1));
+
+        let mut target_row = self.row_idx;
+        let mut target_vis_line = 0;
+        for (i, &s) in starts.iter().enumerate().rev() {
+            if s <= bottom_vis {
+                target_row = i;
+                let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
+                    1
+                } else {
+                    0
+                };
+                let offset = bottom_vis.saturating_sub(s + hunk_div);
+                target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                break;
+            }
+        }
+
+        if self.row_idx == target_row && self.vis_line == target_vis_line {
+            // Already at bottom -> scroll 1/3 of viewport down and place cursor at new
+            // bottom
+            let step = ((max_rows * 2 + 3) / 6).max(1);
+            self.scroll_to_visual(self.scroll + step);
+            let new_bottom_vis = (self.scroll + max_rows)
+                .saturating_sub(1)
+                .min(total_vis_lines.saturating_sub(1));
+            let mut new_target_row = self.row_idx;
+            let mut new_target_vis_line = 0;
+            for (i, &s) in starts.iter().enumerate().rev() {
+                if s <= new_bottom_vis {
+                    new_target_row = i;
+                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
+                        1
+                    } else {
+                        0
+                    };
+                    let offset = new_bottom_vis.saturating_sub(s + hunk_div);
+                    new_target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                    break;
+                }
+            }
+            self.row_idx = new_target_row;
+            self.vis_line = new_target_vis_line;
+        } else {
+            // Jump cursor to bottom of visible page
+            self.row_idx = target_row;
+            self.vis_line = target_vis_line;
+        }
     }
 
     pub fn page_up(&mut self) {
         if self.flat.is_empty() {
             return;
         }
-        let step = ((self.viewport_height * 2 + 3) / 6).max(1);
-        self.scroll_to_visual(self.scroll.saturating_sub(step));
+        let (starts, counts, seg_counts, _total_vis_lines) =
+            self.visual_geometry(self.last_content_width);
+        let top_vis = self.scroll;
+
+        let mut target_row = self.row_idx;
+        let mut target_vis_line = 0;
+        for (i, &s) in starts.iter().enumerate() {
+            if s + counts[i] > top_vis {
+                target_row = i;
+                let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
+                    1
+                } else {
+                    0
+                };
+                let offset = top_vis.saturating_sub(s + hunk_div);
+                target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                break;
+            }
+        }
+
+        if self.row_idx == target_row && self.vis_line == target_vis_line {
+            // Already at top -> scroll 1/3 of viewport up and place cursor at new top
+            let max_rows = self.viewport_height.max(4);
+            let step = ((max_rows * 2 + 3) / 6).max(1);
+            self.scroll_to_visual(self.scroll.saturating_sub(step));
+            let new_top_vis = self.scroll;
+            let mut new_target_row = self.row_idx;
+            let mut new_target_vis_line = 0;
+            for (i, &s) in starts.iter().enumerate() {
+                if s + counts[i] > new_top_vis {
+                    new_target_row = i;
+                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
+                        1
+                    } else {
+                        0
+                    };
+                    let offset = new_top_vis.saturating_sub(s + hunk_div);
+                    new_target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                    break;
+                }
+            }
+            self.row_idx = new_target_row;
+            self.vis_line = new_target_vis_line;
+        } else {
+            // Jump cursor to top of visible page
+            self.row_idx = target_row;
+            self.vis_line = target_vis_line;
+        }
     }
 
     pub fn move_top(&mut self) {
@@ -2495,23 +2607,37 @@ index 1111111..2222222 100644
         state.render_frame(80, 20);
         assert_eq!(state.scroll, 0);
 
-        // 1/3 of vh (16) is 5 lines
+        // 1st pg down moves cursor to bottom of current visible page without scrolling
+        state.page_down();
+        assert_eq!(state.scroll, 0);
+        assert!(state.row_idx > 0);
+
+        // 2nd pg down (already at bottom) scrolls 1/3 of vh (5 lines)
         state.page_down();
         assert_eq!(state.scroll, 5);
 
+        // 3rd pg down scrolls another 5 lines
         state.page_down();
         assert_eq!(state.scroll, 10);
 
+        // 1st pg up moves cursor to top of current visible page without scrolling
+        state.page_up();
+        assert_eq!(state.scroll, 10);
+
+        // 2nd pg up (already at top) scrolls 1/3 of vh (5 lines)
         state.page_up();
         assert_eq!(state.scroll, 5);
 
-        // In raw diff mode
+        // In raw diff mode: first move cursor to bottom, then scroll
         state.toggle_raw_diff();
         state.render_frame(80, 20);
+        state.move_top();
+        state.page_down(); // to bottom
         let raw_scroll = state.scroll;
-        state.page_down();
+        state.page_down(); // scroll 1/3
         assert_eq!(state.scroll, raw_scroll + 5);
-        state.page_up();
+        state.page_up(); // to top
+        state.page_up(); // scroll 1/3
         assert_eq!(state.scroll, raw_scroll);
     }
 }
