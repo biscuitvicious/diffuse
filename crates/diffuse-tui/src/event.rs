@@ -625,6 +625,10 @@ index 3333333..4444444 100644
             1,
             "immediately jumped to banana.rs live"
         );
+        assert!(
+            s.flat[s.row_idx].is_file_header,
+            "must display from the file banner row"
+        );
 
         // Esc cancels and restores initial position
         handle_event(
@@ -655,6 +659,10 @@ index 3333333..4444444 100644
             s.current_file_idx(),
             1,
             "stays on banana.rs after confirmation"
+        );
+        assert!(
+            s.flat[s.row_idx].is_file_header,
+            "stays on the file banner row after confirmation"
         );
     }
 
