@@ -1,8 +1,10 @@
 //! TUI Event Handling & Input Processing.
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 
-use super::app::AppState;
+use super::{app::AppState, command::TuiCommand};
 
 /// Handle incoming crossterm terminal events.
 pub fn handle_event(state: &mut AppState, event: Event) {
@@ -18,10 +20,10 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
     if state.file_finder.is_some() {
         match (key.modifiers, key.code) {
             (_, KeyCode::Esc) => {
-                state.cancel_file_finder();
+                state.execute(TuiCommand::CloseFileFinder);
             }
             (_, KeyCode::Enter) => {
-                state.confirm_file_finder();
+                state.execute(TuiCommand::ConfirmFileFinder);
             }
             (_, KeyCode::Up)
             | (KeyModifiers::CONTROL, KeyCode::Char('p'))
@@ -64,18 +66,18 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
     // Note Draft Editing Mode draft typing
     if let Some(ref mut draft) = state.note_draft {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
-            state.commit_note_draft();
+            state.execute(TuiCommand::CommitNoteDraft);
             return;
         }
 
         match key.code {
             KeyCode::Esc => {
-                state.note_draft = None;
+                state.execute(TuiCommand::CancelNoteDraft);
             }
             KeyCode::Enter => {
                 // One-line draft: Enter commits. A literal '\n' would break the
                 // single-line status rendering.
-                state.commit_note_draft();
+                state.execute(TuiCommand::CommitNoteDraft);
             }
             KeyCode::Backspace => {
                 draft.pop();
@@ -91,42 +93,36 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
     // Normal Reviewer Navigation & Commands
     match (key.modifiers, key.code) {
         (KeyModifiers::NONE, KeyCode::Char('q')) | (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-            state.should_quit = true;
+            state.execute(TuiCommand::Quit);
         }
         (KeyModifiers::NONE, KeyCode::Esc) => {
-            if state.show_help {
-                state.show_help = false;
-            } else if state.anchor.is_some() {
-                state.anchor = None;
-            } else {
-                state.should_quit = true;
-            }
+            state.execute(TuiCommand::Dismiss);
         }
         (KeyModifiers::NONE, KeyCode::Enter) => {
-            state.toggle_current_file_collapse();
+            state.execute(TuiCommand::ToggleCollapseFile(None));
         }
         (KeyModifiers::NONE, KeyCode::Char('j')) | (KeyModifiers::NONE, KeyCode::Down) => {
-            state.move_down();
+            state.execute(TuiCommand::MoveDown(1));
         }
         (KeyModifiers::NONE, KeyCode::Char('k')) | (KeyModifiers::NONE, KeyCode::Up) => {
-            state.move_up();
+            state.execute(TuiCommand::MoveUp(1));
         }
         (KeyModifiers::SHIFT, KeyCode::Char('J')) | (KeyModifiers::NONE, KeyCode::Char('}')) => {
-            state.next_hunk();
+            state.execute(TuiCommand::JumpHunkNext);
         }
         (KeyModifiers::SHIFT, KeyCode::Char('K')) | (KeyModifiers::NONE, KeyCode::Char('{')) => {
-            state.prev_hunk();
+            state.execute(TuiCommand::JumpHunkPrev);
         }
         (KeyModifiers::NONE, KeyCode::PageDown)
         | (KeyModifiers::CONTROL, KeyCode::Char('d'))
         | (KeyModifiers::CONTROL, KeyCode::Char('f'))
         | (KeyModifiers::NONE, KeyCode::Char(' ')) => {
-            state.page_down();
+            state.execute(TuiCommand::PageDown);
         }
         (KeyModifiers::NONE, KeyCode::PageUp)
         | (KeyModifiers::CONTROL, KeyCode::Char('u'))
         | (KeyModifiers::CONTROL, KeyCode::Char('b')) => {
-            state.page_up();
+            state.execute(TuiCommand::PageUp);
         }
         (KeyModifiers::NONE, KeyCode::Char(c @ '0'..='9')) => {
             state.num_buffer.push(c);
@@ -136,10 +132,10 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                 let line = state.num_buffer.parse::<u32>().ok();
                 state.num_buffer.clear();
                 if let Some(l) = line {
-                    state.goto_line(l);
+                    state.execute(TuiCommand::JumpToLine(l));
                 }
             } else {
-                state.move_top();
+                state.execute(TuiCommand::MoveToTop);
             }
         }
         (KeyModifiers::NONE, KeyCode::End) | (KeyModifiers::SHIFT, KeyCode::Char('G')) => {
@@ -147,88 +143,64 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                 let line = state.num_buffer.parse::<u32>().ok();
                 state.num_buffer.clear();
                 if let Some(l) = line {
-                    state.goto_line(l);
+                    state.execute(TuiCommand::JumpToLine(l));
                 }
             } else {
-                state.move_bottom();
+                state.execute(TuiCommand::MoveToBottom);
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('n'))
         | (KeyModifiers::NONE, KeyCode::Char(']'))
         | (KeyModifiers::NONE, KeyCode::Tab) => {
-            state.next_file();
+            state.execute(TuiCommand::JumpFileNext);
         }
         (KeyModifiers::NONE, KeyCode::Char('p'))
         | (KeyModifiers::NONE, KeyCode::Char('['))
         | (KeyModifiers::SHIFT, KeyCode::BackTab)
         | (KeyModifiers::NONE, KeyCode::BackTab) => {
-            state.prev_file();
+            state.execute(TuiCommand::JumpFilePrev);
         }
         (KeyModifiers::NONE, KeyCode::Char('h')) | (KeyModifiers::NONE, KeyCode::Left) => {
-            state.col_offset = state.col_offset.saturating_sub(4);
+            state.execute(TuiCommand::ScrollLeft(4));
         }
         (KeyModifiers::NONE, KeyCode::Char('l')) | (KeyModifiers::NONE, KeyCode::Right) => {
-            state.col_offset += 4;
+            state.execute(TuiCommand::ScrollRight(4));
         }
         (KeyModifiers::NONE, KeyCode::Char('^')) => {
             state.col_offset = 0;
         }
         (KeyModifiers::NONE, KeyCode::Char('$')) => {
-            state.col_offset += 16;
+            state.execute(TuiCommand::ScrollRight(16));
         }
         (KeyModifiers::NONE, KeyCode::Char('w')) => {
-            state.word_diff = !state.word_diff;
+            state.execute(TuiCommand::ToggleWordDiff);
         }
         (KeyModifiers::NONE, KeyCode::Char('y')) => {
-            state.syntax_on = !state.syntax_on;
+            state.execute(TuiCommand::ToggleSyntax);
         }
         (KeyModifiers::NONE, KeyCode::Char('R')) | (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
-            state.toggle_raw_diff();
+            state.execute(TuiCommand::ToggleRawDiff);
         }
         (KeyModifiers::NONE, KeyCode::Char('?')) => {
-            state.show_help = !state.show_help;
+            state.execute(TuiCommand::ToggleHelp);
         }
         (KeyModifiers::NONE, KeyCode::Char('@')) | (KeyModifiers::SHIFT, KeyCode::Char('@')) => {
-            state.open_file_finder();
+            state.execute(TuiCommand::OpenFileFinder);
         }
         (KeyModifiers::NONE, KeyCode::Char('m')) => {
-            state.note_draft = Some(String::new());
+            state.execute(TuiCommand::StartNoteDraft);
         }
         (KeyModifiers::NONE, KeyCode::Char('v')) | (KeyModifiers::NONE, KeyCode::Char('V')) => {
-            state.start_or_confirm_selection();
+            state.execute(TuiCommand::StartSelection);
         }
         (KeyModifiers::NONE, KeyCode::Char('d')) | (KeyModifiers::NONE, KeyCode::Char('D')) => {
-            state.delete_notes();
+            state.execute(TuiCommand::DeleteNote);
         }
         (KeyModifiers::NONE, KeyCode::Char('o')) | (KeyModifiers::SHIFT, KeyCode::Char('O')) => {
-            if let Some(file) = state.current_file()
-                && let Some(row) = state.current_flat_row()
-                && let Some(c) = AppState::row_coord(&row.row)
-            {
-                let range = state.compute_selection().and_then(|sel| {
-                    if sel.side_is_new {
-                        Some((sel.start, sel.end))
-                    } else {
-                        None
-                    }
-                });
-                state.pending_editor = Some(super::editor::EditorRequest {
-                    file: file.path.clone(),
-                    line: c,
-                    range,
-                });
-            }
+            state.execute(TuiCommand::OpenEditor);
         }
         (KeyModifiers::NONE, KeyCode::Char('s')) => {
-            let repo_root = state.repo_root.clone();
-            let git_args = state.git_args.clone();
-            match super::actions::stage_action(state, &repo_root, &git_args, false) {
-                Ok(()) => {
-                    state.status_message = Some(("staged hunk".into(), true));
-                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
-                }
-                Err(e) => state.status_message = Some((e, false)),
-            }
+            state.execute(TuiCommand::Stage);
         }
         (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
             let repo_root = state.repo_root.clone();
@@ -242,15 +214,7 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('u')) => {
-            let repo_root = state.repo_root.clone();
-            let git_args = state.git_args.clone();
-            match super::actions::unstage_action(state, &repo_root, &git_args, false) {
-                Ok(()) => {
-                    state.status_message = Some(("unstaged hunk".into(), true));
-                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
-                }
-                Err(e) => state.status_message = Some((e, false)),
-            }
+            state.execute(TuiCommand::Unstage);
         }
         (KeyModifiers::SHIFT, KeyCode::Char('U')) => {
             let repo_root = state.repo_root.clone();
@@ -264,20 +228,7 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('x')) => {
-            let repo_root = state.repo_root.clone();
-            let git_args = state.git_args.clone();
-            match super::actions::discard_action(state, &repo_root, &git_args, false) {
-                Ok(stash_ref) => {
-                    let msg = if let Some(sr) = stash_ref {
-                        format!("discarded hunk (stash: {sr})")
-                    } else {
-                        "discarded hunk".into()
-                    };
-                    state.status_message = Some((msg, true));
-                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
-                }
-                Err(e) => state.status_message = Some((e, false)),
-            }
+            state.execute(TuiCommand::Discard);
         }
         (KeyModifiers::SHIFT, KeyCode::Char('X')) => {
             let repo_root = state.repo_root.clone();
@@ -300,80 +251,24 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
 }
 
 fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
-    use crossterm::event::MouseButton;
-    let header_offset = state.last_viewport_start;
-    let vh = state.viewport_height;
     let col = mouse.column as usize;
     let row = mouse.row as usize;
-    let is_on_scrollbar = col >= state.last_content_width;
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
-            state.move_down();
-            state.move_down();
-            state.move_down();
+            state.execute(TuiCommand::MouseScrollDown(3));
         }
         MouseEventKind::ScrollUp => {
-            state.move_up();
-            state.move_up();
-            state.move_up();
+            state.execute(TuiCommand::MouseScrollUp(3));
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if is_on_scrollbar && row >= header_offset && row < header_offset + vh {
-                state.is_dragging_scrollbar = true;
-                let row_in_vh = row - header_offset;
-                let (_starts, _counts, _seg, total_vis) =
-                    state.visual_geometry(state.last_content_width);
-                let max_scroll = total_vis.saturating_sub(vh);
-                if max_scroll > 0 && vh > 1 {
-                    let target_vis =
-                        ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64).round() as usize;
-                    state.scroll_to_visual(target_vis);
-                }
-            } else if row >= header_offset && row < header_offset + vh {
-                state.is_dragging_scrollbar = false;
-                let target_vis = state.scroll + (row - header_offset);
-                let (starts, counts, _seg, _total_vis) =
-                    state.visual_geometry(state.last_content_width);
-                for (i, &s) in starts.iter().enumerate() {
-                    if target_vis >= s && target_vis < s + counts[i] {
-                        state.row_idx = i;
-                        state.vis_line = 0;
-                        break;
-                    }
-                }
-            }
+            state.execute(TuiCommand::MouseClick { row, col });
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            if state.is_dragging_scrollbar {
-                let clamped_row = row.clamp(header_offset, header_offset + vh.saturating_sub(1));
-                let row_in_vh = clamped_row - header_offset;
-                let (_starts, _counts, _seg, total_vis) =
-                    state.visual_geometry(state.last_content_width);
-                let max_scroll = total_vis.saturating_sub(vh);
-                if max_scroll > 0 && vh > 1 {
-                    let target_vis =
-                        ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64).round() as usize;
-                    state.scroll_to_visual(target_vis);
-                }
-            } else if row >= header_offset && row < header_offset + vh {
-                if state.anchor.is_none() {
-                    state.anchor = Some(state.row_idx);
-                }
-                let target_vis = state.scroll + (row - header_offset);
-                let (starts, counts, _seg, _total_vis) =
-                    state.visual_geometry(state.last_content_width);
-                for (i, &s) in starts.iter().enumerate() {
-                    if target_vis >= s && target_vis < s + counts[i] {
-                        state.row_idx = i;
-                        state.vis_line = 0;
-                        break;
-                    }
-                }
-            }
+            state.execute(TuiCommand::MouseDrag { row, col });
         }
         MouseEventKind::Up(MouseButton::Left) => {
-            state.is_dragging_scrollbar = false;
+            state.execute(TuiCommand::EndMouseDrag);
         }
         _ => {}
     }

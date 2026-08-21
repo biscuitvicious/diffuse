@@ -9,40 +9,17 @@ use crate::{
         DiffuseTheme, display_text, render_raw_row, render_row_segment, slice_by_visual_width,
         styled_prefix,
     },
+    tui::{
+        command::TuiCommand,
+        types::{FlatRow, HunkMeta, HunkStart, Selection},
+        view::{
+            diff_grid::{render_file_header, render_hunk_divider},
+            header::{render_bottom_ribbon, render_header_bar, render_status_bar, visible_width},
+            modals::{render_finder_modal, render_help_modal},
+        },
+    },
     wire::{OutputFile, OutputRow, PipelineOutput},
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Selection {
-    pub file_idx: usize,
-    pub start: u32,
-    pub end: u32,
-    pub side_is_new: bool,
-}
-
-/// The first flat row of a hunk's content region (the jump target for hunk
-/// navigation, mirroring the reference `hunkStarts`).
-#[derive(Clone, Copy, Debug)]
-pub struct HunkStart {
-    pub flat: usize,
-    pub file: usize,
-    pub hunk: usize,
-}
-
-/// A hunk's allocated context envelope (above/below counts),
-/// used for the divider `ctx N▴ M▾` counters.
-#[derive(Clone, Copy, Debug)]
-pub struct HunkMeta {
-    pub above: usize,
-    pub below: usize,
-}
-
-pub struct FlatRow {
-    pub file_idx: usize,
-    pub hunk_idx: usize,
-    pub is_file_header: bool,
-    pub row: OutputRow,
-}
 
 pub struct AppState {
     pub output: PipelineOutput,
@@ -550,79 +527,23 @@ impl AppState {
         };
 
         // Header bar
-        let counts = &f.counts;
-        let note_count = f.notes.len();
-        let note_s = format!(
-            "{note_count} note{}",
-            if note_count == 1 { "" } else { "s" }
-        );
-        let counts_str = format!(
-            "+{}{}{}{} · {}",
-            counts.adds,
-            if counts.dels > 0 {
-                format!(" −{}", counts.dels)
-            } else {
-                String::new()
-            },
-            if counts.mods > 0 {
-                format!(" ~{}", counts.mods)
-            } else {
-                String::new()
-            },
-            if counts.movs > 0 {
-                format!(" ≈{} moved", counts.movs)
-            } else {
-                String::new()
-            },
-            note_s
-        );
-
-        let head_raw = format!(
-            " Review: {} · {} ({}) · {}",
-            self.repo, f.path, f.status, counts_str
-        );
-        let head_str = truncate_pad(&head_raw, width);
-        lines.push(format!(
-            "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{head_str}\x1b[0m"
-        ));
+        lines.push(render_header_bar(&self.repo, f, width));
 
         // Secondary status bar
         let total_files = self.output.files.len();
         let cur_hunk = self.current_hunk().unwrap_or(0);
         let total_hunks = f.hunks.len().max(1);
-        let mode_txt = if self.raw_diff {
-            " · raw diff".to_string()
-        } else {
-            String::new()
-        };
-        let go_txt = if !self.num_buffer.is_empty() {
-            format!(" · go {}", self.num_buffer)
-        } else {
-            String::new()
-        };
-        let col_txt = if self.col_offset > 0 {
-            format!(" · col {}+", self.col_offset)
-        } else {
-            String::new()
-        };
-        let branch_txt = if !self.output.branch.is_empty() {
-            format!(" · branch: {}", self.output.branch)
-        } else {
-            String::new()
-        };
-        let status_raw = format!(
-            " {}/{} files · hunk {}/{}{}{}{}{}",
-            cur_fi + 1,
+        lines.push(render_status_bar(crate::tui::view::StatusBarContext {
+            cur_fi,
             total_files,
-            cur_hunk + 1,
+            cur_hunk,
             total_hunks,
-            mode_txt,
-            col_txt,
-            go_txt,
-            branch_txt
-        );
-        let status_str = truncate_pad(&status_raw, width);
-        lines.push(format!("\x1b[38;5;244m{status_str}\x1b[39m"));
+            raw_diff: self.raw_diff,
+            col_offset: self.col_offset,
+            num_buffer: &self.num_buffer,
+            branch: &self.output.branch,
+            width,
+        }));
 
         // Ephemeral action feedback (note saved/deleted, git ops, ...)
         if let Some((msg, is_ok)) = self.status_message.clone() {
@@ -739,23 +660,7 @@ impl AppState {
                         .map(|m| (m.above, m.below))
                         .unwrap_or((0, 0));
                     let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
-                    let span = format!(
-                        "−{},{} +{},{}",
-                        h.old_start, h.old_count, h.new_start, h.new_count
-                    );
-                    let txt = format!(
-                        "───── H{} · {span} · ctx {}▴ {}▾ ─────",
-                        div_hi + 1,
-                        ctx.0,
-                        ctx.1
-                    );
-                    let txt_str = truncate_pad(&txt, content_width);
-                    let styled = if is_cur {
-                        format!("\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{txt_str}\x1b[0m")
-                    } else {
-                        format!("\x1b[38;5;240m{txt_str}\x1b[39m")
-                    };
-                    lines.push(styled);
+                    lines.push(render_hunk_divider(div_hi, h, ctx, is_cur, content_width));
                 }
                 vis_i += 1;
             }
@@ -763,30 +668,15 @@ impl AppState {
             if item.is_file_header {
                 if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
                     let file_obj = &self.output.files[item.file_idx];
-                    let f_counts = &file_obj.counts;
                     let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-                    let indicator = if is_collapsed { "▸" } else { "▾" };
-                    let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
-                    let bar = format!(
-                        "─── {} {} ({}) +{} -{} ~{}{} ───",
-                        indicator,
-                        file_obj.path,
-                        file_obj.status,
-                        f_counts.adds,
-                        f_counts.dels,
-                        f_counts.mods,
-                        collapse_tag
-                    );
-                    let bar_str = truncate_pad(&bar, content_width);
                     let is_selected = idx == self.row_idx;
-                    let styled_bar = if is_selected {
-                        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
-                    } else if in_band {
-                        format!("\x1b[48;5;240m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
-                    } else {
-                        format!("\x1b[38;5;244m{bar_str}\x1b[39m")
-                    };
-                    lines.push(styled_bar);
+                    lines.push(render_file_header(
+                        file_obj,
+                        is_collapsed,
+                        is_selected,
+                        in_band,
+                        content_width,
+                    ));
                 }
                 vis_i += 1;
             } else {
@@ -905,19 +795,13 @@ impl AppState {
             }
         }
 
-        lines.push(format!(
-            "\x1b[38;5;244m {}\x1b[39m",
-            "─".repeat(width.saturating_sub(2).min(60))
-        ));
-        let ribbon = truncate_pad(
-            " [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help",
-            width.saturating_sub(1),
-        );
-        lines.push(format!("\x1b[38;5;244m{ribbon}\x1b[39m"));
+        let (divider, ribbon) = render_bottom_ribbon(width);
+        lines.push(divider);
+        lines.push(ribbon);
 
         // Help modal overlays the frame when toggled on.
         if self.show_help {
-            let modal = Self::render_help_modal(width);
+            let modal = render_help_modal(width);
             let start = lines.len().saturating_sub(modal.len()) / 2;
             for (i, mline) in modal.iter().enumerate() {
                 let idx = start + i;
@@ -929,7 +813,7 @@ impl AppState {
 
         // File finder dialog overlays the frame when active.
         if let Some(finder) = &self.file_finder {
-            let modal = self.render_finder_modal(width, finder);
+            let modal = render_finder_modal(&self.output, finder, width);
             let start = lines.len().saturating_sub(modal.len()) / 2;
             for (i, mline) in modal.iter().enumerate() {
                 let idx = start + i;
@@ -953,108 +837,6 @@ impl AppState {
                 out.push_str("\x1b[0m");
             }
         }
-        out
-    }
-
-    fn render_finder_modal(
-        &self,
-        width: usize,
-        finder: &crate::tui::finder::FileFinderState,
-    ) -> Vec<String> {
-        let w = width.saturating_sub(4).clamp(36, 76);
-        let mut lines = Vec::new();
-
-        let prompt = format!(" @ {}█", finder.query);
-        lines.push(format!(
-            "\x1b[48;5;238m\x1b[1m\x1b[38;5;231m {:<w$}\x1b[0m",
-            prompt,
-            w = w.saturating_sub(1)
-        ));
-
-        let header_info = format!(
-            " FIND FILE ({}/{}) · ↑/↓ nav · Enter jump · Esc close",
-            if finder.matches.is_empty() {
-                0
-            } else {
-                finder.selected_idx + 1
-            },
-            finder.matches.len()
-        );
-        lines.push(format!(
-            "\x1b[48;5;236m\x1b[38;5;244m {:<w$}\x1b[0m",
-            header_info,
-            w = w.saturating_sub(1)
-        ));
-
-        if finder.matches.is_empty() {
-            lines.push(format!(
-                "\x1b[48;5;235m\x1b[38;5;240m {:<w$}\x1b[0m",
-                "  No matching files in diff",
-                w = w.saturating_sub(1)
-            ));
-        } else {
-            let max_visible = 8;
-            let total = finder.matches.len();
-            let start = if total <= max_visible || finder.selected_idx < max_visible / 2 {
-                0
-            } else if finder.selected_idx + max_visible / 2 >= total {
-                total - max_visible
-            } else {
-                finder.selected_idx - max_visible / 2
-            };
-            let end = (start + max_visible).min(total);
-
-            for (i, m) in finder.matches[start..end].iter().enumerate() {
-                let actual_idx = start + i;
-                let is_sel = actual_idx == finder.selected_idx;
-                let f = &self.output.files[m.file_idx];
-                let prefix = if is_sel { "▶ " } else { "  " };
-                let stats = format!("+{} -{} ~{}", f.counts.adds, f.counts.dels, f.counts.mods);
-
-                let path_display = Self::highlight_path_matches(&m.path, &m.match_indices, is_sel);
-                let bg_code = if is_sel {
-                    "\x1b[48;5;239m"
-                } else {
-                    "\x1b[48;5;235m"
-                };
-                let stats_color = if is_sel {
-                    "\x1b[38;5;248m"
-                } else {
-                    "\x1b[38;5;242m"
-                };
-                let prefix_color = if is_sel {
-                    "\x1b[1m\x1b[38;5;120m"
-                } else {
-                    "\x1b[38;5;244m"
-                };
-
-                lines.push(format!(
-                    "{bg_code}{prefix_color}{prefix}\x1b[0m{bg_code}{path_display} {stats_color}{stats:<8}\x1b[0m"
-                ));
-            }
-        }
-
-        lines
-    }
-
-    fn highlight_path_matches(path: &str, indices: &[usize], selected: bool) -> String {
-        let mut out = String::new();
-        let default_color = if selected {
-            "\x1b[1m\x1b[38;5;231m"
-        } else {
-            "\x1b[38;5;250m"
-        };
-        let match_color = "\x1b[1m\x1b[38;5;51m";
-
-        for (i, ch) in path.char_indices() {
-            if indices.contains(&i) {
-                out.push_str(match_color);
-            } else {
-                out.push_str(default_color);
-            }
-            out.push(ch);
-        }
-        out.push_str("\x1b[0m");
         out
     }
 
@@ -1094,35 +876,6 @@ impl AppState {
         let first = self.first_row_of_file(fi);
         let target = self.next_coord_row(first);
         self.row_idx = target;
-    }
-
-    /// Render the `?` key-bindings modal as full-width overlay lines.
-    fn render_help_modal(width: usize) -> Vec<String> {
-        let entries: &[(&str, &str)] = &[
-            ("j / k / ↑ / ↓", "move"),
-            ("J / K / } / {", "prev / next hunk"),
-            ("Space · PgDn/PgUp · Ctrl+d f u b", "page up/down"),
-            ("g / G / Home / End", "top / bottom"),
-            ("n / p / ] / [", "next / prev file"),
-            ("@", "find file in diff"),
-            ("h / l / ← / →", "horizontal scroll"),
-            ("w", "toggle word diff"),
-            ("y", "toggle syntax highlighting"),
-            ("R", "toggle raw unified-diff view"),
-            ("m", "new note (ctrl+enter save, esc cancel)"),
-            ("?", "toggle help"),
-            ("q / Ctrl+c", "quit"),
-        ];
-        let mut boxed = vec![String::from(" KEY BINDINGS ")];
-        for (key, desc) in entries {
-            boxed.push(format!("   {key:<32} {desc}"));
-        }
-        boxed.push(String::from("   ? or Esc to close"));
-        let w = width.saturating_sub(2).min(64);
-        boxed
-            .into_iter()
-            .map(|l| format!("\x1b[48;5;236m\x1b[38;5;255m{:<w$}\x1b[0m", l))
-            .collect()
     }
 
     pub fn row_seg_count(&self, idx: usize, content_width: usize) -> usize {
@@ -1983,52 +1736,208 @@ impl AppState {
             self.vis_line = 0;
         }
     }
-}
 
-/// Calculate the visible column width of a string by ignoring ANSI escape
-/// sequences and using unicode-width for wide chars (emojis, CJK, etc.).
-fn visible_width(s: &str) -> usize {
-    use unicode_width::UnicodeWidthChar;
-    let mut in_escape = false;
-    let mut count = 0;
-    for c in s.chars() {
-        if c == '\x1b' {
-            in_escape = true;
-        } else if in_escape {
-            if c.is_ascii_alphabetic() {
-                in_escape = false;
+    /// Execute a high-level user command to mutate application state.
+    pub fn execute(&mut self, cmd: TuiCommand) {
+        match cmd {
+            TuiCommand::Quit => self.should_quit = true,
+            TuiCommand::Dismiss => {
+                if self.file_finder.is_some() {
+                    self.cancel_file_finder();
+                } else if self.note_draft.is_some() {
+                    self.note_draft = None;
+                } else if self.show_help {
+                    self.show_help = false;
+                } else if self.anchor.is_some() {
+                    self.anchor = None;
+                } else {
+                    self.should_quit = true;
+                }
             }
-        } else {
-            count += c.width().unwrap_or(0);
+            TuiCommand::MoveUp(n) | TuiCommand::MouseScrollUp(n) => {
+                for _ in 0..n {
+                    self.move_up();
+                }
+            }
+            TuiCommand::MoveDown(n) | TuiCommand::MouseScrollDown(n) => {
+                for _ in 0..n {
+                    self.move_down();
+                }
+            }
+            TuiCommand::PageUp => self.page_up(),
+            TuiCommand::PageDown => self.page_down(),
+            TuiCommand::HalfPageUp => {
+                let delta = (self.viewport_height / 2).max(1);
+                self.scroll_to_visual(self.scroll.saturating_sub(delta));
+            }
+            TuiCommand::HalfPageDown => {
+                let delta = (self.viewport_height / 2).max(1);
+                self.scroll_to_visual(self.scroll + delta);
+            }
+            TuiCommand::MoveToTop => self.move_top(),
+            TuiCommand::MoveToBottom => self.move_bottom(),
+            TuiCommand::ScrollLeft(n) => self.col_offset = self.col_offset.saturating_sub(n),
+            TuiCommand::ScrollRight(n) => self.col_offset += n,
+            TuiCommand::JumpHunkPrev => self.prev_hunk(),
+            TuiCommand::JumpHunkNext => self.next_hunk(),
+            TuiCommand::JumpFilePrev => self.prev_file(),
+            TuiCommand::JumpFileNext => self.next_file(),
+            TuiCommand::JumpToLine(line) => self.goto_line(line),
+            TuiCommand::ToggleSyntax => self.syntax_on = !self.syntax_on,
+            TuiCommand::ToggleWordDiff => self.word_diff = !self.word_diff,
+            TuiCommand::ToggleRawDiff => self.toggle_raw_diff(),
+            TuiCommand::ToggleHelp => self.show_help = !self.show_help,
+            TuiCommand::ToggleCollapseFile(None) => self.toggle_current_file_collapse(),
+            TuiCommand::ToggleCollapseFile(Some(fi)) => self.toggle_file_collapse(fi),
+            TuiCommand::OpenFileFinder => self.open_file_finder(),
+            TuiCommand::CloseFileFinder => self.cancel_file_finder(),
+            TuiCommand::ConfirmFileFinder => self.confirm_file_finder(),
+            TuiCommand::UpdateFileFinderQuery(q) => {
+                if let Some(finder) = &mut self.file_finder {
+                    finder.query = q;
+                    finder.update_matches(&self.output.files);
+                }
+                self.track_finder_selection();
+            }
+            TuiCommand::StartSelection | TuiCommand::ConfirmSelection => {
+                self.start_or_confirm_selection();
+            }
+            TuiCommand::ClearSelection => {
+                self.anchor = None;
+                self.confirmed_sel = None;
+            }
+            TuiCommand::OpenEditor => {
+                if let Some(file) = self.current_file()
+                    && let Some(row) = self.current_flat_row()
+                    && let Some(c) = Self::row_coord(&row.row)
+                {
+                    let range = self.compute_selection().and_then(|sel| {
+                        if sel.side_is_new {
+                            Some((sel.start, sel.end))
+                        } else {
+                            None
+                        }
+                    });
+                    self.pending_editor = Some(crate::tui::editor::EditorRequest {
+                        file: file.path.clone(),
+                        line: c,
+                        range,
+                    });
+                }
+            }
+            TuiCommand::Stage => {
+                let repo_root = self.repo_root.clone();
+                let git_args = self.git_args.clone();
+                match crate::tui::actions::stage_action(self, &repo_root, &git_args, false) {
+                    Ok(()) => {
+                        self.status_message = Some(("staged hunk".into(), true));
+                        let _ = crate::tui::actions::reload_diff(self, &repo_root, &git_args);
+                    }
+                    Err(e) => self.status_message = Some((e, false)),
+                }
+            }
+            TuiCommand::Unstage => {
+                let repo_root = self.repo_root.clone();
+                let git_args = self.git_args.clone();
+                match crate::tui::actions::unstage_action(self, &repo_root, &git_args, false) {
+                    Ok(()) => {
+                        self.status_message = Some(("unstaged hunk".into(), true));
+                        let _ = crate::tui::actions::reload_diff(self, &repo_root, &git_args);
+                    }
+                    Err(e) => self.status_message = Some((e, false)),
+                }
+            }
+            TuiCommand::Discard => {
+                let repo_root = self.repo_root.clone();
+                let git_args = self.git_args.clone();
+                match crate::tui::actions::discard_action(self, &repo_root, &git_args, false) {
+                    Ok(stash_ref) => {
+                        let msg = if let Some(sr) = stash_ref {
+                            format!("discarded hunk (stash: {sr})")
+                        } else {
+                            "discarded hunk".into()
+                        };
+                        self.status_message = Some((msg, true));
+                        let _ = crate::tui::actions::reload_diff(self, &repo_root, &git_args);
+                    }
+                    Err(e) => self.status_message = Some((e, false)),
+                }
+            }
+            TuiCommand::StartNoteDraft => self.note_draft = Some(String::new()),
+            TuiCommand::CommitNoteDraft => self.commit_note_draft(),
+            TuiCommand::CancelNoteDraft => self.note_draft = None,
+            TuiCommand::DeleteNote => self.delete_notes(),
+            TuiCommand::MouseClick { row, col } => {
+                let header_offset = self.last_viewport_start;
+                let vh = self.viewport_height;
+                let is_on_scrollbar = col >= self.last_content_width;
+                if is_on_scrollbar && row >= header_offset && row < header_offset + vh {
+                    self.is_dragging_scrollbar = true;
+                    let row_in_vh = row - header_offset;
+                    let (_starts, _counts, _seg, total_vis) =
+                        self.visual_geometry(self.last_content_width);
+                    let max_scroll = total_vis.saturating_sub(vh);
+                    if max_scroll > 0 && vh > 1 {
+                        let target_vis = ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64)
+                            .round() as usize;
+                        self.scroll_to_visual(target_vis);
+                    }
+                } else if row >= header_offset && row < header_offset + vh {
+                    self.is_dragging_scrollbar = false;
+                    let target_vis = self.scroll + (row - header_offset);
+                    let (starts, counts, _seg, _total_vis) =
+                        self.visual_geometry(self.last_content_width);
+                    for (i, &s) in starts.iter().enumerate() {
+                        if target_vis >= s && target_vis < s + counts[i] {
+                            self.row_idx = i;
+                            self.vis_line = 0;
+                            break;
+                        }
+                    }
+                }
+            }
+            TuiCommand::MouseDrag { row, col: _ } => {
+                let header_offset = self.last_viewport_start;
+                let vh = self.viewport_height;
+                if self.is_dragging_scrollbar {
+                    let clamped_row =
+                        row.clamp(header_offset, header_offset + vh.saturating_sub(1));
+                    let row_in_vh = clamped_row - header_offset;
+                    let (_starts, _counts, _seg, total_vis) =
+                        self.visual_geometry(self.last_content_width);
+                    let max_scroll = total_vis.saturating_sub(vh);
+                    if max_scroll > 0 && vh > 1 {
+                        let target_vis = ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64)
+                            .round() as usize;
+                        self.scroll_to_visual(target_vis);
+                    }
+                } else if row >= header_offset && row < header_offset + vh {
+                    if self.anchor.is_none() {
+                        self.anchor = Some(self.row_idx);
+                    }
+                    let target_vis = self.scroll + (row - header_offset);
+                    let (starts, counts, _seg, _total_vis) =
+                        self.visual_geometry(self.last_content_width);
+                    for (i, &s) in starts.iter().enumerate() {
+                        if target_vis >= s && target_vis < s + counts[i] {
+                            self.row_idx = i;
+                            self.vis_line = 0;
+                            break;
+                        }
+                    }
+                }
+            }
+            TuiCommand::EndMouseDrag => {
+                self.is_dragging_scrollbar = false;
+            }
         }
     }
-    count
-}
-
-/// Truncate or right-pad a string with spaces to exactly `target_width`
-/// terminal columns (accounting for wide characters/emojis).
-fn truncate_pad(s: &str, target_width: usize) -> String {
-    use unicode_segmentation::UnicodeSegmentation;
-    use unicode_width::UnicodeWidthStr;
-    let mut current_width = 0;
-    let mut out = String::new();
-    for g in s.graphemes(true) {
-        let gw = g.width();
-        if current_width + gw > target_width {
-            break;
-        }
-        out.push_str(g);
-        current_width += gw;
-    }
-    if current_width < target_width {
-        out.push_str(&" ".repeat(target_width - current_width));
-    }
-    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tui::view::truncate_pad;
 
     #[test]
     fn test_app_state_scroll_through_all_rows() {

@@ -2,17 +2,22 @@
 
 pub mod actions;
 pub mod app;
+pub mod command;
 pub mod editor;
 pub mod event;
 pub mod finder;
 pub mod terminal;
+pub mod types;
+pub mod view;
 
 pub use actions::{discard_action, reload_diff, stage_action, unstage_action};
 pub use app::AppState;
+pub use command::TuiCommand;
 pub use editor::{open_editor, resolve_editor_args};
 pub use event::handle_event;
 pub use finder::FileFinderState;
 pub use terminal::TerminalGuard;
+pub use types::{FlatRow, HunkMeta, HunkStart, Selection};
 
 use std::{io, path::PathBuf, time::Duration};
 

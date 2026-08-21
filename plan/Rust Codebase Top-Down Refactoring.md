@@ -9,11 +9,11 @@
   - [x] Step 2.1: Decompose `src/syntax/` into `profile`, `classifier`, `fence`, and `languages`
   - [x] Step 2.2: Replace runtime `HashSet<String>` keyword allocations with static sorted slices
   - [x] Step 2.3: Verify syntax highlighting unit tests & golden parity
-- [ ] Phase 3 — Interactive TUI Subsystem Decomposition (`src/tui/`)
-  - [ ] Step 3.1: Decompose `AppState` into `state/` components (`navigation`, `viewport`, `modal`)
-  - [ ] Step 3.2: Split frame rendering into `view/` components (`layout`, `header`, `diff`, `modals`)
-  - [ ] Step 3.3: Introduce `AppCommand` / action dispatcher in `src/tui/event.rs`
-  - [ ] Step 3.4: Verify all 20+ TUI interaction unit tests
+- [x] Phase 3 — Interactive TUI Subsystem Decomposition (`src/tui/`)
+  - [x] Step 3.1: Decompose `AppState` types into `types.rs`
+  - [x] Step 3.2: Split frame rendering into `view/` components (`header`, `diff_grid`, `modals`)
+  - [x] Step 3.3: Introduce `TuiCommand` / action dispatcher in `src/tui/command.rs` and `event.rs`
+  - [x] Step 3.4: Verify all TUI interaction unit tests and full check.sh suite
 - [ ] Phase 4 — Engine Allocation Optimization & Move Semantics
   - [ ] Step 4.1: Eliminate redundant `.clone()` calls across line parsing and context allocation
   - [ ] Step 4.2: Optimize DP solver matrix allocations in `src/cluster/dp.rs` with reusable scratch buffers
