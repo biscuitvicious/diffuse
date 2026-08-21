@@ -93,8 +93,8 @@ pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
 pub struct GitFileItem {
     pub path: String,
     pub status: String,
-    pub new_content: Vec<String>,
-    pub old_content: Vec<String>,
+    pub new_content: Option<String>,
+    pub old_content: Option<String>,
     pub no_content: bool,
 }
 
@@ -191,8 +191,8 @@ pub fn load_git_repo(
         files.push(GitFileItem {
             path,
             status: status.to_string(),
-            new_content: Vec::new(),
-            old_content: Vec::new(),
+            new_content: None,
+            old_content: None,
             no_content: false,
         });
     }
@@ -211,15 +211,11 @@ pub fn load_git_repo(
                     untracked_skipped.push(rel.to_string());
                     continue;
                 }
-                let lines: Vec<String> = content
-                    .split('\n')
-                    .map(std::string::ToString::to_string)
-                    .collect();
                 files.push(GitFileItem {
                     path: rel.to_string(),
                     status: "untracked".to_string(),
-                    new_content: lines,
-                    old_content: Vec::new(),
+                    new_content: Some(content),
+                    old_content: None,
                     no_content: false,
                 });
             }
@@ -233,18 +229,12 @@ pub fn load_git_repo(
         if refs.worktree_new {
             let new_abs = repo_root.join(&f.path);
             if let Ok(c) = fs::read_to_string(&new_abs) {
-                f.new_content = c
-                    .split('\n')
-                    .map(std::string::ToString::to_string)
-                    .collect();
+                f.new_content = Some(c);
             }
         } else if let Some(new_ref) = &refs.new_ref {
             let spec = format!("{new_ref}:{}", f.path);
             if let Some(c) = run_git(repo_root, &["show", &spec]) {
-                f.new_content = c
-                    .split('\n')
-                    .map(std::string::ToString::to_string)
-                    .collect();
+                f.new_content = Some(c);
             }
         }
     }
@@ -254,7 +244,7 @@ pub fn load_git_repo(
         if f.status == "untracked" {
             continue;
         }
-        let new_empty = f.new_content.is_empty();
+        let new_empty = f.new_content.as_ref().is_none_or(String::is_empty);
         let needs_old =
             f.status == "deleted" || del_of.get(&f.path).copied().unwrap_or(0) > 0 || new_empty;
         if !needs_old {
@@ -262,23 +252,23 @@ pub fn load_git_repo(
         }
         let spec = format!("{old_tree_ref}:{}", f.path);
         if let Some(c) = run_git(repo_root, &["show", &spec]) {
-            f.old_content = c
-                .split('\n')
-                .map(std::string::ToString::to_string)
-                .collect();
             if new_empty && f.status != "deleted" {
-                f.new_content = f.old_content.clone();
+                f.new_content = Some(c.clone());
             }
+            f.old_content = Some(c);
         }
-        f.no_content = f.new_content.is_empty() && f.old_content.is_empty();
+        f.no_content = f.new_content.as_ref().is_none_or(String::is_empty)
+            && f.old_content.as_ref().is_none_or(String::is_empty);
     }
 
-    let mut contents: HashMap<String, String> = HashMap::new();
+    let mut contents: HashMap<String, String> = HashMap::with_capacity(files.len());
     let mut old_contents: HashMap<String, String> = HashMap::new();
-    for f in &files {
-        contents.insert(f.path.clone(), f.new_content.join("\n"));
-        if !f.old_content.is_empty() {
-            old_contents.insert(f.path.clone(), f.old_content.join("\n"));
+    for f in files {
+        if let Some(nc) = f.new_content {
+            contents.insert(f.path.clone(), nc);
+        }
+        if let Some(oc) = f.old_content {
+            old_contents.insert(f.path, oc);
         }
     }
 

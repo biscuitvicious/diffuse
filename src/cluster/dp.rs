@@ -412,23 +412,21 @@ pub fn solve_cluster_with(
     let old_open_dist = compute_open_dist(&cluster.old_rows, &cluster.preceding_ctx);
     let new_open_dist = compute_open_dist(&cluster.new_rows, &cluster.preceding_ctx);
 
-    #[derive(Clone)]
+    #[derive(Clone, Copy)]
     struct Cell {
         score: f64,
         back: Option<(usize, usize, &'static str, usize)>, // (i, j, op, k)
     }
     let neg = f64::NEG_INFINITY;
+    let stride = n + 1;
     let mut dp = vec![
-        vec![
-            Cell {
-                score: neg,
-                back: None
-            };
-            n + 1
-        ];
-        m + 1
+        Cell {
+            score: neg,
+            back: None
+        };
+        (m + 1) * stride
     ];
-    dp[0][0].score = 0.0;
+    dp[0].score = 0.0;
 
     let block_score = |bm: &BlockMatch, side_chars: usize, block_chars: usize, k: usize| -> f64 {
         let total = side_chars.max(block_chars);
@@ -443,22 +441,22 @@ pub fn solve_cluster_with(
 
     for i in 0..=m {
         for j in 0..=n {
-            let base = dp[i][j].score;
+            let base = dp[i * stride + j].score;
             if base == neg {
                 continue;
             }
             // Standalone Del / Add.
-            if i < m && base - w.beta > dp[i + 1][j].score {
-                dp[i + 1][j] = Cell {
+            if i < m && base - w.beta > dp[(i + 1) * stride + j].score {
+                dp[(i + 1) * stride + j] = Cell {
                     score: base - w.beta,
                     back: Some((i, j, "del", 1)),
                 };
             }
-            if j < n && base - w.beta >= dp[i][j + 1].score {
+            if j < n && base - w.beta >= dp[i * stride + j + 1].score {
                 // `>=`: on a del/add tie the path prefers ending with the
                 // add — the emission reads dels first, adds after (the
                 // diff reading convention).
-                dp[i][j + 1] = Cell {
+                dp[i * stride + j + 1] = Cell {
                     score: base - w.beta,
                     back: Some((i, j, "add", 1)),
                 };
@@ -476,8 +474,8 @@ pub fn solve_cluster_with(
                     let s = base + w.alpha * ot.chars.max(nt.chars) as f64
                         - w.beta
                         - w.gamma * length_diff;
-                    if s > dp[i + 1][j + 1].score {
-                        dp[i + 1][j + 1] = Cell {
+                    if s > dp[(i + 1) * stride + j + 1].score {
+                        dp[(i + 1) * stride + j + 1] = Cell {
                             score: s,
                             back: Some((i, j, "mov", 1)),
                         };
@@ -485,8 +483,8 @@ pub fn solve_cluster_with(
                 } else if ot.ids.is_empty() && nt.ids.is_empty() {
                     // blank ↔ blank: a trivial full match in one row.
                     let s = base - w.beta + w.delta;
-                    if s > dp[i + 1][j + 1].score {
-                        dp[i + 1][j + 1] = Cell {
+                    if s > dp[(i + 1) * stride + j + 1].score {
+                        dp[(i + 1) * stride + j + 1] = Cell {
                             score: s,
                             back: Some((i, j, "mod", 1)),
                         };
@@ -566,8 +564,8 @@ pub fn solve_cluster_with(
                     let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
                         + syntax
                         + (effective_close_bonus + open_bonus) * proximity_gate;
-                    if s > dp[i + 1][j + 1].score {
-                        dp[i + 1][j + 1] = Cell {
+                    if s > dp[(i + 1) * stride + j + 1].score {
+                        dp[(i + 1) * stride + j + 1] = Cell {
                             score: s,
                             back: Some((i, j, "mod", 1)),
                         };
@@ -625,8 +623,8 @@ pub fn solve_cluster_with(
                         + block_score(&bm, old[i].chars, block_chars, k)
                         + syntax
                         + close_bonus;
-                    if s > dp[i + 1][j + k].score {
-                        dp[i + 1][j + k] = Cell {
+                    if s > dp[(i + 1) * stride + j + k].score {
+                        dp[(i + 1) * stride + j + k] = Cell {
                             score: s,
                             back: Some((i, j, "expand", k)),
                         };
@@ -684,8 +682,8 @@ pub fn solve_cluster_with(
                         + block_score(&bm, new[j].chars, block_chars, k)
                         + syntax
                         + close_bonus;
-                    if s > dp[i + k][j + 1].score {
-                        dp[i + k][j + 1] = Cell {
+                    if s > dp[(i + k) * stride + j + 1].score {
+                        dp[(i + k) * stride + j + 1] = Cell {
                             score: s,
                             back: Some((i, j, "collapse", k)),
                         };
@@ -698,7 +696,7 @@ pub fn solve_cluster_with(
     // Traceback: collect (i, j, op, k) from (m, n) back to (0, 0).
     let mut ops: Vec<(usize, usize, &'static str, usize)> = Vec::new();
     let (mut i, mut j) = (m, n);
-    while let Some(bp) = dp[i][j].back {
+    while let Some(bp) = dp[i * stride + j].back {
         let (pi, pj, op, k) = bp;
         ops.push((pi, pj, op, k));
         i = pi;
@@ -799,7 +797,7 @@ pub fn solve_cluster_with(
     DpSolution {
         rows,
         transitions,
-        score: dp[m][n].score,
+        score: dp[m * stride + n].score,
     }
 }
 

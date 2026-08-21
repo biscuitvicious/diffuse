@@ -14,13 +14,13 @@
   - [x] Step 3.2: Split frame rendering into `view/` components (`header`, `diff_grid`, `modals`)
   - [x] Step 3.3: Introduce `TuiCommand` / action dispatcher in `src/tui/command.rs` and `event.rs`
   - [x] Step 3.4: Verify all TUI interaction unit tests and full check.sh suite
-- [ ] Phase 4 — Engine Allocation Optimization & Move Semantics
-  - [ ] Step 4.1: Eliminate redundant `.clone()` calls across line parsing and context allocation
-  - [ ] Step 4.2: Optimize DP solver matrix allocations in `src/cluster/dp.rs` with reusable scratch buffers
-  - [ ] Step 4.3: Verify apply oracle and DP projection invariants
-- [ ] Phase 5 — Full Acceptance Gate & Documentation
-  - [ ] Step 5.1: Run complete `./scripts/check.sh` suite across all corpora
-  - [ ] Step 5.2: Install extension and perform visual review
+- [x] Phase 4 — Engine Allocation Optimization & Move Semantics
+  - [x] Step 4.1: Eliminate redundant `.clone()` calls across line parsing and context allocation
+  - [x] Step 4.2: Optimize DP solver matrix allocations in `src/cluster/dp.rs` with reusable scratch buffers
+  - [x] Step 4.3: Verify apply oracle and DP projection invariants
+- [x] Phase 5 — Full Acceptance Gate & Documentation
+  - [x] Step 5.1: Run complete `./scripts/check.sh` suite across all corpora
+  - [x] Step 5.2: Install extension and perform visual review
 
 ---
 

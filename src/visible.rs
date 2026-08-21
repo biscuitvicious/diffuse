@@ -32,7 +32,11 @@ pub fn build_visible(
     no_content: bool,
 ) -> Vec<VisibleRow> {
     let alloc = allocate_context(hunks, new_line_count, old_line_count);
-    let mut rows = Vec::new();
+    let est_rows: usize = hunks
+        .iter()
+        .map(|h| h.rows.len() + (h.above_ctx + h.below_ctx) as usize + 2)
+        .sum();
+    let mut rows = Vec::with_capacity(est_rows);
 
     for (i, h) in hunks.iter().enumerate() {
         if i > 0 {
@@ -260,7 +264,7 @@ fn add_count(h: &Hunk) -> usize {
 }
 
 fn context_rows(side: Side, start_line: usize, count: usize, src: &[String]) -> Vec<VisibleRow> {
-    let mut rows = Vec::new();
+    let mut rows = Vec::with_capacity(count);
     for i in 0..count {
         let line_no = start_line + i;
         let text = src
