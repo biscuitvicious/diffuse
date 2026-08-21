@@ -91,11 +91,17 @@ pub struct StatusBarContext<'a> {
     pub num_buffer: &'a str,
     pub branch: &'a str,
     pub width: usize,
+    pub is_streaming: bool,
 }
 
 /// Render the secondary status bar with file index, hunk index, and mode
 /// indicators.
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> String {
+    let stream_txt = if ctx.is_streaming {
+        " · streaming...".to_string()
+    } else {
+        String::new()
+    };
     let mode_txt = if ctx.raw_diff {
         " · raw diff".to_string()
     } else {
@@ -117,7 +123,7 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> String {
         String::new()
     };
     let status_raw = format!(
-        " {}/{} files · hunk {}/{}{}{}{}{}",
+        " {}/{} files{stream_txt} · hunk {}/{}{}{}{}{}",
         ctx.cur_fi + 1,
         ctx.total_files,
         ctx.cur_hunk + 1,

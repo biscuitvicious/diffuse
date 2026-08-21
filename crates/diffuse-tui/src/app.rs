@@ -56,6 +56,7 @@ pub struct AppState {
     pub terminal_width: usize,
     pub is_dragging_scrollbar: bool,
     pub last_viewport_start: usize,
+    pub is_streaming: bool,
 }
 
 impl AppState {
@@ -111,6 +112,7 @@ impl AppState {
             terminal_width: 80,
             is_dragging_scrollbar: false,
             last_viewport_start: 2,
+            is_streaming: false,
         }
     }
 
@@ -303,36 +305,177 @@ impl AppState {
     /// Per-file per-hunk context allocation. The wire carries no ctx counts,
     /// so recompute them over the hunks the same way `f.rows` was built
     /// (forced 6/6 above/below).
-    fn build_hunk_meta(output: &PipelineOutput) -> Vec<Vec<HunkMeta>> {
+    fn build_file_hunk_meta(f: &OutputFile) -> Vec<HunkMeta> {
         use diffuse_core::visible::allocate_context;
+        let mut hunks: Vec<diffuse_core::parse::Hunk> = f
+            .hunks
+            .iter()
+            .map(diffuse_core::wire::OutputHunk::reconstruct)
+            .collect();
+        for h in &mut hunks {
+            if h.above_ctx == 0 {
+                h.above_ctx = 6;
+            }
+            if h.below_ctx == 0 {
+                h.below_ctx = 6;
+            }
+        }
+        let alloc = allocate_context(&hunks, f.new_line_count, f.old_line_count);
+        f.hunks
+            .iter()
+            .enumerate()
+            .map(|(i, _h)| HunkMeta {
+                above: alloc[i].above,
+                below: alloc[i].below,
+            })
+            .collect()
+    }
+
+    fn build_hunk_meta(output: &PipelineOutput) -> Vec<Vec<HunkMeta>> {
         output
             .files
             .iter()
-            .map(|f| {
-                let mut hunks: Vec<diffuse_core::parse::Hunk> = f
-                    .hunks
-                    .iter()
-                    .map(diffuse_core::wire::OutputHunk::reconstruct)
-                    .collect();
-                for h in &mut hunks {
-                    if h.above_ctx == 0 {
-                        h.above_ctx = 6;
-                    }
-                    if h.below_ctx == 0 {
-                        h.below_ctx = 6;
+            .map(Self::build_file_hunk_meta)
+            .collect()
+    }
+
+    /// Appends a newly processed file from the streaming pipeline.
+    pub fn append_file(&mut self, file: OutputFile) {
+        let fi = self.output.files.len();
+        if file.status == "untracked" {
+            self.collapsed_files.insert(fi);
+        }
+
+        let is_collapsed = self.collapsed_files.contains(&fi);
+        let meta = Self::build_file_hunk_meta(&file);
+        self.hunk_meta.push(meta);
+
+        let file_header_idx = self.flat.len();
+        self.flat.push(Self::file_header_row(fi, &file.path));
+
+        if !is_collapsed {
+            if self.raw_diff {
+                let hunks = if !file.raw_hunks.is_empty() {
+                    &file.raw_hunks
+                } else {
+                    &file.hunks
+                };
+                for (hi, h) in hunks.iter().enumerate() {
+                    self.flat.push(FlatRow {
+                        file_idx: fi,
+                        hunk_idx: hi,
+                        is_file_header: false,
+                        row: OutputRow {
+                            kind: diffuse_core::parse::RowKind::Sep,
+                            new_line: None,
+                            old_line: None,
+                            text: format!(
+                                "@@ -{},{} +{},{} @@",
+                                h.old_start, h.old_count, h.new_start, h.new_count
+                            ),
+                            del_text: None,
+                            spans: Default::default(),
+                            runs: Vec::new(),
+                            wholesale: false,
+                            moved: false,
+                        },
+                    });
+                    self.hunk_starts.push(HunkStart {
+                        flat: self.flat.len() - 1,
+                        file: fi,
+                        hunk: hi,
+                    });
+                    for r in &h.rows {
+                        self.flat.push(FlatRow {
+                            file_idx: fi,
+                            hunk_idx: hi,
+                            is_file_header: false,
+                            row: r.clone(),
+                        });
                     }
                 }
-                let alloc = allocate_context(&hunks, f.new_line_count, f.old_line_count);
-                f.hunks
-                    .iter()
-                    .enumerate()
-                    .map(|(i, _h)| HunkMeta {
-                        above: alloc[i].above,
-                        below: alloc[i].below,
-                    })
-                    .collect()
-            })
-            .collect()
+            } else if !file.rows.is_empty() {
+                for r in &file.rows {
+                    self.flat.push(FlatRow {
+                        file_idx: fi,
+                        hunk_idx: 0,
+                        is_file_header: false,
+                        row: r.clone(),
+                    });
+                }
+                if !file.hunks.is_empty() {
+                    let mut search_from = file_header_idx + 1;
+                    for (hi, h) in file.hunks.iter().enumerate() {
+                        if hi == 0 {
+                            if search_from < self.flat.len()
+                                && self.flat[search_from].file_idx == fi
+                            {
+                                self.hunk_starts.push(HunkStart {
+                                    flat: search_from,
+                                    file: fi,
+                                    hunk: hi,
+                                });
+                            }
+                        } else {
+                            let target_start = if h.new_count > 0 {
+                                h.new_start
+                            } else {
+                                h.old_start
+                            };
+                            let mut found = None;
+                            for (idx, fr) in self.flat.iter().enumerate().skip(search_from) {
+                                if fr.file_idx != fi {
+                                    break;
+                                }
+                                if let Some(coord) = Self::row_coord(&fr.row)
+                                    && coord >= target_start
+                                {
+                                    found = Some(idx);
+                                    break;
+                                }
+                            }
+                            if let Some(idx) = found {
+                                self.hunk_starts.push(HunkStart {
+                                    flat: idx,
+                                    file: fi,
+                                    hunk: hi,
+                                });
+                                search_from = idx + 1;
+                            }
+                        }
+                    }
+                }
+            } else {
+                for (hi, h) in file.hunks.iter().enumerate() {
+                    let hunk_start_flat = self.flat.len();
+                    self.hunk_starts.push(HunkStart {
+                        flat: hunk_start_flat,
+                        file: fi,
+                        hunk: hi,
+                    });
+                    for r in &h.rows {
+                        self.flat.push(FlatRow {
+                            file_idx: fi,
+                            hunk_idx: hi,
+                            is_file_header: false,
+                            row: r.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        self.output.files.push(file);
+
+        if self.row_idx == 0 && self.flat.len() > 1 && self.flat[0].is_file_header
+            && let Some(pos) = self
+                .flat
+                .iter()
+                .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
+            {
+                self.row_idx = pos;
+            }
+        self.vis_line = 0;
     }
 
     pub fn current_file_idx(&self) -> usize {
@@ -589,6 +732,7 @@ impl AppState {
             num_buffer: &self.num_buffer,
             branch: &self.output.branch,
             width,
+            is_streaming: self.is_streaming,
         }));
 
         // Ephemeral action feedback (note saved/deleted, git ops, ...)
@@ -3546,5 +3690,77 @@ index 6f6222d..4aa7a1d 100644
         let a_banner = state.first_row_of_file(0);
         assert_eq!(state.row_idx, a_banner, "lands on a.rs banner");
         assert_eq!(state.scroll, 0, "a.rs sits at top of screen");
+    }
+
+    #[test]
+    fn test_incremental_file_append_and_streaming_navigation() {
+        let diff = r#"diff --git a/file1.rs b/file1.rs
+index 000..111 100644
+--- a/file1.rs
++++ b/file1.rs
+@@ -1,2 +1,2 @@
+-fn one() {}
++fn one_mod() {}
+diff --git a/file2.rs b/file2.rs
+index 222..333 100644
+--- a/file2.rs
++++ b/file2.rs
+@@ -1,2 +1,2 @@
+-fn two() {}
++fn two_mod() {}
+"#;
+        let contents = [
+            ("file1.rs".to_string(), "fn one_mod() {}\n".to_string()),
+            ("file2.rs".to_string(), "fn two_mod() {}\n".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let consumer = diffuse_core::streaming::stream_diff_pipeline(
+            diff,
+            &contents,
+            None,
+            None,
+            None,
+            Some(2),
+        );
+
+        let initial_output = PipelineOutput {
+            files: Vec::new(),
+            branch: "main".into(),
+            untracked_skipped: Vec::new(),
+        };
+
+        let mut state = AppState::new(
+            initial_output,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-streaming-notes.json"),
+        );
+        state.is_streaming = true;
+        assert_eq!(state.output.files.len(), 0);
+
+        let files: Vec<OutputFile> = consumer.collect();
+        assert_eq!(files.len(), 2);
+
+        // Ingest file 0
+        state.append_file(files[0].clone());
+        assert_eq!(state.output.files.len(), 1);
+        assert_eq!(state.current_file_idx(), 0);
+        assert_eq!(state.output.files[0].path, "file1.rs");
+
+        // Ingest file 1
+        state.append_file(files[1].clone());
+        assert_eq!(state.output.files.len(), 2);
+        assert_eq!(state.output.files[1].path, "file2.rs");
+
+        // Navigate to next file
+        state.next_file();
+        assert_eq!(state.current_file_idx(), 1);
+        assert_eq!(state.current_file().unwrap().path, "file2.rs");
+
+        // Navigate to prev file
+        state.prev_file();
+        assert_eq!(state.current_file_idx(), 0);
+        assert_eq!(state.current_file().unwrap().path, "file1.rs");
     }
 }

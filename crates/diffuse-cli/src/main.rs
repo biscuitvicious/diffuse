@@ -26,7 +26,7 @@ use diffuse_core::{
     wire::PipelineOutput,
 };
 use diffuse_render::default_theme;
-use diffuse_tui::run_interactive_tui;
+use diffuse_tui::run_streaming_interactive_tui;
 
 /// The diffuse diff-engine CLI.
 #[derive(Parser, Debug)]
@@ -239,8 +239,8 @@ fn main() -> io::Result<()> {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(default_notes_path);
         let loaded_db = load_notes(&notes_path);
-        let db_ref = Some(&loaded_db);
-        let repo_ref = args.repo.as_deref();
+        let _db_ref = Some(&loaded_db);
+        let _repo_ref = args.repo.as_deref();
 
         let repo_name = args.repo.clone().unwrap_or_else(|| {
             repo_root
@@ -252,16 +252,27 @@ fn main() -> io::Result<()> {
         // Interactive TUI only when both ends are real terminals; any
         // piped or redirected end falls back to the full ANSI render.
         if !args.no_tui && stdin_tty && stdout_tty {
-            let mut out = run_pipeline_full(
+            let consumer = diffuse_core::streaming::stream_diff_pipeline(
                 &git_res.diff_text,
                 &git_res.contents,
                 Some(&git_res.old_contents),
-                db_ref,
-                repo_ref,
+                Some(loaded_db),
+                args.repo.clone(),
+                None,
             );
-            out.branch = git_res.branch;
-            out.untracked_skipped = git_res.untracked_skipped;
-            run_interactive_tui(out, repo_name, notes_path, repo_root, args.git_args)?;
+            let initial_out = PipelineOutput {
+                files: Vec::new(),
+                branch: git_res.branch,
+                untracked_skipped: git_res.untracked_skipped,
+            };
+            run_streaming_interactive_tui(
+                initial_out,
+                Some(consumer.into_receiver()),
+                repo_name,
+                notes_path,
+                repo_root,
+                args.git_args,
+            )?;
         } else {
             let theme = default_theme();
             let consumer = diffuse_core::streaming::stream_diff_pipeline(

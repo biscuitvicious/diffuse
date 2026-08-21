@@ -19,24 +19,52 @@ pub use finder::FileFinderState;
 pub use terminal::TerminalGuard;
 pub use types::{FlatRow, HunkMeta, HunkStart, Selection};
 
-use std::{io, path::PathBuf, time::Duration};
+use std::{io, path::PathBuf, sync::mpsc::Receiver, time::Duration};
 
-use diffuse_core::wire::PipelineOutput;
+use diffuse_core::wire::{OutputFile, PipelineOutput};
 
-/// Launch and run the interactive TUI application.
-pub fn run_interactive_tui(
-    output: PipelineOutput,
+/// Launch and run the interactive TUI application with live streaming file
+/// ingestion.
+pub fn run_streaming_interactive_tui(
+    initial_output: PipelineOutput,
+    streaming_rx: Option<Receiver<OutputFile>>,
     repo: String,
     notes_path: PathBuf,
     repo_root: PathBuf,
     git_args: Vec<String>,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
-    let mut state = AppState::new(output, repo, notes_path).with_repo_context(repo_root, git_args);
+    let mut state =
+        AppState::new(initial_output, repo, notes_path).with_repo_context(repo_root, git_args);
+    if streaming_rx.is_some() {
+        state.is_streaming = true;
+    }
+    let mut streaming_active = streaming_rx.is_some();
     let mut dirty = true;
     let mut last_size = guard.size();
 
     while !state.should_quit {
+        if streaming_active
+            && let Some(ref rx) = streaming_rx {
+                loop {
+                    match rx.try_recv() {
+                        Ok(file) => {
+                            state.append_file(file);
+                            dirty = true;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Empty) => {
+                            break;
+                        }
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                            state.is_streaming = false;
+                            streaming_active = false;
+                            dirty = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
         let size = guard.size();
         if size != last_size {
             dirty = true;
@@ -50,7 +78,13 @@ pub fn run_interactive_tui(
             dirty = false;
         }
 
-        if let Some(event) = guard.poll_event(Duration::from_millis(100))? {
+        let poll_duration = if streaming_active {
+            Duration::from_millis(20)
+        } else {
+            Duration::from_millis(100)
+        };
+
+        if let Some(event) = guard.poll_event(poll_duration)? {
             handle_event(&mut state, event);
             dirty = true;
         }
@@ -67,4 +101,15 @@ pub fn run_interactive_tui(
     }
 
     Ok(())
+}
+
+/// Launch and run the interactive TUI application with static output.
+pub fn run_interactive_tui(
+    output: PipelineOutput,
+    repo: String,
+    notes_path: PathBuf,
+    repo_root: PathBuf,
+    git_args: Vec<String>,
+) -> io::Result<()> {
+    run_streaming_interactive_tui(output, None, repo, notes_path, repo_root, git_args)
 }
