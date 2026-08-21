@@ -22,7 +22,7 @@ use crate::{
     moves::mark_moves,
     notes::{NotesDB, note_runs, notes_for_file},
     old_content::old_content_from_diff,
-    parse::{Row, parse_diff},
+    parse::{DiffFile, Row, parse_diff},
     syntax::{
         classifier::{ClassifiedToken, classify_line, classify_tokens, markdown_tokens},
         fence::{FenceRegion, fence_regions, region_at},
@@ -94,8 +94,7 @@ pub fn run_pipeline_with_notes(
 }
 
 /// Run the pipeline over a diff + new-file contents + optional old-file
-/// contents
-/// + optional notes; produce the wire-contract output.
+/// contents + optional notes; produce the wire-contract output.
 pub fn run_pipeline_full(
     diff: &str,
     contents: &HashMap<String, String>,
@@ -103,243 +102,259 @@ pub fn run_pipeline_full(
     notes_db: Option<&NotesDB>,
     repo: Option<&str>,
 ) -> PipelineOutput {
-    let mut files = parse_diff(diff);
-    let mut out_files = Vec::new();
+    let files = parse_diff(diff);
+    let mut out_files = Vec::with_capacity(files.len());
 
-    for f in &mut files {
-        let ext = f.path.rsplit('.').next().unwrap_or("");
-        let profile = lang_profile(ext);
-        f.new_content = contents
-            .get(&f.path)
-            .map(|c| c.split('\n').map(String::from).collect())
-            .unwrap_or_default();
-        f.new_line_count = f.new_content.len();
-
-        if let Some(old_map) = old_contents
-            && let Some(oc) = old_map.get(&f.path)
-            && !oc.is_empty()
-        {
-            f.old_content = oc.split('\n').map(String::from).collect();
-            f.old_line_count = f.old_content.len();
-        } else if f.old_content.is_empty() {
-            f.old_content = old_content_from_diff(diff, &f.path);
-            f.old_line_count = f.old_content.len();
-        }
-
-        mark_moves(f);
-
-        let old_content = f.old_content.clone();
-        let new_content = f.new_content.clone();
-        for h in &mut f.hunks {
-            h.rows = collapse_hunk_rows(h, Some(&old_content), Some(&new_content), profile);
-        }
-
-        // Bake word spans for moved lines with indentation reflows
-        for h in &mut f.hunks {
-            for r in &mut h.rows {
-                if let Row::Mov { old_line, new_line } = r
-                    && old_line.text != new_line.text
-                    && new_line.spans.is_empty()
-                {
-                    new_line.spans = word_spans(&old_line.text, &new_line.text);
-                }
-            }
-        }
-
-        let counts = file_counts(f);
-        let regions = fence_regions(&f.new_content, profile);
-
-        let mut hunks_out = Vec::new();
-        for h in &f.hunks {
-            let mut rows_out = Vec::new();
-            for r in &h.rows {
-                rows_out.push(OutputRow {
-                    kind: r.kind(),
-                    new_line: r.new_line(),
-                    old_line: if matches!(r, Row::Add(_) | Row::Mov { .. }) {
-                        None
-                    } else {
-                        r.old_line()
-                    },
-                    text: r.text().to_string(),
-                    del_text: r.del_text().map(String::from),
-                    spans: r.spans().cloned().unwrap_or_default(),
-                    runs: colored_runs(r, profile, &regions),
-                    wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
-                    moved: r.is_moved(),
-                });
-            }
-            hunks_out.push(OutputHunk {
-                old_start: h.old_start,
-                old_count: h.old_count,
-                new_start: h.new_start,
-                new_count: h.new_count,
-                rows: rows_out,
-            });
-        }
-
-        let mut raw_hunks_out = Vec::new();
-        for h in &f.raw_hunks {
-            let mut rows_out = Vec::new();
-            for r in &h.rows {
-                rows_out.push(OutputRow {
-                    kind: r.kind(),
-                    new_line: r.new_line(),
-                    old_line: r.old_line(),
-                    text: r.text().to_string(),
-                    del_text: r.del_text().map(String::from),
-                    spans: r.spans().cloned().unwrap_or_default(),
-                    runs: Vec::new(),
-                    wholesale: false,
-                    moved: false,
-                });
-            }
-            raw_hunks_out.push(OutputHunk {
-                old_start: h.old_start,
-                old_count: h.old_count,
-                new_start: h.new_start,
-                new_count: h.new_count,
-                rows: rows_out,
-            });
-        }
-
-        let notes_out = match (notes_db, repo) {
-            (Some(db), Some(r)) => notes_for_file(db, r, &f.path)
-                .into_iter()
-                .map(|n| OutputNote {
-                    id: n.id.clone(),
-                    file: n.file.clone(),
-                    side: n.side,
-                    start: n.start,
-                    end: n.end,
-                    text: n.text.clone(),
-                    created_at: n.created_at,
-                    runs: note_runs(&n.text),
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
-
-        let content_to_classify = if !f.new_content.is_empty() {
-            &f.new_content
-        } else {
-            &f.old_content
-        };
-        let content_runs: Vec<Vec<OutputRun>> = content_to_classify
-            .iter()
-            .enumerate()
-            .map(|(idx, line_text)| {
-                let line_num = (idx + 1) as u32;
-                classify_ctx_line(line_text, Some(line_num), profile, &regions)
-                    .into_iter()
-                    .map(|tk| OutputRun {
-                        kind: RunKind::Ctx,
-                        color: Some(tk.color),
-                        sgr: tk.sgr,
-                        text: tk.text,
-                    })
-                    .collect()
-            })
-            .collect();
-
-        out_files.push(OutputFile {
-            path: f.path.clone(),
-            status: format!("{:?}", f.status).to_lowercase(),
-            new_line_count: f.new_line_count,
-            old_line_count: f.old_line_count,
-            new_content: f.new_content.clone(),
-            old_content: f.old_content.clone(),
-            hunks: hunks_out,
-            raw_hunks: raw_hunks_out,
-            counts,
-            fences: regions
-                .iter()
-                .map(|r| OutputFence {
-                    start: r.start,
-                    end: r.end,
-                    lang: fence_lang_ext(&r.lang.clone().unwrap_or_default()).to_string(),
-                })
-                .collect(),
-            notes: notes_out,
-            content_runs,
-            rows: {
-                let mut hunks_with_ctx = f.hunks.clone();
-                for h in &mut hunks_with_ctx {
-                    if h.above_ctx == 0 {
-                        h.above_ctx = 6;
-                    }
-                    if h.below_ctx == 0 {
-                        h.below_ctx = 6;
-                    }
-                }
-                build_visible(
-                    &hunks_with_ctx,
-                    f.new_line_count,
-                    f.old_line_count,
-                    &f.new_content,
-                    &f.old_content,
-                    f.new_content.is_empty() && f.old_content.is_empty(),
-                )
-            }
-            .into_iter()
-            .map(|vis| {
-                let r = vis.row;
-                let runs = if matches!(
-                    r,
-                    Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
-                ) {
-                    colored_runs(&r, profile, &regions)
-                } else {
-                    classify_ctx_line(
-                        r.text(),
-                        match vis.side {
-                            Some(VisibleSide::New) => r.new_line(),
-                            Some(VisibleSide::Old) => None,
-                            None => r.new_line().or_else(|| r.old_line()),
-                        },
-                        profile,
-                        &regions,
-                    )
-                    .into_iter()
-                    .map(|tk| OutputRun {
-                        kind: RunKind::Ctx,
-                        color: Some(tk.color),
-                        sgr: tk.sgr,
-                        text: tk.text,
-                    })
-                    .collect()
-                };
-                let (new_line, old_line) = match (&r, vis.side) {
-                    (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
-                        (r.new_line(), None)
-                    }
-                    (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => {
-                        (None, r.old_line())
-                    }
-                    (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
-                    (Row::Sep(_), _) => (None, None),
-                };
-                let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
-                OutputRow {
-                    kind: r.kind(),
-                    new_line,
-                    old_line,
-                    text: r.text().to_string(),
-                    del_text: r.del_text().map(String::from),
-                    spans: r.spans().cloned().unwrap_or_default(),
-                    runs,
-                    wholesale,
-                    moved: r.is_moved(),
-                }
-            })
-            .collect(),
-        });
+    for f in files {
+        let new_c = contents.get(&f.path).map(String::as_str);
+        let old_c = old_contents
+            .and_then(|m| m.get(&f.path))
+            .map(String::as_str);
+        let out_file = process_single_diff_file(f, new_c, old_c, Some(diff), notes_db, repo);
+        out_files.push(out_file);
     }
 
     PipelineOutput {
         files: out_files,
         branch: String::new(),
         untracked_skipped: Vec::new(),
+    }
+}
+
+/// Run pipeline diffing, alignment, move detection, and syntax classification
+/// on a single parsed diff file.
+pub fn process_single_diff_file(
+    mut f: DiffFile,
+    new_content: Option<&str>,
+    old_content: Option<&str>,
+    diff_fallback: Option<&str>,
+    notes_db: Option<&NotesDB>,
+    repo: Option<&str>,
+) -> OutputFile {
+    let ext = f.path.rsplit('.').next().unwrap_or("");
+    let profile = lang_profile(ext);
+    f.new_content = new_content
+        .map(|c| c.split('\n').map(String::from).collect())
+        .unwrap_or_default();
+    f.new_line_count = f.new_content.len();
+
+    if let Some(oc) = old_content
+        && !oc.is_empty()
+    {
+        f.old_content = oc.split('\n').map(String::from).collect();
+        f.old_line_count = f.old_content.len();
+    } else if f.old_content.is_empty()
+        && let Some(diff) = diff_fallback
+    {
+        f.old_content = old_content_from_diff(diff, &f.path);
+        f.old_line_count = f.old_content.len();
+    }
+
+    mark_moves(&mut f);
+
+    let old_c = f.old_content.clone();
+    let new_c = f.new_content.clone();
+    for h in &mut f.hunks {
+        h.rows = collapse_hunk_rows(h, Some(&old_c), Some(&new_c), profile);
+    }
+
+    // Bake word spans for moved lines with indentation reflows
+    for h in &mut f.hunks {
+        for r in &mut h.rows {
+            if let Row::Mov { old_line, new_line } = r
+                && old_line.text != new_line.text
+                && new_line.spans.is_empty()
+            {
+                new_line.spans = word_spans(&old_line.text, &new_line.text);
+            }
+        }
+    }
+
+    let counts = file_counts(&f);
+    let regions = fence_regions(&f.new_content, profile);
+
+    let mut hunks_out = Vec::new();
+    for h in &f.hunks {
+        let mut rows_out = Vec::new();
+        for r in &h.rows {
+            rows_out.push(OutputRow {
+                kind: r.kind(),
+                new_line: r.new_line(),
+                old_line: if matches!(r, Row::Add(_) | Row::Mov { .. }) {
+                    None
+                } else {
+                    r.old_line()
+                },
+                text: r.text().to_string(),
+                del_text: r.del_text().map(String::from),
+                spans: r.spans().cloned().unwrap_or_default(),
+                runs: colored_runs(r, profile, &regions),
+                wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
+                moved: r.is_moved(),
+            });
+        }
+        hunks_out.push(OutputHunk {
+            old_start: h.old_start,
+            old_count: h.old_count,
+            new_start: h.new_start,
+            new_count: h.new_count,
+            rows: rows_out,
+        });
+    }
+
+    let mut raw_hunks_out = Vec::new();
+    for h in &f.raw_hunks {
+        let mut rows_out = Vec::new();
+        for r in &h.rows {
+            rows_out.push(OutputRow {
+                kind: r.kind(),
+                new_line: r.new_line(),
+                old_line: r.old_line(),
+                text: r.text().to_string(),
+                del_text: r.del_text().map(String::from),
+                spans: r.spans().cloned().unwrap_or_default(),
+                runs: Vec::new(),
+                wholesale: false,
+                moved: false,
+            });
+        }
+        raw_hunks_out.push(OutputHunk {
+            old_start: h.old_start,
+            old_count: h.old_count,
+            new_start: h.new_start,
+            new_count: h.new_count,
+            rows: rows_out,
+        });
+    }
+
+    let notes_out = match (notes_db, repo) {
+        (Some(db), Some(r)) => notes_for_file(db, r, &f.path)
+            .into_iter()
+            .map(|n| OutputNote {
+                id: n.id.clone(),
+                file: n.file.clone(),
+                side: n.side,
+                start: n.start,
+                end: n.end,
+                text: n.text.clone(),
+                created_at: n.created_at,
+                runs: note_runs(&n.text),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+
+    let content_to_classify = if !f.new_content.is_empty() {
+        &f.new_content
+    } else {
+        &f.old_content
+    };
+    let content_runs: Vec<Vec<OutputRun>> = content_to_classify
+        .iter()
+        .enumerate()
+        .map(|(idx, line_text)| {
+            let line_num = (idx + 1) as u32;
+            classify_ctx_line(line_text, Some(line_num), profile, &regions)
+                .into_iter()
+                .map(|tk| OutputRun {
+                    kind: RunKind::Ctx,
+                    color: Some(tk.color),
+                    sgr: tk.sgr,
+                    text: tk.text,
+                })
+                .collect()
+        })
+        .collect();
+
+    OutputFile {
+        path: f.path.clone(),
+        status: format!("{:?}", f.status).to_lowercase(),
+        new_line_count: f.new_line_count,
+        old_line_count: f.old_line_count,
+        new_content: f.new_content.clone(),
+        old_content: f.old_content.clone(),
+        hunks: hunks_out,
+        raw_hunks: raw_hunks_out,
+        counts,
+        fences: regions
+            .iter()
+            .map(|r| OutputFence {
+                start: r.start,
+                end: r.end,
+                lang: fence_lang_ext(&r.lang.clone().unwrap_or_default()).to_string(),
+            })
+            .collect(),
+        notes: notes_out,
+        content_runs,
+        rows: {
+            let mut hunks_with_ctx = f.hunks.clone();
+            for h in &mut hunks_with_ctx {
+                if h.above_ctx == 0 {
+                    h.above_ctx = 6;
+                }
+                if h.below_ctx == 0 {
+                    h.below_ctx = 6;
+                }
+            }
+            build_visible(
+                &hunks_with_ctx,
+                f.new_line_count,
+                f.old_line_count,
+                &f.new_content,
+                &f.old_content,
+                f.new_content.is_empty() && f.old_content.is_empty(),
+            )
+        }
+        .into_iter()
+        .map(|vis| {
+            let r = vis.row;
+            let runs = if matches!(
+                r,
+                Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
+            ) {
+                colored_runs(&r, profile, &regions)
+            } else {
+                classify_ctx_line(
+                    r.text(),
+                    match vis.side {
+                        Some(VisibleSide::New) => r.new_line(),
+                        Some(VisibleSide::Old) => None,
+                        None => r.new_line().or_else(|| r.old_line()),
+                    },
+                    profile,
+                    &regions,
+                )
+                .into_iter()
+                .map(|tk| OutputRun {
+                    kind: RunKind::Ctx,
+                    color: Some(tk.color),
+                    sgr: tk.sgr,
+                    text: tk.text,
+                })
+                .collect()
+            };
+            let (new_line, old_line) = match (&r, vis.side) {
+                (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
+                    (r.new_line(), None)
+                }
+                (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => (None, r.old_line()),
+                (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
+                (Row::Sep(_), _) => (None, None),
+            };
+            let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
+            OutputRow {
+                kind: r.kind(),
+                new_line,
+                old_line,
+                text: r.text().to_string(),
+                del_text: r.del_text().map(String::from),
+                spans: r.spans().cloned().unwrap_or_default(),
+                runs,
+                wholesale,
+                moved: r.is_moved(),
+            }
+        })
+        .collect(),
     }
 }
 

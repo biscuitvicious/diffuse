@@ -17,5 +17,6 @@ pub mod pipeline;
 pub mod scope;
 pub mod shift;
 pub mod similarity;
+pub mod streaming;
 pub mod visible;
 pub mod wire;
