@@ -1662,36 +1662,16 @@ impl AppState {
         if self.flat.is_empty() {
             return;
         }
-        let max_idx = self.flat.len() - 1;
-        let bottom_of_viewport =
-            (self.scroll + self.viewport_height.saturating_sub(1)).min(max_idx);
-
-        // If cursor is not at the bottom of the current visible page, jump to bottom
-        if self.row_idx < bottom_of_viewport {
-            self.row_idx = bottom_of_viewport;
-        } else {
-            // Otherwise, scroll down 1/3 of the viewport height with half-up rounding
-            let step = ((self.viewport_height * 2 + 3) / 6).max(1);
-            self.row_idx = (self.row_idx + step).min(max_idx);
-        }
-        self.vis_line = 0;
+        let step = ((self.viewport_height * 2 + 3) / 6).max(1);
+        self.scroll_to_visual(self.scroll + step);
     }
 
     pub fn page_up(&mut self) {
         if self.flat.is_empty() {
             return;
         }
-        let top_of_viewport = self.scroll;
-
-        // If cursor is not at the top of the current visible page, jump to top
-        if self.row_idx > top_of_viewport {
-            self.row_idx = top_of_viewport;
-        } else {
-            // Otherwise, scroll up 1/3 of the viewport height with half-up rounding
-            let step = ((self.viewport_height * 2 + 3) / 6).max(1);
-            self.row_idx = self.row_idx.saturating_sub(step);
-        }
-        self.vis_line = 0;
+        let step = ((self.viewport_height * 2 + 3) / 6).max(1);
+        self.scroll_to_visual(self.scroll.saturating_sub(step));
     }
 
     pub fn move_top(&mut self) {
@@ -2448,5 +2428,90 @@ index 1111111..2222222 100644
             frame.contains("\x1b[38;5;120m "),
             "continuation segments must start with space prefix and green foreground"
         );
+    }
+
+    #[test]
+    fn test_page_down_up_scrolls_one_third_viewport() {
+        let diff = r#"diff --git a/many.rs b/many.rs
+index 1111111..2222222 100644
+--- a/many.rs
++++ b/many.rs
+@@ -1,1 +1,40 @@
+-old
++line 1
++line 2
++line 3
++line 4
++line 5
++line 6
++line 7
++line 8
++line 9
++line 10
++line 11
++line 12
++line 13
++line 14
++line 15
++line 16
++line 17
++line 18
++line 19
++line 20
++line 21
++line 22
++line 23
++line 24
++line 25
++line 26
++line 27
++line 28
++line 29
++line 30
++line 31
++line 32
++line 33
++line 34
++line 35
++line 36
++line 37
++line 38
++line 39
++line 40
+"#;
+        let contents = [(
+            "many.rs".to_string(),
+            (1..=40).map(|i| format!("line {i}\n")).collect::<String>(),
+        )]
+        .into_iter()
+        .collect();
+
+        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-pgdn.json"),
+        );
+        state.render_frame(80, 20);
+        assert_eq!(state.scroll, 0);
+
+        // 1/3 of vh (16) is 5 lines
+        state.page_down();
+        assert_eq!(state.scroll, 5);
+
+        state.page_down();
+        assert_eq!(state.scroll, 10);
+
+        state.page_up();
+        assert_eq!(state.scroll, 5);
+
+        // In raw diff mode
+        state.toggle_raw_diff();
+        state.render_frame(80, 20);
+        let raw_scroll = state.scroll;
+        state.page_down();
+        assert_eq!(state.scroll, raw_scroll + 5);
+        state.page_up();
+        assert_eq!(state.scroll, raw_scroll);
     }
 }
