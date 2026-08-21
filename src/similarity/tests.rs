@@ -2,7 +2,10 @@
 //! pairing metric). The TS suite exercises these through `collapseHunkRows`;
 //! these are direct sanity checks of the scoring functions themselves.
 
-use crate::similarity::{line_similarity, line_similarity_parts};
+use crate::{
+    similarity::{line_similarity, line_similarity_parts},
+    syntax::registry::lang_profile,
+};
 
 // Identical content → sim 1; the add is fully matched.
 #[test]
@@ -44,8 +47,8 @@ fn fragment_vs_growth_parts() {
 
 #[test]
 fn comment_line_markers() {
-    let rs = crate::syntax::lang_profile("rs").unwrap();
-    let py = crate::syntax::lang_profile("py").unwrap();
+    let rs = lang_profile("rs").unwrap();
+    let py = lang_profile("py").unwrap();
 
     assert!(rs.is_comment_line("// a comment"));
     assert!(rs.is_comment_line("/// doc"));

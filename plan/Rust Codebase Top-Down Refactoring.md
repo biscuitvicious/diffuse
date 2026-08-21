@@ -5,10 +5,10 @@
   - [x] Step 1.1: Extract serializable wire models into `src/wire/mod.rs`
   - [x] Step 1.2: Decouple AST pipeline runner and introduce `PipelineContext`
   - [x] Step 1.3: Update acceptance tests and verify byte-identical wire output
-- [·] Phase 2 — Syntax Engine Modularization (`src/syntax/`)
-  - [ ] Step 2.1: Decompose `src/syntax/` into `profile`, `classifier`, `fence`, and `languages/`
-  - [ ] Step 2.2: Replace runtime `HashSet<String>` keyword allocations with static sorted slices
-  - [ ] Step 2.3: Verify syntax highlighting unit tests & golden parity
+- [x] Phase 2 — Syntax Engine Modularization (`src/syntax/`)
+  - [x] Step 2.1: Decompose `src/syntax/` into `profile`, `classifier`, `fence`, and `languages`
+  - [x] Step 2.2: Replace runtime `HashSet<String>` keyword allocations with static sorted slices
+  - [x] Step 2.3: Verify syntax highlighting unit tests & golden parity
 - [ ] Phase 3 — Interactive TUI Subsystem Decomposition (`src/tui/`)
   - [ ] Step 3.1: Decompose `AppState` into `state/` components (`navigation`, `viewport`, `modal`)
   - [ ] Step 3.2: Split frame rendering into `view/` components (`layout`, `header`, `diff`, `modals`)

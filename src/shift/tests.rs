@@ -1,7 +1,10 @@
 //! Unit tests for diff identity shift transformations.
 
 use super::*;
-use crate::parse::{AddLine, DelLine, Hunk, LineNum, Row};
+use crate::{
+    parse::{AddLine, DelLine, Hunk, LineNum, Row},
+    syntax::registry::lang_profile,
+};
 
 fn hunk(rows: Vec<Row>) -> Hunk {
     Hunk {
@@ -71,7 +74,7 @@ fn test_apply_shift_down_identity() {
 
 #[test]
 fn test_semantic_boundary_score() {
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     // Boundary before a function declaration
     let score_fn = semantic_boundary_score(Some("    }"), Some("    pub fn compute() {"), rs);
     // Boundary inside function body
@@ -221,7 +224,7 @@ fn test_semantic_slide_addition_to_function_header() {
     new_content[24] = "    }".to_string();
     new_content[25] = "".to_string();
 
-    let profile = crate::syntax::lang_profile("rs");
+    let profile = lang_profile("rs");
     let shifted = pass_shift_hunk(&h, Some(&new_content), profile);
 
     assert_eq!(shifted.rows[0].text(), "    pub fn new_func() {");

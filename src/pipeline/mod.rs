@@ -24,8 +24,10 @@ use crate::{
     old_content::old_content_from_diff,
     parse::{Row, parse_diff},
     syntax::{
-        ClassifiedToken, FenceRegion, LangProfile, classify_line, classify_tokens, fence_lang_ext,
-        fence_regions, lang_profile, markdown_tokens, region_at,
+        classifier::{ClassifiedToken, classify_line, classify_tokens, markdown_tokens},
+        fence::{FenceRegion, fence_regions, region_at},
+        profile::LangProfile,
+        registry::{fence_lang_ext, lang_profile},
     },
     visible::{Side as VisibleSide, build_visible},
     wire::{OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun, PipelineOutput},

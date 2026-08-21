@@ -1,0 +1,42 @@
+//! C / C++ / Java language profiles (one shared profile).
+
+use regex::Regex;
+
+use crate::syntax::profile::{BlockDelimStyle, LangProfile};
+
+pub const KEYWORDS: &[&str] = &[
+    "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else",
+    "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long", "register",
+    "restrict", "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef",
+    "union", "unsigned", "void", "volatile", "while",
+];
+
+pub fn profile() -> LangProfile {
+    LangProfile {
+        keywords: KEYWORDS,
+        line_comment: true,
+        block_comment: true,
+        types_by_case: true,
+        hash_comment: false,
+        fence: None,
+        unlabeled_fence_lang: None,
+        fence_strip: None,
+        markdown: false,
+        block_style: BlockDelimStyle::Braces,
+        // C/C++ function definitions are hard to distinguish from declarations;
+        // capture the name from the last word-token before the opening paren.
+        fn_decl: Some(
+            Regex::new(r"^\s*(?:[A-Za-z0-9_<>:*&\s]+\s+)+([A-Za-z0-9_]+)\s*\([^;]*\)\s*\{?\s*$")
+                .expect("c fn_decl"),
+        ),
+        decl_prefixes: &[
+            "class ",
+            "struct ",
+            "enum ",
+            "typedef ",
+            "template ",
+            "namespace ",
+        ],
+        scope_stop_prefixes: &["class ", "struct ", "enum ", "namespace "],
+    }
+}

@@ -277,7 +277,7 @@ pub fn subline_moves(bm: &BlockMatch, anchor: usize) -> Vec<SublineMove> {
 /// Solve one cluster with the default weights.
 pub fn solve_cluster(
     cluster: &ChangeCluster,
-    profile: Option<&crate::syntax::LangProfile>,
+    profile: Option<&crate::syntax::profile::LangProfile>,
 ) -> DpSolution {
     solve_cluster_with(cluster, profile, &Weights::default())
 }
@@ -286,7 +286,7 @@ pub fn solve_cluster(
 /// preference experiments).
 pub fn solve_cluster_with(
     cluster: &ChangeCluster,
-    profile: Option<&crate::syntax::LangProfile>,
+    profile: Option<&crate::syntax::profile::LangProfile>,
     w: &Weights,
 ) -> DpSolution {
     let m = cluster.old_rows.len();

@@ -2,12 +2,14 @@
 //! pairing + the declaration section-stop, the `None` ↔ `Some(result)`
 //! brace-anchor, the reflow pairing, the reverse stretch.
 
+use std::time::Instant;
+
 use crate::{
     collapse::collapse_hunk_rows,
     moves::mark_moves,
     parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind},
+    syntax::registry::lang_profile,
 };
-use std::time::Instant;
 
 fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
     match kind {
@@ -190,7 +192,7 @@ fn brace_anchor_none_some_result() {
         row(RowKind::Add, "        }", Some(154), None),
         row(RowKind::Add, "        Some(result)", Some(155), None),
     ]);
-    let profile = crate::syntax::lang_profile("rs");
+    let profile = lang_profile("rs");
     let c = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), profile);
     let none_mod = c
         .iter()
@@ -228,7 +230,7 @@ fn python_block_tail_anchor_none_some_result() {
         row(RowKind::Add, "        return None", Some(153), None),
         row(RowKind::Add, "    return result", Some(155), None),
     ]);
-    let py = crate::syntax::lang_profile("py");
+    let py = lang_profile("py");
     let c = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), py);
     let none_mod = c
         .iter()
@@ -1227,7 +1229,7 @@ fn test_closing_brace_released_from_add_block() {
     new_content[1065] = "    }".to_string();
     new_content[1066] = "".to_string();
 
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let collapsed = collapse_hunk_rows(&h, None, Some(&new_content), rs);
     // The first row should be the mod at 1060
     assert_eq!(collapsed[0].kind(), RowKind::Mod);
@@ -1263,7 +1265,7 @@ fn test_hunk_patience_anchoring_prevents_cross_block_mispairing() {
         row(RowKind::Add, "}", Some(23), None),
     ]);
 
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let collapsed = collapse_hunk_rows(&h, None, None, rs);
     let alpha_head = collapsed
         .iter()

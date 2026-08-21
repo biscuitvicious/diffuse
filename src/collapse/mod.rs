@@ -17,7 +17,7 @@ use crate::{
     lcs::{char_slice, tokenize_line, word_spans},
     parse::{AddLine, DelLine, Hunk, Row, Spans},
     shift::pass_shift_hunk,
-    syntax::LangProfile,
+    syntax::profile::LangProfile,
 };
 
 /// Results of the initial pairing pass.

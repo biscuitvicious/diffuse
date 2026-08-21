@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     merge::RunKind,
     syntax::{
-        ClassifiedToken, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE,
-        classify_tokens, lang_profile, md_inner_tokens,
+        classifier::{ClassifiedToken, classify_tokens},
+        md_inner_tokens,
+        profile::{MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE},
+        registry::lang_profile,
     },
     wire::OutputRun,
 };

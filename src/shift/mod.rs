@@ -8,7 +8,7 @@
 
 use crate::{
     parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row},
-    syntax::LangProfile,
+    syntax::profile::LangProfile,
 };
 
 /// Evaluates the semantic quality of a boundary between `prev_line` and
@@ -239,7 +239,7 @@ pub fn calculate_needed_shift_down(
     start_idx: usize,
     end_idx: usize,
     split_idx: usize,
-    profile: Option<&crate::syntax::LangProfile>,
+    profile: Option<&crate::syntax::profile::LangProfile>,
 ) -> usize {
     let Some(p) = profile else {
         return 0;
@@ -315,7 +315,7 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
 pub fn pass_shift_hunk(
     h: &Hunk,
     new_content: Option<&[String]>,
-    profile: Option<&crate::syntax::LangProfile>,
+    profile: Option<&crate::syntax::profile::LangProfile>,
 ) -> Hunk {
     let mut new_hunk = h.clone();
     let mut i = 0;

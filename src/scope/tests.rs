@@ -3,7 +3,7 @@
 
 use crate::{
     scope::{fn_of, is_tail_before_closing},
-    syntax::lang_profile,
+    syntax::registry::lang_profile,
 };
 
 #[test]

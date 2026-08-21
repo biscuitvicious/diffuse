@@ -1,12 +1,15 @@
 //! Unit tests for syntax section classification and cluster partitioning.
 
 use super::*;
-use crate::parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row};
+use crate::{
+    parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row},
+    syntax::registry::lang_profile,
+};
 
 #[test]
 fn test_classify_syntax_section() {
-    let rs = crate::syntax::lang_profile("rs");
-    let py = crate::syntax::lang_profile("py");
+    let rs = lang_profile("rs");
+    let py = lang_profile("py");
 
     assert_eq!(
         classify_syntax_section("/// Doc comment", rs),
@@ -51,7 +54,7 @@ fn test_syntax_section_compatibility() {
 
 #[test]
 fn test_partition_hunk_segments_with_syntax_barriers() {
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let h = Hunk {
         old_start: 1,
         old_count: 5,
@@ -154,7 +157,7 @@ fn dp_verbatim_line_pairs_as_mov() {
         vec![del_row(10, "    let value = 42;")],
         vec![add_row(21, "        let value = 42;")],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     assert_eq!(signature(&sol), ["mov"]);
     verify_projection(&sol, &c).expect("projection invariant holds");
@@ -167,7 +170,7 @@ fn dp_similar_lines_pair_as_mod() {
         vec![del_row(10, "    let total = count + 1;")],
         vec![add_row(21, "    let total = count + 2;")],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     assert_eq!(signature(&sol), ["mod"]);
     verify_projection(&sol, &c).expect("projection invariant holds");
@@ -182,7 +185,7 @@ fn dp_unrelated_lines_stay_del_and_add() {
         vec![del_row(10, "fn generate_report(&self) -> Report {")],
         vec![add_row(21, "    drop(buffer);")],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     assert_eq!(signature(&sol), ["del", "add"]);
     verify_projection(&sol, &c).expect("projection invariant holds");
@@ -202,7 +205,7 @@ fn dp_expansion_one_to_two() {
             add_row(22, "    return self.name.clone(); }"),
         ],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     assert_eq!(signature(&sol), ["mod", "add"]);
     verify_projection(&sol, &c).expect("projection invariant holds");
@@ -226,7 +229,7 @@ fn dp_collapse_two_to_one() {
             "fn render(&self) -> String { return self.name.clone(); }",
         )],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     // Plan §4.2: a K-to-1 collapse renders as the anchor Mod followed by
     // the absorbed Del rows — the anchor owns the new line's head.
@@ -243,7 +246,7 @@ fn dp_collapse_two_to_one() {
 fn dp_blank_lines_pair_as_single_row() {
     // Blank ↔ blank: one row (no fragmentation into del+add).
     let c = code_cluster(vec![del_row(10, "")], vec![add_row(21, "")]);
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     assert_eq!(signature(&sol).len(), 1);
     verify_projection(&sol, &c).expect("projection invariant holds");
@@ -264,7 +267,7 @@ fn dp_mixed_cluster_covers_all_lines_in_order() {
             add_row(23, "    debug!(\"opened {path}\");"),
         ],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     verify_projection(&sol, &c).expect("projection invariant holds");
     // The comment must NOT pair with code (syntax-section compat is the
@@ -289,7 +292,7 @@ fn dp_projection_oracle_rejects_corrupted_solution() {
         vec![del_row(10, "alpha"), del_row(11, "beta")],
         vec![add_row(21, "alpha"), add_row(22, "gamma")],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     verify_projection(&sol, &c).expect("clean solution verifies");
 
@@ -328,7 +331,7 @@ fn dp_subline_moves_recorded_for_reflow_expansion() {
             add_row(22, "// and renders each row."),
         ],
     );
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
     assert!(matches!(sol.transitions[0], DpOp::Expand { k: 2, .. }));
     verify_projection(&sol, &c).expect("projection invariant holds");
@@ -346,7 +349,7 @@ fn dp_corpus_projection_oracle() {
     // frozen golden corpus, the DP's optimal decomposition must satisfy the
     // bidirectional string invariant — the rows project back to exactly the
     // cluster's old lines and new lines, in order, byte for byte.
-    use crate::{parse::parse_diff, syntax::lang_profile};
+    use crate::parse::parse_diff;
     use serde::Deserialize;
     use std::fs;
 
@@ -492,7 +495,7 @@ fn test_mirage_cache_cluster() {
         following_ctx: Vec::new(),
         section: SyntaxSectionKind::Code,
     };
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = dp::solve_cluster(&cluster, rs);
     eprintln!("SOL ROWS:");
     for r in &sol.rows {
@@ -585,7 +588,7 @@ fn test_mirage_lookup_cluster() {
         following_ctx: vec!["    }".to_string()],
         section: SyntaxSectionKind::Code,
     };
-    let rs = crate::syntax::lang_profile("rs");
+    let rs = lang_profile("rs");
     let sol = dp::solve_cluster(&cluster, rs);
     eprintln!("LOOKUP SOL ROWS:");
     for r in &sol.rows {

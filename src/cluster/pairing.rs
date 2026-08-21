@@ -25,7 +25,7 @@ use crate::{
     collapse::PairingResults,
     parse::{Hunk, Row},
     scope::{fn_of, fn_of_exists, is_tail_before_closing},
-    syntax::LangProfile,
+    syntax::profile::LangProfile,
 };
 
 use super::{HunkSegment, dp, partition_hunk_segments};

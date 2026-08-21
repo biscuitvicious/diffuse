@@ -7,7 +7,7 @@ pub mod render;
 
 use crate::{
     parse::{Hunk, Row},
-    syntax::LangProfile,
+    syntax::profile::LangProfile,
 };
 
 /// Classification of syntactic construct for change runs.

@@ -1,7 +1,8 @@
 //! Ports of the syntax-highlighting tests from test/review.test.ts.
 
-use crate::syntax::{LangProfile, classify_tokens, fence_regions, lang_profile, region_at};
 use std::ptr::addr_eq;
+
+use crate::syntax::prelude::*;
 
 // The semantic colors, per the TS test's theme codes.
 fn color_of(tok: &str) -> &str {

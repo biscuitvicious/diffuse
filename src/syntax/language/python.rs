@@ -1,0 +1,30 @@
+//! Python language profile.
+
+use regex::Regex;
+
+use crate::syntax::profile::{BlockDelimStyle, LangProfile};
+
+pub const KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield",
+];
+
+pub fn profile() -> LangProfile {
+    LangProfile {
+        keywords: KEYWORDS,
+        hash_comment: true,
+        line_comment: false,
+        types_by_case: true,
+        block_comment: false,
+        fence: None,
+        unlabeled_fence_lang: None,
+        fence_strip: None,
+        markdown: false,
+        block_style: BlockDelimStyle::IndentColon,
+        fn_decl: Some(Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z0-9_]+)").expect("py fn_decl")),
+        decl_prefixes: &["def ", "async def ", "class "],
+        scope_stop_prefixes: &["class "],
+    }
+}
