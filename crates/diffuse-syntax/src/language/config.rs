@@ -3,6 +3,8 @@
 //! TOML and YAML share the hash-comment + colon-indent style but have no
 //! prose classifier. JSON uses brace structure with no comments.
 
+use regex::Regex;
+
 use crate::profile::{BlockDelimStyle, LangProfile};
 
 /// TOML and YAML — hash comments, colon-indented blocks, no prose.
@@ -18,9 +20,9 @@ pub fn toml_yaml_profile() -> LangProfile {
         fence_strip: None,
         markdown: false,
         block_style: BlockDelimStyle::IndentColon,
-        fn_decl: None,
-        decl_prefixes: &[],
-        scope_stop_prefixes: &[],
+        fn_decl: Some(Regex::new(r"^\s*\[+([A-Za-z0-9_.-]+)\]+").expect("toml section header")),
+        decl_prefixes: &["["],
+        scope_stop_prefixes: &["["],
     }
 }
 

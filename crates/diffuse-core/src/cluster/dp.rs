@@ -227,6 +227,61 @@ fn is_reflow_candidate(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
+fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangProfile>) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if let Some(p) = profile {
+        if p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
+            || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
+        {
+            return true;
+        }
+        // In config files (TOML/YAML/INI), every `key = ` is an independent property
+        // declaration
+        if p.hash_comment
+            && !p.line_comment
+            && !p.block_comment
+            && let Some(eq_pos) = t.find('=')
+        {
+            let lhs = t[..eq_pos].trim();
+            if !lhs.is_empty()
+                && lhs
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+                && !lhs.contains(' ')
+            {
+                return true;
+            }
+        }
+    }
+    // Check for section headers: `[section]`
+    if t.starts_with('[') && t.ends_with(']') {
+        return true;
+    }
+    false
+}
+
+fn is_duplicate_key_assignment(first: &str, current: &str) -> bool {
+    let f = first.trim();
+    let c = current.trim();
+    if let (Some(f_eq), Some(c_eq)) = (f.find('='), c.find('=')) {
+        let f_key = f[..f_eq].trim();
+        let c_key = c[..c_eq].trim();
+        if !f_key.is_empty()
+            && f_key == c_key
+            && f_key
+                .chars()
+                .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+            && !f_key.contains(' ')
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// The block line carrying the transition's anchor `Mod`: the line that
 /// continues the SOURCE line's head (its first matched token), falling
 /// back to the line with the most matched tokens. The plan's §4.2 renders
@@ -501,10 +556,28 @@ pub fn solve_cluster_with(
                         cluster.old_rows[i].text(),
                         cluster.new_rows[j].text(),
                     );
-                    let syntax = if statement_head_match {
-                        w.head_agree_bonus
+                    let is_config_property_match = statement_head_match
+                        && profile.is_some_and(|p| {
+                            p.hash_comment && !p.line_comment && !p.block_comment && !p.markdown
+                        })
+                        && is_duplicate_key_assignment(
+                            cluster.old_rows[i].text(),
+                            cluster.new_rows[j].text(),
+                        );
+                    let (penalty, syntax) = if is_config_property_match {
+                        let min_chars = ot.chars.min(nt.chars);
+                        let max_chars = ot.chars.max(nt.chars);
+                        let core_unmatched = min_chars.saturating_sub(matched);
+                        let length_diff = (max_chars - min_chars) as f64;
+                        let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
+                        (pen, w.head_agree_bonus + 200.0)
                     } else {
-                        0.0
+                        let syn = if statement_head_match {
+                            w.head_agree_bonus
+                        } else {
+                            0.0
+                        };
+                        (w.mu * unmatched as f64, syn)
                     };
                     // Distance-based closing-brace proximity bonus, tapering with distance
                     let d_old_close = old_close_dist[i];
@@ -559,7 +632,6 @@ pub fn solve_cluster_with(
                     } else {
                         0.0
                     };
-                    let penalty = w.mu * unmatched as f64;
 
                     let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
                         + syntax
@@ -585,7 +657,15 @@ pub fn solve_cluster_with(
                         let text = cluster.new_rows[j + idx].text();
                         let ok = is_reflow_candidate(text);
                         let no_mid_semi = idx == k - 1 || !text.trim().ends_with(';');
-                        ok && no_mid_semi && new_comment[j + idx] == old_comment[i]
+                        let not_statement_start =
+                            idx == 0 || old_comment[i] || !is_statement_start(text, profile);
+                        let not_repeated_head = idx == 0
+                            || old_comment[i]
+                            || !is_duplicate_key_assignment(cluster.new_rows[j].text(), text);
+                        ok && no_mid_semi
+                            && new_comment[j + idx] == old_comment[i]
+                            && not_statement_start
+                            && not_repeated_head
                     }) {
                         break;
                     }
@@ -644,7 +724,15 @@ pub fn solve_cluster_with(
                         let text = cluster.old_rows[i + idx].text();
                         let ok = is_reflow_candidate(text);
                         let no_mid_semi = idx == k - 1 || !text.trim().ends_with(';');
-                        ok && no_mid_semi && old_comment[i + idx] == new_comment[j]
+                        let not_statement_start =
+                            idx == 0 || new_comment[j] || !is_statement_start(text, profile);
+                        let not_repeated_head = idx == 0
+                            || new_comment[j]
+                            || !is_duplicate_key_assignment(cluster.old_rows[i].text(), text);
+                        ok && no_mid_semi
+                            && old_comment[i + idx] == new_comment[j]
+                            && not_statement_start
+                            && not_repeated_head
                     }) {
                         break;
                     }

@@ -186,3 +186,149 @@ fn test_run_pipeline_full_with_old_contents() {
     let del_run = runs.iter().find(|r| r.kind == RunKind::Del);
     assert_eq!(del_run.map(|r| r.text.as_str()), Some("resolved_"));
 }
+
+#[test]
+fn test_cargo_config_toml_runner_pairing() {
+    let diff = r#"diff --git a/.cargo/config.toml b/.cargo/config.toml
+index 759adaf..fbe3b20 100644
+--- a/.cargo/config.toml
++++ b/.cargo/config.toml
+@@ -1,5 +1,9 @@
+ [env]
+ CARGO_WORKSPACE_DIR = { value = "", relative = true }
++RUST_TEST_THREADS = { value = "4" }
++
++[alias]
++regen = "run -p linux --bin mirage-registry-gen --target x86_64-unknown-linux-gnu -- src/registry/generated.rs"
+ 
+ [build]
+ target = [ "x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu" ]
+@@ -7,23 +11,30 @@ target = [ "x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu" ]
+ [target.x86_64-unknown-linux-musl]
+ linker = "clang"
+ rustflags = [ "-C", "target-feature=+crt-static", "-C", "link-arg=-fuse-ld=mold" ]
+-runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then echo "Running on x86_64: $*"; "$@"; else echo "WARNING: Skipping runner on non-x86_64 arch (got $(uname -m))"; exit 1; fi', "--"]
++runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then "$@"; fi', "--"]
+ 
+ [target.x86_64-unknown-linux-gnu]
+ linker = "clang"
+ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+-runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then echo "Running on x86_64: $*"; "$@"; else echo "WARNING: Skipping runner on non-x86_64 arch (got $(uname -m))"; exit 1; fi', "--"]
++runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then "$@"; fi', "--"]
+ 
+ [target.aarch64-unknown-linux-musl.env]
+ RUST_TEST_THREADS = "1"
+ 
+ [target.aarch64-unknown-linux-musl]
+ linker = "aarch64-linux-gnu-gcc"
+-rustflags = ["-C", "target-feature=+crt-static"]
+-runner = "qemu-aarch64-static"
++rustflags = ["-C", "target-feature=+crt-static", "--cfg", 'remote_exec="adb"']
++runner = ["sh", "-c", 'BIN=${1##*/}; if [ -n "$MIRAGE_REMOTE_HOST" ] && [ ! "${BIN#e2e-}" = "$BIN" ]; then $CARGO_WORKSPACE_DIR/scripts/android-test-runner "$@"; else qemu-aarch64-static "$@"; fi', "--"]
+ 
+ [target.aarch64-linux-android]
+ # Linker is provided via CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER in the environment
+ # to keep this file agnostic of the local build environment.
+-rustflags = []
+-runner = ["sh", "-c", 'if [ "$(uname -m)" = "aarch64" ]; then "$@"; fi', "--"]
++rustflags = ["--cfg", 'remote_exec="adb"']
++runner = "scripts/android-test-runner"
++
++[target.x86_64-linux-android]
++# Linker is provided via CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER in the environment
++# to keep this file agnostic of the local build environment.
++rustflags = ["--cfg", 'remote_exec="adb"']
++runner = "scripts/android-test-runner"
++"#;
+    let mut contents = HashMap::new();
+    contents.insert(
+        ".cargo/config.toml".to_string(),
+        r#"[env]
+CARGO_WORKSPACE_DIR = { value = "", relative = true }
+RUST_TEST_THREADS = { value = "4" }
+
+[alias]
+regen = "run -p linux --bin mirage-registry-gen --target x86_64-unknown-linux-gnu -- src/registry/generated.rs"
+
+[build]
+target = [ "x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu" ]
+
+[target.x86_64-unknown-linux-musl]
+linker = "clang"
+rustflags = [ "-C", "target-feature=+crt-static", "-C", "link-arg=-fuse-ld=mold" ]
+runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then "$@"; fi', "--"]
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then "$@"; fi', "--"]
+
+[target.aarch64-unknown-linux-musl.env]
+RUST_TEST_THREADS = "1"
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-gnu-gcc"
+rustflags = ["-C", "target-feature=+crt-static", "--cfg", 'remote_exec="adb"']
+runner = ["sh", "-c", 'BIN=${1##*/}; if [ -n "$MIRAGE_REMOTE_HOST" ] && [ ! "${BIN#e2e-}" = "$BIN" ]; then $CARGO_WORKSPACE_DIR/scripts/android-test-runner "$@"; else qemu-aarch64-static "$@"; fi', "--"]
+
+[target.aarch64-linux-android]
+# Linker is provided via CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER in the environment
+# to keep this file agnostic of the local build environment.
+rustflags = ["--cfg", 'remote_exec="adb"']
+runner = "scripts/android-test-runner"
+
+[target.x86_64-linux-android]
+# Linker is provided via CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER in the environment
+# to keep this file agnostic of the local build environment.
+rustflags = ["--cfg", 'remote_exec="adb"']
+runner = "scripts/android-test-runner"
+"#.to_string(),
+    );
+
+    let output = run_pipeline_full(diff, &contents, None, None, None);
+    let rows = &output.files[0].rows;
+
+    // 1. Assert that there is NO floating del under [env] (between lines 1 and 6)
+    for r in &rows[..6] {
+        assert_ne!(
+            r.kind,
+            RowKind::Del,
+            "no del rows should float into the top [env] section"
+        );
+    }
+
+    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1 Mod
+    //    (old 10 -> new 14)
+    let musl_runner = rows.iter().find(|r| r.new_line == Some(14));
+    assert!(musl_runner.is_some());
+    assert_eq!(musl_runner.unwrap().kind, RowKind::Mod);
+    assert_eq!(musl_runner.unwrap().old_line, Some(10));
+
+    // 3. Assert that runner in x86_64-unknown-linux-gnu is paired as 1-to-1 Mod
+    //    (old 15 -> new 19)
+    let gnu_runner = rows.iter().find(|r| r.new_line == Some(19));
+    assert!(gnu_runner.is_some());
+    assert_eq!(gnu_runner.unwrap().kind, RowKind::Mod);
+    assert_eq!(gnu_runner.unwrap().old_line, Some(15));
+
+    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1 Mod
+    //    (old 23 -> new 27)
+    let aarch64_musl_runner = rows.iter().find(|r| r.new_line == Some(27));
+    assert!(aarch64_musl_runner.is_some());
+    assert_eq!(aarch64_musl_runner.unwrap().kind, RowKind::Mod);
+    assert_eq!(aarch64_musl_runner.unwrap().old_line, Some(23));
+
+    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod (old
+    //    29 -> new 33)
+    let android_runner = rows.iter().find(|r| r.new_line == Some(33));
+    assert!(android_runner.is_some());
+    assert_eq!(android_runner.unwrap().kind, RowKind::Mod);
+    assert_eq!(android_runner.unwrap().old_line, Some(29));
+
+    // 6. Assert that rustflags in aarch64-linux-android is paired as 1-to-1 Mod
+    //    (old 28 -> new 32)
+    let android_rustflags = rows.iter().find(|r| r.new_line == Some(32));
+    assert!(android_rustflags.is_some());
+    assert_eq!(android_rustflags.unwrap().kind, RowKind::Mod);
+    assert_eq!(android_rustflags.unwrap().old_line, Some(28));
+}

@@ -73,15 +73,15 @@ pub fn fn_of(
     for i in (0..line).rev() {
         let raw = content.get(i).map_or("", |s| s.as_str());
         let l = raw.trim();
+        if let Some(caps) = fn_re.captures(l) {
+            return Some(caps[1].to_string());
+        }
         if Some(i) != line.checked_sub(1)
             && (l == "}"
                 || raw.starts_with('}')
                 || stop_prefixes.iter().any(|&pf| l.starts_with(pf)))
         {
             return None;
-        }
-        if let Some(caps) = fn_re.captures(l) {
-            return Some(caps[1].to_string());
         }
     }
     None
