@@ -444,9 +444,13 @@ pub fn render_raw_row(
     if trailing_len > 0 {
         let (body, trailing) = text.split_at(text.len() - trailing_len);
         out.push_str(body);
-        out.push_str(&format!(
-            "{sub_bg}\x1b[9m{sub_fg}{trailing}\x1b[29m{bg}{fg}"
-        ));
+        if kind == RowKind::Del {
+            out.push_str(&format!(
+                "{sub_bg}\x1b[9m{sub_fg}{trailing}\x1b[29m{bg}{fg}"
+            ));
+        } else {
+            out.push_str(&format!("{sub_bg}{sub_fg}{trailing}{bg}{fg}"));
+        }
     } else {
         out.push_str(text);
     }
@@ -704,15 +708,19 @@ mod tests {
         let add_trailing = render_raw_row(RowKind::Add, "+", "let x = 1;   ", false, false);
         assert!(add_trailing.contains("+let x = 1;"));
         assert!(
-            add_trailing.contains("\x1b[48;5;28m\x1b[9m\x1b[38;5;151m   \x1b[29m"),
-            "trailing spaces must have subline highlight and strikethrough in add row"
+            add_trailing.contains("\x1b[48;5;28m\x1b[38;5;151m   "),
+            "added trailing spaces must have subline highlight without strikethrough"
+        );
+        assert!(
+            !add_trailing.contains("\x1b[9m"),
+            "added trailing spaces must not be crossed out"
         );
 
         let del_trailing = render_raw_row(RowKind::Del, "-", "foo();  ", false, false);
         assert!(del_trailing.contains("-foo();"));
         assert!(
             del_trailing.contains("\x1b[48;5;88m\x1b[9m\x1b[38;5;167m  \x1b[29m"),
-            "trailing spaces must have subline highlight and strikethrough in del row"
+            "deleted trailing spaces must have subline highlight and strikethrough in del row"
         );
     }
 }
