@@ -1,7 +1,7 @@
 # Incremental Streaming Pipeline & Asynchronous Worker Pool
 
 - [x] **Phase 1 — Core Streaming & Priority Worker Pool (`diffuse-core`)**
-- [ ] **Phase 2 — CLI Line-by-Line Streaming Output (`diffuse-cli`)**
+- [x] **Phase 2 — CLI Line-by-Line Streaming Output (`diffuse-cli`)**
 - [ ] **Phase 3 — Incremental File Ingestion & TUI Live Rendering (`diffuse-tui`)**
 - [ ] **Phase 4 — Open-Source Dataset Harvesting & Large-Scale Benchmarks (`tests/`)**
 

@@ -77,8 +77,11 @@ fn piped_stdout_renders_not_json_and_not_tui() {
     );
 }
 
+static REPO_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+
 fn setup_repo() -> PathBuf {
-    let dir = env::temp_dir().join(format!("diffuse-cli-repo-{}", process::id()));
+    let id = REPO_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = env::temp_dir().join(format!("diffuse-cli-repo-{}-{}", process::id(), id));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
@@ -102,5 +105,54 @@ fn setup_repo() -> PathBuf {
     run(&["add", "."]);
     run(&["commit", "-qm", "init"]);
     fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    fs::write(dir.join("b.txt"), "hello\nworld\n").unwrap();
     dir
+}
+
+#[test]
+fn jsonl_streaming_emits_valid_json_lines() {
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-one\n+ONE\ndiff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1,1 +1,1 @@\n-two\n+TWO\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--jsonl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    std::io::Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+    drop(stdin);
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "must emit exactly two JSON lines");
+
+    for line in lines {
+        let val: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
+        assert!(val.get("path").is_some());
+        assert!(val.get("counts").is_some());
+        assert!(val.get("hunks").is_some());
+    }
+}
+
+#[test]
+fn non_tui_mode_handles_broken_pipe_cleanly() {
+    let dir = setup_repo();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--no-tui")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    // Drop stdout pipe reader immediately to simulate `diffuse | head -n 1`
+    drop(child.stdout.take());
+    let _ = child.wait();
+
+    let _ = fs::remove_dir_all(&dir);
 }

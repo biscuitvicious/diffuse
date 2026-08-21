@@ -25,7 +25,7 @@ use diffuse_core::{
     pipeline::{run_pipeline_full, run_pipeline_with_notes},
     wire::PipelineOutput,
 };
-use diffuse_render::{default_theme, render_pipeline_output};
+use diffuse_render::default_theme;
 use diffuse_tui::run_interactive_tui;
 
 /// The diffuse diff-engine CLI.
@@ -48,6 +48,10 @@ struct Args {
     /// Emit raw token-stream JSON (for machine/extension integration).
     #[arg(long)]
     json: bool,
+    /// Emit raw token-stream JSON Lines (one JSON object per file as it is
+    /// processed).
+    #[arg(long)]
+    jsonl: bool,
     /// Disable interactive TUI mode and print colored diff to terminal.
     #[arg(long)]
     no_tui: bool,
@@ -167,18 +171,29 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
 /// The extension pipes a JSON payload on stdin (a non-terminal stdin with
 /// content). A standalone run has git arguments, an interactive stdin, or
 /// an empty piped stdin (e.g. `diffuse < /dev/null | cat`). Routing on the
+use std::io::Write;
+
+/// Decide between the machine/extension JSON contract (`true`) and the
+/// standalone reviewer producing terminal output (`false`).
+///
+/// The extension pipes a JSON payload on stdin (a non-terminal stdin with
+/// content). A standalone run has git arguments, an interactive stdin, or
+/// an empty piped stdin (e.g. `diffuse < /dev/null | cat`). Routing on the
 /// *content* of a piped stdin keeps the extension contract intact while
 /// letting fully-piped invocations fall through to the full render — and
 /// the TUI is only ever entered when both ends are real terminals (see
 /// `main`).
 fn route_mode(
     json: bool,
+    jsonl: bool,
     diff: Option<&str>,
     git_args: &[String],
     stdin_tty: bool,
     piped_stdin: &str,
 ) -> bool {
-    json || diff.is_some() || (git_args.is_empty() && !stdin_tty && !piped_stdin.trim().is_empty())
+    json || jsonl
+        || diff.is_some()
+        || (git_args.is_empty() && !stdin_tty && !piped_stdin.trim().is_empty())
 }
 
 fn main() -> io::Result<()> {
@@ -191,7 +206,7 @@ fn main() -> io::Result<()> {
     // content (no git args, no explicit contract flags). Never block a
     // long-running pipe for a repo review (`diffuse HEAD < <(tail -f …)`).
     let mut piped_stdin = String::new();
-    if !stdin_tty && args.git_args.is_empty() && !args.json && args.diff.is_none() {
+    if !stdin_tty && args.git_args.is_empty() && !args.json && !args.jsonl && args.diff.is_none() {
         io::stdin().read_to_string(&mut piped_stdin)?;
     }
 
@@ -200,6 +215,7 @@ fn main() -> io::Result<()> {
     // (piped/redirected), render the full ANSI diff instead of the TUI.
     if !route_mode(
         args.json,
+        args.jsonl,
         args.diff.as_deref(),
         &args.git_args,
         stdin_tty,
@@ -226,16 +242,6 @@ fn main() -> io::Result<()> {
         let db_ref = Some(&loaded_db);
         let repo_ref = args.repo.as_deref();
 
-        let mut out = run_pipeline_full(
-            &git_res.diff_text,
-            &git_res.contents,
-            Some(&git_res.old_contents),
-            db_ref,
-            repo_ref,
-        );
-        out.branch = git_res.branch;
-        out.untracked_skipped = git_res.untracked_skipped;
-
         let repo_name = args.repo.clone().unwrap_or_else(|| {
             repo_root
                 .file_name()
@@ -246,11 +252,39 @@ fn main() -> io::Result<()> {
         // Interactive TUI only when both ends are real terminals; any
         // piped or redirected end falls back to the full ANSI render.
         if !args.no_tui && stdin_tty && stdout_tty {
+            let mut out = run_pipeline_full(
+                &git_res.diff_text,
+                &git_res.contents,
+                Some(&git_res.old_contents),
+                db_ref,
+                repo_ref,
+            );
+            out.branch = git_res.branch;
+            out.untracked_skipped = git_res.untracked_skipped;
             run_interactive_tui(out, repo_name, notes_path, repo_root, args.git_args)?;
         } else {
             let theme = default_theme();
-            let rendered = render_pipeline_output(&out, &theme, true);
-            print!("{rendered}");
+            let consumer = diffuse_core::streaming::stream_diff_pipeline(
+                &git_res.diff_text,
+                &git_res.contents,
+                Some(&git_res.old_contents),
+                Some(loaded_db),
+                args.repo.clone(),
+                None,
+            );
+            let mut stdout = io::stdout().lock();
+            for file in consumer {
+                let rendered = diffuse_render::render_file_diff(&file, &theme, true);
+                if let Err(e) = stdout.write_all(rendered.as_bytes()) {
+                    if e.kind() == io::ErrorKind::BrokenPipe {
+                        return Ok(());
+                    }
+                    return Err(e);
+                }
+                let _ = stdout.flush();
+            }
+            let _ = stdout.write_all(b"\x1b[0m");
+            let _ = stdout.flush();
         }
         return Ok(());
     }
@@ -298,8 +332,37 @@ fn main() -> io::Result<()> {
             println!("{}", serde_json::to_string(&outputs).expect("serialize"));
         }
         InputPayload::Single(input) => {
-            let output = process_input(*input, &args);
-            println!("{}", serde_json::to_string(&output).expect("serialize"));
+            if args.jsonl {
+                let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
+                let notes_path = notes_file_path
+                    .as_ref()
+                    .map(Path::new)
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(default_notes_path);
+                let loaded_db = load_notes(&notes_path);
+                let consumer = diffuse_core::streaming::stream_diff_pipeline(
+                    &input.diff,
+                    &input.contents,
+                    None,
+                    Some(loaded_db),
+                    args.repo.clone().or(input.repo.clone()),
+                    None,
+                );
+                let mut stdout = io::stdout().lock();
+                for file in consumer {
+                    if let Ok(line) = serde_json::to_string(&file)
+                        && let Err(e) = writeln!(stdout, "{line}")
+                    {
+                        if e.kind() == io::ErrorKind::BrokenPipe {
+                            return Ok(());
+                        }
+                        return Err(e);
+                    }
+                }
+            } else {
+                let output = process_input(*input, &args);
+                println!("{}", serde_json::to_string(&output).expect("serialize"));
+            }
         }
     }
     Ok(())
@@ -312,40 +375,66 @@ mod tests {
     #[test]
     fn extension_json_payload_is_json_mode() {
         // The pi extension pipes a JSON payload with no git args.
-        assert!(route_mode(false, None, &[], false, "{\"diff\":\"x\"}"));
+        assert!(route_mode(
+            false,
+            false,
+            None,
+            &[],
+            false,
+            "{\"diff\":\"x\"}"
+        ));
     }
 
     #[test]
     fn piped_raw_diff_stays_json_mode() {
         // `git diff | diffuse` — a raw (non-JSON) payload piped in.
-        assert!(route_mode(false, None, &[], false, "diff --git a b\n"));
+        assert!(route_mode(
+            false,
+            false,
+            None,
+            &[],
+            false,
+            "diff --git a b\n"
+        ));
     }
 
     #[test]
     fn empty_piped_stdin_is_standalone() {
         // `diffuse < /dev/null | cat` — no payload, must route to the
         // standalone reviewer, never the JSON contract.
-        assert!(!route_mode(false, None, &[], false, ""));
+        assert!(!route_mode(false, false, None, &[], false, ""));
     }
 
     #[test]
     fn interactive_stdin_is_standalone() {
-        assert!(!route_mode(false, None, &[], true, ""));
+        assert!(!route_mode(false, false, None, &[], true, ""));
     }
 
     #[test]
     fn explicit_json_flag_is_json_mode() {
-        assert!(route_mode(true, None, &[], true, ""));
+        assert!(route_mode(true, false, None, &[], true, ""));
+    }
+
+    #[test]
+    fn explicit_jsonl_flag_is_json_mode() {
+        assert!(route_mode(false, true, None, &[], true, ""));
     }
 
     #[test]
     fn diff_file_flag_is_json_mode() {
-        assert!(route_mode(false, Some("x.diff"), &[], true, ""));
+        assert!(route_mode(false, false, Some("x.diff"), &[], true, ""));
     }
 
     #[test]
     fn git_args_are_always_standalone() {
         // `diffuse HEAD < file` — git args win over piped stdin content.
-        assert!(!route_mode(false, None, &["HEAD".into()], false, "noise"));
+        assert!(!route_mode(
+            false,
+            false,
+            None,
+            &["HEAD".into()],
+            false,
+            "noise"
+        ));
     }
 }

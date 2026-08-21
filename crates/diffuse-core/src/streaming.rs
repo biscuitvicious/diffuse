@@ -274,6 +274,36 @@ pub fn spawn_streaming_pipeline(
     (producer, consumer)
 }
 
+/// Convenience helper to parse a diff and immediately spawn a streaming
+/// pipeline.
+pub fn stream_diff_pipeline(
+    diff: &str,
+    contents: &std::collections::HashMap<String, String>,
+    old_contents: Option<&std::collections::HashMap<String, String>>,
+    notes_db: Option<NotesDB>,
+    repo: Option<String>,
+    worker_count: Option<usize>,
+) -> StreamingConsumer {
+    let parsed = crate::parse::parse_diff(diff);
+    let (producer, consumer) = spawn_streaming_pipeline(worker_count, notes_db, repo);
+
+    let diff_fallback = diff.to_string();
+    for (idx, f) in parsed.into_iter().enumerate() {
+        let new_c = contents.get(&f.path).cloned();
+        let old_c = old_contents.and_then(|oc| oc.get(&f.path).cloned());
+        producer.push(FileJob {
+            idx,
+            file: f,
+            new_content: new_c,
+            old_content: old_c,
+            diff_fallback: Some(diff_fallback.clone()),
+        });
+    }
+    producer.finish();
+
+    consumer
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +478,25 @@ index 444..555 100644
             serde_json::to_string(&baseline).unwrap(),
             "streaming pipeline output must match run_pipeline_full byte-for-byte"
         );
+    }
+
+    #[test]
+    fn test_stream_diff_pipeline_helper() {
+        let diff = r#"diff --git a/x.rs b/x.rs
+index 000..111 100644
+--- a/x.rs
++++ b/x.rs
+@@ -1,1 +1,1 @@
+-const X: i32 = 1;
++const X: i32 = 2;
+"#;
+        let mut contents = std::collections::HashMap::new();
+        contents.insert("x.rs".to_string(), "const X: i32 = 2;\n".to_string());
+
+        let consumer = stream_diff_pipeline(diff, &contents, None, None, None, Some(2));
+        let files: Vec<OutputFile> = consumer.collect();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "x.rs");
+        assert_eq!(files[0].counts.mods, 1);
     }
 }
