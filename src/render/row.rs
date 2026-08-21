@@ -1,12 +1,15 @@
 //! Row & Segment Renderer with subword styling, background tinting, and column
 //! slicing.
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use super::theme::{DiffuseTheme, S_ADD, S_DEL, S_MOD, S_MOV};
 use crate::{
     bin_pipeline::OutputRun,
+    lcs::char_slice,
+    merge::RunKind,
     parse::{RowKind, Spans},
 };
-use unicode_segmentation::UnicodeSegmentation;
 
 /// Check whether a row consists solely of common/context runs.
 pub fn is_common_only_row(kind: RowKind, runs: &[OutputRun]) -> bool {
@@ -14,7 +17,7 @@ pub fn is_common_only_row(kind: RowKind, runs: &[OutputRun]) -> bool {
         && !runs.is_empty()
         && runs.iter().all(|x| {
             let k = x.kind;
-            k == crate::merge::RunKind::Common || k == crate::merge::RunKind::Ctx
+            k == RunKind::Common || k == RunKind::Ctx
         })
 }
 
@@ -22,7 +25,7 @@ pub fn is_common_only_row(kind: RowKind, runs: &[OutputRun]) -> bool {
 pub fn is_pure_deletion_mod(spans: &Spans, text: &str) -> bool {
     spans.add.iter().all(|&(s, e)| {
         if s <= e {
-            crate::lcs::char_slice(text, s, e).trim().is_empty()
+            char_slice(text, s, e).trim().is_empty()
         } else {
             true
         }

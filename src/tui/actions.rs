@@ -1,7 +1,8 @@
 //! Interactive Git Actions for Diffuse TUI (stage, unstage, discard, reload).
 
-use super::app::AppState;
 use std::{fs, path::Path, process::Command};
+
+use super::app::AppState;
 
 /// Build a unified patch for the current hunk or untracked file.
 pub fn hunk_patch(state: &AppState, repo_root: &Path, base_args: &[String]) -> Option<String> {

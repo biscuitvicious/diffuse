@@ -3,8 +3,9 @@
 //! ported verbatim. The TS mutates rows via references; the port collects
 //! the decisions first (row positions), then applies them.
 
-use crate::parse::{DiffFile, Row};
 use std::collections::{HashMap, HashSet};
+
+use crate::parse::{DiffFile, Row};
 
 type RowPos = (usize, usize);
 

@@ -8,12 +8,14 @@
 //! renderer receives, so behavior is identical; only the raw offset
 //! values differ for non-ASCII lines.
 
-use crate::parse::Spans;
-use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     sync::OnceLock,
 };
+
+use regex::Regex;
+
+use crate::parse::Spans;
 
 /// Slice `s` by char offsets (the port's span convention). The JS
 /// `String.slice(start, end)` clamps out-of-range indices and returns an

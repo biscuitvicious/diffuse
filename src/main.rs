@@ -5,18 +5,26 @@
 //! extension spawns it with the review input and renders the returned
 //! rows. The output schema is frozen in PLAN.md §2 (the wire contract).
 
-use clap::Parser;
-use diffuse::{
-    bin_pipeline::run_pipeline_with_notes,
-    git::load_git_repo,
-    notes::{NotesDB, load_notes},
-};
-use serde::Deserialize;
 use std::{
     collections::HashMap,
-    fs,
+    env, fs,
     io::{self, IsTerminal, Read},
     path::Path,
+    process,
+};
+
+use clap::Parser;
+use serde::Deserialize;
+
+use diffuse::{
+    bin_pipeline::{PipelineOutput, run_pipeline_full, run_pipeline_with_notes},
+    git::load_git_repo,
+    notes::{
+        NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
+        save_notes,
+    },
+    render::{default_theme, render_pipeline_output},
+    tui::run_interactive_tui,
 };
 
 /// The diffuse diff-engine CLI.
@@ -54,11 +62,11 @@ struct Input {
     #[serde(default)]
     action: Option<String>,
     #[serde(default)]
-    note: Option<diffuse::notes::ReviewNote>,
+    note: Option<ReviewNote>,
     #[serde(default)]
     file: Option<String>,
     #[serde(default)]
-    side: Option<diffuse::notes::Side>,
+    side: Option<Side>,
     #[serde(default)]
     start: Option<u32>,
     #[serde(default)]
@@ -93,20 +101,20 @@ enum InputPayload {
     Single(Box<Input>),
 }
 
-fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOutput {
+fn process_input(input: Input, args: &Args) -> PipelineOutput {
     let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
     let notes_path = notes_file_path
         .as_ref()
         .map(Path::new)
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(diffuse::notes::default_notes_path);
+        .unwrap_or_else(default_notes_path);
 
     if let Some("addNote") = input.action.as_deref()
         && let (Some(n), Some(r)) = (input.note.clone(), input.repo.as_deref())
     {
         let mut db = load_notes(&notes_path);
-        diffuse::notes::add_note(&mut db, r, n);
-        let _ = diffuse::notes::save_notes(&notes_path, &db);
+        add_note(&mut db, r, n);
+        let _ = save_notes(&notes_path, &db);
     }
 
     if let Some("removeNotes") = input.action.as_deref()
@@ -119,8 +127,8 @@ fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOu
         )
     {
         let mut db = load_notes(&notes_path);
-        diffuse::notes::remove_notes(&mut db, r, f, s, st, en);
-        let _ = diffuse::notes::save_notes(&notes_path, &db);
+        remove_notes(&mut db, r, f, s, st, en);
+        let _ = save_notes(&notes_path, &db);
     }
 
     let loaded_db = load_notes(&notes_path);
@@ -136,7 +144,7 @@ fn process_input(input: Input, args: &Args) -> diffuse::bin_pipeline::PipelineOu
             input.cached,
             context,
         ) {
-            let mut out = diffuse::bin_pipeline::run_pipeline_full(
+            let mut out = run_pipeline_full(
                 &git_res.diff_text,
                 &git_res.contents,
                 Some(&git_res.old_contents),
@@ -175,8 +183,8 @@ fn route_mode(
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    let stdin_tty = std::io::stdin().is_terminal();
-    let stdout_tty = std::io::stdout().is_terminal();
+    let stdin_tty = io::stdin().is_terminal();
+    let stdout_tty = io::stdout().is_terminal();
 
     // Peek a piped stdin only when the routing decision depends on its
     // content (no git args, no explicit contract flags). Never block a
@@ -196,14 +204,14 @@ fn main() -> io::Result<()> {
         stdin_tty,
         &piped_stdin,
     ) {
-        let repo_root = std::env::current_dir()?;
+        let repo_root = env::current_dir()?;
         let git_res = load_git_repo(&repo_root, &args.git_args, &[], false, 6);
 
         let git_res = match git_res {
             Ok(g) => g,
             Err(e) => {
                 eprintln!("diffuse: {e}");
-                std::process::exit(2);
+                process::exit(2);
             }
         };
 
@@ -212,12 +220,12 @@ fn main() -> io::Result<()> {
             .as_ref()
             .map(Path::new)
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(diffuse::notes::default_notes_path);
+            .unwrap_or_else(default_notes_path);
         let loaded_db = load_notes(&notes_path);
         let db_ref = Some(&loaded_db);
         let repo_ref = args.repo.as_deref();
 
-        let mut out = diffuse::bin_pipeline::run_pipeline_full(
+        let mut out = run_pipeline_full(
             &git_res.diff_text,
             &git_res.contents,
             Some(&git_res.old_contents),
@@ -237,16 +245,10 @@ fn main() -> io::Result<()> {
         // Interactive TUI only when both ends are real terminals; any
         // piped or redirected end falls back to the full ANSI render.
         if !args.no_tui && stdin_tty && stdout_tty {
-            diffuse::tui::run_interactive_tui(
-                out,
-                repo_name,
-                notes_path,
-                repo_root,
-                args.git_args,
-            )?;
+            run_interactive_tui(out, repo_name, notes_path, repo_root, args.git_args)?;
         } else {
-            let theme = diffuse::render::default_theme();
-            let rendered = diffuse::render::render_pipeline_output(&out, &theme, true);
+            let theme = default_theme();
+            let rendered = render_pipeline_output(&out, &theme, true);
             print!("{rendered}");
         }
         return Ok(());

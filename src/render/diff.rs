@@ -3,11 +3,12 @@
 //! Formats full file diff summaries and colored hunks directly to terminal
 //! output.
 
+use crate::bin_pipeline::{OutputFile, PipelineOutput};
+
 use super::{
     row::{prefix_of, render_row_segment, styled_prefix},
     theme::DiffuseTheme,
 };
-use crate::bin_pipeline::{OutputFile, PipelineOutput};
 
 /// Render complete pipeline output to terminal ANSI strings.
 pub fn render_pipeline_output(

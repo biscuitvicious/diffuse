@@ -1,5 +1,7 @@
 //! TUI App State Machine, Layout Engine & Flat Visual Row Navigation.
 
+use std::{collections::HashMap, path::PathBuf};
+
 use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
@@ -9,7 +11,6 @@ use crate::{
         styled_prefix,
     },
 };
-use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {

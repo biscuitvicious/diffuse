@@ -2,14 +2,16 @@
 //!
 //! Models the diff hierarchy: `DiffFile` -> `Hunk` -> `Row`.
 
-use regex::Regex;
 use std::{num::NonZero, sync::OnceLock};
+
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 /// A 1-based source line number.
 pub type LineNum = NonZero<u32>;
 
 /// A diff row kind.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RowKind {
     Add,
@@ -34,7 +36,7 @@ impl RowKind {
 }
 
 /// A line deletion: (`line_num`, text).
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DelLine {
     pub num: LineNum,
     pub text: String,
@@ -51,7 +53,7 @@ impl DelLine {
 }
 
 /// A line addition: (`line_num`, text, spans, optional donor `del_text`).
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct AddLine {
     pub num: LineNum,
     pub text: String,
@@ -99,7 +101,7 @@ impl AddLine {
 }
 
 /// A context line: (`old_pos`, `new_pos`, text).
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct CtxLine {
     pub old_pos: LineNum,
     pub new_pos: LineNum,
@@ -118,7 +120,7 @@ impl CtxLine {
 }
 
 /// A diff row.
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Row {
     Ctx(CtxLine),
@@ -136,7 +138,7 @@ pub enum Row {
 }
 
 /// Change spans between old and new lines.
-#[derive(Clone, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 pub struct Spans {
     pub del: Vec<(usize, usize)>,
     pub add: Vec<(usize, usize)>,
@@ -283,7 +285,7 @@ impl Row {
 }
 
 /// A hunk: the `@@ -old +new @@` region of a diff.
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct Hunk {
     pub old_start: u32,
     pub old_count: u32,
@@ -342,7 +344,7 @@ pub fn del_count(h: &Hunk) -> u32 {
     h.rows.iter().filter(|r| matches!(r, Row::Del(_))).count() as u32
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileStatus {
     Added,
@@ -365,7 +367,7 @@ impl FileStatus {
 }
 
 /// A parsed diff file.
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
 pub struct DiffFile {
     /// Repo-relative path of the NEW side (old path for deletions).
     pub path: String,

@@ -3,14 +3,43 @@
 //! `isWholesaleMod`, `isPureDeletionMod`. Comments ported verbatim; char
 //! offsets throughout (the lcs.rs convention).
 
+use std::collections::{HashMap, HashSet};
+
+use serde::{Deserialize, Serialize};
+
 use crate::{
     lcs::char_slice,
     parse::{Row, Spans},
 };
-use std::collections::{HashMap, HashSet};
+
+/// The semantic classification of a token run in a diff row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RunKind {
+    Common,
+    Del,
+    Add,
+    Ctx,
+    /// Moved text: verbatim relocation (a whole `Mov` row) or a reflowed
+    /// fragment (struck-moved on the source side, filled-moved on the target).
+    /// Renders muted-connected rather than struck/filled.
+    Mov,
+}
+
+impl RunKind {
+    pub fn reverse(&self) -> Self {
+        match self {
+            RunKind::Common => RunKind::Common,
+            RunKind::Del => RunKind::Add,
+            RunKind::Add => RunKind::Del,
+            RunKind::Ctx => RunKind::Ctx,
+            RunKind::Mov => RunKind::Mov,
+        }
+    }
+}
 
 /// A merged run of a mod row's display.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Run {
     pub kind: RunKind,
     pub text: String,
@@ -23,6 +52,13 @@ impl Run {
             text: self.text.clone(),
         }
     }
+}
+
+/// The result of the del/add span pairing.
+pub struct DelPairing {
+    pub del_pos: Vec<usize>,
+    pub pair: HashMap<usize, usize>,
+    pub op_anchor: HashMap<usize, usize>,
 }
 
 /// Project the old side of a run sequence (Common + Del + Ctx).
@@ -47,30 +83,6 @@ pub fn project_new_runs(runs: &[Run]) -> String {
     s
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RunKind {
-    Common,
-    Del,
-    Add,
-    Ctx,
-    /// Moved text: verbatim relocation (a whole `Mov` row) or a reflowed
-    /// fragment (struck-moved on the source side, filled-moved on the target).
-    /// Renders muted-connected rather than struck/filled.
-    Mov,
-}
-
-impl RunKind {
-    pub fn reverse(&self) -> RunKind {
-        match self {
-            RunKind::Add => RunKind::Del,
-            RunKind::Del => RunKind::Add,
-            RunKind::Common => RunKind::Common,
-            RunKind::Ctx => RunKind::Ctx,
-            RunKind::Mov => RunKind::Mov,
-        }
-    }
-}
 /// The Unicode `White_Space` property plus the zero-width space — the
 /// tokenizer's whitespace class.
 fn is_ws_class(c: char) -> bool {
@@ -245,13 +257,6 @@ pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Ve
         })
         .copied()
         .collect()
-}
-
-/// The result of the del/add span pairing.
-pub struct DelPairing {
-    pub del_pos: Vec<usize>,
-    pub pair: HashMap<usize, usize>,
-    pub op_anchor: HashMap<usize, usize>,
 }
 
 /// The add-text position of each del span (the del offset minus the del

@@ -1,15 +1,5 @@
 //! Note storage, persistence, and markdown rendering for review notes.
 
-use crate::{
-    bin_pipeline::OutputRun,
-    merge::RunKind,
-    syntax::{
-        ClassifiedToken, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE,
-        classify_tokens, lang_profile, md_inner_tokens,
-    },
-};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     env,
@@ -17,6 +7,18 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
     sync::OnceLock,
+};
+
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    bin_pipeline::OutputRun,
+    merge::RunKind,
+    syntax::{
+        ClassifiedToken, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE,
+        classify_tokens, lang_profile, md_inner_tokens,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

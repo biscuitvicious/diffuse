@@ -19,26 +19,18 @@
 //! reachable from `run_pipeline` yet; the wire contract only gains the
 //! additive `Mov` run kind when the DP engine becomes the default.
 
+use super::dp::{DpOp, DpSolution, SublineMove};
 use crate::{
     lcs::{char_len, char_slice, word_spans},
     merge::{Run, RunKind, merged_runs},
     parse::{AddLine, DelLine, Row, Spans},
 };
 
-use super::dp::{DpOp, DpSolution, SublineMove};
-
 /// One rendered row: the row itself, the wire spans, and the run stream.
 pub struct RenderedRow {
     pub row: Row,
     pub spans: Spans,
     pub runs: Vec<Run>,
-}
-
-fn run(kind: RunKind, text: &str) -> Run {
-    Run {
-        kind,
-        text: text.to_string(),
-    }
 }
 
 /// Render a solution's rows into universal run streams.
@@ -167,6 +159,14 @@ fn render_mod_row(r: &Row, side: Side, moved: &[(usize, usize)]) -> RenderedRow 
         },
         spans,
         runs,
+    }
+}
+
+#[inline]
+fn run(kind: RunKind, text: &str) -> Run {
+    Run {
+        kind,
+        text: text.to_string(),
     }
 }
 

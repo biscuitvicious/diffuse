@@ -14,8 +14,9 @@ pub use event::handle_event;
 pub use finder::FileFinderState;
 pub use terminal::TerminalGuard;
 
-use crate::bin_pipeline::PipelineOutput;
 use std::{io, path::PathBuf, time::Duration};
+
+use crate::bin_pipeline::PipelineOutput;
 
 /// Launch and run the interactive TUI application.
 pub fn run_interactive_tui(

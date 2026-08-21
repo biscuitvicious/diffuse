@@ -105,14 +105,14 @@ mod tests {
         assert_eq!(oc[99], "        None");
         assert_eq!(oc[100], "    }", "the context line after the del");
     }
-}
 
-// A NEW file's hunk is `@@ -0,0 +1,N @@` — old start 0. The JS `oi - 1`
-// is a number; usize must saturate: the old side stays empty (the
-// diffuse corpus's extension/pi/ files hit this).
-#[test]
-fn new_file_hunk_old_start_zero() {
-    let diff = "diff --git a/extension/pi/x.ts b/extension/pi/x.ts\nnew file mode 100644\n--- /dev/null\n+++ b/extension/pi/x.ts\n@@ -0,0 +1,2 @@\n+line one\n+line two\n";
-    let oc = old_content_from_diff(diff, "extension/pi/x.ts");
-    assert_eq!(oc.len(), 0, "a new file has no old side");
+    // A NEW file's hunk is `@@ -0,0 +1,N @@` — old start 0. The JS `oi - 1`
+    // is a number; usize must saturate: the old side stays empty (the
+    // diffuse corpus's extension/pi/ files hit this).
+    #[test]
+    fn new_file_hunk_old_start_zero() {
+        let diff = "diff --git a/extension/pi/x.ts b/extension/pi/x.ts\nnew file mode 100644\n--- /dev/null\n+++ b/extension/pi/x.ts\n@@ -0,0 +1,2 @@\n+line one\n+line two\n";
+        let oc = old_content_from_diff(diff, "extension/pi/x.ts");
+        assert_eq!(oc.len(), 0, "a new file has no old side");
+    }
 }

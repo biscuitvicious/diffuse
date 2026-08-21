@@ -2,7 +2,11 @@
 //! fall into the extension JSON contract, and non-interactive output must
 //! never try to open the interactive TUI.
 
-use std::process::{Command, Stdio};
+use std::{
+    env, fs,
+    path::PathBuf,
+    process::{self, Command, Stdio},
+};
 
 /// `diffuse < /dev/null | cat` with no git args and no JSON payload must
 /// route to the standalone reviewer (git repo resolution), never to the
@@ -12,8 +16,8 @@ use std::process::{Command, Stdio};
 fn empty_piped_stdin_routes_to_standalone_reviewer() {
     // A provably NON-git dir: the standalone path fails with the repo error
     // (exit 2); the JSON path would exit 0 with `{"files":[]}`.
-    let dir = std::env::temp_dir().join(format!("diffuse-cli-route-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = env::temp_dir().join(format!("diffuse-cli-route-{}", process::id()));
+    fs::create_dir_all(&dir).unwrap();
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(&dir)
@@ -24,7 +28,7 @@ fn empty_piped_stdin_routes_to_standalone_reviewer() {
         .unwrap();
     drop(child.stdin.take()); // close stdin immediately: EOF, no payload
     let out = child.wait_with_output().unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(
         out.status.code(),
@@ -53,7 +57,7 @@ fn piped_stdout_renders_not_json_and_not_tui() {
         .unwrap();
     drop(child.stdin.take());
     let out = child.wait_with_output().unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(out.status.code(), Some(0), "render must succeed");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -73,10 +77,10 @@ fn piped_stdout_renders_not_json_and_not_tui() {
     );
 }
 
-fn setup_repo() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("diffuse-cli-repo-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+fn setup_repo() -> PathBuf {
+    let dir = env::temp_dir().join(format!("diffuse-cli-repo-{}", process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
 
     let run = |args: &[&str]| {
         let out = Command::new("git")
@@ -94,9 +98,9 @@ fn setup_repo() -> std::path::PathBuf {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "init"]);
-    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
     dir
 }

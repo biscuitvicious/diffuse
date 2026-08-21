@@ -1,5 +1,10 @@
 //! Terminal Session RAII wrapper, Crossterm events & raw mode initialization.
 
+use std::{
+    io::{self, Stdout, Write, stdout},
+    time::Duration,
+};
+
 use crossterm::{
     cursor,
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
@@ -8,10 +13,6 @@ use crossterm::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
         size as terminal_size,
     },
-};
-use std::{
-    io::{self, Stdout, Write, stdout},
-    time::Duration,
 };
 
 /// RAII Guard that manages terminal raw mode, alternate screen buffer, and

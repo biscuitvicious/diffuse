@@ -6,7 +6,10 @@
 //! absorbed.text`), the transformation is a pure mathematical identity on the
 //! reconstructed file.
 
-use crate::parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row};
+use crate::{
+    parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row},
+    syntax::LangProfile,
+};
 
 /// Evaluates the semantic quality of a boundary between `prev_line` and
 /// `next_line`.
@@ -16,7 +19,7 @@ use crate::parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row};
 pub fn semantic_boundary_score(
     prev_line: Option<&str>,
     next_line: Option<&str>,
-    profile: Option<&crate::syntax::LangProfile>,
+    profile: Option<&LangProfile>,
 ) -> i32 {
     let mut score = 0;
 

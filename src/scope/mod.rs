@@ -1,6 +1,10 @@
 //! Function scope and block-ending delimiter anchor helpers for diff pairing.
 
-use crate::syntax::LangProfile;
+use std::sync::OnceLock;
+
+use regex::Regex;
+
+use crate::syntax::{BlockDelimStyle, LangProfile};
 
 /// True when the row is the last expression of its block: the next line
 /// on its side is a closing delimiter at a LOWER indent (the fn's `}` after the
@@ -33,14 +37,13 @@ pub fn is_tail_before_closing(
     }
     let next = &content[line];
     match profile.block_style {
-        crate::syntax::BlockDelimStyle::Braces => {
-            static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-            let re =
-                RE.get_or_init(|| regex::Regex::new(r"^\s{4}\}\s*$").expect("tail brace regex"));
+        BlockDelimStyle::Braces => {
+            static RE: OnceLock<Regex> = OnceLock::new();
+            let re = RE.get_or_init(|| Regex::new(r"^\s{4}\}\s*$").expect("tail brace regex"));
             re.is_match(next)
         }
-        crate::syntax::BlockDelimStyle::Keywords => profile.is_block_close(next),
-        crate::syntax::BlockDelimStyle::IndentColon => false,
+        BlockDelimStyle::Keywords => profile.is_block_close(next),
+        BlockDelimStyle::IndentColon => false,
     }
 }
 

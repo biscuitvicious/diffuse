@@ -2,6 +2,10 @@
 //! mark moves → collapse → merged runs → counts. The output shape is the
 //! wire contract (PLAN.md §2).
 
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
 use crate::{
     collapse::collapse_hunk_rows,
     counts::{FileCounts, file_counts},
@@ -20,8 +24,6 @@ use crate::{
     },
     visible::{Side as VisibleSide, build_visible},
 };
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// A row in the wire-contract output: the collapse row + its merged runs.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

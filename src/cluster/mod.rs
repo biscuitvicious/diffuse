@@ -1,7 +1,14 @@
 //! Context-delimited change clusters and syntax section partitioning (Phase 2 &
 //! 3).
 
-use crate::parse::{Hunk, Row};
+pub mod dp;
+pub mod pairing;
+pub mod render;
+
+use crate::{
+    parse::{Hunk, Row},
+    syntax::LangProfile,
+};
 
 /// Classification of syntactic construct for change runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -44,10 +51,7 @@ impl SyntaxSectionKind {
 }
 
 /// Classify the syntax section of a line.
-pub fn classify_syntax_section(
-    line: &str,
-    profile: Option<&crate::syntax::LangProfile>,
-) -> SyntaxSectionKind {
+pub fn classify_syntax_section(line: &str, profile: Option<&LangProfile>) -> SyntaxSectionKind {
     let t = line.trim();
     if t.is_empty() {
         return SyntaxSectionKind::Blank;
@@ -109,10 +113,10 @@ impl ChangeCluster {
         self.new_rows.iter()
     }
     pub fn old_texts(&self) -> impl Iterator<Item = &str> {
-        self.old_iter().map(super::parse::Row::text)
+        self.old_iter().map(Row::text)
     }
     pub fn new_texts(&self) -> impl Iterator<Item = &str> {
-        self.new_iter().map(super::parse::Row::text)
+        self.new_iter().map(Row::text)
     }
 }
 
@@ -129,7 +133,7 @@ pub fn partition_hunk_segments(
     hunk: &Hunk,
     old_content: Option<&[String]>,
     new_content: Option<&[String]>,
-    profile: Option<&crate::syntax::LangProfile>,
+    profile: Option<&LangProfile>,
 ) -> Vec<HunkSegment> {
     let mut segments = Vec::new();
     let mut i = 0;
@@ -261,7 +265,3 @@ pub fn partition_hunk_segments(
 
 #[cfg(test)]
 mod tests;
-
-pub mod dp;
-pub mod pairing;
-pub mod render;

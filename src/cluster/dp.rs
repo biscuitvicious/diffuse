@@ -43,14 +43,14 @@
 //! The weights are named constants — the tuning surface for the visual
 //! quality gates (`tests/AGENTS.md`).
 
+use std::collections::{HashMap, HashSet};
+
+use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 use crate::{
     lcs::{lcs_pairs_ids, tokenize_line},
     parse::Row,
     similarity::TokenInterner,
 };
-use std::collections::{HashMap, HashSet};
-
-use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
 pub const MAX_BLOCK_K: usize = 10;

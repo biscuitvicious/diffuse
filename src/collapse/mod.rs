@@ -44,6 +44,40 @@ pub struct PairingContext<'a> {
     pub paired_dels: &'a HashSet<usize>,
 }
 
+/// Collapse each FIFO del→add pair into a single "mod" row: the new line
+/// with its word-diff spans baked in.
+///
+/// Composed of 4 pure passes over the diff AST.
+pub fn collapse_hunk_rows(
+    h: &Hunk,
+    old_content: Option<&[String]>,
+    new_content: Option<&[String]>,
+    profile: Option<&LangProfile>,
+) -> Vec<Row> {
+    let h_norm = pass_shift_hunk(h, new_content, profile);
+    let h = &h_norm;
+
+    // Pass 1: DP cluster pairing engine
+    let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
+    let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
+    let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
+
+    // Pass 2: Assemble Mod rows and subword spans
+    let pairing_ctx = PairingContext {
+        pair_of: &p1.pair_of,
+        add_of: &add_of,
+        run_of: &p1.run_of,
+        paired_dels: &paired_dels,
+    };
+    let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
+
+    // Pass 3: Filter verbatim reflow dels and adds
+    let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &paired_dels);
+
+    // Pass 4: Keyed anchor sorting into the final visual row stream
+    pass_sort_ordered_walk(h, p2.out, &p3.meaningful_dels, &p3.kept_adds, &p2.add_spans)
+}
+
 /// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow
 /// suppression.
 pub fn pass_assemble_mods(
@@ -512,40 +546,6 @@ pub fn pass_sort_ordered_walk(
     });
 
     keyed.into_iter().map(|(r, _)| r).collect()
-}
-
-/// Collapse each FIFO del→add pair into a single "mod" row: the new line
-/// with its word-diff spans baked in.
-///
-/// Composed of 4 pure passes over the diff AST.
-pub fn collapse_hunk_rows(
-    h: &Hunk,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
-    profile: Option<&LangProfile>,
-) -> Vec<Row> {
-    let h_norm = pass_shift_hunk(h, new_content, profile);
-    let h = &h_norm;
-
-    // Pass 1: DP cluster pairing engine
-    let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
-    let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
-    let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
-
-    // Pass 2: Assemble Mod rows and subword spans
-    let pairing_ctx = PairingContext {
-        pair_of: &p1.pair_of,
-        add_of: &add_of,
-        run_of: &p1.run_of,
-        paired_dels: &paired_dels,
-    };
-    let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
-
-    // Pass 3: Filter verbatim reflow dels and adds
-    let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &paired_dels);
-
-    // Pass 4: Keyed anchor sorting into the final visual row stream
-    pass_sort_ordered_walk(h, p2.out, &p3.meaningful_dels, &p3.kept_adds, &p2.add_spans)
 }
 
 #[cfg(test)]

@@ -1,6 +1,28 @@
 //! File and row count calculation for review summaries.
 
+use serde::{Deserialize, Serialize};
+
 use crate::parse::{DiffFile, Row};
+
+/// Aggregated line-level change counts for a diff file.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileCounts {
+    pub adds: usize,
+    pub dels: usize,
+    pub mods: usize,
+    pub movs: usize,
+}
+
+impl FileCounts {
+    pub fn reverse(&self) -> Self {
+        FileCounts {
+            adds: self.dels,
+            dels: self.adds,
+            mods: self.mods,
+            movs: self.movs,
+        }
+    }
+}
 
 /// Display counts: moves are neither added nor removed; mods are one row.
 pub fn file_counts(f: &DiffFile) -> FileCounts {
@@ -26,25 +48,6 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
         dels,
         mods,
         movs,
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FileCounts {
-    pub adds: usize,
-    pub dels: usize,
-    pub mods: usize,
-    pub movs: usize,
-}
-
-impl FileCounts {
-    pub fn reverse(&self) -> Self {
-        FileCounts {
-            adds: self.dels,
-            dels: self.adds,
-            mods: self.mods,
-            movs: self.movs,
-        }
     }
 }
 

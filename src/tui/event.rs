@@ -1,7 +1,8 @@
 //! TUI Event Handling & Input Processing.
 
-use super::app::AppState;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+
+use super::app::AppState;
 
 /// Handle incoming crossterm terminal events.
 pub fn handle_event(state: &mut AppState, event: Event) {

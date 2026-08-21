@@ -1,11 +1,20 @@
 //! One-for-one port of `review.ts`'s `lineSimilarity`/`lineSimilarityParts`
 //! (PLAN.md §3). The comments carry the *why* — ported verbatim.
 
+use std::collections::HashMap;
+
 use crate::lcs::{
     char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
     tokenize_line,
 };
-use std::collections::HashMap;
+
+/// The similarity score plus the add-side fractions.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SimilarityParts {
+    pub sim: f64,
+    pub add_matched: usize,
+    pub add_total: usize,
+}
 
 /// Shared-char ratio between two lines (for the mod pairing). Whitespace
 /// tokens are excluded — an indent-only reflow must not inflate the match
@@ -52,14 +61,6 @@ pub fn line_similarity_parts(a: &str, b: &str) -> SimilarityParts {
         add_matched: matched,
         add_total: nt.iter().map(|t| char_len(t)).sum(),
     }
-}
-
-/// The similarity score plus the add-side fractions.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct SimilarityParts {
-    pub sim: f64,
-    pub add_matched: usize,
-    pub add_total: usize,
 }
 
 /// The content-char count of a line: its tokenized tokens minus the

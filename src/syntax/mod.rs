@@ -3,11 +3,12 @@
 //! SEMANTIC colors (`syntaxKeyword`, `syntaxString`, …) — the renderer
 //! maps them to theme colors.
 
-use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Mutex, OnceLock},
 };
+
+use regex::Regex;
 
 /// A per-language syntax profile.
 #[derive(Clone, Debug)]

@@ -17,176 +17,10 @@ pub enum Side {
     Old,
 }
 
-fn add_count(h: &Hunk) -> usize {
-    h.rows
-        .iter()
-        .filter(|r| matches!(r, Row::Add(_) | Row::Mod { .. } | Row::Mov { .. }))
-        .count()
-}
-
-pub fn hunk_change_bounds(h: &Hunk, side: Side) -> (usize, usize) {
-    let mut min_line = usize::MAX;
-    let mut max_line = 0;
-    for r in &h.rows {
-        if matches!(r, Row::Ctx(_)) {
-            continue;
-        }
-        let line = match side {
-            Side::New => r.new_line().map(|x| x as usize),
-            Side::Old => r.old_line().map(|x| x as usize),
-        };
-        if let Some(l) = line {
-            min_line = min_line.min(l);
-            max_line = max_line.max(l);
-        }
-    }
-    if min_line == usize::MAX {
-        let start = match side {
-            Side::New => h.new_start as usize,
-            Side::Old => h.old_start as usize,
-        };
-        (start, start)
-    } else {
-        (min_line, max_line)
-    }
-}
-
-pub fn gap_between(
-    hunks: &[Hunk],
-    i: usize,
-    new_line_count: usize,
-    old_line_count: usize,
-) -> usize {
-    let a = &hunks[i];
-    let b = &hunks[i + 1];
-    let a_new = add_count(a) > 0;
-    let b_new = add_count(b) > 0;
-
-    if a_new == b_new {
-        let a_side = if a_new { Side::New } else { Side::Old };
-        let (_, a_end) = hunk_change_bounds(a, a_side);
-        let b_side = if b_new { Side::New } else { Side::Old };
-        let (b_start, _) = hunk_change_bounds(b, b_side);
-        return b_start.saturating_sub(a_end + 1);
-    }
-
-    let (_, a_new_end) = hunk_change_bounds(a, Side::New);
-    let (b_new_start, _) = hunk_change_bounds(b, Side::New);
-    let new_gap = b_new_start.saturating_sub(a_new_end + 1);
-
-    let (_, a_old_end) = hunk_change_bounds(a, Side::Old);
-    let (b_old_start, _) = hunk_change_bounds(b, Side::Old);
-    let old_gap = b_old_start.saturating_sub(a_old_end + 1);
-
-    let new_c = if new_line_count > 0 {
-        new_line_count
-    } else {
-        usize::MAX
-    };
-    let old_c = if old_line_count > 0 {
-        old_line_count
-    } else {
-        usize::MAX
-    };
-
-    new_gap.min(new_c).max(old_gap.min(old_c))
-}
-
-pub fn allocate_context(
-    hunks: &[Hunk],
-    new_line_count: usize,
-    old_line_count: usize,
-) -> Vec<ContextAlloc> {
-    let mut alloc: Vec<ContextAlloc> = Vec::with_capacity(hunks.len());
-
-    for (i, h) in hunks.iter().enumerate() {
-        let new_side = add_count(h) > 0;
-        let side = if new_side { Side::New } else { Side::Old };
-        let (change_start, change_end) = hunk_change_bounds(h, side);
-        let total = if new_side {
-            new_line_count
-        } else {
-            old_line_count
-        };
-
-        if total == 0 {
-            alloc.push(ContextAlloc { above: 0, below: 0 });
-            continue;
-        }
-
-        let mut free_above = change_start.saturating_sub(1);
-        if i > 0 {
-            let p = &hunks[i - 1];
-            let p_new = add_count(p) > 0;
-            if new_side == p_new {
-                let (_, p_end) = hunk_change_bounds(p, side);
-                free_above = change_start.saturating_sub(p_end + 1);
-            }
-        }
-
-        let mut free_below = total.saturating_sub(change_end);
-        if i + 1 < hunks.len() {
-            let n = &hunks[i + 1];
-            let n_new = add_count(n) > 0;
-            if new_side == n_new {
-                let (n_start, _) = hunk_change_bounds(n, side);
-                free_below = n_start.saturating_sub(change_end + 1);
-            }
-        }
-
-        let above = free_above.min(h.above_ctx as usize);
-        let below = free_below.min(h.below_ctx as usize);
-        alloc.push(ContextAlloc { above, below });
-    }
-
-    if hunks.len() > 1 {
-        for i in 0..hunks.len() - 1 {
-            let a = &hunks[i];
-            let b = &hunks[i + 1];
-            if (add_count(a) > 0) == (add_count(b) > 0) {
-                let gap = gap_between(hunks, i, new_line_count, old_line_count);
-                alloc[i + 1].above = alloc[i + 1].above.min(gap.saturating_sub(alloc[i].below));
-            }
-        }
-    }
-
-    alloc
-}
-
-pub fn hidden_gap(
-    hunks: &[Hunk],
-    i: usize,
-    alloc: &[ContextAlloc],
-    new_line_count: usize,
-    old_line_count: usize,
-) -> usize {
-    let raw = gap_between(hunks, i, new_line_count, old_line_count);
-    let consumed = alloc[i].below + alloc[i + 1].above;
-    raw.saturating_sub(consumed)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VisibleRow {
     pub row: Row,
     pub side: Option<Side>,
-}
-
-fn context_rows(side: Side, start_line: usize, count: usize, src: &[String]) -> Vec<VisibleRow> {
-    let mut rows = Vec::new();
-    for i in 0..count {
-        let line_no = start_line + i;
-        let text = src
-            .get(line_no.saturating_sub(1))
-            .cloned()
-            .unwrap_or_default();
-        let num = LineNum::new(line_no as u32).unwrap_or(LineNum::MIN);
-        let ctx_line = CtxLine::new(num, num, text);
-        rows.push(VisibleRow {
-            row: Row::Ctx(ctx_line),
-            side: Some(side),
-        });
-    }
-    rows
 }
 
 pub fn build_visible(
@@ -274,6 +108,172 @@ pub fn build_visible(
         rows.extend(below_rows);
     }
 
+    rows
+}
+
+pub fn allocate_context(
+    hunks: &[Hunk],
+    new_line_count: usize,
+    old_line_count: usize,
+) -> Vec<ContextAlloc> {
+    let mut alloc: Vec<ContextAlloc> = Vec::with_capacity(hunks.len());
+
+    for (i, h) in hunks.iter().enumerate() {
+        let new_side = add_count(h) > 0;
+        let side = if new_side { Side::New } else { Side::Old };
+        let (change_start, change_end) = hunk_change_bounds(h, side);
+        let total = if new_side {
+            new_line_count
+        } else {
+            old_line_count
+        };
+
+        if total == 0 {
+            alloc.push(ContextAlloc { above: 0, below: 0 });
+            continue;
+        }
+
+        let mut free_above = change_start.saturating_sub(1);
+        if i > 0 {
+            let p = &hunks[i - 1];
+            let p_new = add_count(p) > 0;
+            if new_side == p_new {
+                let (_, p_end) = hunk_change_bounds(p, side);
+                free_above = change_start.saturating_sub(p_end + 1);
+            }
+        }
+
+        let mut free_below = total.saturating_sub(change_end);
+        if i + 1 < hunks.len() {
+            let n = &hunks[i + 1];
+            let n_new = add_count(n) > 0;
+            if new_side == n_new {
+                let (n_start, _) = hunk_change_bounds(n, side);
+                free_below = n_start.saturating_sub(change_end + 1);
+            }
+        }
+
+        let above = free_above.min(h.above_ctx as usize);
+        let below = free_below.min(h.below_ctx as usize);
+        alloc.push(ContextAlloc { above, below });
+    }
+
+    if hunks.len() > 1 {
+        for i in 0..hunks.len() - 1 {
+            let a = &hunks[i];
+            let b = &hunks[i + 1];
+            if (add_count(a) > 0) == (add_count(b) > 0) {
+                let gap = gap_between(hunks, i, new_line_count, old_line_count);
+                alloc[i + 1].above = alloc[i + 1].above.min(gap.saturating_sub(alloc[i].below));
+            }
+        }
+    }
+
+    alloc
+}
+
+pub fn gap_between(
+    hunks: &[Hunk],
+    i: usize,
+    new_line_count: usize,
+    old_line_count: usize,
+) -> usize {
+    let a = &hunks[i];
+    let b = &hunks[i + 1];
+    let a_new = add_count(a) > 0;
+    let b_new = add_count(b) > 0;
+
+    if a_new == b_new {
+        let a_side = if a_new { Side::New } else { Side::Old };
+        let (_, a_end) = hunk_change_bounds(a, a_side);
+        let b_side = if b_new { Side::New } else { Side::Old };
+        let (b_start, _) = hunk_change_bounds(b, b_side);
+        return b_start.saturating_sub(a_end + 1);
+    }
+
+    let (_, a_new_end) = hunk_change_bounds(a, Side::New);
+    let (b_new_start, _) = hunk_change_bounds(b, Side::New);
+    let new_gap = b_new_start.saturating_sub(a_new_end + 1);
+
+    let (_, a_old_end) = hunk_change_bounds(a, Side::Old);
+    let (b_old_start, _) = hunk_change_bounds(b, Side::Old);
+    let old_gap = b_old_start.saturating_sub(a_old_end + 1);
+
+    let new_c = if new_line_count > 0 {
+        new_line_count
+    } else {
+        usize::MAX
+    };
+    let old_c = if old_line_count > 0 {
+        old_line_count
+    } else {
+        usize::MAX
+    };
+
+    new_gap.min(new_c).max(old_gap.min(old_c))
+}
+
+pub fn hidden_gap(
+    hunks: &[Hunk],
+    i: usize,
+    alloc: &[ContextAlloc],
+    new_line_count: usize,
+    old_line_count: usize,
+) -> usize {
+    let raw = gap_between(hunks, i, new_line_count, old_line_count);
+    let consumed = alloc[i].below + alloc[i + 1].above;
+    raw.saturating_sub(consumed)
+}
+
+pub fn hunk_change_bounds(h: &Hunk, side: Side) -> (usize, usize) {
+    let mut min_line = usize::MAX;
+    let mut max_line = 0;
+    for r in &h.rows {
+        if matches!(r, Row::Ctx(_)) {
+            continue;
+        }
+        let line = match side {
+            Side::New => r.new_line().map(|x| x as usize),
+            Side::Old => r.old_line().map(|x| x as usize),
+        };
+        if let Some(l) = line {
+            min_line = min_line.min(l);
+            max_line = max_line.max(l);
+        }
+    }
+    if min_line == usize::MAX {
+        let start = match side {
+            Side::New => h.new_start as usize,
+            Side::Old => h.old_start as usize,
+        };
+        (start, start)
+    } else {
+        (min_line, max_line)
+    }
+}
+
+fn add_count(h: &Hunk) -> usize {
+    h.rows
+        .iter()
+        .filter(|r| matches!(r, Row::Add(_) | Row::Mod { .. } | Row::Mov { .. }))
+        .count()
+}
+
+fn context_rows(side: Side, start_line: usize, count: usize, src: &[String]) -> Vec<VisibleRow> {
+    let mut rows = Vec::new();
+    for i in 0..count {
+        let line_no = start_line + i;
+        let text = src
+            .get(line_no.saturating_sub(1))
+            .cloned()
+            .unwrap_or_default();
+        let num = LineNum::new(line_no as u32).unwrap_or(LineNum::MIN);
+        let ctx_line = CtxLine::new(num, num, text);
+        rows.push(VisibleRow {
+            row: Row::Ctx(ctx_line),
+            side: Some(side),
+        });
+    }
     rows
 }
 
