@@ -376,7 +376,7 @@ pub fn render_raw_row(
     band: bool,
 ) -> String {
     let is_ctx = matches!(kind, RowKind::Ctx | RowKind::Sep);
-    let (fg, bg) = match kind {
+    let (fg, bg, sub_bg, sub_fg) = match kind {
         RowKind::Add => {
             let bg = if selected {
                 S_ADD.cursor_bg()
@@ -385,7 +385,12 @@ pub fn render_raw_row(
             } else {
                 S_ADD.tint_bg()
             };
-            ("\x1b[38;5;120m", bg)
+            let sub_bg = if selected {
+                S_ADD.fill_cursor_bg()
+            } else {
+                S_ADD.fill_bg()
+            };
+            ("\x1b[38;5;120m", bg, sub_bg, "\x1b[38;5;151m")
         }
         RowKind::Del => {
             let bg = if selected {
@@ -395,7 +400,12 @@ pub fn render_raw_row(
             } else {
                 S_DEL.tint_bg()
             };
-            ("\x1b[38;5;203m", bg)
+            (
+                "\x1b[38;5;203m",
+                bg,
+                "\x1b[48;5;88m".to_string(),
+                "\x1b[38;5;167m",
+            )
         }
         RowKind::Sep => (
             "\x1b[1m\x1b[38;5;214m",
@@ -404,6 +414,8 @@ pub fn render_raw_row(
             } else {
                 String::new()
             },
+            String::new(),
+            "",
         ),
         _ => {
             let bg = if selected {
@@ -413,10 +425,32 @@ pub fn render_raw_row(
             } else {
                 String::new()
             };
-            (" ", bg)
+            (
+                "\x1b[38;5;255m",
+                bg,
+                "\x1b[48;5;238m".to_string(),
+                "\x1b[38;5;244m",
+            )
         }
     };
-    let mut out = format!("{bg}{fg}{marker}{text}");
+
+    let trailing_len = if kind == RowKind::Sep {
+        0
+    } else {
+        text.len() - text.trim_end_matches(|c: char| c.is_whitespace()).len()
+    };
+
+    let mut out = format!("{bg}{fg}{marker}");
+    if trailing_len > 0 {
+        let (body, trailing) = text.split_at(text.len() - trailing_len);
+        out.push_str(body);
+        out.push_str(&format!(
+            "{sub_bg}\x1b[9m{sub_fg}{trailing}\x1b[29m{bg}{fg}"
+        ));
+    } else {
+        out.push_str(text);
+    }
+
     if selected || band || !is_ctx {
         out.push_str(&bg);
     }
@@ -663,5 +697,22 @@ mod tests {
 
         let ctx = render_raw_row(RowKind::Ctx, " ", "context_line", false, false);
         assert!(ctx.contains(" context_line"));
+    }
+
+    #[test]
+    fn test_render_raw_row_trailing_whitespace() {
+        let add_trailing = render_raw_row(RowKind::Add, "+", "let x = 1;   ", false, false);
+        assert!(add_trailing.contains("+let x = 1;"));
+        assert!(
+            add_trailing.contains("\x1b[48;5;28m\x1b[9m\x1b[38;5;151m   \x1b[29m"),
+            "trailing spaces must have subline highlight and strikethrough in add row"
+        );
+
+        let del_trailing = render_raw_row(RowKind::Del, "-", "foo();  ", false, false);
+        assert!(del_trailing.contains("-foo();"));
+        assert!(
+            del_trailing.contains("\x1b[48;5;88m\x1b[9m\x1b[38;5;167m  \x1b[29m"),
+            "trailing spaces must have subline highlight and strikethrough in del row"
+        );
     }
 }
