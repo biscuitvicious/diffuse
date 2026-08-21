@@ -3,10 +3,12 @@
 use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
-    render::{DiffuseTheme, display_text, render_raw_row, render_row_segment, styled_prefix},
+    render::{
+        DiffuseTheme, display_text, render_raw_row, render_row_segment, slice_by_visual_width,
+        styled_prefix,
+    },
 };
 use std::{collections::HashMap, path::PathBuf};
-use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -809,16 +811,32 @@ impl AppState {
                             "\x1b[38;5;242m      \x1b[39m".to_string()
                         };
                         let rendered_row = if self.raw_diff {
-                            let text_cols = content_width.max(1);
-                            let seg_start = s_idx * text_cols;
-                            let graphemes: Vec<&str> = r.text.graphemes(true).collect();
-                            let piece = if seg_start < graphemes.len() {
-                                let seg_end = (seg_start + text_cols).min(graphemes.len());
-                                graphemes[seg_start..seg_end].concat()
+                            let marker_len = if r.kind == crate::parse::RowKind::Sep {
+                                0
                             } else {
-                                String::new()
+                                1
                             };
-                            render_raw_row(r.kind, &piece, is_selected, in_band && !is_selected)
+                            let marker_str = if r.kind == crate::parse::RowKind::Sep {
+                                ""
+                            } else if s_idx == 0 {
+                                match r.kind {
+                                    crate::parse::RowKind::Add => "+",
+                                    crate::parse::RowKind::Del => "-",
+                                    _ => " ",
+                                }
+                            } else {
+                                " "
+                            };
+                            let text_cols = content_width.saturating_sub(marker_len).max(1);
+                            let start_col = s_idx * text_cols;
+                            let piece = slice_by_visual_width(&r.text, start_col, text_cols);
+                            render_raw_row(
+                                r.kind,
+                                marker_str,
+                                &piece,
+                                is_selected,
+                                in_band && !is_selected,
+                            )
                         } else {
                             let text_cols = content_width.saturating_sub(6).max(1);
                             let seg_start = s_idx * text_cols;
@@ -1122,7 +1140,12 @@ impl AppState {
             let r = &item.row;
             if self.raw_diff {
                 use unicode_width::UnicodeWidthStr;
-                let cols = content_width.max(1);
+                let marker_len = if r.kind == crate::parse::RowKind::Sep {
+                    0
+                } else {
+                    1
+                };
+                let cols = content_width.saturating_sub(marker_len).max(1);
                 let len = r.text.width();
                 if len == 0 { 1 } else { len.div_ceil(cols) }
             } else {
@@ -2373,5 +2396,57 @@ index 1111111..2222222 100644
 
         let padded = truncate_pad("🦀", 4);
         assert_eq!(visible_width(&padded), 4);
+    }
+
+    #[test]
+    fn test_raw_diff_word_wrap_and_marker() {
+        let diff = r#"diff --git a/long.rs b/long.rs
+index 1111111..2222222 100644
+--- a/long.rs
++++ b/long.rs
+@@ -1,1 +1,1 @@
+-short
++very long line with extensive description that spans well beyond typical width boundaries and needs multiple visual wraps to fit comfortably
+"#;
+        let contents = [(
+            "long.rs".to_string(),
+            "very long line with extensive description that spans well beyond typical width boundaries and needs multiple visual wraps to fit comfortably\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+
+        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-raw-wrap.json"),
+        );
+        state.toggle_raw_diff();
+        assert!(state.raw_diff);
+
+        // Find addition row
+        let add_row = state
+            .flat
+            .iter()
+            .position(|r| r.row.kind == crate::parse::RowKind::Add)
+            .unwrap();
+        state.row_idx = add_row;
+
+        // Content width 50 (scrollbar at 49, text cols = 48)
+        let seg_count = state.row_seg_count(state.row_idx, 49);
+        assert!(
+            seg_count >= 3,
+            "long line should produce 3+ visual segments in raw mode"
+        );
+
+        let frame = state.render_frame(50, 20);
+        assert!(
+            frame.contains("\x1b[38;5;120m+very long line"),
+            "segment 0 must start with + marker"
+        );
+        assert!(
+            frame.contains("\x1b[38;5;120m "),
+            "continuation segments must start with space prefix and green foreground"
+        );
     }
 }

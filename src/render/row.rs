@@ -341,13 +341,42 @@ pub fn render_row_segment(
     format!("{lead_bg}{prefix}{out}{trail_bg}")
 }
 
+/// Slices text by visual terminal column width rather than raw bytes or
+/// character counts.
+pub fn slice_by_visual_width(text: &str, start_col: usize, max_cols: usize) -> String {
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let mut current_col = 0;
+    let mut out = String::new();
+    let mut accumulated = 0;
+    for g in text.graphemes(true) {
+        let gw = g.width();
+        if current_col >= start_col && accumulated + gw <= max_cols {
+            out.push_str(g);
+            accumulated += gw;
+        }
+        current_col += gw;
+        if current_col >= start_col + max_cols {
+            break;
+        }
+    }
+    out
+}
+
 /// Render a row in the raw unified-diff representation: a plain marker
-/// (`+ ` / `- ` / two spaces) plus the line text in a flat green/red/muted
-/// color — no gutter, no word-level spans. `Sep` rows are `@@` hunk headers.
+/// (`+` / `-` / ` ` / continuation ` `) plus the line text in a flat
+/// green/red/muted color. `Sep` rows are `@@` hunk headers.
 /// Backgrounds follow the same selected/band precedence as the visual
 /// renderer so the UI shell (navigation, selection, notes) reads identically.
-pub fn render_raw_row(kind: RowKind, text: &str, selected: bool, band: bool) -> String {
-    let (marker, fg, bg) = match kind {
+pub fn render_raw_row(
+    kind: RowKind,
+    marker: &str,
+    text: &str,
+    selected: bool,
+    band: bool,
+) -> String {
+    let is_ctx = matches!(kind, RowKind::Ctx | RowKind::Sep);
+    let (fg, bg) = match kind {
         RowKind::Add => {
             let bg = if selected {
                 S_ADD.cursor_bg()
@@ -356,7 +385,7 @@ pub fn render_raw_row(kind: RowKind, text: &str, selected: bool, band: bool) -> 
             } else {
                 S_ADD.tint_bg()
             };
-            ("+", "\x1b[38;5;120m", bg)
+            ("\x1b[38;5;120m", bg)
         }
         RowKind::Del => {
             let bg = if selected {
@@ -366,10 +395,9 @@ pub fn render_raw_row(kind: RowKind, text: &str, selected: bool, band: bool) -> 
             } else {
                 S_DEL.tint_bg()
             };
-            ("-", "\x1b[38;5;203m", bg)
+            ("\x1b[38;5;203m", bg)
         }
         RowKind::Sep => (
-            "",
             "\x1b[1m\x1b[38;5;214m",
             if selected {
                 "\x1b[48;5;237m".to_string()
@@ -385,11 +413,11 @@ pub fn render_raw_row(kind: RowKind, text: &str, selected: bool, band: bool) -> 
             } else {
                 String::new()
             };
-            (" ", "\x1b[38;5;255m", bg)
+            (" ", bg)
         }
     };
     let mut out = format!("{bg}{fg}{marker}{text}");
-    if selected || band {
+    if selected || band || !is_ctx {
         out.push_str(&bg);
     }
     out.push_str("\x1b[39m\x1b[22m");
@@ -625,15 +653,15 @@ mod tests {
 
     #[test]
     fn test_render_raw_row_colors() {
-        let add = render_raw_row(RowKind::Add, "added_line", false, false);
+        let add = render_raw_row(RowKind::Add, "+", "added_line", false, false);
         assert!(add.contains("+added_line"));
         assert!(add.contains("\x1b[38;5;120m"));
 
-        let del = render_raw_row(RowKind::Del, "deleted_line", false, false);
+        let del = render_raw_row(RowKind::Del, "-", "deleted_line", false, false);
         assert!(del.contains("-deleted_line"));
         assert!(del.contains("\x1b[38;5;203m"));
 
-        let ctx = render_raw_row(RowKind::Ctx, "context_line", false, false);
+        let ctx = render_raw_row(RowKind::Ctx, " ", "context_line", false, false);
         assert!(ctx.contains(" context_line"));
     }
 }
