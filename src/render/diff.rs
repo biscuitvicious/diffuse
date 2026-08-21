@@ -3,7 +3,7 @@
 //! Formats full file diff summaries and colored hunks directly to terminal
 //! output.
 
-use crate::bin_pipeline::{OutputFile, PipelineOutput};
+use crate::wire::{OutputFile, PipelineOutput};
 
 use super::{
     row::{prefix_of, render_row_segment, styled_prefix},
@@ -110,13 +110,8 @@ mod tests {
         let old_contents = [("a.txt".to_string(), "old line one\n".to_string())]
             .into_iter()
             .collect();
-        let out = crate::bin_pipeline::run_pipeline_full(
-            diff,
-            &contents,
-            Some(&old_contents),
-            None,
-            None,
-        );
+        let out =
+            crate::pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None);
         let rendered = render_pipeline_output(&out, &DiffuseTheme::MAGIC, true);
         assert!(
             rendered.ends_with("\x1b[0m"),

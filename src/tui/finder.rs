@@ -1,6 +1,6 @@
 //! Interactive File Finder Dialog for diffuse TUI.
 
-use crate::bin_pipeline::OutputFile;
+use crate::wire::OutputFile;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileMatch {

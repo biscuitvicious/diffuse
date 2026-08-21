@@ -34,10 +34,11 @@ pub mod similarity; // lineSimilarity, lineSimilarityParts
 pub mod syntax; // lang_profile, classify_tokens
 
 pub mod apply; // apply_file_diff: the Phase 6 apply-oracle primitive
-pub mod bin_pipeline;
 pub mod git;
 pub mod notes;
 pub mod old_content;
+pub mod pipeline;
 pub mod render;
 pub mod tui;
 pub mod visible;
+pub mod wire;

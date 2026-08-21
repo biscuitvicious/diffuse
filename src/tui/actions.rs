@@ -276,7 +276,7 @@ pub fn reload_diff(
     let git_res = crate::git::load_git_repo(repo_root, git_args, &[], false, 6)
         .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
-    let mut new_out = crate::bin_pipeline::run_pipeline_full(
+    let mut new_out = crate::pipeline::run_pipeline_full(
         &git_res.diff_text,
         &git_res.contents,
         Some(&git_res.old_contents),
@@ -356,7 +356,7 @@ mod tests {
     fn test_git_stage_unstage_reload_flow() {
         let (repo_root, notes_path) = setup_test_git_repo();
         let git_res = crate::git::load_git_repo(&repo_root, &[], &[], false, 6).unwrap();
-        let out = crate::bin_pipeline::run_pipeline_full(
+        let out = crate::pipeline::run_pipeline_full(
             &git_res.diff_text,
             &git_res.contents,
             Some(&git_res.old_contents),
@@ -381,7 +381,7 @@ mod tests {
         let cached_args = vec!["--cached".to_string()];
         let git_res_cached =
             crate::git::load_git_repo(&repo_root, &cached_args, &[], false, 6).unwrap();
-        let out_cached = crate::bin_pipeline::run_pipeline_full(
+        let out_cached = crate::pipeline::run_pipeline_full(
             &git_res_cached.diff_text,
             &git_res_cached.contents,
             Some(&git_res_cached.old_contents),
@@ -406,7 +406,7 @@ mod tests {
     fn test_git_discard_flow() {
         let (repo_root, notes_path) = setup_test_git_repo();
         let git_res = crate::git::load_git_repo(&repo_root, &[], &[], false, 6).unwrap();
-        let out = crate::bin_pipeline::run_pipeline_full(
+        let out = crate::pipeline::run_pipeline_full(
             &git_res.diff_text,
             &git_res.contents,
             Some(&git_res.old_contents),

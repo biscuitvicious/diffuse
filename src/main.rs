@@ -17,14 +17,15 @@ use clap::Parser;
 use serde::Deserialize;
 
 use diffuse::{
-    bin_pipeline::{PipelineOutput, run_pipeline_full, run_pipeline_with_notes},
     git::load_git_repo,
     notes::{
         NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
         save_notes,
     },
+    pipeline::{run_pipeline_full, run_pipeline_with_notes},
     render::{default_theme, render_pipeline_output},
     tui::run_interactive_tui,
+    wire::PipelineOutput,
 };
 
 /// The diffuse diff-engine CLI.

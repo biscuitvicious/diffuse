@@ -5,10 +5,10 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::theme::{DiffuseTheme, S_ADD, S_DEL, S_MOD, S_MOV};
 use crate::{
-    bin_pipeline::OutputRun,
     lcs::char_slice,
     merge::RunKind,
     parse::{RowKind, Spans},
+    wire::OutputRun,
 };
 
 /// Check whether a row consists solely of common/context runs.
@@ -426,7 +426,7 @@ pub fn render_raw_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{bin_pipeline::OutputRun, merge::RunKind};
+    use crate::{merge::RunKind, wire::OutputRun};
 
     #[test]
     fn test_prefix_gutters() {

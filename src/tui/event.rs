@@ -382,7 +382,7 @@ fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bin_pipeline::PipelineOutput;
+    use crate::wire::PipelineOutput;
 
     fn unique_notes_path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -432,13 +432,7 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
         AppState::new(
-            crate::bin_pipeline::run_pipeline_full(
-                diff,
-                &contents,
-                Some(&old_contents),
-                None,
-                None,
-            ),
+            crate::pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None),
             "test_repo".into(),
             unique_notes_path(),
         )
@@ -698,7 +692,7 @@ index 3333333..4444444 100644
         .collect();
 
         let mut s = AppState::new(
-            crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None),
+            crate::pipeline::run_pipeline_full(diff, &contents, None, None, None),
             "test_repo".into(),
             unique_notes_path(),
         );

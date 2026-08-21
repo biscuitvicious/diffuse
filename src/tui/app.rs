@@ -3,13 +3,13 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
     parse::RowKind,
     render::{
         DiffuseTheme, display_text, render_raw_row, render_row_segment, slice_by_visual_width,
         styled_prefix,
     },
+    wire::{OutputFile, OutputRow, PipelineOutput},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -334,7 +334,7 @@ impl AppState {
                 let mut hunks: Vec<crate::parse::Hunk> = f
                     .hunks
                     .iter()
-                    .map(crate::bin_pipeline::OutputHunk::reconstruct)
+                    .map(crate::wire::OutputHunk::reconstruct)
                     .collect();
                 for h in &mut hunks {
                     if h.above_ctx == 0 {
@@ -2051,13 +2051,8 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
 
-        let out = crate::bin_pipeline::run_pipeline_full(
-            diff,
-            &contents,
-            Some(&old_contents),
-            None,
-            None,
-        );
+        let out =
+            crate::pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -2098,7 +2093,7 @@ index 1111111..2222222 100644
         )]
         .into_iter()
         .collect();
-        crate::bin_pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None)
+        crate::pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None)
     }
 
     fn sample_output_two_hunks() -> PipelineOutput {
@@ -2149,7 +2144,7 @@ index 1111111..2222222 100644
         let old_contents = [("foo.rs".to_string(), old_lines.join("\n") + "\n")]
             .into_iter()
             .collect();
-        crate::bin_pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None)
+        crate::pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None)
     }
 
     #[test]
@@ -2495,21 +2490,21 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
 
-        let mut out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let mut out = crate::pipeline::run_pipeline_full(diff, &contents, None, None, None);
         // Add an untracked file to output
-        out.files.push(crate::bin_pipeline::OutputFile {
+        out.files.push(crate::wire::OutputFile {
             path: "untracked.rs".to_string(),
             status: "untracked".to_string(),
             new_line_count: 1,
             old_line_count: 0,
             new_content: vec!["fn new_untracked() {}".to_string()],
             old_content: Vec::new(),
-            hunks: vec![crate::bin_pipeline::OutputHunk {
+            hunks: vec![crate::wire::OutputHunk {
                 old_start: 0,
                 old_count: 0,
                 new_start: 1,
                 new_count: 1,
-                rows: vec![crate::bin_pipeline::OutputRow {
+                rows: vec![crate::wire::OutputRow {
                     kind: crate::parse::RowKind::Add,
                     new_line: Some(1),
                     old_line: None,
@@ -2691,7 +2686,7 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
 
-        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let out = crate::pipeline::run_pipeline_full(diff, &contents, None, None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -2782,7 +2777,7 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
 
-        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let out = crate::pipeline::run_pipeline_full(diff, &contents, None, None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -2853,13 +2848,8 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
 
-        let out = crate::bin_pipeline::run_pipeline_full(
-            diff,
-            &contents,
-            Some(&old_contents),
-            None,
-            None,
-        );
+        let out =
+            crate::pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -2909,7 +2899,7 @@ index 1111111..2222222 100644
         let contents = [("test.rs".to_string(), lines.join("\n") + "\n")]
             .into_iter()
             .collect();
-        let out = crate::bin_pipeline::run_pipeline_full(&diff, &contents, None, None, None);
+        let out = crate::pipeline::run_pipeline_full(&diff, &contents, None, None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -2955,7 +2945,7 @@ index 1111111..2222222 100644
         let contents = [("test.rs".to_string(), "let short = 2;\n".to_string())]
             .into_iter()
             .collect();
-        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let out = crate::pipeline::run_pipeline_full(diff, &contents, None, None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -2997,7 +2987,7 @@ index 1111111..2222222 100644
         )]
         .into_iter()
         .collect();
-        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let out = crate::pipeline::run_pipeline_full(diff, &contents, None, None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -3046,13 +3036,8 @@ index 1111111..2222222 100644
         )]
         .into_iter()
         .collect();
-        let out = crate::bin_pipeline::run_pipeline_full(
-            diff,
-            &contents,
-            Some(&old_contents),
-            None,
-            None,
-        );
+        let out =
+            crate::pipeline::run_pipeline_full(diff, &contents, Some(&old_contents), None, None);
         let mut state = AppState::new(
             out,
             "test_repo".into(),
@@ -3236,7 +3221,7 @@ index 6f6222d..4aa7a1d 100644
             false,
             6,
         ) {
-            crate::bin_pipeline::run_pipeline_full(
+            crate::pipeline::run_pipeline_full(
                 &git_res.diff_text,
                 &git_res.contents,
                 Some(&git_res.old_contents),
@@ -3244,7 +3229,7 @@ index 6f6222d..4aa7a1d 100644
                 Some("mirage"),
             )
         } else {
-            crate::bin_pipeline::run_pipeline_full(
+            crate::pipeline::run_pipeline_full(
                 diff,
                 &std::collections::HashMap::new(),
                 None,

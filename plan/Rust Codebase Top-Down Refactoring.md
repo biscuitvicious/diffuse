@@ -1,11 +1,11 @@
 # Plan — Rust Codebase Top-Down Architectural Refactoring
 
 ## Global TODO
-- [ ] Phase 1 — Wire Contract & Pipeline Decoupling (`src/wire/` & `src/pipeline/`)
-  - [ ] Step 1.1: Extract serializable wire models into `src/wire/mod.rs`
-  - [ ] Step 1.2: Decouple AST pipeline runner and introduce `PipelineContext`
-  - [ ] Step 1.3: Update acceptance tests and verify byte-identical wire output
-- [ ] Phase 2 — Syntax Engine Modularization (`src/syntax/`)
+- [x] Phase 1 — Wire Contract & Pipeline Decoupling (`src/wire/` & `src/pipeline/`)
+  - [x] Step 1.1: Extract serializable wire models into `src/wire/mod.rs`
+  - [x] Step 1.2: Decouple AST pipeline runner and introduce `PipelineContext`
+  - [x] Step 1.3: Update acceptance tests and verify byte-identical wire output
+- [·] Phase 2 — Syntax Engine Modularization (`src/syntax/`)
   - [ ] Step 2.1: Decompose `src/syntax/` into `profile`, `classifier`, `fence`, and `languages/`
   - [ ] Step 2.2: Replace runtime `HashSet<String>` keyword allocations with static sorted slices
   - [ ] Step 2.3: Verify syntax highlighting unit tests & golden parity

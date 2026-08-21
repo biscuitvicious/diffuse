@@ -16,7 +16,7 @@ pub use terminal::TerminalGuard;
 
 use std::{io, path::PathBuf, time::Duration};
 
-use crate::bin_pipeline::PipelineOutput;
+use crate::wire::PipelineOutput;
 
 /// Launch and run the interactive TUI application.
 pub fn run_interactive_tui(
