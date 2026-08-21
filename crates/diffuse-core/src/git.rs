@@ -135,7 +135,7 @@ pub fn load_git_repo(
     diff_cmd.extend(paths.iter().cloned());
 
     let diff_args: Vec<&str> = diff_cmd.iter().map(std::string::String::as_str).collect();
-    let diff_text = run_git(repo_root, &diff_args).unwrap_or_default();
+    let mut diff_text = run_git(repo_root, &diff_args).unwrap_or_default();
 
     let mut name_cmd = vec![
         "diff".to_string(),
@@ -198,8 +198,13 @@ pub fn load_git_repo(
     }
 
     let mut untracked_skipped: Vec<String> = Vec::new();
-    if !cached && paths.is_empty() {
-        let ut_opt = run_git(repo_root, &["ls-files", "--others", "--exclude-standard"]);
+    if !cached {
+        let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
+        if !paths.is_empty() {
+            ls_args.push("--");
+            ls_args.extend(paths.iter().map(String::as_str));
+        }
+        let ut_opt = run_git(repo_root, &ls_args);
         if let Some(ut) = ut_opt {
             for rel in ut.lines().filter(|s| !s.is_empty()) {
                 let abs = repo_root.join(rel);
@@ -210,6 +215,18 @@ pub fn load_git_repo(
                 if content.contains('\0') {
                     untracked_skipped.push(rel.to_string());
                     continue;
+                }
+                let line_count = content.lines().count();
+                if !diff_text.is_empty() && !diff_text.ends_with('\n') {
+                    diff_text.push('\n');
+                }
+                diff_text.push_str(&format!(
+                    "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{line_count} @@\n"
+                ));
+                for line in content.lines() {
+                    diff_text.push('+');
+                    diff_text.push_str(line);
+                    diff_text.push('\n');
                 }
                 files.push(GitFileItem {
                     path: rel.to_string(),
@@ -319,5 +336,57 @@ mod tests {
         assert!(!refs.worktree_new);
         assert_eq!(refs.new_ref.as_deref(), Some("abc1234"));
         assert_eq!(refs.old_ref.as_deref(), Some("abc1234^"));
+    }
+
+    #[test]
+    fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
+        let dir = std::env::temp_dir().join(format!("diffuse-untracked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "init"]);
+
+        // Create untracked file
+        std::fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
+
+        let res = load_git_repo(&dir, &[], &[], false, 6).unwrap();
+        assert!(
+            res.diff_text.contains("untracked.rs"),
+            "diff_text must contain synthetic diff for untracked.rs"
+        );
+        assert!(
+            res.contents.contains_key("untracked.rs"),
+            "contents must contain untracked.rs"
+        );
+
+        let out = crate::pipeline::run_pipeline_full(
+            &res.diff_text,
+            &res.contents,
+            Some(&res.old_contents),
+            None,
+            None,
+        );
+        let untracked_file = out
+            .files
+            .iter()
+            .find(|f| f.path == "untracked.rs")
+            .expect("untracked.rs must be in pipeline output");
+        assert_eq!(untracked_file.status, "untracked");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
