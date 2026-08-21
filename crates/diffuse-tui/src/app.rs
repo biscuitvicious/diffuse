@@ -467,14 +467,16 @@ impl AppState {
 
         self.output.files.push(file);
 
-        if self.row_idx == 0 && self.flat.len() > 1 && self.flat[0].is_file_header
+        if self.row_idx == 0
+            && self.flat.len() > 1
+            && self.flat[0].is_file_header
             && let Some(pos) = self
                 .flat
                 .iter()
                 .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
-            {
-                self.row_idx = pos;
-            }
+        {
+            self.row_idx = pos;
+        }
         self.vis_line = 0;
     }
 

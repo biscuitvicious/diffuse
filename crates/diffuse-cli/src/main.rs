@@ -222,16 +222,6 @@ fn main() -> io::Result<()> {
         &piped_stdin,
     ) {
         let repo_root = env::current_dir()?;
-        let git_res = load_git_repo(&repo_root, &args.git_args, &[], false, 6);
-
-        let git_res = match git_res {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("diffuse: {e}");
-                process::exit(2);
-            }
-        };
-
         let notes_path = args
             .notes_file
             .as_ref()
@@ -239,8 +229,6 @@ fn main() -> io::Result<()> {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(default_notes_path);
         let loaded_db = load_notes(&notes_path);
-        let _db_ref = Some(&loaded_db);
-        let _repo_ref = args.repo.as_deref();
 
         let repo_name = args.repo.clone().unwrap_or_else(|| {
             repo_root
@@ -252,28 +240,38 @@ fn main() -> io::Result<()> {
         // Interactive TUI only when both ends are real terminals; any
         // piped or redirected end falls back to the full ANSI render.
         if !args.no_tui && stdin_tty && stdout_tty {
-            let consumer = diffuse_core::streaming::stream_diff_pipeline(
-                &git_res.diff_text,
-                &git_res.contents,
-                Some(&git_res.old_contents),
+            let (consumer, meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
+                repo_root.clone(),
+                args.git_args.clone(),
+                Vec::new(),
+                false,
+                6,
                 Some(loaded_db),
                 args.repo.clone(),
                 None,
             );
             let initial_out = PipelineOutput {
                 files: Vec::new(),
-                branch: git_res.branch,
-                untracked_skipped: git_res.untracked_skipped,
+                branch: String::new(),
+                untracked_skipped: Vec::new(),
             };
             run_streaming_interactive_tui(
                 initial_out,
                 Some(consumer.into_receiver()),
+                Some(meta_rx),
                 repo_name,
                 notes_path,
                 repo_root,
                 args.git_args,
             )?;
         } else {
+            let git_res = match load_git_repo(&repo_root, &args.git_args, &[], false, 6) {
+                Ok(g) => g,
+                Err(e) => {
+                    eprintln!("diffuse: {e}");
+                    process::exit(2);
+                }
+            };
             let theme = default_theme();
             let consumer = diffuse_core::streaming::stream_diff_pipeline(
                 &git_res.diff_text,

@@ -106,6 +106,73 @@ pub struct LoadGitResult {
     pub untracked_skipped: Vec<String>,
 }
 
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    process::Stdio,
+};
+
+/// Batch-load file blob contents using a single `git cat-file --batch` process.
+pub fn load_git_blobs_batch(repo_root: &Path, specs: &[String]) -> HashMap<String, String> {
+    if specs.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut child = match Command::new("git")
+        .args(["cat-file", "--batch"])
+        .current_dir(repo_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut stdin = child.stdin.take().expect("child stdin");
+    let mut input_data = Vec::new();
+    for spec in specs {
+        input_data.extend_from_slice(spec.as_bytes());
+        input_data.push(b'\n');
+    }
+
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&input_data);
+        drop(stdin);
+    });
+
+    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
+    let mut results = HashMap::with_capacity(specs.len());
+
+    for spec in specs {
+        let mut header = String::new();
+        if stdout.read_line(&mut header).is_err() || header.is_empty() {
+            break;
+        }
+        let header_str = header.trim_end();
+        if header_str.ends_with("missing") {
+            continue;
+        }
+        let parts: Vec<&str> = header_str.split_whitespace().collect();
+        if parts.len() == 3
+            && let Ok(size) = parts[2].parse::<usize>()
+        {
+            let mut buf = vec![0u8; size];
+            if stdout.read_exact(&mut buf).is_ok() {
+                let mut newline = [0u8; 1];
+                let _ = stdout.read_exact(&mut newline);
+                if let Ok(text) = String::from_utf8(buf) {
+                    results.insert(spec.clone(), text);
+                }
+            }
+        }
+    }
+
+    let _ = writer.join();
+    let _ = child.wait();
+    results
+}
+
 pub fn load_git_repo(
     repo_root: &Path,
     base_args: &[String],
@@ -239,6 +306,8 @@ pub fn load_git_repo(
         }
     }
 
+    let mut specs_to_fetch = Vec::new();
+
     for f in &mut files {
         if f.status == "deleted" || f.status == "untracked" {
             continue;
@@ -249,30 +318,47 @@ pub fn load_git_repo(
                 f.new_content = Some(c);
             }
         } else if let Some(new_ref) = &refs.new_ref {
-            let spec = format!("{new_ref}:{}", f.path);
-            if let Some(c) = run_git(repo_root, &["show", &spec]) {
-                f.new_content = Some(c);
-            }
+            specs_to_fetch.push(format!("{new_ref}:{}", f.path));
         }
     }
 
     let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
-    for f in &mut files {
+    for f in &files {
         if f.status == "untracked" {
             continue;
         }
         let new_empty = f.new_content.as_ref().is_none_or(String::is_empty);
         let needs_old =
             f.status == "deleted" || del_of.get(&f.path).copied().unwrap_or(0) > 0 || new_empty;
-        if !needs_old {
+        if needs_old {
+            specs_to_fetch.push(format!("{old_tree_ref}:{}", f.path));
+        }
+    }
+
+    let mut batch_blobs = load_git_blobs_batch(repo_root, &specs_to_fetch);
+
+    for f in &mut files {
+        if f.new_content.is_none()
+            && let Some(new_ref) = &refs.new_ref
+        {
+            let spec = format!("{new_ref}:{}", f.path);
+            f.new_content = batch_blobs.remove(&spec);
+        }
+
+        if f.status == "untracked" {
             continue;
         }
-        let spec = format!("{old_tree_ref}:{}", f.path);
-        if let Some(c) = run_git(repo_root, &["show", &spec]) {
-            if new_empty && f.status != "deleted" {
-                f.new_content = Some(c.clone());
+        let new_empty = f.new_content.as_ref().is_none_or(String::is_empty);
+        let needs_old =
+            f.status == "deleted" || del_of.get(&f.path).copied().unwrap_or(0) > 0 || new_empty;
+        if needs_old {
+            let spec = format!("{old_tree_ref}:{}", f.path);
+            if let Some(c) = batch_blobs.remove(&spec) {
+                if new_empty && f.status != "deleted" {
+                    f.new_content = Some(c.clone());
+                }
+                f.old_content = Some(c);
             }
-            f.old_content = Some(c);
         }
         f.no_content = f.new_content.as_ref().is_none_or(String::is_empty)
             && f.old_content.as_ref().is_none_or(String::is_empty);
@@ -386,6 +472,58 @@ mod tests {
             .find(|f| f.path == "untracked.rs")
             .expect("untracked.rs must be in pipeline output");
         assert_eq!(untracked_file.status, "untracked");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_git_blobs_batch() {
+        let dir = std::env::temp_dir().join(format!("diffuse-batch-blob-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(dir.join("f1.txt"), "content 1\n").unwrap();
+        std::fs::write(dir.join("f2.txt"), "content 2\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "commit1"]);
+
+        std::fs::write(dir.join("f1.txt"), "content 1 mod\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "commit2"]);
+
+        let specs = vec![
+            "HEAD:f1.txt".to_string(),
+            "HEAD:f2.txt".to_string(),
+            "HEAD~1:f1.txt".to_string(),
+            "HEAD:nonexistent.txt".to_string(),
+        ];
+
+        let blobs = load_git_blobs_batch(&dir, &specs);
+        assert_eq!(
+            blobs.get("HEAD:f1.txt").map(|s| s.as_str()),
+            Some("content 1 mod\n")
+        );
+        assert_eq!(
+            blobs.get("HEAD:f2.txt").map(|s| s.as_str()),
+            Some("content 2\n")
+        );
+        assert_eq!(
+            blobs.get("HEAD~1:f1.txt").map(|s| s.as_str()),
+            Some("content 1\n")
+        );
+        assert!(!blobs.contains_key("HEAD:nonexistent.txt"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

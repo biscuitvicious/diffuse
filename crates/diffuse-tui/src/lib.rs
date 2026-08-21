@@ -28,6 +28,7 @@ use diffuse_core::wire::{OutputFile, PipelineOutput};
 pub fn run_streaming_interactive_tui(
     initial_output: PipelineOutput,
     streaming_rx: Option<Receiver<OutputFile>>,
+    meta_rx: Option<Receiver<Result<diffuse_core::streaming::GitRepoMeta, String>>>,
     repo: String,
     notes_path: PathBuf,
     repo_root: PathBuf,
@@ -44,26 +45,40 @@ pub fn run_streaming_interactive_tui(
     let mut last_size = guard.size();
 
     while !state.should_quit {
-        if streaming_active
-            && let Some(ref rx) = streaming_rx {
-                loop {
-                    match rx.try_recv() {
-                        Ok(file) => {
-                            state.append_file(file);
-                            dirty = true;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Empty) => {
-                            break;
-                        }
-                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            state.is_streaming = false;
-                            streaming_active = false;
-                            dirty = true;
-                            break;
-                        }
+        if let Some(ref mrx) = meta_rx {
+            match mrx.try_recv() {
+                Ok(Ok(meta)) => {
+                    state.output.branch = meta.branch;
+                    state.output.untracked_skipped = meta.untracked_skipped;
+                    dirty = true;
+                }
+                Ok(Err(err)) => {
+                    state.status_message = Some((err, false));
+                    dirty = true;
+                }
+                Err(_) => {}
+            }
+        }
+
+        if streaming_active && let Some(ref rx) = streaming_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(file) => {
+                        state.append_file(file);
+                        dirty = true;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        state.is_streaming = false;
+                        streaming_active = false;
+                        dirty = true;
+                        break;
                     }
                 }
             }
+        }
 
         let size = guard.size();
         if size != last_size {
@@ -111,5 +126,5 @@ pub fn run_interactive_tui(
     repo_root: PathBuf,
     git_args: Vec<String>,
 ) -> io::Result<()> {
-    run_streaming_interactive_tui(output, None, repo, notes_path, repo_root, git_args)
+    run_streaming_interactive_tui(output, None, None, repo, notes_path, repo_root, git_args)
 }

@@ -304,6 +304,69 @@ pub fn stream_diff_pipeline(
     consumer
 }
 
+/// Metadata discovered asynchronously from the git repository.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GitRepoMeta {
+    pub branch: String,
+    pub untracked_skipped: Vec<String>,
+}
+
+/// Spawns an asynchronous git streaming pipeline:
+/// 1. Immediately starts the worker pool and sequencer.
+/// 2. Spawns a background thread to load the git repository diff and blob
+///    contents.
+/// 3. Returns a `StreamingConsumer` receiving ordered `OutputFile`s and a
+///    receiver for `GitRepoMeta`.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_git_stream_pipeline(
+    repo_root: std::path::PathBuf,
+    base_args: Vec<String>,
+    paths: Vec<String>,
+    cached: bool,
+    context: usize,
+    notes_db: Option<NotesDB>,
+    repo: Option<String>,
+    worker_count: Option<usize>,
+) -> (StreamingConsumer, Receiver<Result<GitRepoMeta, String>>) {
+    let (producer, consumer) = spawn_streaming_pipeline(worker_count, notes_db, repo);
+    let (meta_tx, meta_rx) = channel::<Result<GitRepoMeta, String>>();
+
+    std::thread::spawn(move || {
+        let git_res =
+            match crate::git::load_git_repo(&repo_root, &base_args, &paths, cached, context) {
+                Ok(g) => g,
+                Err(e) => {
+                    let _ = meta_tx.send(Err(e));
+                    producer.finish();
+                    return;
+                }
+            };
+
+        let meta = GitRepoMeta {
+            branch: git_res.branch,
+            untracked_skipped: git_res.untracked_skipped,
+        };
+        let _ = meta_tx.send(Ok(meta));
+
+        let parsed = crate::parse::parse_diff(&git_res.diff_text);
+        let diff_fallback = git_res.diff_text;
+        for (idx, f) in parsed.into_iter().enumerate() {
+            let new_c = git_res.contents.get(&f.path).cloned();
+            let old_c = git_res.old_contents.get(&f.path).cloned();
+            producer.push(FileJob {
+                idx,
+                file: f,
+                new_content: new_c,
+                old_content: old_c,
+                diff_fallback: Some(diff_fallback.clone()),
+            });
+        }
+        producer.finish();
+    });
+
+    (consumer, meta_rx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

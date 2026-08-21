@@ -1,6 +1,6 @@
 # Native Git Engine & Asynchronous Repository Loader
 
-- [ ] **Phase 1 — Asynchronous Git Repository Loader & Instant TUI Startup (`diffuse-cli`, `diffuse-tui`)**
+- [x] **Phase 1 — Asynchronous Git Repository Loader & Instant TUI Startup (`diffuse-cli`, `diffuse-tui`)**
 - [ ] **Phase 2 — Direct In-Process Git Blob Access via Native Git Crate (`diffuse-core`)**
 - [ ] **Phase 3 — Streaming Diff Engine & Benchmark Profiling (`tests/`, `crates/`)**
 
