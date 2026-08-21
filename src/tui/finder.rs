@@ -168,6 +168,7 @@ mod tests {
             new_content: Vec::new(),
             old_content: Vec::new(),
             hunks: Vec::new(),
+            raw_hunks: Vec::new(),
             counts: FileCounts {
                 adds: 1,
                 dels: 0,

@@ -378,6 +378,7 @@ pub struct DiffFile {
     /// Content of the old side (HEAD/ref), for deleted-file context.
     pub old_content: Vec<String>,
     pub hunks: Vec<Hunk>,
+    pub raw_hunks: Vec<Hunk>,
     /// True when neither side's content could be loaded (no context source).
     pub no_content: bool,
 }
@@ -397,6 +398,7 @@ impl DiffFile {
             new_content: self.old_content.clone(),
             old_content: self.new_content.clone(),
             hunks: self.hunks.iter().map(Hunk::reverse).collect(),
+            raw_hunks: self.raw_hunks.iter().map(Hunk::reverse).collect(),
             no_content: self.no_content,
         }
     }
@@ -459,6 +461,7 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
                 new_content: Vec::new(),
                 old_content: Vec::new(),
                 hunks: Vec::new(),
+                raw_hunks: Vec::new(),
                 no_content: false,
             });
         } else if cur.is_none() {
@@ -487,6 +490,7 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
         } else if line.starts_with("GIT binary patch") || line.starts_with("Binary files ") {
             if let Some(c) = cur.as_mut() {
                 c.hunks.clear(); // binary: nothing to review
+                c.raw_hunks.clear();
             }
         } else if line.starts_with("+++ ") || line.starts_with("--- ") {
             let is_new = line.starts_with("+++ ");
@@ -514,12 +518,23 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
                 oi = old_start;
                 ni = new_start;
                 if let Some(c) = cur.as_mut() {
+                    let section = caps.get(5).map_or("", |m| m.as_str()).trim().to_string();
                     c.hunks.push(Hunk {
                         old_start,
                         old_count,
                         new_start,
                         new_count,
-                        section: caps.get(5).map_or("", |m| m.as_str()).trim().to_string(),
+                        section: section.clone(),
+                        rows: Vec::new(),
+                        above_ctx: 0,
+                        below_ctx: 0,
+                    });
+                    c.raw_hunks.push(Hunk {
+                        old_start,
+                        old_count,
+                        new_start,
+                        new_count,
+                        section,
                         rows: Vec::new(),
                         above_ctx: 0,
                         below_ctx: 0,
@@ -535,15 +550,28 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
                 Some(h) => h,
                 None => continue,
             };
+            let raw_hunk = match c.raw_hunks.last_mut() {
+                Some(h) => h,
+                None => continue,
+            };
             if let Some(rest) = line.strip_prefix('+') {
                 let num = LineNum::new(ni).unwrap_or(LineNum::MIN);
-                hunk.rows.push(Row::Add(AddLine::new(num, rest)));
+                let row = Row::Add(AddLine::new(num, rest));
+                hunk.rows.push(row.clone());
+                raw_hunk.rows.push(row);
                 ni += 1;
             } else if let Some(rest) = line.strip_prefix('-') {
                 let num = LineNum::new(oi).unwrap_or(LineNum::MIN);
-                hunk.rows.push(Row::Del(DelLine::new(num, rest)));
+                let row = Row::Del(DelLine::new(num, rest));
+                hunk.rows.push(row.clone());
+                raw_hunk.rows.push(row);
                 oi += 1;
-            } else if line.starts_with(' ') {
+            } else if let Some(rest) = line.strip_prefix(' ') {
+                let old_num = LineNum::new(oi).unwrap_or(LineNum::MIN);
+                let new_num = LineNum::new(ni).unwrap_or(LineNum::MIN);
+                raw_hunk
+                    .rows
+                    .push(Row::Ctx(CtxLine::new(old_num, new_num, rest)));
                 oi += 1;
                 ni += 1;
             }

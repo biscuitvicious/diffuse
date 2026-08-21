@@ -38,6 +38,7 @@ fn file(hunks: Vec<Hunk>) -> DiffFile {
         new_content: Vec::new(),
         old_content: Vec::new(),
         hunks,
+        raw_hunks: Vec::new(),
         no_content: false,
     }
 }

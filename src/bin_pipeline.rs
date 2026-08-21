@@ -447,6 +447,30 @@ pub fn run_pipeline_full(
                 rows: rows_out,
             });
         }
+        let mut raw_hunks_out = Vec::new();
+        for h in &f.raw_hunks {
+            let mut rows_out = Vec::new();
+            for r in &h.rows {
+                rows_out.push(OutputRow {
+                    kind: r.kind(),
+                    new_line: r.new_line(),
+                    old_line: r.old_line(),
+                    text: r.text().to_string(),
+                    del_text: r.del_text().map(String::from),
+                    spans: r.spans().cloned().unwrap_or_default(),
+                    runs: Vec::new(),
+                    wholesale: false,
+                    moved: false,
+                });
+            }
+            raw_hunks_out.push(OutputHunk {
+                old_start: h.old_start,
+                old_count: h.old_count,
+                new_start: h.new_start,
+                new_count: h.new_count,
+                rows: rows_out,
+            });
+        }
         let notes_out = match (notes_db, repo) {
             (Some(db), Some(r)) => notes_for_file(db, r, &f.path)
                 .into_iter()
@@ -494,6 +518,7 @@ pub fn run_pipeline_full(
             new_content: f.new_content.clone(),
             old_content: f.old_content.clone(),
             hunks: hunks_out,
+            raw_hunks: raw_hunks_out,
             counts,
             fences: regions
                 .iter()
@@ -674,6 +699,8 @@ pub struct OutputFile {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub old_content: Vec<String>,
     pub hunks: Vec<OutputHunk>,
+    #[serde(default, skip_serializing)]
+    pub raw_hunks: Vec<OutputHunk>,
     pub counts: FileCounts,
     /// The fence regions (the wire's syntax-region spans — line 1-indexed).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -706,6 +733,7 @@ impl OutputFile {
             new_content: self.old_content.clone(),
             old_content: self.new_content.clone(),
             hunks: self.hunks.iter().map(OutputHunk::reverse).collect(),
+            raw_hunks: self.raw_hunks.iter().map(OutputHunk::reverse).collect(),
             counts: self.counts.reverse(),
             fences: self.fences.clone(),
             notes: self.notes.iter().map(OutputNote::reverse).collect(),
@@ -735,6 +763,7 @@ impl OutputFile {
             new_content: self.new_content.clone(),
             old_content: self.old_content.clone(),
             hunks: self.hunks.iter().map(OutputHunk::reconstruct).collect(),
+            raw_hunks: self.raw_hunks.iter().map(OutputHunk::reconstruct).collect(),
             no_content: self.new_content.is_empty() && self.old_content.is_empty(),
         }
     }

@@ -363,100 +363,58 @@ pub fn slice_by_visual_width(text: &str, start_col: usize, max_cols: usize) -> S
     out
 }
 
-/// Render a row in the raw unified-diff representation: a plain marker
-/// (`+` / `-` / ` ` / continuation ` `) plus the line text in a flat
-/// green/red/muted color. `Sep` rows are `@@` hunk headers.
-/// Backgrounds follow the same selected/band precedence as the visual
-/// renderer so the UI shell (navigation, selection, notes) reads identically.
+/// Render a row in the raw unified-diff representation: the 6-character
+/// line-number gutter plus the line text in flat green/red/muted text color
+/// on a default black background (or cursor/band background when selected).
 pub fn render_raw_row(
     kind: RowKind,
-    marker: &str,
+    prefix: &str,
     text: &str,
     selected: bool,
     band: bool,
+    highlight_trailing: bool,
 ) -> String {
-    let is_ctx = matches!(kind, RowKind::Ctx | RowKind::Sep);
-    let (fg, bg, sub_bg, sub_fg) = match kind {
-        RowKind::Add => {
-            let bg = if selected {
-                S_ADD.cursor_bg()
-            } else if band {
-                "\x1b[48;5;240m".to_string()
-            } else {
-                S_ADD.tint_bg()
-            };
-            let sub_bg = if selected {
-                S_ADD.fill_cursor_bg()
-            } else {
-                S_ADD.fill_bg()
-            };
-            ("\x1b[38;5;120m", bg, sub_bg, "\x1b[38;5;151m")
-        }
-        RowKind::Del => {
-            let bg = if selected {
-                S_DEL.cursor_bg()
-            } else if band {
-                "\x1b[48;5;240m".to_string()
-            } else {
-                S_DEL.tint_bg()
-            };
-            (
-                "\x1b[38;5;203m",
-                bg,
-                "\x1b[48;5;88m".to_string(),
-                "\x1b[38;5;167m",
-            )
-        }
-        RowKind::Sep => (
-            "\x1b[1m\x1b[38;5;214m",
-            if selected {
-                "\x1b[48;5;237m".to_string()
-            } else {
-                String::new()
-            },
-            String::new(),
-            "",
-        ),
-        _ => {
-            let bg = if selected {
-                "\x1b[48;5;237m".to_string()
-            } else if band {
-                "\x1b[48;5;240m".to_string()
-            } else {
-                String::new()
-            };
-            (
-                "\x1b[38;5;255m",
-                bg,
-                "\x1b[48;5;238m".to_string(),
-                "\x1b[38;5;244m",
-            )
-        }
+    let (fg, sub_bg, sub_fg) = match kind {
+        RowKind::Add => ("\x1b[38;5;120m", "\x1b[48;5;28m", "\x1b[38;5;151m"),
+        RowKind::Del => ("\x1b[38;5;203m", "\x1b[48;5;88m", "\x1b[38;5;167m"),
+        RowKind::Sep => ("\x1b[1m\x1b[38;5;214m", "", ""),
+        _ => ("\x1b[38;5;255m", "\x1b[48;5;238m", "\x1b[38;5;244m"),
     };
 
-    let trailing_len = if kind == RowKind::Sep {
-        0
+    let bg = if selected {
+        "\x1b[48;5;237m"
+    } else if band {
+        "\x1b[48;5;240m"
     } else {
+        ""
+    };
+    let reset_bg = if bg.is_empty() { "\x1b[49m" } else { bg };
+
+    let trailing_len = if highlight_trailing && kind != RowKind::Sep {
         text.len() - text.trim_end_matches(|c: char| c.is_whitespace()).len()
+    } else {
+        0
     };
 
-    let mut out = format!("{bg}{fg}{marker}");
+    let mut out = format!("{bg}{prefix}{fg}");
     if trailing_len > 0 {
         let (body, trailing) = text.split_at(text.len() - trailing_len);
         out.push_str(body);
         if kind == RowKind::Del {
             out.push_str(&format!(
-                "{sub_bg}\x1b[9m{sub_fg}{trailing}\x1b[29m{bg}{fg}"
+                "{sub_bg}\x1b[9m{sub_fg}{trailing}\x1b[29m{reset_bg}{fg}"
             ));
         } else {
-            out.push_str(&format!("{sub_bg}{sub_fg}{trailing}{bg}{fg}"));
+            out.push_str(&format!("{sub_bg}{sub_fg}{trailing}{reset_bg}{fg}"));
         }
     } else {
         out.push_str(text);
     }
 
-    if selected || band || !is_ctx {
-        out.push_str(&bg);
+    if selected || band {
+        out.push_str(bg);
+    } else {
+        out.push_str("\x1b[49m");
     }
     out.push_str("\x1b[39m\x1b[22m");
     out
@@ -691,36 +649,55 @@ mod tests {
 
     #[test]
     fn test_render_raw_row_colors() {
-        let add = render_raw_row(RowKind::Add, "+", "added_line", false, false);
-        assert!(add.contains("+added_line"));
-        assert!(add.contains("\x1b[38;5;120m"));
+        let add = render_raw_row(RowKind::Add, "  42 + ", "added_line", false, false, true);
+        assert!(add.contains("  42 + "));
+        assert!(add.contains("\x1b[38;5;120madded_line"));
 
-        let del = render_raw_row(RowKind::Del, "-", "deleted_line", false, false);
-        assert!(del.contains("-deleted_line"));
-        assert!(del.contains("\x1b[38;5;203m"));
+        let del = render_raw_row(RowKind::Del, "  41 - ", "deleted_line", false, false, true);
+        assert!(del.contains("  41 - "));
+        assert!(del.contains("\x1b[38;5;203mdeleted_line"));
 
-        let ctx = render_raw_row(RowKind::Ctx, " ", "context_line", false, false);
-        assert!(ctx.contains(" context_line"));
+        let ctx = render_raw_row(RowKind::Ctx, "  40   ", "context_line", false, false, true);
+        assert!(ctx.contains("  40   "));
+        assert!(ctx.contains("context_line"));
     }
 
     #[test]
     fn test_render_raw_row_trailing_whitespace() {
-        let add_trailing = render_raw_row(RowKind::Add, "+", "let x = 1;   ", false, false);
-        assert!(add_trailing.contains("+let x = 1;"));
+        let add_trailing =
+            render_raw_row(RowKind::Add, "  42 + ", "let x = 1;   ", false, false, true);
+        assert!(add_trailing.contains("  42 + "));
+        assert!(add_trailing.contains("\x1b[38;5;120mlet x = 1;"));
         assert!(
-            add_trailing.contains("\x1b[48;5;28m\x1b[38;5;151m   "),
-            "added trailing spaces must have subline highlight without strikethrough"
+            add_trailing.contains("\x1b[48;5;28m\x1b[38;5;151m   \x1b[49m"),
+            "added trailing spaces must reset background to default immediately after spaces"
         );
         assert!(
             !add_trailing.contains("\x1b[9m"),
             "added trailing spaces must not be crossed out"
         );
 
-        let del_trailing = render_raw_row(RowKind::Del, "-", "foo();  ", false, false);
-        assert!(del_trailing.contains("-foo();"));
+        // When highlight_trailing is false (intermediate wrapped segment), do not
+        // highlight
+        let add_wrapped_intermediate = render_raw_row(
+            RowKind::Add,
+            "  42 + ",
+            "let x = 1;   ",
+            false,
+            false,
+            false,
+        );
         assert!(
-            del_trailing.contains("\x1b[48;5;88m\x1b[9m\x1b[38;5;167m  \x1b[29m"),
-            "deleted trailing spaces must have subline highlight and strikethrough in del row"
+            !add_wrapped_intermediate.contains("\x1b[48;5;28m"),
+            "intermediate wrapped segments must not highlight spaces at wrap boundary"
+        );
+
+        let del_trailing = render_raw_row(RowKind::Del, "  41 - ", "foo();  ", false, false, true);
+        assert!(del_trailing.contains("  41 - "));
+        assert!(del_trailing.contains("\x1b[38;5;203mfoo();"));
+        assert!(
+            del_trailing.contains("\x1b[48;5;88m\x1b[9m\x1b[38;5;167m  \x1b[29m\x1b[49m"),
+            "deleted trailing spaces must have subline highlight and reset background to default"
         );
     }
 }

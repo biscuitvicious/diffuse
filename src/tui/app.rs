@@ -3,6 +3,7 @@
 use crate::{
     bin_pipeline::{OutputFile, OutputRow, PipelineOutput},
     notes::{NotesDB, Side},
+    parse::RowKind,
     render::{
         DiffuseTheme, display_text, render_raw_row, render_row_segment, slice_by_visual_width,
         styled_prefix,
@@ -73,6 +74,7 @@ pub struct AppState {
     pub file_finder: Option<crate::tui::finder::FileFinderState>,
     pub collapsed_files: std::collections::HashSet<usize>,
     pub last_content_width: usize,
+    pub terminal_width: usize,
     pub is_dragging_scrollbar: bool,
     pub last_viewport_start: usize,
 }
@@ -127,6 +129,7 @@ impl AppState {
             file_finder: None,
             collapsed_files,
             last_content_width: 80,
+            terminal_width: 80,
             is_dragging_scrollbar: false,
             last_viewport_start: 2,
         }
@@ -150,20 +153,26 @@ impl AppState {
     }
 
     /// The raw unified-diff flat sequence: per file a header banner, then per
-    /// hunk an `@@` header row and its rows with mod/move pairs un-collapsed
-    /// into separate `-`/`+` lines. Hunk navigation jumps to the `@@` rows.
+    /// hunk an `@@` header row and the hunk rows exactly as loaded in the diff.
+    /// Hunk navigation jumps to the `@@` rows.
     fn build_raw_flat(
         output: &PipelineOutput,
         collapsed_files: &std::collections::HashSet<usize>,
     ) -> (Vec<FlatRow>, Vec<HunkStart>) {
         let mut flat = Vec::new();
         let mut hunk_starts = Vec::new();
+
         for (fi, f) in output.files.iter().enumerate() {
             flat.push(Self::file_header_row(fi, &f.path));
             if collapsed_files.contains(&fi) {
                 continue;
             }
-            for (hi, h) in f.hunks.iter().enumerate() {
+            let hunks = if !f.raw_hunks.is_empty() {
+                &f.raw_hunks
+            } else {
+                &f.hunks
+            };
+            for (hi, h) in hunks.iter().enumerate() {
                 flat.push(FlatRow {
                     file_idx: fi,
                     hunk_idx: hi,
@@ -189,60 +198,16 @@ impl AppState {
                     hunk: hi,
                 });
                 for r in &h.rows {
-                    for r in Self::raw_row_expansion(r) {
-                        flat.push(FlatRow {
-                            file_idx: fi,
-                            hunk_idx: hi,
-                            is_file_header: false,
-                            row: r,
-                        });
-                    }
+                    flat.push(FlatRow {
+                        file_idx: fi,
+                        hunk_idx: hi,
+                        is_file_header: false,
+                        row: r.clone(),
+                    });
                 }
             }
         }
         (flat, hunk_starts)
-    }
-
-    /// Split a collapsed hunk row into raw unified-diff lines: a mod or move
-    /// becomes a `-` del line plus a `+` add line; everything else passes
-    /// through.
-    fn raw_row_expansion(r: &OutputRow) -> Vec<OutputRow> {
-        let del_line = |old_line: Option<u32>, text: String| OutputRow {
-            kind: crate::parse::RowKind::Del,
-            new_line: None,
-            old_line,
-            text,
-            del_text: None,
-            spans: Default::default(),
-            runs: Vec::new(),
-            wholesale: false,
-            moved: false,
-        };
-        let add_line = |new_line: Option<u32>, text: String| OutputRow {
-            kind: crate::parse::RowKind::Add,
-            new_line,
-            old_line: None,
-            text,
-            del_text: None,
-            spans: Default::default(),
-            runs: Vec::new(),
-            wholesale: false,
-            moved: false,
-        };
-        match r.kind {
-            crate::parse::RowKind::Mod => {
-                let old = r.del_text.clone().unwrap_or_default();
-                vec![
-                    del_line(r.old_line, old),
-                    add_line(r.new_line, r.text.clone()),
-                ]
-            }
-            crate::parse::RowKind::Add if r.moved => {
-                let old = r.del_text.clone().unwrap_or_default();
-                vec![del_line(None, old), add_line(r.new_line, r.text.clone())]
-            }
-            _ => vec![r.clone()],
-        }
     }
 
     /// Build the flat row list (shared by the visual and raw representations).
@@ -300,32 +265,57 @@ impl AppState {
         }
     }
 
-    /// Locate each hunk's first content row in the flat sequence, matching by
-    /// (`kind`, `new_line`, `old_line`, `text`) — the visible rows and the
-    /// hunk rows are separate `OutputRow` conversions, so value equality is
-    /// not stable.
+    /// Locate each hunk's first content row in the flat sequence by file index
+    /// and coordinate envelope.
     fn build_hunk_starts(output: &PipelineOutput, flat: &[FlatRow]) -> Vec<HunkStart> {
         let mut starts = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
+            let file_start = flat
+                .iter()
+                .position(|fr| fr.file_idx == fi && fr.is_file_header);
+            let Some(file_start) = file_start else {
+                continue;
+            };
+            if f.hunks.is_empty() {
+                continue;
+            }
+            let mut search_from = file_start + 1;
             for (hi, h) in f.hunks.iter().enumerate() {
-                let Some(first) = h.rows.first() else {
-                    continue;
-                };
-                let Some(idx) = flat.iter().position(|fr| {
-                    !fr.is_file_header
-                        && fr.file_idx == fi
-                        && fr.row.kind == first.kind
-                        && fr.row.new_line == first.new_line
-                        && fr.row.old_line == first.old_line
-                        && fr.row.text == first.text
-                }) else {
-                    continue;
-                };
-                starts.push(HunkStart {
-                    flat: idx,
-                    file: fi,
-                    hunk: hi,
-                });
+                if hi == 0 {
+                    if search_from < flat.len() && flat[search_from].file_idx == fi {
+                        starts.push(HunkStart {
+                            flat: search_from,
+                            file: fi,
+                            hunk: hi,
+                        });
+                    }
+                } else {
+                    let target_start = if h.new_count > 0 {
+                        h.new_start
+                    } else {
+                        h.old_start
+                    };
+                    let mut found = None;
+                    for (idx, fr) in flat.iter().enumerate().skip(search_from) {
+                        if fr.file_idx != fi {
+                            break;
+                        }
+                        if let Some(coord) = Self::row_coord(&fr.row)
+                            && coord >= target_start
+                        {
+                            found = Some(idx);
+                            break;
+                        }
+                    }
+                    if let Some(idx) = found {
+                        starts.push(HunkStart {
+                            flat: idx,
+                            file: fi,
+                            hunk: hi,
+                        });
+                        search_from = idx + 1;
+                    }
+                }
             }
         }
         starts
@@ -675,16 +665,21 @@ impl AppState {
         };
 
         // Compute visual geometry with content_width
-        let est_content_width = width.saturating_sub(1);
+        let est_content_width = if self.raw_diff {
+            width
+        } else {
+            width.saturating_sub(1)
+        };
         let (mut starts, mut counts, mut seg_counts, mut total_vis_lines) =
             self.visual_geometry(est_content_width);
 
-        let has_scrollbar = total_vis_lines > vh && vh > 2;
+        let has_scrollbar = !self.raw_diff && total_vis_lines > vh && vh > 2;
         let content_width = if has_scrollbar {
             width.saturating_sub(1)
         } else {
             width
         };
+        self.terminal_width = width;
         self.last_content_width = content_width;
 
         if !has_scrollbar && content_width != est_content_width {
@@ -811,31 +806,21 @@ impl AppState {
                             "\x1b[38;5;242m      \x1b[39m".to_string()
                         };
                         let rendered_row = if self.raw_diff {
-                            let marker_len = if r.kind == crate::parse::RowKind::Sep {
-                                0
+                            let (prefix_str, text_cols) = if r.kind == crate::parse::RowKind::Sep {
+                                ("", content_width.max(1))
                             } else {
-                                1
+                                (pfx.as_str(), content_width.saturating_sub(6).max(1))
                             };
-                            let marker_str = if r.kind == crate::parse::RowKind::Sep {
-                                ""
-                            } else if s_idx == 0 {
-                                match r.kind {
-                                    crate::parse::RowKind::Add => "+",
-                                    crate::parse::RowKind::Del => "-",
-                                    _ => " ",
-                                }
-                            } else {
-                                " "
-                            };
-                            let text_cols = content_width.saturating_sub(marker_len).max(1);
                             let start_col = s_idx * text_cols;
                             let piece = slice_by_visual_width(&r.text, start_col, text_cols);
+                            let is_last_seg = s_idx + 1 == seg_count;
                             render_raw_row(
                                 r.kind,
-                                marker_str,
+                                prefix_str,
                                 &piece,
                                 is_selected,
                                 in_band && !is_selected,
+                                is_last_seg,
                             )
                         } else {
                             let text_cols = content_width.saturating_sub(6).max(1);
@@ -897,21 +882,24 @@ impl AppState {
             (0, 0)
         };
 
-        for row_i in 0..vh {
-            let line_idx = viewport_start_line + row_i;
-            if line_idx < lines.len() {
-                let vis_w = visible_width(&lines[line_idx]);
-                if vis_w < content_width {
-                    lines[line_idx].push_str(&" ".repeat(content_width - vis_w));
-                }
-                lines[line_idx].push_str("\x1b[0m");
-                if has_scrollbar {
-                    let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size {
-                        "\x1b[38;5;248m█\x1b[0m"
-                    } else {
-                        "\x1b[38;5;236m│\x1b[0m"
-                    };
-                    lines[line_idx].push_str(sb_char);
+        if !self.raw_diff {
+            for row_i in 0..vh {
+                let line_idx = viewport_start_line + row_i;
+                if line_idx < lines.len() {
+                    let vis_w = visible_width(&lines[line_idx]);
+                    if vis_w < content_width {
+                        lines[line_idx].push_str(&" ".repeat(content_width - vis_w));
+                    }
+                    lines[line_idx].push_str("\x1b[0m");
+                    if has_scrollbar {
+                        let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size
+                        {
+                            "\x1b[38;5;248m█\x1b[0m"
+                        } else {
+                            "\x1b[38;5;236m│\x1b[0m"
+                        };
+                        lines[line_idx].push_str(sb_char);
+                    }
                 }
             }
         }
@@ -922,7 +910,7 @@ impl AppState {
         ));
         let ribbon = truncate_pad(
             " [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help",
-            width,
+            width.saturating_sub(1),
         );
         lines.push(format!("\x1b[38;5;244m{ribbon}\x1b[39m"));
 
@@ -958,7 +946,11 @@ impl AppState {
                 out.push_str("\r\n");
             }
             out.push_str(line);
-            out.push_str("\x1b[K\x1b[0m");
+            if i + 1 < lines.len() {
+                out.push_str("\x1b[K\x1b[0m");
+            } else {
+                out.push_str("\x1b[0m");
+            }
         }
         out
     }
@@ -1140,14 +1132,13 @@ impl AppState {
             let r = &item.row;
             if self.raw_diff {
                 use unicode_width::UnicodeWidthStr;
-                let marker_len = if r.kind == crate::parse::RowKind::Sep {
-                    0
+                let text_cols = if r.kind == crate::parse::RowKind::Sep {
+                    content_width.max(1)
                 } else {
-                    1
+                    content_width.saturating_sub(6).max(1)
                 };
-                let cols = content_width.saturating_sub(marker_len).max(1);
                 let len = r.text.width();
-                if len == 0 { 1 } else { len.div_ceil(cols) }
+                if len == 0 { 1 } else { len.div_ceil(text_cols) }
             } else {
                 use unicode_width::UnicodeWidthStr;
                 let text_cols = content_width.saturating_sub(6).max(1);
@@ -1379,21 +1370,100 @@ impl AppState {
         set
     }
 
+    /// Compute the exact visual line position of the cursor in the current
+    /// layout.
+    pub fn cursor_visual_line(&self) -> usize {
+        let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
+            HashMap::new()
+        } else {
+            self.hunk_starts
+                .iter()
+                .map(|h| (h.flat, (h.file, h.hunk)))
+                .collect()
+        };
+        let callouts = self.note_callouts();
+        let width = if self.terminal_width > 0 {
+            self.terminal_width
+        } else if self.last_content_width > 0 {
+            self.last_content_width
+        } else {
+            80
+        };
+        let content_width = if self.raw_diff {
+            width
+        } else {
+            width.saturating_sub(1)
+        };
+
+        let mut vis_i = 0;
+        for (i, item) in self.flat.iter().enumerate() {
+            if div_at.contains_key(&i) {
+                vis_i += 1;
+            }
+            if item.is_file_header {
+                if i == self.row_idx {
+                    return vis_i;
+                }
+                vis_i += 1;
+            } else {
+                let seg_count = self.row_seg_count(i, content_width);
+                if i == self.row_idx {
+                    return vis_i + self.vis_line.min(seg_count.saturating_sub(1));
+                }
+                vis_i += seg_count;
+            }
+            vis_i += callouts.get(&i).map_or(0, Vec::len);
+        }
+        vis_i
+    }
+
     /// Switch between the visual (reflowed) and raw unified-diff
     /// representations, anchoring the cursor at its exact line: capture
-    /// `(file, coord, side)`, rebuild the other view, then jump to the
-    /// equivalent row (same coordinate, preferring the same side).
+    /// `(file, coord, side)`, rebuild the other view, jump to the
+    /// equivalent row (same coordinate, preferring the same side), and
+    /// preserve the visual screen-y pivot position.
     pub fn toggle_raw_diff(&mut self) {
-        let (file, coord, prefer_new) = {
+        let old_vis = self.cursor_visual_line();
+        let screen_y = old_vis.saturating_sub(self.scroll);
+
+        let cur_hunk_hi = self.current_hunk();
+        let is_sep_row = self
+            .current_flat_row()
+            .is_some_and(|fr| fr.row.kind == RowKind::Sep);
+
+        let (file, target_new, target_old) = {
             let Some(row) = self.current_flat_row() else {
                 return;
             };
             let r = &row.row;
-            (
-                row.file_idx,
-                Self::row_coord(r).unwrap_or(0),
-                r.new_line.is_some(),
-            )
+            if r.new_line.is_some() || r.old_line.is_some() {
+                (row.file_idx, r.new_line, r.old_line)
+            } else {
+                let mut neighbor_coord = None;
+                for offset in 1..self.flat.len() {
+                    if self.row_idx >= offset {
+                        let prev = &self.flat[self.row_idx - offset];
+                        if prev.file_idx == row.file_idx
+                            && !prev.is_file_header
+                            && let Some(c) = Self::row_coord(&prev.row)
+                        {
+                            neighbor_coord = Some(c);
+                            break;
+                        }
+                    }
+                    if self.row_idx + offset < self.flat.len() {
+                        let next = &self.flat[self.row_idx + offset];
+                        if next.file_idx == row.file_idx
+                            && !next.is_file_header
+                            && let Some(c) = Self::row_coord(&next.row)
+                        {
+                            neighbor_coord = Some(c);
+                            break;
+                        }
+                    }
+                }
+                (row.file_idx, neighbor_coord, neighbor_coord)
+            }
         };
         let (flat, hunk_starts) = if self.raw_diff {
             Self::build_visual_flat(&self.output, &self.collapsed_files)
@@ -1402,9 +1472,123 @@ impl AppState {
         };
         self.flat = flat;
         self.hunk_starts = hunk_starts;
+        let was_raw = self.raw_diff;
         self.raw_diff = !self.raw_diff;
         self.anchor = None;
-        self.goto_coord(file, coord, prefer_new);
+
+        let mut idx = None;
+        if is_sep_row
+            && let Some(hi) = cur_hunk_hi
+            && let Some(hs) = self
+                .hunk_starts
+                .iter()
+                .find(|h| h.file == file && h.hunk == hi)
+        {
+            if was_raw {
+                // Transitioning from raw to visual: use preceding gap row if present
+                if hs.flat > 0
+                    && self
+                        .flat
+                        .get(hs.flat - 1)
+                        .is_some_and(|fr| fr.row.kind == RowKind::Sep)
+                {
+                    idx = Some(hs.flat - 1);
+                } else {
+                    idx = Some(hs.flat);
+                }
+            } else {
+                // Transitioning from visual to raw: use hunk_start separator row
+                idx = Some(hs.flat);
+            }
+        }
+        // Priority 1: Match on old_line if coming from a deletion
+        if target_new.is_none()
+            && let Some(target_ol) = target_old
+        {
+            for (i, item) in self.flat.iter().enumerate() {
+                if item.file_idx == file && item.row.old_line == Some(target_ol) {
+                    idx = Some(i);
+                    break;
+                }
+            }
+        }
+        // Priority 2: Match on new_line if coming from an addition/context/mod
+        if idx.is_none()
+            && let Some(target_nl) = target_new
+        {
+            for (i, item) in self.flat.iter().enumerate() {
+                if item.file_idx == file && item.row.new_line == Some(target_nl) {
+                    idx = Some(i);
+                    break;
+                }
+            }
+        }
+        // Priority 3: Match on old_line as fallback
+        if idx.is_none()
+            && let Some(target_ol) = target_old
+        {
+            for (i, item) in self.flat.iter().enumerate() {
+                if item.file_idx == file && item.row.old_line == Some(target_ol) {
+                    idx = Some(i);
+                    break;
+                }
+            }
+        }
+        // Priority 4: Cross-side fallback
+        if idx.is_none() {
+            let coord = target_new.or(target_old);
+            if let Some(c) = coord {
+                for (i, item) in self.flat.iter().enumerate() {
+                    if item.file_idx == file
+                        && (item.row.new_line == Some(c) || item.row.old_line == Some(c))
+                    {
+                        idx = Some(i);
+                        break;
+                    }
+                }
+            }
+        }
+        // Priority 5: Proximity fallback (closest line in the same file if target is in
+        // a gap)
+        if idx.is_none() {
+            let target = target_new.or(target_old).unwrap_or(0);
+            let mut best = None;
+            let mut best_diff = u32::MAX;
+            for (i, item) in self.flat.iter().enumerate() {
+                if item.file_idx != file || item.is_file_header {
+                    continue;
+                }
+                if let Some(c) = Self::row_coord(&item.row) {
+                    let diff = target.abs_diff(c);
+                    if diff < best_diff {
+                        best_diff = diff;
+                        best = Some(i);
+                    }
+                }
+            }
+            idx = best;
+        }
+        let idx = idx.unwrap_or_else(|| self.first_row_of_file(file));
+        self.row_idx = idx;
+        self.vis_line = 0;
+
+        let new_vis = self.cursor_visual_line();
+        let width = if self.terminal_width > 0 {
+            self.terminal_width
+        } else if self.last_content_width > 0 {
+            self.last_content_width
+        } else {
+            80
+        };
+        let content_width = if self.raw_diff {
+            width
+        } else {
+            width.saturating_sub(1)
+        };
+        let (_, _, _, total_vis_lines) = self.visual_geometry(content_width);
+        let max_rows = self.viewport_height.max(1);
+        let max_scroll = total_vis_lines.saturating_sub(max_rows);
+        self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
     }
 
     pub fn toggle_file_collapse(&mut self, fi: usize) {
@@ -2147,10 +2331,8 @@ index 1111111..2222222 100644
             std::env::temp_dir().join("diffuse-test-notes.json"),
         );
         assert_eq!(state.hunk_starts.len(), 2, "both hunks must be located");
-        assert_eq!(state.current_hunk(), Some(0));
-
-        // From above hunk 1, next jumps to hunk 1's start (reference
-        // gotoHunk = first hunk start after the cursor).
+        // Start from file header (row 0), next jumps to hunk 1's start
+        state.row_idx = 0;
         state.next_hunk();
         assert_eq!(state.current_hunk(), Some(0));
 
@@ -2246,12 +2428,12 @@ index 1111111..2222222 100644
         let frame = state.render_frame(120, 40);
         assert!(frame.contains("@@ -1025,6 +1025,8 @@"), "raw @@ header");
         assert!(
-            frame.contains("\x1b[38;5;203m- "),
-            "raw deleted lines render red"
+            frame.contains("\x1b[38;5;203m-\x1b[39m\x1b[23m\x1b[38;5;203m"),
+            "raw deleted lines render red marker and red text"
         );
         assert!(
-            frame.contains("\x1b[38;5;120m+ "),
-            "raw added lines render green"
+            frame.contains("\x1b[38;5;120m+\x1b[39m\x1b[23m\x1b[38;5;120m"),
+            "raw added lines render green marker and green text"
         );
     }
 
@@ -2338,6 +2520,7 @@ index 1111111..2222222 100644
                     moved: false,
                 }],
             }],
+            raw_hunks: Vec::new(),
             counts: crate::counts::FileCounts {
                 adds: 1,
                 dels: 0,
@@ -2533,12 +2716,12 @@ index 1111111..2222222 100644
 
         let frame = state.render_frame(50, 20);
         assert!(
-            frame.contains("\x1b[38;5;120m+very long line"),
-            "segment 0 must start with + marker"
+            frame.contains("\x1b[38;5;120m+\x1b[39m\x1b[23m\x1b[38;5;120mvery long line"),
+            "segment 0 must start with gutter line number and + marker followed by green text"
         );
         assert!(
-            frame.contains("\x1b[38;5;120m "),
-            "continuation segments must start with space prefix and green foreground"
+            frame.contains("\x1b[38;5;242m      \x1b[39m\x1b[38;5;120m"),
+            "continuation segments must start with 6-space gutter and green foreground"
         );
     }
 
@@ -2639,5 +2822,573 @@ index 1111111..2222222 100644
         state.page_up(); // to top
         state.page_up(); // scroll 1/3
         assert_eq!(state.scroll, raw_scroll);
+    }
+
+    #[test]
+    fn test_raw_diff_exact_input_reproduction() {
+        let diff = r#"diff --git a/cache.rs b/cache.rs
+index 1111111..2222222 100644
+--- a/cache.rs
++++ b/cache.rs
+@@ -1,4 +1,4 @@
+-fn a() {
+-    let x = 1;
+-    let y = 2;
++fn a() {
++    let x = 10;
++    let y = 20;
+ }
+"#;
+        let contents = [(
+            "cache.rs".to_string(),
+            "fn a() {\n    let x = 10;\n    let y = 20;\n}\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let old_contents = [(
+            "cache.rs".to_string(),
+            "fn a() {\n    let x = 1;\n    let y = 2;\n}\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+
+        let out = crate::bin_pipeline::run_pipeline_full(
+            diff,
+            &contents,
+            Some(&old_contents),
+            None,
+            None,
+        );
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-raw-group.json"),
+        );
+        state.toggle_raw_diff();
+        assert!(state.raw_diff);
+
+        let kinds: Vec<crate::parse::RowKind> = state
+            .flat
+            .iter()
+            .filter(|r| !r.is_file_header && r.row.kind != crate::parse::RowKind::Sep)
+            .map(|r| r.row.kind)
+            .collect();
+
+        // Exact match with diff input: 3 deletions, 3 additions, 1 context line
+        assert_eq!(
+            kinds,
+            vec![
+                crate::parse::RowKind::Del,
+                crate::parse::RowKind::Del,
+                crate::parse::RowKind::Del,
+                crate::parse::RowKind::Add,
+                crate::parse::RowKind::Add,
+                crate::parse::RowKind::Add,
+                crate::parse::RowKind::Ctx,
+            ],
+            "raw diff must reproduce the exact hunk row sequence from the input diff"
+        );
+    }
+
+    #[test]
+    fn test_toggle_raw_diff_preserves_cursor_screen_pivot() {
+        let mut diff = String::from(
+            "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,40 +1,40 @@\n",
+        );
+        let mut lines = Vec::new();
+        for i in 1..=50 {
+            if i == 25 {
+                diff.push_str("- line 25\n+ line 25 mod\n");
+                lines.push(" line 25 mod".to_string());
+            } else {
+                diff.push_str(&format!(" line {i}\n"));
+                lines.push(format!(" line {i}"));
+            }
+        }
+        let contents = [("test.rs".to_string(), lines.join("\n") + "\n")]
+            .into_iter()
+            .collect();
+        let out = crate::bin_pipeline::run_pipeline_full(&diff, &contents, None, None, None);
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-pivot.json"),
+        );
+        state.viewport_height = 10;
+        state.last_content_width = 80;
+        state.render_frame(80, 10);
+
+        // Position cursor at modified line (row 7) and scroll down by 2
+        state.scroll = 2;
+        state.row_idx = 7;
+        let visual_screen_y = state.cursor_visual_line().saturating_sub(state.scroll);
+
+        state.toggle_raw_diff();
+        assert!(state.raw_diff);
+
+        let raw_screen_y = state.cursor_visual_line().saturating_sub(state.scroll);
+        assert_eq!(
+            visual_screen_y, raw_screen_y,
+            "cursor screen-y position relative to viewport top must be preserved across raw diff toggle"
+        );
+
+        // Toggle back and verify round-trip stability
+        state.toggle_raw_diff();
+        assert!(!state.raw_diff);
+        let roundtrip_screen_y = state.cursor_visual_line().saturating_sub(state.scroll);
+        assert_eq!(
+            visual_screen_y, roundtrip_screen_y,
+            "cursor screen-y position must match after roundtrip toggle"
+        );
+    }
+
+    #[test]
+    fn test_raw_diff_no_right_padding_or_scrollbar() {
+        let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,3 +1,3 @@
+-let short = 1;
++let short = 2;
+"#;
+        let contents = [("test.rs".to_string(), "let short = 2;\n".to_string())]
+            .into_iter()
+            .collect();
+        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-no-pad.json"),
+        );
+        state.viewport_height = 20;
+        state.toggle_raw_diff();
+        assert!(state.raw_diff);
+
+        let frame = state.render_frame(80, 20);
+        let lines: Vec<&str> = frame.lines().collect();
+
+        // Check the diff rows (excluding banner/ribbon)
+        for line in &lines[1..3] {
+            // Must not contain scrollbar characters
+            assert!(
+                !line.contains('█') && !line.contains('│'),
+                "raw diff must not draw scrollbar"
+            );
+            // Must not be right-padded with 50+ trailing spaces before \x1b[K
+            assert!(
+                !line.contains("                                                  "),
+                "raw diff must not right-pad with spaces"
+            );
+        }
+    }
+
+    #[test]
+    fn test_raw_diff_wrapped_line_no_false_trailing_highlight() {
+        let diff = r#"diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,1 +1,1 @@
++6. Segment Rule: Each upper captures the contiguous run of read-only layers directly beneath it.
+"#;
+        let contents = [(
+            "test.rs".to_string(),
+            "6. Segment Rule: Each upper captures the contiguous run of read-only layers directly beneath it.\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let out = crate::bin_pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-wrapped.json"),
+        );
+        state.viewport_height = 20;
+        state.toggle_raw_diff();
+        assert!(state.raw_diff);
+
+        // Render at width 40 so the line wraps into multiple segments
+        let frame = state.render_frame(40, 20);
+        let lines: Vec<&str> = frame.lines().collect();
+
+        // The first segment of the wrapped line must not contain green background
+        // highlight \x1b[48;5;28m
+        for line in &lines[2..4] {
+            assert!(
+                !line.contains("\x1b[48;5;28m"),
+                "wrapped line segments without trailing spaces must not highlight intermediate spaces: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
+        let diff = r#"diff --git a/cache.rs b/cache.rs
+--- a/cache.rs
++++ b/cache.rs
+@@ -80,5 +86,5 @@
+  context line 80
+  context line 81
+-/// LRU cache for path resolution results with modtime validation.
++/// LRU cache for path resolution results with modtime validation and
+  context line 83
+  context line 84
+"#;
+        let contents = [(
+            "cache.rs".to_string(),
+            "context line 80\ncontext line 81\n/// LRU cache for path resolution results with modtime validation and\ncontext line 83\ncontext line 84\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let old_contents = [(
+            "cache.rs".to_string(),
+            "context line 80\ncontext line 81\n/// LRU cache for path resolution results with modtime validation.\ncontext line 83\ncontext line 84\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let out = crate::bin_pipeline::run_pipeline_full(
+            diff,
+            &contents,
+            Some(&old_contents),
+            None,
+            None,
+        );
+        let mut state = AppState::new(
+            out,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-del-to-mod.json"),
+        );
+        state.viewport_height = 20;
+
+        // Switch to raw diff
+        state.toggle_raw_diff();
+        assert!(state.raw_diff);
+
+        // Find the deleted line in raw diff (old_line = Some(82))
+        let del_idx = state
+            .flat
+            .iter()
+            .position(|r| r.row.kind == crate::parse::RowKind::Del && r.row.old_line == Some(82))
+            .expect("must find deleted line 82 in raw diff");
+        state.row_idx = del_idx;
+
+        // Hit R to toggle back to visual diff
+        state.toggle_raw_diff();
+        assert!(!state.raw_diff);
+
+        let current_row = &state.flat[state.row_idx];
+        assert!(
+            !current_row.is_file_header,
+            "must not jump to file header row"
+        );
+        assert_eq!(
+            current_row.row.old_line,
+            Some(82),
+            "selected row in visual diff must have old_line 82"
+        );
+        assert_eq!(
+            current_row.row.new_line,
+            Some(88),
+            "selected row in visual diff must be the merged mod line 88"
+        );
+    }
+
+    #[test]
+    fn test_cache_rs_lines_115_and_141_stick_to_screen() {
+        let diff = r#"diff --git a/src/tracer/vfs/cache.rs b/src/tracer/vfs/cache.rs
+index 6f6222d..4aa7a1d 100644
+--- a/src/tracer/vfs/cache.rs
++++ b/src/tracer/vfs/cache.rs
+@@ -1,7 +1,13 @@
+-use std::{cell::RefCell, num::NonZeroUsize, os::unix::fs::MetadataExt, path::PathBuf};
++use std::{
++    cell::RefCell,
++    num::NonZeroUsize,
++    os::unix::fs::MetadataExt,
++    path::PathBuf,
++    sync::atomic::{AtomicU64, Ordering},
++};
+
+ use lru::LruCache;
+
+ use super::{Intent, Links, ResolutionResult};
+
+ // ── Cache Key
+@@ -76,55 +82,104 @@ impl ResolutionFingerprint {
+ }
+
+ // ── Resolution Cache ────────────────────────────────────────────────────────
+
+ const DEFAULT_CAPACITY: usize = 2048;
+
+-/// LRU cache for path resolution results with modtime validation.
++/// LRU cache for path resolution results with modtime validation and
++/// **epoch-based invalidation**.
++///
++/// Every entry is tagged with the epoch snapshot taken when its resolution
++/// *started* (`VFS::resolve` reads the epoch before lookup). A mode flip /
++/// mount mutation bumps the epoch atomically:
++///
++/// - `lookup` rejects any entry whose tag differs from the caller's snapshot
++///   — a result computed under a pre-flip mount state is never served.
++/// - `insert` drops any entry whose tag is stale *at insert time* — a
++///   resolution that started before a flip but finishes its (possibly
++///   copy-up) computation after the bump cannot re-populate the cache with a
++///   pre-flip result (the in-flight-insert race). The epoch read at resolve
++///   start is the coherence anchor: an insert under an old epoch means the
++///   computation spanned a flip, so the result is discarded.
++///
++/// The epoch is a single `AtomicU64` — when the VFS becomes shared
++/// (multi-threaded multi-guest, plan/TOKIO_MULTITHREADED_HYPERVISOR.md) the
++/// bump stays a single atomic store; the `set_mode` + bump pair must then sit
++/// in one critical section (the per-guest `Mutex` from phase M2).
+ #[derive(Debug)]
+ pub(super) struct ResolutionCache {
+     cache: RefCell<LruCache<CacheKey, ResolutionFingerprint>>,
+-    results: RefCell<LruCache<CacheKey, ResolutionResult>>,
++    results: RefCell<LruCache<CacheKey, (u64, ResolutionResult)>>,
++    epoch: AtomicU64,
+ }
+
+ impl Clone for ResolutionCache {
+     fn clone(&self) -> Self {
+         Self {
+             cache: RefCell::new(LruCache::new(NonZeroUsize::new(DEFAULT_CAPACITY).unwrap())),
+             results: RefCell::new(LruCache::new(NonZeroUsize::new(DEFAULT_CAPACITY).unwrap())),
++            epoch: AtomicU64::new(self.epoch.load(Ordering::Relaxed)),
+         }
+     }
+ }
+
+ impl ResolutionCache {
+     pub fn new() -> Self {
+         Self {
+             cache: RefCell::new(LruCache::new(NonZeroUsize::new(DEFAULT_CAPACITY).unwrap())),
+             results: RefCell::new(LruCache::new(NonZeroUsize::new(DEFAULT_CAPACITY).unwrap())),
++            epoch: AtomicU64::new(0),
+         }
+     }
+
+-    pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {
++    /// Current epoch. A resolution must snapshot this *before* its first
++    /// lookup and pass it to both `lookup` and `insert`.
++    pub fn epoch(&self) -> u64 {
++        self.epoch.load(Ordering::Relaxed)
++    }
++
++    pub fn lookup(&self, key: &CacheKey, epoch: u64) -> Option<ResolutionResult> {
+         let fingerprint = self.cache.borrow().peek(key)?.clone();
+-        if fingerprint.is_valid() {
+-            return self.results.borrow_mut().get(key).cloned();
++        if !fingerprint.is_valid() {
++            self.cache.borrow_mut().pop(key);
++            self.results.borrow_mut().pop(key);
++            return None;
+         }
+-        self.cache.borrow_mut().pop(key);
+-        self.results.borrow_mut().pop(key);
+-        None
++        let (entry_epoch, result) = self.results.borrow_mut().get(key)?.clone();
++        if entry_epoch != epoch {
++            // Computed under an older mount state: the epoch bump (mode flip,
++            // mount mutation) invalidated it.
++            self.cache.borrow_mut().pop(key);
++            self.results.borrow_mut().pop(key);
++            return None;
+         }
+         Some(result)
+     }
+
+     pub fn insert(
+         &self,
+         key: CacheKey,
+         result: ResolutionResult,
+         fingerprint: ResolutionFingerprint,
++        epoch: u64,
+     ) {
++        // The epoch read at resolve start is the coherence anchor. If it is
++        // already stale, the computation spanned a mode flip / mount change —
++        // discard the result rather than cache a mixed-state entry.
++        if self.epoch.load(Ordering::Relaxed) != epoch {
++            return;
++        }
+         self.cache.borrow_mut().put(key.clone(), fingerprint);
+-        self.results.borrow_mut().put(key, result);
++        self.results.borrow_mut().put(key, (epoch, result));
+     }
+
++    /// Invalidate every cached entry. Epoch-based: a single atomic bump makes
++    /// all entries computed under an older epoch stale at lookup — race-free
++    /// even against an in-flight resolution inserting after this call (the
++    /// insert carries the pre-bump epoch and is dropped or never served).
++    /// The physical clear additionally bounds memory.
+     pub fn clear(&self) {
++        self.epoch.fetch_add(1, Ordering::Relaxed);
+         self.cache.borrow_mut().clear();
+         self.results.borrow_mut().clear();
+     }
+ }
+"#;
+        let out = if let Ok(git_res) = crate::git::load_git_repo(
+            std::path::Path::new("/home/daniel/lab/mirage.work"),
+            &[],
+            &[],
+            false,
+            6,
+        ) {
+            crate::bin_pipeline::run_pipeline_full(
+                &git_res.diff_text,
+                &git_res.contents,
+                Some(&git_res.old_contents),
+                None,
+                Some("mirage"),
+            )
+        } else {
+            crate::bin_pipeline::run_pipeline_full(
+                diff,
+                &std::collections::HashMap::new(),
+                None,
+                None,
+                None,
+            )
+        };
+        let mut state = AppState::new(
+            out,
+            "mirage".into(),
+            std::env::temp_dir().join("diffuse-test-cache-lines.json"),
+        );
+
+        // Exact reproduction test matching user's terminal geometry (74 rows, 300 cols)
+        // on mirage.work
+        let vis_idx_115 = state
+            .flat
+            .iter()
+            .position(|r| r.file_idx == 3 && r.row.new_line == Some(115))
+            .unwrap_or_else(|| {
+                state
+                    .flat
+                    .iter()
+                    .position(|r| r.row.new_line == Some(115))
+                    .unwrap_or_else(|| panic!("must find line 115"))
+            });
+        state.row_idx = vis_idx_115;
+        state.vis_line = 0;
+
+        // Set scroll so line 90 is at the top of the viewport (matching visual
+        // screenshot)
+        let vis_idx_90 = state
+            .flat
+            .iter()
+            .position(|r| {
+                r.file_idx == state.flat[vis_idx_115].file_idx && r.row.new_line == Some(90)
+            })
+            .unwrap_or_else(|| panic!("must find line 90"));
+        state.scroll = state.visual_geometry(300).0[vis_idx_90];
+
+        let frame_vis = state.render_frame(300, 74);
+        let vis_cursor_line = frame_vis
+            .lines()
+            .enumerate()
+            .skip(2)
+            .find(|(_, l)| l.contains("115") && l.contains("ResolutionCache"))
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| panic!("line 115 not in visual frame"));
+
+        state.toggle_raw_diff();
+        let frame_raw = state.render_frame(300, 74);
+        let raw_cursor_line = frame_raw
+            .lines()
+            .enumerate()
+            .skip(2)
+            .find(|(_, l)| l.contains("115") && l.contains("ResolutionCache"))
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| panic!("line 115 not in raw frame"));
+
+        assert_eq!(
+            vis_cursor_line, raw_cursor_line,
+            "line 115 cursor screen line must not jump on 74x300 terminal: vis={vis_cursor_line}, raw={raw_cursor_line}"
+        );
+
+        // Switch back to visual mode for the loop test
+        if state.raw_diff {
+            state.toggle_raw_diff();
+        }
+
+        // Test line 115 and line 141 specifically, across different viewport heights
+        // and scroll positions
+        for target_line in [115, 141] {
+            for vh in [25, 30, 40, 50] {
+                let vis_idx = state
+                    .flat
+                    .iter()
+                    .position(|r| {
+                        r.row.new_line == Some(target_line) || r.row.old_line == Some(target_line)
+                    })
+                    .unwrap_or_else(|| panic!("must find line {target_line} in visual flat"));
+                state.row_idx = vis_idx;
+                state.vis_line = 0;
+                state.scroll = 0;
+
+                let _ = state.render_frame(120, vh);
+                let vis_screen_y = state.cursor_visual_line().saturating_sub(state.scroll);
+
+                state.toggle_raw_diff();
+                let _ = state.render_frame(120, vh);
+                let raw_screen_y = state.cursor_visual_line().saturating_sub(state.scroll);
+
+                assert_eq!(
+                    vis_screen_y, raw_screen_y,
+                    "line {target_line} (vh={vh}) screen Y must match on toggle to raw: vis={vis_screen_y}, raw={raw_screen_y}"
+                );
+
+                state.toggle_raw_diff();
+                let _ = state.render_frame(120, vh);
+                let roundtrip_screen_y = state.cursor_visual_line().saturating_sub(state.scroll);
+
+                assert_eq!(
+                    vis_screen_y, roundtrip_screen_y,
+                    "line {target_line} (vh={vh}) screen Y must match on roundtrip toggle: vis={vis_screen_y}, roundtrip={roundtrip_screen_y}"
+                );
+            }
+        }
+
+        // Test line 115 in raw diff
+        if !state.raw_diff {
+            state.toggle_raw_diff();
+        }
+        assert!(state.raw_diff);
+
+        let raw_idx_115 = state
+            .flat
+            .iter()
+            .position(|r| r.row.new_line == Some(115))
+            .unwrap_or_else(|| panic!("must find line 115 in raw flat"));
+        state.row_idx = raw_idx_115;
+        state.scroll = 30;
+
+        let frame_raw_115 = state.render_frame(120, 30);
+        let raw_115_cursor_line = frame_raw_115
+            .lines()
+            .enumerate()
+            .skip(2)
+            .find(|(_, l)| l.contains("\x1b[48;5;237m"))
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| panic!("raw 115 cursor line not found"));
+
+        state.toggle_raw_diff();
+        assert!(!state.raw_diff);
+
+        let frame_vis_115 = state.render_frame(120, 30);
+        let vis_115_cursor_line = frame_vis_115
+            .lines()
+            .enumerate()
+            .skip(2)
+            .find(|(_, l)| l.contains("\x1b[48;5;237m"))
+            .map(|(i, _)| i)
+            .unwrap_or_else(|| panic!("visual 115 cursor line not found"));
+
+        assert_eq!(
+            raw_115_cursor_line, vis_115_cursor_line,
+            "cursor screen line on line 115 must not move when switching from raw to visual diff"
+        );
     }
 }

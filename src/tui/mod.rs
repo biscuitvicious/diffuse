@@ -27,14 +27,26 @@ pub fn run_interactive_tui(
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
     let mut state = AppState::new(output, repo, notes_path).with_repo_context(repo_root, git_args);
+    let mut dirty = true;
+    let mut last_size = guard.size();
 
     while !state.should_quit {
-        let (width, height) = guard.size();
-        let frame = state.render_frame(width as usize, height as usize);
-        guard.write_frame(&frame)?;
+        let size = guard.size();
+        if size != last_size {
+            dirty = true;
+            last_size = size;
+        }
 
-        if let Some(event) = guard.poll_event(Duration::from_millis(50))? {
+        if dirty {
+            let (width, height) = size;
+            let frame = state.render_frame(width as usize, height as usize);
+            guard.write_frame(&frame)?;
+            dirty = false;
+        }
+
+        if let Some(event) = guard.poll_event(Duration::from_millis(100))? {
             handle_event(&mut state, event);
+            dirty = true;
         }
 
         if let Some(req) = state.pending_editor.take() {
@@ -44,6 +56,7 @@ pub fn run_interactive_tui(
             let _ = editor::open_editor(&req.file, req.line, req.range, &repo_root);
             let _ = guard.resume();
             let _ = actions::reload_diff(&mut state, &repo_root, &git_args);
+            dirty = true;
         }
     }
 

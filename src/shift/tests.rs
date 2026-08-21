@@ -99,6 +99,7 @@ fn test_inline_hunk_merging() {
         old_line_count: 50,
         old_content: (1..=50).map(|i| format!("line {i}")).collect(),
         new_content: (1..=50).map(|i| format!("line {i}")).collect(),
+        raw_hunks: Vec::new(),
         hunks: vec![
             Hunk {
                 old_start: 10,
@@ -175,6 +176,7 @@ fn test_context_budget_normalization() {
         old_line_count: 30,
         old_content: (1..=30).map(|i| format!("line {i}")).collect(),
         new_content: (1..=30).map(|i| format!("line {i}")).collect(),
+        raw_hunks: Vec::new(),
         hunks: vec![Hunk {
             old_start: 10,
             old_count: 1,
@@ -240,6 +242,7 @@ fn test_normalize_and_merge_hunks() {
         old_line_count: 50,
         old_content: (1..=50).map(|i| format!("line {i}")).collect(),
         new_content: (1..=50).map(|i| format!("line {i}")).collect(),
+        raw_hunks: Vec::new(),
         hunks: vec![
             Hunk {
                 old_start: 10,
