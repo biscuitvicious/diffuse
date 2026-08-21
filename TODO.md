@@ -5,8 +5,7 @@
 - [x] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
 - [ ] **CLI UX & subcommands**: Remove raw `JSON | stdin` default mode in favor of explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse --pager`).
-- [x] **Automatic repository discovery**: If invoked without a repository path parameter, discover the git repository root in the current working directory or its ancestors.
-- [ ] **Direct git access via git crate**: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`).
+- [ ] ~~**Direct git access via git crate**: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`).~~ (See [Native Git Engine & Asynchronous Repository Loader](plan/Native%20Git%20Engine%20&%20Async%20Loader.md))
 
 ## 2. Streaming Pipeline & Incremental Loading (Pi Extension & Engine)
 - [ ] ~~**Incremental file streaming**: Append and render each file as it arrives from the backend rather than waiting for the entire multi-file diff to finish processing.~~ (See [Incremental Streaming Pipeline & Worker Pool](plan/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
