@@ -173,6 +173,236 @@ pub fn load_git_blobs_batch(repo_root: &Path, specs: &[String]) -> HashMap<Strin
     results
 }
 
+/// Load file blob contents directly using the native `gix` object database,
+/// falling back to `load_git_blobs_batch` on error.
+pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<String, String> {
+    let Ok(repo) = gix::open(repo_root) else {
+        return load_git_blobs_batch(repo_root, specs);
+    };
+
+    let mut results = HashMap::with_capacity(specs.len());
+    let mut tree_cache: HashMap<String, gix::Tree<'_>> = HashMap::new();
+
+    for spec in specs {
+        let Some((ref_str, path)) = spec.split_once(':') else {
+            continue;
+        };
+
+        let tree_opt = if let Some(t) = tree_cache.get(ref_str) {
+            Some(t.clone())
+        } else {
+            let res: Result<gix::Tree<'_>, Box<dyn std::error::Error>> = (|| {
+                let id = repo.rev_parse_single(ref_str)?;
+                let obj = repo.find_object(id)?;
+                let commit = obj.peel_to_commit()?;
+                let tree = commit.tree()?;
+                Ok(tree)
+            })();
+            match res {
+                Ok(tree) => {
+                    tree_cache.insert(ref_str.to_string(), tree.clone());
+                    Some(tree)
+                }
+                Err(_) => None,
+            }
+        };
+
+        if let Some(tree) = tree_opt
+            && let Ok(Some(entry)) = tree.lookup_entry_by_path(path)
+            && let Ok(obj) = entry.object()
+            && let Ok(text) = String::from_utf8(obj.data.to_vec()) {
+                results.insert(spec.clone(), text);
+            }
+    }
+
+    // If any specs were not found in the gix ODB (e.g. unreferenced index blobs),
+    // fill in missing ones via batch loader
+    if results.len() < specs.len() {
+        let missing: Vec<String> = specs
+            .iter()
+            .filter(|s| !results.contains_key(*s))
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            let fallback_blobs = load_git_blobs_batch(repo_root, &missing);
+            results.extend(fallback_blobs);
+        }
+    }
+
+    results
+}
+
+///// Progressive streaming producer for git diff and blob retrieval.
+/// Directly emits `FileJob`s to `StreamingProducer` as each file's diff chunk
+/// is encountered.
+pub fn stream_git_repo_to_producer(
+    repo_root: &Path,
+    base_args: &[String],
+    paths: &[String],
+    cached: bool,
+    context: usize,
+    producer: crate::streaming::StreamingProducer,
+    meta_tx: &std::sync::mpsc::Sender<Result<crate::streaming::GitRepoMeta, String>>,
+) {
+    if run_git(repo_root, &["rev-parse", "--is-inside-work-tree"]).is_none() {
+        let _ = meta_tx.send(Err(format!(
+            "not a git repository (or any of the parent directories): {}",
+            repo_root.display()
+        )));
+        producer.finish();
+        return;
+    }
+
+    let branch = run_git(repo_root, &["branch", "--show-current"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    let mut untracked_skipped = Vec::new();
+    let refs = resolve_refs(repo_root, base_args, cached);
+
+    let mut diff_cmd = vec![
+        "diff".to_string(),
+        format!("-U{context}"),
+        "-M".to_string(),
+        "--no-color".to_string(),
+    ];
+    diff_cmd.extend(base_args.iter().cloned());
+    diff_cmd.push("--".to_string());
+    diff_cmd.extend(paths.iter().cloned());
+
+    let mut child = match Command::new("git")
+        .args(&diff_cmd)
+        .current_dir(repo_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = meta_tx.send(Err(format!("failed to spawn git diff: {e}")));
+            producer.finish();
+            return;
+        }
+    };
+
+    let stdout = BufReader::new(child.stdout.take().expect("git diff stdout"));
+    let mut current_chunk = String::new();
+    let mut file_idx = 0;
+
+    let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
+
+    let emit_chunk = |chunk: &str, idx: &mut usize| {
+        if chunk.trim().is_empty() {
+            return;
+        }
+        let parsed_files = crate::parse::parse_diff(chunk);
+        for f in parsed_files {
+            let mut new_c = None;
+            let mut old_c = None;
+
+            if f.status != crate::parse::FileStatus::Deleted {
+                if refs.worktree_new {
+                    let new_abs = repo_root.join(&f.path);
+                    if let Ok(c) = fs::read_to_string(&new_abs) {
+                        new_c = Some(c);
+                    }
+                } else if let Some(new_ref) = &refs.new_ref {
+                    let spec = format!("{new_ref}:{}", f.path);
+                    let blobs = load_git_blobs_native(repo_root, std::slice::from_ref(&spec));
+                    new_c = blobs.get(&spec).cloned();
+                }
+            }
+
+            let has_dels = f.hunks.iter().any(|h| {
+                h.rows
+                    .iter()
+                    .any(|r| matches!(r, crate::parse::Row::Del(_)))
+            });
+            let needs_old =
+                f.status == crate::parse::FileStatus::Deleted || has_dels || new_c.is_none();
+            if needs_old {
+                let spec = format!("{old_tree_ref}:{}", f.path);
+                let blobs = load_git_blobs_native(repo_root, std::slice::from_ref(&spec));
+                if let Some(c) = blobs.get(&spec) {
+                    if new_c.is_none() && f.status != crate::parse::FileStatus::Deleted {
+                        new_c = Some(c.clone());
+                    }
+                    old_c = Some(c.clone());
+                }
+            }
+
+            producer.push(crate::streaming::FileJob {
+                idx: *idx,
+                file: f,
+                new_content: new_c,
+                old_content: old_c,
+                diff_fallback: Some(chunk.to_string()),
+            });
+            *idx += 1;
+        }
+    };
+
+    for line in stdout.lines() {
+        let Ok(line) = line else { break };
+        if line.starts_with("diff --git ") && !current_chunk.is_empty() {
+            emit_chunk(&current_chunk, &mut file_idx);
+            current_chunk.clear();
+        }
+        current_chunk.push_str(&line);
+        current_chunk.push('\n');
+    }
+
+    if !current_chunk.is_empty() {
+        emit_chunk(&current_chunk, &mut file_idx);
+    }
+
+    let _ = child.wait();
+
+    // Untracked files
+    if !cached {
+        let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
+        if !paths.is_empty() {
+            ls_args.push("--");
+            ls_args.extend(paths.iter().map(String::as_str));
+        }
+        if let Some(ut) = run_git(repo_root, &ls_args) {
+            for rel in ut.lines().filter(|s| !s.is_empty()) {
+                let abs = repo_root.join(rel);
+                let content = match fs::read_to_string(&abs) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                if content.contains('\0') {
+                    untracked_skipped.push(rel.to_string());
+                    continue;
+                }
+                let line_count = content.lines().count();
+                let synthetic_diff = format!(
+                    "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{line_count} @@\n"
+                );
+                let parsed_files = crate::parse::parse_diff(&synthetic_diff);
+                for mut f in parsed_files {
+                    f.status = crate::parse::FileStatus::Untracked;
+                    producer.push(crate::streaming::FileJob {
+                        idx: file_idx,
+                        file: f,
+                        new_content: Some(content.clone()),
+                        old_content: None,
+                        diff_fallback: Some(synthetic_diff.clone()),
+                    });
+                    file_idx += 1;
+                }
+            }
+        }
+    }
+
+    let _ = meta_tx.send(Ok(crate::streaming::GitRepoMeta {
+        branch,
+        untracked_skipped,
+    }));
+    producer.finish();
+}
+
 pub fn load_git_repo(
     repo_root: &Path,
     base_args: &[String],
@@ -335,7 +565,7 @@ pub fn load_git_repo(
         }
     }
 
-    let mut batch_blobs = load_git_blobs_batch(repo_root, &specs_to_fetch);
+    let mut batch_blobs = load_git_blobs_native(repo_root, &specs_to_fetch);
 
     for f in &mut files {
         if f.new_content.is_none()
@@ -524,6 +754,58 @@ mod tests {
             Some("content 1\n")
         );
         assert!(!blobs.contains_key("HEAD:nonexistent.txt"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_load_git_blobs_native() {
+        let dir = std::env::temp_dir().join(format!("diffuse-native-blob-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let run = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+        };
+
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(dir.join("f1.txt"), "hello native\n").unwrap();
+        std::fs::write(dir.join("f2.txt"), "world native\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "native1"]);
+
+        std::fs::write(dir.join("f1.txt"), "hello native mod\n").unwrap();
+        run(&["add", "."]);
+        run(&["commit", "-qm", "native2"]);
+
+        let specs = vec![
+            "HEAD:f1.txt".to_string(),
+            "HEAD:f2.txt".to_string(),
+            "HEAD~1:f1.txt".to_string(),
+            "HEAD:missing.txt".to_string(),
+        ];
+
+        let blobs = load_git_blobs_native(&dir, &specs);
+        assert_eq!(
+            blobs.get("HEAD:f1.txt").map(|s| s.as_str()),
+            Some("hello native mod\n")
+        );
+        assert_eq!(
+            blobs.get("HEAD:f2.txt").map(|s| s.as_str()),
+            Some("world native\n")
+        );
+        assert_eq!(
+            blobs.get("HEAD~1:f1.txt").map(|s| s.as_str()),
+            Some("hello native\n")
+        );
+        assert!(!blobs.contains_key("HEAD:missing.txt"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

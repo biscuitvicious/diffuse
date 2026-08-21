@@ -13,3 +13,4 @@ difflib = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 regex = { workspace = true }
+gix = { workspace = true }

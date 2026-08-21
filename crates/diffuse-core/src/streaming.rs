@@ -332,36 +332,9 @@ pub fn spawn_git_stream_pipeline(
     let (meta_tx, meta_rx) = channel::<Result<GitRepoMeta, String>>();
 
     std::thread::spawn(move || {
-        let git_res =
-            match crate::git::load_git_repo(&repo_root, &base_args, &paths, cached, context) {
-                Ok(g) => g,
-                Err(e) => {
-                    let _ = meta_tx.send(Err(e));
-                    producer.finish();
-                    return;
-                }
-            };
-
-        let meta = GitRepoMeta {
-            branch: git_res.branch,
-            untracked_skipped: git_res.untracked_skipped,
-        };
-        let _ = meta_tx.send(Ok(meta));
-
-        let parsed = crate::parse::parse_diff(&git_res.diff_text);
-        let diff_fallback = git_res.diff_text;
-        for (idx, f) in parsed.into_iter().enumerate() {
-            let new_c = git_res.contents.get(&f.path).cloned();
-            let old_c = git_res.old_contents.get(&f.path).cloned();
-            producer.push(FileJob {
-                idx,
-                file: f,
-                new_content: new_c,
-                old_content: old_c,
-                diff_fallback: Some(diff_fallback.clone()),
-            });
-        }
-        producer.finish();
+        crate::git::stream_git_repo_to_producer(
+            &repo_root, &base_args, &paths, cached, context, producer, &meta_tx,
+        );
     });
 
     (consumer, meta_rx)

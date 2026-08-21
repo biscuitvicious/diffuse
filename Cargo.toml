@@ -23,6 +23,7 @@ difflib = "0.4"
 crossterm = "0.29"
 unicode-segmentation = "1.13.2"
 unicode-width = "0.2"
+gix = { version = "0.86", default-features = false, features = ["basic", "revision", "blob-diff", "parallel", "sha1"] }
 
 [profile.dev.package.regex]
 opt-level = 3
