@@ -1,0 +1,22 @@
+[package]
+name = "diffuse"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "diff-engine token-stream & terminal renderer"
+
+[[bin]]
+name = "diffuse"
+path = "src/main.rs"
+
+[dependencies]
+diffuse-core = { workspace = true }
+diffuse-render = { workspace = true }
+diffuse-syntax = { workspace = true }
+diffuse-tui = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+difflib = { workspace = true }

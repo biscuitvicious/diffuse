@@ -188,9 +188,54 @@ name = "diffuse"
 version = "0.1.0"
 dependencies = [
  "clap",
- "crossterm",
  "difflib",
+ "diffuse-core",
+ "diffuse-render",
+ "diffuse-syntax",
+ "diffuse-tui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "diffuse-core"
+version = "0.1.0"
+dependencies = [
+ "difflib",
+ "diffuse-syntax",
  "regex",
+ "serde",
+ "serde_json",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "diffuse-render"
+version = "0.1.0"
+dependencies = [
+ "diffuse-core",
+ "diffuse-syntax",
+ "regex",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "diffuse-syntax"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
+name = "diffuse-tui"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "diffuse-core",
+ "diffuse-render",
+ "diffuse-syntax",
  "serde",
  "serde_json",
  "unicode-segmentation",

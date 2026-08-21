@@ -1,0 +1,9 @@
+[package]
+name = "diffuse-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Syntax highlighting, language profiles, token classifier, and fence detection for diffuse"
+
+[dependencies]
+regex = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "diffuse-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Terminal ANSI rendering, themes, and styled token diff output for diffuse"
+
+[dependencies]
+diffuse-core = { workspace = true }
+diffuse-syntax = { workspace = true }
+regex = { workspace = true }
+unicode-segmentation = { workspace = true }
+unicode-width = { workspace = true }

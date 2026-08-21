@@ -1,19 +1,20 @@
-[package]
-name = "diffuse"
+[workspace]
+resolver = "2"
+members = [
+    "crates/*",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "The diffuse diff-engine: a renderer-agnostic token-stream backend (parse → moves → collapse → merged runs), ported one-for-one from the pi review extension"
 license = "MIT"
 
-[lib]
-name = "diffuse"
-path = "src/lib.rs"
+[workspace.dependencies]
+diffuse-syntax = { path = "crates/diffuse-syntax", version = "0.1.0" }
+diffuse-core = { path = "crates/diffuse-core", version = "0.1.0" }
+diffuse-render = { path = "crates/diffuse-render", version = "0.1.0" }
+diffuse-tui = { path = "crates/diffuse-tui", version = "0.1.0" }
 
-[[bin]]
-name = "diffuse"
-path = "src/main.rs"
-
-[dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,12 +24,6 @@ crossterm = "0.29"
 unicode-segmentation = "1.13.2"
 unicode-width = "0.2"
 
-[dev-dependencies]
-
-# The regex crate is ~20-50x slower in an unoptimized dev build (the automata
-# matching), and the engine's hot loops (the parse, the tokenizer, the syntax)
-# are regex-bound. Optimize it (and its dep) even in dev, so `cargo test`'s
-# golden acceptance — the validation farm — runs fast without a release build.
 [profile.dev.package.regex]
 opt-level = 3
 
@@ -38,11 +33,5 @@ opt-level = 3
 [profile.dev.package.regex-syntax]
 opt-level = 3
 
-# The validation farm runs the engine in the DEV profile (cargo test). The
-# dev builds are unoptimized (~8x slower than release) — the golden
-# acceptance and the growing corpus farm would crawl. Optimize the dev
-# profile itself (the compile time grows a bit; the tests run fast).
 [profile.dev]
 opt-level = 1
-# compile was ~2.5x slower than opt-level 1 for little gain — 1 is the
-# sweet spot (fast enough tests, fast builds).
