@@ -16,12 +16,14 @@ pub mod bounded_dp;
 pub mod hirschberg;
 pub mod hunt_szymanski;
 pub mod myers_ond;
+pub mod prefix_dfa;
 
 pub use bit_parallel::BitParallelLcs;
 pub use bounded_dp::BoundedDpLcs;
 pub use hirschberg::HirschbergLcs;
 pub use hunt_szymanski::HuntSzymanskiLcs;
 pub use myers_ond::MyersOnD;
+pub use prefix_dfa::PrefixDfa;
 
 /// An elementary edit operation between two generic sequences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

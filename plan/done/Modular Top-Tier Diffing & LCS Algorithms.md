@@ -20,9 +20,9 @@
 - [x] [Phase 6 — $A^*$ & Diagonal Bounding on Cluster State Graphs](#6-phase-6--a-diagonal-bounding-on-cluster-state-graphs)
   - [x] Implement admissible heuristic lower bounds and diagonal bandwidth pruning
   - [x] Verify 100% score and path equivalence against unpruned cluster DP
-- [ ] [Phase 7 — Aho-Corasick & Shift-And Direct Pattern Automata](#7-phase-7--aho-corasick--shift-and-direct-pattern-automata)
-  - [ ] Implement direct 256-state transition table for prefix matching
-  - [ ] Connect to syntax stop-prefixes and language keyword classifiers
+- [x] [Phase 7 — Aho-Corasick & Shift-And Direct Pattern Automata](#7-phase-7--aho-corasick--shift-and-direct-pattern-automata)
+  - [x] Implement direct 256-state transition table for prefix matching
+  - [x] Connect to syntax stop-prefixes and language keyword classifiers
 
 ---
 

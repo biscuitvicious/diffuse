@@ -497,3 +497,51 @@ fn test_bounded_dp_diagonal_bandwidth() {
         assert_eq!(a[ai], b[bi]);
     }
 }
+
+#[test]
+fn test_prefix_dfa_matches_trie_matcher() {
+    let patterns = [
+        "//",
+        "/*",
+        "///",
+        "/**",
+        "fn",
+        "let mut",
+        "let",
+        "pub(crate)",
+        "pub",
+    ];
+    let dfa = PrefixDfa::from_patterns(patterns);
+    let trie = TriePrefixMatcher::from_patterns(patterns);
+
+    let test_inputs = [
+        "/// doc comment",
+        "// regular comment",
+        "let mut x = 1;",
+        "let x = 1;",
+        "pub(crate) fn test()",
+        "pub fn hello()",
+        "struct Foo",
+        "/** block comment */",
+        "fn main()",
+        "",
+    ];
+
+    for input in test_inputs {
+        assert_eq!(
+            dfa.longest_matching_prefix(input),
+            trie.longest_matching_prefix(input),
+            "Mismatch on input: {input:?}"
+        );
+        assert_eq!(
+            dfa.has_matching_prefix(input),
+            trie.has_matching_prefix(input),
+            "Mismatch on has_matching_prefix for: {input:?}"
+        );
+    }
+
+    assert_eq!(
+        dfa.all_matching_prefixes("pub(crate) struct A;"),
+        vec!["pub", "pub(crate)"]
+    );
+}
