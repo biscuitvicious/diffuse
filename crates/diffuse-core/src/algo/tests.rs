@@ -104,3 +104,89 @@ fn test_trie_prefix_matcher() {
     assert!(matcher.has_matching_prefix("/** block */"));
     assert!(!matcher.has_matching_prefix("unmatched text"));
 }
+
+#[test]
+fn test_bit_parallel_lcs_matches_matrix_dp() {
+    let bp = BitParallelLcs::new();
+    let matrix = MatrixDpLcs::new();
+
+    let cases: Vec<(&[u32], &[u32])> = vec![
+        (&[], &[]),
+        (&[1, 2, 3], &[]),
+        (&[], &[1, 2, 3]),
+        (&[1, 2, 3, 4, 5], &[1, 2, 3, 4, 5]),
+        (&[1, 2, 3, 4, 5], &[2, 4, 6]),
+        (&[10, 20, 30, 40, 50, 60], &[5, 10, 25, 30, 45, 60, 70]),
+        (&[1, 1, 1, 1], &[1, 1]),
+        (&[1, 2, 1, 2, 1], &[2, 1, 2]),
+    ];
+
+    for (a, b) in cases {
+        let pairs_bp = bp.lcs_indices(a, b);
+        let pairs_matrix = matrix.lcs_indices(a, b);
+        assert_eq!(
+            pairs_bp.len(),
+            pairs_matrix.len(),
+            "LCS lengths must match exactly: bp={pairs_bp:?}, matrix={pairs_matrix:?}"
+        );
+        // Verify valid monotonic matching
+        for &(ai, bi) in &pairs_bp {
+            assert_eq!(a[ai], b[bi]);
+        }
+        let diff_bp = bp.diff_slices(a, b);
+        let diff_matrix = matrix.diff_slices(a, b);
+        let kept_bp = diff_bp
+            .iter()
+            .filter(|op| matches!(op, EditOp::Keep { .. }))
+            .count();
+        let kept_matrix = diff_matrix
+            .iter()
+            .filter(|op| matches!(op, EditOp::Keep { .. }))
+            .count();
+        assert_eq!(kept_bp, kept_matrix);
+    }
+}
+
+#[test]
+fn test_bit_parallel_pseudo_random_fuzz_equivalence() {
+    let bp = BitParallelLcs::new();
+    let matrix = MatrixDpLcs::new();
+
+    // Deterministic linear congruential generator for reproducibility
+    let mut state = 0x1234_5678_u64;
+    let mut rand = || -> u32 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (state >> 32) as u32
+    };
+
+    for _ in 0..100 {
+        let m = (rand() % 64) as usize;
+        let n = (rand() % 64) as usize;
+        let a: Vec<u32> = (0..m).map(|_| rand() % 16).collect();
+        let b: Vec<u32> = (0..n).map(|_| rand() % 16).collect();
+
+        let pairs_bp = bp.lcs_indices(&a, &b);
+        let pairs_matrix = matrix.lcs_indices(&a, &b);
+
+        assert_eq!(
+            pairs_bp.len(),
+            pairs_matrix.len(),
+            "Fuzz match failure on lengths m={m}, n={n}: a={a:?}, b={b:?}"
+        );
+
+        // Verify valid subsequence properties
+        let mut prev_a = None;
+        let mut prev_b = None;
+        for &(ai, bi) in &pairs_bp {
+            assert_eq!(a[ai], b[bi]);
+            if let Some(pa) = prev_a {
+                assert!(ai > pa, "strictly monotonic in A");
+            }
+            if let Some(pb) = prev_b {
+                assert!(bi > pb, "strictly monotonic in B");
+            }
+            prev_a = Some(ai);
+            prev_b = Some(bi);
+        }
+    }
+}

@@ -11,6 +11,10 @@
 
 use std::collections::HashMap;
 
+pub mod bit_parallel;
+
+pub use bit_parallel::BitParallelLcs;
+
 /// An elementary edit operation between two generic sequences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EditOp {
