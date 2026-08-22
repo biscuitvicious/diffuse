@@ -8,9 +8,9 @@
   - [x] Implement bit-vector dynamic programming across `u64` / `u128` words for token sequences $\le 64 / \le 128$
   - [x] Implement fallback to chunked bit-vector for arbitrarily long sequences
   - [x] Property-based testing & fuzzing against naive $O(M \times N)$ reference LCS
-- [ ] [Phase 3 — Myers' $O(ND)$ Difference Engine](#3-phase-3--myers-ond-difference-engine)
-  - [ ] Implement diagonal $k$-line search with linear space $O(D)$ trace
-  - [ ] Benchmark near-identical line pairing vs full matrix DP
+- [x] [Phase 3 — Myers' $O(ND)$ Difference Engine](#3-phase-3--myers-ond-difference-engine)
+  - [x] Implement diagonal $k$-line search with linear space $O(D)$ trace
+  - [x] Benchmark near-identical line pairing vs full matrix DP
 - [ ] [Phase 4 — Hunt-Szymanski / Robinson-Schensted Patience LCS](#4-phase-4--hunt-szymanski--robinson-schensted-patience-lcs)
   - [ ] Implement $O((R + N) \log N)$ sparse LCS matching with binary search
   - [ ] Verify multi-line block and comment reflow anchor fidelity

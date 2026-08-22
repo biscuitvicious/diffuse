@@ -12,8 +12,10 @@
 use std::collections::HashMap;
 
 pub mod bit_parallel;
+pub mod myers_ond;
 
 pub use bit_parallel::BitParallelLcs;
+pub use myers_ond::MyersOnD;
 
 /// An elementary edit operation between two generic sequences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
