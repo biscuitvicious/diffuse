@@ -26,3 +26,7 @@
 - [ ] **Widen golden corpus**: Expand captured fixtures to 50–100+ realistic code diffs across diverse programming languages.
 - [ ] **Multi-language diversity**: Rust, C/C++, Go, Zig, TypeScript, JavaScript, Python, JSON, YAML, Markdown, SQL, Shell.
 - [ ] **Automated fixture harvesting tool**: CLI tool to harvest diffs + old/new file snapshots from repository histories.
+
+## 6. Performance Engineering & Algorithm Modernization
+- [ ] **Production Performance Optimizations**: Top 5 hot-path optimizations across tokenizer, TUI flat row indexing, precomputed similarity tokens, DP scratch arena, and UTF-8 string slicing. (See [Production Performance Optimizations](plan/Production%20Performance%20Optimizations.md))
+- [ ] **Modular Top-Tier Diffing & LCS Algorithms**: 100% modular, generic sequence alignment engines including Myers' 64-bit Bit-Parallel LCS, Myers' $O(ND)$ diffing, Hunt-Szymanski / Robinson-Schensted patience LIS, Hirschberg linear-space solver, and Aho-Corasick prefix automata. (See [Modular Top-Tier Diffing & LCS Algorithms](plan/Modular%20Top-Tier%20Diffing%20&%20LCS%20Algorithms.md))

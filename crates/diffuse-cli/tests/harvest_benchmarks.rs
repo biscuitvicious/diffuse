@@ -122,7 +122,7 @@ fn create_synthetic_multilang_repo(
 
 #[test]
 fn test_harvest_and_stream_small_10_files() {
-    let (dir, diff_text, new_contents, old_contents) = create_synthetic_multilang_repo(10);
+    let (diff_text, new_contents, old_contents) = create_synthetic_diff_in_memory(10);
 
     let start = Instant::now();
     let consumer = stream_diff_pipeline(
@@ -161,13 +161,11 @@ fn test_harvest_and_stream_small_10_files() {
         assert!(f.counts.adds > 0 || f.counts.mods > 0 || f.counts.dels > 0);
         assert!(!f.hunks.is_empty());
     }
-
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn test_harvest_and_stream_medium_100_files() {
-    let (dir, diff_text, new_contents, old_contents) = create_synthetic_multilang_repo(100);
+    let (diff_text, new_contents, old_contents) = create_synthetic_diff_in_memory(100);
 
     let start = Instant::now();
     let consumer = stream_diff_pipeline(
@@ -205,8 +203,6 @@ fn test_harvest_and_stream_medium_100_files() {
             f.path
         );
     }
-
-    let _ = fs::remove_dir_all(&dir);
 }
 
 fn create_synthetic_diff_in_memory(

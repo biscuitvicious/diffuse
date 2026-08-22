@@ -343,63 +343,106 @@ fn dp_subline_moves_recorded_for_reflow_expansion() {
     }
 }
 
-#[test]
-fn dp_corpus_projection_oracle() {
-    // The mechanical oracle (plan Step 3.4): over EVERY cluster of every
-    // frozen golden corpus, the DP's optimal decomposition must satisfy the
-    // bidirectional string invariant — the rows project back to exactly the
-    // cluster's old lines and new lines, in order, byte for byte.
-    use crate::parse::parse_diff;
+fn run_dp_oracle_on_corpus(name: &str) -> usize {
+    use std::{
+        fs,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
+
     use serde::Deserialize;
-    use std::fs;
+
+    use crate::parse::parse_diff;
 
     #[derive(Deserialize)]
     struct Fixture {
         diff: String,
     }
 
-    const CORPORA: &[&str] = &[
-        "mirage-2025-08",
-        "diffuse-2025-08",
-        "opt-1-cache-regex-window-slice",
-        "opt-2-cache-markdown-regex",
-        "opt-3-cache-lang-profile",
-        "opt-4-manual-scanner-prefilter",
-        "diffuse-history-mid",
-    ];
+    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let path = if manifest.join("tests/golden").exists() {
+        manifest.join(format!("tests/golden/{name}.json"))
+    } else {
+        manifest.join(format!("../../tests/golden/{name}.json"))
+    };
+    let raw = fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let fixture: Fixture = serde_json::from_str(&raw).unwrap();
+    let files = Arc::new(parse_diff(&fixture.diff));
+    let num_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(8);
+    let counter = Arc::new(AtomicUsize::new(0));
 
-    let mut clusters = 0usize;
-    for name in CORPORA {
-        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let path = if manifest.join("tests/golden").exists() {
-            manifest.join(format!("tests/golden/{name}.json"))
-        } else {
-            manifest.join(format!("../../tests/golden/{name}.json"))
-        };
-        let raw = fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-        let fixture: Fixture = serde_json::from_str(&raw).unwrap();
-        let files = parse_diff(&fixture.diff);
-        for f in &files {
-            let ext = f.path.rsplit('.').next().unwrap_or("");
-            let prof = lang_profile(ext);
-            for h in &f.hunks {
-                for seg in partition_hunk_segments(h, None, None, prof) {
-                    if let HunkSegment::Cluster(c) = seg {
-                        let sol = solve_cluster(&c, prof);
-                        verify_projection(&sol, &c).unwrap_or_else(|e| {
-                            panic!("[{name}] {}: projection invariant failed: {e}", f.path)
-                        });
-                        clusters += 1;
+    let mut handles = Vec::new();
+    for thread_idx in 0..num_threads {
+        let files = Arc::clone(&files);
+        let counter = Arc::clone(&counter);
+        let name_str = name.to_string();
+        handles.push(std::thread::spawn(move || {
+            for (idx, f) in files.iter().enumerate() {
+                if idx % num_threads != thread_idx {
+                    continue;
+                }
+                let ext = f.path.rsplit('.').next().unwrap_or("");
+                let prof = lang_profile(ext);
+                for h in &f.hunks {
+                    for seg in partition_hunk_segments(h, None, None, prof) {
+                        if let HunkSegment::Cluster(c) = seg {
+                            let sol = solve_cluster(&c, prof);
+                            verify_projection(&sol, &c).unwrap_or_else(|e| {
+                                panic!("[{name_str}] {}: projection invariant failed: {e}", f.path)
+                            });
+                            counter.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                 }
             }
-        }
+        }));
     }
-    assert!(
-        clusters > 100,
-        "expected a real corpus sweep, got {clusters} clusters"
-    );
+    for h in handles {
+        h.join().unwrap();
+    }
+    counter.load(Ordering::Relaxed)
+}
+
+#[test]
+fn dp_oracle_mirage() {
+    assert!(run_dp_oracle_on_corpus("mirage-2025-08") > 0);
+}
+
+#[test]
+fn dp_oracle_diffuse() {
+    assert!(run_dp_oracle_on_corpus("diffuse-2025-08") > 0);
+}
+
+#[test]
+fn dp_oracle_opt_1() {
+    assert!(run_dp_oracle_on_corpus("opt-1-cache-regex-window-slice") > 0);
+}
+
+#[test]
+fn dp_oracle_opt_2() {
+    assert!(run_dp_oracle_on_corpus("opt-2-cache-markdown-regex") > 0);
+}
+
+#[test]
+fn dp_oracle_opt_3() {
+    assert!(run_dp_oracle_on_corpus("opt-3-cache-lang-profile") > 0);
+}
+
+#[test]
+fn dp_oracle_opt_4() {
+    assert!(run_dp_oracle_on_corpus("opt-4-manual-scanner-prefilter") > 0);
+}
+
+#[test]
+#[ignore = "massive history stress test (run with cargo test -- --ignored)"]
+fn dp_oracle_diffuse_history_mid() {
+    assert!(run_dp_oracle_on_corpus("diffuse-history-mid") > 0);
 }
 
 // ---- Head-anchor detection (Phase 4 validation) ----

@@ -207,8 +207,8 @@ pub fn spawn_streaming_pipeline(
     notes_db: Option<NotesDB>,
     repo: Option<String>,
 ) -> (StreamingProducer, StreamingConsumer) {
-    let num_workers = worker_count
-        .unwrap_or_else(|| (available_parallelism().map(|p| p.get()).unwrap_or(2) / 2).max(1));
+    let num_workers =
+        worker_count.unwrap_or_else(|| available_parallelism().map(|p| p.get()).unwrap_or(4));
 
     let queue = Arc::new(PriorityJobQueue::new());
     let (processed_tx, processed_rx) = channel::<ProcessedFile>();
@@ -287,16 +287,21 @@ pub fn stream_diff_pipeline(
     let parsed = crate::parse::parse_diff(diff);
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, notes_db, repo);
 
-    let diff_fallback = diff.to_string();
+    let diff_str = diff.to_string();
     for (idx, f) in parsed.into_iter().enumerate() {
         let new_c = contents.get(&f.path).cloned();
         let old_c = old_contents.and_then(|oc| oc.get(&f.path).cloned());
+        let needs_fallback = old_c.is_none();
         producer.push(FileJob {
             idx,
             file: f,
             new_content: new_c,
             old_content: old_c,
-            diff_fallback: Some(diff_fallback.clone()),
+            diff_fallback: if needs_fallback {
+                Some(diff_str.clone())
+            } else {
+                None
+            },
         });
     }
     producer.finish();

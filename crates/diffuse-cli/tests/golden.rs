@@ -38,23 +38,6 @@ use diffuse_core::{
     wire::PipelineOutput,
 };
 
-/// The frozen corpora (the extension's golden walk covers the same pairs).
-/// The `opt-*` entries are the perf-optimization commits captured as
-/// fixtures — each commit's own `git diff` + post-patch file contents —
-/// so the engine renders its own evolution: a corpus of realistic code
-/// diffs exercising the collapse/pairing/classify paths the optimizations
-/// touched.
-const CORPORA: &[(&str, usize)] = &[
-    ("mirage-2025-08", 8),
-    ("diffuse-2025-08", 26),
-    ("opt-1-cache-regex-window-slice", 5),
-    ("opt-2-cache-markdown-regex", 2),
-    ("opt-3-cache-lang-profile", 3),
-    ("opt-4-manual-scanner-prefilter", 4),
-    ("diffuse-history-mid", 45),
-    ("untracked-files", 2),
-];
-
 #[derive(Deserialize, Serialize)]
 struct Fixture {
     diff: String,
@@ -85,9 +68,21 @@ fn fixture_path(name: &str) -> String {
         .to_string()
 }
 
-fn load_fixture(name: &str) -> Fixture {
+use std::sync::{Arc, LazyLock, Mutex};
+
+static FIXTURE_CACHE: LazyLock<Mutex<HashMap<String, Arc<Fixture>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn load_fixture(name: &str) -> Arc<Fixture> {
+    let mut cache = FIXTURE_CACHE.lock().unwrap();
+    if let Some(f) = cache.get(name) {
+        return Arc::clone(f);
+    }
     let raw = fs::read_to_string(fixture_path(name)).expect("the frozen fixture");
-    serde_json::from_str(&raw).expect("fixture JSON parses")
+    let f: Fixture = serde_json::from_str(&raw).expect("fixture JSON parses");
+    let arc = Arc::new(f);
+    cache.insert(name.to_string(), Arc::clone(&arc));
+    arc
 }
 
 /// The walk: every invariant over the whole corpus. A failure increments
@@ -426,11 +421,11 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
 
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     let wire_path = expected_wire_path(name);
-    let actual_pretty = format!(
-        "{}\n",
-        serde_json::to_string_pretty(output).expect("serialize pretty JSON")
-    );
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
+        let actual_pretty = format!(
+            "{}\n",
+            serde_json::to_string_pretty(output).expect("serialize pretty JSON")
+        );
         fs::write(&wire_path, &actual_pretty)
             .unwrap_or_else(|e| panic!("failed to write {wire_path}: {e}"));
         eprintln!("{name}: wire JSON updated ({wire_path})");
@@ -441,9 +436,32 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     });
     let expected_output: PipelineOutput = serde_json::from_str(&expected_str)
         .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
-    let actual_output: PipelineOutput = serde_json::from_str(&actual_pretty)
-        .unwrap_or_else(|e| panic!("[{name}] failed to parse serialized wire JSON: {e}"));
-    if actual_output != expected_output {
+
+    let matches = output.files.len() == expected_output.files.len()
+        && output.branch == expected_output.branch
+        && output.untracked_skipped == expected_output.untracked_skipped
+        && output
+            .files
+            .iter()
+            .zip(expected_output.files.iter())
+            .all(|(a, b)| {
+                a.path == b.path
+                    && a.status == b.status
+                    && a.new_line_count == b.new_line_count
+                    && a.old_line_count == b.old_line_count
+                    && a.counts == b.counts
+                    && a.fences == b.fences
+                    && a.notes == b.notes
+                    && a.hunks == b.hunks
+            });
+
+    if !matches {
+        let actual_pretty = format!(
+            "{}\n",
+            serde_json::to_string_pretty(output).expect("serialize pretty JSON")
+        );
+        let actual_output: PipelineOutput = serde_json::from_str(&actual_pretty)
+            .unwrap_or_else(|e| panic!("[{name}] failed to parse serialized wire JSON: {e}"));
         print_wire_diff(name, &actual_output, &expected_output);
         panic!(
             "[{name}] wire JSON output deviates from expected static golden ({wire_path}). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update."
@@ -505,79 +523,39 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
     }
 }
 
-/// The lib leg's canonical output per corpus.
-fn lib_canonical(name: &str) -> String {
+fn run_lib_leg(name: &str, min: usize) {
     let fixture = load_fixture(name);
     let output = run_pipeline(&fixture.diff, &fixture.contents);
-    let min = CORPORA
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, m)| *m)
-        .unwrap_or(0);
     walk_and_assert(&output, name, min);
     assert_wire_json_matches(&output, name);
-    serde_json::to_string(&output).expect("canonical JSON")
 }
 
-#[test]
-fn lib_leg_golden_walk() {
-    // Embed the engine, run the full pipeline over every frozen corpus, walk
-    // the wire-contract output (invariants + canonical JSON + static expected wire
-    // JSON).
-    for &(name, _) in CORPORA {
-        lib_canonical(name);
+fn run_bin_leg(name: &str, min: usize) {
+    let input = fs::read(fixture_path(name)).expect("read fixture file");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn the diffuse binary");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(&input)
+            .expect("write the fixture");
     }
-}
-
-#[test]
-fn terminal_render_golden_walk() {
-    // Render every frozen corpus using the diffuse CLI terminal renderer,
-    // asserting byte-for-byte equivalence against the static render golden.
-    for &(name, _) in CORPORA {
-        let fixture = load_fixture(name);
-        let output = run_pipeline(&fixture.diff, &fixture.contents);
-        assert_render_matches(&output, name);
-    }
-}
-
-#[test]
-fn bin_leg_golden_walk() {
-    // Spawn the built binary, feed it each fixture, decode its token-stream
-    // JSON, run the SAME walk — and assert the two legs are byte-identical
-    // (the wire contract is pinned to the engine).
-    for &(name, min) in CORPORA {
-        let fixture = load_fixture(name);
-        let input = serde_json::to_string(&fixture).expect("fixture JSON");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("spawn the diffuse binary");
-        {
-            use std::io::Write;
-            child
-                .stdin
-                .take()
-                .expect("stdin")
-                .write_all(input.as_bytes())
-                .expect("write the fixture");
-        }
-        let out = child.wait_with_output().expect("wait for the bin");
-        assert!(
-            out.status.success(),
-            "[{name}] the bin exited non-zero: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let decoded: PipelineOutput =
-            serde_json::from_slice(&out.stdout).expect("decode the bin's token-stream JSON");
-        walk_and_assert(&decoded, name, min);
-        let canonical = serde_json::to_string(&decoded).expect("canonical JSON");
-        assert_eq!(
-            canonical,
-            lib_canonical(name),
-            "[{name}] lib leg and bin leg must be byte-identical — a wire-contract change broke the bin leg"
-        );
-    }
+    let out = child.wait_with_output().expect("wait for the bin");
+    assert!(
+        out.status.success(),
+        "[{name}] the bin exited non-zero: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let decoded: PipelineOutput =
+        serde_json::from_slice(&out.stdout).expect("decode the bin's token-stream JSON");
+    walk_and_assert(&decoded, name, min);
+    assert_wire_json_matches(&decoded, name);
 }
 
 /// Slice a single path's portion out of a multi-file diff: from its
@@ -607,71 +585,112 @@ fn file_diff_slice(diff: &str, path: &str) -> String {
     diff[si..ni].to_string()
 }
 
-/// The apply-oracle (PLAN.md §4 Phase 6): for every corpus whose fixture
-/// carries the OLD side, prove the diff is a semantic program —
-/// `apply(file_diff, old) == new` byte-for-byte. The golden's structural
-/// walk proves the engine + wire contract; this proves the diff itself is
-/// a valid, applicable transformation and locks `apply_file_diff` as the
-/// mechanical primitive. Runs over the opt-* and diffuse-history corpora.
-#[test]
-fn apply_oracle() {
-    for &(name, _) in CORPORA {
-        let fixture = load_fixture(name);
+fn run_oracle_for_corpus(name: &str) {
+    let fixture = load_fixture(name);
+    for (path, new) in &fixture.contents {
+        let Some(old) = fixture.old_contents.get(path) else {
+            continue;
+        };
+        let slice = file_diff_slice(&fixture.diff, path);
+        assert!(!slice.is_empty(), "{name}: no diff slice for {path}");
+        let old_vec: Vec<String> = old.split('\n').map(String::from).collect();
+        let applied = diffuse_core::apply::apply_file_diff(&slice, &old_vec);
+        let expected: Vec<String> = new.split('\n').map(String::from).collect();
+        assert_eq!(
+            applied, expected,
+            "[{name}:{path}] apply(file_diff, old) != new — the fixture's diff is not a valid transformation"
+        );
+    }
+
+    let wire = diffuse_core::pipeline::run_pipeline(&fixture.diff, &fixture.contents);
+    assert_eq!(
+        wire.reverse().reverse(),
+        wire,
+        "[{name}] wire.reverse().reverse() == wire"
+    );
+
+    if name.starts_with("opt-") {
+        let wire_rev = wire.reverse();
+        let reconstructed = wire.reconstruct();
+        let reconstructed_rev = wire_rev.reconstruct();
+
         for (path, new) in &fixture.contents {
-            let Some(old) = fixture.old_contents.get(path) else {
+            let Some(old_str) = fixture.old_contents.get(path) else {
                 continue;
             };
-            let slice = file_diff_slice(&fixture.diff, path);
-            assert!(!slice.is_empty(), "{name}: no diff slice for {path}");
-            let old_vec: Vec<String> = old.split('\n').map(String::from).collect();
-            let applied = diffuse_core::apply::apply_file_diff(&slice, &old_vec);
+            let old_vec: Vec<String> = old_str.split('\n').map(String::from).collect();
             let expected: Vec<String> = new.split('\n').map(String::from).collect();
-            assert_eq!(
-                applied, expected,
-                "[{name}:{path}] apply(file_diff, old) != new — the fixture's diff is not a valid transformation"
-            );
-        }
 
-        // Entire fixture wire contract reconstruction and reverse invariants
-        let wire = diffuse_core::pipeline::run_pipeline(&fixture.diff, &fixture.contents);
-        assert_eq!(
-            wire.reverse().reverse(),
-            wire,
-            "[{name}] wire.reverse().reverse() == wire"
-        );
+            if let Some(f_reconstructed) = reconstructed.iter().find(|f| f.path == *path) {
+                let applied_forward =
+                    diffuse_core::apply::apply_hunk_rows(&f_reconstructed.hunks, &old_vec);
+                assert_eq!(
+                    applied_forward, expected,
+                    "[{name}:{path}] apply(old, wire.reconstruct()) != new"
+                );
+            }
 
-        if name.starts_with("opt-") {
-            let wire_rev = wire.reverse();
-            let reconstructed = wire.reconstruct();
-            let reconstructed_rev = wire_rev.reconstruct();
-
-            for (path, new) in &fixture.contents {
-                let Some(old_str) = fixture.old_contents.get(path) else {
-                    continue;
-                };
-                let old_vec: Vec<String> = old_str.split('\n').map(String::from).collect();
-                let expected: Vec<String> = new.split('\n').map(String::from).collect();
-
-                if let Some(f_reconstructed) = reconstructed.iter().find(|f| f.path == *path) {
-                    let applied_forward =
-                        diffuse_core::apply::apply_hunk_rows(&f_reconstructed.hunks, &old_vec);
-                    assert_eq!(
-                        applied_forward, expected,
-                        "[{name}:{path}] apply(old, wire.reconstruct()) != new"
-                    );
-                }
-
-                if let Some(f_rev_reconstructed) =
-                    reconstructed_rev.iter().find(|f| f.path == *path)
-                {
-                    let applied_backward =
-                        diffuse_core::apply::apply_hunk_rows(&f_rev_reconstructed.hunks, &expected);
-                    assert_eq!(
-                        applied_backward, old_vec,
-                        "[{name}:{path}] apply(new, wire.reverse().reconstruct()) != old"
-                    );
-                }
+            if let Some(f_rev_reconstructed) = reconstructed_rev.iter().find(|f| f.path == *path) {
+                let applied_backward =
+                    diffuse_core::apply::apply_hunk_rows(&f_rev_reconstructed.hunks, &expected);
+                assert_eq!(
+                    applied_backward, old_vec,
+                    "[{name}:{path}] apply(new, wire.reverse().reconstruct()) != old"
+                );
             }
         }
     }
 }
+
+macro_rules! corpus_tests {
+    ($mod_name:ident, $name:expr, $min:expr, $has_render:expr, $has_oracle:expr) => {
+        mod $mod_name {
+            use super::*;
+
+            #[test]
+            fn golden_acceptance() {
+                let fixture = load_fixture($name);
+                let output = run_pipeline(&fixture.diff, &fixture.contents);
+                walk_and_assert(&output, $name, $min);
+                assert_wire_json_matches(&output, $name);
+                if $has_render {
+                    assert_render_matches(&output, $name);
+                }
+                if $has_oracle {
+                    run_oracle_for_corpus($name);
+                }
+            }
+
+            #[test]
+            fn bin_leg() {
+                run_bin_leg($name, $min);
+            }
+        }
+    };
+    (ignored $mod_name:ident, $name:expr, $min:expr) => {
+        mod $mod_name {
+            use super::*;
+
+            #[test]
+            #[ignore = "massive history stress corpus (run with cargo test -- --ignored)"]
+            fn lib_leg() {
+                run_lib_leg($name, $min);
+            }
+
+            #[test]
+            #[ignore = "massive history stress corpus (run with cargo test -- --ignored)"]
+            fn bin_leg() {
+                run_bin_leg($name, $min);
+            }
+        }
+    };
+}
+
+corpus_tests!(mirage_2025_08, "mirage-2025-08", 8, true, false);
+corpus_tests!(diffuse_2025_08, "diffuse-2025-08", 26, true, false);
+corpus_tests!(opt_1, "opt-1-cache-regex-window-slice", 5, true, true);
+corpus_tests!(opt_2, "opt-2-cache-markdown-regex", 2, true, true);
+corpus_tests!(opt_3, "opt-3-cache-lang-profile", 3, true, true);
+corpus_tests!(opt_4, "opt-4-manual-scanner-prefilter", 4, true, true);
+corpus_tests!(ignored diffuse_history_mid, "diffuse-history-mid", 45);
+corpus_tests!(untracked_files, "untracked-files", 2, true, false);

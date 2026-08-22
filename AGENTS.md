@@ -82,6 +82,15 @@ Every bug fix, behavior adjustment, or new feature must expand the test corpus w
 3. **Implement the change**: Write the minimal code needed to fulfill the requirement.
 4. **Verify passing run**: Ensure `cargo test` and `npm test` pass cleanly, permanently expanding the test suite to guard against regressions.
 
+## Test Performance Invariants
+
+To keep development iterations instantaneous and prevent CI / pre-commit stalls, the test suite enforces strict latency budgets:
+
+- **Individual Test Latency**: Any individual `#[test]` must execute in **`< 0.5s`**.
+- **Test Binary Latency**: Any test binary (e.g. `diffuse-core`, `diffuse-tui`, `golden.rs`, `harvest_benchmarks.rs`) must complete in **`< 1.5s`**.
+- **Full `./scripts/check.sh` Suite**: The entire `./scripts/check.sh` gate (fmt check, fast clippy, all cargo tests, extension smoke suite) must complete in **`< 3s`** (warm cache, less clippy and compile time).
+- **Massive Scale & Stress Benchmarks**: Any multi-megabyte whole-evolution history stress tests (e.g. `diffuse-history-mid`) or 10,000-file scale generators must be tagged with `#[ignore = "..."]` so normal developer test sweeps remain sub-second while full stress validation is runnable on-demand via `cargo test -- --ignored`.
+
 ## Standard workflow
 
 Every bug fix, behavior change, or feature follows this loop (steps 1–2

@@ -74,6 +74,9 @@ fn guarded_dels(
     profile: Option<&LangProfile>,
 ) -> HashSet<usize> {
     let mut skip = HashSet::new();
+    let new_trimmed_set: Option<HashSet<&str>> =
+        new_content.map(|c| c.iter().map(|l| l.trim()).collect());
+
     for (ri, r) in h.rows.iter().enumerate() {
         if !matches!(r, Row::Del(_)) {
             continue;
@@ -114,7 +117,7 @@ fn guarded_dels(
         if !r_trim.is_empty()
             && !tail_candidate
             && !has_same_hunk_add
-            && new_content.is_some_and(|c| c.iter().any(|l| l.trim() == r_trim))
+            && new_trimmed_set.as_ref().is_some_and(|s| s.contains(r_trim))
         {
             skip.insert(ri);
         }

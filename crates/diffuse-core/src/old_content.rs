@@ -11,9 +11,18 @@ pub fn old_content_from_diff(diff: &str, path: &str) -> Vec<String> {
     let lines = diff.split('\n');
     let mut cur: Option<&str> = None; // the diff section's file path, if ours
     let mut oi: usize = 0;
+    let b_suffix = format!(" b/{path}");
+    let a_prefix = format!("diff --git a/{path} ");
     for line in lines {
         if line.starts_with("diff --git ") {
-            cur = if line.contains(path) { Some("") } else { None };
+            if cur.is_some() {
+                break;
+            }
+            cur = if line.ends_with(&b_suffix) || line.starts_with(&a_prefix) {
+                Some("")
+            } else {
+                None
+            };
             continue;
         }
         let Some(_) = cur else { continue };
@@ -68,6 +77,42 @@ pub fn old_content_from_diff(diff: &str, path: &str) -> Vec<String> {
                 out.push(String::new());
             }
             oi += 1;
+        }
+    }
+    out
+}
+
+/// Reconstruct the old side of a file directly from its parsed hunks without
+/// needing to re-scan and split raw diff strings.
+pub fn old_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for h in hunks {
+        if h.old_start == 0 {
+            continue;
+        }
+        let oi = h.old_start as usize;
+        while out.len() < oi.saturating_sub(1) {
+            out.push(String::new());
+        }
+        for r in &h.rows {
+            match r {
+                crate::parse::Row::Del(del) => {
+                    let num = del.num.get() as usize;
+                    if num > 0 {
+                        while out.len() < num {
+                            out.push(String::new());
+                        }
+                        out[num - 1] = del.text.clone();
+                    }
+                }
+                crate::parse::Row::Ctx(ctx) => {
+                    let num = ctx.old_pos.get() as usize;
+                    if num > 0 && out.len() == num - 1 {
+                        out.push(ctx.text.clone());
+                    }
+                }
+                _ => {}
+            }
         }
     }
     out

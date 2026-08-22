@@ -28,7 +28,7 @@ discipline for any change in golden output.
 | `opt-2-cache-markdown-regex` | ✅ | ✅ | perf commit captured as fixture |
 | `opt-3-cache-lang-profile` | ✅ | ✅ | perf commit captured as fixture |
 | `opt-4-manual-scanner-prefilter` | ✅ | ✅ | perf commit captured as fixture |
-| `diffuse-history-mid` | ✅ | ❌ | huge (wire-only) |
+| `diffuse-history-mid` | ✅ (`--ignored`) | ❌ | huge wire-only stress test (`cargo test -- --ignored`) |
 | `untracked-files` | ✅ | ✅ | untracked additions & status representation |
 
 The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)

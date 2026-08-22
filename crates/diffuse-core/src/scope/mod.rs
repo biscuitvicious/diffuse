@@ -1,9 +1,5 @@
 //! Function scope and block-ending delimiter anchor helpers for diff pairing.
 
-use std::sync::OnceLock;
-
-use regex::Regex;
-
 use crate::syntax::profile::{BlockDelimStyle, LangProfile};
 
 /// True when the row is the last expression of its block: the next line
@@ -37,11 +33,7 @@ pub fn is_tail_before_closing(
     }
     let next = &content[line];
     match profile.block_style {
-        BlockDelimStyle::Braces => {
-            static RE: OnceLock<Regex> = OnceLock::new();
-            let re = RE.get_or_init(|| Regex::new(r"^\s{4}\}\s*$").expect("tail brace regex"));
-            re.is_match(next)
-        }
+        BlockDelimStyle::Braces => next.starts_with("    }") && next[5..].trim().is_empty(),
         BlockDelimStyle::Keywords => profile.is_block_close(next),
         BlockDelimStyle::IndentColon => false,
     }

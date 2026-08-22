@@ -6,7 +6,7 @@
 	"scripts": {
 		"check": "node --experimental-transform-types --check review.ts",
 		"pretest": "sh scripts/build-bin.sh",
-		"test": "node --experimental-transform-types test/runner.ts"
+		"test": "node --experimental-transform-types --test-reporter=spec test/runner.ts"
 	},
 	"devDependencies": {
 		"@earendil-works/pi-tui": "^0.83.0"

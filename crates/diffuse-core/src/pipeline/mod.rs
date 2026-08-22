@@ -21,8 +21,7 @@ use crate::{
     merge::{RunKind, is_wholesale_mod, merged_runs},
     moves::mark_moves,
     notes::{NotesDB, note_runs, notes_for_file},
-    old_content::old_content_from_diff,
-    parse::{DiffFile, Row, parse_diff},
+    parse::{DiffFile, Row},
     syntax::{
         classifier::{ClassifiedToken, classify_line, classify_tokens, markdown_tokens},
         fence::{FenceRegion, fence_regions, region_at},
@@ -102,17 +101,15 @@ pub fn run_pipeline_full(
     notes_db: Option<&NotesDB>,
     repo: Option<&str>,
 ) -> PipelineOutput {
-    let files = parse_diff(diff);
-    let mut out_files = Vec::with_capacity(files.len());
-
-    for f in files {
-        let new_c = contents.get(&f.path).map(String::as_str);
-        let old_c = old_contents
-            .and_then(|m| m.get(&f.path))
-            .map(String::as_str);
-        let out_file = process_single_diff_file(f, new_c, old_c, Some(diff), notes_db, repo);
-        out_files.push(out_file);
-    }
+    let out_files = crate::streaming::stream_diff_pipeline(
+        diff,
+        contents,
+        old_contents,
+        notes_db.cloned(),
+        repo.map(String::from),
+        None,
+    )
+    .collect();
 
     PipelineOutput {
         files: out_files,
@@ -146,16 +143,19 @@ pub fn process_single_diff_file(
     } else if f.old_content.is_empty()
         && let Some(diff) = diff_fallback
     {
-        f.old_content = old_content_from_diff(diff, &f.path);
+        f.old_content = crate::old_content::old_content_from_diff(diff, &f.path);
         f.old_line_count = f.old_content.len();
     }
 
     mark_moves(&mut f);
 
-    let old_c = f.old_content.clone();
-    let new_c = f.new_content.clone();
     for h in &mut f.hunks {
-        h.rows = collapse_hunk_rows(h, Some(&old_c), Some(&new_c), profile);
+        h.rows = collapse_hunk_rows(
+            h,
+            Some(f.old_content.as_slice()),
+            Some(f.new_content.as_slice()),
+            profile,
+        );
     }
 
     // Bake word spans for moved lines with indentation reflows
