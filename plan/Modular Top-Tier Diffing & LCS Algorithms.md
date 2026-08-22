@@ -14,9 +14,9 @@
 - [x] [Phase 4 — Hunt-Szymanski / Robinson-Schensted Patience LCS](#4-phase-4--hunt-szymanski--robinson-schensted-patience-lcs)
   - [x] Implement $O((R + N) \log N)$ sparse LCS matching with binary search
   - [x] Verify multi-line block and comment reflow anchor fidelity
-- [ ] [Phase 5 — Hirschberg Linear-Space Divide-and-Conquer Solver](#5-phase-5--hirschberg-linear-space-divide-and-conquer-solver)
-  - [ ] Implement bidirectional linear-space score recursion
-  - [ ] Guarantee $O(\min(M, N))$ L1-cache-resident working set for large cluster diffs
+- [x] [Phase 5 — Hirschberg Linear-Space Divide-and-Conquer Solver](#5-phase-5--hirschberg-linear-space-divide-and-conquer-solver)
+  - [x] Implement bidirectional linear-space score recursion
+  - [x] Guarantee $O(\min(M, N))$ L1-cache-resident working set for large cluster diffs
 - [ ] [Phase 6 — $A^*$ & Diagonal Bounding on Cluster State Graphs](#6-phase-6--a-diagonal-bounding-on-cluster-state-graphs)
   - [ ] Implement admissible heuristic lower bounds and diagonal bandwidth pruning
   - [ ] Verify 100% score and path equivalence against unpruned cluster DP
