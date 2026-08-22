@@ -2,6 +2,7 @@
 
 pub use diffuse_syntax as syntax;
 
+pub mod algo;
 pub mod apply;
 pub mod cluster;
 pub mod collapse;

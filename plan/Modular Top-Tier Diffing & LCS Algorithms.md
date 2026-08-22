@@ -1,9 +1,9 @@
 # Modular Top-Tier Diffing & LCS Algorithms
 
 ## Global TODO
-- [ ] [Phase 1 — Algorithm Module Architecture & Generic Contracts](#1-phase-1--algorithm-module-architecture--generic-contracts)
-  - [ ] Define abstract, generic trait interfaces in `crates/diffuse-core/src/algo/mod.rs` (or standalone crate `crates/diffuse-algo`)
-  - [ ] Ensure 100% separation: algorithms take generic slices `&[T]` / `&[u8]` and return index pairs with zero diffuse domain types
+- [x] [Phase 1 — Algorithm Module Architecture & Generic Contracts](#1-phase-1--algorithm-module-architecture--generic-contracts)
+  - [x] Define abstract, generic trait interfaces in `crates/diffuse-core/src/algo/mod.rs` (or standalone crate `crates/diffuse-algo`)
+  - [x] Ensure 100% separation: algorithms take generic slices `&[T]` / `&[u8]` and return index pairs with zero diffuse domain types
 - [ ] [Phase 2 — Myers' 64-Bit Bit-Parallel LCS Engine](#2-phase-2--myers-64-bit-bit-parallel-lcs-engine)
   - [ ] Implement bit-vector dynamic programming across `u64` / `u128` words for token sequences $\le 64 / \le 128$
   - [ ] Implement fallback to chunked bit-vector for arbitrarily long sequences
