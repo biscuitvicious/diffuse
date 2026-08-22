@@ -8,8 +8,8 @@
 - [ ] ~~**Direct git access via git crate**: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`).~~ (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
 
 ## 2. Streaming Pipeline & Incremental Loading (Pi Extension & Engine)
-- [ ] ~~**Incremental file streaming**: Append and render each file as it arrives from the backend rather than waiting for the entire multi-file diff to finish processing.~~ (See [Incremental Streaming Pipeline & Worker Pool](plan/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
-- [ ] ~~**Incremental diff line streaming (JSONL)**: Stream and render individual tokenized rows/lines progressively over a JSON Lines protocol.~~ (See [Incremental Streaming Pipeline & Worker Pool](plan/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
+- [ ] ~~**Incremental file streaming**: Append and render each file as it arrives from the backend rather than waiting for the entire multi-file diff to finish processing.~~ (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
+- [ ] ~~**Incremental diff line streaming (JSONL)**: Stream and render individual tokenized rows/lines progressively over a JSON Lines protocol.~~ (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
 
 ## 3. UI, Navigation & Display Features
 - [x] **Expand / collapse entire files**: Toggle file visibility on/off by pressing Enter on the file header row.

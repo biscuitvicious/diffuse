@@ -9,6 +9,10 @@ description = "diff-engine token-stream & terminal renderer"
 name = "diffuse"
 path = "src/main.rs"
 
+[[bin]]
+name = "diffuse-harvest"
+path = "src/bin/harvest.rs"
+
 [dependencies]
 diffuse-core = { workspace = true }
 diffuse-render = { workspace = true }
