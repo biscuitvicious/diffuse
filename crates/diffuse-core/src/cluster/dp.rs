@@ -337,6 +337,46 @@ pub fn solve_cluster(
     solve_cluster_with(cluster, profile, &Weights::default())
 }
 
+/// Scratch arena for DP cluster solving to reuse memory across clusters.
+#[derive(Default)]
+pub struct DpScratchArena {
+    pub interner: TokenInterner,
+    pub old_tokens: Vec<DpTokens>,
+    pub new_tokens: Vec<DpTokens>,
+    pub old_comment: Vec<bool>,
+    pub new_comment: Vec<bool>,
+    pub old_kind: Vec<SyntaxSectionKind>,
+    pub new_kind: Vec<SyntaxSectionKind>,
+    pub old_close_dist: Vec<usize>,
+    pub new_close_dist: Vec<usize>,
+    pub old_open_dist: Vec<usize>,
+    pub new_open_dist: Vec<usize>,
+    dp: Vec<Cell>,
+}
+
+#[derive(Clone, Copy)]
+struct Cell {
+    score: f64,
+    back: Option<(usize, usize, &'static str, usize)>, // (i, j, op, k)
+}
+
+impl DpScratchArena {
+    pub fn clear(&mut self) {
+        self.interner.clear();
+        self.old_tokens.clear();
+        self.new_tokens.clear();
+        self.old_comment.clear();
+        self.new_comment.clear();
+        self.old_kind.clear();
+        self.new_kind.clear();
+        self.old_close_dist.clear();
+        self.new_close_dist.clear();
+        self.old_open_dist.clear();
+        self.new_open_dist.clear();
+        self.dp.clear();
+    }
+}
+
 /// Solve with explicit weights (the tuning surface for tests and Phase 5
 /// preference experiments).
 pub fn solve_cluster_with(
@@ -344,40 +384,43 @@ pub fn solve_cluster_with(
     profile: Option<&crate::syntax::profile::LangProfile>,
     w: &Weights,
 ) -> DpSolution {
+    let mut arena = DpScratchArena::default();
+    solve_cluster_with_arena(cluster, profile, w, &mut arena)
+}
+
+/// Solve cluster reusing an existing scratch arena to avoid allocations.
+pub fn solve_cluster_with_arena(
+    cluster: &ChangeCluster,
+    profile: Option<&crate::syntax::profile::LangProfile>,
+    w: &Weights,
+    arena: &mut DpScratchArena,
+) -> DpSolution {
+    arena.clear();
     let m = cluster.old_rows.len();
     let n = cluster.new_rows.len();
 
-    let mut interner = TokenInterner::new();
-    let old: Vec<DpTokens> = cluster
-        .old_rows
-        .iter()
-        .map(|r| dp_tokens(&mut interner, r.text()))
-        .collect();
-    let new: Vec<DpTokens> = cluster
-        .new_rows
-        .iter()
-        .map(|r| dp_tokens(&mut interner, r.text()))
-        .collect();
-    let old_comment: Vec<bool> = cluster
-        .old_rows
-        .iter()
-        .map(|r| profile.is_some_and(|p| p.is_comment_line(r.text())))
-        .collect();
-    let new_comment: Vec<bool> = cluster
-        .new_rows
-        .iter()
-        .map(|r| profile.is_some_and(|p| p.is_comment_line(r.text())))
-        .collect();
-    let old_kind: Vec<SyntaxSectionKind> = cluster
-        .old_rows
-        .iter()
-        .map(|r| classify_syntax_section(r.text(), profile))
-        .collect();
-    let new_kind: Vec<SyntaxSectionKind> = cluster
-        .new_rows
-        .iter()
-        .map(|r| classify_syntax_section(r.text(), profile))
-        .collect();
+    for r in &cluster.old_rows {
+        arena
+            .old_tokens
+            .push(dp_tokens(&mut arena.interner, r.text()));
+        arena
+            .old_comment
+            .push(profile.is_some_and(|p| p.is_comment_line(r.text())));
+        arena
+            .old_kind
+            .push(classify_syntax_section(r.text(), profile));
+    }
+    for r in &cluster.new_rows {
+        arena
+            .new_tokens
+            .push(dp_tokens(&mut arena.interner, r.text()));
+        arena
+            .new_comment
+            .push(profile.is_some_and(|p| p.is_comment_line(r.text())));
+        arena
+            .new_kind
+            .push(classify_syntax_section(r.text(), profile));
+    }
 
     let is_open_line = |t: &str| -> bool {
         if let Some(p) = profile {
@@ -395,54 +438,51 @@ pub fn solve_cluster_with(
     };
     let indent_of = |t: &str| -> usize { t.len() - t.trim_start().len() };
 
-    let compute_close_dist = |rows: &[crate::parse::Row], following: &[String]| -> Vec<usize> {
-        let count = rows.len();
-        (0..count)
-            .map(|i| {
+    let compute_close_dist =
+        |rows: &[crate::parse::Row], following: &[String], out: &mut Vec<usize>| {
+            let count = rows.len();
+            for i in 0..count {
                 let txt = rows[i].text().trim();
                 if is_close_line(txt) {
-                    return 0;
+                    out.push(0);
+                    continue;
                 }
                 let cur_ind = indent_of(rows[i].text());
+                let mut found = None;
                 for d in 1..(count - i) {
                     let next_t = rows[i + d].text().trim();
                     if next_t.is_empty() {
                         continue;
                     }
-                    if is_close_line(next_t) {
-                        return d;
-                    }
-                    let next_ind = indent_of(rows[i + d].text());
-                    if next_ind < cur_ind {
-                        return d;
+                    if is_close_line(next_t) || indent_of(rows[i + d].text()) < cur_ind {
+                        found = Some(d);
+                        break;
                     }
                 }
-                for (idx, line) in following.iter().enumerate() {
-                    let next_t = line.trim();
-                    if next_t.is_empty() {
-                        continue;
-                    }
-                    if is_close_line(next_t) {
-                        return count - i + idx;
-                    }
-                    let next_ind = indent_of(line);
-                    if next_ind < cur_ind {
-                        return count - i + idx;
+                if found.is_none() {
+                    for (idx, line) in following.iter().enumerate() {
+                        let next_t = line.trim();
+                        if next_t.is_empty() {
+                            continue;
+                        }
+                        if is_close_line(next_t) || indent_of(line) < cur_ind {
+                            found = Some(count - i + idx);
+                            break;
+                        }
                     }
                 }
-                usize::MAX
-            })
-            .collect()
-    };
+                out.push(found.unwrap_or(usize::MAX));
+            }
+        };
 
-    let compute_open_dist = |rows: &[crate::parse::Row], preceding: &[String]| -> Vec<usize> {
-        let count = rows.len();
-        (0..count)
-            .map(|i| {
+    let compute_open_dist =
+        |rows: &[crate::parse::Row], preceding: &[String], out: &mut Vec<usize>| {
+            let count = rows.len();
+            for i in 0..count {
                 if let Some(k) = (0..=i).rev().find(|&k| is_open_line(rows[k].text())) {
-                    i - k
+                    out.push(i - k);
                 } else {
-                    preceding
+                    let dist = preceding
                         .iter()
                         .rev()
                         .enumerate()
@@ -453,35 +493,64 @@ pub fn solve_cluster_with(
                                 None
                             }
                         })
-                        .unwrap_or(usize::MAX)
+                        .unwrap_or(usize::MAX);
+                    out.push(dist);
                 }
-            })
-            .collect()
-    };
+            }
+        };
 
     // Proximity to a block end / closing delimiter / unindent.
-    let old_close_dist = compute_close_dist(&cluster.old_rows, &cluster.following_ctx);
-    let new_close_dist = compute_close_dist(&cluster.new_rows, &cluster.following_ctx);
+    compute_close_dist(
+        &cluster.old_rows,
+        &cluster.following_ctx,
+        &mut arena.old_close_dist,
+    );
+    compute_close_dist(
+        &cluster.new_rows,
+        &cluster.following_ctx,
+        &mut arena.new_close_dist,
+    );
 
     // Proximity to a block start / opening delimiter.
-    let old_open_dist = compute_open_dist(&cluster.old_rows, &cluster.preceding_ctx);
-    let new_open_dist = compute_open_dist(&cluster.new_rows, &cluster.preceding_ctx);
+    compute_open_dist(
+        &cluster.old_rows,
+        &cluster.preceding_ctx,
+        &mut arena.old_open_dist,
+    );
+    compute_open_dist(
+        &cluster.new_rows,
+        &cluster.preceding_ctx,
+        &mut arena.new_open_dist,
+    );
 
-    #[derive(Clone, Copy)]
-    struct Cell {
-        score: f64,
-        back: Option<(usize, usize, &'static str, usize)>, // (i, j, op, k)
-    }
+    let interner = &arena.interner;
+    let old = &arena.old_tokens;
+    let new = &arena.new_tokens;
+    let old_comment = &arena.old_comment;
+    let new_comment = &arena.new_comment;
+    let old_kind = &arena.old_kind;
+    let new_kind = &arena.new_kind;
+    let old_close_dist = &arena.old_close_dist;
+    let new_close_dist = &arena.new_close_dist;
+    let old_open_dist = &arena.old_open_dist;
+    let new_open_dist = &arena.new_open_dist;
+
     let neg = f64::NEG_INFINITY;
     let stride = n + 1;
-    let mut dp = vec![
+    let total_cells = (m + 1) * stride;
+    arena.dp.resize(
+        total_cells,
         Cell {
             score: neg,
-            back: None
-        };
-        (m + 1) * stride
-    ];
-    dp[0].score = 0.0;
+            back: None,
+        },
+    );
+    for cell in &mut arena.dp {
+        cell.score = neg;
+        cell.back = None;
+    }
+    arena.dp[0].score = 0.0;
+    let dp = &mut arena.dp;
 
     let block_score = |bm: &BlockMatch, side_chars: usize, block_chars: usize, k: usize| -> f64 {
         let total = side_chars.max(block_chars);
@@ -669,7 +738,7 @@ pub fn solve_cluster_with(
                     }) {
                         break;
                     }
-                    let bm = block_lcs(&old[i], block, &interner);
+                    let bm = block_lcs(&old[i], block, interner);
                     let block_chars: usize = block.iter().map(|t| t.chars).sum();
                     let total = old[i].chars.max(block_chars);
                     if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
@@ -736,7 +805,7 @@ pub fn solve_cluster_with(
                     }) {
                         break;
                     }
-                    let bm = block_lcs(&new[j], block, &interner);
+                    let bm = block_lcs(&new[j], block, interner);
                     let block_chars: usize = block.iter().map(|t| t.chars).sum();
                     let total = new[j].chars.max(block_chars);
                     if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
@@ -836,7 +905,7 @@ pub fn solve_cluster_with(
             }
             "expand" => {
                 let block = &new[pj..pj + k];
-                let bm = block_lcs(&old[pi], block, &interner);
+                let bm = block_lcs(&old[pi], block, interner);
                 let anchor = block_anchor(&bm);
                 transitions.push(DpOp::Expand {
                     k,
@@ -858,7 +927,7 @@ pub fn solve_cluster_with(
             }
             "collapse" => {
                 let block = &old[pi..pi + k];
-                let bm = block_lcs(&new[pj], block, &interner);
+                let bm = block_lcs(&new[pj], block, interner);
                 let anchor = block_anchor(&bm);
                 transitions.push(DpOp::Collapse {
                     k,

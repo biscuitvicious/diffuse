@@ -1,11 +1,11 @@
 # Production Performance Optimizations
 
 ## Global TODO
-- [ ] [Phase 1 — Manual Zero-Allocation Line Tokenizer](#1-phase-1--manual-zero-allocation-line-tokenizer)
-  - [ ] Implement fast byte/char classification table for whitespace, operators, and delimiters
-  - [ ] Replace `regex::Regex::find_iter` in `diffuse_core::lcs::tokenize_line` with manual scanner
-  - [ ] Add parity unit tests asserting 100% token sequence and span equivalence with regex baseline
-- [ ] [Phase 2 — Index-Based `FlatRow` View Model](#2-phase-2--index-based-flatrow-view-model)
+- [x] [Phase 1 — Manual Zero-Allocation Line Tokenizer](#1-phase-1--manual-zero-allocation-line-tokenizer)
+  - [x] Implement fast byte/char classification table for whitespace, operators, and delimiters
+  - [x] Replace `regex::Regex::find_iter` in `diffuse_core::lcs::tokenize_line` with manual scanner
+  - [x] Add parity unit tests asserting 100% token sequence and span equivalence with regex baseline
+- [·] [Phase 2 — Index-Based `FlatRow` View Model](#2-phase-2--index-based-flatrow-view-model)
   - [ ] Refactor `FlatRow` to store coordinate indices `(file_idx: u32, hunk_idx: u16, row_idx: u16)`
   - [ ] Replace deep-cloning in `AppState::build_visual_flat` with zero-copy row indexing
   - [ ] Verify instant file folding and streaming UI updates in `diffuse-tui`

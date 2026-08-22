@@ -244,3 +244,91 @@ fn test_semantic_delimiter_atomicity_and_literals() {
         "Alice"
     );
 }
+
+#[test]
+fn test_tokenize_line_parity_with_regex() {
+    fn tokenize_regex(text: &str) -> Vec<&str> {
+        let re = regex::Regex::new(
+            r#"([\p{White_Space}\u200b]+|[<>!=+\-*\/\\|&^%~?:._]+|[()\[\]{};,@#`"])"#,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        let mut last = 0;
+        for m in re.find_iter(text) {
+            if m.start() > last {
+                let seg = &text[last..m.start()];
+                if !seg.is_empty() {
+                    out.push(seg);
+                }
+            }
+            let seg = m.as_str();
+            if !seg.is_empty() {
+                out.push(seg);
+            }
+            last = m.end();
+        }
+        if last < text.len() {
+            let seg = &text[last..];
+            if !seg.is_empty() {
+                out.push(seg);
+            }
+        }
+        out
+    }
+
+    let cases = [
+        "",
+        "   ",
+        "abc",
+        "let mut x: u32 = 123 + 456;",
+        "fn calculate(a: &str, b: &[u8]) -> Result<Option<Vec<String>>, Box<dyn Error>> {",
+        "// this is a comment with \t tabs \n and multiple spaces",
+        "let unicode = \"こんにちは世界 — 🚀 \u{200b} zero width\";",
+        "if (a >= b && c != d || !e) { return *ptr->val; }",
+        "`code_block` and ```inline``` with @decorator and #tag;",
+        "::path::to::Item<T, U>::new(..)",
+        "a => b -> c +++ --- === !=== <=>= //*/*\\",
+        "struct Foo<T: 'static + Send + Sync> { field: HashMap<String, (u32, i64)> }",
+        "word\u{00A0}nbsp\u{1680}ogham\u{2000}enquad\u{2001}emquad\u{2002}ensp\u{2003}emsp",
+        "thin\u{2009}hair\u{200A}line\u{2028}para\u{2029}narrow\u{202F}math\u{205F}ideo\u{3000}zw\u{200B}end",
+        "let\u{3000}x\u{00A0}=\u{2002}1;",
+    ];
+
+    for case in cases {
+        let actual = tokenize_line(case);
+        let expected = tokenize_regex(case);
+        assert_eq!(
+            actual, expected,
+            "tokenize_line mismatch for case: {:?}",
+            case
+        );
+    }
+}
+
+#[test]
+fn test_char_slice_and_char_len() {
+    // ASCII tests
+    let s_ascii = "hello world";
+    assert_eq!(char_len(s_ascii), 11);
+    assert_eq!(char_slice(s_ascii, 0, 5), "hello");
+    assert_eq!(char_slice(s_ascii, 6, 11), "world");
+    assert_eq!(char_slice(s_ascii, 0, 0), "");
+    assert_eq!(char_slice(s_ascii, 5, 5), "");
+    assert_eq!(char_slice(s_ascii, 8, 4), "");
+    assert_eq!(char_slice(s_ascii, 6, 50), "world");
+    assert_eq!(char_slice(s_ascii, 50, 100), "");
+
+    // Unicode tests
+    let s_uni = "🦀 rocket 🚀 — world";
+    assert_eq!(char_len(s_uni), 18);
+    assert_eq!(char_slice(s_uni, 0, 1), "🦀");
+    assert_eq!(char_slice(s_uni, 2, 8), "rocket");
+    assert_eq!(char_slice(s_uni, 9, 10), "🚀");
+    assert_eq!(char_slice(s_uni, 11, 12), "—");
+    assert_eq!(char_slice(s_uni, 13, 18), "world");
+    assert_eq!(char_slice(s_uni, 0, 0), "");
+    assert_eq!(char_slice(s_uni, 5, 5), "");
+    assert_eq!(char_slice(s_uni, 10, 2), "");
+    assert_eq!(char_slice(s_uni, 13, 100), "world");
+    assert_eq!(char_slice(s_uni, 50, 100), "");
+}

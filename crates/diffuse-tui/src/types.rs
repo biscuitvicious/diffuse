@@ -1,8 +1,6 @@
 //! TUI Domain Types — selection, navigation coordinates, and flat visual row
 //! models.
 
-use diffuse_core::wire::OutputRow;
-
 /// A contiguous line selection within a file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
@@ -30,9 +28,11 @@ pub struct HunkMeta {
 }
 
 /// A flattened visual row within the reviewer viewport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FlatRow {
     pub file_idx: usize,
     pub hunk_idx: usize,
+    pub row_idx: usize,
     pub is_file_header: bool,
-    pub row: OutputRow,
+    pub is_hunk_divider: bool,
 }

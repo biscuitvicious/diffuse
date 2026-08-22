@@ -4,7 +4,6 @@ use std::{collections::HashMap, path::PathBuf};
 
 use diffuse_core::{
     notes::{NotesDB, Side},
-    parse::RowKind,
     wire::{OutputFile, OutputRow, PipelineOutput},
 };
 use diffuse_render::{
@@ -73,7 +72,7 @@ impl AppState {
         // Start on first coordinate row if available, or first row (e.g. header)
         let start_row = flat
             .iter()
-            .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
+            .position(|r| Self::flat_coord(&output, false, r).is_some())
             .unwrap_or(0);
 
         let hunk_meta = Self::build_hunk_meta(&output);
@@ -122,6 +121,41 @@ impl AppState {
         self
     }
 
+    pub fn row_of(&self, fr: &FlatRow) -> Option<&OutputRow> {
+        Self::row_from_output(&self.output, self.raw_diff, fr)
+    }
+
+    pub fn row_from_output<'a>(
+        output: &'a PipelineOutput,
+        raw_diff: bool,
+        fr: &FlatRow,
+    ) -> Option<&'a OutputRow> {
+        if fr.is_file_header || fr.is_hunk_divider {
+            return None;
+        }
+        let file = output.files.get(fr.file_idx)?;
+        if raw_diff {
+            let hunks = if !file.raw_hunks.is_empty() {
+                &file.raw_hunks
+            } else {
+                &file.hunks
+            };
+            hunks.get(fr.hunk_idx)?.rows.get(fr.row_idx)
+        } else if !file.rows.is_empty() {
+            file.rows.get(fr.row_idx)
+        } else {
+            file.hunks.get(fr.hunk_idx)?.rows.get(fr.row_idx)
+        }
+    }
+
+    pub fn flat_coord(output: &PipelineOutput, raw_diff: bool, fr: &FlatRow) -> Option<u32> {
+        Self::row_from_output(output, raw_diff, fr).and_then(Self::row_coord)
+    }
+
+    pub fn flat_row_coord(&self, fr: &FlatRow) -> Option<u32> {
+        self.row_of(fr).and_then(Self::row_coord)
+    }
+
     /// The visual (reflowed) flat sequence: per file a header banner, then the
     /// engine's pre-assembled visible rows (padded context, merged mod pairs).
     fn build_visual_flat(
@@ -144,7 +178,7 @@ impl AppState {
         let mut hunk_starts = Vec::new();
 
         for (fi, f) in output.files.iter().enumerate() {
-            flat.push(Self::file_header_row(fi, &f.path));
+            flat.push(Self::file_header_row(fi));
             if collapsed_files.contains(&fi) {
                 continue;
             }
@@ -157,33 +191,22 @@ impl AppState {
                 flat.push(FlatRow {
                     file_idx: fi,
                     hunk_idx: hi,
+                    row_idx: 0,
                     is_file_header: false,
-                    row: OutputRow {
-                        kind: diffuse_core::parse::RowKind::Sep,
-                        new_line: None,
-                        old_line: None,
-                        text: format!(
-                            "@@ -{},{} +{},{} @@",
-                            h.old_start, h.old_count, h.new_start, h.new_count
-                        ),
-                        del_text: None,
-                        spans: Default::default(),
-                        runs: Vec::new(),
-                        wholesale: false,
-                        moved: false,
-                    },
+                    is_hunk_divider: true,
                 });
                 hunk_starts.push(HunkStart {
                     flat: flat.len() - 1,
                     file: fi,
                     hunk: hi,
                 });
-                for r in &h.rows {
+                for ri in 0..h.rows.len() {
                     flat.push(FlatRow {
                         file_idx: fi,
                         hunk_idx: hi,
+                        row_idx: ri,
                         is_file_header: false,
-                        row: r.clone(),
+                        is_hunk_divider: false,
                     });
                 }
             }
@@ -198,27 +221,29 @@ impl AppState {
     ) -> Vec<FlatRow> {
         let mut flat = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
-            flat.push(Self::file_header_row(fi, &f.path));
+            flat.push(Self::file_header_row(fi));
             if collapsed_files.contains(&fi) {
                 continue;
             }
             if !f.rows.is_empty() {
-                for r in &f.rows {
+                for ri in 0..f.rows.len() {
                     flat.push(FlatRow {
                         file_idx: fi,
                         hunk_idx: 0,
+                        row_idx: ri,
                         is_file_header: false,
-                        row: r.clone(),
+                        is_hunk_divider: false,
                     });
                 }
             } else {
                 for (hi, h) in f.hunks.iter().enumerate() {
-                    for r in &h.rows {
+                    for ri in 0..h.rows.len() {
                         flat.push(FlatRow {
                             file_idx: fi,
                             hunk_idx: hi,
+                            row_idx: ri,
                             is_file_header: false,
-                            row: r.clone(),
+                            is_hunk_divider: false,
                         });
                     }
                 }
@@ -227,22 +252,13 @@ impl AppState {
         flat
     }
 
-    fn file_header_row(fi: usize, path: &str) -> FlatRow {
+    fn file_header_row(fi: usize) -> FlatRow {
         FlatRow {
             file_idx: fi,
             hunk_idx: 0,
+            row_idx: 0,
             is_file_header: true,
-            row: OutputRow {
-                kind: diffuse_core::parse::RowKind::File,
-                new_line: None,
-                old_line: None,
-                text: path.to_string(),
-                del_text: None,
-                spans: Default::default(),
-                runs: Vec::new(),
-                wholesale: false,
-                moved: false,
-            },
+            is_hunk_divider: false,
         }
     }
 
@@ -281,7 +297,7 @@ impl AppState {
                         if fr.file_idx != fi {
                             break;
                         }
-                        if let Some(coord) = Self::row_coord(&fr.row)
+                        if let Some(coord) = Self::flat_coord(output, false, fr)
                             && coord >= target_start
                         {
                             found = Some(idx);
@@ -351,7 +367,7 @@ impl AppState {
         self.hunk_meta.push(meta);
 
         let file_header_idx = self.flat.len();
-        self.flat.push(Self::file_header_row(fi, &file.path));
+        self.flat.push(Self::file_header_row(fi));
 
         if !is_collapsed {
             if self.raw_diff {
@@ -364,43 +380,33 @@ impl AppState {
                     self.flat.push(FlatRow {
                         file_idx: fi,
                         hunk_idx: hi,
+                        row_idx: 0,
                         is_file_header: false,
-                        row: OutputRow {
-                            kind: diffuse_core::parse::RowKind::Sep,
-                            new_line: None,
-                            old_line: None,
-                            text: format!(
-                                "@@ -{},{} +{},{} @@",
-                                h.old_start, h.old_count, h.new_start, h.new_count
-                            ),
-                            del_text: None,
-                            spans: Default::default(),
-                            runs: Vec::new(),
-                            wholesale: false,
-                            moved: false,
-                        },
+                        is_hunk_divider: true,
                     });
                     self.hunk_starts.push(HunkStart {
                         flat: self.flat.len() - 1,
                         file: fi,
                         hunk: hi,
                     });
-                    for r in &h.rows {
+                    for ri in 0..h.rows.len() {
                         self.flat.push(FlatRow {
                             file_idx: fi,
                             hunk_idx: hi,
+                            row_idx: ri,
                             is_file_header: false,
-                            row: r.clone(),
+                            is_hunk_divider: false,
                         });
                     }
                 }
             } else if !file.rows.is_empty() {
-                for r in &file.rows {
+                for ri in 0..file.rows.len() {
                     self.flat.push(FlatRow {
                         file_idx: fi,
                         hunk_idx: 0,
+                        row_idx: ri,
                         is_file_header: false,
-                        row: r.clone(),
+                        is_hunk_divider: false,
                     });
                 }
                 if !file.hunks.is_empty() {
@@ -427,7 +433,7 @@ impl AppState {
                                 if fr.file_idx != fi {
                                     break;
                                 }
-                                if let Some(coord) = Self::row_coord(&fr.row)
+                                if let Some(coord) = self.flat_row_coord(fr)
                                     && coord >= target_start
                                 {
                                     found = Some(idx);
@@ -453,12 +459,13 @@ impl AppState {
                         file: fi,
                         hunk: hi,
                     });
-                    for r in &h.rows {
+                    for ri in 0..h.rows.len() {
                         self.flat.push(FlatRow {
                             file_idx: fi,
                             hunk_idx: hi,
+                            row_idx: ri,
                             is_file_header: false,
-                            row: r.clone(),
+                            is_hunk_divider: false,
                         });
                     }
                 }
@@ -473,7 +480,7 @@ impl AppState {
             && let Some(pos) = self
                 .flat
                 .iter()
-                .position(|r| !r.is_file_header && Self::row_coord(&r.row).is_some())
+                .position(|r| self.flat_row_coord(r).is_some())
         {
             self.row_idx = pos;
         }
@@ -519,10 +526,13 @@ impl AppState {
             let Some(row) = self.current_flat_row() else {
                 return;
             };
-            let Some(c) = Self::row_coord(&row.row) else {
+            let Some(r) = self.row_of(row) else {
                 return;
             };
-            (file.path.clone(), c, c, row.row.new_line.is_some())
+            let Some(c) = Self::row_coord(r) else {
+                return;
+            };
+            (file.path.clone(), c, c, r.new_line.is_some())
         };
         self.note_id_counter += 1;
         let created_at = diffuse_core::notes::now_millis();
@@ -561,7 +571,7 @@ impl AppState {
             let Some(row) = self.current_flat_row() else {
                 return;
             };
-            let Some(c) = Self::row_coord(&row.row) else {
+            let Some(c) = self.flat_row_coord(row) else {
                 return;
             };
             (file.path.clone(), c, c)
@@ -640,7 +650,7 @@ impl AppState {
             if item.file_idx != cur_fi || item.is_file_header {
                 continue;
             }
-            if let Some(c) = Self::row_coord(&item.row) {
+            if let Some(c) = self.flat_row_coord(item) {
                 let dist = c.abs_diff(line_num);
                 match best {
                     None => best = Some((i, dist)),
@@ -674,7 +684,7 @@ impl AppState {
                 if item.file_idx != file_idx {
                     continue;
                 }
-                if let Some(c) = Self::row_coord(&item.row)
+                if let Some(c) = self.flat_row_coord(item)
                     && c >= n.start
                     && c <= n.end
                 {
@@ -751,7 +761,7 @@ impl AppState {
                 "{}:{}",
                 f.path,
                 self.current_flat_row()
-                    .and_then(|fr| Self::row_coord(&fr.row))
+                    .and_then(|fr| self.flat_row_coord(fr))
                     .unwrap_or(0)
             );
             lines.push(format!(
@@ -828,6 +838,7 @@ impl AppState {
 
         // Viewport iteration
         let mut vis_i = 0;
+        let mut scrollbar_chars = Vec::new();
         for (idx, item) in self.flat.iter().enumerate() {
             let count = counts[idx];
             if vis_i + count <= self.scroll {
@@ -840,7 +851,6 @@ impl AppState {
 
             let in_band = band[idx];
             let in_hunk_extent = !in_band && hunk_extent[idx];
-            let r = &item.row;
 
             if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
                 if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
@@ -853,6 +863,7 @@ impl AppState {
                         .unwrap_or((0, 0));
                     let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
                     lines.push(render_hunk_divider(div_hi, h, ctx, is_cur, content_width));
+                    scrollbar_chars.push("\x1b[38;5;236m│\x1b[0m".to_string());
                 }
                 vis_i += 1;
             }
@@ -869,9 +880,41 @@ impl AppState {
                         in_band,
                         content_width,
                     ));
+                    scrollbar_chars.push("\x1b[38;5;236m│\x1b[0m".to_string());
                 }
                 vis_i += 1;
-            } else {
+            } else if item.is_hunk_divider {
+                let seg_count = seg_counts[idx];
+                let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
+                    &self.output.files[item.file_idx].raw_hunks
+                } else {
+                    &self.output.files[item.file_idx].hunks
+                };
+                let h = &hunks[item.hunk_idx];
+                let sep_text = format!(
+                    "@@ -{},{} +{},{} @@",
+                    h.old_start, h.old_count, h.new_start, h.new_count
+                );
+                for s_idx in 0..seg_count {
+                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                        let text_cols = content_width.max(1);
+                        let start_col = s_idx * text_cols;
+                        let piece = slice_by_visual_width(&sep_text, start_col, text_cols);
+                        let is_last_seg = s_idx + 1 == seg_count;
+                        lines.push(render_raw_row(
+                            diffuse_core::parse::RowKind::Sep,
+                            "",
+                            &piece,
+                            is_selected,
+                            in_band && !is_selected,
+                            is_last_seg,
+                        ));
+                        scrollbar_chars.push("\x1b[38;5;236m│\x1b[0m".to_string());
+                    }
+                    vis_i += 1;
+                }
+            } else if let Some(r) = self.row_of(item) {
                 let seg_count = seg_counts[idx];
                 for s_idx in 0..seg_count {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
@@ -889,12 +932,8 @@ impl AppState {
                             "\x1b[38;5;242m      \x1b[39m".to_string()
                         };
                         let rendered_row = if self.raw_diff {
-                            let (prefix_str, text_cols) =
-                                if r.kind == diffuse_core::parse::RowKind::Sep {
-                                    ("", content_width.max(1))
-                                } else {
-                                    (pfx.as_str(), content_width.saturating_sub(6).max(1))
-                                };
+                            let prefix_str = pfx.as_str();
+                            let text_cols = content_width.saturating_sub(6).max(1);
                             let start_col = s_idx * text_cols;
                             let piece = slice_by_visual_width(&r.text, start_col, text_cols);
                             let is_last_seg = s_idx + 1 == seg_count;
@@ -929,6 +968,7 @@ impl AppState {
                             )
                         };
                         lines.push(rendered_row);
+                        scrollbar_chars.push("\x1b[38;5;236m│\x1b[0m".to_string());
                     }
                     vis_i += 1;
                 }
@@ -1071,37 +1111,49 @@ impl AppState {
     }
 
     pub fn row_seg_count(&self, idx: usize, content_width: usize) -> usize {
-        if let Some(item) = self.flat.get(idx) {
-            if item.is_file_header {
-                return 1;
-            }
-            let r = &item.row;
-            if self.raw_diff {
-                use unicode_width::UnicodeWidthStr;
-                let text_cols = if r.kind == diffuse_core::parse::RowKind::Sep {
-                    content_width.max(1)
-                } else {
-                    content_width.saturating_sub(6).max(1)
-                };
-                let len = r.text.width();
-                if len == 0 { 1 } else { len.div_ceil(text_cols) }
+        let Some(item) = self.flat.get(idx) else {
+            return 1;
+        };
+        if item.is_file_header {
+            return 1;
+        }
+        if item.is_hunk_divider {
+            use unicode_width::UnicodeWidthStr;
+            let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
+                &self.output.files[item.file_idx].raw_hunks
             } else {
-                use unicode_width::UnicodeWidthStr;
-                let text_cols = content_width.saturating_sub(6).max(1);
-                let disp = display_text(
-                    &r.text,
-                    r.del_text.as_deref(),
-                    r.kind,
-                    r.moved,
-                    &r.runs,
-                    self.col_offset,
-                    self.word_diff,
-                );
-                let len = disp.width();
-                if len == 0 { 1 } else { len.div_ceil(text_cols) }
-            }
+                &self.output.files[item.file_idx].hunks
+            };
+            let h = &hunks[item.hunk_idx];
+            let sep_text = format!(
+                "@@ -{},{} +{},{} @@",
+                h.old_start, h.old_count, h.new_start, h.new_count
+            );
+            let len = sep_text.width();
+            let text_cols = content_width.max(1);
+            return if len == 0 { 1 } else { len.div_ceil(text_cols) };
+        }
+        let Some(r) = self.row_of(item) else {
+            return 1;
+        };
+        use unicode_width::UnicodeWidthStr;
+        if self.raw_diff {
+            let text_cols = content_width.saturating_sub(6).max(1);
+            let len = r.text.width();
+            if len == 0 { 1 } else { len.div_ceil(text_cols) }
         } else {
-            1
+            let text_cols = content_width.saturating_sub(6).max(1);
+            let disp = display_text(
+                &r.text,
+                r.del_text.as_deref(),
+                r.kind,
+                r.moved,
+                &r.runs,
+                self.col_offset,
+                self.word_diff,
+            );
+            let len = disp.width();
+            if len == 0 { 1 } else { len.div_ceil(text_cols) }
         }
     }
 
@@ -1256,7 +1308,7 @@ impl AppState {
         let Some(row) = self.current_flat_row() else {
             return Some(0);
         };
-        let Some(coord) = Self::row_coord(&row.row) else {
+        let Some(coord) = self.flat_row_coord(row) else {
             return Some(0);
         };
         let mut idx = Some(0);
@@ -1296,7 +1348,9 @@ impl AppState {
             if item.file_idx != fi || item.is_file_header {
                 continue;
             }
-            let r = &item.row;
+            let Some(r) = self.row_of(item) else {
+                continue;
+            };
             if let Some(nl) = r.new_line
                 && nl >= new_lo
                 && nl < new_hi
@@ -1371,16 +1425,15 @@ impl AppState {
         let screen_y = old_vis.saturating_sub(self.scroll);
 
         let cur_hunk_hi = self.current_hunk();
-        let is_sep_row = self
-            .current_flat_row()
-            .is_some_and(|fr| fr.row.kind == RowKind::Sep);
+        let is_sep_row = self.current_flat_row().is_some_and(|fr| fr.is_hunk_divider);
 
         let (file, target_new, target_old) = {
             let Some(row) = self.current_flat_row() else {
                 return;
             };
-            let r = &row.row;
-            if r.new_line.is_some() || r.old_line.is_some() {
+            if let Some(r) = self.row_of(row)
+                && (r.new_line.is_some() || r.old_line.is_some())
+            {
                 (row.file_idx, r.new_line, r.old_line)
             } else {
                 let mut neighbor_coord = None;
@@ -1388,8 +1441,7 @@ impl AppState {
                     if self.row_idx >= offset {
                         let prev = &self.flat[self.row_idx - offset];
                         if prev.file_idx == row.file_idx
-                            && !prev.is_file_header
-                            && let Some(c) = Self::row_coord(&prev.row)
+                            && let Some(c) = self.flat_row_coord(prev)
                         {
                             neighbor_coord = Some(c);
                             break;
@@ -1398,8 +1450,7 @@ impl AppState {
                     if self.row_idx + offset < self.flat.len() {
                         let next = &self.flat[self.row_idx + offset];
                         if next.file_idx == row.file_idx
-                            && !next.is_file_header
-                            && let Some(c) = Self::row_coord(&next.row)
+                            && let Some(c) = self.flat_row_coord(next)
                         {
                             neighbor_coord = Some(c);
                             break;
@@ -1434,7 +1485,7 @@ impl AppState {
                     && self
                         .flat
                         .get(hs.flat - 1)
-                        .is_some_and(|fr| fr.row.kind == RowKind::Sep)
+                        .is_some_and(|fr| fr.is_hunk_divider)
                 {
                     idx = Some(hs.flat - 1);
                 } else {
@@ -1450,7 +1501,9 @@ impl AppState {
             && let Some(target_ol) = target_old
         {
             for (i, item) in self.flat.iter().enumerate() {
-                if item.file_idx == file && item.row.old_line == Some(target_ol) {
+                if item.file_idx == file
+                    && self.row_of(item).and_then(|r| r.old_line) == Some(target_ol)
+                {
                     idx = Some(i);
                     break;
                 }
@@ -1461,7 +1514,9 @@ impl AppState {
             && let Some(target_nl) = target_new
         {
             for (i, item) in self.flat.iter().enumerate() {
-                if item.file_idx == file && item.row.new_line == Some(target_nl) {
+                if item.file_idx == file
+                    && self.row_of(item).and_then(|r| r.new_line) == Some(target_nl)
+                {
                     idx = Some(i);
                     break;
                 }
@@ -1472,7 +1527,9 @@ impl AppState {
             && let Some(target_ol) = target_old
         {
             for (i, item) in self.flat.iter().enumerate() {
-                if item.file_idx == file && item.row.old_line == Some(target_ol) {
+                if item.file_idx == file
+                    && self.row_of(item).and_then(|r| r.old_line) == Some(target_ol)
+                {
                     idx = Some(i);
                     break;
                 }
@@ -1484,7 +1541,9 @@ impl AppState {
             if let Some(c) = coord {
                 for (i, item) in self.flat.iter().enumerate() {
                     if item.file_idx == file
-                        && (item.row.new_line == Some(c) || item.row.old_line == Some(c))
+                        && self
+                            .row_of(item)
+                            .is_some_and(|r| r.new_line == Some(c) || r.old_line == Some(c))
                     {
                         idx = Some(i);
                         break;
@@ -1502,7 +1561,7 @@ impl AppState {
                 if item.file_idx != file || item.is_file_header {
                     continue;
                 }
-                if let Some(c) = Self::row_coord(&item.row) {
+                if let Some(c) = self.flat_row_coord(item) {
                     let diff = target.abs_diff(c);
                     if diff < best_diff {
                         best_diff = diff;
@@ -1584,8 +1643,11 @@ impl AppState {
                 .map(|f| f.path.clone())
                 .unwrap_or_default();
             let row = self.current_flat_row();
-            let c = row.and_then(|r| Self::row_coord(&r.row)).unwrap_or(0);
-            let prefer = row.map(|r| r.row.new_line.is_some()).unwrap_or(true);
+            let c = row.and_then(|r| self.flat_row_coord(r)).unwrap_or(0);
+            let prefer = row
+                .and_then(|r| self.row_of(r))
+                .map(|r| r.new_line.is_some())
+                .unwrap_or(true);
             (cur_path, c, prefer)
         };
 
@@ -1634,7 +1696,9 @@ impl AppState {
             if item.file_idx != file {
                 continue;
             }
-            let r = &item.row;
+            let Some(r) = self.row_of(item) else {
+                continue;
+            };
             let side_ok = if prefer_new {
                 r.new_line.is_some()
             } else {
@@ -1688,7 +1752,7 @@ impl AppState {
 
     fn next_coord_row(&self, from: usize) -> usize {
         for i in from..self.flat.len() {
-            if Self::row_coord(&self.flat[i].row).is_some() {
+            if self.flat_row_coord(&self.flat[i]).is_some() {
                 return i;
             }
         }
@@ -1698,7 +1762,7 @@ impl AppState {
     fn prev_coord_row(&self, from: usize) -> usize {
         let hi = from.min(self.flat.len().saturating_sub(1));
         for i in (0..=hi).rev() {
-            if Self::row_coord(&self.flat[i].row).is_some() {
+            if self.flat_row_coord(&self.flat[i]).is_some() {
                 return i;
             }
         }
@@ -1732,9 +1796,11 @@ impl AppState {
         hi = self.prev_coord_row(hi);
         let first = self.flat.get(lo)?;
         let last = self.flat.get(hi)?;
-        let side_is_new = first.row.new_line.is_some() || last.row.new_line.is_some();
-        let f = Self::row_coord(&first.row)?;
-        let l = Self::row_coord(&last.row)?;
+        let r_first = self.row_of(first)?;
+        let r_last = self.row_of(last)?;
+        let side_is_new = r_first.new_line.is_some() || r_last.new_line.is_some();
+        let f = Self::row_coord(r_first)?;
+        let l = Self::row_coord(r_last)?;
         Some(Selection {
             file_idx: c_file,
             start: f.min(l),
@@ -1785,7 +1851,7 @@ impl AppState {
                 if item.file_idx != conf.file_idx {
                     continue;
                 }
-                if let Some(c) = Self::row_coord(&item.row)
+                if let Some(c) = self.flat_row_coord(item)
                     && c >= conf.start
                     && c <= conf.end
                 {
@@ -1991,7 +2057,7 @@ impl AppState {
             TuiCommand::OpenEditor => {
                 if let Some(file) = self.current_file()
                     && let Some(row) = self.current_flat_row()
-                    && let Some(c) = Self::row_coord(&row.row)
+                    && let Some(c) = self.flat_row_coord(row)
                 {
                     let range = self.compute_selection().and_then(|sel| {
                         if sel.side_is_new {
@@ -2495,27 +2561,29 @@ index 1111111..2222222 100644
         state.toggle_raw_diff();
         assert!(state.raw_diff);
 
-        let del = state
-            .flat
-            .iter()
-            .find(|fr| fr.row.kind == diffuse_core::parse::RowKind::Del);
+        let del = state.flat.iter().find(|fr| {
+            state
+                .row_of(fr)
+                .is_some_and(|r| r.kind == diffuse_core::parse::RowKind::Del)
+        });
         assert!(
-            del.is_some() && del.unwrap().row.text.contains("old comment"),
+            del.is_some()
+                && state
+                    .row_of(del.unwrap())
+                    .unwrap()
+                    .text
+                    .contains("old comment"),
             "the mod pair must un-collapse into a - line"
         );
         let add = state.flat.iter().find(|fr| {
-            fr.row.kind == diffuse_core::parse::RowKind::Add && fr.row.text.contains("new comment")
+            state.row_of(fr).is_some_and(|r| {
+                r.kind == diffuse_core::parse::RowKind::Add && r.text.contains("new comment")
+            })
         });
         assert!(add.is_some(), "the mod pair must un-collapse into a + line");
 
-        let sep = state
-            .flat
-            .iter()
-            .find(|fr| fr.row.kind == diffuse_core::parse::RowKind::Sep);
-        assert_eq!(
-            sep.map(|fr| fr.row.text.as_str()),
-            Some("@@ -1025,6 +1025,8 @@")
-        );
+        let sep = state.flat.iter().find(|fr| fr.is_hunk_divider);
+        assert!(sep.is_some());
 
         let frame = state.render_frame(120, 40);
         assert!(frame.contains("@@ -1025,6 +1025,8 @@"), "raw @@ header");
@@ -2540,12 +2608,12 @@ index 1111111..2222222 100644
         for _ in 0..6 {
             state.move_down();
         }
-        let r = &state.flat[state.row_idx].row;
+        let r = state.row_of(&state.flat[state.row_idx]).unwrap();
         assert_eq!(r.kind, diffuse_core::parse::RowKind::Mod);
         assert_eq!(r.new_line, Some(1026));
 
         state.toggle_raw_diff();
-        let r = &state.flat[state.row_idx].row;
+        let r = state.row_of(&state.flat[state.row_idx]).unwrap();
         assert_eq!(
             r.kind,
             diffuse_core::parse::RowKind::Add,
@@ -2554,7 +2622,7 @@ index 1111111..2222222 100644
         assert_eq!(r.new_line, Some(1026), "same coordinate after the switch");
 
         state.toggle_raw_diff();
-        let r = &state.flat[state.row_idx].row;
+        let r = state.row_of(&state.flat[state.row_idx]).unwrap();
         assert_eq!(
             AppState::row_coord(r),
             Some(1026),
@@ -2795,7 +2863,11 @@ index 1111111..2222222 100644
         let add_row = state
             .flat
             .iter()
-            .position(|r| r.row.kind == diffuse_core::parse::RowKind::Add)
+            .position(|r| {
+                state
+                    .row_of(r)
+                    .is_some_and(|row| row.kind == diffuse_core::parse::RowKind::Add)
+            })
             .unwrap();
         state.row_idx = add_row;
 
@@ -2962,8 +3034,8 @@ index 1111111..2222222 100644
         let kinds: Vec<diffuse_core::parse::RowKind> = state
             .flat
             .iter()
-            .filter(|r| !r.is_file_header && r.row.kind != diffuse_core::parse::RowKind::Sep)
-            .map(|r| r.row.kind)
+            .filter(|r| !r.is_file_header && !r.is_hunk_divider)
+            .map(|r| state.row_of(r).unwrap().kind)
             .collect();
 
         // Exact match with diff input: 3 deletions, 3 additions, 1 context line
@@ -3160,7 +3232,9 @@ index 1111111..2222222 100644
             .flat
             .iter()
             .position(|r| {
-                r.row.kind == diffuse_core::parse::RowKind::Del && r.row.old_line == Some(82)
+                state.row_of(r).is_some_and(|row| {
+                    row.kind == diffuse_core::parse::RowKind::Del && row.old_line == Some(82)
+                })
             })
             .expect("must find deleted line 82 in raw diff");
         state.row_idx = del_idx;
@@ -3174,13 +3248,14 @@ index 1111111..2222222 100644
             !current_row.is_file_header,
             "must not jump to file header row"
         );
+        let current_out = state.row_of(current_row).unwrap();
         assert_eq!(
-            current_row.row.old_line,
+            current_out.old_line,
             Some(82),
             "selected row in visual diff must have old_line 82"
         );
         assert_eq!(
-            current_row.row.new_line,
+            current_out.new_line,
             Some(88),
             "selected row in visual diff must be the merged mod line 88"
         );
@@ -3356,12 +3431,14 @@ index 6f6222d..4aa7a1d 100644
         let vis_idx_115 = state
             .flat
             .iter()
-            .position(|r| r.file_idx == 3 && r.row.new_line == Some(115))
+            .position(|r| {
+                r.file_idx == 3 && state.row_of(r).is_some_and(|row| row.new_line == Some(115))
+            })
             .unwrap_or_else(|| {
                 state
                     .flat
                     .iter()
-                    .position(|r| r.row.new_line == Some(115))
+                    .position(|r| state.row_of(r).is_some_and(|row| row.new_line == Some(115)))
                     .unwrap_or_else(|| panic!("must find line 115"))
             });
         state.row_idx = vis_idx_115;
@@ -3373,7 +3450,8 @@ index 6f6222d..4aa7a1d 100644
             .flat
             .iter()
             .position(|r| {
-                r.file_idx == state.flat[vis_idx_115].file_idx && r.row.new_line == Some(90)
+                r.file_idx == state.flat[vis_idx_115].file_idx
+                    && state.row_of(r).is_some_and(|row| row.new_line == Some(90))
             })
             .unwrap_or_else(|| panic!("must find line 90"));
         state.scroll = state.visual_geometry(300).0[vis_idx_90];
@@ -3415,7 +3493,9 @@ index 6f6222d..4aa7a1d 100644
                     .flat
                     .iter()
                     .position(|r| {
-                        r.row.new_line == Some(target_line) || r.row.old_line == Some(target_line)
+                        state.row_of(r).is_some_and(|row| {
+                            row.new_line == Some(target_line) || row.old_line == Some(target_line)
+                        })
                     })
                     .unwrap_or_else(|| panic!("must find line {target_line} in visual flat"));
                 state.row_idx = vis_idx;
@@ -3454,7 +3534,7 @@ index 6f6222d..4aa7a1d 100644
         let raw_idx_115 = state
             .flat
             .iter()
-            .position(|r| r.row.new_line == Some(115))
+            .position(|r| state.row_of(r).is_some_and(|row| row.new_line == Some(115)))
             .unwrap_or_else(|| panic!("must find line 115 in raw flat"));
         state.row_idx = raw_idx_115;
         state.scroll = 30;

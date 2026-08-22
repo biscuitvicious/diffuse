@@ -183,13 +183,19 @@ pub fn dp_pairing(
         .collect();
 
     let mut pair_of: HashMap<usize, usize> = HashMap::new();
+    let mut arena = super::dp::DpScratchArena::default();
 
     for seg in partition_hunk_segments(h, old_content, new_content, profile) {
         let cluster = match seg {
             HunkSegment::Cluster(c) => c,
             HunkSegment::Context(_) => continue,
         };
-        let sol = super::dp::solve_cluster(&cluster, profile);
+        let sol = super::dp::solve_cluster_with_arena(
+            &cluster,
+            profile,
+            &super::dp::Weights::default(),
+            &mut arena,
+        );
 
         // Walk the DP's consumption of cluster sides, mapping transitions
         // to global indices via line numbers.

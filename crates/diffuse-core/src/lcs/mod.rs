@@ -8,12 +8,7 @@
 //! renderer receives, so behavior is identical; only the raw offset
 //! values differ for non-ASCII lines.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::OnceLock,
-};
-
-use regex::Regex;
+use std::collections::{HashMap, HashSet};
 
 use crate::parse::Spans;
 
@@ -23,15 +18,16 @@ use crate::parse::Spans;
 /// whole-line gate or an empty del/add line yields empty spans `(0,0)`,
 /// and `wholesalePair` slices them (an empty del line is a valid row).
 pub fn char_slice(s: &str, start: usize, end: usize) -> &str {
-    let len = s.chars().count();
+    let len = char_len(s);
     let start = start.min(len);
     let end = end.min(len).max(start);
-    let start_byte = s.char_indices().nth(start).map_or(s.len(), |(i, _)| i);
-    if end == start {
-        return &s[start_byte..start_byte];
+    if start >= end {
+        return "";
     }
-    // The end byte is the char at `end - 1`'s START byte plus its UTF-8
-    // length (a multi-byte char must not leave a non-boundary end).
+    if s.is_ascii() {
+        return &s[start..end];
+    }
+    let start_byte = s.char_indices().nth(start).map_or(s.len(), |(i, _)| i);
     let end_byte = match s.char_indices().nth(end - 1) {
         Some((i, c)) => i + c.len_utf8(),
         None => s.len(),
@@ -40,40 +36,193 @@ pub fn char_slice(s: &str, start: usize, end: usize) -> &str {
 }
 
 /// Number of chars in `s` (the port's span unit).
+#[inline]
 pub fn char_len(s: &str) -> usize {
-    s.chars().count()
+    if s.is_ascii() {
+        s.len()
+    } else {
+        s.chars().count()
+    }
 }
+
+#[inline]
+fn is_ws_char(c: char) -> bool {
+    c.is_whitespace() || c == '\u{200b}' || c == '\u{feff}'
+}
+
+#[inline]
+fn is_op_char(c: char) -> bool {
+    matches!(
+        c,
+        '<' | '>'
+            | '!'
+            | '='
+            | '+'
+            | '-'
+            | '*'
+            | '/'
+            | '\\'
+            | '|'
+            | '&'
+            | '^'
+            | '%'
+            | '~'
+            | '?'
+            | ':'
+            | '.'
+            | '_'
+    )
+}
+
+#[inline]
+fn is_delim_char(c: char) -> bool {
+    matches!(
+        c,
+        '(' | ')' | '[' | ']' | '{' | '}' | ';' | ',' | '@' | '#' | '`' | '"'
+    )
+}
+
+const KIND_WORD: u8 = 0;
+const KIND_WS: u8 = 1;
+const KIND_DELIM: u8 = 2;
+const KIND_OP: u8 = 3;
+
+const ASCII_KIND: [u8; 128] = {
+    let mut table = [KIND_WORD; 128];
+    // Whitespace
+    table[b' ' as usize] = KIND_WS;
+    table[b'\t' as usize] = KIND_WS;
+    table[b'\n' as usize] = KIND_WS;
+    table[b'\r' as usize] = KIND_WS;
+    table[0x0C] = KIND_WS; // form feed \f
+    table[0x0B] = KIND_WS; // vertical tab \v
+
+    // Delimiters
+    table[b'(' as usize] = KIND_DELIM;
+    table[b')' as usize] = KIND_DELIM;
+    table[b'[' as usize] = KIND_DELIM;
+    table[b']' as usize] = KIND_DELIM;
+    table[b'{' as usize] = KIND_DELIM;
+    table[b'}' as usize] = KIND_DELIM;
+    table[b';' as usize] = KIND_DELIM;
+    table[b',' as usize] = KIND_DELIM;
+    table[b'@' as usize] = KIND_DELIM;
+    table[b'#' as usize] = KIND_DELIM;
+    table[b'`' as usize] = KIND_DELIM;
+    table[b'"' as usize] = KIND_DELIM;
+
+    // Operators
+    table[b'<' as usize] = KIND_OP;
+    table[b'>' as usize] = KIND_OP;
+    table[b'!' as usize] = KIND_OP;
+    table[b'=' as usize] = KIND_OP;
+    table[b'+' as usize] = KIND_OP;
+    table[b'-' as usize] = KIND_OP;
+    table[b'*' as usize] = KIND_OP;
+    table[b'/' as usize] = KIND_OP;
+    table[b'\\' as usize] = KIND_OP;
+    table[b'|' as usize] = KIND_OP;
+    table[b'&' as usize] = KIND_OP;
+    table[b'^' as usize] = KIND_OP;
+    table[b'%' as usize] = KIND_OP;
+    table[b'~' as usize] = KIND_OP;
+    table[b'?' as usize] = KIND_OP;
+    table[b':' as usize] = KIND_OP;
+    table[b'.' as usize] = KIND_OP;
+    table[b'_' as usize] = KIND_OP;
+
+    table
+};
 
 /// Tokenize a diff line into word/operator tokens (whitespace + punctuation
 /// are separate tokens so `->` → `=>` highlights a single character). Zero-copy
 /// slices.
 pub fn tokenize_line(text: &str) -> Vec<&str> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r#"([\p{White_Space}\u200b]+|[<>!=+\-*\/\\|&^%~?:._]+|[()\[\]{};,@#`"])"#)
-            .expect("tokenizer regex")
-    });
+    if text.is_empty() {
+        return Vec::new();
+    }
+
     let mut out = Vec::new();
-    let mut last = 0;
-    for m in re.find_iter(text) {
-        if m.start() > last {
-            let seg = &text[last..m.start()];
-            if !seg.is_empty() {
-                out.push(seg);
+
+    if text.is_ascii() {
+        let bytes = text.as_bytes();
+        let len = bytes.len();
+        let mut i = 0;
+        while i < len {
+            let start = i;
+            let kind = ASCII_KIND[bytes[i] as usize];
+            match kind {
+                KIND_DELIM => {
+                    i += 1;
+                    out.push(&text[start..i]);
+                }
+                KIND_WS => {
+                    i += 1;
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WS {
+                        i += 1;
+                    }
+                    out.push(&text[start..i]);
+                }
+                KIND_OP => {
+                    i += 1;
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_OP {
+                        i += 1;
+                    }
+                    out.push(&text[start..i]);
+                }
+                _ => {
+                    i += 1;
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WORD {
+                        i += 1;
+                    }
+                    out.push(&text[start..i]);
+                }
             }
         }
-        let seg = m.as_str();
-        if !seg.is_empty() {
-            out.push(seg);
-        }
-        last = m.end();
+        return out;
     }
-    if last < text.len() {
-        let seg = &text[last..];
-        if !seg.is_empty() {
-            out.push(seg);
+
+    let mut chars = text.char_indices().peekable();
+    while let Some(&(start_byte, c)) = chars.peek() {
+        if is_ws_char(c) {
+            chars.next();
+            while let Some(&(_, next_c)) = chars.peek() {
+                if is_ws_char(next_c) {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
+            out.push(&text[start_byte..end_byte]);
+        } else if is_delim_char(c) {
+            chars.next();
+            let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
+            out.push(&text[start_byte..end_byte]);
+        } else if is_op_char(c) {
+            chars.next();
+            while let Some(&(_, next_c)) = chars.peek() {
+                if is_op_char(next_c) {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
+            out.push(&text[start_byte..end_byte]);
+        } else {
+            chars.next();
+            while let Some(&(_, next_c)) = chars.peek() {
+                if is_ws_char(next_c) || is_delim_char(next_c) || is_op_char(next_c) {
+                    break;
+                }
+                chars.next();
+            }
+            let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
+            out.push(&text[start_byte..end_byte]);
         }
     }
+
     out
 }
 

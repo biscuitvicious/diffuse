@@ -32,12 +32,37 @@ pub fn is_pure_deletion_mod(spans: &Spans, text: &str) -> bool {
     })
 }
 
+/// Format 4-character right-aligned line numbers into a stack buffer without
+/// heap allocation.
+pub fn pad4_bytes(num: Option<u32>, buf: &mut [u8; 4]) -> &str {
+    match num {
+        None => "    ",
+        Some(n) => {
+            *buf = *b"    ";
+            let mut val = n;
+            let mut idx = 3;
+            if val == 0 {
+                buf[3] = b'0';
+            } else {
+                while val > 0 {
+                    buf[idx] = b'0' + (val % 10) as u8;
+                    val /= 10;
+                    if idx == 0 {
+                        break;
+                    }
+                    idx -= 1;
+                }
+            }
+            // SAFETY: buf contains only ASCII spaces and digits.
+            unsafe { std::str::from_utf8_unchecked(buf) }
+        }
+    }
+}
+
 /// Format 4-character right-aligned line numbers.
 pub fn pad4(num: Option<u32>) -> String {
-    match num {
-        Some(n) => format!("{n:>4}"),
-        None => "    ".to_string(),
-    }
+    let mut buf = [b' '; 4];
+    pad4_bytes(num, &mut buf).to_string()
 }
 
 /// Generate plain 6-character prefix gutter (` 123 + `).
@@ -48,20 +73,21 @@ pub fn prefix_of(
     moved: bool,
     runs: &[OutputRun],
 ) -> String {
+    let mut buf = [b' '; 4];
     if is_common_only_row(kind, runs) {
-        return format!("{}  ", pad4(new_line));
+        return format!("{}  ", pad4_bytes(new_line, &mut buf));
     }
     match kind {
         RowKind::Add => {
             let icon = if moved { S_MOV.icon } else { S_ADD.icon };
-            format!("{} {}", pad4(new_line), icon)
+            format!("{} {}", pad4_bytes(new_line, &mut buf), icon)
         }
         RowKind::Del => {
             let icon = if moved { S_MOV.icon } else { S_DEL.icon };
-            format!("{} {}", pad4(old_line), icon)
+            format!("{} {}", pad4_bytes(old_line, &mut buf), icon)
         }
-        RowKind::Mod => format!("{} {}", pad4(new_line), S_MOD.icon),
-        _ => format!("{}  ", pad4(new_line.or(old_line))),
+        RowKind::Mod => format!("{} {}", pad4_bytes(new_line, &mut buf), S_MOD.icon),
+        _ => format!("{}  ", pad4_bytes(new_line.or(old_line), &mut buf)),
     }
 }
 
@@ -75,14 +101,15 @@ pub fn styled_prefix(
     in_hunk: bool,
 ) -> String {
     let fg_reset = "\x1b[39m\x1b[23m";
+    let mut buf = [b' '; 4];
     if is_common_only_row(kind, runs) {
-        let pad = pad4(new_line);
+        let pad = pad4_bytes(new_line, &mut buf);
         let color = if in_hunk { "38;5;252" } else { "38;5;242" };
         return format!("\x1b[{color}m{pad}  {fg_reset}");
     }
     match kind {
         RowKind::Del => {
-            let pad = pad4(old_line);
+            let pad = pad4_bytes(old_line, &mut buf);
             let icon = if moved {
                 format!("\x1b[38;5;117m{}", S_MOV.icon)
             } else {
@@ -91,7 +118,7 @@ pub fn styled_prefix(
             format!("\x1b[3;38;5;174m{pad}\x1b[23m {icon}{fg_reset}")
         }
         RowKind::Add => {
-            let pad = pad4(new_line);
+            let pad = pad4_bytes(new_line, &mut buf);
             let icon = if moved {
                 format!("\x1b[38;5;117m{}", S_MOV.icon)
             } else {
@@ -100,15 +127,15 @@ pub fn styled_prefix(
             format!("\x1b[38;5;151m{pad} {icon}{fg_reset}")
         }
         RowKind::Mod => {
-            let pad = pad4(new_line);
+            let pad = pad4_bytes(new_line, &mut buf);
             format!("\x1b[38;5;253m{pad} \x1b[38;5;214m{}{fg_reset}", S_MOD.icon)
         }
         _ => {
             if moved {
-                let pad = pad4(new_line.or(old_line));
+                let pad = pad4_bytes(new_line.or(old_line), &mut buf);
                 format!("\x1b[38;5;147m{pad} \x1b[38;5;117m{}{fg_reset}", S_MOV.icon)
             } else {
-                let pad = pad4(new_line.or(old_line));
+                let pad = pad4_bytes(new_line.or(old_line), &mut buf);
                 let color = if in_hunk { "38;5;252" } else { "38;5;242" };
                 format!("\x1b[{color}m{pad}  {fg_reset}")
             }

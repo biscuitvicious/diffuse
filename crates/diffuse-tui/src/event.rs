@@ -525,7 +525,7 @@ index 1111111..2222222 100644
         );
         assert_eq!(s.num_buffer, "");
         let cur_row = s.current_flat_row().expect("cur row");
-        assert_eq!(AppState::row_coord(&cur_row.row), Some(1026));
+        assert_eq!(s.flat_row_coord(cur_row), Some(1026));
     }
 
     #[test]

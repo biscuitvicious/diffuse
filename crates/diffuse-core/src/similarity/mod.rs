@@ -110,6 +110,12 @@ impl TokenInterner {
         Self::default()
     }
 
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.ws.clear();
+        self.alnum.clear();
+    }
+
     fn intern(&mut self, token: &str) -> u32 {
         if let Some(&id) = self.map.get(token) {
             return id;
