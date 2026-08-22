@@ -35,7 +35,10 @@ pub mod prelude {
             BlockDelimStyle, LangProfile, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE,
             MD_SGR_UNDERLINE,
         },
-        registry::{fence_lang_ext, lang_profile},
+        registry::{
+            ascii_word_prefix, ascii_word_prefix_len, fence_lang_ext, first_ascii_word,
+            is_ascii_word_char, lang_profile,
+        },
     };
 }
 

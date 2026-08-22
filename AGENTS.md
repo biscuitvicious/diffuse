@@ -123,7 +123,9 @@ are the test-first discipline above):
   must be clean after every change. Code style, import conventions, and
   top-down file component layout (public/high-level abstraction at the top
   down to internal detail and tests at the bottom) are specified in
-  [`CODE_STYLE.md`](file:///home/daniel/lab/diffuse/CODE_STYLE.md).
+  [`CODE_STYLE.md`](file:///home/daniel/lab/diffuse/CODE_STYLE.md). Architecture,
+  language profile decoupling, and algorithm separation rules are specified in
+  [`GUIDELINES.md`](file:///home/daniel/lab/diffuse/GUIDELINES.md).
 - `target/`, `extension/*/node_modules/`, and `extension/pi/bin/` are
   gitignored (build artifacts).
 - The extension's suite runs with `npm test` in `extension/pi/` (rust-only:

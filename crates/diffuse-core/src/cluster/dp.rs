@@ -51,6 +51,7 @@ use crate::{
     parse::Row,
     similarity::TokenInterner,
 };
+use diffuse_syntax::{prelude::first_ascii_word, registry::is_ascii_word_char};
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
 pub const MAX_BLOCK_K: usize = 10;
@@ -157,6 +158,7 @@ pub struct DpTokens {
     ids: Vec<u32>,
     chars: usize,
     token_chars: Vec<usize>,
+    token_mask: u64,
     /// Each content token's byte offset — consumed by Phase 4's subword
     /// span mapping (`RunKind::Mov` runs); `expect` so its eventual use
     /// un-silences this attribute.
@@ -178,10 +180,17 @@ pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
             offsets.push(start);
         }
     }
+    let mut token_mask = 0u64;
+    for &id in &lt.ids {
+        if !interner.ws[id as usize] {
+            token_mask |= 1u64 << (id % 64);
+        }
+    }
     DpTokens {
         ids: lt.ids,
         chars: lt.chars,
         token_chars: lt.token_chars,
+        token_mask,
         offsets,
         trimmed: lt.trimmed,
     }
@@ -227,6 +236,12 @@ fn is_reflow_candidate(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
+/// Config-file key character: `[A-Za-z0-9_\-.]` (broader than
+/// [`is_ascii_word_char`] — TOML/INI keys allow hyphens and dots).
+fn is_config_key_char(c: char) -> bool {
+    is_ascii_word_char(c) || c == '-' || c == '.'
+}
+
 fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangProfile>) -> bool {
     let t = text.trim();
     if t.is_empty() {
@@ -246,12 +261,7 @@ fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangP
             && let Some(eq_pos) = t.find('=')
         {
             let lhs = t[..eq_pos].trim();
-            if !lhs.is_empty()
-                && lhs
-                    .chars()
-                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
-                && !lhs.contains(' ')
-            {
+            if !lhs.is_empty() && lhs.chars().all(is_config_key_char) {
                 return true;
             }
         }
@@ -271,9 +281,7 @@ fn is_duplicate_key_assignment(first: &str, current: &str) -> bool {
         let c_key = c[..c_eq].trim();
         if !f_key.is_empty()
             && f_key == c_key
-            && f_key
-                .chars()
-                .all(|ch| ch.is_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+            && f_key.chars().all(is_config_key_char)
             && !f_key.contains(' ')
         {
             return true;
@@ -563,6 +571,70 @@ pub fn solve_cluster_with_arena(
             - w.gamma * moved_lines as f64 * 0.5
     };
 
+    let old_first_ascii_words: Vec<Option<&str>> = cluster
+        .old_rows
+        .iter()
+        .map(|r| first_ascii_word(r.text()))
+        .collect();
+    let new_first_ascii_words: Vec<Option<&str>> = cluster
+        .new_rows
+        .iter()
+        .map(|r| first_ascii_word(r.text()))
+        .collect();
+
+    let old_indents: Vec<usize> = cluster
+        .old_rows
+        .iter()
+        .map(|r| r.text().len() - r.text().trim_start().len())
+        .collect();
+    let new_indents: Vec<usize> = cluster
+        .new_rows
+        .iter()
+        .map(|r| r.text().len() - r.text().trim_start().len())
+        .collect();
+
+    let old_prox_close: Vec<f64> = old_close_dist
+        .iter()
+        .map(|&d| {
+            if d == usize::MAX {
+                0.0
+            } else {
+                1.0 / (1.0 + (d as f64).powi(2))
+            }
+        })
+        .collect();
+    let new_prox_close: Vec<f64> = new_close_dist
+        .iter()
+        .map(|&d| {
+            if d == usize::MAX {
+                0.0
+            } else {
+                1.0 / (1.0 + (d as f64).powi(2))
+            }
+        })
+        .collect();
+
+    let old_prox_open: Vec<f64> = old_open_dist
+        .iter()
+        .map(|&d| {
+            if d == usize::MAX {
+                0.0
+            } else {
+                1.0 / (1.0 + (d as f64).powi(2))
+            }
+        })
+        .collect();
+    let new_prox_open: Vec<f64> = new_open_dist
+        .iter()
+        .map(|&d| {
+            if d == usize::MAX {
+                0.0
+            } else {
+                1.0 / (1.0 + (d as f64).powi(2))
+            }
+        })
+        .collect();
+
     for i in 0..=m {
         for j in 0..=n {
             let base = dp[i * stride + j].score;
@@ -614,17 +686,24 @@ pub fn solve_cluster_with_arena(
                         };
                     }
                 } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
-                    let pairs = lcs_pairs_ids(&ot.ids, &nt.ids, &interner.ws, &interner.alnum);
-                    let mut matched = 0usize;
-                    for &jt in pairs.values() {
-                        matched += nt.token_chars[jt];
-                    }
+                    let token_overlap = (ot.token_mask & nt.token_mask) != 0;
+                    let matched = if token_overlap {
+                        let pairs = lcs_pairs_ids(&ot.ids, &nt.ids, &interner.ws, &interner.alnum);
+                        let mut m = 0usize;
+                        for &jt in pairs.values() {
+                            m += nt.token_chars[jt];
+                        }
+                        m
+                    } else {
+                        0usize
+                    };
                     let total = ot.chars.max(nt.chars);
                     let unmatched = total.saturating_sub(matched);
-                    let statement_head_match = statement_heads_agree(
-                        cluster.old_rows[i].text(),
-                        cluster.new_rows[j].text(),
-                    );
+                    let statement_head_match =
+                        match (old_first_ascii_words[i], new_first_ascii_words[j]) {
+                            (Some(a), Some(b)) => a == b,
+                            _ => false,
+                        };
                     let is_config_property_match = statement_head_match
                         && profile.is_some_and(|p| {
                             p.hash_comment && !p.line_comment && !p.block_comment && !p.markdown
@@ -649,45 +728,21 @@ pub fn solve_cluster_with_arena(
                         (w.mu * unmatched as f64, syn)
                     };
                     // Distance-based closing-brace proximity bonus, tapering with distance
-                    let d_old_close = old_close_dist[i];
-                    let d_new_close = new_close_dist[j];
-                    let proximity_old_close = if d_old_close == usize::MAX {
-                        0.0
-                    } else {
-                        1.0 / (1.0 + (d_old_close as f64).powi(2))
-                    };
-                    let proximity_new_close = if d_new_close == usize::MAX {
-                        0.0
-                    } else {
-                        1.0 / (1.0 + (d_new_close as f64).powi(2))
-                    };
+                    let proximity_old_close = old_prox_close[i];
+                    let proximity_new_close = new_prox_close[j];
                     let close_bonus = w.epsilon * proximity_old_close * proximity_new_close;
                     // Distance-based opening-brace proximity bonus
-                    let d_old_open = old_open_dist[i];
-                    let d_new_open = new_open_dist[j];
-                    let proximity_old_open = if d_old_open == usize::MAX {
-                        0.0
-                    } else {
-                        1.0 / (1.0 + (d_old_open as f64).powi(2))
-                    };
-                    let proximity_new_open = if d_new_open == usize::MAX {
-                        0.0
-                    } else {
-                        1.0 / (1.0 + (d_new_open as f64).powi(2))
-                    };
+                    let proximity_old_open = old_prox_open[i];
+                    let proximity_new_open = new_prox_open[j];
                     let open_bonus = w.epsilon * proximity_old_open * proximity_new_open;
 
-                    let indent_old = cluster.old_rows[i].text().len()
-                        - cluster.old_rows[i].text().trim_start().len();
-                    let indent_new = cluster.new_rows[j].text().len()
-                        - cluster.new_rows[j].text().trim_start().len();
                     let indent_diff =
-                        (indent_old as isize - indent_new as isize).unsigned_abs() as f64;
+                        (old_indents[i] as isize - new_indents[j] as isize).unsigned_abs() as f64;
                     let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
 
                     let similarity_ratio = matched as f64 / total as f64;
                     let is_direct_tail_pair =
-                        d_old_close == 1 && d_new_close == 1 && indent_diff == 0.0;
+                        old_close_dist[i] == 1 && new_close_dist[j] == 1 && indent_diff == 0.0;
                     let effective_close_bonus = if is_direct_tail_pair {
                         w.delta
                     } else {
@@ -716,6 +771,8 @@ pub fn solve_cluster_with_arena(
             // Expand: old i vs new block j..j+k (k >= 2).
             if i < m
                 && j + 2 <= n
+                && old[i].chars >= 8
+                && (old[i].token_mask & new[j].token_mask) != 0
                 && is_reflow_candidate(cluster.old_rows[i].text())
                 && old_comment[i] == new_comment[j]
             {
@@ -738,20 +795,21 @@ pub fn solve_cluster_with_arena(
                     }) {
                         break;
                     }
-                    let bm = block_lcs(&old[i], block, interner);
                     let block_chars: usize = block.iter().map(|t| t.chars).sum();
                     let total = old[i].chars.max(block_chars);
+                    let min_chars = old[i].chars.min(block_chars);
+                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
+                    let bm = block_lcs(&old[i], block, interner);
                     if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
                         continue;
                     }
                     let anchor = block_anchor(&bm);
-                    let syntax = if statement_heads_agree(
-                        cluster.old_rows[i].text(),
-                        cluster.new_rows[j].text(),
-                    ) || statement_heads_agree(
-                        cluster.old_rows[i].text(),
-                        cluster.new_rows[j + anchor].text(),
-                    ) {
+                    let syntax = if old_first_ascii_words[i].is_some()
+                        && (old_first_ascii_words[i] == new_first_ascii_words[j]
+                            || old_first_ascii_words[i] == new_first_ascii_words[j + anchor])
+                    {
                         w.delta
                     } else {
                         0.0
@@ -783,6 +841,8 @@ pub fn solve_cluster_with_arena(
             // Collapse: old block i..i+k vs new j (k >= 2).
             if j < n
                 && i + 2 <= m
+                && new[j].chars >= 8
+                && (new[j].token_mask & old[i].token_mask) != 0
                 && is_reflow_candidate(cluster.new_rows[j].text())
                 && old_comment[i] == new_comment[j]
             {
@@ -805,20 +865,21 @@ pub fn solve_cluster_with_arena(
                     }) {
                         break;
                     }
-                    let bm = block_lcs(&new[j], block, interner);
                     let block_chars: usize = block.iter().map(|t| t.chars).sum();
                     let total = new[j].chars.max(block_chars);
+                    let min_chars = new[j].chars.min(block_chars);
+                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
+                    let bm = block_lcs(&new[j], block, interner);
                     if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
                         continue;
                     }
                     let anchor = block_anchor(&bm);
-                    let syntax = if statement_heads_agree(
-                        cluster.old_rows[i].text(),
-                        cluster.new_rows[j].text(),
-                    ) || statement_heads_agree(
-                        cluster.old_rows[i + anchor].text(),
-                        cluster.new_rows[j].text(),
-                    ) {
+                    let syntax = if new_first_ascii_words[j].is_some()
+                        && (new_first_ascii_words[j] == old_first_ascii_words[i]
+                            || new_first_ascii_words[j] == old_first_ascii_words[i + anchor])
+                    {
                         w.delta
                     } else {
                         0.0
@@ -904,48 +965,50 @@ pub fn solve_cluster_with_arena(
                 transitions.push(DpOp::Mod { matched });
             }
             "expand" => {
-                let block = &new[pj..pj + k];
-                let bm = block_lcs(&old[pi], block, interner);
+                let bm = block_lcs(&old[pi], &new[pj..pj + k], interner);
                 let anchor = block_anchor(&bm);
-                transitions.push(DpOp::Expand {
-                    k,
-                    matched: bm.matched,
-                    anchor,
-                    spans: subline_moves(&bm, anchor),
-                });
-                for li in 0..k {
-                    let line = new_line_of(pj + li);
-                    if li == anchor {
+                let spans = subline_moves(&bm, anchor);
+
+                for idx in 0..k {
+                    let nl = new_line_of(pj + idx);
+                    if idx == anchor {
                         rows.push(Row::Mod {
                             old_line: old_line_of(pi),
-                            new_line: line,
+                            new_line: nl,
                         });
                     } else {
-                        rows.push(Row::Add(line));
+                        rows.push(Row::Add(nl));
                     }
                 }
+                transitions.push(DpOp::Expand {
+                    matched: bm.matched,
+                    k,
+                    anchor,
+                    spans,
+                });
             }
             "collapse" => {
-                let block = &old[pi..pi + k];
-                let bm = block_lcs(&new[pj], block, interner);
+                let bm = block_lcs(&new[pj], &old[pi..pi + k], interner);
                 let anchor = block_anchor(&bm);
-                transitions.push(DpOp::Collapse {
-                    k,
-                    matched: bm.matched,
-                    anchor,
-                    spans: subline_moves(&bm, anchor),
-                });
-                for li in 0..k {
-                    let line = old_line_of(pi + li);
-                    if li == anchor {
+                let spans = subline_moves(&bm, anchor);
+
+                for idx in 0..k {
+                    let ol = old_line_of(pi + idx);
+                    if idx == anchor {
                         rows.push(Row::Mod {
-                            old_line: line,
+                            old_line: ol,
                             new_line: new_line_of(pj),
                         });
                     } else {
-                        rows.push(Row::Del(line));
+                        rows.push(Row::Del(ol));
                     }
                 }
+                transitions.push(DpOp::Collapse {
+                    matched: bm.matched,
+                    k,
+                    anchor,
+                    spans,
+                });
             }
             other => unreachable!("unknown op {other}"),
         }
@@ -1005,23 +1068,4 @@ pub fn verify_projection(sol: &DpSolution, cluster: &ChangeCluster) -> Result<()
         }
     }
     Ok(())
-}
-
-/// Whether two statements share their leading word token (`c.is_alphanumeric()
-/// || c == '_'`) — the language-agnostic syntax-alignment bonus.
-fn statement_heads_agree(a: &str, b: &str) -> bool {
-    fn first_word(t: &str) -> Option<&str> {
-        let trimmed = t.trim_start();
-        let word_len: usize = trimmed
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .map(char::len_utf8)
-            .sum();
-        if word_len > 0 {
-            Some(&trimmed[..word_len])
-        } else {
-            None
-        }
-    }
-    matches!((first_word(a), first_word(b)), (Some(x), Some(y)) if x == y)
 }

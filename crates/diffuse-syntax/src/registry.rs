@@ -200,7 +200,7 @@ pub(super) fn syntax_token_spans(text: &str, profile: &LangProfile) -> Vec<(usiz
             scan_bt(&chars, i)
         } else if c == '0' && i + 1 < n && chars[i + 1].1 == 'x' {
             // \b0x[0-9a-fA-F_]+\b. The leading \b is satisfied (a '0'
-            // start never follows a word char — idents consume those).
+            // start never follows an ascii_word char — idents consume those).
             scan_hex(&chars, i + 2).unwrap_or_else(|| scan_num_or_other(&chars, i))
         } else if c.is_ascii_digit() {
             scan_num_or_other(&chars, i)
@@ -304,8 +304,9 @@ fn scan_bt(chars: &[(usize, char)], i: usize) -> usize {
 }
 
 /// `[0-9a-fA-F_]+` then `\b`: trailing word boundary. None if no hex digit
-/// or the trailing char is a word char (the `+` needs ≥1 hex digit, and the
-/// `\b` needs a non-word after — a trailing word char fails the whole hex).
+/// or the trailing char is an ascii_word char (the `+` needs ≥1 hex digit, and
+/// the `\b` needs an ascii non-word after — a trailing ascii_word char fails
+/// the whole hex).
 fn scan_hex(chars: &[(usize, char)], i: usize) -> Option<usize> {
     let n = chars.len();
     let mut j = i;
@@ -320,8 +321,8 @@ fn scan_hex(chars: &[(usize, char)], i: usize) -> Option<usize> {
     if j == i {
         return None; // `+` needs ≥1 hex digit
     }
-    // trailing \b: next char non-word (or EOF).
-    if j < n && is_word_char(chars[j].1) {
+    // trailing \b: next char ascii non-word (or EOF).
+    if j < n && is_ascii_word_char(chars[j].1) {
         return None;
     }
     Some(j)
@@ -331,8 +332,8 @@ fn scan_hex(chars: &[(usize, char)], i: usize) -> Option<usize> {
 /// (digits, optional decimal, optional exponent), then verify the trailing
 /// `\b`. If it fails, the regex backtracks: drop the exponent, then the
 /// decimal, down to the bare digit run — the first drop whose end sits
-/// before a non-word char wins. If even the bare digit run fails the
-/// trailing `\b` (a word char immediately follows, e.g. `5x`), the whole
+/// before an ascii non-word char wins. If even the bare digit run fails the
+/// trailing `\b` (an ascii_word char immediately follows, e.g. `5x`), the whole
 /// num fails → the single digit is `.` (`RE_OTHER`).
 fn scan_num_or_other(chars: &[(usize, char)], i: usize) -> usize {
     let n = chars.len();
@@ -374,25 +375,20 @@ fn scan_num_or_other(chars: &[(usize, char)], i: usize) -> usize {
     }
     // Backtrack ladder (longest first): full, without exp, without decimal.
     for &end in &[after_exp, after_dec, digits_end] {
-        let tail_ok = end >= n || !is_word_char(chars[end].1);
+        let tail_ok = end >= n || !is_ascii_word_char(chars[end].1);
         if tail_ok {
             return end;
         }
     }
-    i + 1 // bare digit run followed by a word char → num fails → RE_OTHER `.`
+    i + 1 // bare digit run followed by an ascii_word char → num fails → RE_OTHER `.`
 }
 
 /// `[A-Za-z_][A-Za-z0-9_]*`
 fn scan_ident(chars: &[(usize, char)], i: usize) -> usize {
     let n = chars.len();
     let mut j = i + 1;
-    while j < n {
-        let c = chars[j].1;
-        if c.is_ascii_alphanumeric() || c == '_' {
-            j += 1;
-        } else {
-            break;
-        }
+    while j < n && is_ascii_word_char(chars[j].1) {
+        j += 1;
     }
     j
 }
@@ -407,6 +403,42 @@ fn scan_ws(chars: &[(usize, char)], i: usize) -> usize {
     j
 }
 
-fn is_word_char(c: char) -> bool {
+/// Whether `c` is an ASCII identifier character (`[A-Za-z0-9_]`).
+///
+/// This is the canonical ascii_word-boundary test used by the tokenizer
+/// scanner, subword span splitting, and the DP first-word alignment check — all
+/// callers must import this instead of duplicating the predicate inline.
+pub fn is_ascii_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Leading `[A-Za-z0-9_]` run of `s` (may be empty).
+///
+/// This is the higher-level ascii_word-slice primitive — callers that
+/// previously did `s.find(|c| !is_ascii_word_char(c))` / slicing by length must
+/// use this instead of reimplementing the scan inline.
+pub fn ascii_word_prefix(s: &str) -> &str {
+    let end = s.find(|c: char| !is_ascii_word_char(c)).unwrap_or(s.len());
+    &s[..end]
+}
+
+/// Byte length of the leading `[A-Za-z0-9_]` run of `s`.
+pub fn ascii_word_prefix_len(s: &str) -> usize {
+    ascii_word_prefix(s).len()
+}
+
+/// First `[A-Za-z0-9_]` ascii_word after trimming leading whitespace, if any.
+///
+/// Replaces the `trim_start` + `find(|c| !is_ascii_word_char(c))` + slice
+/// pattern (e.g. the DP's `first_ascii_word`).
+pub fn first_ascii_word(s: &str) -> Option<&str> {
+    let w = ascii_word_prefix(s.trim_start());
+    if w.is_empty() { None } else { Some(w) }
+}
+
+/// Leading `[A-Za-z0-9_]` run interpreted as a char count (identical to byte
+/// count since the charset is ASCII, but expressed in the caller's char-offset
+/// convention).
+pub fn ascii_word_prefix_char_len(s: &str) -> usize {
+    ascii_word_prefix_len(s)
 }

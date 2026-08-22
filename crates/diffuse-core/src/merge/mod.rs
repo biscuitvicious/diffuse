@@ -11,6 +11,7 @@ use crate::{
     lcs::char_slice,
     parse::{Row, Spans},
 };
+use diffuse_syntax::{prelude::is_ascii_word_char, registry::first_ascii_word};
 
 /// The semantic classification of a token run in a diff row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -93,11 +94,6 @@ fn all_ws(s: &str) -> bool {
     !s.is_empty() && s.chars().all(is_ws_class)
 }
 
-/// The TS `/[A-Za-z0-9_]/` test.
-fn is_word(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
 fn char_at(s: &str, i: usize) -> Option<char> {
     s.chars().nth(i)
 }
@@ -105,12 +101,12 @@ fn char_at(s: &str, i: usize) -> Option<char> {
 /**
  * The wholesale decision from a raw pair: the artifact-filtered del spans,
  * the mismatched fragment counts, and the split-word insertions (a
- * standalone removal landing mid-word: `fro~~upper~~zen`). A wholesale pair
- * reads as garble inline — the collapse un-pairs it into the `-`/`+`
- * baseline rows (a `~` row must never carry an embedded "newline" — the
- * whole-old-struck + whole-new-filled blocks look like one, so they get the
- * plain two rows instead). Shared with the collapse so the two never drift
- * apart.
+ * standalone removal landing mid-ascii-word: `fro~~upper~~zen`). A
+ * wholesale pair reads as garble inline — the collapse un-pairs it into the
+ * `-`/`+` baseline rows (a `~` row must never carry an embedded "newline" —
+ * the whole-old-struck + whole-new-filled blocks look like one, so they get
+ * the plain two rows instead). Shared with the collapse so the two never
+ * drift apart.
  * */
 /// Exact display position of each del span in the merged (new-text) view.
 ///
@@ -188,11 +184,12 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
     // renders as the inline mod — fragment-count mismatches included (`0` →
     // `Option<`/`>`/`None`, `lowers`+`.rev()` → `below`, `k <`+` {` →
     // `let Some(…)`). Only the split-word check below (a standalone del
-    // landing mid-word) is garble — that one stays wholesale.
+    // landing mid-ascii_word) is garble — that one stays wholesale.
     let pairing = del_pairing(&del_spans, add_spans, add_text, del_text);
-    // A WORD-led standalone del landing mid-word is garble (e.g. `m~~them~~ust`);
-    // a punctuation-led fragment (`.rev()`, ` {`) reads fine struck mid-word
-    // (`enumer~~.rev()~~ate()` still reconstructs `enumerate()`).
+    // An ASCII-word-led standalone del landing mid-ascii_word is garble (e.g.
+    // `m~~them~~ust`); a punctuation-led fragment (`.rev()`, ` {`) reads fine
+    // struck mid-ascii_word (`enumer~~.rev()~~ate()` still reconstructs
+    // `enumerate()`).
     del_spans.iter().enumerate().any(|(j, (ds, de))| {
         if pairing.pair.contains_key(&j) {
             return false;
@@ -205,11 +202,14 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
         let ins = pairing.del_pos[j].min(add_len);
         let left = ins.checked_sub(1).and_then(|i| char_at(add_text, i));
         let right = char_at(add_text, ins);
-        if !(ins > 0 && ins < add_len && left.is_some_and(is_word) && right.is_some_and(is_word)) {
+        if !(ins > 0
+            && ins < add_len
+            && left.is_some_and(is_ascii_word_char)
+            && right.is_some_and(is_ascii_word_char))
+        {
             return false;
         }
-        let t = del_span_text.trim_start();
-        t.chars().next().is_some_and(is_word)
+        first_ascii_word(del_span_text).is_some()
     })
 }
 
@@ -321,8 +321,12 @@ pub fn del_pairing(
                 }
             }
             let first = char_at(add_text, *as0);
-            let gap =
-                del_start.abs_diff(add_start) + if first.is_some_and(is_word) { 0 } else { 5 };
+            let gap = del_start.abs_diff(add_start)
+                + if first.is_some_and(is_ascii_word_char) {
+                    0
+                } else {
+                    5
+                };
             if ws_pair {
                 best_gap = 0;
                 best = Some(i);
