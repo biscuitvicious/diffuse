@@ -442,3 +442,58 @@ fn test_hirschberg_pseudo_random_fuzz_equivalence() {
         }
     }
 }
+
+#[test]
+fn test_bounded_dp_matches_matrix_dp() {
+    let bounded = BoundedDpLcs::new();
+    let matrix = MatrixDpLcs::new();
+
+    let cases: Vec<(&[u32], &[u32])> = vec![
+        (&[], &[]),
+        (&[1, 2, 3], &[]),
+        (&[], &[1, 2, 3]),
+        (&[1, 2, 3, 4, 5], &[1, 2, 3, 4, 5]),
+        (&[1, 2, 3, 4, 5], &[2, 4, 6]),
+        (&[10, 20, 30, 40, 50, 60], &[5, 10, 25, 30, 45, 60, 70]),
+        (&[1, 1, 1, 1], &[1, 1]),
+        (&[1, 2, 1, 2, 1], &[2, 1, 2]),
+        (&[1, 2, 3, 4, 5, 6, 7, 8], &[1, 2, 9, 4, 5, 10, 7, 8]),
+    ];
+
+    for (a, b) in cases {
+        let pairs_bd = bounded.lcs_indices(a, b);
+        let pairs_matrix = matrix.lcs_indices(a, b);
+        assert_eq!(
+            pairs_bd.len(),
+            pairs_matrix.len(),
+            "Bounded DP LCS length mismatch: bd={pairs_bd:?}, matrix={pairs_matrix:?}"
+        );
+        for &(ai, bi) in &pairs_bd {
+            assert_eq!(a[ai], b[bi]);
+        }
+        let diff_bd = bounded.diff_slices(a, b);
+        let diff_matrix = matrix.diff_slices(a, b);
+        let kept_bd = diff_bd
+            .iter()
+            .filter(|op| matches!(op, EditOp::Keep { .. }))
+            .count();
+        let kept_matrix = diff_matrix
+            .iter()
+            .filter(|op| matches!(op, EditOp::Keep { .. }))
+            .count();
+        assert_eq!(kept_bd, kept_matrix);
+    }
+}
+
+#[test]
+fn test_bounded_dp_diagonal_bandwidth() {
+    let a = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let b = [1, 2, 3, 99, 5, 6, 7, 8, 9, 10];
+
+    // Bandwidth 2 is sufficient for single-element substitution
+    let pairs = BoundedDpLcs::lcs_bounded(&a, &b, 2);
+    assert_eq!(pairs.len(), 9);
+    for &(ai, bi) in &pairs {
+        assert_eq!(a[ai], b[bi]);
+    }
+}

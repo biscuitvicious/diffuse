@@ -12,11 +12,13 @@
 use std::collections::HashMap;
 
 pub mod bit_parallel;
+pub mod bounded_dp;
 pub mod hirschberg;
 pub mod hunt_szymanski;
 pub mod myers_ond;
 
 pub use bit_parallel::BitParallelLcs;
+pub use bounded_dp::BoundedDpLcs;
 pub use hirschberg::HirschbergLcs;
 pub use hunt_szymanski::HuntSzymanskiLcs;
 pub use myers_ond::MyersOnD;
