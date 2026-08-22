@@ -156,3 +156,73 @@ fn non_tui_mode_handles_broken_pipe_cleanly() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn large_changeset_progressive_streaming_performance() {
+    let id = REPO_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = env::temp_dir().join(format!("diffuse-bench-repo-{}-{}", process::id(), id));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+
+    // Create 60 files
+    for i in 0..60 {
+        fs::write(
+            dir.join(format!("file_{i}.rs")),
+            format!("fn func_{i}() {{\n    println!(\"hello {i}\");\n}}\n"),
+        )
+        .unwrap();
+    }
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init commit"]);
+
+    // Modify all 60 files
+    for i in 0..60 {
+        fs::write(
+            dir.join(format!("file_{i}.rs")),
+            format!("fn func_{i}() {{\n    println!(\"modified {i}\");\n}}\n"),
+        )
+        .unwrap();
+    }
+
+    let start = std::time::Instant::now();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--no-tui")
+        .current_dir(&dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut first_line = String::new();
+    std::io::BufRead::read_line(&mut stdout, &mut first_line).unwrap();
+    let time_to_first_file = start.elapsed();
+
+    assert!(
+        !first_line.is_empty(),
+        "must yield first file line progressively"
+    );
+    assert!(
+        time_to_first_file < std::time::Duration::from_millis(500),
+        "time to first file ({time_to_first_file:?}) must be under 500ms"
+    );
+
+    let status = child.wait().unwrap();
+    assert!(status.success());
+
+    let _ = fs::remove_dir_all(&dir);
+}

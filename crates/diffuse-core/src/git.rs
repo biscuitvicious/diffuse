@@ -25,6 +25,26 @@ pub fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
     }
 }
 
+/// Check if the directory is inside a git repository or worktree.
+pub fn is_inside_work_tree(cwd: &Path) -> bool {
+    if gix::discover(cwd).is_ok() {
+        return true;
+    }
+    run_git(cwd, &["rev-parse", "--is-inside-work-tree"]).is_some()
+}
+
+/// Get current repository branch name via native gix or git fallback.
+pub fn get_current_branch(cwd: &Path) -> String {
+    if let Ok(repo) = gix::open(cwd)
+        && let Ok(Some(head)) = repo.head_name()
+    {
+        return head.shorten().to_string();
+    }
+    run_git(cwd, &["branch", "--show-current"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// Resolve old/new git refs from base args (e.g. `main..feature`, `HEAD^!`,
 /// `main...feature`).
 pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
@@ -210,9 +230,10 @@ pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<Stri
         if let Some(tree) = tree_opt
             && let Ok(Some(entry)) = tree.lookup_entry_by_path(path)
             && let Ok(obj) = entry.object()
-            && let Ok(text) = String::from_utf8(obj.data.to_vec()) {
-                results.insert(spec.clone(), text);
-            }
+            && let Ok(text) = String::from_utf8(obj.data.to_vec())
+        {
+            results.insert(spec.clone(), text);
+        }
     }
 
     // If any specs were not found in the gix ODB (e.g. unreferenced index blobs),
@@ -244,7 +265,7 @@ pub fn stream_git_repo_to_producer(
     producer: crate::streaming::StreamingProducer,
     meta_tx: &std::sync::mpsc::Sender<Result<crate::streaming::GitRepoMeta, String>>,
 ) {
-    if run_git(repo_root, &["rev-parse", "--is-inside-work-tree"]).is_none() {
+    if !is_inside_work_tree(repo_root) {
         let _ = meta_tx.send(Err(format!(
             "not a git repository (or any of the parent directories): {}",
             repo_root.display()
@@ -253,9 +274,7 @@ pub fn stream_git_repo_to_producer(
         return;
     }
 
-    let branch = run_git(repo_root, &["branch", "--show-current"])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+    let branch = get_current_branch(repo_root);
 
     let mut untracked_skipped = Vec::new();
     let refs = resolve_refs(repo_root, base_args, cached);
@@ -410,16 +429,14 @@ pub fn load_git_repo(
     cached: bool,
     context: usize,
 ) -> Result<LoadGitResult, String> {
-    if run_git(repo_root, &["rev-parse", "--is-inside-work-tree"]).is_none() {
+    if !is_inside_work_tree(repo_root) {
         return Err(format!(
             "not a git repository (or any of the parent directories): {}",
             repo_root.display()
         ));
     }
 
-    let branch = run_git(repo_root, &["branch", "--show-current"])
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+    let branch = get_current_branch(repo_root);
 
     let mut diff_cmd = vec![
         "diff".to_string(),

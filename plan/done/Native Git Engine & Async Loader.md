@@ -2,7 +2,8 @@
 
 - [x] **Phase 1 — Asynchronous Git Repository Loader & Instant TUI Startup (`diffuse-cli`, `diffuse-tui`)**
 - [x] **Phase 2 — Direct In-Process Git Blob Access via Native Git Crate (`diffuse-core`)**
-- [ ] **Phase 3 — Streaming Diff Engine & Benchmark Profiling (`tests/`, `crates/`)**
+- [x] **Phase 3 — Streaming Diff Engine & Benchmark Profiling (`tests/`, `crates/`)**
+- [x] **Phase 4 — Complete Native Gix Migration for Status, Branch & Staging Actions (`diffuse-core`, `diffuse-tui`)**
 
 ---
 
@@ -22,6 +23,7 @@ This plan solves this latency through a two-fold architectural upgrade:
 1. [Phase 1 — Asynchronous Git Repository Loader & Instant TUI Startup (`diffuse-cli`, `diffuse-tui`)](#1-phase-1--asynchronous-git-repository-loader--instant-tui-startup-diffuse-cli-diffuse-tui)
 2. [Phase 2 — Direct In-Process Git Blob Access via Native Git Crate (`diffuse-core`)](#2-phase-2--direct-in-process-git-blob-access-via-native-git-crate-diffuse-core)
 3. [Phase 3 — Streaming Diff Engine & Benchmark Profiling (`tests/`, `crates/`)](#3-phase-3--streaming-diff-engine--benchmark-profiling-tests-crates)
+4. [Phase 4 — Complete Native Gix Migration for Status, Branch & Staging Actions (`diffuse-core`, `diffuse-tui`)](#4-phase-4--complete-native-gix-migration-for-status-branch--staging-actions-diffuse-core-diffuse-tui)
 
 ---
 
@@ -74,3 +76,20 @@ Add benchmark profiling tools and verify end-to-end time-to-first-file render.
 ### Step 3.2: Verification Gate & Performance Measurements
 - Run `./scripts/check.sh` and verify all golden walk suites, unit tests, clippy, and TypeScript extension tests pass cleanly.
 - Report before/after latency measurements on `mirage.work` (`HEAD~250..HEAD`).
+
+---
+
+## 4. Phase 4 — Complete Native Gix Migration for Status, Branch & Staging Actions (`diffuse-core`, `diffuse-tui`)
+
+Eliminate all remaining git subprocess spawns across the entire repository.
+
+### Step 4.1: Native Discovery & Branch Inspection
+- **Location**: `crates/diffuse-core/src/git.rs`
+- Replace `rev-parse --is-inside-work-tree` with `gix::discover(repo_root)`.
+- Replace `branch --show-current` with `repo.head_name()`.
+- Replace `merge-base` with native `repo.merge_base()`.
+
+### Step 4.2: Native Status & TUI Staging Actions
+- **Location**: `crates/diffuse-tui/src/actions.rs`
+- Replace `run_git_show` with in-process `load_git_blobs_native`.
+- Replace `git status --porcelain=v1` with native `repo.status()` or index status check.
