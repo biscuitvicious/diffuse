@@ -12,9 +12,11 @@
 use std::collections::HashMap;
 
 pub mod bit_parallel;
+pub mod hunt_szymanski;
 pub mod myers_ond;
 
 pub use bit_parallel::BitParallelLcs;
+pub use hunt_szymanski::HuntSzymanskiLcs;
 pub use myers_ond::MyersOnD;
 
 /// An elementary edit operation between two generic sequences.

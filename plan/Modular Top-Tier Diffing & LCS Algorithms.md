@@ -11,9 +11,9 @@
 - [x] [Phase 3 — Myers' $O(ND)$ Difference Engine](#3-phase-3--myers-ond-difference-engine)
   - [x] Implement diagonal $k$-line search with linear space $O(D)$ trace
   - [x] Benchmark near-identical line pairing vs full matrix DP
-- [ ] [Phase 4 — Hunt-Szymanski / Robinson-Schensted Patience LCS](#4-phase-4--hunt-szymanski--robinson-schensted-patience-lcs)
-  - [ ] Implement $O((R + N) \log N)$ sparse LCS matching with binary search
-  - [ ] Verify multi-line block and comment reflow anchor fidelity
+- [x] [Phase 4 — Hunt-Szymanski / Robinson-Schensted Patience LCS](#4-phase-4--hunt-szymanski--robinson-schensted-patience-lcs)
+  - [x] Implement $O((R + N) \log N)$ sparse LCS matching with binary search
+  - [x] Verify multi-line block and comment reflow anchor fidelity
 - [ ] [Phase 5 — Hirschberg Linear-Space Divide-and-Conquer Solver](#5-phase-5--hirschberg-linear-space-divide-and-conquer-solver)
   - [ ] Implement bidirectional linear-space score recursion
   - [ ] Guarantee $O(\min(M, N))$ L1-cache-resident working set for large cluster diffs

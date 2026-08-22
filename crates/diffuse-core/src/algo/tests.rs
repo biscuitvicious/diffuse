@@ -274,3 +274,87 @@ fn test_myers_ond_pseudo_random_fuzz_equivalence() {
         }
     }
 }
+
+#[test]
+fn test_hunt_szymanski_matches_matrix_dp() {
+    let hs = HuntSzymanskiLcs::new();
+    let matrix = MatrixDpLcs::new();
+
+    let cases: Vec<(&[u32], &[u32])> = vec![
+        (&[], &[]),
+        (&[1, 2, 3], &[]),
+        (&[], &[1, 2, 3]),
+        (&[1, 2, 3, 4, 5], &[1, 2, 3, 4, 5]),
+        (&[1, 2, 3, 4, 5], &[2, 4, 6]),
+        (&[10, 20, 30, 40, 50, 60], &[5, 10, 25, 30, 45, 60, 70]),
+        (&[1, 1, 1, 1], &[1, 1]),
+        (&[1, 2, 1, 2, 1], &[2, 1, 2]),
+        (&[1, 2, 3, 4, 5, 6, 7, 8], &[1, 2, 9, 4, 5, 10, 7, 8]),
+    ];
+
+    for (a, b) in cases {
+        let pairs_hs = hs.lcs_indices(a, b);
+        let pairs_matrix = matrix.lcs_indices(a, b);
+        assert_eq!(
+            pairs_hs.len(),
+            pairs_matrix.len(),
+            "Hunt-Szymanski LCS length mismatch: hs={pairs_hs:?}, matrix={pairs_matrix:?}"
+        );
+        for &(ai, bi) in &pairs_hs {
+            assert_eq!(a[ai], b[bi]);
+        }
+        let diff_hs = hs.diff_slices(a, b);
+        let diff_matrix = matrix.diff_slices(a, b);
+        let kept_hs = diff_hs
+            .iter()
+            .filter(|op| matches!(op, EditOp::Keep { .. }))
+            .count();
+        let kept_matrix = diff_matrix
+            .iter()
+            .filter(|op| matches!(op, EditOp::Keep { .. }))
+            .count();
+        assert_eq!(kept_hs, kept_matrix);
+    }
+}
+
+#[test]
+fn test_hunt_szymanski_pseudo_random_fuzz_equivalence() {
+    let hs = HuntSzymanskiLcs::new();
+    let matrix = MatrixDpLcs::new();
+
+    let mut state = 0x9999_8888_u64;
+    let mut rand = || -> u32 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (state >> 32) as u32
+    };
+
+    for _ in 0..100 {
+        let m = (rand() % 50) as usize;
+        let n = (rand() % 50) as usize;
+        let a: Vec<u32> = (0..m).map(|_| rand() % 15).collect();
+        let b: Vec<u32> = (0..n).map(|_| rand() % 15).collect();
+
+        let pairs_hs = hs.lcs_indices(&a, &b);
+        let pairs_matrix = matrix.lcs_indices(&a, &b);
+
+        assert_eq!(
+            pairs_hs.len(),
+            pairs_matrix.len(),
+            "Hunt-Szymanski fuzz length mismatch for m={m}, n={n}: a={a:?}, b={b:?}"
+        );
+
+        let mut prev_a = None;
+        let mut prev_b = None;
+        for &(ai, bi) in &pairs_hs {
+            assert_eq!(a[ai], b[bi]);
+            if let Some(pa) = prev_a {
+                assert!(ai > pa, "strictly monotonic in A");
+            }
+            if let Some(pb) = prev_b {
+                assert!(bi > pb, "strictly monotonic in B");
+            }
+            prev_a = Some(ai);
+            prev_b = Some(bi);
+        }
+    }
+}
