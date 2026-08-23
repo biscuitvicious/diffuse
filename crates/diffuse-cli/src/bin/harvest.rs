@@ -79,7 +79,15 @@ fn main() {
     let json = serde_json::to_string_pretty(&fixture).expect("serialize fixture");
 
     if let Some(out_path) = args.output {
-        fs::write(&out_path, json).expect("write output file");
+        if out_path.extension().is_some_and(|ext| ext == "gz") {
+            use std::io::Write as _;
+            let file = fs::File::create(&out_path).expect("create output file");
+            let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::best());
+            encoder.write_all(json.as_bytes()).expect("write gzip data");
+            encoder.finish().expect("finish gzip compression");
+        } else {
+            fs::write(&out_path, json).expect("write output file");
+        }
         eprintln!(
             "Harvested {} files to {}",
             fixture.contents.len(),

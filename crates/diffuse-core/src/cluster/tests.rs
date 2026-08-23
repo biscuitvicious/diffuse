@@ -362,13 +362,29 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
     }
 
     let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let path = if manifest.join("tests/golden").exists() {
-        manifest.join(format!("tests/golden/{name}.json"))
+    let dir = if manifest.join("tests/golden").exists() {
+        manifest.join("tests/golden")
     } else {
-        manifest.join(format!("../../tests/golden/{name}.json"))
+        manifest.join("../../tests/golden")
     };
-    let raw = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+    let raw = {
+        let json_path = dir.join(format!("{name}.json"));
+        let gz_path = dir.join(format!("{name}.json.gz"));
+        if gz_path.exists() {
+            use std::io::Read as _;
+            let bytes = fs::read(&gz_path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", gz_path.display()));
+            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+            let mut s = String::new();
+            decoder
+                .read_to_string(&mut s)
+                .expect("valid decompressed gzip");
+            s
+        } else {
+            fs::read_to_string(&json_path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", json_path.display()))
+        }
+    };
     let fixture: Fixture = serde_json::from_str(&raw).unwrap();
     let files = Arc::new(parse_diff(&fixture.diff));
     let num_threads = std::thread::available_parallelism()

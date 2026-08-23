@@ -50,8 +50,14 @@ struct Fixture {
     old_contents: HashMap<String, String>,
 }
 
-fn golden_dir() -> std::path::PathBuf {
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use std::{
+    io::{Read as _, Write as _},
+    path::{Path, PathBuf},
+};
+
+fn golden_dir() -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let in_pkg = manifest.join("tests/golden");
     if in_pkg.exists() {
         in_pkg
@@ -60,12 +66,49 @@ fn golden_dir() -> std::path::PathBuf {
     }
 }
 
-fn fixture_path(name: &str) -> String {
-    golden_dir()
-        .join(format!("{name}.json"))
-        .to_str()
-        .unwrap()
-        .to_string()
+fn read_maybe_gz_to_string(path: &Path) -> std::io::Result<String> {
+    if path.exists() {
+        let bytes = fs::read(path)?;
+        if path.extension().is_some_and(|ext| ext == "gz") {
+            let mut decoder = GzDecoder::new(&bytes[..]);
+            let mut s = String::new();
+            decoder.read_to_string(&mut s)?;
+            Ok(s)
+        } else {
+            Ok(String::from_utf8(bytes)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
+        }
+    } else {
+        let gz_path = PathBuf::from(format!("{}.gz", path.display()));
+        if gz_path.exists() {
+            let bytes = fs::read(&gz_path)?;
+            let mut decoder = GzDecoder::new(&bytes[..]);
+            let mut s = String::new();
+            decoder.read_to_string(&mut s)?;
+            Ok(s)
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("neither {} nor {}.gz found", path.display(), path.display()),
+            ))
+        }
+    }
+}
+
+fn write_gz(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let gz_path = if path.extension().is_some_and(|ext| ext == "gz") {
+        path.to_path_buf()
+    } else {
+        PathBuf::from(format!("{}.gz", path.display()))
+    };
+    let file = fs::File::create(&gz_path)?;
+    let mut encoder = GzEncoder::new(file, Compression::best());
+    encoder.write_all(data)?;
+    encoder.finish()?;
+    if path.exists() && path != gz_path {
+        let _ = fs::remove_file(path);
+    }
+    Ok(())
 }
 
 use std::sync::{Arc, LazyLock, Mutex};
@@ -78,7 +121,8 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     if let Some(f) = cache.get(name) {
         return Arc::clone(f);
     }
-    let raw = fs::read_to_string(fixture_path(name)).expect("the frozen fixture");
+    let p = golden_dir().join(format!("{name}.json"));
+    let raw = read_maybe_gz_to_string(&p).expect("the frozen fixture");
     let f: Fixture = serde_json::from_str(&raw).expect("fixture JSON parses");
     let arc = Arc::new(f);
     cache.insert(name.to_string(), Arc::clone(&arc));
@@ -332,14 +376,6 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
     );
 }
 
-fn expected_wire_path(name: &str) -> String {
-    golden_dir()
-        .join(format!("{name}.wire.json"))
-        .to_str()
-        .unwrap()
-        .to_string()
-}
-
 fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutput) {
     eprintln!("\n----- WIRE DIFF [{name}] -----");
     if actual.files.len() != expected.files.len() {
@@ -420,19 +456,22 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
 }
 
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
-    let wire_path = expected_wire_path(name);
+    let wire_path = golden_dir().join(format!("{name}.wire.json"));
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
         let actual_pretty = format!(
             "{}\n",
             serde_json::to_string_pretty(output).expect("serialize pretty JSON")
         );
-        fs::write(&wire_path, &actual_pretty)
-            .unwrap_or_else(|e| panic!("failed to write {wire_path}: {e}"));
-        eprintln!("{name}: wire JSON updated ({wire_path})");
+        write_gz(&wire_path, actual_pretty.as_bytes())
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
+        eprintln!("{name}: wire JSON updated ({}.gz)", wire_path.display());
         return;
     }
-    let expected_str = fs::read_to_string(&wire_path).unwrap_or_else(|e| {
-        panic!("Failed to read expected wire JSON for {name} from {wire_path}: {e}")
+    let expected_str = read_maybe_gz_to_string(&wire_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected wire JSON for {name} from {}: {e}",
+            wire_path.display()
+        )
     });
     let expected_output: PipelineOutput = serde_json::from_str(&expected_str)
         .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
@@ -464,17 +503,14 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
             .unwrap_or_else(|e| panic!("[{name}] failed to parse serialized wire JSON: {e}"));
         print_wire_diff(name, &actual_output, &expected_output);
         panic!(
-            "[{name}] wire JSON output deviates from expected static golden ({wire_path}). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update."
+            "[{name}] wire JSON output deviates from expected static golden ({}.gz). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update.",
+            wire_path.display()
         );
     }
 }
 
-fn expected_render_path(name: &str) -> String {
-    golden_dir()
-        .join(format!("{name}.render.txt"))
-        .to_str()
-        .unwrap()
-        .to_string()
+fn expected_render_path(name: &str) -> PathBuf {
+    golden_dir().join(format!("{name}.render.txt"))
 }
 
 fn print_render_diff(name: &str, actual: &str, expected: &str) {
@@ -503,22 +539,27 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
     let render_path = expected_render_path(name);
 
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_RENDER").is_ok() {
-        fs::write(&render_path, &actual_encoded)
-            .unwrap_or_else(|e| panic!("failed to write {render_path}: {e}"));
-        eprintln!("{name}: render static golden updated ({render_path})");
+        write_gz(&render_path, actual_encoded.as_bytes())
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
+        eprintln!(
+            "{name}: render static golden updated ({}.gz)",
+            render_path.display()
+        );
         return;
     }
 
-    let expected_encoded = fs::read_to_string(&render_path).unwrap_or_else(|e| {
+    let expected_encoded = read_maybe_gz_to_string(&render_path).unwrap_or_else(|e| {
         panic!(
-            "Failed to read expected render output for {name} from {render_path}: {e}. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to create/update."
+            "Failed to read expected render output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to create/update.",
+            render_path.display()
         )
     });
 
     if actual_encoded != expected_encoded {
         print_render_diff(name, &actual_encoded, &expected_encoded);
         panic!(
-            "[{name}] terminal render output deviates from expected static golden ({render_path}). See render diff above. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to update."
+            "[{name}] terminal render output deviates from expected static golden ({}.gz). See render diff above. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to update.",
+            render_path.display()
         );
     }
 }
@@ -531,7 +572,9 @@ fn run_lib_leg(name: &str, min: usize) {
 }
 
 fn run_bin_leg(name: &str, min: usize) {
-    let input = fs::read(fixture_path(name)).expect("read fixture file");
+    let p = golden_dir().join(format!("{name}.json"));
+    let raw = read_maybe_gz_to_string(&p).expect("read fixture file");
+    let input = raw.into_bytes();
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

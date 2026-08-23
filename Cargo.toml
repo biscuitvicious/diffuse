@@ -26,6 +26,7 @@ unicode-width = "0.2"
 gix = { version = "0.87", default-features = false, features = ["basic", "revision", "blob-diff", "parallel", "sha1"] }
 rayon = "1.12"
 rustc-hash = "2"
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 
 [profile.dev.package.regex]
 opt-level = 3

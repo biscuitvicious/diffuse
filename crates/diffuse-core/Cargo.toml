@@ -16,3 +16,6 @@ regex = { workspace = true }
 gix = { workspace = true }
 rayon = { workspace = true }
 rustc-hash = { workspace = true }
+
+[dev-dependencies]
+flate2 = { workspace = true }

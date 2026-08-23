@@ -37,21 +37,19 @@ the single canonical copy.
 
 ## Fixture file types per corpus
 
-Each corpus `<name>` has up to three files, each with a **different change
-policy**:
+All fixture files in `tests/golden/` are gzip-compressed (`.gz`) to save repository space (reducing ~92MB of uncompressed JSON down to ~3.9MB), and test runners support transparent decompression:
 
-1. **`<name>.json`** — the frozen *input* fixture: the captured `git diff`,
+1. **`<name>.json.gz`** (or `<name>.json`) — the frozen *input* fixture: the captured `git diff`,
    post-patch file contents, and (for `opt-*`) pre-patch `old_contents`.
    **Never regenerated** except when the corpus itself is deliberately
    changed (rare, human sign-off only).
-2. **`<name>.wire.json`** — the frozen *wire-contract output* (the
+2. **`<name>.wire.json.gz`** (or `<name>.wire.json`) — the frozen *wire-contract output* (the
    token-stream JSON) of the lib leg; both legs must match it
    byte-for-byte. Changes whenever engine behavior **deliberately**
    changes — under the review discipline below.
-3. **`<name>.golden.txt`** — the frozen *rendered* output (the TUI's
-   colored scrolldown). It locks the hand-tuned visual preferences
-   (strike/fill minimums, anchor pairings, move-block shape,
-   reverse-stretch). It changes only when a rendering preference is
+3. **`<name>.render.txt.gz`** (or `<name>.render.txt`) — the frozen *terminal rendered* output.
+   It locks the hand-tuned visual preferences (strike/fill minimums, anchor pairings,
+   move-block shape, reverse-stretch). It changes only when a rendering preference is
    deliberately changed — under the review discipline below.
 
 ## Building a new golden fixture
