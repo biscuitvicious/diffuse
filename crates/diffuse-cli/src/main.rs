@@ -12,7 +12,7 @@ use std::{
     path::Path,
 };
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 use diffuse_core::{
@@ -36,31 +36,63 @@ use diffuse_tui::run_streaming_interactive_tui;
 )]
 struct Args {
     /// Change to DIR before doing anything (equivalent to git -C <DIR>).
-    #[arg(short = 'C', value_name = "DIR", action = clap::ArgAction::Append)]
+    #[arg(short = 'C', value_name = "DIR", action = clap::ArgAction::Append, global = true)]
     directory: Vec<std::path::PathBuf>,
     /// Read the diff from this file instead of stdin.
-    #[arg(long)]
+    #[arg(long, global = true)]
     diff: Option<String>,
     /// Path to notes database file (e.g. ~/.pi/review/notes.json).
-    #[arg(long)]
+    #[arg(long, global = true)]
     notes_file: Option<String>,
     /// Repository name key for notes lookup.
-    #[arg(long)]
+    #[arg(long, global = true)]
     repo: Option<String>,
+    /// Unified diff context lines (default: 6).
+    #[arg(short = 'U', long, default_value_t = 6, global = true)]
+    context: usize,
     /// Emit raw token-stream JSON (for machine/extension integration).
-    #[arg(long)]
+    #[arg(long, global = true)]
     json: bool,
     /// Emit raw token-stream JSON Lines (one JSON object per file as it is
     /// processed).
-    #[arg(long)]
+    #[arg(long, global = true)]
     jsonl: bool,
-    /// Disable interactive TUI mode and print colored diff to terminal.
-    #[arg(long)]
+    /// Run in non-interactive pager mode (print colored diff to terminal).
+    #[arg(short = 'p', long, global = true)]
+    pager: bool,
+    /// Disable interactive TUI mode (alias for --pager).
+    #[arg(long, global = true)]
     no_tui: bool,
+
+    #[command(subcommand)]
+    command: Option<SubCommand>,
+
     /// Git diff arguments (e.g. `diffuse HEAD~1`, `diffuse --cached`, `diffuse
     /// path/to/file`).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     git_args: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum SubCommand {
+    /// Interactive diff reviewer (default when invoked in a repository).
+    Review {
+        /// Git diff arguments (e.g. `HEAD~1`, `--cached`, `src/`).
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        git_args: Vec<String>,
+    },
+    /// Parse a diff and emit structured token-stream JSON or JSON Lines.
+    Parse {
+        /// Read raw diff or JSON payload from file instead of stdin.
+        #[arg(long)]
+        diff: Option<String>,
+        /// Emit single JSON document (default).
+        #[arg(long)]
+        json: bool,
+        /// Emit JSON Lines.
+        #[arg(long)]
+        jsonl: bool,
+    },
 }
 
 #[derive(Deserialize)]
@@ -214,25 +246,70 @@ fn main() -> io::Result<()> {
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();
 
+    let (explicit_cmd, git_args, is_json, is_jsonl, diff_opt) = match &args.command {
+        Some(SubCommand::Review {
+            git_args: sub_git_args,
+        }) => {
+            let mut ga = args.git_args.clone();
+            ga.extend(sub_git_args.iter().cloned());
+            (Some("review"), ga, args.json, args.jsonl, args.diff.clone())
+        }
+        Some(SubCommand::Parse { diff, json, jsonl }) => {
+            let j = if !*json && !*jsonl {
+                true
+            } else {
+                *json || args.json
+            };
+            let jl = *jsonl || args.jsonl;
+            (
+                Some("parse"),
+                Vec::new(),
+                j,
+                jl,
+                diff.clone().or_else(|| args.diff.clone()),
+            )
+        }
+        None => (
+            None,
+            args.git_args.clone(),
+            args.json,
+            args.jsonl,
+            args.diff.clone(),
+        ),
+    };
+
+    let no_tui = args.no_tui || args.pager;
+
     // Peek a piped stdin only when the routing decision depends on its
-    // content (no git args, no explicit contract flags). Never block a
-    // long-running pipe for a repo review (`diffuse HEAD < <(tail -f …)`).
+    // content (no git args, no explicit contract flags, no explicit subcommand).
     let mut piped_stdin = String::new();
-    if !stdin_tty && args.git_args.is_empty() && !args.json && !args.jsonl && args.diff.is_none() {
+    if explicit_cmd.is_none()
+        && !stdin_tty
+        && git_args.is_empty()
+        && !is_json
+        && !is_jsonl
+        && diff_opt.is_none()
+    {
         io::stdin().read_to_string(&mut piped_stdin)?;
     }
 
-    // Standalone reviewer: `diffuse [git-args...]` from a terminal or with
-    // an empty/closed piped stdin. When either end is non-interactive
-    // (piped/redirected), render the full ANSI diff instead of the TUI.
-    if !route_mode(
-        args.json,
-        args.jsonl,
-        args.diff.as_deref(),
-        &args.git_args,
-        stdin_tty,
-        &piped_stdin,
-    ) {
+    let is_json_contract = match explicit_cmd {
+        Some("parse") => true,
+        Some("review") => is_json || is_jsonl,
+        _ => route_mode(
+            is_json,
+            is_jsonl,
+            diff_opt.as_deref(),
+            &git_args,
+            stdin_tty,
+            &piped_stdin,
+        ),
+    };
+
+    // Standalone reviewer: `diffuse [git-args...]` or `diffuse review
+    // [git-args...]` When either end is non-interactive or --pager/--no-tui is
+    // requested, render the full ANSI diff instead of the TUI.
+    if !is_json_contract {
         let repo_root = env::current_dir()?;
         let notes_path = args
             .notes_file
@@ -249,15 +326,15 @@ fn main() -> io::Result<()> {
                 .unwrap_or_else(|| "diffuse".to_string())
         });
 
-        // Interactive TUI only when both ends are real terminals; any
-        // piped or redirected end falls back to the full ANSI render.
-        if !args.no_tui && stdin_tty && stdout_tty {
+        // Interactive TUI only when both ends are real terminals and not in pager mode;
+        // any piped or redirected end falls back to the full ANSI render.
+        if !no_tui && stdin_tty && stdout_tty {
             let (consumer, meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
                 repo_root.clone(),
-                args.git_args.clone(),
+                git_args.clone(),
                 Vec::new(),
                 false,
-                6,
+                args.context,
                 Some(loaded_db.clone()),
                 args.repo.clone(),
                 None,
@@ -274,15 +351,15 @@ fn main() -> io::Result<()> {
                 repo_name,
                 notes_path,
                 repo_root.clone(),
-                args.git_args.clone(),
+                git_args.clone(),
             )?;
         } else {
             let (consumer, meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
                 repo_root.clone(),
-                args.git_args.clone(),
+                git_args.clone(),
                 Vec::new(),
                 false,
-                6,
+                args.context,
                 Some(loaded_db),
                 args.repo.clone(),
                 None,
@@ -308,7 +385,7 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
-    let raw = match &args.diff {
+    let raw = match &diff_opt {
         Some(path) => fs::read_to_string(path)?,
         None => {
             if piped_stdin.is_empty() {
@@ -351,7 +428,7 @@ fn main() -> io::Result<()> {
             println!("{}", serde_json::to_string(&outputs).expect("serialize"));
         }
         InputPayload::Single(input) => {
-            if args.jsonl {
+            if is_jsonl {
                 let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
                 let notes_path = notes_file_path
                     .as_ref()

@@ -4,7 +4,7 @@
 - [x] **Standalone Rust TUI**: Full terminal user interface in the `diffuse` binary equivalent to the Pi extension's interactive review UI.
 - [x] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
-- [ ] **CLI UX & subcommands**: Remove raw `JSON | stdin` default mode in favor of explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse --pager`).
+- [x] **CLI UX & subcommands**: Explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse -p`/`--pager`, `-U`/`--context`).
 - [ ] ~~**Direct git access via git crate**: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`).~~ (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
 
 ## 2. Streaming Pipeline & Incremental Loading (Pi Extension & Engine)
@@ -33,3 +33,4 @@
 
 ## 7. Execution Context & CLI
 - [x] **Support `-C` (change directory) option**: Conceptually `chdir` to the given directory before scanning for repositories, loading files, and resolving all relative paths. Must be honoured everywhere (git discovery, file I/O, config, golden/corpus paths, etc.). Supports single or multiple sequential `-C` flags (e.g. `diffuse -C <parent> -C <child>`).
+- [ ] **Markdown output format (`--markdown` / `-m`)**: Support emitting diff output in GitHub-Flavored Markdown (GFM) format (e.g. diff code blocks, collapsible file `<details>`, and change summary tables) suitable for pasting into PR comments, reviews, and issue trackers.

@@ -311,3 +311,221 @@ fn test_multiple_c_flags_evaluate_sequentially() {
         "stdout must contain diff for nested.rs, got: {stdout}"
     );
 }
+
+/// `diffuse review [git_args...] --pager` explicit subcommand runs the
+/// reviewer.
+#[test]
+fn test_cli_review_subcommand() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("review")
+        .arg("--pager")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&repo_dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse review --pager must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\x1b["),
+        "stdout must contain ANSI colored diff"
+    );
+}
+
+/// `diffuse --pager` and `diffuse -p` should activate pager mode.
+#[test]
+fn test_cli_pager_flag() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&repo_dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse -p must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\x1b["),
+        "stdout must contain ANSI colored diff"
+    );
+}
+
+/// `diffuse parse --json` should parse diff and emit JSON token stream.
+#[test]
+fn test_cli_parse_subcommand_json() {
+    let diff_input = r#"diff --git a/hello.rs b/hello.rs
+index 0000000..1111111 100644
+--- a/hello.rs
++++ b/hello.rs
+@@ -1 +1 @@
+-println!("old");
++println!("new");
+"#;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("parse")
+        .arg("--json")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    use std::io::Write as _;
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(diff_input.as_bytes())
+        .unwrap();
+    drop(child.stdin.take());
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse parse --json must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.trim().starts_with('{'),
+        "must emit JSON object, got: {stdout}"
+    );
+    assert!(stdout.contains("\"files\""), "must contain files field");
+}
+
+/// `diffuse parse --jsonl` should parse diff and emit JSON Lines.
+#[test]
+fn test_cli_parse_subcommand_jsonl() {
+    let diff_input = r#"diff --git a/hello.rs b/hello.rs
+index 0000000..1111111 100644
+--- a/hello.rs
++++ b/hello.rs
+@@ -1 +1 @@
+-println!("old");
++println!("new");
+"#;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("parse")
+        .arg("--jsonl")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    use std::io::Write as _;
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(diff_input.as_bytes())
+        .unwrap();
+    drop(child.stdin.take());
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse parse --jsonl must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(lines.len(), 1, "must emit 1 JSON line for 1 file");
+    assert!(
+        lines[0].starts_with('{'),
+        "must be JSON line, got: {}",
+        lines[0]
+    );
+}
+
+/// `diffuse parse --diff <file>` should read diff from file and emit JSON.
+#[test]
+fn test_cli_parse_with_diff_file() {
+    let dir = env::temp_dir().join(format!("diffuse-diff-file-{}", process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let diff_file = dir.join("test.patch");
+    fs::write(
+        &diff_file,
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-1\n+2\n",
+    )
+    .unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("parse")
+        .arg("--diff")
+        .arg(&diff_file)
+        .output()
+        .unwrap();
+
+    let _ = fs::remove_dir_all(&dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse parse --diff must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.trim().starts_with('{'));
+    assert!(stdout.contains("\"a.txt\""));
+}
+
+/// `diffuse review HEAD~1 --pager` reviews specified commit range.
+#[test]
+fn test_cli_review_commit_range() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("review")
+        .arg("HEAD~1")
+        .arg("-p")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&repo_dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse review HEAD~1 -p must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\x1b["));
+}
+
+/// `diffuse -U 3 -p` honors context flag.
+#[test]
+fn test_cli_context_flag() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-U")
+        .arg("3")
+        .arg("-p")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&repo_dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse -U 3 -p must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
