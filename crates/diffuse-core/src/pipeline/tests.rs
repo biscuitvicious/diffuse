@@ -332,3 +332,40 @@ runner = "scripts/android-test-runner"
     assert_eq!(android_rustflags.unwrap().kind, RowKind::Mod);
     assert_eq!(android_rustflags.unwrap().old_line, Some(28));
 }
+
+#[test]
+fn test_visible_context_rows_populate_text() {
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ fn foo() {
+-    let x = 1;
++    let x = 2;
+ }
+"#;
+    let new_content = "fn foo() {\n    let x = 2;\n}";
+    let mut contents = HashMap::new();
+    contents.insert("src/lib.rs".to_string(), new_content.to_string());
+
+    let output = run_pipeline(diff, &contents);
+    assert_eq!(output.files.len(), 1);
+    let file = &output.files[0];
+    assert!(
+        !file.new_content.is_empty(),
+        "file.new_content must not be empty"
+    );
+
+    let ctx_rows: Vec<_> = file
+        .rows
+        .iter()
+        .filter(|r| r.kind == RowKind::Ctx)
+        .collect();
+    assert_eq!(
+        ctx_rows.len(),
+        2,
+        "must have visible context rows: 'fn foo() {{' and '}}'"
+    );
+    assert_eq!(ctx_rows[0].text, "fn foo() {");
+    assert_eq!(ctx_rows[1].text, "}");
+}

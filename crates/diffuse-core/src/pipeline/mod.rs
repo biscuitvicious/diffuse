@@ -127,16 +127,24 @@ pub fn process_single_diff_file(
     mut f: DiffFile,
     new_content: Option<&str>,
     old_content: Option<&str>,
-    diff_fallback: Option<&str>,
+    _diff_fallback: Option<&str>,
     notes_db: Option<&NotesDB>,
     repo: Option<&str>,
 ) -> OutputFile {
     let ext = f.path.rsplit('.').next().unwrap_or("");
     let profile = lang_profile(ext);
-    let new_lines: Vec<&str> = new_content
-        .map(|c| c.split('\n').collect())
-        .unwrap_or_default();
-    f.new_line_count = new_lines.len();
+    let new_lines_fallback: Vec<String>;
+    let new_lines: Vec<&str> = if let Some(c) = new_content
+        && !c.is_empty()
+    {
+        f.new_line_count = c.split('\n').count();
+        c.split('\n').collect()
+    } else {
+        new_lines_fallback = crate::old_content::new_content_from_hunks(&f.raw_hunks);
+        f.new_line_count = new_lines_fallback.len();
+        new_lines_fallback.iter().map(|s| s.as_str()).collect()
+    };
+    f.new_content = new_lines.iter().map(|s| s.to_string()).collect();
 
     let old_lines_fallback: Vec<String>;
     let old_lines: Vec<&str> = if let Some(oc) = old_content
@@ -144,13 +152,12 @@ pub fn process_single_diff_file(
     {
         f.old_line_count = oc.split('\n').count();
         oc.split('\n').collect()
-    } else if let Some(diff) = diff_fallback {
-        old_lines_fallback = crate::old_content::old_content_from_diff(diff, &f.path);
+    } else {
+        old_lines_fallback = crate::old_content::old_content_from_hunks(&f.raw_hunks);
         f.old_line_count = old_lines_fallback.len();
         old_lines_fallback.iter().map(|s| s.as_str()).collect()
-    } else {
-        Vec::new()
     };
+    f.old_content = old_lines.iter().map(|s| s.to_string()).collect();
 
     mark_moves(&mut f);
 

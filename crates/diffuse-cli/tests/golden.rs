@@ -334,25 +334,65 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             let _ = &fence.lang;
         }
 
-        // Verify visible rows continuity and accuracy against new_content
-        if !f.new_content.is_empty() {
-            let mut last_new_line: Option<u32> = None;
-            for r in &f.rows {
-                if r.kind == RowKind::Sep {
-                    last_new_line = None;
-                    continue;
+        // 1. Verify reconstructed content completeness:
+        if f.status != "deleted" && f.new_line_count > 0 {
+            check!(
+                !f.new_content.is_empty(),
+                "{}: new_content must not be empty for non-deleted file (new_line_count={})",
+                f.path,
+                f.new_line_count
+            );
+            check!(
+                f.new_content.len() == f.new_line_count,
+                "{}: new_content len {} != new_line_count {}",
+                f.path,
+                f.new_content.len(),
+                f.new_line_count
+            );
+        }
+        if f.status != "added" && f.old_line_count > 0 {
+            check!(
+                !f.old_content.is_empty(),
+                "{}: old_content must not be empty for non-added file (old_line_count={})",
+                f.path,
+                f.old_line_count
+            );
+            check!(
+                f.old_content.len() == f.old_line_count,
+                "{}: old_content len {} != old_line_count {}",
+                f.path,
+                f.old_content.len(),
+                f.old_line_count
+            );
+        }
+
+        // 2. Verify visible rows completeness and accuracy
+        if !f.hunks.is_empty() {
+            check!(
+                !f.rows.is_empty(),
+                "{}: visible rows must not be empty for file with hunks",
+                f.path
+            );
+        }
+
+        let mut last_new_line: Option<u32> = None;
+        for (ri, r) in f.rows.iter().enumerate() {
+            if r.kind == RowKind::Sep {
+                last_new_line = None;
+                continue;
+            }
+            if let Some(nl) = r.new_line {
+                if let Some(prev) = last_new_line {
+                    check!(
+                        nl == prev + 1,
+                        "{}: visible rows skipped line numbers: {} -> {}",
+                        f.path,
+                        prev,
+                        nl
+                    );
                 }
-                if let Some(nl) = r.new_line {
-                    if let Some(prev) = last_new_line {
-                        check!(
-                            nl == prev + 1,
-                            "{}: visible rows skipped line numbers: {} -> {}",
-                            f.path,
-                            prev,
-                            nl
-                        );
-                    }
-                    last_new_line = Some(nl);
+                last_new_line = Some(nl);
+                if !f.new_content.is_empty() {
                     let expected_text = f
                         .new_content
                         .get((nl as usize) - 1)
@@ -360,13 +400,49 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .unwrap_or("");
                     check!(
                         r.text == expected_text,
-                        "{}:{}: visible row text {:?} != new_content text {:?}",
+                        "{}:{}: visible row {} text {:?} != new_content text {:?}",
                         f.path,
                         nl,
+                        ri,
                         r.text,
                         expected_text
                     );
                 }
+            } else if let Some(ol) = r.old_line
+                && !f.old_content.is_empty()
+            {
+                let expected_text = f
+                    .old_content
+                    .get((ol as usize) - 1)
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                check!(
+                    r.text == expected_text,
+                    "{}:{}: visible old row {} text {:?} != old_content text {:?}",
+                    f.path,
+                    ol,
+                    ri,
+                    r.text,
+                    expected_text
+                );
+            }
+
+            if r.kind == RowKind::Ctx {
+                check!(
+                    r.new_line.is_some() || r.old_line.is_some(),
+                    "{}: visible ctx row {} missing line number",
+                    f.path,
+                    ri
+                );
+                let concat: String = r.runs.iter().map(|x| x.text.as_str()).collect();
+                check!(
+                    concat == r.text,
+                    "{}: visible ctx row {} runs concat {:?} != text {:?}",
+                    f.path,
+                    ri,
+                    concat,
+                    r.text
+                );
             }
         }
     }
@@ -451,6 +527,54 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
                 }
             }
         }
+        if af.new_content != ef.new_content {
+            eprintln!(
+                "  [file {fi} {:?}] new_content mismatch: actual len={}, expected len={}",
+                af.path,
+                af.new_content.len(),
+                ef.new_content.len()
+            );
+        }
+        if af.old_content != ef.old_content {
+            eprintln!(
+                "  [file {fi} {:?}] old_content mismatch: actual len={}, expected len={}",
+                af.path,
+                af.old_content.len(),
+                ef.old_content.len()
+            );
+        }
+        if af.rows.len() != ef.rows.len() {
+            eprintln!(
+                "  [file {fi} {:?}] Visible rows count mismatch: actual={}, expected={}",
+                af.path,
+                af.rows.len(),
+                ef.rows.len()
+            );
+        } else {
+            for (ri, (ar, er)) in af.rows.iter().zip(ef.rows.iter()).enumerate() {
+                if ar != er {
+                    eprintln!("  [file {fi} {:?} visible row {ri}] mismatch:", af.path);
+                    if ar.kind != er.kind
+                        || ar.new_line != er.new_line
+                        || ar.old_line != er.old_line
+                        || ar.text != er.text
+                    {
+                        eprintln!(
+                            "    actual:   kind={:?}, nl={:?}, ol={:?}, text={:?}",
+                            ar.kind, ar.new_line, ar.old_line, ar.text
+                        );
+                        eprintln!(
+                            "    expected: kind={:?}, nl={:?}, ol={:?}, text={:?}",
+                            er.kind, er.new_line, er.old_line, er.text
+                        );
+                    }
+                    if ar.runs != er.runs {
+                        eprintln!("      runs actual:   {:?}", ar.runs);
+                        eprintln!("      runs expected: {:?}", er.runs);
+                    }
+                }
+            }
+        }
     }
     eprintln!("----- END WIRE DIFF -----\n");
 }
@@ -476,31 +600,14 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     let expected_output: PipelineOutput = serde_json::from_str(&expected_str)
         .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
 
-    let matches = output.files.len() == expected_output.files.len()
-        && output.branch == expected_output.branch
-        && output.untracked_skipped == expected_output.untracked_skipped
-        && output
-            .files
-            .iter()
-            .zip(expected_output.files.iter())
-            .all(|(a, b)| {
-                a.path == b.path
-                    && a.status == b.status
-                    && a.new_line_count == b.new_line_count
-                    && a.old_line_count == b.old_line_count
-                    && a.counts == b.counts
-                    && a.fences == b.fences
-                    && a.notes == b.notes
-                    && a.hunks == b.hunks
-            });
+    let actual_pretty = format!(
+        "{}\n",
+        serde_json::to_string_pretty(output).expect("serialize pretty JSON")
+    );
+    let actual_output: PipelineOutput = serde_json::from_str(&actual_pretty)
+        .unwrap_or_else(|e| panic!("[{name}] failed to parse serialized wire JSON: {e}"));
 
-    if !matches {
-        let actual_pretty = format!(
-            "{}\n",
-            serde_json::to_string_pretty(output).expect("serialize pretty JSON")
-        );
-        let actual_output: PipelineOutput = serde_json::from_str(&actual_pretty)
-            .unwrap_or_else(|e| panic!("[{name}] failed to parse serialized wire JSON: {e}"));
+    if actual_output != expected_output {
         print_wire_diff(name, &actual_output, &expected_output);
         panic!(
             "[{name}] wire JSON output deviates from expected static golden ({}.gz). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update.",

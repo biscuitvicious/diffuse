@@ -118,6 +118,51 @@ pub fn old_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
     out
 }
 
+/// Reconstruct the new side of a file directly from its parsed hunks.
+pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for h in hunks {
+        if h.new_start == 0 {
+            continue;
+        }
+        let ni = h.new_start as usize;
+        while out.len() < ni.saturating_sub(1) {
+            out.push(String::new());
+        }
+        for r in &h.rows {
+            match r {
+                crate::parse::Row::Add(add) => {
+                    let num = add.num.get() as usize;
+                    if num > 0 {
+                        while out.len() < num {
+                            out.push(String::new());
+                        }
+                        out[num - 1] = add.text.clone();
+                    }
+                }
+                crate::parse::Row::Ctx(ctx) => {
+                    let num = ctx.new_pos.get() as usize;
+                    if num > 0 && out.len() == num - 1 {
+                        out.push(ctx.text.clone());
+                    }
+                }
+                crate::parse::Row::Mod { new_line, .. }
+                | crate::parse::Row::Mov { new_line, .. } => {
+                    let num = new_line.num.get() as usize;
+                    if num > 0 {
+                        while out.len() < num {
+                            out.push(String::new());
+                        }
+                        out[num - 1] = new_line.text.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::old_content_from_diff;
