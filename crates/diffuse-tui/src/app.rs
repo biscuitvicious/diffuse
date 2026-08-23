@@ -133,18 +133,63 @@ impl AppState {
         if fr.is_file_header || fr.is_hunk_divider {
             return None;
         }
-        let file = output.files.get(fr.file_idx)?;
+        let file = output.files.get(fr.file_idx).unwrap_or_else(|| {
+            panic!(
+                "FlatRow file_idx {} out of bounds (output has {} files)",
+                fr.file_idx,
+                output.files.len()
+            )
+        });
         if raw_diff {
             let hunks = if !file.raw_hunks.is_empty() {
                 &file.raw_hunks
             } else {
                 &file.hunks
             };
-            hunks.get(fr.hunk_idx)?.rows.get(fr.row_idx)
+            let hunk = hunks.get(fr.hunk_idx).unwrap_or_else(|| {
+                panic!(
+                    "FlatRow hunk_idx {} out of bounds for '{}' (has {} hunks)",
+                    fr.hunk_idx,
+                    file.path,
+                    hunks.len()
+                )
+            });
+            Some(hunk.rows.get(fr.row_idx).unwrap_or_else(|| {
+                panic!(
+                    "FlatRow row_idx {} out of bounds for '{}' hunk {} (has {} rows)",
+                    fr.row_idx,
+                    file.path,
+                    fr.hunk_idx,
+                    hunk.rows.len()
+                )
+            }))
         } else if !file.rows.is_empty() {
-            file.rows.get(fr.row_idx)
+            Some(file.rows.get(fr.row_idx).unwrap_or_else(|| {
+                panic!(
+                    "FlatRow row_idx {} out of bounds for '{}' (has {} visible rows)",
+                    fr.row_idx,
+                    file.path,
+                    file.rows.len()
+                )
+            }))
         } else {
-            file.hunks.get(fr.hunk_idx)?.rows.get(fr.row_idx)
+            let hunk = file.hunks.get(fr.hunk_idx).unwrap_or_else(|| {
+                panic!(
+                    "FlatRow hunk_idx {} out of bounds for '{}' (has {} hunks)",
+                    fr.hunk_idx,
+                    file.path,
+                    file.hunks.len()
+                )
+            });
+            Some(hunk.rows.get(fr.row_idx).unwrap_or_else(|| {
+                panic!(
+                    "FlatRow row_idx {} out of bounds for '{}' hunk {} (has {} rows)",
+                    fr.row_idx,
+                    file.path,
+                    fr.hunk_idx,
+                    hunk.rows.len()
+                )
+            }))
         }
     }
 
@@ -264,65 +309,103 @@ impl AppState {
 
     /// Locate each hunk's first content row in the flat sequence by file index
     /// and coordinate envelope.
-    fn build_hunk_starts(output: &PipelineOutput, flat: &[FlatRow]) -> Vec<HunkStart> {
+    fn build_file_hunk_starts_for_file(
+        flat: &[FlatRow],
+        fi: usize,
+        f: &OutputFile,
+        file_header_idx: usize,
+    ) -> Vec<HunkStart> {
         let mut starts = Vec::new();
-        for (fi, f) in output.files.iter().enumerate() {
-            let file_start = flat
-                .iter()
-                .position(|fr| fr.file_idx == fi && fr.is_file_header);
-            let Some(file_start) = file_start else {
-                continue;
-            };
-            if f.hunks.is_empty() {
-                continue;
-            }
-            let mut search_from = file_start + 1;
-            for (hi, h) in f.hunks.iter().enumerate() {
-                if hi == 0 {
-                    if search_from < flat.len() && flat[search_from].file_idx == fi {
-                        starts.push(HunkStart {
-                            flat: search_from,
-                            file: fi,
-                            hunk: hi,
-                        });
-                    }
+        if f.hunks.is_empty() {
+            return starts;
+        }
+        let meta = Self::build_file_hunk_meta(f);
+        let mut search_from = file_header_idx + 1;
+        for (hi, h) in f.hunks.iter().enumerate() {
+            if hi == 0 {
+                if search_from < flat.len() && flat[search_from].file_idx == fi {
+                    starts.push(HunkStart {
+                        flat: search_from,
+                        file: fi,
+                        hunk: hi,
+                    });
+                }
+            } else {
+                let above_ctx = meta.get(hi).map(|m| m.above as u32).unwrap_or(0);
+                let target_start = if h.new_count > 0 {
+                    h.new_start.saturating_sub(above_ctx)
                 } else {
-                    let target_start = if h.new_count > 0 {
-                        h.new_start
+                    h.old_start.saturating_sub(above_ctx)
+                };
+                let mut found = None;
+                let mut passed_sep = false;
+                for (idx, fr) in flat.iter().enumerate().skip(search_from) {
+                    if fr.file_idx != fi {
+                        break;
+                    }
+                    if fr.is_file_header || fr.is_hunk_divider {
+                        continue;
+                    }
+                    let row = if !f.rows.is_empty() {
+                        f.rows.get(fr.row_idx)
                     } else {
-                        h.old_start
+                        f.hunks
+                            .get(fr.hunk_idx)
+                            .and_then(|h| h.rows.get(fr.row_idx))
                     };
-                    let mut found = None;
-                    for (idx, fr) in flat.iter().enumerate().skip(search_from) {
-                        if fr.file_idx != fi {
+                    if let Some(r) = row {
+                        if r.kind == diffuse_core::parse::RowKind::Sep {
+                            passed_sep = true;
+                            continue;
+                        }
+                        if passed_sep {
+                            found = Some(idx);
                             break;
                         }
-                        if let Some(coord) = Self::flat_coord(output, false, fr)
-                            && coord >= target_start
+                        let coord = Self::row_coord(r);
+                        if let Some(c) = coord
+                            && c >= target_start
                         {
                             found = Some(idx);
                             break;
                         }
                     }
-                    if let Some(idx) = found {
-                        starts.push(HunkStart {
-                            flat: idx,
-                            file: fi,
-                            hunk: hi,
-                        });
-                        search_from = idx + 1;
-                    }
+                }
+                if let Some(idx) = found {
+                    starts.push(HunkStart {
+                        flat: idx,
+                        file: fi,
+                        hunk: hi,
+                    });
+                    search_from = idx + 1;
                 }
             }
         }
         starts
     }
 
+    fn build_hunk_starts(output: &PipelineOutput, flat: &[FlatRow]) -> Vec<HunkStart> {
+        let mut starts = Vec::new();
+        for (fi, f) in output.files.iter().enumerate() {
+            let file_header_idx = flat
+                .iter()
+                .position(|fr| fr.file_idx == fi && fr.is_file_header)
+                .unwrap_or(0);
+            starts.extend(Self::build_file_hunk_starts_for_file(
+                flat,
+                fi,
+                f,
+                file_header_idx,
+            ));
+        }
+        starts
+    }
+
     /// Per-file per-hunk context allocation. The wire carries no ctx counts,
     /// so recompute them over the hunks the same way `f.rows` was built
-    /// (forced 6/6 above/below).
+    /// (default context above/below).
     fn build_file_hunk_meta(f: &OutputFile) -> Vec<HunkMeta> {
-        use diffuse_core::visible::allocate_context;
+        use diffuse_core::visible::{DEFAULT_CONTEXT_LINES, allocate_context};
         let mut hunks: Vec<diffuse_core::parse::Hunk> = f
             .hunks
             .iter()
@@ -330,10 +413,10 @@ impl AppState {
             .collect();
         for h in &mut hunks {
             if h.above_ctx == 0 {
-                h.above_ctx = 6;
+                h.above_ctx = DEFAULT_CONTEXT_LINES;
             }
             if h.below_ctx == 0 {
-                h.below_ctx = 6;
+                h.below_ctx = DEFAULT_CONTEXT_LINES;
             }
         }
         let alloc = allocate_context(&hunks, f.new_line_count, f.old_line_count);
@@ -409,48 +492,13 @@ impl AppState {
                         is_hunk_divider: false,
                     });
                 }
-                if !file.hunks.is_empty() {
-                    let mut search_from = file_header_idx + 1;
-                    for (hi, h) in file.hunks.iter().enumerate() {
-                        if hi == 0 {
-                            if search_from < self.flat.len()
-                                && self.flat[search_from].file_idx == fi
-                            {
-                                self.hunk_starts.push(HunkStart {
-                                    flat: search_from,
-                                    file: fi,
-                                    hunk: hi,
-                                });
-                            }
-                        } else {
-                            let target_start = if h.new_count > 0 {
-                                h.new_start
-                            } else {
-                                h.old_start
-                            };
-                            let mut found = None;
-                            for (idx, fr) in self.flat.iter().enumerate().skip(search_from) {
-                                if fr.file_idx != fi {
-                                    break;
-                                }
-                                if let Some(coord) = self.flat_row_coord(fr)
-                                    && coord >= target_start
-                                {
-                                    found = Some(idx);
-                                    break;
-                                }
-                            }
-                            if let Some(idx) = found {
-                                self.hunk_starts.push(HunkStart {
-                                    flat: idx,
-                                    file: fi,
-                                    hunk: hi,
-                                });
-                                search_from = idx + 1;
-                            }
-                        }
-                    }
-                }
+                self.hunk_starts
+                    .extend(Self::build_file_hunk_starts_for_file(
+                        &self.flat,
+                        fi,
+                        &file,
+                        file_header_idx,
+                    ));
             } else {
                 for (hi, h) in file.hunks.iter().enumerate() {
                     let hunk_start_flat = self.flat.len();
@@ -515,9 +563,11 @@ impl AppState {
             return;
         }
         let (file, start, end, is_new) = if let Some(sel) = self.compute_selection() {
-            let Some(file) = self.output.files.get(sel.file_idx) else {
-                return;
-            };
+            let file = self
+                .output
+                .files
+                .get(sel.file_idx)
+                .expect("selection file_idx out of bounds in output.files");
             (file.path.clone(), sel.start, sel.end, sel.side_is_new)
         } else {
             let Some(file) = self.current_file() else {
@@ -560,9 +610,11 @@ impl AppState {
     /// Persists immediately.
     pub fn delete_notes(&mut self) {
         let (file, start, end) = if let Some(sel) = self.compute_selection() {
-            let Some(file) = self.output.files.get(sel.file_idx) else {
-                return;
-            };
+            let file = self
+                .output
+                .files
+                .get(sel.file_idx)
+                .expect("selection file_idx out of bounds in output.files");
             (file.path.clone(), sel.start, sel.end)
         } else {
             let Some(file) = self.current_file() else {
@@ -1303,24 +1355,13 @@ impl AppState {
         if f.hunks.is_empty() {
             return None;
         }
-        let Some(row) = self.current_flat_row() else {
-            return Some(0);
-        };
-        let Some(coord) = self.flat_row_coord(row) else {
-            return Some(0);
-        };
-        let mut idx = Some(0);
-        for (i, h) in f.hunks.iter().enumerate() {
-            let hs = if h.new_count > 0 {
-                h.new_start
-            } else {
-                h.old_start
-            };
-            if coord >= hs {
-                idx = Some(i);
+        let mut cur = 0;
+        for hs in &self.hunk_starts {
+            if hs.file == fi && self.row_idx >= hs.flat {
+                cur = hs.hunk;
             }
         }
-        idx
+        Some(cur)
     }
 
     /// Marks all rows belonging to the current hunk envelope for gutter
@@ -1331,16 +1372,23 @@ impl AppState {
             return set;
         };
         let fi = self.current_file_idx();
-        let Some(f) = self.output.files.get(fi) else {
-            return set;
-        };
-        let Some(h) = f.hunks.get(hi) else {
-            return set;
-        };
-        let old_lo = h.old_start;
-        let old_hi = h.old_start + h.old_count;
-        let new_lo = h.new_start;
-        let new_hi = h.new_start + h.new_count;
+        let f = self
+            .output
+            .files
+            .get(fi)
+            .expect("current file index out of bounds in output.files");
+        let h = f
+            .hunks
+            .get(hi)
+            .expect("current hunk index out of bounds in f.hunks");
+        let meta = self.hunk_meta.get(fi).and_then(|v| v.get(hi));
+        let (above, below) = meta
+            .map(|m| (m.above as u32, m.below as u32))
+            .unwrap_or((0, 0));
+        let old_lo = h.old_start.saturating_sub(above);
+        let old_hi = h.old_start + h.old_count + below;
+        let new_lo = h.new_start.saturating_sub(above);
+        let new_hi = h.new_start + h.new_count + below;
 
         for (i, item) in self.flat.iter().enumerate() {
             if item.file_idx != fi || item.is_file_header {
@@ -2394,10 +2442,10 @@ index 1111111..2222222 100644
         );
         // flat[0] is the file header (no coordinate); AppState starts on the
         // first coordinate row (1020). The engine pads the hunk with empty
-        // above-context rows (1020-1024), then the real rows: ctx
+        // above-context rows (1022-1024), then the real rows: ctx
         // " let x = 1;" (1025), the mod pair (1026), the add (1027). Walk to
         // the first real row, anchor, extend over the mod.
-        for _ in 0..5 {
+        for _ in 0..3 {
             state.move_down();
         }
         state.start_or_confirm_selection();
@@ -2424,7 +2472,7 @@ index 1111111..2222222 100644
             "test_repo".into(),
             std::env::temp_dir().join("diffuse-test-notes.json"),
         );
-        for _ in 0..5 {
+        for _ in 0..3 {
             state.move_down();
         }
         state.start_or_confirm_selection();
@@ -2442,7 +2490,8 @@ index 1111111..2222222 100644
         let sel = state
             .confirmed_sel
             .expect("confirm must record a selection");
-        assert_eq!((sel.start, sel.end), (1025, 1027));
+        assert_eq!(sel.start, 1025);
+        assert_eq!(sel.end, 1027);
 
         let frame2 = state.render_frame(100, 30);
         assert!(
@@ -2480,8 +2529,8 @@ index 1111111..2222222 100644
         let sel = state
             .compute_selection()
             .expect("anchor over the header must snap to a coordinate row");
-        assert_eq!(sel.start, 1020, "snap to the first padded ctx row");
-        assert_eq!(sel.end, 1020);
+        assert_eq!(sel.start, 1022, "snap to the first padded ctx row");
+        assert_eq!(sel.end, 1022);
     }
 
     #[test]
@@ -2529,8 +2578,8 @@ index 1111111..2222222 100644
         );
         assert!(frame.contains("H2"), "the second hunk needs a divider");
         assert!(
-            frame.contains("−1,3 +1,4"),
-            "the divider carries the hunk span"
+            frame.contains("−1,8 +1,9"),
+            "the divider carries the hunk span including context lines"
         );
         assert!(
             frame.contains("\x1b[48;5;237m") || frame.contains("\x1b[48;5;236m"),
@@ -2607,8 +2656,8 @@ index 1111111..2222222 100644
             "test_repo".into(),
             std::env::temp_dir().join("diffuse-test-notes.json"),
         );
-        // flat[7] is the mod pair (new 1026); walk onto it.
-        for _ in 0..6 {
+        // flat[5] is the mod pair (new 1026); walk onto it.
+        for _ in 0..4 {
             state.move_down();
         }
         let r = state.row_of(&state.flat[state.row_idx]).unwrap();
@@ -3831,5 +3880,214 @@ index 222..333 100644
         state.prev_file();
         assert_eq!(state.current_file_idx(), 0);
         assert_eq!(state.current_file().unwrap().path, "file1.rs");
+    }
+
+    #[test]
+    fn test_hunks_with_hidden_gap_has_hunk_header_after_separator() {
+        let diff = r#"diff --git a/cache.rs b/cache.rs
+index 1111111..2222222 100644
+--- a/cache.rs
++++ b/cache.rs
+@@ -1,3 +1,4 @@
+ fn a() {
++    let x = 1;
+     return 1;
+ }
+@@ -85,3 +86,4 @@
+ fn b() {
++    let y = 2;
+     return 2;
+ }
+"#;
+        let mut old_lines = vec![
+            "fn a() {".to_string(),
+            "    return 1;".to_string(),
+            "}".to_string(),
+        ];
+        for i in 4..=84 {
+            old_lines.push(format!("    // filler {i}"));
+        }
+        old_lines.push("fn b() {".to_string());
+        old_lines.push("    return 2;".to_string());
+        old_lines.push("}".to_string());
+
+        let mut new_lines = vec![
+            "fn a() {".to_string(),
+            "    let x = 1;".to_string(),
+            "    return 1;".to_string(),
+            "}".to_string(),
+        ];
+        for i in 5..=85 {
+            new_lines.push(format!("    // filler {i}"));
+        }
+        new_lines.push("fn b() {".to_string());
+        new_lines.push("    let y = 2;".to_string());
+        new_lines.push("    return 2;".to_string());
+        new_lines.push("}".to_string());
+
+        let contents = [("cache.rs".to_string(), new_lines.join("\n") + "\n")]
+            .into_iter()
+            .collect();
+        let old_contents = [("cache.rs".to_string(), old_lines.join("\n") + "\n")]
+            .into_iter()
+            .collect();
+        let output = diffuse_core::pipeline::run_pipeline_full(
+            diff,
+            &contents,
+            Some(&old_contents),
+            None,
+            None,
+        );
+        let mut state = AppState::new(
+            output,
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+
+        assert_eq!(state.hunk_starts.len(), 2, "must find 2 hunk starts");
+
+        // Find separator row
+        let sep_pos = state
+            .flat
+            .iter()
+            .position(|fr| {
+                state
+                    .row_of(fr)
+                    .is_some_and(|r| r.kind == diffuse_core::parse::RowKind::Sep)
+            })
+            .expect("must contain a separator row for hidden gap");
+
+        // Hunk 2 start must be immediately following the separator row!
+        assert_eq!(
+            state.hunk_starts[1].flat,
+            sep_pos + 1,
+            "Hunk 2 start must be the first row right after the separator"
+        );
+
+        // Jump to hunk 2
+        state.next_hunk();
+        assert_eq!(
+            state.row_idx,
+            sep_pos + 1,
+            "next_hunk must jump to the first row of Hunk 2"
+        );
+        assert_eq!(
+            state.current_hunk(),
+            Some(1),
+            "current_hunk must be 1 when on the first row of Hunk 2"
+        );
+
+        // Render frame with viewport covering the separator and hunk 2 start
+        let frame = state.render_frame(120, 40);
+        assert!(frame.contains("⋯ 72 lines hidden") || frame.contains("hidden"));
+        assert!(frame.contains("H2"), "rendered frame must show H2 divider");
+    }
+
+    #[test]
+    fn test_mirage_golden_cache_rs_hunk_divider() {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let file = std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz")
+            .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
+            .expect("must open mirage-2025-08.wire.json.gz");
+        let mut gz = GzDecoder::new(file);
+        let mut json_str = String::new();
+        gz.read_to_string(&mut json_str).unwrap();
+        let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+        let mut state = AppState::new(
+            output,
+            "mirage".into(),
+            std::env::temp_dir().join("diffuse-mirage-notes.json"),
+        );
+
+        // Find cache.rs file index
+        let fi = state
+            .output
+            .files
+            .iter()
+            .position(|f| f.path.contains("cache.rs"))
+            .expect("cache.rs must exist");
+
+        // Jump to cache.rs
+        let cache_file_row = state
+            .flat
+            .iter()
+            .position(|fr| fr.file_idx == fi && fr.is_file_header)
+            .expect("file header row for cache.rs");
+        state.jump_to_row(cache_file_row, false);
+
+        let cache_hunks: Vec<_> = state
+            .hunk_starts
+            .iter()
+            .filter(|hs| hs.file == fi)
+            .collect();
+        eprintln!("cache_hunks: {:?}", cache_hunks);
+
+        let frame = state.render_frame(140, 40);
+        assert!(frame.contains("H1"), "must contain H1 divider");
+        assert!(frame.contains("H2"), "must contain H2 divider");
+    }
+
+    #[test]
+    fn test_streaming_append_file_multi_hunk_with_gap() {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let file = std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz")
+            .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
+            .expect("must open mirage-2025-08.wire.json.gz");
+        let mut gz = GzDecoder::new(file);
+        let mut json_str = String::new();
+        gz.read_to_string(&mut json_str).unwrap();
+        let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+
+        // Simulate streaming: start with empty AppState and append files one by one
+        let mut empty_output = output.clone();
+        empty_output.files.clear();
+        let mut state = AppState::new(
+            empty_output,
+            "mirage".into(),
+            std::env::temp_dir().join("diffuse-mirage-notes.json"),
+        );
+
+        for file in output.files {
+            state.append_file(file);
+        }
+
+        // Find cache.rs file index
+        let fi = state
+            .output
+            .files
+            .iter()
+            .position(|f| f.path.contains("cache.rs"))
+            .expect("cache.rs must exist");
+
+        // Jump to cache.rs
+        let cache_file_row = state
+            .flat
+            .iter()
+            .position(|fr| fr.file_idx == fi && fr.is_file_header)
+            .expect("file header row for cache.rs");
+        state.jump_to_row(cache_file_row, false);
+
+        let cache_hunks: Vec<_> = state
+            .hunk_starts
+            .iter()
+            .filter(|hs| hs.file == fi)
+            .collect();
+        assert_eq!(
+            cache_hunks.len(),
+            2,
+            "streaming append_file must register 2 hunk starts for cache.rs"
+        );
+
+        let frame = state.render_frame(140, 40);
+        assert!(
+            frame.contains("───── H1 ·"),
+            "streaming render must contain H1 divider"
+        );
+        assert!(
+            frame.contains("───── H2 ·"),
+            "streaming render must contain H2 divider"
+        );
     }
 }

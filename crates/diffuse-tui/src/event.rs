@@ -392,8 +392,8 @@ index 1111111..2222222 100644
     fn test_v_starts_and_confirms_selection() {
         let mut s = state_with_rows();
         // Walk past the file header + the engine's padded above-context rows
-        // (1020-1024) onto the real content (1025+).
-        for _ in 0..5 {
+        // (1022-1024) onto the real content (1025+).
+        for _ in 0..3 {
             s.move_down();
         }
 
@@ -434,7 +434,7 @@ index 1111111..2222222 100644
     #[test]
     fn test_note_commit_on_range_selection() {
         let mut s = state_with_rows();
-        for _ in 0..5 {
+        for _ in 0..3 {
             s.move_down();
         }
         s.start_or_confirm_selection(); // anchor at 1025
@@ -463,7 +463,7 @@ index 1111111..2222222 100644
     #[test]
     fn test_note_delete_on_range_selection() {
         let mut s = state_with_rows();
-        for _ in 0..5 {
+        for _ in 0..3 {
             s.move_down();
         }
         s.start_or_confirm_selection(); // anchor at 1025

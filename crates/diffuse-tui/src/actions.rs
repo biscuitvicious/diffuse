@@ -8,7 +8,10 @@ use super::app::AppState;
 pub fn hunk_patch(state: &AppState, repo_root: &Path, base_args: &[String]) -> Option<String> {
     let f = state.current_file()?;
     let hi = state.current_hunk()?;
-    let h = f.hunks.get(hi)?;
+    let h = f
+        .hunks
+        .get(hi)
+        .expect("current hunk index out of bounds in f.hunks");
 
     if f.status == "untracked" {
         let body: String = h

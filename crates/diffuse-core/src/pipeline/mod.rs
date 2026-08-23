@@ -279,10 +279,10 @@ pub fn process_single_diff_file(
         rows: {
             for h in &mut f.hunks {
                 if h.above_ctx == 0 {
-                    h.above_ctx = 6;
+                    h.above_ctx = crate::visible::DEFAULT_CONTEXT_LINES;
                 }
                 if h.below_ctx == 0 {
-                    h.below_ctx = 6;
+                    h.below_ctx = crate::visible::DEFAULT_CONTEXT_LINES;
                 }
             }
             build_visible(

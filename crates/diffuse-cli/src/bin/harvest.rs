@@ -33,7 +33,7 @@ struct Args {
     output: Option<PathBuf>,
 
     /// Lines of context around changes
-    #[arg(short, long, default_value_t = 6)]
+    #[arg(short, long, default_value_t = 4)]
     context: usize,
 }
 

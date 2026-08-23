@@ -47,8 +47,8 @@ struct Args {
     /// Repository name key for notes lookup.
     #[arg(long, global = true)]
     repo: Option<String>,
-    /// Unified diff context lines (default: 6).
-    #[arg(short = 'U', long, default_value_t = 6, global = true)]
+    /// Unified diff context lines (default: 4).
+    #[arg(short = 'U', long, default_value_t = 4, global = true)]
     context: usize,
     /// Emit raw token-stream JSON (for machine/extension integration).
     #[arg(long, global = true)]
@@ -175,7 +175,7 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
     let repo_ref = args.repo.as_deref().or(input.repo.as_deref());
 
     if let Some(ref repo_root) = input.repo_root {
-        let context = input.context.unwrap_or(6);
+        let context = input.context.unwrap_or(4);
         if let Ok(git_res) = load_git_repo(
             Path::new(repo_root),
             &input.base_args,

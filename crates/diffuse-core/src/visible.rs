@@ -5,6 +5,9 @@
 
 use crate::parse::{CtxLine, Hunk, LineNum, Row};
 
+/// Default context lines allocated above and below changed hunks.
+pub const DEFAULT_CONTEXT_LINES: u32 = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContextAlloc {
     pub above: usize,

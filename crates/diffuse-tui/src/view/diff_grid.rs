@@ -43,15 +43,29 @@ pub fn render_hunk_divider(
     is_current: bool,
     content_width: usize,
 ) -> String {
-    let span = format!(
-        "−{},{} +{},{}",
-        hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
-    );
+    let (above, below) = ctx;
+    let (old_start, old_count) = if hunk.old_start == 0 && hunk.old_count == 0 {
+        (0, 0)
+    } else {
+        (
+            hunk.old_start.saturating_sub(above as u32).max(1),
+            hunk.old_count + (above + below) as u32,
+        )
+    };
+    let (new_start, new_count) = if hunk.new_start == 0 && hunk.new_count == 0 {
+        (0, 0)
+    } else {
+        (
+            hunk.new_start.saturating_sub(above as u32).max(1),
+            hunk.new_count + (above + below) as u32,
+        )
+    };
+    let span = format!("−{old_start},{old_count} +{new_start},{new_count}");
     let txt = format!(
         "───── H{} · {span} · ctx {}▴ {}▾ ─────",
         hi + 1,
-        ctx.0,
-        ctx.1
+        above,
+        below
     );
     let txt_str = truncate_pad(&txt, content_width);
     if is_current {
@@ -158,5 +172,45 @@ mod tests {
             current.contains("48;5;237m"),
             "current hunk divider must have subtle background stripe"
         );
+    }
+
+    #[test]
+    fn test_hunk_divider_span_includes_context() {
+        let h = OutputHunk {
+            old_start: 85,
+            old_count: 3,
+            new_start: 86,
+            new_count: 4,
+            rows: vec![],
+        };
+        // Zero context (e.g. raw diff)
+        let raw = render_hunk_divider(1, &h, (0, 0), false, 80);
+        assert!(raw.contains("H2 · −85,3 +86,4 · ctx 0▴ 0▾"));
+
+        // Normal 6/6 context
+        let expanded = render_hunk_divider(1, &h, (6, 6), false, 80);
+        assert!(expanded.contains("H2 · −79,15 +80,16 · ctx 6▴ 6▾"));
+
+        // Near top of file (above = 1, below = 5)
+        let top_hunk = OutputHunk {
+            old_start: 1,
+            old_count: 3,
+            new_start: 1,
+            new_count: 4,
+            rows: vec![],
+        };
+        let top_expanded = render_hunk_divider(0, &top_hunk, (1, 5), false, 80);
+        assert!(top_expanded.contains("H1 · −1,9 +1,10 · ctx 1▴ 5▾"));
+
+        // New file (old_start = 0, old_count = 0)
+        let new_file_hunk = OutputHunk {
+            old_start: 0,
+            old_count: 0,
+            new_start: 1,
+            new_count: 20,
+            rows: vec![],
+        };
+        let new_file = render_hunk_divider(0, &new_file_hunk, (0, 0), false, 80);
+        assert!(new_file.contains("H1 · −0,0 +1,20 · ctx 0▴ 0▾"));
     }
 }

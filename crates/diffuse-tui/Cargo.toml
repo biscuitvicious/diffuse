@@ -14,3 +14,6 @@ unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+flate2 = { workspace = true }

@@ -431,6 +431,7 @@ dependencies = [
  "diffuse-core",
  "diffuse-render",
  "diffuse-syntax",
+ "flate2",
  "serde",
  "serde_json",
  "unicode-segmentation",

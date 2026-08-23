@@ -36,7 +36,7 @@ Then `/reload` in pi and run `/review` in any git work tree.
 
 ## What it does
 
-- **Diff browser**: hunks with expandable context (default 6 lines), lines
+- **Diff browser**: hunks with expandable context (default 4 lines), lines
   wrapped at the viewport (syntax colors continue across the wrap), the
   changed words filled in a stronger shade, and removed words struck through
   inline at their position. Infinite scroll across all files — selection is
@@ -57,7 +57,7 @@ Then `/reload` in pi and run `/review` in any git work tree.
 
 | Var | Meaning | Default |
 |-----|---------|---------|
-| `REVIEW_CONTEXT` | context lines around each hunk | `6` |
+| `REVIEW_CONTEXT` | context lines around each hunk | `4` |
 | `REVIEW_EDITOR` | editor binary | `$VISUAL`/`$EDITOR` → `vim` |
 | `REVIEW_EDITOR_ARGS` | argv template override: `{bin} {file} {line} {start} {end} {count}` | — |
 | `REVIEW_EDITOR_RANGE_ARGS` | argv template when a range is selected | — |
