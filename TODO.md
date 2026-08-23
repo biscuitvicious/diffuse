@@ -28,8 +28,8 @@
 - [ ] **Automated fixture harvesting tool**: CLI tool to harvest diffs + old/new file snapshots from repository histories.
 
 ## 6. Performance Engineering & Algorithm Modernization
-- [ ] **Production Performance Optimizations**: Top 5 hot-path optimizations across tokenizer, TUI flat row indexing, precomputed similarity tokens, DP scratch arena, and UTF-8 string slicing. (See [Production Performance Optimizations](plan/Production%20Performance%20Optimizations.md))
-- [ ] **Modular Top-Tier Diffing & LCS Algorithms**: 100% modular, generic sequence alignment engines including Myers' 64-bit Bit-Parallel LCS, Myers' $O(ND)$ diffing, Hunt-Szymanski / Robinson-Schensted patience LIS, Hirschberg linear-space solver, and Aho-Corasick prefix automata. (See [Modular Top-Tier Diffing & LCS Algorithms](plan/Modular%20Top-Tier%20Diffing%20&%20LCS%20Algorithms.md))
+- [x] **Production Performance Optimizations**: Top 5 hot-path optimizations across tokenizer, TUI flat row indexing, precomputed similarity tokens, DP scratch arena, zero-allocation pipeline, and UTF-8 string slicing. (See [Production Performance Optimizations](plan/done/Production%20Performance%20Optimizations.md))
+- [x] **Modular Top-Tier Diffing & LCS Algorithms**: 100% modular, generic sequence alignment engines including Myers' 64-bit Bit-Parallel LCS, Myers' $O(ND)$ diffing, Hunt-Szymanski / Robinson-Schensted patience LIS, Hirschberg linear-space solver, and Aho-Corasick prefix automata. (See [Modular Top-Tier Diffing & LCS Algorithms](plan/done/Modular%20Top-Tier%20Diffing%20&%20LCS%20Algorithms.md))
 
 ## 7. Execution Context & CLI
 - [ ] **Support `-C` (change directory) option**: Conceptually `chdir` to the given directory before scanning for repositories, loading files, and resolving all relative paths. Must be honoured everywhere (git discovery, file I/O, config, golden/corpus paths, etc.). If many call sites are affected, introduce an `ExecutionContext` (or `AppContext`/`ResolveContext`) struct that tracks the effective cwd and exposes `resolve(path) -> PathBuf` / `join` helpers, threaded through the pipeline instead of ad-hoc `Path::new(".")` / `env::current_dir()` uses.
