@@ -3,7 +3,7 @@
 //! ported verbatim. The TS mutates rows via references; the port collects
 //! the decisions first (row positions), then applies them.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::parse::{DiffFile, Row};
 
@@ -17,32 +17,34 @@ pub fn mark_moves(f: &mut DiffFile) {
     // is still a move, not a change. Trailing whitespace is NOT stripped —
     // trimming the right side would cause trailing-space cleanup hunks (like
     // `/// ` → `///`) to match across hunks, producing false-positive ≈ moves.
-    let key = |t: &str| -> String { t.trim_start().to_string() };
-
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    for h in &f.hunks {
-        for r in &h.rows {
-            if let Row::Add(add_line) = r {
-                *counts.entry(key(&add_line.text)).or_insert(0) += 1;
-            }
-        }
+    fn key(t: &str) -> &str {
+        t.trim_start()
     }
 
-    // All add positions in document order — the TS re-scans the hunks per
-    // del; precomputing keeps the same "first un-moved add" semantics.
-    let mut add_positions: Vec<RowPos> = Vec::new();
+    let mut counts: FxHashMap<&str, usize> = FxHashMap::default();
+    let mut add_by_key: FxHashMap<&str, Vec<RowPos>> = FxHashMap::default();
+    let mut add_texts: Vec<&str> = Vec::new();
+
     for (hi, h) in f.hunks.iter().enumerate() {
         for (ri, r) in h.rows.iter().enumerate() {
-            if matches!(r, Row::Add(_)) {
-                add_positions.push((hi, ri));
+            if let Row::Add(add_line) = r {
+                let k = key(&add_line.text);
+                *counts.entry(k).or_insert(0) += 1;
+                add_by_key.entry(k).or_default().push((hi, ri));
+                add_texts.push(&add_line.text);
             }
         }
     }
 
-    // The pairing decisions: (del, paired add, moved). The reflow check and
-    // the count consume read-only state; the mutation is applied after.
+    if add_texts.is_empty() {
+        return;
+    }
+
+    // Next unused index in add_by_key vector for each key
+    let mut add_cursor: FxHashMap<&str, usize> = FxHashMap::default();
     let mut decisions: Vec<(RowPos, Option<RowPos>)> = Vec::new();
-    let mut used_adds: HashSet<RowPos> = HashSet::new();
+    let mut used_adds: FxHashSet<RowPos> = FxHashSet::default();
+
     for (hi, h) in f.hunks.iter().enumerate() {
         for (ri, r) in h.rows.iter().enumerate() {
             let del_line = match r {
@@ -50,36 +52,39 @@ pub fn mark_moves(f: &mut DiffFile) {
                 _ => continue,
             };
             let t = key(&del_line.text);
+            let n = counts.get(t).copied().unwrap_or(0);
+            if n == 0 {
+                continue;
+            }
+
             // A del whose content survives INSIDE a different add (a
             // restructured line — the old `.iter()` of the `let up` chain
             // folded into the one-liner mod) is a reflow the collapse
             // absorbs, not a move: pairing it would mark an unrelated
             // same-text add (the new `below` block's `.iter()`) as relocated.
             let reflow = !t.is_empty()
-                && f.hunks.iter().any(|h2| {
-                    h2.rows.iter().any(|a| {
-                        matches!(a, Row::Add(add_line) if key(&add_line.text) != t && add_line.text.contains(&t))
-                    })
-                });
+                && add_texts
+                    .iter()
+                    .any(|&add_text| key(add_text) != t && add_text.contains(t));
             if reflow {
                 continue;
             }
-            let n = counts.get(&t).copied().unwrap_or(0);
-            if n == 0 {
-                continue;
-            }
-            counts.insert(t.clone(), n - 1);
-            // The first un-moved add with the same trimmed text, in document
-            // order — the TS `outer:` scan.
-            let paired = add_positions.iter().copied().find(|&pos| {
-                !used_adds.contains(&pos) && {
-                    let (ph, pr) = pos;
-                    match &f.hunks[ph].rows[pr] {
-                        Row::Add(add_line) => key(&add_line.text) == t,
-                        _ => false,
+
+            counts.insert(t, n - 1);
+
+            let cursor = add_cursor.entry(t).or_insert(0);
+            let mut paired = None;
+            if let Some(positions) = add_by_key.get(t) {
+                while *cursor < positions.len() {
+                    let pos = positions[*cursor];
+                    *cursor += 1;
+                    if !used_adds.contains(&pos) {
+                        paired = Some(pos);
+                        break;
                     }
                 }
-            });
+            }
+
             if let Some(pos) = paired {
                 used_adds.insert(pos);
                 decisions.push(((hi, ri), Some(pos)));
@@ -90,8 +95,8 @@ pub fn mark_moves(f: &mut DiffFile) {
     }
 
     // Apply: convert paired adds into Row::Mov.
-    let mut pair_of: HashMap<RowPos, RowPos> = HashMap::new(); // del -> paired add
-    let mut moved_dels: HashSet<RowPos> = HashSet::new();
+    let mut pair_of: FxHashMap<RowPos, RowPos> = FxHashMap::default(); // del -> paired add
+    let mut moved_dels: FxHashSet<RowPos> = FxHashSet::default();
     for (del_pos, add_pos) in decisions {
         let (hi, ri) = del_pos;
         if let Some(pos) = add_pos {

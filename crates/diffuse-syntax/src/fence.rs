@@ -21,7 +21,10 @@ pub struct FenceRegion {
 /// next — no nesting); the region language = the captured group, or the
 /// profile's `unlabeled_fence_lang`, or the plain "code" style. An
 /// unterminated fence runs to the file's end.
-pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<FenceRegion> {
+pub fn fence_regions<S: AsRef<str>>(
+    lines: &[S],
+    profile: Option<&LangProfile>,
+) -> Vec<FenceRegion> {
     let Some(profile) = profile else {
         return Vec::new();
     };
@@ -33,6 +36,7 @@ pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<Fen
     let mut state: Option<Option<String>> = None;
     let mut region_start: u32 = 0;
     for (i, line) in lines.iter().enumerate() {
+        let line = line.as_ref();
         let n = (i + 1) as u32;
         if fence.is_match(line) {
             let captured_tag = fence

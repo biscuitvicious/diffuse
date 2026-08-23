@@ -33,14 +33,14 @@ fn test_max_shift_down_rows() {
         Row::Add(AddLine::new(LineNum::new(24).unwrap(), "    }")),
     ]);
 
-    let mut new_content = vec![String::new(); 30];
-    new_content[19] = "line 1".to_string();
-    new_content[20] = "    }".to_string();
-    new_content[21] = "".to_string();
-    new_content[22] = "    pub fn next() {}".to_string();
-    new_content[23] = "    }".to_string();
-    new_content[24] = "    }".to_string();
-    new_content[25] = "".to_string();
+    let mut new_content = vec![""; 30];
+    new_content[19] = "line 1";
+    new_content[20] = "    }";
+    new_content[21] = "";
+    new_content[22] = "    pub fn next() {}";
+    new_content[23] = "    }";
+    new_content[24] = "    }";
+    new_content[25] = "";
 
     let max_rows = max_shift_down_rows(&h, 2, 6, Some(&new_content));
     assert_eq!(
@@ -216,13 +216,13 @@ fn test_semantic_slide_addition_to_function_header() {
         Row::Add(AddLine::new(LineNum::new(24).unwrap(), "        step();")),
     ]);
 
-    let mut new_content = vec![String::new(); 30];
-    new_content[20] = "    }".to_string();
-    new_content[21] = "".to_string();
-    new_content[22] = "    pub fn new_func() {".to_string();
-    new_content[23] = "        step();".to_string();
-    new_content[24] = "    }".to_string();
-    new_content[25] = "".to_string();
+    let mut new_content = vec![""; 30];
+    new_content[20] = "    }";
+    new_content[21] = "";
+    new_content[22] = "    pub fn new_func() {";
+    new_content[23] = "        step();";
+    new_content[24] = "    }";
+    new_content[25] = "";
 
     let profile = lang_profile("rs");
     let shifted = pass_shift_hunk(&h, Some(&new_content), profile);

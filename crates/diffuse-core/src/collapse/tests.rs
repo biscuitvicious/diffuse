@@ -155,13 +155,11 @@ fn similarity_pairing_and_section_stop() {
 // `Some(result)` before the `}` — not the mid-block `return None;`.
 #[test]
 fn brace_anchor_none_some_result() {
-    let mut old_content: Vec<String> = Vec::new();
-    old_content.resize(130, String::new());
-    old_content[113] = "    }".to_string(); // the fn's closing brace after the del
-    let mut new_content: Vec<String> = Vec::new();
-    new_content.resize(320, String::new());
-    new_content[155] = "    }".to_string(); // the fn's closing brace after Some(result)
-    new_content[299] = "        None".to_string(); // a verbatim None elsewhere
+    let mut old_content: Vec<&str> = vec![""; 130];
+    old_content[113] = "    }"; // the fn's closing brace after the del
+    let mut new_content: Vec<&str> = vec![""; 320];
+    new_content[155] = "    }"; // the fn's closing brace after Some(result)
+    new_content[299] = "        None"; // a verbatim None elsewhere
     let h = hunk(vec![
         row(
             RowKind::Del,
@@ -209,13 +207,11 @@ fn brace_anchor_none_some_result() {
 // dedent boundary. Tail statements right before the dedent pair appropriately.
 #[test]
 fn python_block_tail_anchor_none_some_result() {
-    let mut old_content: Vec<String> = Vec::new();
-    old_content.resize(130, String::new());
-    old_content[113] = "def next_fn():".to_string(); // dedent boundary after return None
-    let mut new_content: Vec<String> = Vec::new();
-    new_content.resize(320, String::new());
-    new_content[155] = "def next_fn():".to_string(); // dedent boundary after return result
-    new_content[299] = "        return None".to_string(); // a verbatim return None elsewhere
+    let mut old_content: Vec<&str> = vec![""; 130];
+    old_content[113] = "def next_fn():"; // dedent boundary after return None
+    let mut new_content: Vec<&str> = vec![""; 320];
+    new_content[155] = "def next_fn():"; // dedent boundary after return result
+    new_content[299] = "        return None"; // a verbatim return None elsewhere
     let h = hunk(vec![
         row(RowKind::Del, "    self.cache.pop(key)", None, Some(111)),
         row(RowKind::Del, "    self.results.pop(key)", None, Some(112)),
@@ -556,10 +552,10 @@ fn tail_guard_and_reflow_corpus() {
         row(RowKind::Add, "        Some(result)", Some(155), None),
     ]);
 
-    let mut old_content = vec![String::new(); 130];
-    old_content[113] = "    }".to_string();
-    let mut new_content = vec![String::new(); 200];
-    new_content[155] = "    }".to_string();
+    let mut old_content = vec![""; 130];
+    old_content[113] = "    }";
+    let mut new_content = vec![""; 200];
+    new_content[155] = "    }";
     let c = collapse_hunk_rows(&h3, Some(&old_content), Some(&new_content), None);
     let mod3 = c
         .iter()
@@ -664,19 +660,19 @@ fn test_moved_line_duplicate_in_added_block_stays_add() {
 
 #[test]
 fn test_fn_signature_pairs_with_same_fn_name() {
-    let old_content: Vec<String> = vec![
-        "    pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {".into(),
-        "        None".into(),
-        "    }".into(),
+    let old_content: Vec<&str> = vec![
+        "    pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {",
+        "        None",
+        "    }",
     ];
-    let new_content: Vec<String> = vec![
-        "    pub fn epoch(&self) -> u64 {".into(),
-        "        0".into(),
-        "    }".into(),
-        "".into(),
-        "    pub fn lookup(&self, key: &CacheKey, epoch: u64) -> Option<ResolutionResult> {".into(),
-        "        None".into(),
-        "    }".into(),
+    let new_content: Vec<&str> = vec![
+        "    pub fn epoch(&self) -> u64 {",
+        "        0",
+        "    }",
+        "",
+        "    pub fn lookup(&self, key: &CacheKey, epoch: u64) -> Option<ResolutionResult> {",
+        "        None",
+        "    }",
     ];
     let h = hunk(vec![
         row(
@@ -980,19 +976,15 @@ fn multiline_del_mount_pairs_1_to_1_with_two_del_rows() {
         ),
         row(RowKind::Add, "    }", Some(1061), None),
     ]);
-    let mut old_content: Vec<String> = Vec::new();
-    old_content.resize(1030, String::new());
-    old_content[1023] = "    }".to_string();
-    let mut new_content: Vec<String> = Vec::new();
-    new_content.resize(20, String::new());
-    new_content[8] =
-        "    pub fn get(&self, guest_path: &Path) -> Option<&dyn Filesystem> {".to_string();
-    new_content[9] = "        self.filesystems".to_string();
-    new_content[10] = "            .iter()".to_string();
-    new_content[11] =
-        "            .rfind(|fs| guest_path.starts_with(fs.mount_point()))".to_string();
-    new_content[12] = "            .map(|fs| fs.as_ref() as &dyn Filesystem)".to_string();
-    new_content[13] = "    }".to_string();
+    let mut old_content: Vec<&str> = vec![""; 1030];
+    old_content[1023] = "    }";
+    let mut new_content: Vec<&str> = vec![""; 20];
+    new_content[8] = "    pub fn get(&self, guest_path: &Path) -> Option<&dyn Filesystem> {";
+    new_content[9] = "        self.filesystems";
+    new_content[10] = "            .iter()";
+    new_content[11] = "            .rfind(|fs| guest_path.starts_with(fs.mount_point()))";
+    new_content[12] = "            .map(|fs| fs.as_ref() as &dyn Filesystem)";
+    new_content[13] = "    }";
     let c = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), None);
     let rmod = c
         .iter()
@@ -1027,15 +1019,14 @@ fn no_similarity_pairing_across_different_functions() {
             None,
         ),
     ]);
-    let mut old_content: Vec<String> = vec![String::new(); 800];
-    let mut new_content: Vec<String> = vec![String::new(); 1000];
-    old_content[739] = "fn resolve_layer_stack() {".to_string();
-    old_content[746] = "            .find(|l| l.is_upper())?;".to_string();
-    old_content[770] = "fn dir_exists_at(&self, sub_path: &Path) -> bool {".to_string();
-    new_content[739] = "fn resolve_layer_stack() {".to_string();
-    new_content[899] = "fn dir_exists_at(&self, sub_path: &Path) -> bool {".to_string();
-    new_content[911] =
-        "        self.layers.iter().any(|l| l.path().join(sub_path).is_dir())".to_string();
+    let mut old_content: Vec<&str> = vec![""; 800];
+    let mut new_content: Vec<&str> = vec![""; 1000];
+    old_content[739] = "fn resolve_layer_stack() {";
+    old_content[746] = "            .find(|l| l.is_upper())?;";
+    old_content[770] = "fn dir_exists_at(&self, sub_path: &Path) -> bool {";
+    new_content[739] = "fn resolve_layer_stack() {";
+    new_content[899] = "fn dir_exists_at(&self, sub_path: &Path) -> bool {";
+    new_content[911] = "        self.layers.iter().any(|l| l.path().join(sub_path).is_dir())";
 
     let collapsed = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), None);
     let has_mod = collapsed.iter().any(|r| r.kind() == RowKind::Mod);
@@ -1088,10 +1079,10 @@ fn refactored_fn_renamed_lines_pair_as_mod() {
             None,
         ),
     ]);
-    let mut old_content = vec![String::new(); 300];
-    let mut new_content = vec![String::new(); 350];
-    old_content[200] = "fn to_os_string(&self) {".to_string();
-    new_content[280] = "fn into_filesystem(self) {".to_string();
+    let mut old_content = vec![""; 300];
+    let mut new_content = vec![""; 350];
+    old_content[200] = "fn to_os_string(&self) {";
+    new_content[280] = "fn into_filesystem(self) {";
 
     let collapsed = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), None);
     let mod_row = collapsed.iter().find(|r| r.kind() == RowKind::Mod);
@@ -1216,18 +1207,16 @@ fn test_closing_brace_released_from_add_block() {
         ),
     ]);
 
-    let mut new_content: Vec<String> = vec![String::new(); 1100];
-    new_content[1059] = "        self.mount_stack.get(guest_path)".to_string();
-    new_content[1060] = "    }".to_string();
-    new_content[1061] = "".to_string();
-    new_content[1062] =
-        "    /// Mutable variant of [`Self::find_mount`] — for live mode changes".to_string();
+    let mut new_content: Vec<&str> = vec![""; 1100];
+    new_content[1059] = "        self.mount_stack.get(guest_path)";
+    new_content[1060] = "    }";
+    new_content[1061] = "";
+    new_content[1062] = "    /// Mutable variant of [`Self::find_mount`] — for live mode changes";
     new_content[1063] =
-        "    pub fn find_mount_mut(&mut self, guest_path: &Path) -> Option<&mut dyn Filesystem> {"
-            .to_string();
-    new_content[1064] = "        self.mount_stack.get_mut(guest_path)".to_string();
-    new_content[1065] = "    }".to_string();
-    new_content[1066] = "".to_string();
+        "    pub fn find_mount_mut(&mut self, guest_path: &Path) -> Option<&mut dyn Filesystem> {";
+    new_content[1064] = "        self.mount_stack.get_mut(guest_path)";
+    new_content[1065] = "    }";
+    new_content[1066] = "";
 
     let rs = lang_profile("rs");
     let collapsed = collapse_hunk_rows(&h, None, Some(&new_content), rs);

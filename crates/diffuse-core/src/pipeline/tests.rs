@@ -66,7 +66,7 @@ fn test_comment_reflow_del_span_positioning() {
     let non_common_1078: Vec<(RunKind, &str)> = runs_1078
         .iter()
         .filter(|r| r.kind != RunKind::Common)
-        .map(|r| (r.kind, r.text.as_str()))
+        .map(|r| (r.kind, r.text))
         .collect();
     assert_eq!(
         non_common_1078,
@@ -94,7 +94,7 @@ fn test_comment_reflow_del_span_positioning() {
     let non_common_1079: Vec<(RunKind, &str)> = runs_1079
         .iter()
         .filter(|r| r.kind != RunKind::Common)
-        .map(|r| (r.kind, r.text.as_str()))
+        .map(|r| (r.kind, r.text))
         .collect();
     assert_eq!(
         non_common_1079,

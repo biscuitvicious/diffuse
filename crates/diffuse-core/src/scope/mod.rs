@@ -12,8 +12,8 @@ use crate::syntax::profile::{BlockDelimStyle, LangProfile};
 pub fn is_tail_before_closing(
     line: Option<u32>,
     old_side: bool,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> bool {
     let Some(profile) = profile else {
@@ -31,7 +31,7 @@ pub fn is_tail_before_closing(
     if content.get(line).is_none() {
         return false;
     }
-    let next = &content[line];
+    let next = content[line];
     match profile.block_style {
         BlockDelimStyle::Braces => next.starts_with("    }") && next[5..].trim().is_empty(),
         BlockDelimStyle::Keywords => profile.is_block_close(next),
@@ -51,7 +51,7 @@ pub fn is_tail_before_closing(
 /// If `profile` or `profile.fn_decl` is `None`, returns `None` (plain text, no
 /// scope detection).
 pub fn fn_of(
-    content: Option<&[String]>,
+    content: Option<&[&str]>,
     line: Option<u32>,
     profile: Option<&LangProfile>,
 ) -> Option<String> {
@@ -63,9 +63,11 @@ pub fn fn_of(
     let stop_prefixes = profile.scope_stop_prefixes;
 
     for i in (0..line).rev() {
-        let raw = content.get(i).map_or("", |s| s.as_str());
+        let raw = content.get(i).copied().unwrap_or("");
         let l = raw.trim();
-        if let Some(caps) = fn_re.captures(l) {
+        if l.contains('(')
+            && let Some(caps) = fn_re.captures(l)
+        {
             return Some(caps[1].to_string());
         }
         if Some(i) != line.checked_sub(1)
@@ -82,7 +84,7 @@ pub fn fn_of(
 /// Return `true` if any line in `content` declares a function named `fn_name`,
 /// using `profile.fn_decl`. If no profile or `fn_decl` exists, returns `false`.
 pub fn fn_of_exists(
-    content: Option<&[String]>,
+    content: Option<&[&str]>,
     fn_name: &str,
     profile: Option<&LangProfile>,
 ) -> bool {
@@ -96,9 +98,12 @@ pub fn fn_of_exists(
         return false;
     };
     content.iter().any(|l| {
-        fn_re
-            .captures(l.trim())
-            .is_some_and(|c| c.get(1).is_some_and(|m| m.as_str() == fn_name))
+        let trimmed = l.trim();
+        trimmed.contains(fn_name)
+            && trimmed.contains('(')
+            && fn_re
+                .captures(trimmed)
+                .is_some_and(|c| c.get(1).is_some_and(|m| m.as_str() == fn_name))
     })
 }
 

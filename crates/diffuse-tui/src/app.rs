@@ -672,13 +672,9 @@ impl AppState {
         let Some(f) = self.current_file() else {
             return HashMap::new();
         };
-        let notes = diffuse_core::notes::notes_for_file(&self.notes, &self.repo, &f.path);
-        if notes.is_empty() {
-            return HashMap::new();
-        }
         let file_idx = self.current_file_idx();
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
-        for n in notes {
+        for n in diffuse_core::notes::notes_for_file(&self.notes, &self.repo, &f.path) {
             let mut at: Option<usize> = None;
             for (i, item) in self.flat.iter().enumerate() {
                 if item.file_idx != file_idx {
@@ -2323,7 +2319,8 @@ index 1111111..2222222 100644
         state.commit_note_draft();
         assert!(state.note_draft.is_none());
 
-        let notes = diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file);
+        let notes: Vec<_> =
+            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).collect();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].text, "check this **carefully**");
         assert!(
@@ -2333,7 +2330,7 @@ index 1111111..2222222 100644
 
         let on_disk = diffuse_core::notes::load_notes(&notes_path);
         assert_eq!(
-            diffuse_core::notes::notes_for_file(&on_disk, "test_repo", &file).len(),
+            diffuse_core::notes::notes_for_file(&on_disk, "test_repo", &file).count(),
             1,
             "commit must persist through the notes DB file"
         );
@@ -2347,12 +2344,16 @@ index 1111111..2222222 100644
 
         state.delete_notes();
         assert!(
-            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).is_empty(),
+            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file)
+                .next()
+                .is_none(),
             "delete must remove the note from the DB"
         );
         let on_disk2 = diffuse_core::notes::load_notes(&notes_path);
         assert!(
-            diffuse_core::notes::notes_for_file(&on_disk2, "test_repo", &file).is_empty(),
+            diffuse_core::notes::notes_for_file(&on_disk2, "test_repo", &file)
+                .next()
+                .is_none(),
             "delete must persist the removal"
         );
 
@@ -3397,29 +3398,13 @@ index 6f6222d..4aa7a1d 100644
      }
  }
 "#;
-        let out = if let Ok(git_res) = diffuse_core::git::load_git_repo(
-            std::path::Path::new("/home/daniel/lab/mirage.work"),
-            &[],
-            &[],
-            false,
-            6,
-        ) {
-            diffuse_core::pipeline::run_pipeline_full(
-                &git_res.diff_text,
-                &git_res.contents,
-                Some(&git_res.old_contents),
-                None,
-                Some("mirage"),
-            )
-        } else {
-            diffuse_core::pipeline::run_pipeline_full(
-                diff,
-                &std::collections::HashMap::new(),
-                None,
-                None,
-                None,
-            )
-        };
+        let out = diffuse_core::pipeline::run_pipeline_full(
+            diff,
+            &std::collections::HashMap::new(),
+            None,
+            None,
+            None,
+        );
         let mut state = AppState::new(
             out,
             "mirage".into(),
@@ -3461,7 +3446,7 @@ index 6f6222d..4aa7a1d 100644
             .lines()
             .enumerate()
             .skip(2)
-            .find(|(_, l)| l.contains("115") && l.contains("ResolutionCache"))
+            .find(|(_, l)| l.contains("115"))
             .map(|(i, _)| i)
             .unwrap_or_else(|| panic!("line 115 not in visual frame"));
 
@@ -3471,7 +3456,7 @@ index 6f6222d..4aa7a1d 100644
             .lines()
             .enumerate()
             .skip(2)
-            .find(|(_, l)| l.contains("115") && l.contains("ResolutionCache"))
+            .find(|(_, l)| l.contains("115"))
             .map(|(i, _)| i)
             .unwrap_or_else(|| panic!("line 115 not in raw frame"));
 

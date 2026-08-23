@@ -22,20 +22,20 @@
 use super::dp::{DpOp, DpSolution, SublineMove};
 use crate::{
     lcs::{char_len, char_slice, word_spans},
-    merge::{Run, RunKind, merged_runs},
+    merge::{Run, RunKind, merged_runs_from_texts},
     parse::{AddLine, DelLine, Row, Spans},
 };
 
 /// One rendered row: the row itself, the wire spans, and the run stream.
-pub struct RenderedRow {
+pub struct RenderedRow<'a> {
     pub row: Row,
     pub spans: Spans,
-    pub runs: Vec<Run>,
+    pub runs: Vec<Run<'a>>,
 }
 
 /// Render a solution's rows into universal run streams.
-pub fn render_solution(sol: &DpSolution) -> Vec<RenderedRow> {
-    let mut out: Vec<RenderedRow> = Vec::new();
+pub fn render_solution<'a>(sol: &'a DpSolution) -> Vec<RenderedRow<'a>> {
+    let mut out: Vec<RenderedRow<'a>> = Vec::new();
     let mut ri = 0usize;
     for t in &sol.transitions {
         match t {
@@ -65,7 +65,18 @@ pub fn render_solution(sol: &DpSolution) -> Vec<RenderedRow> {
             DpOp::Mod { .. } => {
                 let r = &sol.rows[ri];
                 ri += 1;
-                out.push(render_mod_row(r, Side::Old, &[]));
+                let (old_line, new_line) = match r {
+                    Row::Mod { old_line, new_line } => (old_line, new_line),
+                    other => panic!("expected Mod row: {other:?}"),
+                };
+                out.push(render_mod_row(
+                    old_line,
+                    new_line,
+                    &old_line.text,
+                    &new_line.text,
+                    Side::Old,
+                    &[],
+                ));
             }
             DpOp::Expand {
                 k, anchor, spans, ..
@@ -88,7 +99,7 @@ pub fn render_solution(sol: &DpSolution) -> Vec<RenderedRow> {
 
 /// A `Mov` row: whole-line moved run, or (indentation reflow) the merged
 /// subword runs with the common parts rendered moved.
-fn render_mov_row(r: &Row) -> RenderedRow {
+fn render_mov_row<'a>(r: &'a Row) -> RenderedRow<'a> {
     let (old_line, new_line) = match r {
         Row::Mov { old_line, new_line } => (old_line, new_line),
         other => panic!("render_mov_row on a non-Mov row: {other:?}"),
@@ -108,11 +119,7 @@ fn render_mov_row(r: &Row) -> RenderedRow {
     };
     let mut moved_line = new_line.clone();
     moved_line.spans = spans.clone();
-    let probe = Row::Mod {
-        old_line: old_line.clone(),
-        new_line: moved_line.clone(),
-    };
-    let runs = subword_runs(&probe)
+    let runs = subword_runs_texts(&old_line.text, &new_line.text, &spans)
         .into_iter()
         .map(movify_common)
         .collect();
@@ -130,23 +137,22 @@ fn render_mov_row(r: &Row) -> RenderedRow {
 /// whitespace contraction and delimiter snapping — the legacy machinery).
 /// `moved` ranges (when present) mark reflowed fragments of a block
 /// transition on the given side — those runs become `Mov`.
-fn render_mod_row(r: &Row, side: Side, moved: &[(usize, usize)]) -> RenderedRow {
-    let (old_line, new_line) = match r {
-        Row::Mod { old_line, new_line } => (old_line, new_line),
-        other => panic!("render_mod_row on a non-Mod row: {other:?}"),
-    };
-    let ws = word_spans(&old_line.text, &new_line.text);
+fn render_mod_row<'a>(
+    old_line: &DelLine,
+    new_line: &AddLine,
+    old_text: &'a str,
+    new_text: &'a str,
+    side: Side,
+    moved: &[(usize, usize)],
+) -> RenderedRow<'a> {
+    let ws = word_spans(old_text, new_text);
     let spans = Spans {
         del: ws.del.clone(),
         add: ws.add.clone(),
     };
     let mut nl = new_line.clone();
     nl.spans = spans.clone();
-    let probe = Row::Mod {
-        old_line: old_line.clone(),
-        new_line: nl.clone(),
-    };
-    let runs = subword_runs(&probe);
+    let runs = subword_runs_texts(old_text, new_text, &spans);
     let runs = if moved.is_empty() {
         runs
     } else {
@@ -163,26 +169,19 @@ fn render_mod_row(r: &Row, side: Side, moved: &[(usize, usize)]) -> RenderedRow 
 }
 
 #[inline]
-fn run(kind: RunKind, text: &str) -> Run {
-    Run {
-        kind,
-        text: text.to_string(),
-    }
+fn run<'a>(kind: RunKind, text: &'a str) -> Run<'a> {
+    Run { kind, text }
 }
 
 /// The merged runs of a span-carrying mod probe — or a wholesale
 /// whole-line pair when `word_spans` produced nothing (huge lines past the
 /// token cap: an all-common render would silently hide the change).
-fn subword_runs(probe: &Row) -> Vec<Run> {
-    let spans = probe.spans().cloned().unwrap_or_default();
+fn subword_runs_texts<'a>(del_text: &'a str, add_text: &'a str, spans: &Spans) -> Vec<Run<'a>> {
     let changed = !spans.del.is_empty() || !spans.add.is_empty();
-    if !changed && probe.del_text() != Some(probe.text()) {
-        return vec![
-            run(RunKind::Del, probe.del_text().unwrap_or_default()),
-            run(RunKind::Add, probe.text()),
-        ];
+    if !changed && del_text != add_text {
+        return vec![run(RunKind::Del, del_text), run(RunKind::Add, add_text)];
     }
-    merged_runs(probe)
+    merged_runs_from_texts(del_text, add_text, spans)
 }
 
 /// Which side of a mod's run stream a conversion applies to.
@@ -195,13 +194,13 @@ enum Side {
 /// Rewrite del (old side) or add (new side) runs that overlap any of the
 /// given char ranges into `Mov` runs (struck-moved / filled-moved) — the
 /// reflowed fragments of a block transition.
-fn mark_side_runs(runs: Vec<Run>, side: Side, ranges: &[(usize, usize)]) -> Vec<Run> {
+fn mark_side_runs<'a>(runs: Vec<Run<'a>>, side: Side, ranges: &[(usize, usize)]) -> Vec<Run<'a>> {
     let overlaps = |a: (usize, usize), b: (usize, usize)| a.0 < b.1 && b.0 < a.1;
     let mut out = Vec::with_capacity(runs.len());
     let mut old_pos = 0usize;
     let mut new_pos = 0usize;
     for r in runs {
-        let len = char_len(&r.text);
+        let len = char_len(r.text);
         let mut r = r;
         match r.kind {
             RunKind::Common => {
@@ -232,12 +231,17 @@ fn mark_side_runs(runs: Vec<Run>, side: Side, ranges: &[(usize, usize)]) -> Vec<
 /// A 1-to-K expansion: the anchor `Mod` (its old-side tail that reflowed
 /// onto later lines struck-moved) + the absorbed `Add` rows (reflowed
 /// fragments filled-moved, delText connecting them to the source line).
-fn render_expand(anchor: usize, spans: &[SublineMove], block: &[Row], out: &mut Vec<RenderedRow>) {
+fn render_expand<'a>(
+    anchor: usize,
+    spans: &[SublineMove],
+    block: &'a [Row],
+    out: &mut Vec<RenderedRow<'a>>,
+) {
     // The anchor row is the block's Mod; its old text is everyone's source.
     let (a_old, a_new) = block
         .iter()
         .find_map(|r| match r {
-            Row::Mod { old_line, new_line } => Some((old_line.clone(), new_line.clone())),
+            Row::Mod { old_line, new_line } => Some((old_line, new_line)),
             _ => None,
         })
         .expect("expand block carries an anchor Mod");
@@ -247,11 +251,14 @@ fn render_expand(anchor: usize, spans: &[SublineMove], block: &[Row], out: &mut 
         .filter(|s| s.line != anchor)
         .map(|s| s.anchor_span)
         .collect();
-    let anchor_row = Row::Mod {
-        old_line: a_old.clone(),
-        new_line: a_new,
-    };
-    out.push(render_mod_row(&anchor_row, Side::Old, &moved_old));
+    out.push(render_mod_row(
+        a_old,
+        a_new,
+        &a_old.text,
+        &a_new.text,
+        Side::Old,
+        &moved_old,
+    ));
 
     for (li, r) in block.iter().enumerate() {
         if li == anchor {
@@ -268,16 +275,16 @@ fn render_expand(anchor: usize, spans: &[SublineMove], block: &[Row], out: &mut 
 /// A K-to-1 collapse: the anchor `Mod` (new-side fragments absorbed from
 /// other old lines filled-moved) + the absorbed `Del` rows (reflowed
 /// fragments struck-moved).
-fn render_collapse(
+fn render_collapse<'a>(
     anchor: usize,
     spans: &[SublineMove],
-    block: &[Row],
-    out: &mut Vec<RenderedRow>,
+    block: &'a [Row],
+    out: &mut Vec<RenderedRow<'a>>,
 ) {
     let (a_old, a_new) = block
         .iter()
         .find_map(|r| match r {
-            Row::Mod { old_line, new_line } => Some((old_line.clone(), new_line.clone())),
+            Row::Mod { old_line, new_line } => Some((old_line, new_line)),
             _ => None,
         })
         .expect("collapse block carries an anchor Mod");
@@ -287,11 +294,14 @@ fn render_collapse(
         .filter(|s| s.line != anchor)
         .map(|s| s.anchor_span)
         .collect();
-    let anchor_row = Row::Mod {
-        old_line: a_old,
-        new_line: a_new,
-    };
-    out.push(render_mod_row(&anchor_row, Side::New, &moved_new));
+    out.push(render_mod_row(
+        a_old,
+        a_new,
+        &a_old.text,
+        &a_new.text,
+        Side::New,
+        &moved_new,
+    ));
 
     for (li, r) in block.iter().enumerate() {
         if li == anchor {
@@ -308,13 +318,13 @@ fn render_collapse(
 /// An absorbed `Add` row of an expansion: the reflowed fragments render
 /// filled-moved, the rest fills. The row carries `delText` (the source
 /// line) + spans connecting the moved fragments to their origin.
-fn absorbed_add_row(
+fn absorbed_add_row<'a>(
     old_text: &str,
-    add_text: &str,
+    add_text: &'a str,
     num: crate::parse::LineNum,
     spans: &[SublineMove],
     li: usize,
-) -> RenderedRow {
+) -> RenderedRow<'a> {
     let mut frags: Vec<(usize, usize)> = spans
         .iter()
         .filter(|s| s.line == li)
@@ -346,7 +356,7 @@ fn absorbed_add_row(
 /// An absorbed `Del` row of a collapse: the reflowed fragments render
 /// struck-moved, the rest strikes. (`DelLine` cannot carry spans — the
 /// wire spans ride the [`RenderedRow`].)
-fn absorbed_del_row(d: &DelLine, spans: &[SublineMove], li: usize) -> RenderedRow {
+fn absorbed_del_row<'a>(d: &'a DelLine, spans: &[SublineMove], li: usize) -> RenderedRow<'a> {
     let mut frags: Vec<(usize, usize)> = spans
         .iter()
         .filter(|s| s.line == li)
@@ -372,12 +382,12 @@ fn absorbed_del_row(d: &DelLine, spans: &[SublineMove], li: usize) -> RenderedRo
 /// Partition a line's text into filler runs and fragment runs: the chars
 /// inside each fragment become `frag_kind` (moved), everything between
 /// them `filler_kind`.
-fn fragment_runs(
-    text: &str,
+fn fragment_runs<'a>(
+    text: &'a str,
     frags: &[(usize, usize)],
     filler_kind: RunKind,
     frag_kind: RunKind,
-) -> Vec<Run> {
+) -> Vec<Run<'a>> {
     let frags = merge_ws_frags(text, frags);
     let mut runs = Vec::new();
     let mut pos = 0usize;
@@ -418,7 +428,7 @@ fn merge_ws_frags(text: &str, frags: &[(usize, usize)]) -> Vec<(usize, usize)> {
 
 /// Common runs → moved (a `Mov` row's subword: the common text is by
 /// definition the relocated content).
-fn movify_common(r: Run) -> Run {
+fn movify_common<'a>(r: Run<'a>) -> Run<'a> {
     if r.kind == RunKind::Common {
         Run {
             kind: RunKind::Mov,

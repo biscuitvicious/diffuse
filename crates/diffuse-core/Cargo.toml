@@ -14,3 +14,5 @@ unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 regex = { workspace = true }
 gix = { workspace = true }
+rayon = { workspace = true }
+rustc-hash = { workspace = true }

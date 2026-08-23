@@ -47,7 +47,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 use crate::{
-    lcs::{lcs_pairs_ids, tokenize_line},
+    lcs::{lcs_matched_chars_ids, lcs_pairs_ids},
     parse::Row,
     similarity::TokenInterner,
 };
@@ -158,41 +158,55 @@ pub struct DpTokens {
     ids: Vec<u32>,
     chars: usize,
     token_chars: Vec<usize>,
-    token_mask: u64,
-    /// Each content token's byte offset — consumed by Phase 4's subword
-    /// span mapping (`RunKind::Mov` runs); `expect` so its eventual use
-    /// un-silences this attribute.
-    #[expect(dead_code)]
-    offsets: Vec<usize>,
-    trimmed: String,
+    token_mask: [u64; 4],
+}
+
+#[inline(always)]
+fn mask_overlap(a: &[u64; 4], b: &[u64; 4]) -> bool {
+    ((a[0] & b[0]) | (a[1] & b[1]) | (a[2] & b[2]) | (a[3] & b[3])) != 0
+}
+
+#[inline(always)]
+fn token_mask_matched_chars_bound(
+    tokens: &DpTokens,
+    target_mask: &[u64; 4],
+    id_ws: &[bool],
+) -> usize {
+    let mut bound = 0;
+    for (ti, &id) in tokens.ids.iter().enumerate() {
+        if !id_ws[id as usize] {
+            let bit = (id as usize) % 256;
+            if (target_mask[bit / 64] & (1u64 << (bit % 64))) != 0 {
+                bound += tokens.token_chars[ti];
+            }
+        }
+    }
+    bound
 }
 
 pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
-    let lt = interner.line_tokens(text);
-    // Byte offsets: walk the raw tokens, skipping whitespace-only ones in
-    // lockstep with the content tokens.
-    let mut offsets = Vec::with_capacity(lt.tokens.len());
-    let mut pos = 0usize;
-    for t in tokenize_line(text) {
-        let start = text[pos..].find(t).map(|off| pos + off).unwrap_or(pos);
-        pos = start + t.len();
+    let mut ids = Vec::new();
+    let mut token_chars = Vec::new();
+    let mut token_mask = [0u64; 4];
+    let mut chars = 0;
+    crate::lcs::for_each_token(text, |t| {
         if !t.trim().is_empty() {
-            offsets.push(start);
+            let id = interner.intern(t);
+            ids.push(id);
+            let tc = crate::lcs::char_len(t);
+            token_chars.push(tc);
+            chars += tc;
+            if !interner.ws[id as usize] {
+                let bit = (id as usize) % 256;
+                token_mask[bit / 64] |= 1u64 << (bit % 64);
+            }
         }
-    }
-    let mut token_mask = 0u64;
-    for &id in &lt.ids {
-        if !interner.ws[id as usize] {
-            token_mask |= 1u64 << (id % 64);
-        }
-    }
+    });
     DpTokens {
-        ids: lt.ids,
-        chars: lt.chars,
-        token_chars: lt.token_chars,
+        ids,
+        chars,
+        token_chars,
         token_mask,
-        offsets,
-        trimmed: lt.trimmed,
     }
 }
 
@@ -232,14 +246,295 @@ pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -
     bm
 }
 
-fn is_reflow_candidate(text: &str) -> bool {
-    !text.trim().is_empty()
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum CloseDelimiter {
+    #[default]
+    None,
+    BraceSemi,
+    Brace,
+    ParenSemi,
+    Paren,
 }
 
-/// Config-file key character: `[A-Za-z0-9_\-.]` (broader than
-/// [`is_ascii_word_char`] — TOML/INI keys allow hyphens and dots).
+fn classify_close_tail(text: &str) -> CloseDelimiter {
+    let t = text.trim();
+    if t.ends_with("};") {
+        CloseDelimiter::BraceSemi
+    } else if t.ends_with('}') {
+        CloseDelimiter::Brace
+    } else if t.ends_with(");") {
+        CloseDelimiter::ParenSemi
+    } else if t.ends_with(')') {
+        CloseDelimiter::Paren
+    } else {
+        CloseDelimiter::None
+    }
+}
+
+fn classify_exact_close(text: &str) -> CloseDelimiter {
+    let t = text.trim();
+    if t == "};" {
+        CloseDelimiter::BraceSemi
+    } else if t == "}" {
+        CloseDelimiter::Brace
+    } else if t == ");" {
+        CloseDelimiter::ParenSemi
+    } else if t == ")" {
+        CloseDelimiter::Paren
+    } else {
+        CloseDelimiter::None
+    }
+}
+
 fn is_config_key_char(c: char) -> bool {
     is_ascii_word_char(c) || c == '-' || c == '.'
+}
+
+fn extract_config_key(text: &str) -> Option<&str> {
+    let t = text.trim();
+    if let Some(eq_pos) = t.find('=') {
+        let key = t[..eq_pos].trim();
+        if !key.is_empty() && key.chars().all(is_config_key_char) && !key.contains(' ') {
+            return Some(key);
+        }
+    }
+    None
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PrecomputedBlock {
+    k: usize,
+    mask: [u64; 4],
+    chars: usize,
+    token_start: usize,
+    token_end: usize,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RowValidBlocks {
+    pub(crate) blocks: [PrecomputedBlock; MAX_BLOCK_K],
+    pub(crate) len: u8,
+}
+
+impl RowValidBlocks {
+    #[inline(always)]
+    pub(crate) fn as_slice(&self) -> &[PrecomputedBlock] {
+        &self.blocks[..self.len as usize]
+    }
+}
+
+fn precompute_valid_blocks(
+    tokens: &[DpTokens],
+    meta: &[DpRowMeta],
+    row_token_starts: &[usize],
+    out_blocks: &mut Vec<RowValidBlocks>,
+) {
+    let n = tokens.len();
+    out_blocks.clear();
+    out_blocks.resize(n, RowValidBlocks::default());
+    for j in 0..n {
+        if !meta[j].is_reflow {
+            continue;
+        }
+        let max_k = MAX_BLOCK_K.min(n - j);
+        let mut mask = [0u64; 4];
+        let mut chars = 0usize;
+
+        let head_key = meta[j].config_key;
+        let is_comment = meta[j].comment;
+
+        // idx = 0: row j
+        mask[0] |= tokens[j].token_mask[0];
+        mask[1] |= tokens[j].token_mask[1];
+        mask[2] |= tokens[j].token_mask[2];
+        mask[3] |= tokens[j].token_mask[3];
+        chars += tokens[j].chars;
+        let token_start = row_token_starts[j];
+
+        let mut row_blocks = RowValidBlocks::default();
+
+        for k in 2..=max_k {
+            let idx = k - 1;
+            let row_idx = j + idx;
+
+            // Check if previous row (idx - 1) ended with semicolon
+            if meta[row_idx - 1].ends_with_semi {
+                break;
+            }
+            // Check candidate conditions for new row
+            if !meta[row_idx].is_reflow || meta[row_idx].comment != is_comment {
+                break;
+            }
+            if !is_comment {
+                if meta[row_idx].is_stmt_start {
+                    break;
+                }
+                if let Some(hk) = head_key
+                    && let Some(ck) = meta[row_idx].config_key
+                    && hk == ck
+                {
+                    break;
+                }
+            }
+
+            // Append tokens for row_idx
+            mask[0] |= tokens[row_idx].token_mask[0];
+            mask[1] |= tokens[row_idx].token_mask[1];
+            mask[2] |= tokens[row_idx].token_mask[2];
+            mask[3] |= tokens[row_idx].token_mask[3];
+            chars += tokens[row_idx].chars;
+            let token_end = row_token_starts[row_idx + 1];
+
+            row_blocks.blocks[row_blocks.len as usize] = PrecomputedBlock {
+                k,
+                mask,
+                chars,
+                token_start,
+                token_end,
+            };
+            row_blocks.len += 1;
+        }
+        out_blocks[j] = row_blocks;
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+fn block_lcs_fast_precomputed(
+    old_ids: &[u32],
+    block_ids: &[u32],
+    block_coords: &[(u8, u8)],
+    block_token_chars: &[usize],
+    start_row: usize,
+    k: usize,
+    id_ws: &[bool],
+    id_alnum: &[bool],
+    lcs_scratch: &mut Vec<u32>,
+) -> (usize, usize, usize) {
+    let n = old_ids.len();
+    let m = block_ids.len();
+    if n == 0 || m == 0 {
+        return (0, 0, 0);
+    }
+    let stride = m + 1;
+    let total_len = (n + 1) * stride;
+    if lcs_scratch.len() < total_len {
+        lcs_scratch.resize(total_len, 0);
+    }
+    let dp_ptr = lcs_scratch.as_mut_ptr();
+    unsafe {
+        let mut next_row_ptr = dp_ptr.add(n * stride);
+        for col in 0..=m {
+            *next_row_ptr.add(col) = 0;
+        }
+        let mut i = n;
+        while i > 0 {
+            i -= 1;
+            let curr_row_ptr = dp_ptr.add(i * stride);
+            *curr_row_ptr.add(m) = 0;
+            let ai = *old_ids.get_unchecked(i);
+            let mut j = m;
+            let mut right = 0;
+            while j > 0 {
+                j -= 1;
+                let bj = *block_ids.get_unchecked(j);
+                let val = if ai == bj {
+                    *next_row_ptr.add(j + 1) + 1
+                } else {
+                    let down = *next_row_ptr.add(j);
+                    down.max(right)
+                };
+                *curr_row_ptr.add(j) = val;
+                right = val;
+            }
+            next_row_ptr = curr_row_ptr;
+        }
+    }
+    let dp = &mut lcs_scratch[..total_len];
+    if dp[0] == 0 {
+        return (0, 0, 0);
+    }
+    let mut matched = 0usize;
+    let mut line_matched_counts = [0usize; MAX_BLOCK_K + 1];
+    let mut head = None;
+    let mut i = 0;
+    let mut j = 0;
+    let mut in_add_run = false;
+
+    while i < n && j < m {
+        if old_ids[i] == block_ids[j] {
+            if id_ws[old_ids[i] as usize]
+                && in_add_run
+                && !(i + 1 < n
+                    && j + 1 < m
+                    && old_ids[i + 1] == block_ids[j + 1]
+                    && !id_ws[old_ids[i + 1] as usize])
+            {
+                j += 1;
+                continue;
+            }
+            if in_add_run
+                && dp[i * stride + j + 1] == dp[i * stride + j]
+                && (j + 1..m).any(|k| {
+                    block_ids[k] == old_ids[i]
+                        && dp[(i + 1) * stride + k + 1] + 1 == dp[i * stride + j]
+                })
+            {
+                j += 1;
+                continue;
+            }
+            let (abs_row, _ti) = block_coords[j];
+            let li = (abs_row as usize).saturating_sub(start_row);
+            matched += block_token_chars[j];
+            if li < line_matched_counts.len() {
+                line_matched_counts[li] += 1;
+            }
+            if i == 0 && head.is_none() {
+                head = Some(li);
+            }
+            i += 1;
+            j += 1;
+            in_add_run = false;
+        } else if dp[(i + 1) * stride + j] > dp[i * stride + j + 1] {
+            i += 1;
+        } else if dp[(i + 1) * stride + j] < dp[i * stride + j + 1] {
+            j += 1;
+            in_add_run = true;
+        } else if id_ws[old_ids[i] as usize] && !id_ws[block_ids[j] as usize] {
+            if i + 1 < n && old_ids[i + 1] == block_ids[j] {
+                i += 1;
+            } else {
+                j += 1;
+                in_add_run = true;
+            }
+        } else if id_ws[block_ids[j] as usize] && !id_ws[old_ids[i] as usize] {
+            j += 1;
+            in_add_run = true;
+        } else if !block_ids[j + 1..].iter().any(|t| *t == old_ids[i])
+            || (!id_alnum[old_ids[i] as usize] && id_alnum[block_ids[j] as usize])
+        {
+            i += 1;
+        } else {
+            j += 1;
+            in_add_run = true;
+        }
+    }
+    let mut most = 0usize;
+    let mut most_n = 0usize;
+    let mut moved_lines = 0usize;
+    for (li, &count) in line_matched_counts[..k].iter().enumerate() {
+        if count > most_n {
+            most_n = count;
+            most = li;
+        }
+        if li > 0 && count > 0 {
+            moved_lines += 1;
+        }
+    }
+    (matched, moved_lines, head.unwrap_or(most))
+}
+
+fn is_reflow_candidate(text: &str) -> bool {
+    !text.trim().is_empty()
 }
 
 fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangProfile>) -> bool {
@@ -269,23 +564,6 @@ fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangP
     // Check for section headers: `[section]`
     if t.starts_with('[') && t.ends_with(']') {
         return true;
-    }
-    false
-}
-
-fn is_duplicate_key_assignment(first: &str, current: &str) -> bool {
-    let f = first.trim();
-    let c = current.trim();
-    if let (Some(f_eq), Some(c_eq)) = (f.find('='), c.find('=')) {
-        let f_key = f[..f_eq].trim();
-        let c_key = c[..c_eq].trim();
-        if !f_key.is_empty()
-            && f_key == c_key
-            && f_key.chars().all(is_config_key_char)
-            && !f_key.contains(' ')
-        {
-            return true;
-        }
     }
     false
 }
@@ -345,27 +623,71 @@ pub fn solve_cluster(
     solve_cluster_with(cluster, profile, &Weights::default())
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct DpRowMeta {
+    pub trimmed_id: u32,
+    pub comment: bool,
+    pub kind: SyntaxSectionKind,
+    pub first_ascii_word: Option<u32>,
+    pub indent: usize,
+    pub close_dist: usize,
+    pub prox_close: f64,
+    pub prox_open: f64,
+    pub is_reflow: bool,
+    pub ends_with_semi: bool,
+    pub is_stmt_start: bool,
+    pub config_key: Option<u32>,
+    pub close_tail: CloseDelimiter,
+    pub exact_close: CloseDelimiter,
+}
+
 /// Scratch arena for DP cluster solving to reuse memory across clusters.
 #[derive(Default)]
-pub struct DpScratchArena {
-    pub interner: TokenInterner,
-    pub old_tokens: Vec<DpTokens>,
-    pub new_tokens: Vec<DpTokens>,
-    pub old_comment: Vec<bool>,
-    pub new_comment: Vec<bool>,
-    pub old_kind: Vec<SyntaxSectionKind>,
-    pub new_kind: Vec<SyntaxSectionKind>,
-    pub old_close_dist: Vec<usize>,
-    pub new_close_dist: Vec<usize>,
-    pub old_open_dist: Vec<usize>,
-    pub new_open_dist: Vec<usize>,
+pub(crate) struct DpScratchArena {
+    pub(crate) interner: TokenInterner,
+    pub(crate) old_tokens: Vec<DpTokens>,
+    pub(crate) new_tokens: Vec<DpTokens>,
+    pub(crate) old_meta: Vec<DpRowMeta>,
+    pub(crate) new_meta: Vec<DpRowMeta>,
+    pub(crate) old_close_dist: Vec<usize>,
+    pub(crate) new_close_dist: Vec<usize>,
+    pub(crate) old_open_dist: Vec<usize>,
+    pub(crate) new_open_dist: Vec<usize>,
+    pub(crate) all_old_ids: Vec<u32>,
+    pub(crate) all_old_coords: Vec<(u8, u8)>,
+    pub(crate) all_old_token_chars: Vec<usize>,
+    pub(crate) old_row_token_starts: Vec<usize>,
+    pub(crate) all_new_ids: Vec<u32>,
+    pub(crate) all_new_coords: Vec<(u8, u8)>,
+    pub(crate) all_new_token_chars: Vec<usize>,
+    pub(crate) new_row_token_starts: Vec<usize>,
+    pub(crate) old_valid_blocks: Vec<RowValidBlocks>,
+    pub(crate) new_valid_blocks: Vec<RowValidBlocks>,
+    pub(crate) lcs_scratch: Vec<u32>,
     dp: Vec<Cell>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+enum OpKind {
+    #[default]
+    None = 0,
+    Del,
+    Add,
+    Mod,
+    Mov,
+    Expand,
+    Collapse,
+}
+
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct Cell {
     score: f64,
-    back: Option<(usize, usize, &'static str, usize)>, // (i, j, op, k)
+    prev_i: u32,
+    prev_j: u32,
+    k: u8,
+    op: OpKind,
 }
 
 impl DpScratchArena {
@@ -373,16 +695,39 @@ impl DpScratchArena {
         self.interner.clear();
         self.old_tokens.clear();
         self.new_tokens.clear();
-        self.old_comment.clear();
-        self.new_comment.clear();
-        self.old_kind.clear();
-        self.new_kind.clear();
+        self.old_meta.clear();
+        self.new_meta.clear();
         self.old_close_dist.clear();
         self.new_close_dist.clear();
         self.old_open_dist.clear();
         self.new_open_dist.clear();
+        self.all_old_ids.clear();
+        self.all_old_coords.clear();
+        self.all_old_token_chars.clear();
+        self.old_row_token_starts.clear();
+        self.all_new_ids.clear();
+        self.all_new_coords.clear();
+        self.all_new_token_chars.clear();
+        self.new_row_token_starts.clear();
         self.dp.clear();
     }
+}
+
+thread_local! {
+    static ARENA: std::cell::RefCell<DpScratchArena> = std::cell::RefCell::new(DpScratchArena::default());
+}
+
+/// Solves a cluster using thread-local scratch arena to eliminate allocations
+/// in multithreaded runs.
+pub fn solve_cluster_with_tls(
+    cluster: &ChangeCluster,
+    profile: Option<&crate::syntax::profile::LangProfile>,
+    w: &Weights,
+) -> DpSolution {
+    ARENA.with(|arena_cell| {
+        let mut arena = arena_cell.borrow_mut();
+        solve_cluster_with_arena(cluster, profile, w, &mut arena)
+    })
 }
 
 /// Solve with explicit weights (the tuning surface for tests and Phase 5
@@ -392,12 +737,12 @@ pub fn solve_cluster_with(
     profile: Option<&crate::syntax::profile::LangProfile>,
     w: &Weights,
 ) -> DpSolution {
-    let mut arena = DpScratchArena::default();
-    solve_cluster_with_arena(cluster, profile, w, &mut arena)
+    solve_cluster_with_tls(cluster, profile, w)
 }
 
-/// Solve cluster reusing an existing scratch arena to avoid allocations.
-pub fn solve_cluster_with_arena(
+/// Solves a cluster using a reusable scratch arena for zero-allocation
+/// buffers.
+pub(crate) fn solve_cluster_with_arena(
     cluster: &ChangeCluster,
     profile: Option<&crate::syntax::profile::LangProfile>,
     w: &Weights,
@@ -406,29 +751,6 @@ pub fn solve_cluster_with_arena(
     arena.clear();
     let m = cluster.old_rows.len();
     let n = cluster.new_rows.len();
-
-    for r in &cluster.old_rows {
-        arena
-            .old_tokens
-            .push(dp_tokens(&mut arena.interner, r.text()));
-        arena
-            .old_comment
-            .push(profile.is_some_and(|p| p.is_comment_line(r.text())));
-        arena
-            .old_kind
-            .push(classify_syntax_section(r.text(), profile));
-    }
-    for r in &cluster.new_rows {
-        arena
-            .new_tokens
-            .push(dp_tokens(&mut arena.interner, r.text()));
-        arena
-            .new_comment
-            .push(profile.is_some_and(|p| p.is_comment_line(r.text())));
-        arena
-            .new_kind
-            .push(classify_syntax_section(r.text(), profile));
-    }
 
     let is_open_line = |t: &str| -> bool {
         if let Some(p) = profile {
@@ -447,33 +769,43 @@ pub fn solve_cluster_with_arena(
     let indent_of = |t: &str| -> usize { t.len() - t.trim_start().len() };
 
     let compute_close_dist =
-        |rows: &[crate::parse::Row], following: &[String], out: &mut Vec<usize>| {
+        |rows: &[crate::parse::Row], following: &[&str], out: &mut Vec<usize>| {
             let count = rows.len();
+            let get_row_meta = |r: &crate::parse::Row| {
+                let txt = r.text().trim();
+                (is_close_line(txt), indent_of(r.text()), txt.is_empty())
+            };
+            let get_foll_meta = |line: &str| {
+                let txt = line.trim();
+                (is_close_line(txt), indent_of(line), txt.is_empty())
+            };
+
             for i in 0..count {
-                let txt = rows[i].text().trim();
-                if is_close_line(txt) {
+                let (is_c_i, cur_ind, _) = get_row_meta(&rows[i]);
+                if is_c_i {
                     out.push(0);
                     continue;
                 }
-                let cur_ind = indent_of(rows[i].text());
                 let mut found = None;
-                for d in 1..(count - i) {
-                    let next_t = rows[i + d].text().trim();
-                    if next_t.is_empty() {
+                let max_d = (count - i).min(64);
+                for d in 1..max_d {
+                    let (is_c, ind, is_emp) = get_row_meta(&rows[i + d]);
+                    if is_emp {
                         continue;
                     }
-                    if is_close_line(next_t) || indent_of(rows[i + d].text()) < cur_ind {
+                    if is_c || ind < cur_ind {
                         found = Some(d);
                         break;
                     }
                 }
                 if found.is_none() {
-                    for (idx, line) in following.iter().enumerate() {
-                        let next_t = line.trim();
-                        if next_t.is_empty() {
+                    let max_f = (64usize).saturating_sub(count - i);
+                    for (idx, &line) in following.iter().take(max_f).enumerate() {
+                        let (is_c, ind, is_emp) = get_foll_meta(line);
+                        if is_emp {
                             continue;
                         }
-                        if is_close_line(next_t) || indent_of(line) < cur_ind {
+                        if is_c || ind < cur_ind {
                             found = Some(count - i + idx);
                             break;
                         }
@@ -484,25 +816,25 @@ pub fn solve_cluster_with_arena(
         };
 
     let compute_open_dist =
-        |rows: &[crate::parse::Row], preceding: &[String], out: &mut Vec<usize>| {
-            let count = rows.len();
-            for i in 0..count {
-                if let Some(k) = (0..=i).rev().find(|&k| is_open_line(rows[k].text())) {
-                    out.push(i - k);
+        |rows: &[crate::parse::Row], preceding: &[&str], out: &mut Vec<usize>| {
+            let mut last_open_idx: Option<usize> = None;
+            let prec_dist = preceding.iter().rev().enumerate().find_map(|(idx, line)| {
+                if is_open_line(line) {
+                    Some(1 + idx)
                 } else {
-                    let dist = preceding
-                        .iter()
-                        .rev()
-                        .enumerate()
-                        .find_map(|(idx, line)| {
-                            if is_open_line(line) {
-                                Some(i + 1 + idx)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(usize::MAX);
-                    out.push(dist);
+                    None
+                }
+            });
+            for (i, row) in rows.iter().enumerate() {
+                if is_open_line(row.text()) {
+                    last_open_idx = Some(i);
+                    out.push(0);
+                } else if let Some(k) = last_open_idx {
+                    out.push(i - k);
+                } else if let Some(d) = prec_dist {
+                    out.push(i + d);
+                } else {
+                    out.push(usize::MAX);
                 }
             }
         };
@@ -531,218 +863,372 @@ pub fn solve_cluster_with_arena(
         &mut arena.new_open_dist,
     );
 
-    let interner = &arena.interner;
-    let old = &arena.old_tokens;
-    let new = &arena.new_tokens;
-    let old_comment = &arena.old_comment;
-    let new_comment = &arena.new_comment;
-    let old_kind = &arena.old_kind;
-    let new_kind = &arena.new_kind;
-    let old_close_dist = &arena.old_close_dist;
-    let new_close_dist = &arena.new_close_dist;
-    let old_open_dist = &arena.old_open_dist;
-    let new_open_dist = &arena.new_open_dist;
+    for (i, r) in cluster.old_rows.iter().enumerate() {
+        let text = r.text();
+        let trimmed = text.trim();
+        let dt = dp_tokens(&mut arena.interner, text);
+        let comment = profile.is_some_and(|p| p.is_comment_line(text));
+        let kind = classify_syntax_section(text, profile);
+        let first_ascii_word = first_ascii_word(text).map(|w| arena.interner.intern(w));
+        let indent = text.len() - text.trim_start().len();
+        let close_dist = arena.old_close_dist[i];
+        let prox_close = if close_dist == usize::MAX {
+            0.0
+        } else {
+            1.0 / (1.0 + (close_dist as f64).powi(2))
+        };
+        let open_dist = arena.old_open_dist[i];
+        let prox_open = if open_dist == usize::MAX {
+            0.0
+        } else {
+            1.0 / (1.0 + (open_dist as f64).powi(2))
+        };
+        let is_reflow = is_reflow_candidate(text);
+        let ends_with_semi = trimmed.ends_with(';');
+        let is_stmt_start = is_statement_start(text, profile);
+        let config_key = extract_config_key(text).map(|w| arena.interner.intern(w));
+        let close_tail = classify_close_tail(text);
+        let exact_close = classify_exact_close(text);
+        let trimmed_id = arena.interner.intern(trimmed);
+
+        arena.old_tokens.push(dt);
+        arena.old_meta.push(DpRowMeta {
+            trimmed_id,
+            comment,
+            kind,
+            first_ascii_word,
+            indent,
+            close_dist,
+            prox_close,
+            prox_open,
+            is_reflow,
+            ends_with_semi,
+            is_stmt_start,
+            config_key,
+            close_tail,
+            exact_close,
+        });
+    }
+
+    for (j, r) in cluster.new_rows.iter().enumerate() {
+        let text = r.text();
+        let trimmed = text.trim();
+        let dt = dp_tokens(&mut arena.interner, text);
+        let comment = profile.is_some_and(|p| p.is_comment_line(text));
+        let kind = classify_syntax_section(text, profile);
+        let first_ascii_word = first_ascii_word(text).map(|w| arena.interner.intern(w));
+        let indent = text.len() - text.trim_start().len();
+        let close_dist = arena.new_close_dist[j];
+        let prox_close = if close_dist == usize::MAX {
+            0.0
+        } else {
+            1.0 / (1.0 + (close_dist as f64).powi(2))
+        };
+        let open_dist = arena.new_open_dist[j];
+        let prox_open = if open_dist == usize::MAX {
+            0.0
+        } else {
+            1.0 / (1.0 + (open_dist as f64).powi(2))
+        };
+        let is_reflow = is_reflow_candidate(text);
+        let ends_with_semi = trimmed.ends_with(';');
+        let is_stmt_start = is_statement_start(text, profile);
+        let config_key = extract_config_key(text).map(|w| arena.interner.intern(w));
+        let close_tail = classify_close_tail(text);
+        let exact_close = classify_exact_close(text);
+        let trimmed_id = arena.interner.intern(trimmed);
+
+        arena.new_tokens.push(dt);
+        arena.new_meta.push(DpRowMeta {
+            trimmed_id,
+            comment,
+            kind,
+            first_ascii_word,
+            indent,
+            close_dist,
+            prox_close,
+            prox_open,
+            is_reflow,
+            ends_with_semi,
+            is_stmt_start,
+            config_key,
+            close_tail,
+            exact_close,
+        });
+    }
+
+    let DpScratchArena {
+        interner,
+        old_tokens,
+        new_tokens,
+        old_meta,
+        new_meta,
+        all_old_ids,
+        all_old_coords,
+        all_old_token_chars,
+        old_row_token_starts,
+        all_new_ids,
+        all_new_coords,
+        all_new_token_chars,
+        new_row_token_starts,
+        old_valid_blocks,
+        new_valid_blocks,
+        lcs_scratch,
+        dp,
+        ..
+    } = arena;
 
     let neg = f64::NEG_INFINITY;
     let stride = n + 1;
     let total_cells = (m + 1) * stride;
-    arena.dp.resize(
+    dp.clear();
+    dp.resize(
         total_cells,
         Cell {
             score: neg,
-            back: None,
+            prev_i: 0,
+            prev_j: 0,
+            k: 0,
+            op: OpKind::None,
         },
     );
-    for cell in &mut arena.dp {
-        cell.score = neg;
-        cell.back = None;
-    }
-    arena.dp[0].score = 0.0;
-    let dp = &mut arena.dp;
+    dp[0].score = 0.0;
 
-    let block_score = |bm: &BlockMatch, side_chars: usize, block_chars: usize, k: usize| -> f64 {
+    let calc_block_score = |matched: usize,
+                            moved_lines: usize,
+                            side_chars: usize,
+                            block_chars: usize,
+                            k: usize|
+     -> f64 {
         let total = side_chars.max(block_chars);
-        let unmatched = total.saturating_sub(bm.matched);
-        let moved_lines = bm.per_line.iter().skip(1).filter(|s| !s.is_empty()).count();
-        w.alpha * bm.matched as f64
+        let unmatched = total.saturating_sub(matched);
+        w.alpha * matched as f64
             - w.mu * unmatched as f64
             - w.beta * k as f64
             - w.gamma * (k - 1) as f64
             - w.gamma * moved_lines as f64 * 0.5
     };
 
-    let old_first_ascii_words: Vec<Option<&str>> = cluster
-        .old_rows
-        .iter()
-        .map(|r| first_ascii_word(r.text()))
-        .collect();
-    let new_first_ascii_words: Vec<Option<&str>> = cluster
-        .new_rows
-        .iter()
-        .map(|r| first_ascii_word(r.text()))
-        .collect();
+    // Flatten old tokens
+    all_old_ids.clear();
+    all_old_coords.clear();
+    all_old_token_chars.clear();
+    old_row_token_starts.clear();
+    for (row_idx, dt) in old_tokens.iter().enumerate() {
+        old_row_token_starts.push(all_old_ids.len());
+        for (ti, &id) in dt.ids.iter().enumerate() {
+            all_old_ids.push(id);
+            all_old_coords.push((row_idx as u8, ti as u8));
+            all_old_token_chars.push(dt.token_chars[ti]);
+        }
+    }
+    old_row_token_starts.push(all_old_ids.len());
 
-    let old_indents: Vec<usize> = cluster
-        .old_rows
-        .iter()
-        .map(|r| r.text().len() - r.text().trim_start().len())
-        .collect();
-    let new_indents: Vec<usize> = cluster
-        .new_rows
-        .iter()
-        .map(|r| r.text().len() - r.text().trim_start().len())
-        .collect();
+    // Flatten new tokens
+    all_new_ids.clear();
+    all_new_coords.clear();
+    all_new_token_chars.clear();
+    new_row_token_starts.clear();
+    for (row_idx, dt) in new_tokens.iter().enumerate() {
+        new_row_token_starts.push(all_new_ids.len());
+        for (ti, &id) in dt.ids.iter().enumerate() {
+            all_new_ids.push(id);
+            all_new_coords.push((row_idx as u8, ti as u8));
+            all_new_token_chars.push(dt.token_chars[ti]);
+        }
+    }
+    new_row_token_starts.push(all_new_ids.len());
 
-    let old_prox_close: Vec<f64> = old_close_dist
-        .iter()
-        .map(|&d| {
-            if d == usize::MAX {
-                0.0
-            } else {
-                1.0 / (1.0 + (d as f64).powi(2))
-            }
-        })
-        .collect();
-    let new_prox_close: Vec<f64> = new_close_dist
-        .iter()
-        .map(|&d| {
-            if d == usize::MAX {
-                0.0
-            } else {
-                1.0 / (1.0 + (d as f64).powi(2))
-            }
-        })
-        .collect();
+    precompute_valid_blocks(old_tokens, old_meta, old_row_token_starts, old_valid_blocks);
 
-    let old_prox_open: Vec<f64> = old_open_dist
-        .iter()
-        .map(|&d| {
-            if d == usize::MAX {
-                0.0
-            } else {
-                1.0 / (1.0 + (d as f64).powi(2))
-            }
-        })
-        .collect();
-    let new_prox_open: Vec<f64> = new_open_dist
-        .iter()
-        .map(|&d| {
-            if d == usize::MAX {
-                0.0
-            } else {
-                1.0 / (1.0 + (d as f64).powi(2))
-            }
-        })
-        .collect();
+    precompute_valid_blocks(new_tokens, new_meta, new_row_token_starts, new_valid_blocks);
+
+    let use_band = m * n > 2500;
+    let band_limit_j = 64.max((n as isize) / 10);
+    let band_limit_i = 64.max((m as isize) / 10);
+    let expected_i_for_j: Vec<isize> = if use_band {
+        (0..=n)
+            .map(|j| (j * m).checked_div(n).unwrap_or(0) as isize)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let dummy_tok = DpTokens {
+        ids: Vec::new(),
+        chars: 0,
+        token_chars: Vec::new(),
+        token_mask: [0; 4],
+    };
+    let empty_blocks = RowValidBlocks::default();
 
     for i in 0..=m {
+        let expected_j = (i * n).checked_div(m).unwrap_or(0) as isize;
+        let row_curr_idx = i * stride;
+        let row_next_idx = (i + 1) * stride;
+
+        let has_old = i < m;
+        let (ot, om, old_valid_blocks_i) = if has_old {
+            (&old_tokens[i], old_meta[i], &old_valid_blocks[i])
+        } else {
+            (&dummy_tok, DpRowMeta::default(), &empty_blocks)
+        };
+
         for j in 0..=n {
-            let base = dp[i * stride + j].score;
+            let curr = row_curr_idx + j;
+            let base = dp[curr].score;
             if base == neg {
                 continue;
             }
             // Standalone Del / Add.
-            if i < m && base - w.beta > dp[(i + 1) * stride + j].score {
-                dp[(i + 1) * stride + j] = Cell {
+            if has_old && base - w.beta > dp[row_next_idx + j].score {
+                dp[row_next_idx + j] = Cell {
                     score: base - w.beta,
-                    back: Some((i, j, "del", 1)),
+                    prev_i: i as u32,
+                    prev_j: j as u32,
+                    k: 1,
+                    op: OpKind::Del,
                 };
             }
-            if j < n && base - w.beta >= dp[i * stride + j + 1].score {
+            if j < n && base - w.beta >= dp[curr + 1].score {
                 // `>=`: on a del/add tie the path prefers ending with the
                 // add — the emission reads dels first, adds after (the
                 // diff reading convention).
-                dp[i * stride + j + 1] = Cell {
+                dp[curr + 1] = Cell {
                     score: base - w.beta,
-                    back: Some((i, j, "add", 1)),
+                    prev_i: i as u32,
+                    prev_j: j as u32,
+                    k: 1,
+                    op: OpKind::Add,
                 };
             }
+            if use_band {
+                let diff_j = (j as isize - expected_j).abs();
+                let diff_i = (i as isize - expected_i_for_j[j]).abs();
+                if diff_j > band_limit_j && diff_i > band_limit_i {
+                    continue;
+                }
+            }
             // 1-to-1: Mod or Mov.
-            if i < m
-                && j < n
-                && old_comment[i] == new_comment[j]
-                && old_kind[i].is_compatible(new_kind[j])
-            {
-                let (ot, nt) = (&old[i], &new[j]);
-                if ot.trimmed == nt.trimmed {
+            let nm = if j < n {
+                new_meta[j]
+            } else {
+                DpRowMeta::default()
+            };
+            if has_old && j < n && om.comment == nm.comment && om.kind.is_compatible(nm.kind) {
+                let next_diag = row_next_idx + j + 1;
+                let nt = &new_tokens[j];
+                if om.trimmed_id == nm.trimmed_id {
                     // Verbatim (trim-insensitive) — a Mov.
                     let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
                     let s = base + w.alpha * ot.chars.max(nt.chars) as f64
                         - w.beta
                         - w.gamma * length_diff;
-                    if s > dp[(i + 1) * stride + j + 1].score {
-                        dp[(i + 1) * stride + j + 1] = Cell {
+                    if s > dp[next_diag].score {
+                        dp[next_diag] = Cell {
                             score: s,
-                            back: Some((i, j, "mov", 1)),
+                            prev_i: i as u32,
+                            prev_j: j as u32,
+                            k: 1,
+                            op: OpKind::Mov,
                         };
                     }
                 } else if ot.ids.is_empty() && nt.ids.is_empty() {
                     // blank ↔ blank: a trivial full match in one row.
                     let s = base - w.beta + w.delta;
-                    if s > dp[(i + 1) * stride + j + 1].score {
-                        dp[(i + 1) * stride + j + 1] = Cell {
+                    if s > dp[next_diag].score {
+                        dp[next_diag] = Cell {
                             score: s,
-                            back: Some((i, j, "mod", 1)),
+                            prev_i: i as u32,
+                            prev_j: j as u32,
+                            k: 1,
+                            op: OpKind::Mod,
                         };
                     }
                 } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
-                    let token_overlap = (ot.token_mask & nt.token_mask) != 0;
-                    let matched = if token_overlap {
-                        let pairs = lcs_pairs_ids(&ot.ids, &nt.ids, &interner.ws, &interner.alnum);
-                        let mut m = 0usize;
-                        for &jt in pairs.values() {
-                            m += nt.token_chars[jt];
-                        }
-                        m
+                    let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
+                    let min_chars = ot.chars.min(nt.chars);
+                    let char_bound = if token_overlap {
+                        token_mask_matched_chars_bound(ot, &nt.token_mask, &interner.ws)
+                            .min(min_chars)
                     } else {
-                        0usize
+                        0
                     };
                     let total = ot.chars.max(nt.chars);
-                    let unmatched = total.saturating_sub(matched);
-                    let statement_head_match =
-                        match (old_first_ascii_words[i], new_first_ascii_words[j]) {
-                            (Some(a), Some(b)) => a == b,
-                            _ => false,
-                        };
+                    let max_matched = char_bound;
+
+                    let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => false,
+                    };
                     let is_config_property_match = statement_head_match
                         && profile.is_some_and(|p| {
                             p.hash_comment && !p.line_comment && !p.block_comment && !p.markdown
                         })
-                        && is_duplicate_key_assignment(
-                            cluster.old_rows[i].text(),
-                            cluster.new_rows[j].text(),
-                        );
-                    let (penalty, syntax) = if is_config_property_match {
-                        let min_chars = ot.chars.min(nt.chars);
-                        let max_chars = ot.chars.max(nt.chars);
-                        let core_unmatched = min_chars.saturating_sub(matched);
-                        let length_diff = (max_chars - min_chars) as f64;
-                        let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
-                        (pen, w.head_agree_bonus + 200.0)
+                        && om.config_key.is_some()
+                        && om.config_key == nm.config_key;
+                    let max_syn = if is_config_property_match {
+                        w.head_agree_bonus + 200.0
+                    } else if statement_head_match {
+                        w.head_agree_bonus
                     } else {
-                        let syn = if statement_head_match {
-                            w.head_agree_bonus
+                        0.0
+                    };
+                    let max_close =
+                        if om.close_dist == 1 && nm.close_dist == 1 && om.indent == nm.indent {
+                            w.delta
                         } else {
-                            0.0
+                            w.epsilon
                         };
-                        (w.mu * unmatched as f64, syn)
+
+                    let max_possible_mod_s = base + w.alpha * max_matched as f64
+                        - w.mu * (total - max_matched) as f64
+                        - w.beta
+                        + max_syn
+                        + max_close
+                        + w.epsilon;
+                    let mod_threshold = (base - 2.0 * w.beta).max(dp[next_diag].score);
+                    if max_possible_mod_s <= mod_threshold {
+                        continue;
+                    }
+
+                    let matched = if token_overlap && char_bound > 0 {
+                        lcs_matched_chars_ids(
+                            &ot.ids,
+                            &nt.ids,
+                            &interner.ws,
+                            &interner.alnum,
+                            &nt.token_chars,
+                            lcs_scratch,
+                        )
+                    } else {
+                        0usize
+                    };
+                    let unmatched = total.saturating_sub(matched);
+                    let (penalty, syntax) = if is_config_property_match {
+                        let core_unmatched = min_chars.saturating_sub(matched);
+                        let length_diff = (total - min_chars) as f64;
+                        let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
+                        (pen, max_syn)
+                    } else {
+                        (w.mu * unmatched as f64, max_syn)
                     };
                     // Distance-based closing-brace proximity bonus, tapering with distance
-                    let proximity_old_close = old_prox_close[i];
-                    let proximity_new_close = new_prox_close[j];
+                    let proximity_old_close = om.prox_close;
+                    let proximity_new_close = nm.prox_close;
                     let close_bonus = w.epsilon * proximity_old_close * proximity_new_close;
                     // Distance-based opening-brace proximity bonus
-                    let proximity_old_open = old_prox_open[i];
-                    let proximity_new_open = new_prox_open[j];
+                    let proximity_old_open = om.prox_open;
+                    let proximity_new_open = nm.prox_open;
                     let open_bonus = w.epsilon * proximity_old_open * proximity_new_open;
 
                     let indent_diff =
-                        (old_indents[i] as isize - new_indents[j] as isize).unsigned_abs() as f64;
+                        (om.indent as isize - nm.indent as isize).unsigned_abs() as f64;
                     let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
 
                     let similarity_ratio = matched as f64 / total as f64;
                     let is_direct_tail_pair =
-                        old_close_dist[i] == 1 && new_close_dist[j] == 1 && indent_diff == 0.0;
+                        om.close_dist == 1 && nm.close_dist == 1 && indent_diff == 0.0;
                     let effective_close_bonus = if is_direct_tail_pair {
                         w.delta
                     } else {
@@ -760,66 +1246,75 @@ pub fn solve_cluster_with_arena(
                     let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
                         + syntax
                         + (effective_close_bonus + open_bonus) * proximity_gate;
-                    if s > dp[(i + 1) * stride + j + 1].score {
-                        dp[(i + 1) * stride + j + 1] = Cell {
+                    if s > dp[next_diag].score {
+                        dp[next_diag] = Cell {
                             score: s,
-                            back: Some((i, j, "mod", 1)),
+                            prev_i: i as u32,
+                            prev_j: j as u32,
+                            k: 1,
+                            op: OpKind::Mod,
                         };
                     }
                 }
             }
             // Expand: old i vs new block j..j+k (k >= 2).
-            if i < m
-                && j + 2 <= n
-                && old[i].chars >= 8
-                && (old[i].token_mask & new[j].token_mask) != 0
-                && is_reflow_candidate(cluster.old_rows[i].text())
-                && old_comment[i] == new_comment[j]
-            {
-                let max_k = MAX_BLOCK_K.min(n - j);
-                for k in 2..=max_k {
-                    let block = &new[j..j + k];
-                    if !new[j..j + k].iter().enumerate().all(|(idx, _)| {
-                        let text = cluster.new_rows[j + idx].text();
-                        let ok = is_reflow_candidate(text);
-                        let no_mid_semi = idx == k - 1 || !text.trim().ends_with(';');
-                        let not_statement_start =
-                            idx == 0 || old_comment[i] || !is_statement_start(text, profile);
-                        let not_repeated_head = idx == 0
-                            || old_comment[i]
-                            || !is_duplicate_key_assignment(cluster.new_rows[j].text(), text);
-                        ok && no_mid_semi
-                            && new_comment[j + idx] == old_comment[i]
-                            && not_statement_start
-                            && not_repeated_head
-                    }) {
-                        break;
-                    }
-                    let block_chars: usize = block.iter().map(|t| t.chars).sum();
-                    let total = old[i].chars.max(block_chars);
-                    let min_chars = old[i].chars.min(block_chars);
-                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+            if has_old && j < n && ot.chars >= 8 && om.is_reflow && om.comment == nm.comment {
+                for pblock in new_valid_blocks[j].as_slice() {
+                    let k = pblock.k;
+                    if !mask_overlap(&ot.token_mask, &pblock.mask) {
                         continue;
                     }
-                    let bm = block_lcs(&old[i], block, interner);
-                    if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
+                    let total = ot.chars.max(pblock.chars);
+                    let min_chars = ot.chars.min(pblock.chars);
+                    let char_bound = token_mask_matched_chars_bound(ot, &pblock.mask, &interner.ws)
+                        .min(min_chars);
+                    if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
                         continue;
                     }
-                    let anchor = block_anchor(&bm);
-                    let syntax = if old_first_ascii_words[i].is_some()
-                        && (old_first_ascii_words[i] == new_first_ascii_words[j]
-                            || old_first_ascii_words[i] == new_first_ascii_words[j + anchor])
+                    let max_syntax = if om.first_ascii_word.is_some() {
+                        w.delta
+                    } else {
+                        0.0
+                    };
+                    let max_close = if om.close_tail != CloseDelimiter::None {
+                        w.close_agree_bonus
+                    } else {
+                        0.0
+                    };
+                    let max_possible_s = base
+                        + calc_block_score(char_bound, 0, ot.chars, pblock.chars, k)
+                        + max_syntax
+                        + max_close;
+                    let expand_threshold =
+                        (base - (1 + k) as f64 * w.beta).max(dp[(i + 1) * stride + j + k].score);
+                    if max_possible_s <= expand_threshold {
+                        continue;
+                    }
+
+                    let (bm_matched, bm_moved_lines, anchor) = block_lcs_fast_precomputed(
+                        &ot.ids,
+                        &all_new_ids[pblock.token_start..pblock.token_end],
+                        &all_new_coords[pblock.token_start..pblock.token_end],
+                        &all_new_token_chars[pblock.token_start..pblock.token_end],
+                        j,
+                        k,
+                        &interner.ws,
+                        &interner.alnum,
+                        lcs_scratch,
+                    );
+                    if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
+                    let syntax = if om.first_ascii_word.is_some()
+                        && (om.first_ascii_word == nm.first_ascii_word
+                            || om.first_ascii_word == new_meta[j + anchor].first_ascii_word)
                     {
                         w.delta
                     } else {
                         0.0
                     };
-                    let old_trimmed = cluster.old_rows[i].text().trim();
-                    let last_new_trimmed = cluster.new_rows[j + k - 1].text().trim();
-                    let close_agree = (old_trimmed.ends_with("};") && last_new_trimmed == "};")
-                        || (old_trimmed.ends_with('}') && last_new_trimmed == "}")
-                        || (old_trimmed.ends_with(");") && last_new_trimmed == ");")
-                        || (old_trimmed.ends_with(')') && last_new_trimmed == ")");
+                    let close_agree = om.close_tail != CloseDelimiter::None
+                        && om.close_tail == new_meta[j + k - 1].exact_close;
                     let close_bonus = if close_agree {
                         w.close_agree_bonus
                     } else {
@@ -827,83 +1322,106 @@ pub fn solve_cluster_with_arena(
                     };
 
                     let s = base
-                        + block_score(&bm, old[i].chars, block_chars, k)
+                        + calc_block_score(bm_matched, bm_moved_lines, ot.chars, pblock.chars, k)
                         + syntax
                         + close_bonus;
                     if s > dp[(i + 1) * stride + j + k].score {
                         dp[(i + 1) * stride + j + k] = Cell {
                             score: s,
-                            back: Some((i, j, "expand", k)),
+                            prev_i: i as u32,
+                            prev_j: j as u32,
+                            k: k as u8,
+                            op: OpKind::Expand,
                         };
                     }
                 }
             }
             // Collapse: old block i..i+k vs new j (k >= 2).
             if j < n
-                && i + 2 <= m
-                && new[j].chars >= 8
-                && (new[j].token_mask & old[i].token_mask) != 0
-                && is_reflow_candidate(cluster.new_rows[j].text())
-                && old_comment[i] == new_comment[j]
+                && has_old
+                && new_tokens[j].chars >= 8
+                && nm.is_reflow
+                && om.comment == nm.comment
             {
-                let max_k = MAX_BLOCK_K.min(m - i);
-                for k in 2..=max_k {
-                    let block = &old[i..i + k];
-                    if !old[i..i + k].iter().enumerate().all(|(idx, _)| {
-                        let text = cluster.old_rows[i + idx].text();
-                        let ok = is_reflow_candidate(text);
-                        let no_mid_semi = idx == k - 1 || !text.trim().ends_with(';');
-                        let not_statement_start =
-                            idx == 0 || new_comment[j] || !is_statement_start(text, profile);
-                        let not_repeated_head = idx == 0
-                            || new_comment[j]
-                            || !is_duplicate_key_assignment(cluster.old_rows[i].text(), text);
-                        ok && no_mid_semi
-                            && old_comment[i + idx] == new_comment[j]
-                            && not_statement_start
-                            && not_repeated_head
-                    }) {
-                        break;
-                    }
-                    let block_chars: usize = block.iter().map(|t| t.chars).sum();
-                    let total = new[j].chars.max(block_chars);
-                    let min_chars = new[j].chars.min(block_chars);
-                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+                for pblock in old_valid_blocks_i.as_slice() {
+                    let k = pblock.k;
+                    if !mask_overlap(&new_tokens[j].token_mask, &pblock.mask) {
                         continue;
                     }
-                    let bm = block_lcs(&new[j], block, interner);
-                    if bm.matched < 8 || (bm.matched as f64 / total as f64) < 0.35 {
+                    let total = new_tokens[j].chars.max(pblock.chars);
+                    let min_chars = new_tokens[j].chars.min(pblock.chars);
+                    let char_bound =
+                        token_mask_matched_chars_bound(&new_tokens[j], &pblock.mask, &interner.ws)
+                            .min(min_chars);
+                    if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
                         continue;
                     }
-                    let anchor = block_anchor(&bm);
-                    let syntax = if new_first_ascii_words[j].is_some()
-                        && (new_first_ascii_words[j] == old_first_ascii_words[i]
-                            || new_first_ascii_words[j] == old_first_ascii_words[i + anchor])
+                    let max_syntax = if nm.first_ascii_word.is_some() {
+                        w.delta
+                    } else {
+                        0.0
+                    };
+                    let max_close = if nm.close_tail != CloseDelimiter::None {
+                        w.close_agree_bonus
+                    } else {
+                        0.0
+                    };
+                    let max_possible_s = base
+                        + calc_block_score(char_bound, 0, new_tokens[j].chars, pblock.chars, k)
+                        + max_syntax
+                        + max_close;
+                    let collapse_threshold =
+                        (base - (k + 1) as f64 * w.beta).max(dp[(i + k) * stride + j + 1].score);
+                    if max_possible_s <= collapse_threshold {
+                        continue;
+                    }
+
+                    let (bm_matched, bm_moved_lines, anchor) = block_lcs_fast_precomputed(
+                        &new_tokens[j].ids,
+                        &all_old_ids[pblock.token_start..pblock.token_end],
+                        &all_old_coords[pblock.token_start..pblock.token_end],
+                        &all_old_token_chars[pblock.token_start..pblock.token_end],
+                        i,
+                        k,
+                        &interner.ws,
+                        &interner.alnum,
+                        lcs_scratch,
+                    );
+                    if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
+                    let syntax = if nm.first_ascii_word.is_some()
+                        && (nm.first_ascii_word == om.first_ascii_word
+                            || nm.first_ascii_word == old_meta[i + anchor].first_ascii_word)
                     {
                         w.delta
                     } else {
                         0.0
                     };
-                    let new_trimmed = cluster.new_rows[j].text().trim();
-                    let last_old_trimmed = cluster.old_rows[i + k - 1].text().trim();
-                    let close_agree = (new_trimmed.ends_with("};") && last_old_trimmed == "};")
-                        || (new_trimmed.ends_with('}') && last_old_trimmed == "}")
-                        || (new_trimmed.ends_with(");") && last_old_trimmed == ");")
-                        || (new_trimmed.ends_with(')') && last_old_trimmed == ")");
+                    let close_agree = nm.close_tail != CloseDelimiter::None
+                        && nm.close_tail == old_meta[i + k - 1].exact_close;
                     let close_bonus = if close_agree {
                         w.close_agree_bonus
                     } else {
                         0.0
                     };
 
-                    let s = base
-                        + block_score(&bm, new[j].chars, block_chars, k)
-                        + syntax
-                        + close_bonus;
+                    let s =
+                        base + calc_block_score(
+                            bm_matched,
+                            bm_moved_lines,
+                            new_tokens[j].chars,
+                            pblock.chars,
+                            k,
+                        ) + syntax
+                            + close_bonus;
                     if s > dp[(i + k) * stride + j + 1].score {
                         dp[(i + k) * stride + j + 1] = Cell {
                             score: s,
-                            back: Some((i, j, "collapse", k)),
+                            prev_i: i as u32,
+                            prev_j: j as u32,
+                            k: k as u8,
+                            op: OpKind::Collapse,
                         };
                     }
                 }
@@ -912,15 +1430,23 @@ pub fn solve_cluster_with_arena(
     }
 
     // Traceback: collect (i, j, op, k) from (m, n) back to (0, 0).
-    let mut ops: Vec<(usize, usize, &'static str, usize)> = Vec::new();
+    let mut ops: Vec<(usize, usize, OpKind, usize)> = Vec::new();
     let (mut i, mut j) = (m, n);
-    while let Some(bp) = dp[i * stride + j].back {
-        let (pi, pj, op, k) = bp;
-        ops.push((pi, pj, op, k));
-        i = pi;
-        j = pj;
+    while dp[i * stride + j].op != OpKind::None {
+        let cell = dp[i * stride + j];
+        ops.push((
+            cell.prev_i as usize,
+            cell.prev_j as usize,
+            cell.op,
+            cell.k as usize,
+        ));
+        i = cell.prev_i as usize;
+        j = cell.prev_j as usize;
     }
     ops.reverse();
+
+    let old = old_tokens;
+    let new = new_tokens;
 
     // Emit rows + transitions in path order.
     let old_line_of = |idx: usize| match &cluster.old_rows[idx] {
@@ -936,35 +1462,29 @@ pub fn solve_cluster_with_arena(
     let mut transitions: Vec<DpOp> = Vec::new();
     for &(pi, pj, op, k) in &ops {
         match op {
-            "del" => {
+            OpKind::Del => {
                 rows.push(Row::Del(old_line_of(pi)));
                 transitions.push(DpOp::Del);
             }
-            "add" => {
+            OpKind::Add => {
                 rows.push(Row::Add(new_line_of(pj)));
                 transitions.push(DpOp::Add);
             }
-            "mov" => {
+            OpKind::Mov => {
                 rows.push(Row::Mov {
                     old_line: old_line_of(pi),
                     new_line: new_line_of(pj),
                 });
                 transitions.push(DpOp::Mov);
             }
-            "mod" => {
-                let (ot, nt) = (&old[pi], &new[pj]);
-                let pairs = lcs_pairs_ids(&ot.ids, &nt.ids, &interner.ws, &interner.alnum);
-                let mut matched = 0usize;
-                for &jt in pairs.values() {
-                    matched += nt.token_chars[jt];
-                }
+            OpKind::Mod => {
                 rows.push(Row::Mod {
                     old_line: old_line_of(pi),
                     new_line: new_line_of(pj),
                 });
-                transitions.push(DpOp::Mod { matched });
+                transitions.push(DpOp::Mod { matched: 0 });
             }
-            "expand" => {
+            OpKind::Expand => {
                 let bm = block_lcs(&old[pi], &new[pj..pj + k], interner);
                 let anchor = block_anchor(&bm);
                 let spans = subline_moves(&bm, anchor);
@@ -987,7 +1507,7 @@ pub fn solve_cluster_with_arena(
                     spans,
                 });
             }
-            "collapse" => {
+            OpKind::Collapse => {
                 let bm = block_lcs(&new[pj], &old[pi..pi + k], interner);
                 let anchor = block_anchor(&bm);
                 let spans = subline_moves(&bm, anchor);
@@ -1010,7 +1530,7 @@ pub fn solve_cluster_with_arena(
                     spans,
                 });
             }
-            other => unreachable!("unknown op {other}"),
+            OpKind::None => unreachable!(),
         }
     }
 

@@ -74,34 +74,33 @@ pub fn fence_lang_ext(tag: &str) -> &str {
 // ---------------------------------------------------------------------------
 
 pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
+    static RS: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(rust::profile);
+    static WEB: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(web::profile);
+    static PY: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(python::profile);
+    static SH: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(shell::profile);
+    static C_FAM: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(c_family::profile);
+    static GO: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(go::profile);
+    static MD: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(markdown::profile);
+    static TOML_YAML: std::sync::LazyLock<LangProfile> =
+        std::sync::LazyLock::new(config::toml_yaml_profile);
+    static JSON: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::json_profile);
+
     // Fence ids are LANGUAGE names (` ```rust `); the profiles are keyed by
     // the file EXTENSIONS (`rs`). Map the common aliases — and the rust
     // doctest attribute lists — so a labeled fence actually highlights.
     let ext = fence_lang_ext(ext);
-    let profile = match ext {
-        "rs" => rust::profile(),
-        "ts" | "tsx" | "js" | "jsx" | "mjs" => web::profile(),
-        "py" => python::profile(),
-        "sh" | "bash" => shell::profile(),
-        "c" | "h" | "cpp" | "hpp" | "java" => c_family::profile(),
-        "go" => go::profile(),
-        "md" | "markdown" => markdown::profile(),
-        "toml" | "yaml" | "yml" => config::toml_yaml_profile(),
-        "json" => config::json_profile(),
-        _ => return None,
-    };
-    // The profile rebuilds 2 regexes — and lang_profile is called PER ROW
-    // inside fence regions. Cache by the canonical ext: build once, leak the
-    // Box, hand out a 'static ref so no caller clones or rebuilds.
-    static CACHE: OnceLock<Mutex<HashMap<String, &'static LangProfile>>> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut guard = cache.lock().unwrap();
-    if let Some(p) = guard.get(ext) {
-        return Some(*p);
+    match ext {
+        "rs" => Some(&*RS),
+        "ts" | "tsx" | "js" | "jsx" | "mjs" => Some(&*WEB),
+        "py" => Some(&*PY),
+        "sh" | "bash" => Some(&*SH),
+        "c" | "h" | "cpp" | "hpp" | "java" => Some(&*C_FAM),
+        "go" => Some(&*GO),
+        "md" | "markdown" => Some(&*MD),
+        "toml" | "yaml" | "yml" => Some(&*TOML_YAML),
+        "json" => Some(&*JSON),
+        _ => None,
     }
-    let boxed: &'static LangProfile = Box::leak(Box::new(profile));
-    guard.insert(ext.to_string(), boxed);
-    Some(boxed)
 }
 
 // ---------------------------------------------------------------------------
@@ -173,48 +172,258 @@ pub fn token_re_for(profile: &LangProfile) -> Regex {
 /// This scanner is ~ns/char: a ~50× cut. The color logic in
 /// `classify_tokens` runs unchanged on these spans (behavior-identical,
 /// golden-gated).
-pub(super) fn syntax_token_spans(text: &str, profile: &LangProfile) -> Vec<(usize, usize)> {
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let n = chars.len();
-    let end_off = |i: usize| if i < n { chars[i].0 } else { text.len() };
-    let mut out = Vec::new();
-    let mut i = 0;
-    while i < n {
-        let start_off = chars[i].0;
-        let c = chars[i].1;
-        // Try the alternation in the TS's fixed order; first match wins.
-        // The `#`-comment and `/`-comment both scan to EOL — one merged arm.
-        let next = if (profile.hash_comment && c == '#')
-            || (profile.line_comment && c == '/' && i + 1 < n && chars[i + 1].1 == '/')
-        {
-            scan_to_eol(&chars, i)
-        } else if profile.block_comment && c == '/' && i + 1 < n && chars[i + 1].1 == '*' {
-            scan_block(&chars, i).unwrap_or(i + 1)
-        } else if c == 'r' {
-            scan_raw(&chars, i).unwrap_or_else(|| scan_ident(&chars, i))
-        } else if c == '"' {
-            scan_dstr(&chars, i)
-        } else if c == '\'' {
-            scan_sstr(&chars, i)
-        } else if c == '`' {
-            scan_bt(&chars, i)
-        } else if c == '0' && i + 1 < n && chars[i + 1].1 == 'x' {
-            // \b0x[0-9a-fA-F_]+\b. The leading \b is satisfied (a '0'
-            // start never follows an ascii_word char — idents consume those).
-            scan_hex(&chars, i + 2).unwrap_or_else(|| scan_num_or_other(&chars, i))
-        } else if c.is_ascii_digit() {
-            scan_num_or_other(&chars, i)
-        } else if c.is_ascii_alphabetic() || c == '_' {
-            scan_ident(&chars, i)
-        } else if c.is_whitespace() {
-            scan_ws(&chars, i)
-        } else {
-            i + 1 // RE_OTHER: one char (. does not match \n, but \n is ws)
-        };
-        out.push((start_off, end_off(next)));
-        i = next;
+/// Run the hand-rolled scanner producing token spans for syntax coloring.
+pub(super) fn for_each_syntax_token_span(
+    text: &str,
+    profile: &LangProfile,
+    mut f: impl FnMut(usize, usize),
+) {
+    if text.is_ascii() {
+        let bytes = text.as_bytes();
+        let n = bytes.len();
+        let mut i = 0;
+        while i < n {
+            let start_off = i;
+            let b = bytes[i];
+            let next = if (profile.hash_comment && b == b'#')
+                || (profile.line_comment && b == b'/' && i + 1 < n && bytes[i + 1] == b'/')
+            {
+                scan_to_eol_bytes(bytes, i)
+            } else if profile.block_comment && b == b'/' && i + 1 < n && bytes[i + 1] == b'*' {
+                scan_block_bytes(bytes, i).unwrap_or(i + 1)
+            } else if b == b'r' {
+                scan_raw_bytes(bytes, i).unwrap_or_else(|| scan_ident_bytes(bytes, i))
+            } else if b == b'"' {
+                scan_dstr_bytes(bytes, i)
+            } else if b == b'\'' {
+                scan_sstr_bytes(bytes, i)
+            } else if b == b'`' {
+                scan_bt_bytes(bytes, i)
+            } else if b == b'0' && i + 1 < n && bytes[i + 1] == b'x' {
+                scan_hex_bytes(bytes, i + 2).unwrap_or_else(|| scan_num_or_other_bytes(bytes, i))
+            } else if b.is_ascii_digit() {
+                scan_num_or_other_bytes(bytes, i)
+            } else if b.is_ascii_alphabetic() || b == b'_' {
+                scan_ident_bytes(bytes, i)
+            } else if b.is_ascii_whitespace() {
+                scan_ws_bytes(bytes, i)
+            } else {
+                i + 1
+            };
+            f(start_off, next);
+            i = next;
+        }
+    } else {
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        let n = chars.len();
+        let end_off = |i: usize| if i < n { chars[i].0 } else { text.len() };
+        let mut i = 0;
+        while i < n {
+            let start_off = chars[i].0;
+            let c = chars[i].1;
+            let next = if (profile.hash_comment && c == '#')
+                || (profile.line_comment && c == '/' && i + 1 < n && chars[i + 1].1 == '/')
+            {
+                scan_to_eol(&chars, i)
+            } else if profile.block_comment && c == '/' && i + 1 < n && chars[i + 1].1 == '*' {
+                scan_block(&chars, i).unwrap_or(i + 1)
+            } else if c == 'r' {
+                scan_raw(&chars, i).unwrap_or_else(|| scan_ident(&chars, i))
+            } else if c == '"' {
+                scan_dstr(&chars, i)
+            } else if c == '\'' {
+                scan_sstr(&chars, i)
+            } else if c == '`' {
+                scan_bt(&chars, i)
+            } else if c == '0' && i + 1 < n && chars[i + 1].1 == 'x' {
+                scan_hex(&chars, i + 2).unwrap_or_else(|| scan_num_or_other(&chars, i))
+            } else if c.is_ascii_digit() {
+                scan_num_or_other(&chars, i)
+            } else if c.is_ascii_alphabetic() || c == '_' {
+                scan_ident(&chars, i)
+            } else if c.is_whitespace() {
+                scan_ws(&chars, i)
+            } else {
+                i + 1
+            };
+            f(start_off, end_off(next));
+            i = next;
+        }
     }
+}
+
+#[allow(dead_code)]
+pub(super) fn syntax_token_spans(text: &str, profile: &LangProfile) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for_each_syntax_token_span(text, profile, |s, e| out.push((s, e)));
     out
+}
+
+#[inline(always)]
+fn scan_to_eol_bytes(bytes: &[u8], i: usize) -> usize {
+    let n = bytes.len();
+    let mut j = i + 1;
+    while j < n && bytes[j] != b'\n' {
+        j += 1;
+    }
+    j
+}
+
+#[inline(always)]
+fn scan_block_bytes(bytes: &[u8], i: usize) -> Option<usize> {
+    let n = bytes.len();
+    let mut j = i + 2;
+    while j < n {
+        if bytes[j] == b'*' && j + 1 < n && bytes[j + 1] == b'/' {
+            return Some(j + 2);
+        }
+        j += 1;
+    }
+    None
+}
+
+#[inline(always)]
+fn scan_raw_bytes(bytes: &[u8], i: usize) -> Option<usize> {
+    let n = bytes.len();
+    let mut j = i + 1;
+    while j < n && bytes[j] == b'#' {
+        j += 1;
+    }
+    if j >= n || bytes[j] != b'"' {
+        return None;
+    }
+    j += 1;
+    while j < n && bytes[j] != b'"' {
+        j += if bytes[j] == b'\\' { 2 } else { 1 };
+    }
+    if j >= n {
+        return None;
+    }
+    j += 1;
+    while j < n && bytes[j] == b'#' {
+        j += 1;
+    }
+    Some(j)
+}
+
+#[inline(always)]
+fn scan_quoted_bytes(bytes: &[u8], i: usize, quote: u8) -> Option<usize> {
+    let n = bytes.len();
+    let mut j = i + 1;
+    while j < n {
+        let b = bytes[j];
+        if b == b'\\' {
+            j += 2;
+        } else if b == quote {
+            return Some(j + 1);
+        } else if b == b'\n' {
+            return None;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+#[inline(always)]
+fn scan_dstr_bytes(bytes: &[u8], i: usize) -> usize {
+    scan_quoted_bytes(bytes, i, b'"').unwrap_or(i + 1)
+}
+
+#[inline(always)]
+fn scan_sstr_bytes(bytes: &[u8], i: usize) -> usize {
+    scan_quoted_bytes(bytes, i, b'\'').unwrap_or(i + 1)
+}
+
+#[inline(always)]
+fn scan_bt_bytes(bytes: &[u8], i: usize) -> usize {
+    scan_quoted_bytes(bytes, i, b'`').unwrap_or(i + 1)
+}
+
+#[inline(always)]
+fn scan_hex_bytes(bytes: &[u8], i: usize) -> Option<usize> {
+    let n = bytes.len();
+    let mut j = i;
+    while j < n {
+        let b = bytes[j];
+        if b.is_ascii_hexdigit() || b == b'_' {
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    if j == i {
+        return None;
+    }
+    if j < n && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        return None;
+    }
+    Some(j)
+}
+
+#[inline(always)]
+fn scan_num_or_other_bytes(bytes: &[u8], i: usize) -> usize {
+    let n = bytes.len();
+    let mut digits_end = i;
+    while digits_end < n {
+        let b = bytes[digits_end];
+        if b.is_ascii_digit() || b == b'_' {
+            digits_end += 1;
+        } else {
+            break;
+        }
+    }
+    let mut after_dec = digits_end;
+    if digits_end < n && bytes[digits_end] == b'.' {
+        let mut j = digits_end + 1;
+        while j < n && (bytes[j].is_ascii_digit() || bytes[j] == b'_') {
+            j += 1;
+        }
+        if j > digits_end + 1 {
+            after_dec = j;
+        }
+    }
+    let mut after_exp = after_dec;
+    if after_dec < n && (bytes[after_dec] == b'e' || bytes[after_dec] == b'E') {
+        let mut j = after_dec + 1;
+        if j < n && (bytes[j] == b'+' || bytes[j] == b'-') {
+            j += 1;
+        }
+        let start_digits = j;
+        while j < n && (bytes[j].is_ascii_digit() || bytes[j] == b'_') {
+            j += 1;
+        }
+        if j > start_digits {
+            after_exp = j;
+        }
+    }
+    for &end in &[after_exp, after_dec, digits_end] {
+        let tail_ok = end >= n || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
+        if tail_ok {
+            return end;
+        }
+    }
+    i + 1
+}
+
+#[inline(always)]
+fn scan_ident_bytes(bytes: &[u8], i: usize) -> usize {
+    let n = bytes.len();
+    let mut j = i + 1;
+    while j < n && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        j += 1;
+    }
+    j
+}
+
+#[inline(always)]
+fn scan_ws_bytes(bytes: &[u8], i: usize) -> usize {
+    let n = bytes.len();
+    let mut j = i + 1;
+    while j < n && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    j
 }
 
 // ---------------------------------------------------------------------------

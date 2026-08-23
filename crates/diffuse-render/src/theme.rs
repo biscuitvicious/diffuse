@@ -13,28 +13,36 @@ pub struct RowStyle {
     pub cursor: u8,
     pub fill: Option<u8>,
     pub fill_cursor: Option<u8>,
+    pub tint_bg_str: &'static str,
+    pub cursor_bg_str: &'static str,
+    pub fill_bg_str: &'static str,
+    pub fill_cursor_bg_str: &'static str,
     pub fg: &'static str,
 }
 
 impl RowStyle {
     /// `\x1b[48;5;{tint}m` — the row's resting background.
-    pub fn tint_bg(&self) -> String {
-        format!("\x1b[48;5;{}m", self.tint)
+    #[inline]
+    pub fn tint_bg(&self) -> &'static str {
+        self.tint_bg_str
     }
 
     /// `\x1b[48;5;{cursor}m` — the row's selected (lifted) background.
-    pub fn cursor_bg(&self) -> String {
-        format!("\x1b[48;5;{}m", self.cursor)
+    #[inline]
+    pub fn cursor_bg(&self) -> &'static str {
+        self.cursor_bg_str
     }
 
     /// `\x1b[48;5;{fill}m` — the mod rows' word-fill background.
-    pub fn fill_bg(&self) -> String {
-        format!("\x1b[48;5;{}m", self.fill.unwrap_or(self.tint))
+    #[inline]
+    pub fn fill_bg(&self) -> &'static str {
+        self.fill_bg_str
     }
 
     /// `\x1b[48;5;{fill_cursor}m` — the selected word-fill background.
-    pub fn fill_cursor_bg(&self) -> String {
-        format!("\x1b[48;5;{}m", self.fill_cursor.unwrap_or(self.cursor))
+    #[inline]
+    pub fn fill_cursor_bg(&self) -> &'static str {
+        self.fill_cursor_bg_str
     }
 }
 
@@ -44,6 +52,10 @@ pub const S_ADD: RowStyle = RowStyle {
     cursor: 28,
     fill: Some(28),
     fill_cursor: Some(34),
+    tint_bg_str: "\x1b[48;5;22m",
+    cursor_bg_str: "\x1b[48;5;28m",
+    fill_bg_str: "\x1b[48;5;28m",
+    fill_cursor_bg_str: "\x1b[48;5;34m",
     fg: "toolDiffAdded",
 };
 
@@ -53,6 +65,10 @@ pub const S_DEL: RowStyle = RowStyle {
     cursor: 88,
     fill: None,
     fill_cursor: None,
+    tint_bg_str: "\x1b[48;5;52m",
+    cursor_bg_str: "\x1b[48;5;88m",
+    fill_bg_str: "\x1b[48;5;52m",
+    fill_cursor_bg_str: "\x1b[48;5;88m",
     fg: "toolDiffRemoved",
 };
 
@@ -62,6 +78,10 @@ pub const S_MOD: RowStyle = RowStyle {
     cursor: 237,
     fill: Some(28),
     fill_cursor: Some(34),
+    tint_bg_str: "\x1b[48;5;236m",
+    cursor_bg_str: "\x1b[48;5;237m",
+    fill_bg_str: "\x1b[48;5;28m",
+    fill_cursor_bg_str: "\x1b[48;5;34m",
     fg: "toolDiffContext",
 };
 
@@ -71,6 +91,10 @@ pub const S_MOV: RowStyle = RowStyle {
     cursor: 237,
     fill: None,
     fill_cursor: None,
+    tint_bg_str: "\x1b[48;5;236m",
+    cursor_bg_str: "\x1b[48;5;237m",
+    fill_bg_str: "\x1b[48;5;236m",
+    fill_cursor_bg_str: "\x1b[48;5;237m",
     fg: "muted",
 };
 
@@ -95,15 +119,16 @@ impl DiffuseTheme {
     pub const MAGIC: Self = Self { name: "magic" };
     pub const LEGACY: Self = Self { name: "legacy" };
 
-    /// Render a syntax/markdown token to styled ANSI text.
-    pub fn render_token(
+    /// Render a syntax/markdown token directly into an output buffer.
+    pub fn write_token(
         &self,
         color: &str,
         text: &str,
         row_kind: &str,
         tok_kind: Option<&str>,
         sgr: Option<u32>,
-    ) -> String {
+        out: &mut String,
+    ) {
         let is_add = row_kind == "add" || tok_kind == Some("add");
         let is_del = row_kind == "del" || tok_kind == Some("del");
 
@@ -169,9 +194,9 @@ impl DiffuseTheme {
             }
         };
 
-        let mut out = String::new();
         if let Some(s) = sgr {
-            out.push_str(&format!("\x1b[{s}m"));
+            use std::fmt::Write;
+            let _ = write!(out, "\x1b[{s}m");
         }
         if let Some(c) = ansi_color {
             out.push_str(c);
@@ -183,8 +208,22 @@ impl DiffuseTheme {
         if let Some(s) = sgr
             && let Some(off) = sgr_off(s)
         {
-            out.push_str(&format!("\x1b[{off}m"));
+            use std::fmt::Write;
+            let _ = write!(out, "\x1b[{off}m");
         }
+    }
+
+    /// Render a syntax/markdown token to styled ANSI text.
+    pub fn render_token(
+        &self,
+        color: &str,
+        text: &str,
+        row_kind: &str,
+        tok_kind: Option<&str>,
+        sgr: Option<u32>,
+    ) -> String {
+        let mut out = String::with_capacity(text.len() + 32);
+        self.write_token(color, text, row_kind, tok_kind, sgr, &mut out);
         out
     }
 

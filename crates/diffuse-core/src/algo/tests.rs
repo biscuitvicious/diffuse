@@ -541,7 +541,8 @@ fn test_prefix_dfa_matches_trie_matcher() {
     }
 
     assert_eq!(
-        dfa.all_matching_prefixes("pub(crate) struct A;"),
+        dfa.all_matching_prefixes("pub(crate) struct A;")
+            .collect::<Vec<_>>(),
         vec!["pub", "pub(crate)"]
     );
 }

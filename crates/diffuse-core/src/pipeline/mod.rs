@@ -23,7 +23,10 @@ use crate::{
     notes::{NotesDB, note_runs, notes_for_file},
     parse::{DiffFile, Row},
     syntax::{
-        classifier::{ClassifiedToken, classify_line, classify_tokens, markdown_tokens},
+        classifier::{
+            ClassifiedToken, for_each_classified_token, for_each_line_classified_token,
+            for_each_markdown_token,
+        },
         fence::{FenceRegion, fence_regions, region_at},
         profile::LangProfile,
         registry::{fence_lang_ext, lang_profile},
@@ -130,36 +133,34 @@ pub fn process_single_diff_file(
 ) -> OutputFile {
     let ext = f.path.rsplit('.').next().unwrap_or("");
     let profile = lang_profile(ext);
-    f.new_content = new_content
-        .map(|c| c.split('\n').map(String::from).collect())
+    let new_lines: Vec<&str> = new_content
+        .map(|c| c.split('\n').collect())
         .unwrap_or_default();
-    f.new_line_count = f.new_content.len();
+    f.new_line_count = new_lines.len();
 
-    if let Some(oc) = old_content
+    let old_lines_fallback: Vec<String>;
+    let old_lines: Vec<&str> = if let Some(oc) = old_content
         && !oc.is_empty()
     {
-        f.old_content = oc.split('\n').map(String::from).collect();
-        f.old_line_count = f.old_content.len();
-    } else if f.old_content.is_empty()
-        && let Some(diff) = diff_fallback
-    {
-        f.old_content = crate::old_content::old_content_from_diff(diff, &f.path);
-        f.old_line_count = f.old_content.len();
-    }
+        f.old_line_count = oc.split('\n').count();
+        oc.split('\n').collect()
+    } else if let Some(diff) = diff_fallback {
+        old_lines_fallback = crate::old_content::old_content_from_diff(diff, &f.path);
+        f.old_line_count = old_lines_fallback.len();
+        old_lines_fallback.iter().map(|s| s.as_str()).collect()
+    } else {
+        Vec::new()
+    };
 
     mark_moves(&mut f);
 
-    for h in &mut f.hunks {
+    f.hunks.iter_mut().for_each(|h| {
         h.rows = collapse_hunk_rows(
             h,
-            Some(f.old_content.as_slice()),
-            Some(f.new_content.as_slice()),
+            Some(old_lines.as_slice()),
+            Some(new_lines.as_slice()),
             profile,
         );
-    }
-
-    // Bake word spans for moved lines with indentation reflows
-    for h in &mut f.hunks {
         for r in &mut h.rows {
             if let Row::Mov { old_line, new_line } = r
                 && old_line.text != new_line.text
@@ -168,39 +169,42 @@ pub fn process_single_diff_file(
                 new_line.spans = word_spans(&old_line.text, &new_line.text);
             }
         }
-    }
+    });
 
     let counts = file_counts(&f);
-    let regions = fence_regions(&f.new_content, profile);
+    let regions = fence_regions(&new_lines, profile);
 
-    let mut hunks_out = Vec::new();
-    for h in &f.hunks {
-        let mut rows_out = Vec::new();
-        for r in &h.rows {
-            rows_out.push(OutputRow {
-                kind: r.kind(),
-                new_line: r.new_line(),
-                old_line: if matches!(r, Row::Add(_) | Row::Mov { .. }) {
-                    None
-                } else {
-                    r.old_line()
-                },
-                text: r.text().to_string(),
-                del_text: r.del_text().map(String::from),
-                spans: r.spans().cloned().unwrap_or_default(),
-                runs: colored_runs(r, profile, &regions),
-                wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
-                moved: r.is_moved(),
-            });
-        }
-        hunks_out.push(OutputHunk {
-            old_start: h.old_start,
-            old_count: h.old_count,
-            new_start: h.new_start,
-            new_count: h.new_count,
-            rows: rows_out,
-        });
-    }
+    let hunks_out: Vec<OutputHunk> = f
+        .hunks
+        .iter()
+        .map(|h| {
+            let mut rows_out = Vec::with_capacity(h.rows.len());
+            for r in &h.rows {
+                rows_out.push(OutputRow {
+                    kind: r.kind(),
+                    new_line: r.new_line(),
+                    old_line: if matches!(r, Row::Add(_) | Row::Mov { .. }) {
+                        None
+                    } else {
+                        r.old_line()
+                    },
+                    text: r.text().to_string(),
+                    del_text: r.del_text().map(String::from),
+                    spans: r.spans().cloned().unwrap_or_default(),
+                    runs: colored_runs(r, profile, &regions),
+                    wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
+                    moved: r.is_moved(),
+                });
+            }
+            OutputHunk {
+                old_start: h.old_start,
+                old_count: h.old_count,
+                new_start: h.new_start,
+                new_count: h.new_count,
+                rows: rows_out,
+            }
+        })
+        .collect();
 
     let mut raw_hunks_out = Vec::new();
     for h in &f.raw_hunks {
@@ -229,7 +233,6 @@ pub fn process_single_diff_file(
 
     let notes_out = match (notes_db, repo) {
         (Some(db), Some(r)) => notes_for_file(db, r, &f.path)
-            .into_iter()
             .map(|n| OutputNote {
                 id: n.id.clone(),
                 file: n.file.clone(),
@@ -244,27 +247,7 @@ pub fn process_single_diff_file(
         _ => Vec::new(),
     };
 
-    let content_to_classify = if !f.new_content.is_empty() {
-        &f.new_content
-    } else {
-        &f.old_content
-    };
-    let content_runs: Vec<Vec<OutputRun>> = content_to_classify
-        .iter()
-        .enumerate()
-        .map(|(idx, line_text)| {
-            let line_num = (idx + 1) as u32;
-            classify_ctx_line(line_text, Some(line_num), profile, &regions)
-                .into_iter()
-                .map(|tk| OutputRun {
-                    kind: RunKind::Ctx,
-                    color: Some(tk.color),
-                    sgr: tk.sgr,
-                    text: tk.text,
-                })
-                .collect()
-        })
-        .collect();
+    let content_runs: Vec<Vec<OutputRun>> = Vec::new();
 
     OutputFile {
         path: f.path.clone(),
@@ -287,8 +270,7 @@ pub fn process_single_diff_file(
         notes: notes_out,
         content_runs,
         rows: {
-            let mut hunks_with_ctx = f.hunks.clone();
-            for h in &mut hunks_with_ctx {
+            for h in &mut f.hunks {
                 if h.above_ctx == 0 {
                     h.above_ctx = 6;
                 }
@@ -297,7 +279,7 @@ pub fn process_single_diff_file(
                 }
             }
             build_visible(
-                &hunks_with_ctx,
+                &f.hunks,
                 f.new_line_count,
                 f.old_line_count,
                 &f.new_content,
@@ -314,7 +296,8 @@ pub fn process_single_diff_file(
             ) {
                 colored_runs(&r, profile, &regions)
             } else {
-                classify_ctx_line(
+                let mut runs = Vec::new();
+                for_each_ctx_line_token(
                     r.text(),
                     match vis.side {
                         Some(VisibleSide::New) => r.new_line(),
@@ -323,15 +306,16 @@ pub fn process_single_diff_file(
                     },
                     profile,
                     &regions,
-                )
-                .into_iter()
-                .map(|tk| OutputRun {
-                    kind: RunKind::Ctx,
-                    color: Some(tk.color),
-                    sgr: tk.sgr,
-                    text: tk.text,
-                })
-                .collect()
+                    |tk| {
+                        runs.push(OutputRun {
+                            kind: RunKind::Ctx,
+                            color: Some(std::borrow::Cow::Borrowed(tk.color)),
+                            sgr: tk.sgr,
+                            text: tk.text.to_string(),
+                        });
+                    },
+                );
+                runs
             };
             let (new_line, old_line) = match (&r, vis.side) {
                 (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
@@ -366,22 +350,7 @@ pub fn colored_runs(
 ) -> Vec<OutputRun> {
     let mut out = Vec::new();
     let new_line = r.new_line();
-    let classify_full = |text: &str| -> Vec<ClassifiedToken> {
-        classify_ctx_line(text, new_line, profile, regions)
-    };
     let region = new_line.and_then(|n| region_at(regions, n));
-    let classify_frag = |text: &str| -> Vec<ClassifiedToken> {
-        match region {
-            Some(rg) => classify_tokens(text, rg.lang.as_deref().and_then(lang_profile)),
-            None => {
-                if profile.is_some_and(|p| p.markdown) {
-                    markdown_tokens(text)
-                } else {
-                    classify_tokens(text, profile)
-                }
-            }
-        }
-    };
 
     let use_merged = (matches!(r, Row::Mod { .. })
         || (r.is_moved() && r.del_text() != Some(r.text()))
@@ -395,14 +364,14 @@ pub fn colored_runs(
             } else {
                 RunKind::Ctx
             };
-            for t in classify_full(r.text()) {
+            for_each_ctx_line_token(r.text(), new_line, profile, regions, |t| {
                 out.push(OutputRun {
                     kind,
-                    color: Some(t.color),
+                    color: Some(std::borrow::Cow::Borrowed(t.color)),
                     sgr: t.sgr,
-                    text: t.text,
+                    text: t.text.to_string(),
                 });
-            }
+            });
         } else {
             out.push(OutputRun {
                 kind: RunKind::Del,
@@ -414,113 +383,174 @@ pub fn colored_runs(
         return out;
     }
 
-    let full_tokens = classify_full(r.text());
-    let mut add_pos = 0usize;
-    for run in merged_runs(r) {
-        if run.kind == RunKind::Del {
-            out.push(OutputRun {
-                kind: RunKind::Del,
-                color: None,
-                sgr: None,
-                text: run.text,
-            });
-        } else {
-            let run_len = run.text.chars().count();
-            let end_pos = add_pos + run_len;
-            let frags = slice_classified_tokens(&full_tokens, add_pos, end_pos);
-            add_pos = end_pos;
-            if frags.is_empty() {
-                for t in classify_frag(&run.text) {
-                    out.push(OutputRun {
-                        kind: run.kind,
-                        color: Some(t.color),
-                        sgr: t.sgr,
-                        text: t.text,
-                    });
-                }
+    thread_local! {
+        static CTX_SCRATCH: std::cell::RefCell<Vec<ClassifiedToken<'static>>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    CTX_SCRATCH.with(|cell| {
+        let mut full_tokens = cell.borrow_mut();
+        full_tokens.clear();
+        for_each_ctx_line_token(r.text(), new_line, profile, regions, |t| {
+            // Safety: tokens are only accessed within this block while r.text() is alive.
+            let tok_static =
+                unsafe { std::mem::transmute::<ClassifiedToken<'_>, ClassifiedToken<'static>>(t) };
+            full_tokens.push(tok_static);
+        });
+
+        let mut add_pos = 0usize;
+        for run in merged_runs(r) {
+            if run.kind == RunKind::Del {
+                push_output_run(
+                    &mut out,
+                    OutputRun {
+                        kind: RunKind::Del,
+                        color: None,
+                        sgr: None,
+                        text: run.text.to_string(),
+                    },
+                );
             } else {
-                for t in frags {
-                    out.push(OutputRun {
-                        kind: run.kind,
-                        color: Some(t.color),
-                        sgr: t.sgr,
-                        text: t.text,
-                    });
+                let run_len = if run.text.is_ascii() {
+                    run.text.len()
+                } else {
+                    run.text.chars().count()
+                };
+                let end_pos = add_pos + run_len;
+                let mut had_frags = false;
+                for_each_sliced_token(&full_tokens, add_pos, end_pos, |t| {
+                    had_frags = true;
+                    push_output_run(
+                        &mut out,
+                        OutputRun {
+                            kind: run.kind,
+                            color: Some(std::borrow::Cow::Borrowed(t.color)),
+                            sgr: t.sgr,
+                            text: t.text.to_string(),
+                        },
+                    );
+                });
+                add_pos = end_pos;
+                if !had_frags {
+                    let push_t = |t: ClassifiedToken| {
+                        push_output_run(
+                            &mut out,
+                            OutputRun {
+                                kind: run.kind,
+                                color: Some(std::borrow::Cow::Borrowed(t.color)),
+                                sgr: t.sgr,
+                                text: t.text.to_string(),
+                            },
+                        );
+                    };
+                    match region {
+                        Some(rg) => for_each_classified_token(
+                            run.text,
+                            rg.lang.as_deref().and_then(lang_profile),
+                            push_t,
+                        ),
+                        None => {
+                            if profile.is_some_and(|p| p.markdown) {
+                                for_each_markdown_token(run.text, push_t)
+                            } else {
+                                for_each_classified_token(run.text, profile, push_t)
+                            }
+                        }
+                    }
                 }
             }
         }
-    }
-    coalesce_output_runs(out)
+        full_tokens.clear();
+    });
+    out
 }
 
-fn classify_ctx_line(
-    text: &str,
+#[inline(always)]
+fn push_output_run(out: &mut Vec<OutputRun>, run: OutputRun) {
+    if run.text.is_empty() {
+        return;
+    }
+    if let Some(last) = out.last_mut()
+        && last.kind == run.kind
+        && last.color == run.color
+        && last.sgr == run.sgr
+    {
+        last.text.push_str(&run.text);
+        return;
+    }
+    out.push(run);
+}
+
+fn for_each_ctx_line_token<'a>(
+    text: &'a str,
     new_line: Option<u32>,
     profile: Option<&LangProfile>,
     regions: &[FenceRegion],
-) -> Vec<ClassifiedToken> {
-    let is_delimiter = new_line.is_some_and(|n| {
-        regions
-            .iter()
-            .any(|rg| n + 1 == rg.start || (n > 0 && n - 1 == rg.end))
-    });
+    mut f: impl FnMut(ClassifiedToken<'a>),
+) {
+    let is_delimiter = if regions.is_empty() {
+        false
+    } else {
+        new_line.is_some_and(|n| {
+            regions
+                .iter()
+                .any(|rg| n + 1 == rg.start || (n > 0 && n - 1 == rg.end))
+        })
+    };
     if is_delimiter {
         if let Some(strip) = profile.and_then(|p| p.fence_strip.as_ref())
             && let Some(m) = strip.find(text)
             && m.start() == 0
             && m.end() > 0
         {
-            return vec![
-                ClassifiedToken {
-                    color: "syntaxComment".into(),
-                    sgr: None,
-                    text: text[..m.end()].into(),
-                },
-                ClassifiedToken {
-                    color: "muted".into(),
-                    sgr: None,
-                    text: text[m.end()..].into(),
-                },
-            ];
+            f(ClassifiedToken {
+                color: "syntaxComment",
+                sgr: None,
+                text: &text[..m.end()],
+            });
+            f(ClassifiedToken {
+                color: "muted",
+                sgr: None,
+                text: &text[m.end()..],
+            });
+            return;
         }
-        return vec![ClassifiedToken {
-            color: "muted".into(),
+        f(ClassifiedToken {
+            color: "muted",
             sgr: None,
-            text: text.into(),
-        }];
+            text,
+        });
+        return;
     }
     let region = new_line.and_then(|n| region_at(regions, n));
-    classify_line(text, profile, region)
+    for_each_line_classified_token(text, profile, region, f);
 }
 
-fn coalesce_output_runs(runs: Vec<OutputRun>) -> Vec<OutputRun> {
-    let mut out: Vec<OutputRun> = Vec::new();
-    for run in runs {
-        if run.text.is_empty() {
-            continue;
-        }
-        if let Some(last) = out.last_mut()
-            && last.kind == run.kind
-            && last.color == run.color
-            && last.sgr == run.sgr
-        {
-            last.text.push_str(&run.text);
-            continue;
-        }
-        out.push(run);
-    }
+#[cfg(test)]
+fn classify_ctx_line<'a>(
+    text: &'a str,
+    new_line: Option<u32>,
+    profile: Option<&LangProfile>,
+    regions: &[FenceRegion],
+) -> Vec<ClassifiedToken<'a>> {
+    let mut out = Vec::new();
+    for_each_ctx_line_token(text, new_line, profile, regions, |t| out.push(t));
     out
 }
 
-fn slice_classified_tokens(
-    tokens: &[ClassifiedToken],
+fn for_each_sliced_token<'a>(
+    tokens: &[ClassifiedToken<'a>],
     start_char: usize,
     end_char: usize,
-) -> Vec<ClassifiedToken> {
-    let mut out = Vec::new();
+    mut f: impl FnMut(ClassifiedToken<'a>),
+) -> bool {
+    let mut found = false;
     let mut pos = 0;
     for tok in tokens {
-        let tok_len = tok.text.chars().count();
+        let tok_len = if tok.text.is_ascii() {
+            tok.text.len()
+        } else {
+            tok.text.chars().count()
+        };
         let tok_start = pos;
         let tok_end = pos + tok_len;
         pos = tok_end;
@@ -529,16 +559,21 @@ fn slice_classified_tokens(
         }
         let s = start_char.saturating_sub(tok_start);
         let e = end_char.min(tok_end) - tok_start;
-        let piece: String = tok.text.chars().skip(s).take(e - s).collect();
+        let piece: &'a str = if tok.text.is_ascii() {
+            &tok.text[s..e]
+        } else {
+            crate::lcs::char_slice(tok.text, s, e)
+        };
         if !piece.is_empty() {
-            out.push(ClassifiedToken {
-                color: tok.color.clone(),
+            found = true;
+            f(ClassifiedToken {
+                color: tok.color,
                 sgr: tok.sgr,
                 text: piece,
             });
         }
     }
-    out
+    found
 }
 
 #[cfg(test)]

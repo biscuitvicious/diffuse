@@ -19,7 +19,7 @@
 //! golden legs keep running legacy in the same process; the binary reads
 //! `DIFFUSE_ENGINE=dp`.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     collapse::PairingResults,
@@ -30,7 +30,7 @@ use crate::{
 
 use super::{HunkSegment, dp, partition_hunk_segments};
 
-type LegacyIndexMaps = (Vec<Vec<usize>>, HashMap<usize, Vec<usize>>, Vec<usize>);
+type LegacyIndexMaps = (Vec<Vec<usize>>, FxHashMap<usize, Vec<usize>>, Vec<usize>);
 
 /// The legacy run/del-index construction (identical for both engines —
 /// passes 2–4 consume it).
@@ -50,10 +50,12 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
         del_runs.push(run);
         i += 1;
     }
-    let run_of: HashMap<usize, Vec<usize>> = del_runs
-        .iter()
-        .flat_map(|run| run.iter().map(|&ri| (ri, run.clone())))
-        .collect();
+    let mut run_of: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+    for run in &del_runs {
+        for &ri in run {
+            run_of.insert(ri, run.clone());
+        }
+    }
     let del_ids: Vec<usize> = h
         .rows
         .iter()
@@ -69,12 +71,12 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
 /// dropped so both engines leave the same rows standalone.
 fn guarded_dels(
     h: &Hunk,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
-) -> HashSet<usize> {
-    let mut skip = HashSet::new();
-    let new_trimmed_set: Option<HashSet<&str>> =
+) -> FxHashSet<usize> {
+    let mut skip = FxHashSet::default();
+    let new_trimmed_set: Option<FxHashSet<&str>> =
         new_content.map(|c| c.iter().map(|l| l.trim()).collect());
 
     for (ri, r) in h.rows.iter().enumerate() {
@@ -129,8 +131,8 @@ fn is_fragment_pair_rejected(
     gd: usize,
     ga: usize,
     h: &Hunk,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> bool {
     let r = &h.rows[gd];
@@ -155,15 +157,15 @@ fn is_fragment_pair_rejected(
 /// pair; guarded dels never pair.
 pub fn dp_pairing(
     h: &Hunk,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> PairingResults {
     let (del_runs, run_of, del_ids) = legacy_index_maps(h);
     let guards = guarded_dels(h, old_content, new_content, profile);
 
     // Global row indices by line number (unique per hunk side).
-    let del_by_num: HashMap<u32, usize> = h
+    let del_by_num: FxHashMap<u32, usize> = h
         .rows
         .iter()
         .enumerate()
@@ -172,7 +174,7 @@ pub fn dp_pairing(
             _ => None,
         })
         .collect();
-    let add_by_num: HashMap<u32, usize> = h
+    let add_by_num: FxHashMap<u32, usize> = h
         .rows
         .iter()
         .enumerate()
@@ -182,7 +184,7 @@ pub fn dp_pairing(
         })
         .collect();
 
-    let mut pair_of: HashMap<usize, usize> = HashMap::new();
+    let mut pair_of: FxHashMap<usize, usize> = FxHashMap::default();
     let mut arena = super::dp::DpScratchArena::default();
 
     for seg in partition_hunk_segments(h, old_content, new_content, profile) {

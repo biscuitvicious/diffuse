@@ -158,8 +158,8 @@ fn unicode_whitespace_subwords() {
 fn test_lcs_tie_break_minimizes_span_fragmentation() {
     let old_line = "if k < floor {";
     let new_line = "if let Some(floor) = floor";
-    let ot = tokenize_line(old_line);
-    let nt = tokenize_line(new_line);
+    let ot: Vec<&str> = tokenize_line(old_line).collect();
+    let nt: Vec<&str> = tokenize_line(new_line).collect();
     let pairs = lcs_pairs(&ot, &nt);
     assert_eq!(
         pairs.get(&6),
@@ -172,8 +172,8 @@ fn test_lcs_tie_break_minimizes_span_fragmentation() {
 fn test_patience_unique_token_anchors() {
     let old_line = "fn handle_request(&self, req: Request) -> Response";
     let new_line = "async fn handle_request(&self, cx: Context, req: Request) -> Result<Response>";
-    let ot = tokenize_line(old_line);
-    let nt = tokenize_line(new_line);
+    let ot: Vec<&str> = tokenize_line(old_line).collect();
+    let nt: Vec<&str> = tokenize_line(new_line).collect();
     let anchors = unique_token_anchors(&ot, &nt);
     assert!(!anchors.is_empty(), "patience anchors found");
     let _pairs = lcs_pairs(&ot, &nt);
@@ -202,8 +202,8 @@ fn test_add_span_covers_let_some_floor_equals() {
 fn test_recursive_patience_anchoring() {
     let old_text = "fn transform(user: User, profile: Profile, db: Database) -> Result<Output>";
     let new_text = "pub async fn transform(ctx: Context, user: User, metadata: Metadata, profile: Profile, db: Database) -> Result<Output, Error>";
-    let ot = tokenize_line(old_text);
-    let nt = tokenize_line(new_text);
+    let ot: Vec<&str> = tokenize_line(old_text).collect();
+    let nt: Vec<&str> = tokenize_line(new_text).collect();
     let pairs = lcs_pairs(&ot, &nt);
     assert!(!pairs.is_empty());
     let ws = word_spans(old_text, new_text);
@@ -295,7 +295,7 @@ fn test_tokenize_line_parity_with_regex() {
     ];
 
     for case in cases {
-        let actual = tokenize_line(case);
+        let actual: Vec<&str> = tokenize_line(case).collect();
         let expected = tokenize_regex(case);
         assert_eq!(
             actual, expected,

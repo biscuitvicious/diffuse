@@ -68,25 +68,30 @@ impl PrefixDfa {
     }
 
     /// Find all prefixes registered in the DFA that match the start of `text`.
-    #[must_use]
-    pub fn all_matching_prefixes<'a>(&self, text: &'a str) -> Vec<&'a str> {
+    pub fn all_matching_prefixes<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> impl Iterator<Item = &'a str> + 'a {
         let bytes = text.as_bytes();
-        let mut matches = Vec::new();
         let mut curr = 1u32; // ROOT_STATE
 
-        for (idx, &b) in bytes.iter().enumerate() {
+        bytes.iter().enumerate().filter_map(move |(idx, &b)| {
+            if curr == DEAD_STATE {
+                return None;
+            }
             let next = self.transitions[(curr as usize) * 256 + (b as usize)];
             if next == DEAD_STATE {
-                break;
+                curr = DEAD_STATE;
+                return None;
             }
             curr = next;
             let len = self.match_lengths[curr as usize];
             if len > 0 && len == idx + 1 {
-                matches.push(&text[..len]);
+                Some(&text[..len])
+            } else {
+                None
             }
-        }
-
-        matches
+        })
     }
 }
 

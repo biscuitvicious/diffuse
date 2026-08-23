@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Classification of syntactic construct for change runs.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]
 pub enum SyntaxSectionKind {
     /// Doc comment (`///`, `//!`, `/** ... */`)
     DocComment,
@@ -25,6 +25,7 @@ pub enum SyntaxSectionKind {
     /// `trait`)
     Declaration,
     /// General code / expression / statement
+    #[default]
     Code,
     /// Blank line
     Blank,
@@ -82,21 +83,21 @@ pub fn classify_syntax_section(line: &str, profile: Option<&LangProfile>) -> Syn
 /// An atomic change cluster bounded by context lines or syntax section
 /// transitions.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ChangeCluster {
+pub struct ChangeCluster<'a> {
     /// Preceding context lines immediately before this cluster (for
     /// brace/syntax anchor proximity).
-    pub preceding_ctx: Vec<String>,
+    pub preceding_ctx: Vec<&'a str>,
     /// Old-side rows (dels, in original hunk order).
     pub old_rows: Vec<Row>,
     /// New-side rows (adds, in original hunk order).
     pub new_rows: Vec<Row>,
     /// Following context lines immediately after this cluster (for brace/syntax
     /// anchor proximity).
-    pub following_ctx: Vec<String>,
+    pub following_ctx: Vec<&'a str>,
     pub section: SyntaxSectionKind,
 }
 
-impl ChangeCluster {
+impl<'a> ChangeCluster<'a> {
     #[inline]
     pub fn m(&self) -> usize {
         self.old_rows.len()
@@ -123,18 +124,18 @@ impl ChangeCluster {
 /// Decomposes a hunk into a sequence of isolated change clusters and context
 /// rows.
 #[derive(Clone, Debug, PartialEq)]
-pub enum HunkSegment {
+pub enum HunkSegment<'a> {
     Context(Row),
-    Cluster(ChangeCluster),
+    Cluster(ChangeCluster<'a>),
 }
 
 /// Partitions a hunk into context rows and atomic change clusters.
-pub fn partition_hunk_segments(
-    hunk: &Hunk,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
+pub fn partition_hunk_segments<'a>(
+    hunk: &'a Hunk,
+    old_content: Option<&'a [&str]>,
+    new_content: Option<&'a [&str]>,
     profile: Option<&LangProfile>,
-) -> Vec<HunkSegment> {
+) -> Vec<HunkSegment<'a>> {
     let mut segments = Vec::new();
     let mut i = 0;
 
@@ -153,7 +154,7 @@ pub fn partition_hunk_segments(
             && preceding_ctx.len() < 6
         {
             ctx_idx -= 1;
-            preceding_ctx.push(hunk.rows[ctx_idx].text().to_string());
+            preceding_ctx.push(hunk.rows[ctx_idx].text());
         }
         preceding_ctx.reverse();
 
@@ -194,7 +195,7 @@ pub fn partition_hunk_segments(
                 let end = ((ol as usize) - 1).min(oc.len());
                 let start = end.saturating_sub(6).min(oc.len());
                 for l in &oc[start..end] {
-                    preceding_ctx.push(l.clone());
+                    preceding_ctx.push(l.as_ref());
                 }
             } else if let Some(nl) = new_rows
                 .first()
@@ -206,7 +207,7 @@ pub fn partition_hunk_segments(
                 let end = ((nl as usize) - 1).min(nc.len());
                 let start = end.saturating_sub(6).min(nc.len());
                 for l in &nc[start..end] {
-                    preceding_ctx.push(l.clone());
+                    preceding_ctx.push(l.as_ref());
                 }
             }
         }
@@ -218,7 +219,7 @@ pub fn partition_hunk_segments(
             && matches!(hunk.rows[f_idx], Row::Ctx(_))
             && following_ctx.len() < 6
         {
-            following_ctx.push(hunk.rows[f_idx].text().to_string());
+            following_ctx.push(hunk.rows[f_idx].text());
             f_idx += 1;
         }
 
@@ -233,7 +234,7 @@ pub fn partition_hunk_segments(
                 let start = (nl as usize).min(nc.len());
                 let end = (start + 6).min(nc.len());
                 for l in &nc[start..end] {
-                    following_ctx.push(l.clone());
+                    following_ctx.push(l.as_ref());
                 }
             } else if let Some(ol) = old_rows
                 .last()
@@ -245,7 +246,7 @@ pub fn partition_hunk_segments(
                 let start = (ol as usize).min(oc.len());
                 let end = (start + 6).min(oc.len());
                 for l in &oc[start..end] {
-                    following_ctx.push(l.clone());
+                    following_ctx.push(l.as_ref());
                 }
             }
         }

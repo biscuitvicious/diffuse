@@ -199,19 +199,19 @@ pub fn render_row_segment(
     // row (distinct from the cursor's per-style lift).
     let band_bg = "\x1b[48;5;240m";
 
-    let line_bg = if is_ctx {
+    let line_bg: &str = if is_ctx {
         if selected {
-            "\x1b[48;5;237m".to_string()
+            "\x1b[48;5;237m"
         } else if band {
-            band_bg.to_string()
+            band_bg
         } else {
-            String::new()
+            ""
         }
     } else if moved {
         if selected {
             S_MOV.cursor_bg()
         } else if band {
-            band_bg.to_string()
+            band_bg
         } else {
             S_MOV.tint_bg()
         }
@@ -219,7 +219,7 @@ pub fn render_row_segment(
         if selected {
             S_MOD.cursor_bg()
         } else if band {
-            band_bg.to_string()
+            band_bg
         } else {
             S_MOD.tint_bg()
         }
@@ -227,18 +227,16 @@ pub fn render_row_segment(
         if selected {
             S_DEL.cursor_bg()
         } else if band {
-            band_bg.to_string()
+            band_bg
         } else {
             S_DEL.tint_bg()
         }
+    } else if selected {
+        S_ADD.cursor_bg()
+    } else if band {
+        band_bg
     } else {
-        if selected {
-            S_ADD.cursor_bg()
-        } else if band {
-            band_bg.to_string()
-        } else {
-            S_ADD.tint_bg()
-        }
+        S_ADD.tint_bg()
     };
 
     let word_bg = if selected {
@@ -266,36 +264,41 @@ pub fn render_row_segment(
                 ""
             }
         } else if tok_kind == diffuse_core::merge::RunKind::Del {
-            &del_bg
+            del_bg
         } else if tok_kind == diffuse_core::merge::RunKind::Add
             && (is_mod_row || has_subwords || is_expansion_add)
             && !is_pure_del_mod
         {
-            &word_bg
+            word_bg
         } else {
-            &line_bg
+            line_bg
         }
     };
 
-    let disp = display_text(text, del_text, kind, moved, runs, col_offset, word_diff);
-    let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
-    let total_len = slice_graphemes.len();
-    let s_idx = seg_start.min(total_len);
-    let e_idx = seg_end.min(total_len);
-    let piece: String = slice_graphemes[s_idx..e_idx].concat();
+    let is_full_row = seg_start == 0 && seg_end == usize::MAX && col_offset == 0;
 
     let has_styled_prefix = prefix.starts_with("\x1b[") || selected || band;
-    let lead_bg = if has_styled_prefix { &line_bg } else { "" };
+    let lead_bg = if has_styled_prefix { line_bg } else { "" };
     let trail_bg = if selected || band || !is_ctx {
-        &line_bg
+        line_bg
     } else {
         ""
     };
 
     if is_del_row {
-        let bg = if is_ctx { "" } else { &line_bg };
+        let bg = if is_ctx { "" } else { line_bg };
         let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
         let reset = "\x1b[39m";
+        let piece = if is_full_row {
+            text
+        } else {
+            let disp = display_text(text, del_text, kind, moved, runs, col_offset, word_diff);
+            let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
+            let total_len = slice_graphemes.len();
+            let s_idx = seg_start.min(total_len);
+            let e_idx = seg_end.min(total_len);
+            &slice_graphemes[s_idx..e_idx].concat()
+        };
         return format!("{lead_bg}{prefix}{bg}{del_fg}{piece}{reset}{trail_bg}");
     }
 
@@ -309,11 +312,75 @@ pub fn render_row_segment(
                 ""
             }
         } else {
-            &line_bg
+            line_bg
+        };
+        let piece = if is_full_row {
+            text
+        } else {
+            let disp = display_text(text, del_text, kind, moved, runs, col_offset, word_diff);
+            let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
+            let total_len = slice_graphemes.len();
+            let s_idx = seg_start.min(total_len);
+            let e_idx = seg_end.min(total_len);
+            &slice_graphemes[s_idx..e_idx].concat()
         };
         return format!("{lead_bg}{prefix}{bg}{piece}{trail_bg}");
     }
 
+    if is_full_row {
+        let mut out = String::new();
+        out.push_str(lead_bg);
+        out.push_str(prefix);
+        for tok in runs {
+            if tok.text.is_empty() {
+                continue;
+            }
+            let bg = base_bg(tok.kind);
+            let tok_kind_str = match tok.kind {
+                diffuse_core::merge::RunKind::Add => "add",
+                diffuse_core::merge::RunKind::Del => "del",
+                _ => "ctx",
+            };
+            let row_kind_str = match kind {
+                RowKind::Add => "add",
+                RowKind::Del => "del",
+                RowKind::Mod => "mod",
+                _ => "ctx",
+            };
+
+            if tok.kind == diffuse_core::merge::RunKind::Del {
+                let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
+                let reset = "\x1b[39m";
+                out.push_str(bg);
+                out.push_str("\x1b[9m");
+                out.push_str(del_fg);
+                out.push_str(&tok.text);
+                out.push_str(reset);
+                out.push_str("\x1b[29m");
+            } else {
+                let color = if syntax_on {
+                    tok.color.as_deref().unwrap_or("text")
+                } else {
+                    "text"
+                };
+                let sgr = if syntax_on { tok.sgr } else { None };
+                out.push_str(bg);
+                theme.write_token(
+                    color,
+                    &tok.text,
+                    row_kind_str,
+                    Some(tok_kind_str),
+                    sgr,
+                    &mut out,
+                );
+                out.push_str(bg);
+            }
+        }
+        out.push_str(trail_bg);
+        return out;
+    }
+
+    let _disp = display_text(text, del_text, kind, moved, runs, col_offset, word_diff);
     let mut out = String::new();
     let mut pos = 0usize;
     for tok in runs {
@@ -357,7 +424,12 @@ pub fn render_row_segment(
         if tok.kind == diffuse_core::merge::RunKind::Del {
             let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
             let reset = "\x1b[39m";
-            out.push_str(&format!("{bg}\x1b[9m{del_fg}{sub_piece}{reset}\x1b[29m"));
+            out.push_str(bg);
+            out.push_str("\x1b[9m");
+            out.push_str(del_fg);
+            out.push_str(&sub_piece);
+            out.push_str(reset);
+            out.push_str("\x1b[29m");
         } else {
             // syntax off downgrades every run to plain text (no fg, no sgr)
             let color = if syntax_on {
@@ -366,9 +438,16 @@ pub fn render_row_segment(
                 "text"
             };
             let sgr = if syntax_on { tok.sgr } else { None };
-            let styled_tok =
-                theme.render_token(color, &sub_piece, row_kind_str, Some(tok_kind_str), sgr);
-            out.push_str(&format!("{bg}{styled_tok}{bg}"));
+            out.push_str(bg);
+            theme.write_token(
+                color,
+                &sub_piece,
+                row_kind_str,
+                Some(tok_kind_str),
+                sgr,
+                &mut out,
+            );
+            out.push_str(bg);
         }
     }
 

@@ -649,11 +649,10 @@ macro_rules! corpus_tests {
 
             #[test]
             fn golden_acceptance() {
-                let fixture = load_fixture($name);
-                let output = run_pipeline(&fixture.diff, &fixture.contents);
-                walk_and_assert(&output, $name, $min);
-                assert_wire_json_matches(&output, $name);
+                run_lib_leg($name, $min);
                 if $has_render {
+                    let fixture = load_fixture($name);
+                    let output = run_pipeline(&fixture.diff, &fixture.contents);
                     assert_render_matches(&output, $name);
                 }
                 if $has_oracle {
@@ -692,5 +691,5 @@ corpus_tests!(opt_1, "opt-1-cache-regex-window-slice", 5, true, true);
 corpus_tests!(opt_2, "opt-2-cache-markdown-regex", 2, true, true);
 corpus_tests!(opt_3, "opt-3-cache-lang-profile", 3, true, true);
 corpus_tests!(opt_4, "opt-4-manual-scanner-prefilter", 4, true, true);
-corpus_tests!(ignored diffuse_history_mid, "diffuse-history-mid", 45);
+corpus_tests!(diffuse_history_mid, "diffuse-history-mid", 45, true, false);
 corpus_tests!(untracked_files, "untracked-files", 2, true, false);

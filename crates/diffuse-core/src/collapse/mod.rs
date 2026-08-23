@@ -8,10 +8,9 @@
 //! 4. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row
 //!    stream.
 
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-};
+use std::cmp::Ordering;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     lcs::{char_slice, tokenize_line, word_spans},
@@ -22,9 +21,9 @@ use crate::{
 
 /// Results of the initial pairing pass.
 pub struct PairingResults {
-    pub pair_of: HashMap<usize, usize>, // add row id -> del row id
+    pub pair_of: FxHashMap<usize, usize>, // add row id -> del row id
     pub del_runs: Vec<Vec<usize>>,
-    pub run_of: HashMap<usize, Vec<usize>>,
+    pub run_of: FxHashMap<usize, Vec<usize>>,
     pub del_ids: Vec<usize>,
 }
 
@@ -33,15 +32,15 @@ pub struct AssembledMods {
     pub out: Vec<Row>,
     pub kept_dels: Vec<usize>,
     pub pure_adds: Vec<usize>,
-    pub add_spans: HashMap<usize, (Spans, String)>,
+    pub add_spans: FxHashMap<usize, (Spans, String)>,
 }
 
 /// Context holding all pairing maps and sets for assembly.
 pub struct PairingContext<'a> {
-    pub pair_of: &'a HashMap<usize, usize>,
-    pub add_of: &'a HashMap<usize, usize>,
-    pub run_of: &'a HashMap<usize, Vec<usize>>,
-    pub paired_dels: &'a HashSet<usize>,
+    pub pair_of: &'a FxHashMap<usize, usize>,
+    pub add_of: &'a FxHashMap<usize, usize>,
+    pub run_of: &'a FxHashMap<usize, Vec<usize>>,
+    pub paired_dels: &'a FxHashSet<usize>,
 }
 
 /// Collapse each FIFO del→add pair into a single "mod" row: the new line
@@ -50,8 +49,8 @@ pub struct PairingContext<'a> {
 /// Composed of 4 pure passes over the diff AST.
 pub fn collapse_hunk_rows(
     h: &Hunk,
-    old_content: Option<&[String]>,
-    new_content: Option<&[String]>,
+    old_content: Option<&[&str]>,
+    new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
     let h_norm = pass_shift_hunk(h, new_content, profile);
@@ -59,8 +58,9 @@ pub fn collapse_hunk_rows(
 
     // Pass 1: DP cluster pairing engine
     let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
-    let paired_dels: HashSet<usize> = p1.pair_of.values().copied().collect();
-    let add_of: HashMap<usize, usize> = p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
+    let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
+    let add_of: FxHashMap<usize, usize> =
+        p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
 
     // Pass 2: Assemble Mod rows and subword spans
     let pairing_ctx = PairingContext {
@@ -88,7 +88,7 @@ pub fn pass_assemble_mods(
     let mut out: Vec<Row> = Vec::new();
     let mut kept_dels: Vec<usize> = Vec::new();
     let mut pure_adds: Vec<usize> = Vec::new();
-    let mut add_spans: HashMap<usize, (Spans, String)> = HashMap::new();
+    let mut add_spans: FxHashMap<usize, (Spans, String)> = FxHashMap::default();
 
     for (ri, r) in h.rows.iter().enumerate() {
         if matches!(r, Row::Add(_) | Row::Mov { .. }) {
@@ -198,7 +198,6 @@ pub fn pass_assemble_mods(
                     spans.del.retain(|&(ds, de)| {
                         let seg = char_slice(&del_text, ds, de);
                         let tokens: Vec<&str> = tokenize_line(seg)
-                            .into_iter()
                             .filter(|t| !t.trim().is_empty())
                             .collect();
                         let has_alpha = tokens.iter().any(|t| t.chars().any(char::is_alphanumeric));
@@ -215,7 +214,6 @@ pub fn pass_assemble_mods(
                     let add_nxt = &h.rows[nxt_i];
                     let mut donor_spans = word_spans(&del_text, add_nxt.text());
                     let tok_count = tokenize_line(add_nxt.text())
-                        .into_iter()
                         .filter(|t| !t.trim().is_empty())
                         .count();
                     let nxt_trim = add_nxt.text().trim();
@@ -265,7 +263,6 @@ pub fn pass_assemble_mods(
                             .flat_map(|(ds, de)| {
                                 let seg = char_slice(&del_text, ds, de);
                                 let tokens: Vec<&str> = tokenize_line(seg)
-                                    .into_iter()
                                     .filter(|t| !t.trim().is_empty())
                                     .collect();
                                 let in_other = tokens.iter().any(|t| other_adds_text.contains(t));
@@ -378,7 +375,7 @@ pub fn pass_filter_reflows(
     out: &[Row],
     kept_dels: &[usize],
     pure_adds: &[usize],
-    paired_dels: &HashSet<usize>,
+    paired_dels: &FxHashSet<usize>,
 ) -> ReflowFilter {
     let add_text = out
         .iter()
@@ -403,7 +400,7 @@ pub fn pass_filter_reflows(
         .map(|d| d.text().trim())
         .collect::<Vec<_>>()
         .join("\n");
-    let shown_dels: HashSet<usize> = meaningful.iter().copied().collect();
+    let shown_dels: FxHashSet<usize> = meaningful.iter().copied().collect();
     let del_text_live = h
         .rows
         .iter()
@@ -453,9 +450,9 @@ pub fn pass_sort_ordered_walk(
     out: Vec<Row>,
     meaningful_dels: &[usize],
     kept_adds: &[usize],
-    add_spans: &HashMap<usize, (Spans, String)>,
+    add_spans: &FxHashMap<usize, (Spans, String)>,
 ) -> Vec<Row> {
-    let mut anchor_of: HashMap<usize, usize> = HashMap::new();
+    let mut anchor_of: FxHashMap<usize, usize> = FxHashMap::default();
     for &di in meaningful_dels {
         let Some(dold) = h.rows[di].old_line() else {
             continue;

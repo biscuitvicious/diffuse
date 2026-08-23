@@ -2,9 +2,8 @@
 //!
 //! Models the diff hierarchy: `DiffFile` -> `Hunk` -> `Row`.
 
-use std::{num::NonZero, sync::OnceLock};
+use std::num::NonZero;
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// A 1-based source line number.
@@ -438,12 +437,40 @@ fn hunk_path(sign: &str, line: &str) -> Option<String> {
     Some(unquote_git_path(stripped))
 }
 
+fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32, &str)> {
+    let rest = line.strip_prefix("@@ -")?;
+    let space = rest.find(' ')?;
+    let old_part = &rest[..space];
+    let rest_after_space = &rest[space + 1..];
+    let new_part_full = rest_after_space.strip_prefix('+')?;
+    let at_at = new_part_full.find(" @@")?;
+    let new_part = &new_part_full[..at_at];
+    let section = &new_part_full[at_at + 3..];
+
+    let (old_start, old_count) = if let Some(comma) = old_part.find(',') {
+        (
+            old_part[..comma].parse().ok()?,
+            old_part[comma + 1..].parse().unwrap_or(1),
+        )
+    } else {
+        (old_part.parse().ok()?, 1)
+    };
+
+    let (new_start, new_count) = if let Some(comma) = new_part.find(',') {
+        (
+            new_part[..comma].parse().ok()?,
+            new_part[comma + 1..].parse().unwrap_or(1),
+        )
+    } else {
+        (new_part.parse().ok()?, 1)
+    };
+
+    Some((old_start, old_count, new_start, new_count, section))
+}
+
 /// Parse a `git diff` into files, hunks, and rows. The `git diff -U0`
 /// flavor: hunks carry only add/del rows; the context is synthesized later.
 pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
-    static HUNK_RE: OnceLock<Regex> = OnceLock::new();
-    let hunk_re = HUNK_RE
-        .get_or_init(|| Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$").unwrap());
     let mut files: Vec<DiffFile> = Vec::new();
     let mut cur: Option<DiffFile> = None;
     let mut oi: u32 = 1;
@@ -512,15 +539,13 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
                 }
             }
         } else if line.starts_with("@@ ") {
-            if let Some(caps) = hunk_re.captures(line) {
-                let old_start: u32 = caps[1].parse().unwrap_or(1);
-                let old_count: u32 = caps.get(2).map_or(1, |m| m.as_str().parse().unwrap_or(1));
-                let new_start: u32 = caps[3].parse().unwrap_or(1);
-                let new_count: u32 = caps.get(4).map_or(1, |m| m.as_str().parse().unwrap_or(1));
+            if let Some((old_start, old_count, new_start, new_count, section_str)) =
+                parse_hunk_header(line)
+            {
                 oi = old_start;
                 ni = new_start;
                 if let Some(c) = cur.as_mut() {
-                    let section = caps.get(5).map_or("", |m| m.as_str()).trim().to_string();
+                    let section = section_str.trim().to_string();
                     c.hunks.push(Hunk {
                         old_start,
                         old_count,

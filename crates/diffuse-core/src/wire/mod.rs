@@ -247,6 +247,8 @@ impl OutputRow {
     }
 }
 
+use std::borrow::Cow;
+
 /// A classified token run in an [`OutputRow`]: kind, optional theme color key,
 /// SGR attribute modifier, and text.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -254,7 +256,7 @@ impl OutputRow {
 pub struct OutputRun {
     pub kind: RunKind,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
+    pub color: Option<Cow<'static, str>>,
     /// The SGR attribute (the markdown emphasis — bold/italic/strike/
     /// underline) the renderer applies with the color.
     #[serde(default, skip_serializing_if = "Option::is_none")]

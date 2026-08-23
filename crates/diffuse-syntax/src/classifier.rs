@@ -12,47 +12,55 @@ use regex::Regex;
 
 use super::{
     profile::{LangProfile, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE},
-    registry::syntax_token_spans,
+    registry::for_each_syntax_token_span,
 };
 
 /// A classified token: the semantic color name + its text (+ an optional
 /// SGR attribute — the markdown emphasis: bold/italic/underline/strike).
-#[derive(Clone, Debug, PartialEq)]
-pub struct ClassifiedToken {
-    pub color: String,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ClassifiedToken<'a> {
+    pub color: &'static str,
     pub sgr: Option<u32>,
-    pub text: String,
+    pub text: &'a str,
 }
 
-/// Classify a run of text into semantic tokens (plain `text` when there is
-/// no profile).
-pub fn classify_tokens(text: &str, profile: Option<&LangProfile>) -> Vec<ClassifiedToken> {
+/// Zero-allocation scanner visiting semantic tokens in a run of text.
+pub fn for_each_classified_token<'a>(
+    text: &'a str,
+    profile: Option<&LangProfile>,
+    mut f: impl FnMut(ClassifiedToken<'a>),
+) {
+    for_each_classified_token_dyn(text, profile, &mut f);
+}
+
+fn for_each_classified_token_dyn<'a>(
+    text: &'a str,
+    profile: Option<&LangProfile>,
+    f: &mut dyn FnMut(ClassifiedToken<'a>),
+) {
     let Some(profile) = profile else {
-        return vec![ClassifiedToken {
-            color: "text".into(),
+        f(ClassifiedToken {
+            color: "text",
             sgr: None,
-            text: text.into(),
-        }];
+            text,
+        });
+        return;
     };
     if text.is_empty() {
-        return vec![ClassifiedToken {
-            color: "text".into(),
+        f(ClassifiedToken {
+            color: "text",
             sgr: None,
-            text: text.into(),
-        }];
+            text,
+        });
+        return;
     }
-    // The hand-rolled scanner produces the same spans as the regex's
-    // find_iter (see `syntax_token_spans`) — the regex crate's NFA path
-    // on this alternation was the whole classify cost (~50× slower).
-    let spans = syntax_token_spans(text, profile);
-    let mut out: Vec<ClassifiedToken> = Vec::with_capacity(spans.len());
     let mut last = 0usize;
-    for (start, end) in spans {
+    for_each_syntax_token_span(text, profile, |start, end| {
         if start > last {
-            out.push(ClassifiedToken {
-                color: "text".into(),
+            f(ClassifiedToken {
+                color: "text",
                 sgr: None,
-                text: text[last..start].into(),
+                text: &text[last..start],
             });
         }
         let tok = &text[start..end];
@@ -61,9 +69,9 @@ pub fn classify_tokens(text: &str, profile: Option<&LangProfile>) -> Vec<Classif
             || tok.starts_with("//")
             || tok.starts_with("/*");
         if is_comment {
-            out.extend(tokenize_comment_with_backticks(tok, profile));
+            for_each_comment_with_backticks(tok, profile, f);
             last = end;
-            continue;
+            return;
         }
 
         let color = if tok.starts_with('"')
@@ -98,24 +106,38 @@ pub fn classify_tokens(text: &str, profile: Option<&LangProfile>) -> Vec<Classif
         } else {
             "syntaxOperator"
         };
-        out.push(ClassifiedToken {
-            color: color.into(),
+        f(ClassifiedToken {
+            color,
             sgr: None,
-            text: tok.into(),
+            text: tok,
         });
         last = end;
-    }
+    });
     if last < text.len() {
-        out.push(ClassifiedToken {
-            color: "text".into(),
+        f(ClassifiedToken {
+            color: "text",
             sgr: None,
-            text: text[last..].into(),
+            text: &text[last..],
         });
     }
+}
+
+/// Classify a run of text into semantic tokens (plain `text` when there is
+/// no profile).
+pub fn classify_tokens<'a>(
+    text: &'a str,
+    profile: Option<&LangProfile>,
+) -> Vec<ClassifiedToken<'a>> {
+    let mut out = Vec::new();
+    for_each_classified_token(text, profile, |t| out.push(t));
     out
 }
 
-fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<ClassifiedToken> {
+fn for_each_comment_with_backticks<'a>(
+    tok: &'a str,
+    profile: &LangProfile,
+    f: &mut dyn FnMut(ClassifiedToken<'a>),
+) {
     // Doc comments (`///`, `//!`) are MARKDOWN — rustdoc processes them, so
     // `**bold**`, `*italic*`, `~~strike~~`, `[link](url)`, and `` `code` ``
     // all render. Plain comments (`//`, `/*`, `#`) are NOT markdown; the
@@ -129,11 +151,12 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
         && (tok.contains('`') || tok.contains("**") || tok.contains("~~") || tok.contains('['));
     let has_backtick = tok.contains('`');
     if !has_markdown && !has_backtick {
-        return vec![ClassifiedToken {
-            color: "syntaxComment".into(),
+        f(ClassifiedToken {
+            color: "syntaxComment",
             sgr: None,
-            text: tok.into(),
-        }];
+            text: tok,
+        });
+        return;
     }
 
     let inner_prof = profile;
@@ -147,12 +170,11 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
         0
     };
 
-    let mut out = Vec::new();
     if prefix_len > 0 {
-        out.push(ClassifiedToken {
-            color: "syntaxComment".into(),
+        f(ClassifiedToken {
+            color: "syntaxComment",
             sgr: None,
-            text: tok[..prefix_len].into(),
+            text: &tok[..prefix_len],
         });
     }
 
@@ -160,144 +182,148 @@ fn tokenize_comment_with_backticks(tok: &str, profile: &LangProfile) -> Vec<Clas
     if is_doc {
         // Doc comments: full markdown (emphasis, links, code) — the text
         // gaps between markdown spans are comment-colored.
-        for mut t in markdown_tokens(body) {
+        for_each_markdown_token_dyn(body, &mut |mut t| {
             if t.color == "text" {
-                t.color = "syntaxComment".into();
+                t.color = "syntaxComment";
             } else if t.color == "syntaxString" {
                 let parent_sgr = t.sgr;
-                let mut inner_toks = classify_tokens(&t.text, Some(inner_prof));
-                for it in &mut inner_toks {
+                for_each_classified_token_dyn(t.text, Some(inner_prof), &mut |mut it| {
                     if it.sgr.is_none() {
                         it.sgr = parent_sgr;
                     }
-                }
-                out.extend(inner_toks);
-                continue;
+                    f(it);
+                });
+                return;
             }
-            out.push(t);
-        }
+            f(t);
+        });
     } else {
         // Plain comments: backtick-only. Everything outside `` `code` `` is
         // comment-color; inside, the language's classification.
-        out.extend(backtick_tokens(body, inner_prof));
+        for_each_backtick_token_dyn(body, inner_prof, f);
     }
-    out
 }
 
-/// Backtick-only extraction for plain (`//`, `/*`, `#`) comments: only
-/// inline `` `code` `` spans render — accent backticks + language-classified
-/// inner content; the surrounding comment text stays `syntaxComment`. No
-/// markdown emphasis/link/strike (plain comments aren't markdown).
-fn backtick_tokens(body: &str, profile: &LangProfile) -> Vec<ClassifiedToken> {
+fn for_each_backtick_token_dyn<'a>(
+    body: &'a str,
+    profile: &LangProfile,
+    f: &mut dyn FnMut(ClassifiedToken<'a>),
+) {
     static BACKTICK: OnceLock<Regex> = OnceLock::new();
     let re = BACKTICK.get_or_init(|| Regex::new(r"`[^`\n]+`").expect("the comment backtick"));
-    let mut out = Vec::new();
     let mut last = 0usize;
     for m in re.find_iter(body) {
         if m.start() > last {
-            out.push(ClassifiedToken {
-                color: "syntaxComment".into(),
+            f(ClassifiedToken {
+                color: "syntaxComment",
                 sgr: None,
-                text: body[last..m.start()].into(),
+                text: &body[last..m.start()],
             });
         }
-        out.push(ClassifiedToken {
-            color: "accent".into(),
+        f(ClassifiedToken {
+            color: "accent",
             sgr: None,
-            text: "`".into(),
+            text: "`",
         });
         let inner = &m.as_str()[1..m.as_str().len() - 1];
-        out.extend(classify_tokens(inner, Some(profile)));
-        out.push(ClassifiedToken {
-            color: "accent".into(),
+        for_each_classified_token_dyn(inner, Some(profile), f);
+        f(ClassifiedToken {
+            color: "accent",
             sgr: None,
-            text: "`".into(),
+            text: "`",
         });
         last = m.end();
     }
     if last < body.len() {
-        out.push(ClassifiedToken {
-            color: "syntaxComment".into(),
+        f(ClassifiedToken {
+            color: "syntaxComment",
             sgr: None,
-            text: body[last..].into(),
+            text: &body[last..],
         });
     }
-    out
 }
 
-/// Parse the inner content of a bold/italic/link span, stacking the parent
-/// SGR on top of any inline code children. The child's *color* wins; the
-/// parent's *SGR* (bold, italic, underline) is inherited — so e.g.
-/// `**`code`**` renders as code-color + bold rather than mdBold-color + bold.
-pub fn md_inner_tokens(inner: &str, parent_sgr: u32, parent_color: &str) -> Vec<ClassifiedToken> {
+pub fn for_each_md_inner_token<'a>(
+    inner: &'a str,
+    parent_sgr: u32,
+    parent_color: &'static str,
+    mut f: impl FnMut(ClassifiedToken<'a>),
+) {
     static INNER_CODE: OnceLock<Regex> = OnceLock::new();
     let re = INNER_CODE.get_or_init(|| Regex::new(r"`[^`\n]+`").expect("the inner code"));
-    let mut out = Vec::new();
     let mut last = 0usize;
     for m in re.find_iter(inner) {
         if m.start() > last {
-            out.push(ClassifiedToken {
-                color: parent_color.into(),
+            f(ClassifiedToken {
+                color: parent_color,
                 sgr: Some(parent_sgr),
-                text: inner[last..m.start()].into(),
+                text: &inner[last..m.start()],
             });
         }
         let tok = m.as_str();
         // `code` inside bold/italic: code color wins, parent SGR stacks.
-        out.push(ClassifiedToken {
-            color: "accent".into(),
+        f(ClassifiedToken {
+            color: "accent",
             sgr: None,
-            text: "`".into(),
+            text: "`",
         });
-        out.push(ClassifiedToken {
-            color: "syntaxString".into(),
+        f(ClassifiedToken {
+            color: "syntaxString",
             sgr: Some(parent_sgr),
-            text: tok[1..tok.len() - 1].into(),
+            text: &tok[1..tok.len() - 1],
         });
-        out.push(ClassifiedToken {
-            color: "accent".into(),
+        f(ClassifiedToken {
+            color: "accent",
             sgr: None,
-            text: "`".into(),
+            text: "`",
         });
         last = m.end();
     }
     if last < inner.len() {
-        out.push(ClassifiedToken {
-            color: parent_color.into(),
+        f(ClassifiedToken {
+            color: parent_color,
             sgr: Some(parent_sgr),
-            text: inner[last..].into(),
+            text: &inner[last..],
         });
     }
+}
+
+pub fn md_inner_tokens<'a>(
+    inner: &'a str,
+    parent_sgr: u32,
+    parent_color: &'static str,
+) -> Vec<ClassifiedToken<'a>> {
+    let mut out = Vec::new();
+    for_each_md_inner_token(inner, parent_sgr, parent_color, |t| out.push(t));
     out
 }
 
-/// The markdown tokens — the md default region's classifier (the renderer's
-/// `markdownTokens` ported): `#`-headings (the marker muted, the title
-/// accent + bold), inline code (syntax-string), `**bold**`, `*italic*`,
-/// `~~strike~~`, `[text](url)` — the SGR rides the token.
-pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
+pub fn for_each_markdown_token<'a>(text: &'a str, mut f: impl FnMut(ClassifiedToken<'a>)) {
+    for_each_markdown_token_dyn(text, &mut f);
+}
+
+fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedToken<'a>)) {
     static HEADING: OnceLock<Regex> = OnceLock::new();
     static MD_INLINE: OnceLock<Regex> = OnceLock::new();
     let heading =
         HEADING.get_or_init(|| Regex::new(r"^(#{1,6})(\s+)(.*)$").expect("the md heading"));
     if let Some(h) = heading.captures(text) {
-        return vec![
-            ClassifiedToken {
-                color: "accent".into(),
-                sgr: None,
-                text: h[1].to_string(),
-            },
-            ClassifiedToken {
-                color: "text".into(),
-                sgr: None,
-                text: h[2].to_string(),
-            },
-            ClassifiedToken {
-                color: "accent".into(),
-                sgr: Some(MD_SGR_BOLD),
-                text: h[3].to_string(),
-            },
-        ];
+        f(ClassifiedToken {
+            color: "accent",
+            sgr: None,
+            text: h.get(1).unwrap().as_str(),
+        });
+        f(ClassifiedToken {
+            color: "text",
+            sgr: None,
+            text: h.get(2).unwrap().as_str(),
+        });
+        f(ClassifiedToken {
+            color: "accent",
+            sgr: Some(MD_SGR_BOLD),
+            text: h.get(3).unwrap().as_str(),
+        });
+        return;
     }
     let re = MD_INLINE.get_or_init(|| {
         Regex::new(
@@ -305,143 +331,134 @@ pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
         )
         .expect("the md inline")
     });
-    let mut out: Vec<ClassifiedToken> = Vec::new();
     let mut last = 0usize;
     for m in re.find_iter(text) {
         if m.start() > last {
-            out.push(ClassifiedToken {
-                color: "text".into(),
+            f(ClassifiedToken {
+                color: "text",
                 sgr: None,
-                text: text[last..m.start()].into(),
+                text: &text[last..m.start()],
             });
         }
         let tok = m.as_str();
         if tok.starts_with('`') {
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "`".into(),
+                text: "`",
             });
-            out.push(ClassifiedToken {
-                color: "syntaxString".into(),
+            f(ClassifiedToken {
+                color: "syntaxString",
                 sgr: None,
-                text: tok[1..tok.len() - 1].into(),
+                text: &tok[1..tok.len() - 1],
             });
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "`".into(),
+                text: "`",
             });
         } else if tok.starts_with("~~") {
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "~~".into(),
+                text: "~~",
             });
-            out.extend(md_inner_tokens(
-                &tok[2..tok.len() - 2],
-                MD_SGR_STRIKE,
-                "mdStrike",
-            ));
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            for_each_md_inner_token(&tok[2..tok.len() - 2], MD_SGR_STRIKE, "mdStrike", &mut *f);
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "~~".into(),
+                text: "~~",
             });
         } else if tok.starts_with("**") {
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "**".into(),
+                text: "**",
             });
-            out.extend(md_inner_tokens(
-                &tok[2..tok.len() - 2],
-                MD_SGR_BOLD,
-                "mdBold",
-            ));
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            for_each_md_inner_token(&tok[2..tok.len() - 2], MD_SGR_BOLD, "mdBold", &mut *f);
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "**".into(),
+                text: "**",
             });
         } else if tok.starts_with('[') {
             if let Some(close) = tok.find("](") {
-                out.push(ClassifiedToken {
-                    color: "accent".into(),
+                f(ClassifiedToken {
+                    color: "accent",
                     sgr: None,
-                    text: "[".into(),
+                    text: "[",
                 });
-                out.extend(md_inner_tokens(&tok[1..close], MD_SGR_UNDERLINE, "mdLink"));
-                out.push(ClassifiedToken {
-                    color: "accent".into(),
+                for_each_md_inner_token(&tok[1..close], MD_SGR_UNDERLINE, "mdLink", &mut *f);
+                f(ClassifiedToken {
+                    color: "accent",
                     sgr: None,
-                    text: "](".into(),
+                    text: "](",
                 });
-                out.push(ClassifiedToken {
-                    color: "mdUrl".into(),
+                f(ClassifiedToken {
+                    color: "mdUrl",
                     sgr: Some(MD_SGR_UNDERLINE),
-                    text: tok[close + 2..tok.len() - 1].into(),
+                    text: &tok[close + 2..tok.len() - 1],
                 });
-                out.push(ClassifiedToken {
-                    color: "accent".into(),
+                f(ClassifiedToken {
+                    color: "accent",
                     sgr: None,
-                    text: ")".into(),
+                    text: ")",
                 });
             } else {
-                out.push(ClassifiedToken {
-                    color: "accent".into(),
+                f(ClassifiedToken {
+                    color: "accent",
                     sgr: None,
-                    text: "[".into(),
+                    text: "[",
                 });
-                out.extend(md_inner_tokens(
+                for_each_md_inner_token(
                     &tok[1..tok.len() - 1],
                     MD_SGR_UNDERLINE,
                     "mdLink",
-                ));
-                out.push(ClassifiedToken {
-                    color: "accent".into(),
+                    &mut *f,
+                );
+                f(ClassifiedToken {
+                    color: "accent",
                     sgr: None,
-                    text: "]".into(),
+                    text: "]",
                 });
             }
         } else {
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "*".into(),
+                text: "*",
             });
-            out.extend(md_inner_tokens(
-                &tok[1..tok.len() - 1],
-                MD_SGR_ITALIC,
-                "mdItalic",
-            ));
-            out.push(ClassifiedToken {
-                color: "accent".into(),
+            for_each_md_inner_token(&tok[1..tok.len() - 1], MD_SGR_ITALIC, "mdItalic", &mut *f);
+            f(ClassifiedToken {
+                color: "accent",
                 sgr: None,
-                text: "*".into(),
+                text: "*",
             });
         }
 
         last = m.end();
     }
     if last < text.len() {
-        out.push(ClassifiedToken {
-            color: "text".into(),
+        f(ClassifiedToken {
+            color: "text",
             sgr: None,
-            text: text[last..].into(),
+            text: &text[last..],
         });
     }
+}
+
+pub fn markdown_tokens<'a>(text: &'a str) -> Vec<ClassifiedToken<'a>> {
+    let mut out = Vec::new();
+    for_each_markdown_token(text, |t| out.push(t));
     out
 }
 
-/// The full-line classifier: the file's default region (md → the markdown
-/// tokens, else the profile), or a fence region's language (with the file's
-/// comment prefix stripped first — `/// let x = 5;` → `let x = 5;`).
-pub fn classify_line(
-    text: &str,
+pub fn for_each_line_classified_token<'a>(
+    text: &'a str,
     file_profile: Option<&LangProfile>,
     region: Option<&super::fence::FenceRegion>,
-) -> Vec<ClassifiedToken> {
+    mut f: impl FnMut(ClassifiedToken<'a>),
+) {
     use super::registry::lang_profile;
     match region {
         Some(r) => {
@@ -451,31 +468,39 @@ pub fn classify_line(
                 file_profile.and_then(|p| p.fence_strip.as_ref()),
             ) {
                 (Some(p), Some(strip)) => {
-                    let mut out: Vec<ClassifiedToken> = Vec::new();
                     if let Some(m) = strip.find(text)
                         && m.start() == 0
                         && m.end() > 0
                     {
-                        out.push(ClassifiedToken {
-                            color: "syntaxComment".into(),
+                        f(ClassifiedToken {
+                            color: "syntaxComment",
                             sgr: None,
-                            text: text[..m.end()].into(),
+                            text: &text[..m.end()],
                         });
-                        out.extend(classify_tokens(&text[m.end()..], Some(p)));
-                        return out;
+                        for_each_classified_token(&text[m.end()..], Some(p), f);
+                        return;
                     }
-                    classify_tokens(text, Some(p))
+                    for_each_classified_token(text, Some(p), f);
                 }
-                _ => classify_tokens(text, profile),
+                _ => for_each_classified_token(text, profile, f),
             }
         }
         None => {
             if file_profile.is_some_and(|p| p.markdown) {
-                // The md default region is the markdown prose.
-                markdown_tokens(text)
+                for_each_markdown_token(text, f);
             } else {
-                classify_tokens(text, file_profile)
+                for_each_classified_token(text, file_profile, f);
             }
         }
     }
+}
+
+pub fn classify_line<'a>(
+    text: &'a str,
+    file_profile: Option<&LangProfile>,
+    region: Option<&super::fence::FenceRegion>,
+) -> Vec<ClassifiedToken<'a>> {
+    let mut out = Vec::new();
+    for_each_line_classified_token(text, file_profile, region, |t| out.push(t));
+    out
 }

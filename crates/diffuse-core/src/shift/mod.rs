@@ -204,7 +204,7 @@ pub fn max_shift_down_rows(
     hunk: &Hunk,
     split_idx: usize,
     end_idx: usize,
-    new_content: Option<&[String]>,
+    new_content: Option<&[&str]>,
 ) -> usize {
     let Some(content) = new_content else {
         return 0;
@@ -222,7 +222,7 @@ pub fn max_shift_down_rows(
             break;
         };
         let hunk_text = hunk.rows[split_idx + offset].text();
-        if candidate_text == hunk_text {
+        if *candidate_text == hunk_text {
             count += 1;
         } else {
             break;
@@ -314,7 +314,7 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
 /// `new_content`, and executes the shift.
 pub fn pass_shift_hunk(
     h: &Hunk,
-    new_content: Option<&[String]>,
+    new_content: Option<&[&str]>,
     profile: Option<&crate::syntax::profile::LangProfile>,
 ) -> Hunk {
     let mut new_hunk = h.clone();

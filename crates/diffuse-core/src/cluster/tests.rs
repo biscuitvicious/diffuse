@@ -126,7 +126,7 @@ fn add_row(n: u32, text: &str) -> Row {
     Row::Add(AddLine::new(LineNum::new(n).unwrap(), text))
 }
 
-fn code_cluster(old: Vec<Row>, new: Vec<Row>) -> ChangeCluster {
+fn code_cluster(old: Vec<Row>, new: Vec<Row>) -> ChangeCluster<'static> {
     ChangeCluster {
         preceding_ctx: Vec::new(),
         old_rows: old,
@@ -631,10 +631,10 @@ fn test_mirage_lookup_cluster() {
     ];
 
     let cluster = ChangeCluster {
-        preceding_ctx: vec!["        if !fingerprint.is_valid() {".to_string()],
+        preceding_ctx: vec!["        if !fingerprint.is_valid() {"],
         old_rows,
         new_rows,
-        following_ctx: vec!["    }".to_string()],
+        following_ctx: vec!["    }"],
         section: SyntaxSectionKind::Code,
     };
     let rs = lang_profile("rs");

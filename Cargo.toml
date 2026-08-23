@@ -24,6 +24,8 @@ crossterm = "0.29"
 unicode-segmentation = "1.13.2"
 unicode-width = "0.2"
 gix = { version = "0.86", default-features = false, features = ["basic", "revision", "blob-diff", "parallel", "sha1"] }
+rayon = "1.10"
+rustc-hash = "2"
 
 [profile.dev.package.regex]
 opt-level = 3
@@ -36,3 +38,6 @@ opt-level = 3
 
 [profile.dev]
 opt-level = 1
+
+[profile.release]
+debug = 1

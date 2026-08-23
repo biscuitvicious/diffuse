@@ -58,7 +58,7 @@ fn trace_wobble() {
                     RunKind::Ctx => "ctx",
                     RunKind::Mov => "mov",
                 },
-                x.text.as_str(),
+                x.text,
             )
         })
         .collect();
@@ -95,7 +95,7 @@ fn whitespace_minimum() {
     let add = "            self.cache.borrow_mut().pop(key);";
     let r = mk(del, add);
     let runs = merged_runs(&r);
-    let parts: Vec<(&str, String)> = runs
+    let parts: Vec<(&str, &str)> = runs
         .iter()
         .map(|x| {
             (
@@ -106,16 +106,16 @@ fn whitespace_minimum() {
                     RunKind::Ctx => "ctx",
                     RunKind::Mov => "mov",
                 },
-                x.text.clone(),
+                x.text,
             )
         })
         .collect();
     assert_eq!(
         parts,
         vec![
-            ("common", "        ".to_string()),
-            ("add", "    ".to_string()),
-            ("common", "self.cache.borrow_mut().pop(key);".to_string()),
+            ("common", "        "),
+            ("add", "    "),
+            ("common", "self.cache.borrow_mut().pop(key);"),
         ],
         "8 common + 4 added, never the whole run on each side"
     );

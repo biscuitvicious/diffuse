@@ -10,7 +10,6 @@ use std::{
     env, fs,
     io::{self, IsTerminal, Read},
     path::Path,
-    process,
 };
 
 use clap::Parser;
@@ -246,7 +245,7 @@ fn main() -> io::Result<()> {
                 Vec::new(),
                 false,
                 6,
-                Some(loaded_db),
+                Some(loaded_db.clone()),
                 args.repo.clone(),
                 None,
             );
@@ -261,26 +260,25 @@ fn main() -> io::Result<()> {
                 Some(meta_rx),
                 repo_name,
                 notes_path,
-                repo_root,
-                args.git_args,
+                repo_root.clone(),
+                args.git_args.clone(),
             )?;
         } else {
-            let git_res = match load_git_repo(&repo_root, &args.git_args, &[], false, 6) {
-                Ok(g) => g,
-                Err(e) => {
-                    eprintln!("diffuse: {e}");
-                    process::exit(2);
-                }
-            };
-            let theme = default_theme();
-            let consumer = diffuse_core::streaming::stream_diff_pipeline(
-                &git_res.diff_text,
-                &git_res.contents,
-                Some(&git_res.old_contents),
+            let (consumer, meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
+                repo_root.clone(),
+                args.git_args.clone(),
+                Vec::new(),
+                false,
+                6,
                 Some(loaded_db),
                 args.repo.clone(),
                 None,
             );
+            if let Ok(Err(e)) = meta_rx.recv() {
+                eprintln!("diffuse: {e}");
+                std::process::exit(2);
+            }
+            let theme = default_theme();
             let mut stdout = io::stdout().lock();
             for file in consumer {
                 let rendered = diffuse_render::render_file_diff(&file, &theme, true);
@@ -290,7 +288,6 @@ fn main() -> io::Result<()> {
                     }
                     return Err(e);
                 }
-                let _ = stdout.flush();
             }
             let _ = stdout.write_all(b"\x1b[0m");
             let _ = stdout.flush();

@@ -8,7 +8,7 @@
 //! renderer receives, so behavior is identical; only the raw offset
 //! values differ for non-ASCII lines.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::parse::Spans;
 
@@ -137,12 +137,12 @@ const ASCII_KIND: [u8; 128] = {
 /// Tokenize a diff line into word/operator tokens (whitespace + punctuation
 /// are separate tokens so `->` → `=>` highlights a single character). Zero-copy
 /// slices.
-pub fn tokenize_line(text: &str) -> Vec<&str> {
+/// Iterate through word/operator tokens with zero allocations.
+#[inline]
+pub fn for_each_token<'a>(text: &'a str, mut f: impl FnMut(&'a str)) {
     if text.is_empty() {
-        return Vec::new();
+        return;
     }
-
-    let mut out = Vec::new();
 
     if text.is_ascii() {
         let bytes = text.as_bytes();
@@ -154,32 +154,32 @@ pub fn tokenize_line(text: &str) -> Vec<&str> {
             match kind {
                 KIND_DELIM => {
                     i += 1;
-                    out.push(&text[start..i]);
+                    f(&text[start..i]);
                 }
                 KIND_WS => {
                     i += 1;
                     while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WS {
                         i += 1;
                     }
-                    out.push(&text[start..i]);
+                    f(&text[start..i]);
                 }
                 KIND_OP => {
                     i += 1;
                     while i < len && ASCII_KIND[bytes[i] as usize] == KIND_OP {
                         i += 1;
                     }
-                    out.push(&text[start..i]);
+                    f(&text[start..i]);
                 }
                 _ => {
                     i += 1;
                     while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WORD {
                         i += 1;
                     }
-                    out.push(&text[start..i]);
+                    f(&text[start..i]);
                 }
             }
         }
-        return out;
+        return;
     }
 
     let mut chars = text.char_indices().peekable();
@@ -194,11 +194,11 @@ pub fn tokenize_line(text: &str) -> Vec<&str> {
                 }
             }
             let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
-            out.push(&text[start_byte..end_byte]);
+            f(&text[start_byte..end_byte]);
         } else if is_delim_char(c) {
             chars.next();
             let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
-            out.push(&text[start_byte..end_byte]);
+            f(&text[start_byte..end_byte]);
         } else if is_op_char(c) {
             chars.next();
             while let Some(&(_, next_c)) = chars.peek() {
@@ -209,7 +209,7 @@ pub fn tokenize_line(text: &str) -> Vec<&str> {
                 }
             }
             let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
-            out.push(&text[start_byte..end_byte]);
+            f(&text[start_byte..end_byte]);
         } else {
             chars.next();
             while let Some(&(_, next_c)) = chars.peek() {
@@ -219,11 +219,112 @@ pub fn tokenize_line(text: &str) -> Vec<&str> {
                 chars.next();
             }
             let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
-            out.push(&text[start_byte..end_byte]);
+            f(&text[start_byte..end_byte]);
         }
     }
+}
 
-    out
+/// Zero-allocation iterator over word/operator tokens in a line.
+#[derive(Clone)]
+pub struct LineTokenizer<'a> {
+    text: &'a str,
+    pos: usize,
+    is_ascii: bool,
+}
+
+impl<'a> Iterator for LineTokenizer<'a> {
+    type Item = &'a str;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.text.len() {
+            return None;
+        }
+        if self.is_ascii {
+            let bytes = self.text.as_bytes();
+            let len = bytes.len();
+            let start = self.pos;
+            let kind = ASCII_KIND[bytes[start] as usize];
+            let mut i = start + 1;
+            match kind {
+                KIND_DELIM => {}
+                KIND_WS => {
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WS {
+                        i += 1;
+                    }
+                }
+                KIND_OP => {
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_OP {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WORD {
+                        i += 1;
+                    }
+                }
+            }
+            self.pos = i;
+            Some(&self.text[start..i])
+        } else {
+            let rem = &self.text[self.pos..];
+            let mut chars = rem.chars();
+            let c = chars.next()?;
+            let c_len = c.len_utf8();
+            if is_ws_char(c) {
+                let mut advance = c_len;
+                for next_c in chars {
+                    if is_ws_char(next_c) {
+                        advance += next_c.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                let start = self.pos;
+                self.pos += advance;
+                Some(&self.text[start..self.pos])
+            } else if is_delim_char(c) {
+                let start = self.pos;
+                self.pos += c_len;
+                Some(&self.text[start..self.pos])
+            } else if is_op_char(c) {
+                let mut advance = c_len;
+                for next_c in chars {
+                    if is_op_char(next_c) {
+                        advance += next_c.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                let start = self.pos;
+                self.pos += advance;
+                Some(&self.text[start..self.pos])
+            } else {
+                let mut advance = c_len;
+                for next_c in chars {
+                    if is_ws_char(next_c) || is_delim_char(next_c) || is_op_char(next_c) {
+                        break;
+                    }
+                    advance += next_c.len_utf8();
+                }
+                let start = self.pos;
+                self.pos += advance;
+                Some(&self.text[start..self.pos])
+            }
+        }
+    }
+}
+
+/// Tokenize a diff line into word/operator tokens (whitespace + punctuation
+/// are separate tokens so `->` → `=>` highlights a single character). Zero-copy
+/// iterator.
+#[inline]
+pub fn tokenize_line<'a>(text: &'a str) -> LineTokenizer<'a> {
+    LineTokenizer {
+        text,
+        pos: 0,
+        is_ascii: text.is_ascii(),
+    }
 }
 
 /// The TS `/\s/` test — ASCII whitespace (JS `\s` without the `u` flag),
@@ -240,12 +341,12 @@ pub fn token_is_alnum(t: &str) -> bool {
 
 /// Computes unambiguous unique token anchors (Patience diff pre-pass).
 pub fn unique_token_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
-    let mut a_counts: HashMap<&str, (usize, usize)> = HashMap::new();
+    let mut a_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
     for (i, &t) in a.iter().enumerate() {
         let entry = a_counts.entry(t).or_insert((0, i));
         entry.0 += 1;
     }
-    let mut b_counts: HashMap<&str, (usize, usize)> = HashMap::new();
+    let mut b_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
     for (j, &t) in b.iter().enumerate() {
         let entry = b_counts.entry(t).or_insert((0, j));
         entry.0 += 1;
@@ -299,7 +400,7 @@ pub fn unique_token_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
 }
 
 /// Core LCS backtrace over string slices.
-pub fn raw_lcs_pairs(a: &[&str], b: &[&str]) -> HashMap<usize, usize> {
+pub fn raw_lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
     raw_lcs_pairs_with_lookahead(a, b, None, None)
 }
 
@@ -309,11 +410,11 @@ pub fn raw_lcs_pairs_with_lookahead(
     b: &[&str],
     next_a: Option<&str>,
     next_b: Option<&str>,
-) -> HashMap<usize, usize> {
+) -> FxHashMap<usize, usize> {
     let n = a.len();
     let m = b.len();
     if n == 0 || m == 0 {
-        return HashMap::new();
+        return FxHashMap::default();
     }
     let mut dp = vec![0u32; (n + 1) * (m + 1)];
     let idx = |i: usize, j: usize| i * (m + 1) + j;
@@ -326,7 +427,7 @@ pub fn raw_lcs_pairs_with_lookahead(
             };
         }
     }
-    let mut pairs = HashMap::new();
+    let mut pairs = FxHashMap::default();
     let mut i = 0;
     let mut j = 0;
     let mut in_add_run = false;
@@ -384,7 +485,7 @@ pub fn raw_lcs_pairs_with_lookahead(
 /// LCS backtrace: map of old-token index → matched new-token index.
 /// Combines recursive Patience unique token anchoring with run-continuation
 /// LCS.
-pub fn lcs_pairs(a: &[&str], b: &[&str]) -> HashMap<usize, usize> {
+pub fn lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
     lcs_pairs_recursive(a, b, None, None)
 }
 
@@ -394,15 +495,15 @@ pub fn lcs_pairs_recursive(
     b: &[&str],
     next_a: Option<&str>,
     next_b: Option<&str>,
-) -> HashMap<usize, usize> {
+) -> FxHashMap<usize, usize> {
     if a.is_empty() || b.is_empty() {
-        return HashMap::new();
+        return FxHashMap::default();
     }
     let anchors = unique_token_anchors(a, b);
     if anchors.is_empty() {
         return raw_lcs_pairs_with_lookahead(a, b, next_a, next_b);
     }
-    let mut pairs = HashMap::new();
+    let mut pairs = FxHashMap::default();
     let mut a_prev = 0;
     let mut b_prev = 0;
     for &(ai, bi) in &anchors {
@@ -430,8 +531,8 @@ pub fn lcs_pairs_anchored(
     a: &[&str],
     b: &[&str],
     anchors: &[(usize, usize)],
-) -> HashMap<usize, usize> {
-    let mut pairs = HashMap::new();
+) -> FxHashMap<usize, usize> {
+    let mut pairs = FxHashMap::default();
     let mut a_prev = 0;
     let mut b_prev = 0;
     for &(ai, bi) in anchors {
@@ -468,11 +569,11 @@ pub fn lcs_pairs_ids(
     b: &[u32],
     id_ws: &[bool],
     id_alnum: &[bool],
-) -> HashMap<usize, usize> {
+) -> FxHashMap<usize, usize> {
     let n = a.len();
     let m = b.len();
     if n == 0 || m == 0 {
-        return HashMap::new();
+        return FxHashMap::default();
     }
     let mut dp = vec![0u32; (n + 1) * (m + 1)];
     for i in (0..n).rev() {
@@ -487,7 +588,7 @@ pub fn lcs_pairs_ids(
             };
         }
     }
-    let mut pairs = HashMap::new();
+    let mut pairs = FxHashMap::default();
     let mut i = 0;
     let mut j = 0;
     let mut in_add_run = false;
@@ -559,25 +660,61 @@ pub fn lcs_matched_chars_ids(
     if n == 0 || m == 0 {
         return 0;
     }
-    scratch.clear();
-    scratch.resize((n + 1) * (m + 1), 0);
-    let dp = scratch.as_mut_slice();
-    for i in (0..n).rev() {
-        let row = i * (m + 1);
-        let next = row + m + 1;
-        let ai = a[i];
-        for j in (0..m).rev() {
-            dp[row + j] = if ai == b[j] {
-                dp[next + j + 1] + 1
-            } else {
-                dp[next + j].max(dp[row + j + 1])
-            };
+    if a == b {
+        let mut total = 0;
+        for (idx, &id) in b.iter().enumerate() {
+            if let Some(&is_ws) = id_ws.get(id as usize)
+                && !is_ws
+            {
+                total += b_token_chars.get(idx).copied().unwrap_or(0);
+            }
         }
+        return total;
+    }
+    let stride = m + 1;
+    let total_len = (n + 1) * stride;
+    if scratch.len() < total_len {
+        scratch.resize(total_len, 0);
+    }
+    let dp_ptr = scratch.as_mut_ptr();
+    unsafe {
+        let mut next_row_ptr = dp_ptr.add(n * stride);
+        for col in 0..=m {
+            *next_row_ptr.add(col) = 0;
+        }
+        let mut i = n;
+        while i > 0 {
+            i -= 1;
+            let curr_row_ptr = dp_ptr.add(i * stride);
+            *curr_row_ptr.add(m) = 0;
+            let ai = *a.get_unchecked(i);
+            let mut j = m;
+            let mut right = 0;
+            while j > 0 {
+                j -= 1;
+                let bj = *b.get_unchecked(j);
+                let val = if ai == bj {
+                    *next_row_ptr.add(j + 1) + 1
+                } else {
+                    let down = *next_row_ptr.add(j);
+                    down.max(right)
+                };
+                *curr_row_ptr.add(j) = val;
+                right = val;
+            }
+            next_row_ptr = curr_row_ptr;
+        }
+    }
+    let dp = &mut scratch[..total_len];
+    if dp[0] == 0 {
+        return 0;
     }
     let mut matched = 0usize;
     let mut i = 0;
     let mut j = 0;
     let mut in_add_run = false;
+    let mut row_curr = 0;
+    let mut row_next = stride;
     while i < n && j < m {
         if a[i] == b[j] {
             if id_ws[a[i] as usize]
@@ -588,10 +725,8 @@ pub fn lcs_matched_chars_ids(
                 continue;
             }
             if in_add_run
-                && dp[i * (m + 1) + j + 1] == dp[i * (m + 1) + j]
-                && (j + 1..m).any(|k| {
-                    b[k] == a[i] && dp[(i + 1) * (m + 1) + k + 1] + 1 == dp[i * (m + 1) + j]
-                })
+                && dp[row_curr + j + 1] == dp[row_curr + j]
+                && (j + 1..m).any(|k| b[k] == a[i] && dp[row_next + k + 1] + 1 == dp[row_curr + j])
             {
                 j += 1;
                 continue;
@@ -599,15 +734,21 @@ pub fn lcs_matched_chars_ids(
             matched += b_token_chars[j];
             i += 1;
             j += 1;
+            row_curr += stride;
+            row_next += stride;
             in_add_run = false;
-        } else if dp[(i + 1) * (m + 1) + j] > dp[i * (m + 1) + j + 1] {
+        } else if dp[row_next + j] > dp[row_curr + j + 1] {
             i += 1;
-        } else if dp[(i + 1) * (m + 1) + j] < dp[i * (m + 1) + j + 1] {
+            row_curr += stride;
+            row_next += stride;
+        } else if dp[row_next + j] < dp[row_curr + j + 1] {
             j += 1;
             in_add_run = true;
         } else if id_ws[a[i] as usize] && !id_ws[b[j] as usize] {
             if i + 1 < n && a[i + 1] == b[j] {
                 i += 1;
+                row_curr += stride;
+                row_next += stride;
             } else {
                 j += 1;
                 in_add_run = true;
@@ -615,10 +756,12 @@ pub fn lcs_matched_chars_ids(
         } else if id_ws[b[j] as usize] && !id_ws[a[i] as usize] {
             j += 1;
             in_add_run = true;
-        } else if !b[j + 1..].iter().any(|t| *t == a[i])
+        } else if !b[j + 1..].contains(&a[i])
             || (!id_alnum[a[i] as usize] && id_alnum[b[j] as usize])
         {
             i += 1;
+            row_curr += stride;
+            row_next += stride;
         } else {
             j += 1;
             in_add_run = true;
@@ -628,7 +771,7 @@ pub fn lcs_matched_chars_ids(
 }
 
 /// Char-offset spans of the UNMATCHED (changed) tokens in `toks`.
-pub fn spans_from(text: &str, toks: &[&str], matched: &HashSet<usize>) -> Vec<(usize, usize)> {
+pub fn spans_from(text: &str, toks: &[&str], matched: &FxHashSet<usize>) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut pos = 0usize;
     let mut run_start: Option<usize> = None;
@@ -660,8 +803,8 @@ pub type WordSpans = Spans;
  * (pure add/del) yields no spans (the line-level shade covers it).
  */
 pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
-    let ot = tokenize_line(old_text);
-    let nt = tokenize_line(new_text);
+    let ot: Vec<&str> = tokenize_line(old_text).collect();
+    let nt: Vec<&str> = tokenize_line(new_text).collect();
     // Cap: long lines fall back to whole-line highlighting.
     if ot.len() * nt.len() > 40_000 {
         return WordSpans::default();
@@ -673,8 +816,8 @@ pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
     } else {
         raw_lcs_pairs(&ot, &nt)
     };
-    let mut matched_old = HashSet::new();
-    let mut matched_new = HashSet::new();
+    let mut matched_old = FxHashSet::default();
+    let mut matched_new = FxHashSet::default();
     for (o, n) in &pairs {
         matched_old.insert(*o);
         matched_new.insert(*n);

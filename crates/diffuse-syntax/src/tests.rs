@@ -21,7 +21,7 @@ fn color_of(tok: &str) -> &str {
 fn has_color(text: &str, profile: Option<&LangProfile>, code: &str, needle: &str) -> bool {
     classify_tokens(text, profile)
         .iter()
-        .any(|t| t.text == needle && color_of(&t.color) == code)
+        .any(|t| t.text == needle && color_of(t.color) == code)
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn md_fence_with_rust_modifier_opens_rust_region() {
 // `*italic*`, `~~strike~~`, `[link](url)`. Doc comments (`///`, `//!`) ARE
 // markdown — full emphasis. The split lives in
 // `tokenize_comment_with_backticks`.
-fn colors_of(text: &str, profile: Option<&LangProfile>) -> Vec<(String, String)> {
+fn colors_of<'a>(text: &'a str, profile: Option<&LangProfile>) -> Vec<(&'static str, &'a str)> {
     classify_tokens(text, profile)
         .into_iter()
         .map(|t| (t.color, t.text))
@@ -212,32 +212,30 @@ fn plain_comment_backtick_renders_as_rust_no_markdown() {
     );
     // backtick delimiters are accent
     assert!(
-        toks.iter().any(|(c, t)| c == "accent" && t == "`"),
+        toks.iter().any(|&(c, t)| c == "accent" && t == "`"),
         "backticks accent"
     );
     // inner `if` / `k` classify as Rust keyword (syntaxKeyword), not comment
     assert!(
-        toks.iter().any(|(c, t)| c == "syntaxKeyword" && t == "if"),
+        toks.iter().any(|&(c, t)| c == "syntaxKeyword" && t == "if"),
         "`if` inside backticks renders as a Rust keyword"
     );
     // the `**not bold**` text outside backticks stays syntaxComment — no mdBold
     assert!(
         toks.iter()
-            .any(|(c, t)| c == "syntaxComment" && t.contains("**not bold**")),
+            .any(|&(c, t)| c == "syntaxComment" && t.contains("**not bold**")),
         "`**bold**` in a plain comment (outside backticks) stays comment-colored"
     );
     // `[not link](u)` outside backticks stays syntaxComment — no mdUrl
     assert!(
         toks.iter()
-            .any(|(c, t)| c == "syntaxComment" && t.contains("[not link]")),
+            .any(|&(c, t)| c == "syntaxComment" && t.contains("[not link]")),
         "`[link](url)` in a plain comment stays comment-colored"
     );
     // no mdBold / mdItalic / mdStrike / mdLink / mdUrl tokens at all
     assert!(
-        toks.iter().all(|(c, _)| !matches!(
-            c.as_str(),
-            "mdBold" | "mdItalic" | "mdStrike" | "mdLink" | "mdUrl"
-        )),
+        toks.iter()
+            .all(|&(c, _)| !matches!(c, "mdBold" | "mdItalic" | "mdStrike" | "mdLink" | "mdUrl")),
         "no markdown emphasis tokens in a plain comment"
     );
 }
@@ -249,16 +247,16 @@ fn doc_comment_full_markdown_renders() {
     // and `` `code` `` renders as accent backticks + Rust inner.
     let toks = colors_of("/// **bold** and `code`", Some(rs));
     assert!(
-        toks.iter().any(|(c, t)| *c == "mdBold" && t == "bold"),
+        toks.iter().any(|&(c, t)| c == "mdBold" && t == "bold"),
         "doc bold renders"
     );
     assert!(
-        toks.iter().any(|(c, t)| c == "accent" && t == "`"),
+        toks.iter().any(|&(c, t)| c == "accent" && t == "`"),
         "doc backticks accent"
     );
     assert!(
         toks.iter()
-            .any(|(c, t)| *c == "syntaxKeyword" || t == "code"),
+            .any(|&(c, t)| c == "syntaxKeyword" || t == "code"),
         "doc inner code classified"
     );
 }

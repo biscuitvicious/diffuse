@@ -3,7 +3,7 @@
 //! `isWholesaleMod`, `isPureDeletionMod`. Comments ported verbatim; char
 //! offsets throughout (the lcs.rs convention).
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -40,17 +40,17 @@ impl RunKind {
 }
 
 /// A merged run of a mod row's display.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Run {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Run<'a> {
     pub kind: RunKind,
-    pub text: String,
+    pub text: &'a str,
 }
 
-impl Run {
+impl<'a> Run<'a> {
     pub fn reverse(&self) -> Self {
         Run {
             kind: self.kind.reverse(),
-            text: self.text.clone(),
+            text: self.text,
         }
     }
 }
@@ -58,8 +58,8 @@ impl Run {
 /// The result of the del/add span pairing.
 pub struct DelPairing {
     pub del_pos: Vec<usize>,
-    pub pair: HashMap<usize, usize>,
-    pub op_anchor: HashMap<usize, usize>,
+    pub pair: FxHashMap<usize, usize>,
+    pub op_anchor: FxHashMap<usize, usize>,
 }
 
 /// Project the old side of a run sequence (Common + Del + Ctx).
@@ -67,7 +67,7 @@ pub fn project_old_runs(runs: &[Run]) -> String {
     let mut s = String::new();
     for r in runs {
         if matches!(r.kind, RunKind::Common | RunKind::Del | RunKind::Ctx) {
-            s.push_str(&r.text);
+            s.push_str(r.text);
         }
     }
     s
@@ -78,7 +78,7 @@ pub fn project_new_runs(runs: &[Run]) -> String {
     let mut s = String::new();
     for r in runs {
         if matches!(r.kind, RunKind::Common | RunKind::Add | RunKind::Ctx) {
-            s.push_str(&r.text);
+            s.push_str(r.text);
         }
     }
     s
@@ -94,7 +94,7 @@ fn all_ws(s: &str) -> bool {
     !s.is_empty() && s.chars().all(is_ws_class)
 }
 
-fn char_at(s: &str, i: usize) -> Option<char> {
+pub(crate) fn char_at(s: &str, i: usize) -> Option<char> {
     s.chars().nth(i)
 }
 
@@ -122,8 +122,8 @@ pub fn del_display_positions(
     if del_text.is_empty() || add_text.is_empty() {
         return vec![0; del_spans.len()];
     }
-    let dtoks = crate::lcs::tokenize_line(del_text);
-    let atoks = crate::lcs::tokenize_line(add_text);
+    let dtoks: Vec<&str> = crate::lcs::tokenize_line(del_text).collect();
+    let atoks: Vec<&str> = crate::lcs::tokenize_line(add_text).collect();
     let pairs = crate::lcs::lcs_pairs(&dtoks, &atoks);
 
     let mut d_spans = Vec::with_capacity(dtoks.len());
@@ -215,14 +215,24 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
 
 /// The artifact-filtered del spans a mod row shows (see the TS).
 pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Vec<(usize, usize)> {
-    let del_spans: Vec<(usize, usize)> = match del_spans_in {
-        Some(s) => s.to_vec(),
-        None => r.spans().map_or(Vec::new(), |s| s.del.clone()),
-    };
-    if r.del_text().is_none() {
+    let Some(del_text) = r.del_text() else {
         return Vec::new();
-    }
-    let del_text = r.del_text().expect("del_text");
+    };
+    let spans = r.spans();
+    let del_spans: &[(usize, usize)] = match del_spans_in {
+        Some(s) => s,
+        None => spans.map_or(&[], |s| s.del.as_slice()),
+    };
+    del_spans_to_show_texts(del_text, r.text(), del_spans)
+}
+
+/// The artifact-filtered del spans computed directly from texts and spans
+/// without Row allocation.
+pub fn del_spans_to_show_texts(
+    del_text: &str,
+    add_text: &str,
+    del_spans: &[(usize, usize)],
+) -> Vec<(usize, usize)> {
     del_spans
         .iter()
         .filter(|(ds, de)| {
@@ -232,12 +242,12 @@ pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Ve
             // moves the line into a block): show it struck at the line
             // start. Drop it only when the add's leading run is identical.
             if t.is_empty() {
-                let leading = r
-                    .text()
-                    .chars()
-                    .take_while(char::is_ascii_whitespace)
-                    .collect::<String>();
-                return raw != leading.as_str();
+                let leading_len = add_text.len()
+                    - add_text
+                        .trim_start_matches(|c: char| c.is_ascii_whitespace())
+                        .len();
+                let leading = &add_text[..leading_len];
+                return raw != leading;
             }
             // A single-span del stays even when its text is inside the add
             // (`None` → `return None;` is a growth — the mod must have
@@ -253,7 +263,7 @@ pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Ve
             if del_spans.len() <= 1 {
                 return true;
             }
-            char_slice(r.text(), *ds, *de) != t
+            char_slice(add_text, *ds, *de) != t
         })
         .copied()
         .collect()
@@ -272,9 +282,9 @@ pub fn del_pairing(
     del_text: &str,
 ) -> DelPairing {
     let del_pos = del_display_positions(del_spans, add_spans, del_text, add_text);
-    let mut pair: HashMap<usize, usize> = HashMap::new();
-    let mut used_adds: HashSet<usize> = HashSet::new();
-    let mut op_anchor: HashMap<usize, usize> = HashMap::new();
+    let mut pair: FxHashMap<usize, usize> = FxHashMap::default();
+    let mut used_adds: FxHashSet<usize> = FxHashSet::default();
+    let mut op_anchor: FxHashMap<usize, usize> = FxHashMap::default();
     for (j, (ds, de)) in del_spans.iter().enumerate() {
         let mut best: Option<usize> = None;
         let mut best_gap: usize = 8;
@@ -294,19 +304,16 @@ pub fn del_pairing(
                 continue;
             }
             let del_op = char_slice(del_text, *ds, *de).trim();
-            let op_chars = del_op.chars().collect::<Vec<char>>();
-            let is_compare_op = !op_chars.is_empty()
-                && op_chars.len() <= 2
-                && (op_chars[0] == '<' || op_chars[0] == '>')
-                && (op_chars.len() == 1 || op_chars[1] == '=');
+            let is_compare_op = matches!(del_op, "<" | ">" | "<=" | ">=");
             if is_compare_op {
+                let first_op_char = del_op.chars().next().unwrap();
                 let mut op_best: Option<usize> = None;
                 let mut op_best_gap = usize::MAX;
                 for c in *as0..*ae {
                     if let Some(ch) = char_at(add_text, c)
                         && (ch == '<' || ch == '>')
                     {
-                        let g = del_pos[j].abs_diff(c) + if ch == op_chars[0] { 0 } else { 2 };
+                        let g = del_pos[j].abs_diff(c) + if ch == first_op_char { 0 } else { 2 };
                         if g < op_best_gap {
                             op_best_gap = g;
                             op_best = Some(i);
@@ -379,35 +386,49 @@ pub fn is_pure_deletion_mod(r: &Row) -> bool {
 /// pairs with the add span nearest its own add-position (within a small
 /// window — the aligned replacement); a del span with no nearby add (a
 /// standalone removal like `resolved_`) inserts at its own position, and a
-/// standalone add fills at its own position.
-pub fn merged_runs(r: &Row) -> Vec<Run> {
-    if is_wholesale_mod(r) {
+/// The merged runs of a mod row's display.
+pub fn merged_runs<'a>(r: &'a Row) -> Vec<Run<'a>> {
+    static EMPTY_SPANS: Spans = Spans {
+        del: Vec::new(),
+        add: Vec::new(),
+    };
+    let del_text = r.del_text().unwrap_or_default();
+    let spans = r.spans().unwrap_or(&EMPTY_SPANS);
+    merged_runs_from_texts(del_text, r.text(), spans)
+}
+
+/// The ordered common/del/add runs of a mod's merged view from texts and spans
+/// directly.
+pub fn merged_runs_from_texts<'a>(
+    del_text: &'a str,
+    add_text: &'a str,
+    spans: &Spans,
+) -> Vec<Run<'a>> {
+    if wholesale_pair(del_text, add_text, spans) {
         return vec![
             Run {
                 kind: RunKind::Del,
-                text: r.del_text().unwrap_or_default().to_string(),
+                text: del_text,
             },
             Run {
                 kind: RunKind::Add,
-                text: r.text().to_string(),
+                text: add_text,
             },
         ];
     }
-    let del_text = r.del_text().unwrap_or_default().to_string();
-    let spans = r.spans().cloned().unwrap_or_default();
-    let add_spans = spans.add.clone();
-    let del_spans = del_spans_to_show(r, Some(&spans.del));
+    let add_spans = &spans.add;
+    let del_spans = del_spans_to_show_texts(del_text, add_text, &spans.del);
     let DelPairing {
         del_pos,
         pair,
         op_anchor,
-    } = del_pairing(&del_spans, &add_spans, r.text(), &del_text);
-    let mut runs: Vec<Run> = Vec::new();
-    let emit_range = |runs: &mut Vec<Run>, from: usize, to: usize| {
+    } = del_pairing(&del_spans, add_spans, add_text, del_text);
+    let mut runs: Vec<Run<'a>> = Vec::new();
+    let emit_range = |runs: &mut Vec<Run<'a>>, from: usize, to: usize| {
         if to > from {
             runs.push(Run {
                 kind: RunKind::Common,
-                text: char_slice(r.text(), from, to).to_string(),
+                text: char_slice(add_text, from, to),
             });
         }
     };
@@ -420,8 +441,9 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
         del: Option<(usize, usize)>,
         add: Option<(usize, usize)>,
     }
-    let mut events: Vec<Ev> = Vec::new();
-    let mut used_adds: HashSet<usize> = HashSet::new();
+    let mut events: Vec<Ev> = Vec::with_capacity(del_spans.len() + add_spans.len());
+    let mut used_adds: FxHashSet<usize> =
+        FxHashSet::with_capacity_and_hasher(add_spans.len(), Default::default());
     for (j, dspan) in del_spans.iter().enumerate() {
         if let Some(ai) = pair.get(&j) {
             used_adds.insert(*ai);
@@ -436,7 +458,7 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
         } else {
             // del_pos[j] is already the exact display position (del_display_positions
             // applied the add-correction); just clamp to the new-text length.
-            let add_len = char_len_of(r.text());
+            let add_len = char_len_of(add_text);
             let ins = del_pos[j].min(add_len);
             events.push(Ev {
                 pos: ins,
@@ -465,35 +487,38 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
             // prefix survives as common, only the difference is struck
             // or filled (8 → 12 spaces = 8 common + 4 added, never the
             // whole run on each side).
-            let del_text_span = char_slice(&del_text, dspan.0, dspan.1);
+            let del_text_span = char_slice(del_text, dspan.0, dspan.1);
             if let Some(aspan) = ev.add {
-                let add_text_span = char_slice(r.text(), aspan.0, aspan.1);
+                let add_text_span = char_slice(add_text, aspan.0, aspan.1);
                 if all_ws(del_text_span) && all_ws(add_text_span) {
                     // The shared prefix is the ACTUAL matching chars — a
                     // type change (`\t` vs 4 spaces) shares nothing: the
                     // tab strikes, the spaces fill, both subworded.
-                    let dch: Vec<char> = del_text_span.chars().collect();
-                    let ach: Vec<char> = add_text_span.chars().collect();
                     let mut share = 0usize;
-                    while share < dch.len() && share < ach.len() && dch[share] == ach[share] {
+                    let d_bytes = del_text_span.as_bytes();
+                    let a_bytes = add_text_span.as_bytes();
+                    while share < d_bytes.len()
+                        && share < a_bytes.len()
+                        && d_bytes[share] == a_bytes[share]
+                    {
                         share += 1;
                     }
                     if share > 0 {
                         runs.push(Run {
                             kind: RunKind::Common,
-                            text: dch[..share].iter().collect(),
+                            text: &del_text_span[..share],
                         });
                     }
-                    if share < dch.len() {
+                    if share < del_text_span.len() {
                         runs.push(Run {
                             kind: RunKind::Del,
-                            text: dch[share..].iter().collect(),
+                            text: &del_text_span[share..],
                         });
                     }
-                    if share < ach.len() {
+                    if share < add_text_span.len() {
                         runs.push(Run {
                             kind: RunKind::Add,
-                            text: ach[share..].iter().collect(),
+                            text: &add_text_span[share..],
                         });
                     }
                     pos = aspan.1;
@@ -502,35 +527,41 @@ pub fn merged_runs(r: &Row) -> Vec<Run> {
             }
             runs.push(Run {
                 kind: RunKind::Del,
-                text: del_text_span.to_string(),
+                text: del_text_span,
             });
             pos = pos.max(ev.pos);
         }
         if let Some(aspan) = ev.add {
             runs.push(Run {
                 kind: RunKind::Add,
-                text: char_slice(r.text(), aspan.0, aspan.1).to_string(),
+                text: char_slice(add_text, aspan.0, aspan.1),
             });
             pos = aspan.1;
         }
     }
-    if pos < char_len_of(r.text()) {
-        emit_range(&mut runs, pos, char_len_of(r.text()));
+    if pos < char_len_of(add_text) {
+        emit_range(&mut runs, pos, char_len_of(add_text));
     }
     coalesce_runs(runs)
 }
 
 /// Compress adjacent runs of the same kind into a single run with joined text.
-pub fn coalesce_runs(runs: Vec<Run>) -> Vec<Run> {
-    let mut out: Vec<Run> = Vec::new();
+pub fn coalesce_runs<'a>(runs: Vec<Run<'a>>) -> Vec<Run<'a>> {
+    let mut out: Vec<Run<'a>> = Vec::new();
     for run in runs {
         if run.text.is_empty() {
             continue;
         }
         if let Some(last) = out.last_mut()
             && last.kind == run.kind
+            && last.text.as_ptr().wrapping_add(last.text.len()) == run.text.as_ptr()
         {
-            last.text.push_str(&run.text);
+            last.text = unsafe {
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                    last.text.as_ptr(),
+                    last.text.len() + run.text.len(),
+                ))
+            };
             continue;
         }
         out.push(run);
@@ -555,7 +586,7 @@ pub fn display_text(r: &Row) -> String {
     if is_wholesale_mod(r) {
         return format!("{}{}", r.del_text().unwrap_or_default(), r.text());
     }
-    merged_runs(r).iter().map(|x| x.text.as_str()).collect()
+    merged_runs(r).iter().map(|x| x.text).collect()
 }
 
 /// Project the row runs forward to reconstruct the new line (stripping Del
@@ -563,7 +594,7 @@ pub fn display_text(r: &Row) -> String {
 pub fn project_forward(runs: &[Run]) -> String {
     runs.iter()
         .filter(|r| r.kind != RunKind::Del)
-        .map(|r| r.text.as_str())
+        .map(|r| r.text)
         .collect()
 }
 
@@ -572,7 +603,7 @@ pub fn project_forward(runs: &[Run]) -> String {
 pub fn project_reverse(runs: &[Run]) -> String {
     runs.iter()
         .filter(|r| r.kind != RunKind::Add)
-        .map(|r| r.text.as_str())
+        .map(|r| r.text)
         .collect()
 }
 

@@ -49,11 +49,11 @@ fn test_notes_add_and_query() {
 
     add_note(&mut db, "myrepo", note.clone());
 
-    let repo_notes = notes_for_file(&db, "myrepo", "src/main.rs");
+    let repo_notes: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
     assert_eq!(repo_notes.len(), 1);
     assert_eq!(repo_notes[0].id, "n1");
 
-    let all = all_notes(&db, "myrepo");
+    let all: Vec<_> = all_notes(&db, "myrepo").collect();
     assert_eq!(all.len(), 1);
 }
 
@@ -85,7 +85,7 @@ fn test_notes_remove() {
     let removed = remove_notes(&mut db, "myrepo", "src/main.rs", Side::New, 12, 18);
     assert_eq!(removed, 1);
 
-    let remaining = notes_for_file(&db, "myrepo", "src/main.rs");
+    let remaining: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, "n2");
 }
@@ -113,7 +113,7 @@ fn test_notes_persistence() {
 
     let loaded = load_notes(&file);
     assert_eq!(loaded.len(), 1);
-    let loaded_notes = notes_for_file(&loaded, "repo1", "lib.rs");
+    let loaded_notes: Vec<_> = notes_for_file(&loaded, "repo1", "lib.rs").collect();
     assert_eq!(loaded_notes.len(), 1);
     assert_eq!(loaded_notes[0].text, "**important**");
 
@@ -125,7 +125,7 @@ fn test_render_note_markdown_inline() {
     let text = "This is **bold** and `code` span";
     let tokens = render_note_markdown(text);
 
-    let texts: Vec<&str> = tokens.iter().map(|t| t.text.as_str()).collect();
+    let texts: Vec<&str> = tokens.iter().map(|t| t.text).collect();
     assert_eq!(
         texts,
         vec![
@@ -133,7 +133,7 @@ fn test_render_note_markdown_inline() {
         ]
     );
 
-    let colors: Vec<&str> = tokens.iter().map(|t| t.color.as_str()).collect();
+    let colors: Vec<&str> = tokens.iter().map(|t| t.color).collect();
     assert_eq!(colors[0], "warning");
     assert_eq!(colors[2], "mdBold");
     assert_eq!(colors[6], "syntaxString");

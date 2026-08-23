@@ -196,6 +196,9 @@ pub fn load_git_blobs_batch(repo_root: &Path, specs: &[String]) -> HashMap<Strin
 /// Load file blob contents directly using the native `gix` object database,
 /// falling back to `load_git_blobs_batch` on error.
 pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<String, String> {
+    if specs.len() > 1 {
+        return load_git_blobs_batch(repo_root, specs);
+    }
     let Ok(repo) = gix::open(repo_root) else {
         return load_git_blobs_batch(repo_root, specs);
     };
@@ -310,7 +313,34 @@ pub fn stream_git_repo_to_producer(
 
     let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
 
-    let emit_chunk = |chunk: &str, idx: &mut usize| {
+    let repo_gix = gix::open(repo_root).ok();
+    let mut tree_cache: std::collections::HashMap<String, Option<gix::Tree<'_>>> =
+        std::collections::HashMap::new();
+
+    let mut get_blob = |ref_str: &str, path: &str| -> Option<String> {
+        if let Some(ref repo) = repo_gix {
+            let tree_opt = tree_cache.entry(ref_str.to_string()).or_insert_with(|| {
+                let id = repo.rev_parse_single(ref_str).ok()?;
+                let obj = repo.find_object(id).ok()?;
+                let commit = obj.peel_to_commit().ok()?;
+                commit.tree().ok()
+            });
+            if let Some(tree) = tree_opt.as_ref() {
+                if let Ok(Some(entry)) = tree.lookup_entry_by_path(path)
+                    && let Ok(obj) = entry.object()
+                    && let Ok(text) = std::str::from_utf8(&obj.data)
+                {
+                    return Some(text.to_string());
+                }
+                return None;
+            }
+        }
+        let spec = format!("{ref_str}:{path}");
+        let blobs = load_git_blobs_batch(repo_root, std::slice::from_ref(&spec));
+        blobs.get(&spec).cloned()
+    };
+
+    let mut emit_chunk = |chunk: &str, idx: &mut usize| {
         if chunk.trim().is_empty() {
             return;
         }
@@ -326,9 +356,7 @@ pub fn stream_git_repo_to_producer(
                         new_c = Some(c);
                     }
                 } else if let Some(new_ref) = &refs.new_ref {
-                    let spec = format!("{new_ref}:{}", f.path);
-                    let blobs = load_git_blobs_native(repo_root, std::slice::from_ref(&spec));
-                    new_c = blobs.get(&spec).cloned();
+                    new_c = get_blob(new_ref, &f.path);
                 }
             }
 
@@ -339,36 +367,42 @@ pub fn stream_git_repo_to_producer(
             });
             let needs_old =
                 f.status == crate::parse::FileStatus::Deleted || has_dels || new_c.is_none();
-            if needs_old {
-                let spec = format!("{old_tree_ref}:{}", f.path);
-                let blobs = load_git_blobs_native(repo_root, std::slice::from_ref(&spec));
-                if let Some(c) = blobs.get(&spec) {
-                    if new_c.is_none() && f.status != crate::parse::FileStatus::Deleted {
-                        new_c = Some(c.clone());
-                    }
-                    old_c = Some(c.clone());
+            if needs_old && let Some(c) = get_blob(old_tree_ref, &f.path) {
+                if new_c.is_none() && f.status != crate::parse::FileStatus::Deleted {
+                    new_c = Some(c.clone());
                 }
+                old_c = Some(c);
             }
+
+            let fallback = if old_c.is_none() && f.status != crate::parse::FileStatus::Added {
+                Some(chunk.to_string())
+            } else {
+                None
+            };
 
             producer.push(crate::streaming::FileJob {
                 idx: *idx,
                 file: f,
                 new_content: new_c,
                 old_content: old_c,
-                diff_fallback: Some(chunk.to_string()),
+                diff_fallback: fallback,
             });
             *idx += 1;
         }
     };
 
-    for line in stdout.lines() {
-        let Ok(line) = line else { break };
-        if line.starts_with("diff --git ") && !current_chunk.is_empty() {
+    let mut line_buf = String::with_capacity(512);
+    let mut reader = stdout;
+    while let Ok(n) = reader.read_line(&mut line_buf) {
+        if n == 0 {
+            break;
+        }
+        if line_buf.starts_with("diff --git ") && !current_chunk.is_empty() {
             emit_chunk(&current_chunk, &mut file_idx);
             current_chunk.clear();
         }
-        current_chunk.push_str(&line);
-        current_chunk.push('\n');
+        current_chunk.push_str(&line_buf);
+        line_buf.clear();
     }
 
     if !current_chunk.is_empty() {

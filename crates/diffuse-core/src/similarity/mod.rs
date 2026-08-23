@@ -1,7 +1,7 @@
 //! One-for-one port of `review.ts`'s `lineSimilarity`/`lineSimilarityParts`
 //! (PLAN.md §3). The comments carry the *why* — ported verbatim.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::lcs::{
     char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
@@ -29,11 +29,8 @@ pub fn line_similarity(a: &str, b: &str) -> f64 {
 /// block) from a growth pair (the del inside the add — `None` →
 /// `return None;`), which both score identically on `sim` alone.
 pub fn line_similarity_parts(a: &str, b: &str) -> SimilarityParts {
-    fn content(toks: Vec<&str>) -> Vec<&str> {
-        toks.into_iter().filter(|t| !t.trim().is_empty()).collect()
-    }
-    let ot = content(tokenize_line(a));
-    let nt = content(tokenize_line(b));
+    let ot: Vec<&str> = tokenize_line(a).filter(|t| !t.trim().is_empty()).collect();
+    let nt: Vec<&str> = tokenize_line(b).filter(|t| !t.trim().is_empty()).collect();
 
     if ot.is_empty() || nt.is_empty() {
         return SimilarityParts {
@@ -71,7 +68,6 @@ pub fn line_similarity_parts(a: &str, b: &str) -> SimilarityParts {
 /// with more than 4× the del's content can never score ≥ 0.25).
 pub fn content_char_len(text: &str) -> usize {
     tokenize_line(text)
-        .into_iter()
         .filter(|t| !t.trim().is_empty())
         .map(char_len)
         .sum()
@@ -83,8 +79,8 @@ pub fn content_char_len(text: &str) -> usize {
 /// of once per pair) is the difference between O(dels×adds) tokenizations
 /// and O(dels+adds). The tokens are INTERNED (the LCS compares u32 ids, not
 /// Strings — the pairing's hot inner loop).
-pub struct LineTokens {
-    pub tokens: Vec<String>,
+pub struct LineTokens<'a> {
+    pub tokens: Vec<&'a str>,
     /// The interned ids (one per content token) — the LCS input.
     pub ids: Vec<u32>,
     /// Each token's char length (the token-presence bound's sums).
@@ -92,7 +88,7 @@ pub struct LineTokens {
     pub chars: usize,
     /// The whitespace-trimmed original (the empty-token case's tie-break:
     /// two blank-ish lines score 1.0 when their trims match).
-    pub trimmed: String,
+    pub trimmed: &'a str,
 }
 
 /// The token interner: assigns one u32 id per distinct token + records the
@@ -100,7 +96,7 @@ pub struct LineTokens {
 /// rows, so identical tokens in different lines compare by id.
 #[derive(Default)]
 pub struct TokenInterner {
-    map: HashMap<String, u32>,
+    map: FxHashMap<&'static str, u32>,
     pub ws: Vec<bool>,
     pub alnum: Vec<bool>,
 }
@@ -116,30 +112,37 @@ impl TokenInterner {
         self.alnum.clear();
     }
 
-    fn intern(&mut self, token: &str) -> u32 {
+    pub(crate) fn intern(&mut self, token: &str) -> u32 {
         if let Some(&id) = self.map.get(token) {
             return id;
         }
         let id = self.map.len() as u32;
-        self.map.insert(token.to_string(), id);
+        // The token string slices are valid for the scope of the cluster DP solve
+        // during which the interner is populated and used before being cleared.
+        let static_token: &'static str = unsafe { std::mem::transmute(token) };
+        self.map.insert(static_token, id);
         self.ws.push(token_is_ws(token));
         self.alnum.push(token_is_alnum(token));
         id
     }
 
     /// Tokenize + filter + intern a line once.
-    pub fn line_tokens(&mut self, text: &str) -> LineTokens {
-        let raw_tokens = tokenize_line(text);
-        let tokens = raw_tokens
-            .into_iter()
-            .filter(|t| !t.trim().is_empty())
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<_>>();
-        let ids = tokens.iter().map(|t| self.intern(t)).collect::<Vec<_>>();
-        let token_chars = tokens.iter().map(|t| char_len(t)).collect::<Vec<_>>();
-        let chars = token_chars.iter().sum();
+    pub fn line_tokens<'a>(&mut self, text: &'a str) -> LineTokens<'a> {
+        let mut tokens = Vec::new();
+        let mut ids = Vec::new();
+        let mut token_chars = Vec::new();
+        let mut chars = 0;
+        crate::lcs::for_each_token(text, |t| {
+            if !t.trim().is_empty() {
+                tokens.push(t);
+                ids.push(self.intern(t));
+                let tc = char_len(t);
+                token_chars.push(tc);
+                chars += tc;
+            }
+        });
         LineTokens {
-            trimmed: text.trim().to_string(),
+            trimmed: text.trim(),
             tokens,
             ids,
             token_chars,
@@ -167,7 +170,7 @@ pub fn line_similarity_parts_tokens(
     let pairs = lcs_pairs_ids(&ot.ids, &nt.ids, ws, alnum);
     let mut matched: usize = 0;
     for j in pairs.values() {
-        matched += char_len(&nt.tokens[*j]);
+        matched += char_len(nt.tokens[*j]);
     }
     let total = ot.chars.max(nt.chars);
     SimilarityParts {

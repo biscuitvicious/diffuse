@@ -115,18 +115,22 @@ pub fn save_notes(path: &Path, db: &NotesDB) -> io::Result<()> {
 }
 
 /// Get all notes for a specific repo and file.
-pub fn notes_for_file<'a>(db: &'a NotesDB, repo: &str, file: &str) -> Vec<&'a ReviewNote> {
+pub fn notes_for_file<'a>(
+    db: &'a NotesDB,
+    repo: &str,
+    file: &str,
+) -> impl Iterator<Item = &'a ReviewNote> {
     db.get(repo)
         .and_then(|repo_map| repo_map.get(file))
-        .map(|list| list.iter().collect())
-        .unwrap_or_default()
+        .into_iter()
+        .flatten()
 }
 
 /// Get all notes for a specific repo.
-pub fn all_notes<'a>(db: &'a NotesDB, repo: &str) -> Vec<&'a ReviewNote> {
+pub fn all_notes<'a>(db: &'a NotesDB, repo: &str) -> impl Iterator<Item = &'a ReviewNote> {
     db.get(repo)
-        .map(|repo_map| repo_map.values().flatten().collect())
-        .unwrap_or_default()
+        .into_iter()
+        .flat_map(|repo_map| repo_map.values().flatten())
 }
 
 /// Add a note to the database for a given repo.
@@ -166,7 +170,7 @@ pub fn remove_notes(
 /// Render/tokenize review note markdown into `ClassifiedToken`s.
 /// Note text uses `"warning"` for plain text, code fences with syntax colors,
 /// and inline markdown (bold/italic/strike/link/code).
-pub fn render_note_markdown(text: &str) -> Vec<ClassifiedToken> {
+pub fn render_note_markdown<'a>(text: &'a str) -> Vec<ClassifiedToken<'a>> {
     static FENCE: OnceLock<Regex> = OnceLock::new();
     let fence_re =
         FENCE.get_or_init(|| Regex::new(r"^\s*```([A-Za-z0-9_+-]*)\s*$").expect("note fence"));
@@ -182,34 +186,34 @@ pub fn render_note_markdown(text: &str) -> Vec<ClassifiedToken> {
         let profile = lang_profile(&lang);
         let mut out = Vec::new();
         out.push(ClassifiedToken {
-            color: "muted".into(),
+            color: "muted",
             sgr: None,
-            text: fence[0].to_string(),
+            text: fence.get(0).unwrap().as_str(),
         });
         out.push(ClassifiedToken {
-            color: "text".into(),
+            color: "text",
             sgr: None,
-            text: "\n".into(),
+            text: "\n",
         });
         if let Some(p) = profile {
             out.extend(classify_tokens(code, Some(p)));
         } else {
             out.push(ClassifiedToken {
-                color: "text".into(),
+                color: "text",
                 sgr: None,
-                text: code.into(),
+                text: code,
             });
         }
         if end_idx.is_some() {
             out.push(ClassifiedToken {
-                color: "text".into(),
+                color: "text",
                 sgr: None,
-                text: "\n".into(),
+                text: "\n",
             });
             out.push(ClassifiedToken {
-                color: "muted".into(),
+                color: "muted",
                 sgr: None,
-                text: "```".into(),
+                text: "```",
             });
         }
         return out;
@@ -228,33 +232,33 @@ pub fn render_note_markdown(text: &str) -> Vec<ClassifiedToken> {
     for m in re.find_iter(text) {
         if m.start() > last {
             out.push(ClassifiedToken {
-                color: "warning".into(),
+                color: "warning",
                 sgr: None,
-                text: text[last..m.start()].into(),
+                text: &text[last..m.start()],
             });
         }
         let tok = m.as_str();
         if tok.starts_with('`') {
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "`".into(),
+                text: "`",
             });
             out.push(ClassifiedToken {
-                color: "syntaxString".into(),
+                color: "syntaxString",
                 sgr: None,
-                text: tok[1..tok.len() - 1].into(),
+                text: &tok[1..tok.len() - 1],
             });
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "`".into(),
+                text: "`",
             });
         } else if tok.starts_with("~~") {
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "~~".into(),
+                text: "~~",
             });
             out.extend(md_inner_tokens(
                 &tok[2..tok.len() - 2],
@@ -262,15 +266,15 @@ pub fn render_note_markdown(text: &str) -> Vec<ClassifiedToken> {
                 "mdStrike",
             ));
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "~~".into(),
+                text: "~~",
             });
         } else if tok.starts_with("**") {
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "**".into(),
+                text: "**",
             });
             out.extend(md_inner_tokens(
                 &tok[2..tok.len() - 2],
@@ -278,42 +282,42 @@ pub fn render_note_markdown(text: &str) -> Vec<ClassifiedToken> {
                 "mdBold",
             ));
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "**".into(),
+                text: "**",
             });
         } else if tok.starts_with('[') {
             let close = tok.find("](").unwrap_or(0);
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "[".into(),
+                text: "[",
             });
             out.push(ClassifiedToken {
-                color: "mdLink".into(),
+                color: "mdLink",
                 sgr: Some(MD_SGR_UNDERLINE),
-                text: tok[1..close].into(),
+                text: &tok[1..close],
             });
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "](".into(),
+                text: "](",
             });
             out.push(ClassifiedToken {
-                color: "mdUrl".into(),
+                color: "mdUrl",
                 sgr: Some(MD_SGR_UNDERLINE),
-                text: tok[close + 2..tok.len() - 1].into(),
+                text: &tok[close + 2..tok.len() - 1],
             });
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: ")".into(),
+                text: ")",
             });
         } else {
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "*".into(),
+                text: "*",
             });
             out.extend(md_inner_tokens(
                 &tok[1..tok.len() - 1],
@@ -321,18 +325,18 @@ pub fn render_note_markdown(text: &str) -> Vec<ClassifiedToken> {
                 "mdItalic",
             ));
             out.push(ClassifiedToken {
-                color: "accent".into(),
+                color: "accent",
                 sgr: None,
-                text: "*".into(),
+                text: "*",
             });
         }
         last = m.end();
     }
     if last < text.len() {
         out.push(ClassifiedToken {
-            color: "warning".into(),
+            color: "warning",
             sgr: None,
-            text: text[last..].into(),
+            text: &text[last..],
         });
     }
     out
@@ -344,9 +348,9 @@ pub fn note_runs(text: &str) -> Vec<OutputRun> {
         .into_iter()
         .map(|t| OutputRun {
             kind: RunKind::Ctx,
-            color: Some(t.color),
+            color: Some(std::borrow::Cow::Borrowed(t.color)),
             sgr: t.sgr,
-            text: t.text,
+            text: t.text.to_string(),
         })
         .collect()
 }

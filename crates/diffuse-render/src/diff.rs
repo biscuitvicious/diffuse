@@ -32,7 +32,8 @@ pub fn render_pipeline_output(
 
 /// Render a single file's header bar and colored hunks.
 pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes: bool) -> String {
-    let mut out = String::new();
+    let total_rows: usize = file.hunks.iter().map(|h| h.rows.len()).sum();
+    let mut out = String::with_capacity(total_rows * 128 + 256);
 
     let counts = &file.counts;
     let note_str = format!(
