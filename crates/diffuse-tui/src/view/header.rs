@@ -97,44 +97,59 @@ pub struct StatusBarContext<'a> {
 /// Render the secondary status bar with file index, hunk index, and mode
 /// indicators.
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> String {
+    let files_badge = format!(
+        "\x1b[1m\x1b[38;5;183m{}/{} files\x1b[0m",
+        ctx.cur_fi + 1,
+        ctx.total_files
+    );
+    let hunk_badge = format!(
+        "\x1b[1m\x1b[38;5;214mhunk {}/{}\x1b[0m",
+        ctx.cur_hunk + 1,
+        ctx.total_hunks
+    );
     let stream_txt = if ctx.is_streaming {
-        " · streaming...".to_string()
+        " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;117m● streaming...\x1b[0m"
     } else {
-        String::new()
+        ""
     };
     let mode_txt = if ctx.raw_diff {
-        " · raw diff".to_string()
+        " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;220mraw diff\x1b[0m"
+    } else {
+        ""
+    };
+    let col_txt = if ctx.col_offset > 0 {
+        format!(
+            " \x1b[38;5;240m·\x1b[0m \x1b[38;5;244mcol {}+\x1b[0m",
+            ctx.col_offset
+        )
     } else {
         String::new()
     };
     let go_txt = if !ctx.num_buffer.is_empty() {
-        format!(" · go {}", ctx.num_buffer)
-    } else {
-        String::new()
-    };
-    let col_txt = if ctx.col_offset > 0 {
-        format!(" · col {}+", ctx.col_offset)
+        format!(
+            " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;221mgo {}\x1b[0m",
+            ctx.num_buffer
+        )
     } else {
         String::new()
     };
     let branch_txt = if !ctx.branch.is_empty() {
-        format!(" · branch: {}", ctx.branch)
+        format!(
+            " \x1b[38;5;240m·\x1b[0m \x1b[38;5;244mbranch:\x1b[0m \x1b[1m\x1b[38;5;252m{}\x1b[0m",
+            ctx.branch
+        )
     } else {
         String::new()
     };
-    let status_raw = format!(
-        " {}/{} files{stream_txt} · hunk {}/{}{}{}{}{}",
-        ctx.cur_fi + 1,
-        ctx.total_files,
-        ctx.cur_hunk + 1,
-        ctx.total_hunks,
-        mode_txt,
-        col_txt,
-        go_txt,
-        branch_txt
+    let line = format!(
+        " {files_badge}{stream_txt} \x1b[38;5;240m·\x1b[0m {hunk_badge}{mode_txt}{col_txt}{go_txt}{branch_txt}"
     );
-    let status_str = truncate_pad(&status_raw, ctx.width);
-    format!("\x1b[38;5;244m{status_str}\x1b[39m")
+    let vw = visible_width(&line);
+    if vw < ctx.width {
+        format!("{line}{}\x1b[0m", " ".repeat(ctx.width - vw))
+    } else {
+        format!("{line}\x1b[0m")
+    }
 }
 
 /// Render the bottom navigation key-bindings ribbon.
@@ -149,4 +164,38 @@ pub fn render_bottom_ribbon(width: usize) -> (String, String) {
     );
     let ribbon = format!("\x1b[38;5;244m{ribbon_text}\x1b[39m");
     (divider, ribbon)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_render_status_bar_styling() {
+        let ctx = StatusBarContext {
+            cur_fi: 0,
+            total_files: 11,
+            cur_hunk: 0,
+            total_hunks: 3,
+            raw_diff: false,
+            col_offset: 0,
+            num_buffer: "",
+            branch: "main",
+            width: 80,
+            is_streaming: false,
+        };
+        let rendered = render_status_bar(ctx);
+        assert!(
+            rendered.contains("1/11 files"),
+            "status bar must show 1/11 files"
+        );
+        assert!(
+            rendered.contains("38;5;183m") || rendered.contains("38;5;225m"),
+            "file stats in status bar must have purple tint"
+        );
+        assert!(
+            rendered.contains("38;5;214m"),
+            "hunk count in status bar must have orange tint"
+        );
+    }
 }

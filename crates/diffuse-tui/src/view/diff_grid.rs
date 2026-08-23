@@ -8,6 +8,7 @@ pub fn render_file_header(
     file: &OutputFile,
     is_collapsed: bool,
     is_selected: bool,
+    is_current: bool,
     in_band: bool,
     content_width: usize,
 ) -> String {
@@ -26,11 +27,11 @@ pub fn render_file_header(
     );
     let bar_str = truncate_pad(&bar, content_width);
     if is_selected {
-        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
-    } else if in_band {
-        format!("\x1b[48;5;240m\x1b[1m\x1b[38;5;231m{bar_str}\x1b[0m")
+        format!("\x1b[48;5;241m\x1b[1m\x1b[38;5;219m{bar_str}\x1b[0m")
+    } else if in_band || is_current {
+        format!("\x1b[48;5;239m\x1b[1m\x1b[38;5;219m{bar_str}\x1b[0m")
     } else {
-        format!("\x1b[38;5;244m{bar_str}\x1b[39m")
+        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;183m{bar_str}\x1b[0m")
     }
 }
 
@@ -54,8 +55,108 @@ pub fn render_hunk_divider(
     );
     let txt_str = truncate_pad(&txt, content_width);
     if is_current {
-        format!("\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{txt_str}\x1b[0m")
+        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
     } else {
-        format!("\x1b[38;5;240m{txt_str}\x1b[39m")
+        format!("\x1b[1m\x1b[38;5;214m{txt_str}\x1b[0m")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use diffuse_core::{
+        counts::FileCounts,
+        wire::{OutputFile, OutputHunk},
+    };
+
+    fn dummy_file() -> OutputFile {
+        OutputFile {
+            path: "src/main.rs".to_string(),
+            status: "modified".to_string(),
+            new_line_count: 10,
+            old_line_count: 10,
+            new_content: vec![],
+            old_content: vec![],
+            hunks: vec![],
+            raw_hunks: vec![],
+            counts: FileCounts {
+                adds: 5,
+                dels: 2,
+                mods: 1,
+                movs: 0,
+            },
+            fences: vec![],
+            notes: vec![],
+            content_runs: vec![],
+            rows: vec![],
+        }
+    }
+
+    fn dummy_hunk() -> OutputHunk {
+        OutputHunk {
+            old_start: 1,
+            old_count: 5,
+            new_start: 1,
+            new_count: 8,
+            rows: vec![],
+        }
+    }
+
+    #[test]
+    fn test_file_header_has_background_stripe() {
+        let f = dummy_file();
+        let unselected = render_file_header(&f, false, false, false, false, 80);
+        assert!(
+            unselected.contains("\x1b[48;5;237m"),
+            "unselected file header must have shade 237 background stripe"
+        );
+        assert!(
+            unselected.contains("\x1b[38;5;183m"),
+            "unselected file header must have subtle purple tint 183"
+        );
+        assert!(
+            unselected.ends_with("\x1b[0m"),
+            "unselected file header must reset style at the end"
+        );
+
+        let current_file = render_file_header(&f, false, false, true, false, 80);
+        assert!(
+            current_file.contains("\x1b[48;5;239m"),
+            "current file header must have slightly brighter background stripe 239"
+        );
+        assert!(
+            current_file.contains("\x1b[38;5;219m"),
+            "current file header must have bright purple tint 219"
+        );
+
+        let selected = render_file_header(&f, false, true, true, false, 80);
+        assert!(
+            selected.contains("\x1b[48;5;241m"),
+            "selected file header must have the brightest background stripe 241"
+        );
+        assert!(
+            selected.contains("\x1b[38;5;219m"),
+            "selected file header must have vivid purplish tint 219"
+        );
+    }
+
+    #[test]
+    fn test_hunk_divider_is_orange() {
+        let h = dummy_hunk();
+        let regular = render_hunk_divider(0, &h, (3, 3), false, 80);
+        assert!(
+            regular.contains("38;5;214m"),
+            "regular hunk divider must use orange 214 foreground"
+        );
+
+        let current = render_hunk_divider(0, &h, (3, 3), true, 80);
+        assert!(
+            current.contains("38;5;220m"),
+            "current hunk divider must have brighter amber/orange foreground 220"
+        );
+        assert!(
+            current.contains("48;5;237m"),
+            "current hunk divider must have subtle background stripe"
+        );
     }
 }

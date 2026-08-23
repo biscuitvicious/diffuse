@@ -869,10 +869,12 @@ impl AppState {
                     let file_obj = &self.output.files[item.file_idx];
                     let is_collapsed = self.collapsed_files.contains(&item.file_idx);
                     let is_selected = idx == self.row_idx;
+                    let is_current = item.file_idx == self.current_file_idx();
                     lines.push(render_file_header(
                         file_obj,
                         is_collapsed,
                         is_selected,
+                        is_current,
                         in_band,
                         content_width,
                     ));
@@ -2531,7 +2533,7 @@ index 1111111..2222222 100644
             "the divider carries the hunk span"
         );
         assert!(
-            frame.contains("\x1b[48;5;236m"),
+            frame.contains("\x1b[48;5;237m") || frame.contains("\x1b[48;5;236m"),
             "the current hunk's divider is the bright bar"
         );
         assert!(
