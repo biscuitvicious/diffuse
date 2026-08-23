@@ -226,3 +226,88 @@ fn large_changeset_progressive_streaming_performance() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `diffuse -C <dir>` from an external non-git directory must change directory
+/// to `<dir>` and successfully discover and review the target git repository.
+#[test]
+fn test_c_flag_changes_directory() {
+    let repo_dir = setup_repo();
+    let outside_dir = env::temp_dir().join(format!("diffuse-outside-{}", process::id()));
+    fs::create_dir_all(&outside_dir).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-C")
+        .arg(&repo_dir)
+        .arg("--no-tui")
+        .current_dir(&outside_dir)
+        .output()
+        .unwrap();
+
+    let _ = fs::remove_dir_all(&outside_dir);
+    let _ = fs::remove_dir_all(&repo_dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse -C <dir> must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("file_a.rs") || stdout.contains("modified"),
+        "stdout must contain diff from target repo, got: {stdout}"
+    );
+}
+
+/// Multiple `-C` flags must evaluate sequentially (e.g., `-C <parent> -C
+/// <child>`).
+#[test]
+fn test_multiple_c_flags_evaluate_sequentially() {
+    let parent = env::temp_dir().join(format!("diffuse-parent-{}", process::id()));
+    let child_repo = parent.join("sub_repo");
+    fs::create_dir_all(&child_repo).unwrap();
+
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(&child_repo)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    fs::write(child_repo.join("nested.rs"), "fn nested() {}\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "nested init"]);
+    fs::write(child_repo.join("nested.rs"), "fn nested_mod() {}\n").unwrap();
+
+    let outside = env::temp_dir().join(format!("diffuse-outside-2-{}", process::id()));
+    fs::create_dir_all(&outside).unwrap();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-C")
+        .arg(&parent)
+        .arg("-C")
+        .arg("sub_repo")
+        .arg("--no-tui")
+        .current_dir(&outside)
+        .output()
+        .unwrap();
+
+    let _ = fs::remove_dir_all(&outside);
+    let _ = fs::remove_dir_all(&parent);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "sequential -C must succeed, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("nested.rs"),
+        "stdout must contain diff for nested.rs, got: {stdout}"
+    );
+}

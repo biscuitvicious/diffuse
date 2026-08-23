@@ -35,6 +35,9 @@ use diffuse_tui::run_streaming_interactive_tui;
     about = "diff-engine token-stream & terminal renderer"
 )]
 struct Args {
+    /// Change to DIR before doing anything (equivalent to git -C <DIR>).
+    #[arg(short = 'C', value_name = "DIR", action = clap::ArgAction::Append)]
+    directory: Vec<std::path::PathBuf>,
     /// Read the diff from this file instead of stdin.
     #[arg(long)]
     diff: Option<String>,
@@ -197,6 +200,16 @@ fn route_mode(
 
 fn main() -> io::Result<()> {
     let args = Args::parse();
+
+    for dir in &args.directory {
+        if let Err(e) = env::set_current_dir(dir) {
+            eprintln!(
+                "diffuse: cannot change directory to '{}': {e}",
+                dir.display()
+            );
+            std::process::exit(1);
+        }
+    }
 
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();

@@ -20,6 +20,10 @@ struct Args {
     #[arg(default_value = "HEAD~1..HEAD")]
     revision: String,
 
+    /// Change to DIR before doing anything (equivalent to git -C <DIR>).
+    #[arg(short = 'C', value_name = "DIR", action = clap::ArgAction::Append)]
+    directory: Vec<PathBuf>,
+
     /// Target repository path (defaults to current directory)
     #[arg(short, long)]
     repo: Option<PathBuf>,
@@ -42,6 +46,17 @@ struct FixtureOutput {
 
 fn main() {
     let args = Args::parse();
+
+    for dir in &args.directory {
+        if let Err(e) = env::set_current_dir(dir) {
+            eprintln!(
+                "diffuse-harvest: cannot change directory to '{}': {e}",
+                dir.display()
+            );
+            process::exit(1);
+        }
+    }
+
     let repo_root = args
         .repo
         .unwrap_or_else(|| env::current_dir().expect("valid current dir"));
