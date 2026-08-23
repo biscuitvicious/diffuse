@@ -9,3 +9,7 @@
 
 - **Domain Decoupling**: Algorithms in `crates/diffuse-core/src/algo/` operate on generic types and interfaces (`LcsEngine`, `DiffEngine`, `PrefixMatcher`), decoupled from diffuse domain objects.
 - **Latency Budgets**: All algorithms and pipeline operations must remain within sub-second budgets on large diffs, utilizing bit-parallel operations, diagonal corridor bounding, and zero-allocation scratch buffers where appropriate.
+
+## Build & Installation Conventions
+
+- **`cargo install --locked`**: Always use `--locked` when installing binaries locally (e.g., `cargo install --locked --path crates/diffuse-cli --force`) to ensure deterministic builds strictly bound to the pinned versions in `Cargo.lock`.
