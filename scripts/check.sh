@@ -66,9 +66,9 @@ if [ "$clippy_mode" != "no" ]; then
     t_start=$(date +%s%N)
     if ! cargo clippy --no-deps --workspace --all-targets -- -D warnings 2>&1; then
         echo "-----{ CLIPPY: WARNINGS DETECTED, APPLYING FIXES }-----"
-        cargo clippy --fix --allow-dirty --no-deps --all-targets \
-            --workspace \
-            -- -D warnings
+        cargo clippy --fix --allow-dirty --no-deps --all-targets --workspace -- -D warnings
+        echo "-----{ CLIPPY: RE-CHECKING AFTER FIX }-----"
+        cargo clippy --no-deps --workspace --all-targets -- -D warnings 2>&1
     fi
     t_end=$(date +%s%N)
     echo "-----{ CLIPPY: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
