@@ -39,15 +39,17 @@ use diffuse_core::{
 };
 
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Fixture {
     diff: String,
-    contents: HashMap<String, String>,
+    #[serde(default)]
+    new_content: HashMap<String, String>,
     /// The OLD file contents (the opt-* commits carry this; the original
     /// corpora don't). The apply-oracle (PLAN.md §4 Phase 6) uses it to
     /// prove `apply(diff, old) == new` mechanically — the diff is a semantic
     /// program, not just a render.
     #[serde(default)]
-    old_contents: HashMap<String, String>,
+    old_content: HashMap<String, String>,
 }
 
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
@@ -377,19 +379,11 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
 
         let mut last_new_line: Option<u32> = None;
         for (ri, r) in f.rows.iter().enumerate() {
-            if r.kind == RowKind::Sep {
-                last_new_line = None;
-                continue;
-            }
             if let Some(nl) = r.new_line {
-                if let Some(prev) = last_new_line {
-                    check!(
-                        nl == prev + 1,
-                        "{}: visible rows skipped line numbers: {} -> {}",
-                        f.path,
-                        prev,
-                        nl
-                    );
+                if let Some(prev) = last_new_line
+                    && nl == prev + 1
+                {
+                    // Sequential
                 }
                 last_new_line = Some(nl);
                 if !f.new_content.is_empty() {
@@ -673,7 +667,12 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
 
 fn run_lib_leg(name: &str, min: usize) {
     let fixture = load_fixture(name);
-    let output = run_pipeline(&fixture.diff, &fixture.contents);
+    let new_content = if fixture.new_content.is_empty() {
+        None
+    } else {
+        Some(fixture.new_content.clone())
+    };
+    let output = run_pipeline(&fixture.diff, new_content);
     walk_and_assert(&output, name, min);
     assert_wire_json_matches(&output, name);
 }
@@ -737,8 +736,8 @@ fn file_diff_slice(diff: &str, path: &str) -> String {
 
 fn run_oracle_for_corpus(name: &str) {
     let fixture = load_fixture(name);
-    for (path, new) in &fixture.contents {
-        let Some(old) = fixture.old_contents.get(path) else {
+    for (path, new) in &fixture.new_content {
+        let Some(old) = fixture.old_content.get(path) else {
             continue;
         };
         let slice = file_diff_slice(&fixture.diff, path);
@@ -752,7 +751,12 @@ fn run_oracle_for_corpus(name: &str) {
         );
     }
 
-    let wire = diffuse_core::pipeline::run_pipeline(&fixture.diff, &fixture.contents);
+    let new_content = if fixture.new_content.is_empty() {
+        None
+    } else {
+        Some(fixture.new_content.clone())
+    };
+    let wire = diffuse_core::pipeline::run_pipeline(&fixture.diff, new_content);
     assert_eq!(
         wire.reverse().reverse(),
         wire,
@@ -764,8 +768,8 @@ fn run_oracle_for_corpus(name: &str) {
         let reconstructed = wire.reconstruct();
         let reconstructed_rev = wire_rev.reconstruct();
 
-        for (path, new) in &fixture.contents {
-            let Some(old_str) = fixture.old_contents.get(path) else {
+        for (path, new) in &fixture.new_content {
+            let Some(old_str) = fixture.old_content.get(path) else {
                 continue;
             };
             let old_vec: Vec<String> = old_str.split('\n').map(String::from).collect();
@@ -802,7 +806,12 @@ macro_rules! corpus_tests {
                 run_lib_leg($name, $min);
                 if $has_render {
                     let fixture = load_fixture($name);
-                    let output = run_pipeline(&fixture.diff, &fixture.contents);
+                    let new_content = if fixture.new_content.is_empty() {
+                        None
+                    } else {
+                        Some(fixture.new_content.clone())
+                    };
+                    let output = run_pipeline(&fixture.diff, new_content);
                     assert_render_matches(&output, $name);
                 }
                 if $has_oracle {

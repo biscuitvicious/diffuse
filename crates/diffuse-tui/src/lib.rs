@@ -25,6 +25,7 @@ use diffuse_core::wire::{OutputFile, PipelineOutput};
 
 /// Launch and run the interactive TUI application with live streaming file
 /// ingestion.
+#[allow(clippy::too_many_arguments)]
 pub fn run_streaming_interactive_tui(
     initial_output: PipelineOutput,
     streaming_rx: Option<Receiver<OutputFile>>,
@@ -33,10 +34,12 @@ pub fn run_streaming_interactive_tui(
     notes_path: PathBuf,
     repo_root: PathBuf,
     git_args: Vec<String>,
+    expand_lines: usize,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
-    let mut state =
-        AppState::new(initial_output, repo, notes_path).with_repo_context(repo_root, git_args);
+    let mut state = AppState::new(initial_output, repo, notes_path)
+        .with_repo_context(repo_root, git_args)
+        .with_expand_lines(expand_lines);
     if streaming_rx.is_some() {
         state.is_streaming = true;
     }
@@ -126,5 +129,14 @@ pub fn run_interactive_tui(
     repo_root: PathBuf,
     git_args: Vec<String>,
 ) -> io::Result<()> {
-    run_streaming_interactive_tui(output, None, None, repo, notes_path, repo_root, git_args)
+    run_streaming_interactive_tui(
+        output,
+        None,
+        None,
+        repo,
+        notes_path,
+        repo_root,
+        git_args,
+        diffuse_core::DEFAULT_EXPAND_LINES,
+    )
 }

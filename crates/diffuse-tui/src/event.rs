@@ -175,6 +175,18 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('w')) => {
             state.execute(TuiCommand::ToggleWordDiff);
         }
+        (KeyModifiers::NONE, KeyCode::Char('a'))
+        | (KeyModifiers::SHIFT, KeyCode::Char('A'))
+        | (KeyModifiers::NONE, KeyCode::Char('+'))
+        | (KeyModifiers::SHIFT, KeyCode::Char('E')) => {
+            state.execute(TuiCommand::ExpandAllHidden);
+        }
+        (KeyModifiers::NONE, KeyCode::Char('c')) | (KeyModifiers::NONE, KeyCode::Char('z')) => {
+            state.execute(TuiCommand::ResetCurrentHunkContext);
+        }
+        (KeyModifiers::SHIFT, KeyCode::Char('C')) | (KeyModifiers::SHIFT, KeyCode::Char('Z')) => {
+            state.execute(TuiCommand::ResetAllContext);
+        }
         (KeyModifiers::NONE, KeyCode::Char('y')) => {
             state.execute(TuiCommand::ToggleSyntax);
         }
@@ -253,6 +265,7 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
 fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
     let col = mouse.column as usize;
     let row = mouse.row as usize;
+    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
@@ -262,10 +275,10 @@ fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
             state.execute(TuiCommand::MouseScrollUp(3));
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            state.execute(TuiCommand::MouseClick { row, col });
+            state.execute(TuiCommand::MouseClick { row, col, shift });
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            state.execute(TuiCommand::MouseDrag { row, col });
+            state.execute(TuiCommand::MouseDrag { row, col, shift });
         }
         MouseEventKind::Up(MouseButton::Left) => {
             state.execute(TuiCommand::EndMouseDrag);
@@ -277,7 +290,7 @@ fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diffuse_core::wire::PipelineOutput;
+    use diffuse_core::{PipelineOptions, wire::PipelineOutput};
 
     fn unique_notes_path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
@@ -313,14 +326,14 @@ index 1111111..2222222 100644
 +    let y = 2;
  }
 "#;
-        let contents = [(
+        let new_content = [(
             "filesystem.rs".to_string(),
             "fn test() {\n    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}\n"
                 .to_string(),
         )]
         .into_iter()
         .collect();
-        let old_contents = [(
+        let old_content = [(
             "filesystem.rs".to_string(),
             "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),
         )]
@@ -329,10 +342,9 @@ index 1111111..2222222 100644
         AppState::new(
             diffuse_core::pipeline::run_pipeline_full(
                 diff,
-                &contents,
-                Some(&old_contents),
-                None,
-                None,
+                Some(new_content),
+                Some(old_content),
+                PipelineOptions::default(),
             ),
             "test_repo".into(),
             unique_notes_path(),
@@ -386,6 +398,13 @@ index 1111111..2222222 100644
         );
         assert!(s.anchor.is_none(), "Esc must cancel the active anchor");
         assert!(!s.should_quit, "Esc must not quit while anchoring");
+
+        // Hitting Esc with no active overlays/selection must NOT quit the app
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        );
+        assert!(!s.should_quit, "Esc must never quit the application");
     }
 
     #[test]
@@ -579,7 +598,7 @@ index 3333333..4444444 100644
  fn banana() {}
 +fn banana_extra() {}
 "#;
-        let contents = [
+        let new_content = [
             (
                 "apple.rs".to_string(),
                 "fn apple() {}\nfn apple_extra() {}\n".to_string(),
@@ -593,7 +612,12 @@ index 3333333..4444444 100644
         .collect();
 
         let mut s = AppState::new(
-            diffuse_core::pipeline::run_pipeline_full(diff, &contents, None, None, None),
+            diffuse_core::pipeline::run_pipeline_full(
+                diff,
+                Some(new_content),
+                None,
+                PipelineOptions::default(),
+            ),
             "test_repo".into(),
             unique_notes_path(),
         );
@@ -669,6 +693,7 @@ index 3333333..4444444 100644
     #[test]
     fn test_enter_key_toggles_file_collapse() {
         let mut s = state_with_rows();
+        s.jump_to_row(0, false);
         assert!(!s.collapsed_files.contains(&0), "starts expanded");
         let initial_len = s.flat.len();
         assert!(initial_len > 1);
@@ -738,5 +763,223 @@ index 3333333..4444444 100644
             }),
         );
         assert!(!s.is_dragging_scrollbar, "dragging flag should be cleared");
+    }
+
+    #[test]
+    fn test_mouse_drag_selection_and_click_reset_and_esc_dismiss() {
+        let mut s = state_with_rows();
+        s.render_frame(80, 24);
+        let header_offset = s.last_viewport_start;
+
+        // 1. Mouse Down on row 3 (relative to header)
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 3) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(s.anchor.is_none(), "single click must not anchor");
+        assert!(s.confirmed_sel.is_none());
+
+        // 2. Drag to row 5
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 5) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(
+            s.anchor.is_some(),
+            "dragging starts anchor at origin row and moves cursor"
+        );
+
+        // 3. Mouse Up (release button): should exit active dragging and confirm
+        //    selection band
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 5) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(
+            s.anchor.is_none(),
+            "mouse up must exit active selection anchor mode"
+        );
+        assert!(
+            s.confirmed_sel.is_some(),
+            "mouse up must preserve the selection as a confirmed selection band"
+        );
+
+        // 4. Pressing Escape must dismiss confirmed selection and NOT quit the app
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        );
+        assert!(
+            s.confirmed_sel.is_none(),
+            "Esc must clear confirmed selection"
+        );
+        assert!(
+            !s.should_quit,
+            "Esc must not quit when dismissing selection"
+        );
+
+        // 5. Drag again to create a selection
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 3) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 5) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 5) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(s.confirmed_sel.is_some());
+
+        // 6. Clicking anywhere on screen must clear the selection
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 2) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        assert!(
+            s.confirmed_sel.is_none(),
+            "clicking anywhere must reset and remove selection"
+        );
+        assert!(s.anchor.is_none());
+    }
+
+    #[test]
+    fn test_shift_click_and_shift_drag_selection_modification() {
+        let mut s = state_with_rows();
+        s.render_frame(80, 24);
+        let header_offset = s.last_viewport_start;
+
+        // 1. Initial drag select rows 4 to 5 (lines 1024 to 1025)
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 4) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 5) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 5) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+        );
+        let initial_sel = s.confirmed_sel.expect("confirmed selection exists");
+        assert_eq!(initial_sel.start, 1024);
+        assert_eq!(initial_sel.end, 1025);
+        assert!(s.anchor.is_none(), "not in active drag mode");
+
+        // 2. Shift-Click on row 7 (line 1027): modifies confirmed_sel in place without
+        //    entering active drag
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 7) as u16,
+                modifiers: KeyModifiers::SHIFT,
+            }),
+        );
+        assert!(
+            s.anchor.is_none(),
+            "Shift-click must not enter active selection mode"
+        );
+        let updated_sel = s.confirmed_sel.expect("confirmed selection modified");
+        assert_eq!(updated_sel.start, 1024);
+        assert_eq!(
+            updated_sel.end, 1027,
+            "Shift-click extended selection end to row 7 (1027)"
+        );
+
+        // 3. Shift-Drag: re-enters active selection mode while dragging
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 7) as u16,
+                modifiers: KeyModifiers::SHIFT,
+            }),
+        );
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 7) as u16,
+                modifiers: KeyModifiers::SHIFT,
+            }),
+        );
+        assert!(
+            s.anchor.is_some(),
+            "Shift-drag re-enters active selection mode"
+        );
+
+        // 4. Release mouse: confirms extended selection and exits active mode
+        handle_event(
+            &mut s,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                column: 10,
+                row: (header_offset + 7) as u16,
+                modifiers: KeyModifiers::SHIFT,
+            }),
+        );
+        assert!(s.anchor.is_none(), "mouse up clears active anchor");
+        let drag_sel = s
+            .confirmed_sel
+            .expect("confirmed selection updated by drag");
+        assert_eq!(drag_sel.start, 1024);
+        assert_eq!(drag_sel.end, 1027);
     }
 }

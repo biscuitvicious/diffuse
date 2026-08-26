@@ -62,6 +62,7 @@ pub fn fence_lang_ext(tag: &str) -> &str {
             "c++" | "cpp" => return "cpp",
             "markdown" | "md" => return "md",
             "ignore" | "no_run" | "should_panic" | "compile_fail" => rust_implied = true,
+            "text" | "txt" | "plaintext" | "console" | "log" => return "",
             _ if p.starts_with("edition") || p.starts_with("ignore_") => rust_implied = true,
             _ => {}
         }

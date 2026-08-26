@@ -179,7 +179,7 @@ pub fn partition_hunk_segments<'a>(
                 Row::Mov { new_line, .. } => {
                     new_rows.push(Row::Add(new_line.clone()));
                 }
-                Row::Sep(_) | Row::Ctx(_) => {}
+                Row::Ctx(_) | Row::Sep(_) => {}
             }
             i += 1;
         }

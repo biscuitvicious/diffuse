@@ -107,8 +107,13 @@ pub fn old_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                 }
                 crate::parse::Row::Ctx(ctx) => {
                     let num = ctx.old_pos.get() as usize;
-                    if num > 0 && out.len() == num - 1 {
-                        out.push(ctx.text.clone());
+                    if num > 0 {
+                        while out.len() < num {
+                            out.push(String::new());
+                        }
+                        if out[num - 1].is_empty() {
+                            out[num - 1] = ctx.text.clone();
+                        }
                     }
                 }
                 _ => {}
@@ -142,8 +147,13 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                 }
                 crate::parse::Row::Ctx(ctx) => {
                     let num = ctx.new_pos.get() as usize;
-                    if num > 0 && out.len() == num - 1 {
-                        out.push(ctx.text.clone());
+                    if num > 0 {
+                        while out.len() < num {
+                            out.push(String::new());
+                        }
+                        if out[num - 1].is_empty() {
+                            out[num - 1] = ctx.text.clone();
+                        }
                     }
                 }
                 crate::parse::Row::Mod { new_line, .. }

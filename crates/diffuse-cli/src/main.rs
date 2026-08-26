@@ -16,12 +16,13 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 use diffuse_core::{
+    DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions,
     git::load_git_repo,
     notes::{
         NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
         save_notes,
     },
-    pipeline::{run_pipeline_full, run_pipeline_with_notes},
+    pipeline::run_pipeline_full,
     wire::PipelineOutput,
 };
 use diffuse_render::default_theme;
@@ -48,8 +49,12 @@ struct Args {
     #[arg(long, global = true)]
     repo: Option<String>,
     /// Unified diff context lines (default: 4).
-    #[arg(short = 'U', long, default_value_t = 4, global = true)]
+    #[arg(short = 'U', long, default_value_t = DEFAULT_CONTEXT_LINES, global = true)]
     context: usize,
+    /// Number of context lines to expand when activating a hidden gap separator
+    /// (default: 6).
+    #[arg(long, default_value_t = diffuse_core::DEFAULT_EXPAND_LINES, global = true)]
+    expand_lines: usize,
     /// Emit raw token-stream JSON (for machine/extension integration).
     #[arg(long, global = true)]
     json: bool,
@@ -113,7 +118,9 @@ struct Input {
     #[serde(default)]
     diff: String,
     #[serde(default)]
-    contents: HashMap<String, String>,
+    new_content: Option<HashMap<String, String>>,
+    #[serde(default)]
+    old_content: Option<HashMap<String, String>>,
     #[serde(default)]
     repo_root: Option<String>,
     #[serde(default)]
@@ -171,32 +178,34 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
     }
 
     let loaded_db = load_notes(&notes_path);
-    let db_ref = Some(&loaded_db);
-    let repo_ref = args.repo.as_deref().or(input.repo.as_deref());
+    let repo_str = args.repo.clone().or_else(|| input.repo.clone());
+    let visual = input.context.unwrap_or(args.context);
+    let opts = PipelineOptions::default()
+        .with_notes(Some(loaded_db.clone()), repo_str.clone())
+        .with_visual_context(visual)
+        .with_expand_lines(args.expand_lines);
 
-    if let Some(ref repo_root) = input.repo_root {
-        let context = input.context.unwrap_or(4);
-        if let Ok(git_res) = load_git_repo(
+    if let Some(ref repo_root) = input.repo_root
+        && let Ok(git_res) = load_git_repo(
             Path::new(repo_root),
             &input.base_args,
             &input.paths,
             input.cached,
-            context,
-        ) {
-            let mut out = run_pipeline_full(
-                &git_res.diff_text,
-                &git_res.contents,
-                Some(&git_res.old_contents),
-                db_ref,
-                repo_ref,
-            );
-            out.branch = git_res.branch;
-            out.untracked_skipped = git_res.untracked_skipped;
-            return out;
-        }
+            ENGINE_CONTEXT,
+        )
+    {
+        let mut out = run_pipeline_full(
+            &git_res.diff,
+            Some(git_res.new_content),
+            Some(git_res.old_content),
+            opts,
+        );
+        out.branch = git_res.branch;
+        out.untracked_skipped = git_res.untracked_skipped;
+        return out;
     }
 
-    run_pipeline_with_notes(&input.diff, &input.contents, db_ref, repo_ref)
+    run_pipeline_full(&input.diff, input.new_content, input.old_content, opts)
 }
 
 /// Decide between the machine/extension JSON contract (`true`) and the
@@ -326,6 +335,11 @@ fn main() -> io::Result<()> {
                 .unwrap_or_else(|| "diffuse".to_string())
         });
 
+        let pipeline_opts = PipelineOptions::default()
+            .with_notes(Some(loaded_db.clone()), args.repo.clone())
+            .with_visual_context(args.context)
+            .with_expand_lines(args.expand_lines);
+
         // Interactive TUI only when both ends are real terminals and not in pager mode;
         // any piped or redirected end falls back to the full ANSI render.
         if !no_tui && stdin_tty && stdout_tty {
@@ -334,9 +348,8 @@ fn main() -> io::Result<()> {
                 git_args.clone(),
                 Vec::new(),
                 false,
-                args.context,
-                Some(loaded_db.clone()),
-                args.repo.clone(),
+                ENGINE_CONTEXT,
+                pipeline_opts,
                 None,
             );
             let initial_out = PipelineOutput {
@@ -352,6 +365,7 @@ fn main() -> io::Result<()> {
                 notes_path,
                 repo_root.clone(),
                 git_args.clone(),
+                args.expand_lines,
             )?;
         } else {
             let (consumer, meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
@@ -359,9 +373,8 @@ fn main() -> io::Result<()> {
                 git_args.clone(),
                 Vec::new(),
                 false,
-                args.context,
-                Some(loaded_db),
-                args.repo.clone(),
+                ENGINE_CONTEXT,
+                pipeline_opts,
                 None,
             );
             if let Ok(Err(e)) = meta_rx.recv() {
@@ -407,7 +420,8 @@ fn main() -> io::Result<()> {
             start: None,
             end: None,
             diff: raw,
-            contents: HashMap::new(),
+            new_content: None,
+            old_content: None,
             repo_root: None,
             base_args: Vec::new(),
             paths: Vec::new(),
@@ -436,12 +450,15 @@ fn main() -> io::Result<()> {
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(default_notes_path);
                 let loaded_db = load_notes(&notes_path);
+                let opts = PipelineOptions::default()
+                    .with_notes(Some(loaded_db), args.repo.clone().or(input.repo.clone()))
+                    .with_visual_context(input.context.unwrap_or(args.context))
+                    .with_expand_lines(args.expand_lines);
                 let consumer = diffuse_core::streaming::stream_diff_pipeline(
                     &input.diff,
-                    &input.contents,
-                    None,
-                    Some(loaded_db),
-                    args.repo.clone().or(input.repo.clone()),
+                    input.new_content,
+                    input.old_content,
+                    opts,
                     None,
                 );
                 let mut stdout = io::stdout().lock();

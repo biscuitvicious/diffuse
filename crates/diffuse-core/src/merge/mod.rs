@@ -143,25 +143,21 @@ pub fn del_display_positions(
     }
 
     let mut positions = Vec::with_capacity(del_spans.len());
-    for (ds, de) in del_spans {
+    for (ds, _de) in del_spans {
         let mut ins_pos = 0usize;
-        if *de >= d_pos {
-            ins_pos = a_pos;
-        } else {
-            for (di, (d_start, d_end)) in d_spans.iter().enumerate() {
-                if *d_end <= *ds {
-                    if let Some(&ai) = pairs.get(&di) {
-                        ins_pos = a_spans[ai].1;
-                    }
-                } else if *d_start < *ds {
-                    if let Some(&ai) = pairs.get(&di) {
-                        let offset = ds - d_start;
-                        ins_pos = a_spans[ai].0 + offset;
-                    }
-                    break;
-                } else {
-                    break;
+        for (di, (d_start, d_end)) in d_spans.iter().enumerate() {
+            if *d_end <= *ds {
+                if let Some(&ai) = pairs.get(&di) {
+                    ins_pos = a_spans[ai].1;
                 }
+            } else if *d_start < *ds {
+                if let Some(&ai) = pairs.get(&di) {
+                    let offset = ds - d_start;
+                    ins_pos = a_spans[ai].0 + offset;
+                }
+                break;
+            } else {
+                break;
             }
         }
         positions.push(ins_pos);

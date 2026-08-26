@@ -34,7 +34,7 @@ fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) 
             let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
             Row::Ctx(CtxLine::new(old_num, new_num, text))
         }
-        RowKind::Sep | RowKind::File => Row::Sep(text.to_string()),
+        RowKind::File | RowKind::Sep => Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, text)),
     }
 }
 
@@ -1205,6 +1205,8 @@ fn test_closing_brace_released_from_add_block() {
             Some(1065),
             None,
         ),
+        row(RowKind::Ctx, "    }", Some(1066), Some(1025)),
+        row(RowKind::Ctx, "", Some(1067), Some(1026)),
     ]);
 
     let mut new_content: Vec<&str> = vec![""; 1100];
@@ -1220,14 +1222,28 @@ fn test_closing_brace_released_from_add_block() {
 
     let rs = lang_profile("rs");
     let collapsed = collapse_hunk_rows(&h, None, Some(&new_content), rs);
-    // The first row should be the mod at 1060
+    // The mod leads; the reflowed del chain follows; the released `}` and blank
+    // read as context, and the absorbed trailing `}` and blank read as adds.
     assert_eq!(collapsed[0].kind(), RowKind::Mod);
     assert_eq!(collapsed[0].new_line(), Some(1060));
     assert_eq!(collapsed[1].kind(), RowKind::Del);
-    assert_eq!(collapsed[5].kind(), RowKind::Add);
-    assert_eq!(collapsed[5].new_line(), Some(1063));
+    assert_eq!(
+        collapsed[5].kind(),
+        RowKind::Ctx,
+        "released brace is context"
+    );
+    assert_eq!(collapsed[5].new_line(), Some(1061));
+    assert_eq!(
+        collapsed[6].kind(),
+        RowKind::Ctx,
+        "released blank is context"
+    );
+    assert_eq!(collapsed[6].new_line(), Some(1062));
     assert_eq!(collapsed[7].kind(), RowKind::Add);
-    assert_eq!(collapsed[7].new_line(), Some(1065));
+    assert_eq!(collapsed[7].new_line(), Some(1063));
+    assert_eq!(collapsed[10].kind(), RowKind::Add, "absorbed brace is add");
+    assert_eq!(collapsed[10].new_line(), Some(1066));
+    assert_eq!(collapsed[11].new_line(), Some(1067));
 }
 
 #[test]

@@ -2,6 +2,49 @@
 
 use super::header::truncate_pad;
 use diffuse_core::wire::{OutputFile, OutputHunk};
+use diffuse_render::slice_by_visual_width;
+
+/// Char column of the collapse/expand triangle in [`file_header_text`].
+pub const FILE_HEADER_INDICATOR_COL: usize = 12;
+
+/// Build the raw text of a file header banner row.
+pub fn file_header_text(file: &OutputFile, is_collapsed: bool) -> String {
+    let f_counts = &file.counts;
+    let indicator = if is_collapsed { "▶" } else { "▼" };
+    let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
+    format!(
+        "──────────── {} {} ({}) -{} +{} ~{}{} ────────────",
+        indicator,
+        file.path,
+        file.status,
+        f_counts.dels,
+        f_counts.adds,
+        f_counts.mods,
+        collapse_tag
+    )
+}
+
+/// Render a specific visual segment of a file header banner row.
+pub fn render_file_header_segment(
+    file: &OutputFile,
+    is_collapsed: bool,
+    is_selected: bool,
+    is_current: bool,
+    in_band: bool,
+    seg_start: usize,
+    content_width: usize,
+) -> String {
+    let bar = file_header_text(file, is_collapsed);
+    let piece = slice_by_visual_width(&bar, seg_start, content_width);
+    let bar_str = truncate_pad(&piece, content_width);
+    if is_selected {
+        format!("\x1b[48;5;241m\x1b[1m\x1b[38;5;219m{bar_str}\x1b[0m")
+    } else if in_band || is_current {
+        format!("\x1b[48;5;239m\x1b[1m\x1b[38;5;219m{bar_str}\x1b[0m")
+    } else {
+        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;183m{bar_str}\x1b[0m")
+    }
+}
 
 /// Render a file header banner row with collapse status indicator and counts.
 pub fn render_file_header(
@@ -12,67 +55,110 @@ pub fn render_file_header(
     in_band: bool,
     content_width: usize,
 ) -> String {
-    let f_counts = &file.counts;
-    let indicator = if is_collapsed { "▸" } else { "▾" };
-    let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
-    let bar = format!(
-        "─── {} {} ({}) +{} -{} ~{}{} ───",
-        indicator,
-        file.path,
-        file.status,
-        f_counts.adds,
-        f_counts.dels,
-        f_counts.mods,
-        collapse_tag
-    );
-    let bar_str = truncate_pad(&bar, content_width);
-    if is_selected {
-        format!("\x1b[48;5;241m\x1b[1m\x1b[38;5;219m{bar_str}\x1b[0m")
-    } else if in_band || is_current {
-        format!("\x1b[48;5;239m\x1b[1m\x1b[38;5;219m{bar_str}\x1b[0m")
-    } else {
-        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;183m{bar_str}\x1b[0m")
-    }
+    render_file_header_segment(
+        file,
+        is_collapsed,
+        is_selected,
+        is_current,
+        in_band,
+        0,
+        content_width,
+    )
 }
 
-/// Render a hunk header divider with context envelope markers (`ctx N▴ M▾`).
-pub fn render_hunk_divider(
+/// Build the raw text of a hunk header divider with format
+/// `{rows} lines (-dels +adds ~mods)` plus the hidden-gap tail.
+pub fn hunk_divider_text(hi: usize, hunk: &OutputHunk, hidden_gap: usize) -> String {
+    let mut dels: usize = 0;
+    let mut adds: usize = 0;
+    let mut mods: usize = 0;
+    for r in &hunk.rows {
+        match r.kind {
+            diffuse_core::parse::RowKind::Del => dels += 1,
+            diffuse_core::parse::RowKind::Add => adds += 1,
+            diffuse_core::parse::RowKind::Mod => mods += 1,
+            _ => {}
+        }
+    }
+    let total = hunk.rows.len();
+    let unit = if total == 1 { "line" } else { "lines" };
+    let summary = format!("{total} {unit} (-{dels} +{adds} ~{mods})");
+
+    let gap_part = if hidden_gap > 0 {
+        let arrows = if hi == 0 {
+            "▼▼"
+        } else {
+            "▲▼ ▲▲ ▼▼"
+        };
+        format!(" · {hidden_gap} hidden {arrows}")
+    } else {
+        String::new()
+    };
+    format!("───────── H{} · {summary}{gap_part} ─────────", hi + 1)
+}
+
+/// Render a specific visual segment of a hunk header divider.
+pub fn render_hunk_divider_segment(
     hi: usize,
     hunk: &OutputHunk,
-    ctx: (usize, usize),
+    hidden_gap: usize,
     is_current: bool,
+    seg_start: usize,
     content_width: usize,
 ) -> String {
-    let (above, below) = ctx;
-    let (old_start, old_count) = if hunk.old_start == 0 && hunk.old_count == 0 {
-        (0, 0)
-    } else {
-        (
-            hunk.old_start.saturating_sub(above as u32).max(1),
-            hunk.old_count + (above + below) as u32,
-        )
-    };
-    let (new_start, new_count) = if hunk.new_start == 0 && hunk.new_count == 0 {
-        (0, 0)
-    } else {
-        (
-            hunk.new_start.saturating_sub(above as u32).max(1),
-            hunk.new_count + (above + below) as u32,
-        )
-    };
-    let span = format!("−{old_start},{old_count} +{new_start},{new_count}");
-    let txt = format!(
-        "───── H{} · {span} · ctx {}▴ {}▾ ─────",
-        hi + 1,
-        above,
-        below
-    );
-    let txt_str = truncate_pad(&txt, content_width);
+    let txt = hunk_divider_text(hi, hunk, hidden_gap);
+    let piece = slice_by_visual_width(&txt, seg_start, content_width);
+    let txt_str = truncate_pad(&piece, content_width);
     if is_current {
         format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
     } else {
         format!("\x1b[1m\x1b[38;5;214m{txt_str}\x1b[0m")
     }
+}
+
+/// Render a hunk header divider with format `x-y → a-b`, hidden lines gap,
+/// and context expansion buttons (`▲▼ ▲▲ ▼▼` for interior hunks, or `▼▼` for H1
+/// at top of file).
+pub fn render_hunk_divider(
+    hi: usize,
+    hunk: &OutputHunk,
+    hidden_gap: usize,
+    is_current: bool,
+    content_width: usize,
+) -> String {
+    render_hunk_divider_segment(hi, hunk, hidden_gap, is_current, 0, content_width)
+}
+
+/// Build the raw text of a bottom gap divider.
+pub fn bottom_gap_divider_text(hidden_gap: usize) -> String {
+    let unit = if hidden_gap == 1 { "line" } else { "lines" };
+    format!("───────── {hidden_gap} {unit} hidden · ▲▲ ─────────")
+}
+
+/// Render a specific visual segment of a bottom gap divider.
+pub fn render_bottom_gap_divider_segment(
+    hidden_gap: usize,
+    is_current: bool,
+    seg_start: usize,
+    content_width: usize,
+) -> String {
+    let txt = bottom_gap_divider_text(hidden_gap);
+    let piece = slice_by_visual_width(&txt, seg_start, content_width);
+    let txt_str = truncate_pad(&piece, content_width);
+    if is_current {
+        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
+    } else {
+        format!("\x1b[1m\x1b[38;5;214m{txt_str}\x1b[0m")
+    }
+}
+
+/// Render a clean bottom divider for trailing hidden lines after the last hunk.
+pub fn render_bottom_gap_divider(
+    hidden_gap: usize,
+    is_current: bool,
+    content_width: usize,
+) -> String {
+    render_bottom_gap_divider_segment(hidden_gap, is_current, 0, content_width)
 }
 
 #[cfg(test)]
@@ -157,13 +243,13 @@ mod tests {
     #[test]
     fn test_hunk_divider_is_orange() {
         let h = dummy_hunk();
-        let regular = render_hunk_divider(0, &h, (3, 3), false, 80);
+        let regular = render_hunk_divider(0, &h, 8, false, 80);
         assert!(
             regular.contains("38;5;214m"),
             "regular hunk divider must use orange 214 foreground"
         );
 
-        let current = render_hunk_divider(0, &h, (3, 3), true, 80);
+        let current = render_hunk_divider(0, &h, 8, true, 80);
         assert!(
             current.contains("38;5;220m"),
             "current hunk divider must have brighter amber/orange foreground 220"
@@ -176,41 +262,60 @@ mod tests {
 
     #[test]
     fn test_hunk_divider_span_includes_context() {
-        let h = OutputHunk {
+        use diffuse_core::{parse::RowKind, wire::OutputRow};
+        let mk = |kind: RowKind| OutputRow {
+            kind,
+            new_line: None,
+            old_line: None,
+            text: String::new(),
+            del_text: None,
+            spans: Default::default(),
+            runs: Vec::new(),
+            wholesale: false,
+            moved: false,
+        };
+        let mut h = OutputHunk {
             old_start: 85,
             old_count: 3,
             new_start: 86,
             new_count: 4,
             rows: vec![],
         };
-        // Zero context (e.g. raw diff)
-        let raw = render_hunk_divider(1, &h, (0, 0), false, 80);
-        assert!(raw.contains("H2 · −85,3 +86,4 · ctx 0▴ 0▾"));
+        // Zero gap (e.g. contiguous diff)
+        let contiguous = render_hunk_divider(1, &h, 0, false, 80);
+        assert!(contiguous.contains("H2 · 0 lines (-0 +0 ~0) ─────"));
+        assert!(!contiguous.contains("hidden"));
 
-        // Normal 6/6 context
-        let expanded = render_hunk_divider(1, &h, (6, 6), false, 80);
-        assert!(expanded.contains("H2 · −79,15 +80,16 · ctx 6▴ 6▾"));
+        // With content: 2 ctx, 1 del, 4 adds, 1 mod → 8 rows
+        h.rows = vec![
+            mk(RowKind::Ctx),
+            mk(RowKind::Ctx),
+            mk(RowKind::Del),
+            mk(RowKind::Add),
+            mk(RowKind::Add),
+            mk(RowKind::Add),
+            mk(RowKind::Add),
+            mk(RowKind::Mod),
+        ];
+        let with_rows = render_hunk_divider(1, &h, 0, false, 80);
+        assert!(with_rows.contains("H2 · 8 lines (-1 +4 ~1) ─────"));
 
-        // Near top of file (above = 1, below = 5)
-        let top_hunk = OutputHunk {
-            old_start: 1,
-            old_count: 3,
-            new_start: 1,
-            new_count: 4,
-            rows: vec![],
-        };
-        let top_expanded = render_hunk_divider(0, &top_hunk, (1, 5), false, 80);
-        assert!(top_expanded.contains("H1 · −1,9 +1,10 · ctx 1▴ 5▾"));
+        // Normal 8 lines hidden gap
+        let expanded = render_hunk_divider(1, &h, 8, false, 80);
+        assert!(expanded.contains("H2 · 8 lines (-1 +4 ~1) · 8 hidden ▲▼ ▲▲ ▼▼"));
 
-        // New file (old_start = 0, old_count = 0)
-        let new_file_hunk = OutputHunk {
-            old_start: 0,
-            old_count: 0,
-            new_start: 1,
-            new_count: 20,
-            rows: vec![],
-        };
-        let new_file = render_hunk_divider(0, &new_file_hunk, (0, 0), false, 80);
-        assert!(new_file.contains("H1 · −0,0 +1,20 · ctx 0▴ 0▾"));
+        // Single line hidden
+        let single = render_hunk_divider(1, &h, 1, false, 80);
+        assert!(single.contains("· 1 hidden ▲▼ ▲▲ ▼▼"));
+
+        // Top gap divider (50 lines hidden at top of file, only down arrow)
+        let top_gap = render_hunk_divider(0, &h, 50, false, 80);
+        assert!(top_gap.contains("· 50 hidden ▼▼"));
+        assert!(!top_gap.contains("▲"));
+
+        // Bottom gap divider (only up arrow)
+        let bottom = render_bottom_gap_divider(80, false, 80);
+        assert!(bottom.contains("───── 80 lines hidden · ▲▲ ─────"));
+        assert!(!bottom.contains("▼"));
     }
 }

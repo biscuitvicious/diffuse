@@ -2,6 +2,8 @@
 
 use std::{fs, path::Path, process::Command};
 
+use diffuse_core::PipelineOptions;
+
 use super::app::AppState;
 
 /// Build a unified patch for the current hunk or untracked file.
@@ -31,7 +33,7 @@ pub fn hunk_patch(state: &AppState, repo_root: &Path, base_args: &[String]) -> O
     cmd.arg("diff")
         .arg("-M")
         .arg("--no-color")
-        .arg("-U3")
+        .arg(format!("-U{}", diffuse_core::ENGINE_CONTEXT))
         .args(base_args)
         .arg("--")
         .arg(&f.path)
@@ -276,15 +278,23 @@ pub fn reload_diff(
     repo_root: &Path,
     git_args: &[String],
 ) -> Result<(), String> {
-    let git_res = diffuse_core::git::load_git_repo(repo_root, git_args, &[], false, 6)
-        .map_err(|e| format!("failed to reload git repo: {e}"))?;
+    let git_res = diffuse_core::git::load_git_repo(
+        repo_root,
+        git_args,
+        &[],
+        false,
+        diffuse_core::ENGINE_CONTEXT,
+    )
+    .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
+    let pipeline_opts = PipelineOptions::default()
+        .with_notes(Some(state.notes.clone()), Some(state.repo.clone()))
+        .with_expand_lines(state.expand_lines);
     let mut new_out = diffuse_core::pipeline::run_pipeline_full(
-        &git_res.diff_text,
-        &git_res.contents,
-        Some(&git_res.old_contents),
-        Some(&state.notes),
-        Some(&state.repo),
+        &git_res.diff,
+        Some(git_res.new_content),
+        Some(git_res.old_content),
+        pipeline_opts,
     );
     new_out.branch = git_res.branch;
     new_out.untracked_skipped = git_res.untracked_skipped;
@@ -358,13 +368,19 @@ mod tests {
     #[test]
     fn test_git_stage_unstage_reload_flow() {
         let (repo_root, notes_path) = setup_test_git_repo();
-        let git_res = diffuse_core::git::load_git_repo(&repo_root, &[], &[], false, 6).unwrap();
+        let git_res = diffuse_core::git::load_git_repo(
+            &repo_root,
+            &[],
+            &[],
+            false,
+            diffuse_core::ENGINE_CONTEXT,
+        )
+        .unwrap();
         let out = diffuse_core::pipeline::run_pipeline_full(
-            &git_res.diff_text,
-            &git_res.contents,
-            Some(&git_res.old_contents),
-            None,
-            None,
+            &git_res.diff,
+            Some(git_res.new_content),
+            Some(git_res.old_content),
+            PipelineOptions::default(),
         );
 
         let mut state = AppState::new(out, "test".into(), notes_path)
@@ -382,14 +398,19 @@ mod tests {
 
         // Reload diff with --cached
         let cached_args = vec!["--cached".to_string()];
-        let git_res_cached =
-            diffuse_core::git::load_git_repo(&repo_root, &cached_args, &[], false, 6).unwrap();
+        let git_res_cached = diffuse_core::git::load_git_repo(
+            &repo_root,
+            &cached_args,
+            &[],
+            false,
+            diffuse_core::ENGINE_CONTEXT,
+        )
+        .unwrap();
         let out_cached = diffuse_core::pipeline::run_pipeline_full(
-            &git_res_cached.diff_text,
-            &git_res_cached.contents,
-            Some(&git_res_cached.old_contents),
-            None,
-            None,
+            &git_res_cached.diff,
+            Some(git_res_cached.new_content),
+            Some(git_res_cached.old_content),
+            PipelineOptions::default(),
         );
         state.reload(out_cached);
         assert_eq!(state.output.files.len(), 1, "cached diff has 1 file");
@@ -408,13 +429,19 @@ mod tests {
     #[test]
     fn test_git_discard_flow() {
         let (repo_root, notes_path) = setup_test_git_repo();
-        let git_res = diffuse_core::git::load_git_repo(&repo_root, &[], &[], false, 6).unwrap();
+        let git_res = diffuse_core::git::load_git_repo(
+            &repo_root,
+            &[],
+            &[],
+            false,
+            diffuse_core::ENGINE_CONTEXT,
+        )
+        .unwrap();
         let out = diffuse_core::pipeline::run_pipeline_full(
-            &git_res.diff_text,
-            &git_res.contents,
-            Some(&git_res.old_contents),
-            None,
-            None,
+            &git_res.diff,
+            Some(git_res.new_content),
+            Some(git_res.old_content),
+            PipelineOptions::default(),
         );
 
         let mut state = AppState::new(out, "test".into(), notes_path)

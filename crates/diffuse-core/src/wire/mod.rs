@@ -217,7 +217,9 @@ impl From<&OutputRow> for Row {
                     new_line: AddLine::with_spans(new_num, &r.text, r.spans.clone()),
                 }
             }
-            RowKind::Sep | RowKind::File => Row::Sep(r.text.clone()),
+            RowKind::File | RowKind::Sep => {
+                Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, r.text.clone()))
+            }
         }
     }
 }

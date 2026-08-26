@@ -53,7 +53,7 @@ pub fn collapse_hunk_rows(
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
-    let h_norm = pass_shift_hunk(h, new_content, profile);
+    let h_norm = pass_shift_hunk(h, profile);
     let h = &h_norm;
 
     // Pass 1: DP cluster pairing engine
@@ -72,10 +72,17 @@ pub fn collapse_hunk_rows(
     let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
 
     // Pass 3: Filter verbatim reflow dels and adds
-    let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &paired_dels);
+    let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &pairing_ctx);
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
-    pass_sort_ordered_walk(h, p2.out, &p3.meaningful_dels, &p3.kept_adds, &p2.add_spans)
+    pass_sort_ordered_walk(
+        h,
+        p2.out,
+        &p3.meaningful_dels,
+        &p3.kept_adds,
+        &p2.add_spans,
+        p3.reflow_ctx,
+    )
 }
 
 /// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow
@@ -367,80 +374,113 @@ pub fn pass_assemble_mods(
 pub struct ReflowFilter {
     pub meaningful_dels: Vec<usize>,
     pub kept_adds: Vec<usize>,
+    /// Context rows synthesized from verbatim-reflow del/add pairs: identical
+    /// content that the collapse absorbs as unchanged rather than dropping,
+    /// keeping the visible row stream contiguous.
+    pub reflow_ctx: Vec<Row>,
 }
+
+use crate::parse::{CtxLine, LineNum};
 
 /// Pass 3: Filter verbatim reflow dels and adds.
 pub fn pass_filter_reflows(
     h: &Hunk,
-    out: &[Row],
+    _out: &[Row],
     kept_dels: &[usize],
     pure_adds: &[usize],
-    paired_dels: &FxHashSet<usize>,
+    ctx: &PairingContext,
 ) -> ReflowFilter {
-    let add_text = out
-        .iter()
-        .map(super::parse::Row::text)
-        .chain(pure_adds.iter().map(|&ri| h.rows[ri].text()))
-        .collect::<Vec<_>>()
-        .join("\n");
+    // 1. Dels absorbed into a Mod row: multiline del run whose anchor del was
+    // paired with an add row that incorporates this del's text.
+    let mut absorbed_dels: FxHashSet<usize> = FxHashSet::default();
+    for (&add_idx, &del_idx) in ctx.pair_of {
+        if let Some(run) = ctx.run_of.get(&del_idx)
+            && run.first() == Some(&del_idx)
+        {
+            let add_text = h.rows[add_idx].text();
+            for &d in run.iter().skip(1) {
+                let t = h.rows[d].text().trim();
+                if !t.is_empty() && add_text.contains(t) {
+                    absorbed_dels.insert(d);
+                }
+            }
+        }
+    }
 
-    let meaningful: Vec<usize> = kept_dels
+    // 2. Candidate unabsorbed dels that could pair with verbatim standalone adds.
+    let candidate_dels: Vec<usize> = kept_dels
         .iter()
         .copied()
-        .filter(|&di| {
-            let t = h.rows[di].text().trim();
-            t.is_empty() || !add_text.contains(t)
-        })
+        .filter(|di| !absorbed_dels.contains(di))
         .collect();
 
-    let del_text_all = h
-        .rows
+    // Candidate pure adds that are not moved.
+    let candidate_adds: Vec<usize> = pure_adds
         .iter()
-        .filter(|r| matches!(r, Row::Del(_)))
-        .map(|d| d.text().trim())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let shown_dels: FxHashSet<usize> = meaningful.iter().copied().collect();
-    let del_text_live = h
-        .rows
-        .iter()
-        .enumerate()
-        .filter(|(i, r)| {
-            let r_trim = r.text().trim();
-            matches!(r, Row::Del(_))
-                && !r.is_moved()
-                && !h.rows.iter().any(|m| {
-                    m.is_moved()
-                        && (m.old_line() == r.old_line()
-                            || (!r_trim.is_empty() && m.text().trim() == r_trim))
-                })
-                && !paired_dels.contains(i)
-                && !shown_dels.contains(i)
-        })
-        .map(|(_, d)| d.text().trim())
-        .collect::<Vec<_>>()
-        .join("\n");
+        .copied()
+        .filter(|&ai| !h.rows[ai].is_moved())
+        .collect();
+
+    // 3. Pair verbatim (identical text) standalone del/add lines into Ctx rows.
+    let mut reflow_ctx: Vec<Row> = Vec::new();
+    let mut used_dels: FxHashSet<usize> = FxHashSet::default();
+    let mut used_adds: FxHashSet<usize> = FxHashSet::default();
+
+    for &ai in &candidate_adds {
+        let a = &h.rows[ai];
+        let at = a.text().trim();
+        if at.is_empty() {
+            continue;
+        }
+        for &di in &candidate_dels {
+            if used_dels.contains(&di) {
+                continue;
+            }
+            if h.rows[di].text().trim() == at {
+                used_dels.insert(di);
+                used_adds.insert(ai);
+                reflow_ctx.push(Row::Ctx(CtxLine::new(
+                    h.rows[di].old_line_num().unwrap_or(LineNum::MIN),
+                    a.new_line_num().unwrap_or(LineNum::MIN),
+                    a.text().to_string(),
+                )));
+                break;
+            }
+        }
+    }
+
+    // 4. Meaningful dels: candidate dels that were NOT converted to Ctx.
+    let meaningful: Vec<usize> = candidate_dels
+        .into_iter()
+        .filter(|di| !used_dels.contains(di))
+        .collect();
+
+    // 5. Kept adds: pure_adds that survived (moved adds + adds not converted to
+    //    Ctx).
     let kept_adds: Vec<usize> = pure_adds
         .iter()
         .copied()
-        .filter(|&ai| {
-            let a = &h.rows[ai];
-            if a.is_moved() && a.del_text().is_some_and(|dt| dt != a.text()) {
+        .filter(|ai| {
+            let a = &h.rows[*ai];
+            if a.is_moved() {
+                if a.del_text().is_some_and(|dt| dt != a.text()) {
+                    return true;
+                }
+                // A local same-position move (old line == new line) is an invisible reshuffle;
+                // true moves across different line numbers survive as Row::Mov.
+                if a.old_line().is_some() && a.old_line() == a.new_line() {
+                    return false;
+                }
                 return true;
             }
-            let t = a.text().trim();
-            let corpus = if a.is_moved() {
-                &del_text_all
-            } else {
-                &del_text_live
-            };
-            t.is_empty() || !corpus.contains(t)
+            !used_adds.contains(ai)
         })
         .collect();
 
     ReflowFilter {
         meaningful_dels: meaningful,
         kept_adds,
+        reflow_ctx,
     }
 }
 
@@ -451,6 +491,7 @@ pub fn pass_sort_ordered_walk(
     meaningful_dels: &[usize],
     kept_adds: &[usize],
     add_spans: &FxHashMap<usize, (Spans, String)>,
+    reflow_ctx: Vec<Row>,
 ) -> Vec<Row> {
     let mut anchor_of: FxHashMap<usize, usize> = FxHashMap::default();
     for &di in meaningful_dels {
@@ -530,6 +571,10 @@ pub fn pass_sort_ordered_walk(
         };
         let key = (h.rows[ai].new_line().unwrap_or(0), 1.0);
         keyed.push((a, key));
+    }
+    for ctx in reflow_ctx {
+        let key = (ctx.new_line().unwrap_or(0), 1.0);
+        keyed.push((ctx, key));
     }
 
     keyed.sort_by(|a, b| {

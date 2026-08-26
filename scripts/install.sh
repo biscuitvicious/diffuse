@@ -2,7 +2,13 @@
 set -euo pipefail
 
 # scripts/install.sh: build and install the canonical diffuse binary
-# into the local user environment (~/.cargo/bin/diffuse) using stable toolchain.
+# into the local user environment (~/.cargo/bin/diffuse) using the
+# toolchain pinned in rust-toolchain.toml (single source of truth).
 
-cargo +stable install --path crates/diffuse-cli --force
+TOOLCHAIN="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+if [ -n "$TOOLCHAIN" ]; then
+  cargo "+$TOOLCHAIN" install --locked --path crates/diffuse-cli --force "$@"
+else
+  cargo install --locked --path crates/diffuse-cli --force "$@"
+fi
 echo "diffuse binary installed to $(which diffuse)"

@@ -16,9 +16,10 @@ pub enum RowKind {
     Add,
     Del,
     Ctx,
-    Sep,
     File,
     Mod,
+    #[serde(skip_serializing)]
+    Sep,
 }
 
 impl RowKind {
@@ -27,8 +28,7 @@ impl RowKind {
             RowKind::Add => RowKind::Del,
             RowKind::Del => RowKind::Add,
             RowKind::Mod => RowKind::Mod,
-            RowKind::Ctx => RowKind::Ctx,
-            RowKind::Sep => RowKind::Sep,
+            RowKind::Ctx | RowKind::Sep => RowKind::Ctx,
             RowKind::File => RowKind::File,
         }
     }
@@ -133,6 +133,7 @@ pub enum Row {
         old_line: DelLine,
         new_line: AddLine,
     },
+    #[serde(skip_serializing)]
     Sep(String),
 }
 
@@ -171,11 +172,10 @@ impl Row {
     #[inline]
     pub fn kind(&self) -> RowKind {
         match self {
-            Row::Ctx(_) => RowKind::Ctx,
+            Row::Ctx(_) | Row::Sep(_) => RowKind::Ctx,
             Row::Del(_) => RowKind::Del,
             Row::Add(_) | Row::Mov { .. } => RowKind::Add,
             Row::Mod { .. } => RowKind::Mod,
-            Row::Sep(_) => RowKind::Sep,
         }
     }
 
@@ -186,7 +186,7 @@ impl Row {
             Row::Del(del_line) => &del_line.text,
             Row::Add(add_line) => &add_line.text,
             Row::Mod { new_line, .. } | Row::Mov { new_line, .. } => &new_line.text,
-            Row::Sep(text) => text.as_str(),
+            Row::Sep(s) => s.as_str(),
         }
     }
 
@@ -596,9 +596,9 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
             } else if let Some(rest) = line.strip_prefix(' ') {
                 let old_num = LineNum::new(oi).unwrap_or(LineNum::MIN);
                 let new_num = LineNum::new(ni).unwrap_or(LineNum::MIN);
-                raw_hunk
-                    .rows
-                    .push(Row::Ctx(CtxLine::new(old_num, new_num, rest)));
+                let row = Row::Ctx(CtxLine::new(old_num, new_num, rest));
+                hunk.rows.push(row.clone());
+                raw_hunk.rows.push(row);
                 oi += 1;
                 ni += 1;
             }

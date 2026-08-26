@@ -32,6 +32,9 @@ pub enum TuiCommand {
     ToggleRawDiff,
     ToggleHelp,
     ToggleCollapseFile(Option<usize>),
+    ExpandAllHidden,
+    ResetCurrentHunkContext,
+    ResetAllContext,
 
     // --- Modals & Dialogs ---
     OpenFileFinder,
@@ -60,12 +63,14 @@ pub enum TuiCommand {
     MouseClick {
         row: usize,
         col: usize,
+        shift: bool,
     },
     MouseScrollUp(usize),
     MouseScrollDown(usize),
     MouseDrag {
         row: usize,
         col: usize,
+        shift: bool,
     },
     EndMouseDrag,
 }

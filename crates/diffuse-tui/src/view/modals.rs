@@ -15,6 +15,8 @@ pub fn render_help_modal(width: usize) -> Vec<String> {
         ("w", "toggle word diff"),
         ("y", "toggle syntax highlighting"),
         ("R", "toggle raw unified-diff view"),
+        ("a / +", "expand all hidden context lines"),
+        ("c / C", "reset hunk / all context to default"),
         ("m", "new note (ctrl+enter save, esc cancel)"),
         ("?", "toggle help"),
         ("q / Ctrl+c", "quit"),

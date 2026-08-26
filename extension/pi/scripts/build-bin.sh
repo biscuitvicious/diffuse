@@ -7,11 +7,17 @@
 set -e
 cd "$(dirname "$(readlink -f "$0")")/../../.." # the workspace root
 PROFILE="${PROFILE:-dev}"
+TOOLCHAIN="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+if [ -n "$TOOLCHAIN" ]; then
+  CARGO="cargo +$TOOLCHAIN"
+else
+  CARGO=cargo
+fi
 if [ "$PROFILE" = "release" ]; then
-	cargo build --release --bin diffuse
+	$CARGO build --release --bin diffuse
 	cp target/release/diffuse extension/pi/bin/diffuse
 else
-	cargo build --bin diffuse
+	$CARGO build --bin diffuse
 	cp target/debug/diffuse extension/pi/bin/diffuse
 fi
 echo "bundled: extension/pi/bin/diffuse ($PROFILE)"

@@ -5,19 +5,23 @@
 - [x] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
 - [x] **CLI UX & subcommands**: Explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse -p`/`--pager`, `-U`/`--context`).
-- [ ] ~~**Direct git access via git crate**: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`).~~ (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
+- [x] ~~**Direct git access via git crate**~~: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`). (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
 
 ## 2. Streaming Pipeline & Incremental Loading (Pi Extension & Engine)
-- [ ] ~~**Incremental file streaming**: Append and render each file as it arrives from the backend rather than waiting for the entire multi-file diff to finish processing.~~ (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
-- [ ] ~~**Incremental diff line streaming (JSONL)**: Stream and render individual tokenized rows/lines progressively over a JSON Lines protocol.~~ (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
+- [x] ~~**Incremental file streaming**~~: Append and render each file as it arrives from the backend rather than waiting for the entire multi-file diff to finish processing. (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
+- [x] ~~**Incremental diff line streaming (JSONL)**~~: Stream and render individual tokenized rows/lines progressively over a JSON Lines protocol. (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
 
 ## 3. UI, Navigation & Display Features
+- [ ] **Hunk dividers as selectable rows**: Make hunk dividers "normal" rows that the cursor can select and receive key shortcuts (e.g. `Enter`, `m`, `s`) like file headers and diff lines, instead of click-only expansion targets.
+- [ ] **Subline selection with automatic clipboard copy**: Support character-level / subline selection start and end coordinates with automatic copying of selected text to the system clipboard upon selection confirmation / mouse release.
+- [ ] **Command palette**: Searchable menu of all available commands and their key shortcuts. Divided into 1) contextual commands applicable to the current row (file header, hunk divider, or diff line/selection), and 2) global commands.
 - [x] **Expand / collapse entire files**: Toggle file visibility on/off by pressing Enter on the file header row.
 - [x] **Non-wrapping mode with horizontal scrolling**: Option to disable line wrapping and horizontally scroll wide rows (`h`/`l`, `^`/`$`).
 - [x] **Scrollbar(s)**: Visual scrollbar indicators for both file navigation and viewport position.
 - [x] **Untracked files support**: Detect and display untracked files in the repository (collapsed by default).
 
 ## 4. Notes & Review State
+- [ ] **File-level notes on file header**: Make it possible to add/delete/etc notes to a file using the same key shortcuts (`m`, `d`, etc.) but on the file header.
 - [ ] **Mark notes as done / resolved**: Ability to mark review notes as done and display them collapsed.
 - [ ] **Project-local notes storage (git metadata)**: Store review notes directly in project git metadata / refs by default rather than global database storage.
 
@@ -34,3 +38,7 @@
 ## 7. Execution Context & CLI
 - [x] **Support `-C` (change directory) option**: Conceptually `chdir` to the given directory before scanning for repositories, loading files, and resolving all relative paths. Must be honoured everywhere (git discovery, file I/O, config, golden/corpus paths, etc.). Supports single or multiple sequential `-C` flags (e.g. `diffuse -C <parent> -C <child>`).
 - [ ] **Markdown output format (`--markdown` / `-m`)**: Support emitting diff output in GitHub-Flavored Markdown (GFM) format (e.g. diff code blocks, collapsible file `<details>`, and change summary tables) suitable for pasting into PR comments, reviews, and issue trackers.
+
+## 8. Codebase Architecture & Modularization
+- [ ] **Split `diffuse-tui/src/app.rs` into focused modules**: Decompose the monolithic ~5,200-line `app.rs` into logically distinct submodules with single responsibilities (e.g. `state.rs`, `navigation.rs`, `layout.rs`, `expansion.rs`, `render.rs`, `events.rs`, etc.).
+- [ ] **Unified crate namespace refactoring (`diffuse::core`, `diffuse::tui`, etc.)**: Restructure workspace crate layout and facades so external and internal usage references modules via `diffuse::core::*`, `diffuse::tui::*`, `diffuse::render::*`, and `diffuse::syntax::*`.

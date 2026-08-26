@@ -14,7 +14,9 @@ use std::{
 };
 
 use crate::{
-    notes::NotesDB, parse::DiffFile, pipeline::process_single_diff_file, wire::OutputFile,
+    parse::DiffFile,
+    pipeline::{PipelineOptions, process_single_diff_file},
+    wire::OutputFile,
 };
 
 /// A self-contained diff job representing a single file in a changeset.
@@ -202,10 +204,11 @@ impl Iterator for StreamingConsumer {
 
 /// Spawns an asynchronous streaming pipeline with `N = (num_cpus / 2).max(1)`
 /// workers.
+/// Spawns an asynchronous streaming pipeline with `N = (num_cpus / 2).max(1)`
+/// workers.
 pub fn spawn_streaming_pipeline(
     worker_count: Option<usize>,
-    notes_db: Option<NotesDB>,
-    repo: Option<String>,
+    opts: PipelineOptions,
 ) -> (StreamingProducer, StreamingConsumer) {
     let num_workers =
         worker_count.unwrap_or_else(|| available_parallelism().map(|p| p.get()).unwrap_or(4));
@@ -214,15 +217,13 @@ pub fn spawn_streaming_pipeline(
     let (processed_tx, processed_rx) = channel::<ProcessedFile>();
     let (output_tx, output_rx) = channel::<OutputFile>();
 
-    let notes_arc = notes_db.map(Arc::new);
-    let repo_arc = repo.map(Arc::new);
+    let opts_arc = Arc::new(opts);
 
     let mut worker_handles = Vec::with_capacity(num_workers);
     for _ in 0..num_workers {
         let q = Arc::clone(&queue);
         let p_tx = processed_tx.clone();
-        let n_opt = notes_arc.clone();
-        let r_opt = repo_arc.clone();
+        let opts = Arc::clone(&opts_arc);
 
         let handle = spawn(move || {
             while let Some(job) = q.pop() {
@@ -231,8 +232,7 @@ pub fn spawn_streaming_pipeline(
                     job.new_content.as_deref(),
                     job.old_content.as_deref(),
                     job.diff_fallback.as_deref(),
-                    n_opt.as_deref(),
-                    r_opt.as_deref().map(std::ops::Deref::deref),
+                    &opts,
                 );
                 if p_tx
                     .send(ProcessedFile {
@@ -277,20 +277,19 @@ pub fn spawn_streaming_pipeline(
 /// Convenience helper to parse a diff and immediately spawn a streaming
 /// pipeline.
 pub fn stream_diff_pipeline(
-    diff: &str,
-    contents: &std::collections::HashMap<String, String>,
-    old_contents: Option<&std::collections::HashMap<String, String>>,
-    notes_db: Option<NotesDB>,
-    repo: Option<String>,
+    diff: impl Into<String>,
+    mut new_content: Option<std::collections::HashMap<String, String>>,
+    mut old_content: Option<std::collections::HashMap<String, String>>,
+    opts: PipelineOptions,
     worker_count: Option<usize>,
 ) -> StreamingConsumer {
-    let parsed = crate::parse::parse_diff(diff);
-    let (producer, consumer) = spawn_streaming_pipeline(worker_count, notes_db, repo);
+    let diff_str = diff.into();
+    let parsed = crate::parse::parse_diff(&diff_str);
+    let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
 
-    let diff_str = diff.to_string();
     for (idx, f) in parsed.into_iter().enumerate() {
-        let new_c = contents.get(&f.path).cloned();
-        let old_c = old_contents.and_then(|oc| oc.get(&f.path).cloned());
+        let new_c = new_content.as_mut().and_then(|nc| nc.remove(&f.path));
+        let old_c = old_content.as_mut().and_then(|oc| oc.remove(&f.path));
         let needs_fallback = old_c.is_none();
         producer.push(FileJob {
             idx,
@@ -322,18 +321,16 @@ pub struct GitRepoMeta {
 ///    contents.
 /// 3. Returns a `StreamingConsumer` receiving ordered `OutputFile`s and a
 ///    receiver for `GitRepoMeta`.
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_git_stream_pipeline(
     repo_root: std::path::PathBuf,
     base_args: Vec<String>,
     paths: Vec<String>,
     cached: bool,
     context: usize,
-    notes_db: Option<NotesDB>,
-    repo: Option<String>,
+    opts: PipelineOptions,
     worker_count: Option<usize>,
 ) -> (StreamingConsumer, Receiver<Result<GitRepoMeta, String>>) {
-    let (producer, consumer) = spawn_streaming_pipeline(worker_count, notes_db, repo);
+    let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
     let (meta_tx, meta_rx) = channel::<Result<GitRepoMeta, String>>();
 
     std::thread::spawn(move || {
@@ -475,7 +472,7 @@ index 444..555 100644
 +fn c_mod() {}
 "#;
         let files = parse_diff(diff);
-        let contents = [
+        let new_content: std::collections::HashMap<String, String> = [
             ("a.rs".to_string(), "fn a_mod() {}\n".to_string()),
             ("b.rs".to_string(), "fn b_mod() {}\n".to_string()),
             ("c.rs".to_string(), "fn c_mod() {}\n".to_string()),
@@ -484,13 +481,18 @@ index 444..555 100644
         .collect();
 
         // Run sequential baseline
-        let baseline = crate::pipeline::run_pipeline_full(diff, &contents, None, None, None);
+        let baseline = crate::pipeline::run_pipeline_full(
+            diff,
+            Some(new_content.clone()),
+            None,
+            PipelineOptions::default(),
+        );
 
         // Run concurrent streaming pipeline
-        let (producer, consumer) = spawn_streaming_pipeline(Some(4), None, None);
+        let (producer, consumer) = spawn_streaming_pipeline(Some(4), PipelineOptions::default());
 
         for (idx, f) in files.into_iter().enumerate() {
-            let nc = contents.get(&f.path).cloned();
+            let nc = new_content.get(&f.path).cloned();
             producer.push(FileJob {
                 idx,
                 file: f,
@@ -523,18 +525,17 @@ index 444..555 100644
 
     #[test]
     fn test_stream_diff_pipeline_helper() {
-        let diff = r#"diff --git a/x.rs b/x.rs
-index 000..111 100644
---- a/x.rs
-+++ b/x.rs
-@@ -1,1 +1,1 @@
--const X: i32 = 1;
-+const X: i32 = 2;
-"#;
-        let mut contents = std::collections::HashMap::new();
-        contents.insert("x.rs".to_string(), "const X: i32 = 2;\n".to_string());
+        let diff = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1,1 +1,1 @@\n-const X: i32 = 1;\n+const X: i32 = 2;\n";
+        let mut new_content = std::collections::HashMap::new();
+        new_content.insert("x.rs".to_string(), "const X: i32 = 2;\n".to_string());
 
-        let consumer = stream_diff_pipeline(diff, &contents, None, None, None, Some(2));
+        let consumer = stream_diff_pipeline(
+            diff,
+            Some(new_content),
+            None,
+            PipelineOptions::default(),
+            Some(2),
+        );
         let files: Vec<OutputFile> = consumer.collect();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "x.rs");

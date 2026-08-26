@@ -190,7 +190,7 @@ pub fn render_row_segment(
     syntax_on: bool,
     theme: &DiffuseTheme,
 ) -> String {
-    let is_ctx = matches!(kind, RowKind::Ctx | RowKind::Sep) || is_common_only_row(kind, runs);
+    let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
     let is_del_row = kind == RowKind::Del;
     let is_mod_row = kind == RowKind::Mod;
     let is_pure_del_mod = is_mod_row && is_pure_deletion_mod(spans, text);
@@ -490,7 +490,6 @@ pub fn render_raw_row(
     let (fg, sub_bg, sub_fg) = match kind {
         RowKind::Add => ("\x1b[38;5;120m", "\x1b[48;5;28m", "\x1b[38;5;151m"),
         RowKind::Del => ("\x1b[38;5;203m", "\x1b[48;5;88m", "\x1b[38;5;167m"),
-        RowKind::Sep => ("\x1b[1m\x1b[38;5;214m", "", ""),
         _ => ("\x1b[38;5;255m", "\x1b[48;5;238m", "\x1b[38;5;244m"),
     };
 
@@ -503,7 +502,7 @@ pub fn render_raw_row(
     };
     let reset_bg = if bg.is_empty() { "\x1b[49m" } else { bg };
 
-    let trailing_len = if highlight_trailing && kind != RowKind::Sep {
+    let trailing_len = if highlight_trailing {
         text.len() - text.trim_end_matches(|c: char| c.is_whitespace()).len()
     } else {
         0

@@ -75,12 +75,75 @@ pub fn normalize_and_merge_hunks(file: &mut DiffFile, budget: usize) {
     normalize_file_context_budget(file, budget);
 }
 
-/// Merges adjacent hunks within a `DiffFile` if their line ranges overlap or if
-/// the gap between them is smaller than `2 * context_budget`.
-///
-/// Synthesizes intermediate `Row::Ctx` rows from `old_content` and
-/// `new_content`.
-pub fn merge_adjacent_hunks(file: &mut DiffFile, context_budget: usize) {
+/// Normalizes each hunk's *carried* context to the requested visual width:
+/// trims the excess (visual < engine band), expands upward by synthesizing from
+/// file content (visual > engine band), then merges hunks whose windows
+/// overlap.
+pub fn normalize_context(file: &mut DiffFile, visual: usize) {
+    if file.hunks.is_empty() {
+        return;
+    }
+    for h in &mut file.hunks {
+        let (above, below) = count_carried_ctx(h);
+        h.above_ctx = above;
+        h.below_ctx = below;
+    }
+    trim_context(file, visual);
+    normalize_file_context_budget(file, visual);
+    merge_adjacent_hunks(file, visual);
+}
+
+/// Counts leading and trailing `Ctx` rows carried on a hunk (interior context
+/// between change rows is neither).
+fn count_carried_ctx(h: &Hunk) -> (u32, u32) {
+    let mut above = 0u32;
+    for r in &h.rows {
+        if matches!(r, Row::Ctx(_)) {
+            above += 1;
+        } else {
+            break;
+        }
+    }
+    let mut below = 0u32;
+    for r in h.rows.iter().rev() {
+        if matches!(r, Row::Ctx(_)) {
+            below += 1;
+        } else {
+            break;
+        }
+    }
+    (above, below)
+}
+
+/// Removes leading/trailing `Ctx` rows beyond the requested visual width.
+fn trim_context(file: &mut DiffFile, visual: usize) {
+    for h in &mut file.hunks {
+        while (h.above_ctx as usize) > visual {
+            let Some(pos) = h.rows.iter().position(|r| matches!(r, Row::Ctx(_))) else {
+                break;
+            };
+            h.rows.remove(pos);
+            h.above_ctx -= 1;
+            h.old_start += 1;
+            h.new_start += 1;
+            h.old_count = h.old_count.saturating_sub(1);
+            h.new_count = h.new_count.saturating_sub(1);
+        }
+        while (h.below_ctx as usize) > visual {
+            let Some(pos) = h.rows.iter().rposition(|r| matches!(r, Row::Ctx(_))) else {
+                break;
+            };
+            h.rows.remove(pos);
+            h.below_ctx -= 1;
+            h.old_count = h.old_count.saturating_sub(1);
+            h.new_count = h.new_count.saturating_sub(1);
+        }
+    }
+}
+
+/// Merges adjacent hunks within a `DiffFile` if their context windows touch or
+/// overlap (`next_old_start <= cur_old_end + 1`).
+pub fn merge_adjacent_hunks(file: &mut DiffFile, _context_budget: usize) {
     if file.hunks.len() <= 1 {
         return;
     }
@@ -92,25 +155,24 @@ pub fn merge_adjacent_hunks(file: &mut DiffFile, context_budget: usize) {
         let cur_old_end = cur.old_start + cur.old_count.saturating_sub(1);
         let next_old_start = next.old_start;
 
-        if next_old_start <= cur_old_end + (2 * context_budget as u32) + 1 {
-            // Merge `next` into `cur`
-            // If there is a gap between `cur_old_end` and `next_old_start`, fill with Ctx
-            // lines
-            if next_old_start > cur_old_end + 1 {
-                for line_idx in (cur_old_end + 1)..next_old_start {
-                    let old_text = file
-                        .old_content
-                        .get((line_idx as usize).saturating_sub(1))
-                        .cloned()
-                        .unwrap_or_default();
-                    let new_line_idx = (cur.new_start + cur.new_count.saturating_sub(1) + 1)
-                        + (line_idx - cur_old_end - 1);
-                    cur.rows.push(Row::Ctx(CtxLine::new(
-                        LineNum::new(line_idx).unwrap_or(LineNum::MIN),
-                        LineNum::new(new_line_idx).unwrap_or(LineNum::MIN),
-                        old_text,
-                    )));
+        if next_old_start <= cur_old_end + 1 {
+            // Merge `next` into `cur`.
+            if next_old_start <= cur_old_end {
+                // Overlap: the expanded context windows touch. Drop `cur`'s
+                // trailing rows that duplicate `next`'s leading rows.
+                let mut keep = cur.rows.len();
+                for (i, r) in cur.rows.iter().enumerate().rev() {
+                    if r.old_line().is_some_and(|l| l >= next_old_start) {
+                        keep = i;
+                    } else {
+                        break;
+                    }
                 }
+                let removed = cur.rows.len() - keep;
+                cur.rows.truncate(keep);
+                cur.old_count = cur.old_count.saturating_sub(removed as u32);
+                cur.new_count = cur.new_count.saturating_sub(removed as u32);
+                cur.below_ctx = cur.below_ctx.saturating_sub(removed as u32);
             }
 
             // Append `next` rows
@@ -133,6 +195,11 @@ pub fn merge_adjacent_hunks(file: &mut DiffFile, context_budget: usize) {
 /// to the target `budget` (e.g. standard $N=6$).
 pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
     for h in &mut file.hunks {
+        let new_side = h
+            .rows
+            .iter()
+            .any(|r| matches!(r, Row::Add(_) | Row::Mov { .. } | Row::Mod { .. }));
+
         // Expand leading context if needed
         if (h.above_ctx as usize) < budget && h.old_start > 1 && h.new_start > 1 {
             let needed = (budget - (h.above_ctx as usize))
@@ -143,11 +210,17 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                 for offset in (1..=needed).rev() {
                     let old_ln = h.old_start - (offset as u32);
                     let new_ln = h.new_start - (offset as u32);
-                    let text = file
-                        .old_content
-                        .get((old_ln as usize).saturating_sub(1))
-                        .cloned()
-                        .unwrap_or_default();
+                    let text = if new_side {
+                        file.new_content
+                            .get((new_ln as usize).saturating_sub(1))
+                            .cloned()
+                            .unwrap_or_default()
+                    } else {
+                        file.old_content
+                            .get((old_ln as usize).saturating_sub(1))
+                            .cloned()
+                            .unwrap_or_default()
+                    };
                     leading.push(Row::Ctx(CtxLine::new(
                         LineNum::new(old_ln).unwrap_or(LineNum::MIN),
                         LineNum::new(new_ln).unwrap_or(LineNum::MIN),
@@ -179,11 +252,17 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                 for offset in 1..=needed {
                     let old_ln = cur_old_end + (offset as u32);
                     let new_ln = cur_new_end + (offset as u32);
-                    let text = file
-                        .old_content
-                        .get((old_ln as usize).saturating_sub(1))
-                        .cloned()
-                        .unwrap_or_default();
+                    let text = if new_side {
+                        file.new_content
+                            .get((new_ln as usize).saturating_sub(1))
+                            .cloned()
+                            .unwrap_or_default()
+                    } else {
+                        file.old_content
+                            .get((old_ln as usize).saturating_sub(1))
+                            .cloned()
+                            .unwrap_or_default()
+                    };
                     h.rows.push(Row::Ctx(CtxLine::new(
                         LineNum::new(old_ln).unwrap_or(LineNum::MIN),
                         LineNum::new(new_ln).unwrap_or(LineNum::MIN),
@@ -199,34 +278,27 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
 }
 
 /// Calculates the maximum number of rows that an addition block can shift down
-/// as an exact content-neutral identity transformation against `new_content`.
-pub fn max_shift_down_rows(
-    hunk: &Hunk,
-    split_idx: usize,
-    end_idx: usize,
-    new_content: Option<&[&str]>,
-) -> usize {
-    let Some(content) = new_content else {
-        return 0;
-    };
+/// as an exact content-neutral identity transformation: the released adds at
+/// the top of the block must match the carried context rows immediately below
+/// it.
+pub fn max_shift_down_rows(hunk: &Hunk, split_idx: usize, end_idx: usize) -> usize {
     if split_idx >= end_idx || end_idx > hunk.rows.len() {
         return 0;
     }
-    let last_add_nl = hunk.rows[end_idx - 1].new_line().unwrap_or(0);
-    let target_start = (last_add_nl as usize).saturating_sub(1) + 1;
-
     let available = end_idx - split_idx;
     let mut count = 0;
     for offset in 0..available {
-        let Some(candidate_text) = content.get(target_start + offset) else {
-            break;
-        };
-        let hunk_text = hunk.rows[split_idx + offset].text();
-        if *candidate_text == hunk_text {
-            count += 1;
-        } else {
+        let absorbed_idx = end_idx + offset;
+        if absorbed_idx >= hunk.rows.len() {
             break;
         }
+        if !matches!(hunk.rows[absorbed_idx], Row::Ctx(_)) {
+            break;
+        }
+        if hunk.rows[split_idx + offset].text() != hunk.rows[absorbed_idx].text() {
+            break;
+        }
+        count += 1;
     }
     count
 }
@@ -281,42 +353,52 @@ pub fn calculate_needed_shift_down(
 /// Applies a content-neutral downward shift identity transformation to an
 /// addition block.
 ///
-/// Releases `count` lines starting at `split_idx` into context and absorbs
-/// `count` matching lines from below the addition block into trailing added
-/// rows.
-///
-/// Because `released_lines.text == absorbed_lines.text`, this transformation is
-/// a pure identity operation on the reconstructed file contents.
+/// Reclassifies `count` released adds at the top of the block into context and
+/// the `count` matching carried-context rows below the block into adds — a pure
+/// classification swap, preserving every row's line numbers and the
+/// reconstructed file contents.
 pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usize, count: usize) {
     if count == 0 || split_idx >= end_idx || split_idx + count > end_idx {
         return;
     }
-    let last_add_nl = hunk.rows[end_idx - 1].new_line().unwrap_or(0);
-    let mut absorbed_adds = Vec::with_capacity(count);
+    if end_idx + count > hunk.rows.len() {
+        return;
+    }
     for offset in 0..count {
-        let orig_text = hunk.rows[split_idx + offset].text().to_string();
-        let new_nl = LineNum::new(last_add_nl + 1 + (offset as u32)).unwrap_or(LineNum::MIN);
-        absorbed_adds.push(Row::Add(AddLine::new(new_nl, orig_text)));
+        if !matches!(hunk.rows[end_idx + offset], Row::Ctx(_))
+            || hunk.rows[split_idx + offset].text() != hunk.rows[end_idx + offset].text()
+        {
+            return;
+        }
     }
 
-    // Release the top `count` lines from the addition block
-    hunk.rows.drain(split_idx..split_idx + count);
-    // Absorb the `count` lines into the bottom of the addition block
-    for (idx, r) in absorbed_adds.into_iter().enumerate() {
-        hunk.rows.insert(end_idx - count + idx, r);
+    let mut swaps = Vec::with_capacity(count * 2);
+    for offset in 0..count {
+        let released = &hunk.rows[split_idx + offset];
+        let absorbed = &hunk.rows[end_idx + offset];
+        let add_nl = released.new_line_num().unwrap_or(LineNum::MIN);
+        let ctx_old = absorbed.old_line_num().unwrap_or(LineNum::MIN);
+        let ctx_new = absorbed.new_line_num().unwrap_or(LineNum::MIN);
+        swaps.push((
+            split_idx + offset,
+            Row::Ctx(CtxLine::new(ctx_old, add_nl, released.text().to_string())),
+        ));
+        swaps.push((
+            end_idx + offset,
+            Row::Add(AddLine::new(ctx_new, absorbed.text().to_string())),
+        ));
+    }
+    for (idx, row) in swaps {
+        hunk.rows[idx] = row;
     }
 }
 
 /// Content-neutral diff shift pass.
 ///
 /// Scans addition blocks for interior delimiters/blank lines preceding
-/// declarations, checks the available identity-shift capacity against
-/// `new_content`, and executes the shift.
-pub fn pass_shift_hunk(
-    h: &Hunk,
-    new_content: Option<&[&str]>,
-    profile: Option<&crate::syntax::profile::LangProfile>,
-) -> Hunk {
+/// declarations, checks the available identity-shift capacity against the
+/// carried context, and executes the shift.
+pub fn pass_shift_hunk(h: &Hunk, profile: Option<&crate::syntax::profile::LangProfile>) -> Hunk {
     let mut new_hunk = h.clone();
     let mut i = 0;
     while i < new_hunk.rows.len() {
@@ -340,7 +422,7 @@ pub fn pass_shift_hunk(
             let row_idx = start + k;
             let needed = calculate_needed_shift_down(&new_hunk, start, end, row_idx, profile);
             if needed > 0 {
-                let possible = max_shift_down_rows(&new_hunk, row_idx, end, new_content);
+                let possible = max_shift_down_rows(&new_hunk, row_idx, end);
                 if possible >= needed {
                     apply_shift_down_identity(&mut new_hunk, row_idx, end, needed);
                     break;

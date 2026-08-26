@@ -4,6 +4,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use diffuse_core::wire::OutputFile;
+use diffuse_render::slice_by_visual_width;
 
 /// Calculate the visible column width of a string by ignoring ANSI escape
 /// sequences and using unicode-width for wide chars (emojis, CJK, etc.).
@@ -22,6 +23,28 @@ pub fn visible_width(s: &str) -> usize {
         }
     }
     count
+}
+
+/// Wrap text into segments of `max_cols` visual width.
+pub fn wrap_text_by_visual_width(text: &str, max_cols: usize) -> Vec<String> {
+    if max_cols == 0 {
+        return vec![text.to_string()];
+    }
+    let total_w = visible_width(text);
+    if total_w <= max_cols {
+        return vec![text.to_string()];
+    }
+    let mut lines = Vec::new();
+    let mut start_col = 0;
+    while start_col < total_w {
+        let piece = slice_by_visual_width(text, start_col, max_cols);
+        if piece.is_empty() {
+            break;
+        }
+        start_col += max_cols;
+        lines.push(piece);
+    }
+    lines
 }
 
 /// Truncate or right-pad a string with spaces to exactly `target_width`
@@ -43,8 +66,9 @@ pub fn truncate_pad(s: &str, target_width: usize) -> String {
     out
 }
 
-/// Render the top review header bar with file path, status, and line counts.
-pub fn render_header_bar(repo: &str, file: &OutputFile, width: usize) -> String {
+/// Render the top review header bar with file path, status, and line counts,
+/// wrapping across lines if wider than `width`.
+pub fn render_header_bar(repo: &str, file: &OutputFile, width: usize) -> Vec<String> {
     let counts = &file.counts;
     let note_count = file.notes.len();
     let note_s = format!(
@@ -76,8 +100,14 @@ pub fn render_header_bar(repo: &str, file: &OutputFile, width: usize) -> String 
         " Review: {} · {} ({}) · {}",
         repo, file.path, file.status, counts_str
     );
-    let head_str = truncate_pad(&head_raw, width);
-    format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{head_str}\x1b[0m")
+    let wrapped = wrap_text_by_visual_width(&head_raw, width);
+    wrapped
+        .into_iter()
+        .map(|piece| {
+            let head_str = truncate_pad(&piece, width);
+            format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{head_str}\x1b[0m")
+        })
+        .collect()
 }
 
 /// Parameters for rendering the secondary status bar.
@@ -95,8 +125,8 @@ pub struct StatusBarContext<'a> {
 }
 
 /// Render the secondary status bar with file index, hunk index, and mode
-/// indicators.
-pub fn render_status_bar(ctx: StatusBarContext<'_>) -> String {
+/// indicators, wrapping across lines if wider than `width`.
+pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     let files_badge = format!(
         "\x1b[1m\x1b[38;5;183m{}/{} files\x1b[0m",
         ctx.cur_fi + 1,
@@ -145,10 +175,24 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> String {
         " {files_badge}{stream_txt} \x1b[38;5;240m·\x1b[0m {hunk_badge}{mode_txt}{col_txt}{go_txt}{branch_txt}"
     );
     let vw = visible_width(&line);
-    if vw < ctx.width {
-        format!("{line}{}\x1b[0m", " ".repeat(ctx.width - vw))
+    if vw <= ctx.width {
+        vec![format!(
+            "{line}{}\x1b[0m",
+            " ".repeat(ctx.width.saturating_sub(vw))
+        )]
     } else {
-        format!("{line}\x1b[0m")
+        let wrapped = wrap_text_by_visual_width(&line, ctx.width);
+        wrapped
+            .into_iter()
+            .map(|piece| {
+                let pw = visible_width(&piece);
+                if pw < ctx.width {
+                    format!("{piece}{}\x1b[0m", " ".repeat(ctx.width - pw))
+                } else {
+                    format!("{piece}\x1b[0m")
+                }
+            })
+            .collect()
     }
 }
 
@@ -184,7 +228,7 @@ mod tests {
             width: 80,
             is_streaming: false,
         };
-        let rendered = render_status_bar(ctx);
+        let rendered = render_status_bar(ctx).join("\n");
         assert!(
             rendered.contains("1/11 files"),
             "status bar must show 1/11 files"

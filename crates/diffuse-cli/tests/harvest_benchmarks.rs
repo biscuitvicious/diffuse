@@ -16,7 +16,7 @@ use std::{
     time::Instant,
 };
 
-use diffuse_core::{streaming::stream_diff_pipeline, wire::OutputFile};
+use diffuse_core::{PipelineOptions, streaming::stream_diff_pipeline, wire::OutputFile};
 
 static REPO_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(100);
 
@@ -115,22 +115,21 @@ fn create_synthetic_multilang_repo(
         .current_dir(&dir)
         .output()
         .unwrap();
-    let diff_text = String::from_utf8(out.stdout).unwrap();
+    let diff = String::from_utf8(out.stdout).unwrap();
 
-    (dir, diff_text, new_contents, old_contents)
+    (dir, diff, new_contents, old_contents)
 }
 
 #[test]
 fn test_harvest_and_stream_small_10_files() {
-    let (diff_text, new_contents, old_contents) = create_synthetic_diff_in_memory(10);
+    let (diff, new_content, old_content) = create_synthetic_diff_in_memory(10);
 
     let start = Instant::now();
     let consumer = stream_diff_pipeline(
-        &diff_text,
-        &new_contents,
-        Some(&old_contents),
-        None,
-        None,
+        diff,
+        Some(new_content.clone()),
+        Some(old_content.clone()),
+        PipelineOptions::default(),
         None,
     );
 
@@ -153,8 +152,8 @@ fn test_harvest_and_stream_small_10_files() {
 
     // Verify properties on each harvested file
     for f in &files {
-        let old = old_contents.get(&f.path).unwrap();
-        let new = new_contents.get(&f.path).unwrap();
+        let old = old_content.get(&f.path).unwrap();
+        let new = new_content.get(&f.path).unwrap();
         assert!(!old.is_empty());
         assert!(!new.is_empty());
         assert_eq!(f.status, "modified");
@@ -165,15 +164,14 @@ fn test_harvest_and_stream_small_10_files() {
 
 #[test]
 fn test_harvest_and_stream_medium_100_files() {
-    let (diff_text, new_contents, old_contents) = create_synthetic_diff_in_memory(100);
+    let (diff, new_content, old_content) = create_synthetic_diff_in_memory(100);
 
     let start = Instant::now();
     let consumer = stream_diff_pipeline(
-        &diff_text,
-        &new_contents,
-        Some(&old_contents),
-        None,
-        None,
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
         None,
     );
 
@@ -210,7 +208,7 @@ fn create_synthetic_diff_in_memory(
 ) -> (String, HashMap<String, String>, HashMap<String, String>) {
     let mut old_contents = HashMap::with_capacity(file_count);
     let mut new_contents = HashMap::with_capacity(file_count);
-    let mut diff_text = String::new();
+    let mut diff = String::new();
 
     for i in 0..file_count {
         let (filename, old_body, new_body, diff_chunk) = match i % 5 {
@@ -271,25 +269,24 @@ fn create_synthetic_diff_in_memory(
             ),
         };
 
-        diff_text.push_str(&diff_chunk);
+        diff.push_str(&diff_chunk);
         old_contents.insert(filename.clone(), old_body);
         new_contents.insert(filename, new_body);
     }
 
-    (diff_text, new_contents, old_contents)
+    (diff, new_contents, old_contents)
 }
 
 #[test]
 fn test_harvest_and_stream_massive_1000_files() {
-    let (diff_text, new_contents, old_contents) = create_synthetic_diff_in_memory(1000);
+    let (diff, new_content, old_content) = create_synthetic_diff_in_memory(1000);
 
     let start = Instant::now();
     let consumer = stream_diff_pipeline(
-        &diff_text,
-        &new_contents,
-        Some(&old_contents),
-        None,
-        None,
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
         None,
     );
 
@@ -336,10 +333,10 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
     let val: serde_json::Value = serde_json::from_str(&json_text).expect("valid fixture JSON");
 
     assert!(val.get("diff").is_some());
-    assert!(val.get("contents").is_some());
-    assert!(val.get("old_contents").is_some());
+    assert!(val.get("newContent").is_some());
+    assert!(val.get("oldContent").is_some());
 
-    let contents_map = val["contents"].as_object().unwrap();
+    let contents_map = val["newContent"].as_object().unwrap();
     assert_eq!(contents_map.len(), 8);
 
     let _ = fs::remove_dir_all(&dir);
@@ -348,15 +345,14 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
 #[test]
 #[ignore = "massive scale benchmark (run with --ignored)"]
 fn test_harvest_and_stream_scale_10000_files() {
-    let (diff_text, new_contents, old_contents) = create_synthetic_diff_in_memory(10000);
+    let (diff, new_content, old_content) = create_synthetic_diff_in_memory(10000);
 
     let start = Instant::now();
     let consumer = stream_diff_pipeline(
-        &diff_text,
-        &new_contents,
-        Some(&old_contents),
-        None,
-        None,
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
         None,
     );
 

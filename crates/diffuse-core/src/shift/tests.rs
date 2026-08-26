@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{
-    parse::{AddLine, DelLine, Hunk, LineNum, Row},
+    parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row},
     syntax::registry::lang_profile,
 };
 
@@ -31,18 +31,19 @@ fn test_max_shift_down_rows() {
             "    pub fn next() {}",
         )),
         Row::Add(AddLine::new(LineNum::new(24).unwrap(), "    }")),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(15).unwrap(),
+            LineNum::new(25).unwrap(),
+            "    }",
+        )),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(16).unwrap(),
+            LineNum::new(26).unwrap(),
+            "",
+        )),
     ]);
 
-    let mut new_content = vec![""; 30];
-    new_content[19] = "line 1";
-    new_content[20] = "    }";
-    new_content[21] = "";
-    new_content[22] = "    pub fn next() {}";
-    new_content[23] = "    }";
-    new_content[24] = "    }";
-    new_content[25] = "";
-
-    let max_rows = max_shift_down_rows(&h, 2, 6, Some(&new_content));
+    let max_rows = max_shift_down_rows(&h, 2, 6);
     assert_eq!(
         max_rows, 2,
         "Should be able to shift 2 rows (closing brace and blank line)"
@@ -60,16 +61,37 @@ fn test_apply_shift_down_identity() {
             LineNum::new(23).unwrap(),
             "    pub fn next() {}",
         )),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(12).unwrap(),
+            LineNum::new(24).unwrap(),
+            "    }",
+        )),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(13).unwrap(),
+            LineNum::new(25).unwrap(),
+            "",
+        )),
     ]);
 
     apply_shift_down_identity(&mut h, 2, 5, 2);
 
-    assert_eq!(h.rows.len(), 5);
-    assert_eq!(h.rows[1].new_line(), Some(20));
-    assert_eq!(h.rows[2].new_line(), Some(23));
-    assert_eq!(h.rows[3].new_line(), Some(24));
-    assert_eq!(h.rows[4].new_line(), Some(25));
-    assert_eq!(h.rows[4].text(), "");
+    assert_eq!(h.rows.len(), 7);
+    // Released adds (2,3) became context.
+    assert!(matches!(h.rows[2], Row::Ctx(_)), "released add becomes ctx");
+    assert_eq!(h.rows[2].new_line(), Some(21));
+    assert_eq!(h.rows[2].old_line(), Some(12));
+    assert!(
+        matches!(h.rows[3], Row::Ctx(_)),
+        "released blank becomes ctx"
+    );
+    // Absorbed context (5,6) became adds.
+    assert!(matches!(h.rows[5], Row::Add(_)), "absorbed ctx becomes add");
+    assert_eq!(h.rows[5].new_line(), Some(24));
+    assert!(
+        matches!(h.rows[6], Row::Add(_)),
+        "absorbed blank becomes add"
+    );
+    assert_eq!(h.rows[6].new_line(), Some(25));
 }
 
 #[test]
@@ -157,15 +179,15 @@ fn test_inline_hunk_merging() {
         ],
     };
 
-    merge_adjacent_hunks(&mut f, 6);
+    normalize_and_merge_hunks(&mut f, 6);
 
     assert_eq!(
         f.hunks.len(),
         1,
         "Two hunks separated by only 2 lines (gap < 2*budget) must merge into 1 contiguous hunk"
     );
-    assert_eq!(f.hunks[0].old_start, 10);
-    assert_eq!(f.hunks[0].rows.len(), 8); // lines 10..=17
+    assert_eq!(f.hunks[0].old_start, 5); // expanded leading context (line 11 - 6 = line 5)
+    assert_eq!(f.hunks[0].rows.len(), 18); // lines 5..=22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)
 }
 
 #[test]
@@ -214,24 +236,42 @@ fn test_semantic_slide_addition_to_function_header() {
             "    pub fn new_func() {",
         )),
         Row::Add(AddLine::new(LineNum::new(24).unwrap(), "        step();")),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(18).unwrap(),
+            LineNum::new(25).unwrap(),
+            "    }",
+        )),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(19).unwrap(),
+            LineNum::new(26).unwrap(),
+            "",
+        )),
     ]);
 
-    let mut new_content = vec![""; 30];
-    new_content[20] = "    }";
-    new_content[21] = "";
-    new_content[22] = "    pub fn new_func() {";
-    new_content[23] = "        step();";
-    new_content[24] = "    }";
-    new_content[25] = "";
-
     let profile = lang_profile("rs");
-    let shifted = pass_shift_hunk(&h, Some(&new_content), profile);
+    let shifted = pass_shift_hunk(&h, profile);
 
-    assert_eq!(shifted.rows[0].text(), "    pub fn new_func() {");
-    assert_eq!(shifted.rows[0].new_line(), Some(23));
-    assert_eq!(shifted.rows[1].text(), "        step();");
-    assert_eq!(shifted.rows[2].text(), "    }");
-    assert_eq!(shifted.rows[3].text(), "");
+    // The leading "}" and blank are released into context; the matching
+    // trailing context becomes the additions.
+    assert!(
+        matches!(shifted.rows[0], Row::Ctx(_)),
+        "leading brace is context"
+    );
+    assert_eq!(shifted.rows[0].text(), "    }");
+    assert!(matches!(shifted.rows[1], Row::Ctx(_)), "blank is context");
+    assert_eq!(shifted.rows[2].text(), "    pub fn new_func() {");
+    assert_eq!(shifted.rows[2].new_line(), Some(23));
+    assert_eq!(shifted.rows[3].text(), "        step();");
+    assert!(
+        matches!(shifted.rows[4], Row::Add(_)),
+        "absorbed brace is add"
+    );
+    assert_eq!(shifted.rows[4].text(), "    }");
+    assert!(
+        matches!(shifted.rows[5], Row::Add(_)),
+        "absorbed blank is add"
+    );
+    assert_eq!(shifted.rows[5].text(), "");
 }
 
 #[test]

@@ -20,7 +20,7 @@ pub struct HunkStart {
 }
 
 /// A hunk's allocated context envelope (above/below counts),
-/// used for the divider `ctx N▴ M▾` counters.
+/// used for the divider `ctx N▲ M▼` counters.
 #[derive(Clone, Copy, Debug)]
 pub struct HunkMeta {
     pub above: usize,

@@ -35,84 +35,147 @@ use crate::{
     wire::{OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun, PipelineOutput},
 };
 
-/// Input configuration and content buffers for driving the diff pipeline.
-pub struct PipelineContext<'a> {
-    pub diff: &'a str,
-    pub contents: &'a HashMap<String, String>,
-    pub old_contents: Option<&'a HashMap<String, String>>,
-    pub notes_db: Option<&'a NotesDB>,
-    pub repo: Option<&'a str>,
+/// Options and configuration controlling the pipeline execution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineOptions {
+    pub notes_db: Option<NotesDB>,
+    pub repo: Option<String>,
+    pub visual_context: usize,
+    pub expand_lines: usize,
 }
 
-impl<'a> PipelineContext<'a> {
-    pub fn new(diff: &'a str, contents: &'a HashMap<String, String>) -> Self {
+impl Default for PipelineOptions {
+    fn default() -> Self {
         Self {
-            diff,
-            contents,
-            old_contents: None,
             notes_db: None,
             repo: None,
+            visual_context: crate::git::DEFAULT_CONTEXT_LINES,
+            expand_lines: crate::git::DEFAULT_EXPAND_LINES,
         }
     }
+}
 
-    pub fn with_old_contents(mut self, old: Option<&'a HashMap<String, String>>) -> Self {
-        self.old_contents = old;
-        self
+impl PipelineOptions {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn with_notes(mut self, db: Option<&'a NotesDB>, repo: Option<&'a str>) -> Self {
-        self.notes_db = db;
+    pub fn with_notes(mut self, notes_db: Option<NotesDB>, repo: Option<String>) -> Self {
+        self.notes_db = notes_db;
         self.repo = repo;
         self
     }
 
-    /// Execute the full pipeline over the context.
-    pub fn run(&self) -> PipelineOutput {
-        run_pipeline_full(
-            self.diff,
-            self.contents,
-            self.old_contents,
-            self.notes_db,
-            self.repo,
-        )
+    pub fn with_visual_context(mut self, visual_context: usize) -> Self {
+        self.visual_context = visual_context;
+        self
+    }
+
+    pub fn with_expand_lines(mut self, expand_lines: usize) -> Self {
+        self.expand_lines = expand_lines;
+        self
     }
 }
 
-/// Run the pipeline over a diff + new-file contents; produce the wire-contract
-/// output.
-pub fn run_pipeline(diff: &str, contents: &HashMap<String, String>) -> PipelineOutput {
-    run_pipeline_with_notes(diff, contents, None, None)
+/// Builder for diff pipeline inputs: diff text, optional new/old content
+/// buffers, and pipeline options.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipelineInput {
+    pub diff: String,
+    pub new_content: Option<HashMap<String, String>>,
+    pub old_content: Option<HashMap<String, String>>,
+    pub options: PipelineOptions,
 }
 
-/// Run the pipeline over a diff + new-file contents + optional notes; produce
-/// the wire-contract output.
+impl PipelineInput {
+    pub fn new(diff: impl Into<String>) -> Self {
+        Self {
+            diff: diff.into(),
+            new_content: None,
+            old_content: None,
+            options: PipelineOptions::default(),
+        }
+    }
+
+    pub fn with_new_content(mut self, new_content: HashMap<String, String>) -> Self {
+        self.new_content = Some(new_content);
+        self
+    }
+
+    pub fn with_old_content(mut self, old_content: HashMap<String, String>) -> Self {
+        self.old_content = Some(old_content);
+        self
+    }
+
+    pub fn with_options(mut self, options: PipelineOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    pub fn with_notes(mut self, db: Option<NotesDB>, repo: Option<String>) -> Self {
+        self.options.notes_db = db;
+        self.options.repo = repo;
+        self
+    }
+
+    pub fn with_visual_context(mut self, visual_context: usize) -> Self {
+        self.options.visual_context = visual_context;
+        self
+    }
+
+    pub fn with_expand_lines(mut self, expand_lines: usize) -> Self {
+        self.options.expand_lines = expand_lines;
+        self
+    }
+
+    /// Execute the full pipeline over the input.
+    pub fn run(self) -> PipelineOutput {
+        run_pipeline_full(self.diff, self.new_content, self.old_content, self.options)
+    }
+}
+
+/// Run the pipeline over a diff + optional new-file contents; produce the
+/// wire-contract output.
+pub fn run_pipeline(
+    diff: impl Into<String>,
+    new_content: Option<HashMap<String, String>>,
+) -> PipelineOutput {
+    run_pipeline_with_notes(diff, new_content, None, None)
+}
+
+/// Run the pipeline over a diff with no file contents; produce the
+/// wire-contract output.
+pub fn run_pipeline_diff(diff: impl Into<String>) -> PipelineOutput {
+    run_pipeline_full(diff, None, None, PipelineOptions::default())
+}
+
+/// Run the pipeline over a diff + optional new-file contents + optional notes;
+/// produce the wire-contract output.
 pub fn run_pipeline_with_notes(
-    diff: &str,
-    contents: &HashMap<String, String>,
-    notes_db: Option<&NotesDB>,
-    repo: Option<&str>,
+    diff: impl Into<String>,
+    new_content: Option<HashMap<String, String>>,
+    notes_db: Option<NotesDB>,
+    repo: Option<String>,
 ) -> PipelineOutput {
-    run_pipeline_full(diff, contents, None, notes_db, repo)
+    run_pipeline_full(
+        diff,
+        new_content,
+        None,
+        PipelineOptions::default().with_notes(notes_db, repo),
+    )
 }
 
-/// Run the pipeline over a diff + new-file contents + optional old-file
-/// contents + optional notes; produce the wire-contract output.
+/// Run the pipeline over a diff + optional new-file contents + optional
+/// old-file contents + pipeline options; produce the wire-contract output.
 pub fn run_pipeline_full(
-    diff: &str,
-    contents: &HashMap<String, String>,
-    old_contents: Option<&HashMap<String, String>>,
-    notes_db: Option<&NotesDB>,
-    repo: Option<&str>,
+    diff: impl Into<String>,
+    new_content: Option<HashMap<String, String>>,
+    old_content: Option<HashMap<String, String>>,
+    opts: PipelineOptions,
 ) -> PipelineOutput {
-    let out_files = crate::streaming::stream_diff_pipeline(
-        diff,
-        contents,
-        old_contents,
-        notes_db.cloned(),
-        repo.map(String::from),
-        None,
-    )
-    .collect();
+    let out_files =
+        crate::streaming::stream_diff_pipeline(diff, new_content, old_content, opts, None)
+            .collect();
 
     PipelineOutput {
         files: out_files,
@@ -121,15 +184,21 @@ pub fn run_pipeline_full(
     }
 }
 
+fn split_content_lines(s: &str) -> Vec<&str> {
+    let stripped = s.strip_suffix('\r').unwrap_or(s);
+    let stripped = stripped.strip_suffix('\n').unwrap_or(stripped);
+    let stripped = stripped.strip_suffix('\r').unwrap_or(stripped);
+    stripped.split('\n').collect()
+}
+
 /// Run pipeline diffing, alignment, move detection, and syntax classification
-/// on a single parsed diff file.
+/// on a single parsed diff file using the specified pipeline options.
 pub fn process_single_diff_file(
     mut f: DiffFile,
     new_content: Option<&str>,
     old_content: Option<&str>,
     _diff_fallback: Option<&str>,
-    notes_db: Option<&NotesDB>,
-    repo: Option<&str>,
+    opts: &PipelineOptions,
 ) -> OutputFile {
     let ext = f.path.rsplit('.').next().unwrap_or("");
     let profile = lang_profile(ext);
@@ -137,8 +206,9 @@ pub fn process_single_diff_file(
     let new_lines: Vec<&str> = if let Some(c) = new_content
         && !c.is_empty()
     {
-        f.new_line_count = c.split('\n').count();
-        c.split('\n').collect()
+        let lines = split_content_lines(c);
+        f.new_line_count = lines.len();
+        lines
     } else {
         new_lines_fallback = crate::old_content::new_content_from_hunks(&f.raw_hunks);
         f.new_line_count = new_lines_fallback.len();
@@ -150,8 +220,9 @@ pub fn process_single_diff_file(
     let old_lines: Vec<&str> = if let Some(oc) = old_content
         && !oc.is_empty()
     {
-        f.old_line_count = oc.split('\n').count();
-        oc.split('\n').collect()
+        let lines = split_content_lines(oc);
+        f.old_line_count = lines.len();
+        lines
     } else {
         old_lines_fallback = crate::old_content::old_content_from_hunks(&f.raw_hunks);
         f.old_line_count = old_lines_fallback.len();
@@ -177,6 +248,9 @@ pub fn process_single_diff_file(
             }
         }
     });
+
+    // Final step: normalize the carried context to the requested visual width.
+    crate::shift::normalize_context(&mut f, opts.visual_context);
 
     let counts = file_counts(&f);
     let regions = fence_regions(&new_lines, profile);
@@ -238,7 +312,7 @@ pub fn process_single_diff_file(
         });
     }
 
-    let notes_out = match (notes_db, repo) {
+    let notes_out = match (&opts.notes_db, &opts.repo) {
         (Some(db), Some(r)) => notes_for_file(db, r, &f.path)
             .map(|n| OutputNote {
                 id: n.id.clone(),
@@ -254,7 +328,27 @@ pub fn process_single_diff_file(
         _ => Vec::new(),
     };
 
-    let content_runs: Vec<Vec<OutputRun>> = Vec::new();
+    let lines_for_runs = if !new_lines.is_empty() {
+        &new_lines
+    } else {
+        &old_lines
+    };
+    let content_runs: Vec<Vec<OutputRun>> = lines_for_runs
+        .iter()
+        .enumerate()
+        .map(|(li, line_text)| {
+            let mut runs = Vec::new();
+            for_each_ctx_line_token(line_text, Some((li + 1) as u32), profile, &regions, |tk| {
+                runs.push(OutputRun {
+                    kind: RunKind::Ctx,
+                    color: Some(std::borrow::Cow::Borrowed(tk.color)),
+                    sgr: tk.sgr,
+                    text: tk.text.to_string(),
+                });
+            });
+            runs
+        })
+        .collect();
 
     OutputFile {
         path: f.path.clone(),
@@ -276,76 +370,61 @@ pub fn process_single_diff_file(
             .collect(),
         notes: notes_out,
         content_runs,
-        rows: {
-            for h in &mut f.hunks {
-                if h.above_ctx == 0 {
-                    h.above_ctx = crate::visible::DEFAULT_CONTEXT_LINES;
+        rows: build_visible(&f.hunks, opts.expand_lines)
+            .into_iter()
+            .map(|vis| {
+                let r = vis.row;
+                let runs = if matches!(
+                    r,
+                    Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
+                ) {
+                    colored_runs(&r, profile, &regions)
+                } else {
+                    let mut runs = Vec::new();
+                    for_each_ctx_line_token(
+                        r.text(),
+                        match vis.side {
+                            Some(VisibleSide::New) => r.new_line(),
+                            Some(VisibleSide::Old) => None,
+                            None => r.new_line().or_else(|| r.old_line()),
+                        },
+                        profile,
+                        &regions,
+                        |tk| {
+                            runs.push(OutputRun {
+                                kind: RunKind::Ctx,
+                                color: Some(std::borrow::Cow::Borrowed(tk.color)),
+                                sgr: tk.sgr,
+                                text: tk.text.to_string(),
+                            });
+                        },
+                    );
+                    runs
+                };
+                let (new_line, old_line) = match (&r, vis.side) {
+                    (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
+                        (r.new_line(), None)
+                    }
+                    (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => {
+                        (None, r.old_line())
+                    }
+                    (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
+                    (Row::Sep(_), _) => (None, None),
+                };
+                let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
+                OutputRow {
+                    kind: r.kind(),
+                    new_line,
+                    old_line,
+                    text: r.text().to_string(),
+                    del_text: r.del_text().map(String::from),
+                    spans: r.spans().cloned().unwrap_or_default(),
+                    runs,
+                    wholesale,
+                    moved: r.is_moved(),
                 }
-                if h.below_ctx == 0 {
-                    h.below_ctx = crate::visible::DEFAULT_CONTEXT_LINES;
-                }
-            }
-            build_visible(
-                &f.hunks,
-                f.new_line_count,
-                f.old_line_count,
-                &f.new_content,
-                &f.old_content,
-                f.new_content.is_empty() && f.old_content.is_empty(),
-            )
-        }
-        .into_iter()
-        .map(|vis| {
-            let r = vis.row;
-            let runs = if matches!(
-                r,
-                Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
-            ) {
-                colored_runs(&r, profile, &regions)
-            } else {
-                let mut runs = Vec::new();
-                for_each_ctx_line_token(
-                    r.text(),
-                    match vis.side {
-                        Some(VisibleSide::New) => r.new_line(),
-                        Some(VisibleSide::Old) => None,
-                        None => r.new_line().or_else(|| r.old_line()),
-                    },
-                    profile,
-                    &regions,
-                    |tk| {
-                        runs.push(OutputRun {
-                            kind: RunKind::Ctx,
-                            color: Some(std::borrow::Cow::Borrowed(tk.color)),
-                            sgr: tk.sgr,
-                            text: tk.text.to_string(),
-                        });
-                    },
-                );
-                runs
-            };
-            let (new_line, old_line) = match (&r, vis.side) {
-                (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
-                    (r.new_line(), None)
-                }
-                (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => (None, r.old_line()),
-                (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
-                (Row::Sep(_), _) => (None, None),
-            };
-            let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
-            OutputRow {
-                kind: r.kind(),
-                new_line,
-                old_line,
-                text: r.text().to_string(),
-                del_text: r.del_text().map(String::from),
-                spans: r.spans().cloned().unwrap_or_default(),
-                runs,
-                wholesale,
-                moved: r.is_moved(),
-            }
-        })
-        .collect(),
+            })
+            .collect(),
     }
 }
 
@@ -581,6 +660,22 @@ fn for_each_sliced_token<'a>(
         }
     }
     found
+}
+
+/// Tokenizes and classifies a single context line into styled `OutputRun`s
+/// based on file extension and line number.
+pub fn context_line_runs(line_text: &str, line_num: Option<u32>, ext: &str) -> Vec<OutputRun> {
+    let profile = lang_profile(ext);
+    let mut runs = Vec::new();
+    for_each_ctx_line_token(line_text, line_num, profile, &[], |tk| {
+        runs.push(OutputRun {
+            kind: crate::merge::RunKind::Ctx,
+            color: Some(std::borrow::Cow::Borrowed(tk.color)),
+            sgr: tk.sgr,
+            text: tk.text.to_string(),
+        });
+    });
+    runs
 }
 
 #[cfg(test)]

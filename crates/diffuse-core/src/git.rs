@@ -4,6 +4,23 @@
 
 use std::{collections::HashMap, fs, path::Path, process::Command};
 
+/// Fixed unified-diff context width used when generating diffs from git (`-U`).
+///
+/// This is the *engine* band: the DP/shift engine needs enough context around
+/// changes to slide hunks and anchor against syntax. It is separate from the
+/// *visual* context the user controls via `-U/--context` — the pipeline's last
+/// step normalizes the engine's context down (or up) to the requested visual
+/// width.
+pub const ENGINE_CONTEXT: usize = 4;
+
+/// Default *visual* context lines (`-U/--context` default). Displayed context,
+/// applied by the pipeline's final normalization step.
+pub const DEFAULT_CONTEXT_LINES: usize = 4;
+
+/// Default number of lines to expand up and down when activating a hidden gap
+/// separator.
+pub const DEFAULT_EXPAND_LINES: usize = 6;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefPair {
     pub worktree_new: bool,
@@ -119,9 +136,9 @@ pub struct GitFileItem {
 }
 
 pub struct LoadGitResult {
-    pub diff_text: String,
-    pub contents: HashMap<String, String>,
-    pub old_contents: HashMap<String, String>,
+    pub diff: String,
+    pub new_content: HashMap<String, String>,
+    pub old_content: HashMap<String, String>,
     pub branch: String,
     pub untracked_skipped: Vec<String>,
 }
@@ -483,7 +500,7 @@ pub fn load_git_repo(
     diff_cmd.extend(paths.iter().cloned());
 
     let diff_args: Vec<&str> = diff_cmd.iter().map(std::string::String::as_str).collect();
-    let mut diff_text = run_git(repo_root, &diff_args).unwrap_or_default();
+    let mut diff = run_git(repo_root, &diff_args).unwrap_or_default();
 
     let mut name_cmd = vec![
         "diff".to_string(),
@@ -565,16 +582,16 @@ pub fn load_git_repo(
                     continue;
                 }
                 let line_count = content.lines().count();
-                if !diff_text.is_empty() && !diff_text.ends_with('\n') {
-                    diff_text.push('\n');
+                if !diff.is_empty() && !diff.ends_with('\n') {
+                    diff.push('\n');
                 }
-                diff_text.push_str(&format!(
+                diff.push_str(&format!(
                     "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{line_count} @@\n"
                 ));
                 for line in content.lines() {
-                    diff_text.push('+');
-                    diff_text.push_str(line);
-                    diff_text.push('\n');
+                    diff.push('+');
+                    diff.push_str(line);
+                    diff.push('\n');
                 }
                 files.push(GitFileItem {
                     path: rel.to_string(),
@@ -645,21 +662,21 @@ pub fn load_git_repo(
             && f.old_content.as_ref().is_none_or(String::is_empty);
     }
 
-    let mut contents: HashMap<String, String> = HashMap::with_capacity(files.len());
-    let mut old_contents: HashMap<String, String> = HashMap::new();
+    let mut new_content: HashMap<String, String> = HashMap::with_capacity(files.len());
+    let mut old_content: HashMap<String, String> = HashMap::new();
     for f in files {
         if let Some(nc) = f.new_content {
-            contents.insert(f.path.clone(), nc);
+            new_content.insert(f.path.clone(), nc);
         }
         if let Some(oc) = f.old_content {
-            old_contents.insert(f.path, oc);
+            old_content.insert(f.path, oc);
         }
     }
 
     Ok(LoadGitResult {
-        diff_text,
-        contents,
-        old_contents,
+        diff,
+        new_content,
+        old_content,
         branch,
         untracked_skipped,
     })
@@ -732,20 +749,19 @@ mod tests {
 
         let res = load_git_repo(&dir, &[], &[], false, 6).unwrap();
         assert!(
-            res.diff_text.contains("untracked.rs"),
-            "diff_text must contain synthetic diff for untracked.rs"
+            res.diff.contains("untracked.rs"),
+            "diff must contain synthetic diff for untracked.rs"
         );
         assert!(
-            res.contents.contains_key("untracked.rs"),
-            "contents must contain untracked.rs"
+            res.new_content.contains_key("untracked.rs"),
+            "new_content must contain untracked.rs"
         );
 
         let out = crate::pipeline::run_pipeline_full(
-            &res.diff_text,
-            &res.contents,
-            Some(&res.old_contents),
-            None,
-            None,
+            &res.diff,
+            Some(res.new_content),
+            Some(res.old_content),
+            crate::pipeline::PipelineOptions::default(),
         );
         let untracked_file = out
             .files

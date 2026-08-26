@@ -32,12 +32,12 @@ fn test_fence_delimiter_line_preserves_comment_prefix_color() {
 #[test]
 fn test_mod_comment_row_preserves_comment_color_after_subword_fill() {
     let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,1 +1,1 @@\n-// The lowest layer the lower-walk may descend to: a directory found with\n+// The deepest layer the below-walk may descend to: a directory found with\n";
-    let mut contents = HashMap::new();
-    contents.insert(
+    let mut new_content = HashMap::new();
+    new_content.insert(
         "test.rs".to_string(),
         "// The deepest layer the below-walk may descend to: a directory found with\n".to_string(),
     );
-    let output = run_pipeline(diff, &contents);
+    let output = run_pipeline(diff, Some(new_content));
     let row = &output.files[0].hunks[0].rows[0];
     let common_after = row.runs.iter().find(|r| r.text.contains("layer the"));
     assert!(common_after.is_some(), "common run 'layer the' exists");
@@ -119,13 +119,13 @@ index 111..222 100644
 +new line one
 +new line two
 ";
-    let mut contents = HashMap::new();
-    contents.insert(
+    let mut new_content = HashMap::new();
+    new_content.insert(
         "src/a.rs".to_string(),
         "new line one\nnew line two".to_string(),
     );
 
-    let wire = run_pipeline(diff, &contents);
+    let wire = run_pipeline(diff, Some(new_content));
     let reconstructed_files = wire.reconstruct();
     assert_eq!(reconstructed_files.len(), 1);
     assert_eq!(reconstructed_files[0].path, "src/a.rs");
@@ -163,17 +163,22 @@ index 111..222 100644
 #[test]
 fn test_run_pipeline_full_with_old_contents() {
     let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -250,5 +250,5 @@\n                     origin: Mount::Overlay {\n-                    resolved_layers: unresolved,\n+                    layers: unresolved,\n";
-    let mut contents = HashMap::new();
-    contents.insert(
+    let mut new_content = HashMap::new();
+    new_content.insert(
         "src/lib.rs".to_string(),
         "pub fn into_filesystem() {\n    Box::new(OverlayFilesystem {\n        layers: unresolved,\n    })\n}".to_string(),
     );
-    let mut old_contents = HashMap::new();
-    old_contents.insert(
+    let mut old_content = HashMap::new();
+    old_content.insert(
         "src/lib.rs".to_string(),
         "pub fn into_filesystem() {\n    Box::new(OverlayFilesystem {\n        resolved_layers: unresolved,\n    })\n}".to_string(),
     );
-    let out = run_pipeline_full(diff, &contents, Some(&old_contents), None, None);
+    let out = run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
     let mod_row = out.files[0].hunks[0]
         .rows
         .iter()
@@ -240,8 +245,8 @@ index 759adaf..fbe3b20 100644
 +rustflags = ["--cfg", 'remote_exec="adb"']
 +runner = "scripts/android-test-runner"
 +"#;
-    let mut contents = HashMap::new();
-    contents.insert(
+    let mut new_content = HashMap::new();
+    new_content.insert(
         ".cargo/config.toml".to_string(),
         r#"[env]
 CARGO_WORKSPACE_DIR = { value = "", relative = true }
@@ -285,7 +290,7 @@ runner = "scripts/android-test-runner"
 "#.to_string(),
     );
 
-    let output = run_pipeline_full(diff, &contents, None, None, None);
+    let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let rows = &output.files[0].rows;
 
     // 1. Assert that there is NO floating del under [env] (between lines 1 and 6)
@@ -344,11 +349,11 @@ fn test_visible_context_rows_populate_text() {
 +    let x = 2;
  }
 "#;
-    let new_content = "fn foo() {\n    let x = 2;\n}";
-    let mut contents = HashMap::new();
-    contents.insert("src/lib.rs".to_string(), new_content.to_string());
+    let new_content_str = "fn foo() {\n    let x = 2;\n}";
+    let mut new_content = HashMap::new();
+    new_content.insert("src/lib.rs".to_string(), new_content_str.to_string());
 
-    let output = run_pipeline(diff, &contents);
+    let output = run_pipeline(diff, Some(new_content));
     assert_eq!(output.files.len(), 1);
     let file = &output.files[0];
     assert!(
@@ -368,4 +373,26 @@ fn test_visible_context_rows_populate_text() {
     );
     assert_eq!(ctx_rows[0].text, "fn foo() {");
     assert_eq!(ctx_rows[1].text, "}");
+}
+
+#[test]
+fn test_run_pipeline_with_no_contents_autonomous() {
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+ fn foo() {
+-    let x = 1;
++    let x = 2;
+     return x;
+ }
+"#;
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let file = &output.files[0];
+    assert_eq!(file.path, "src/lib.rs");
+    assert_eq!(file.hunks.len(), 1);
+    assert_eq!(file.hunks[0].rows.len(), 4); // Ctx, Mod, Ctx, Ctx
+    assert_eq!(file.new_content.len(), 4);
+    assert_eq!(file.old_content.len(), 4);
 }

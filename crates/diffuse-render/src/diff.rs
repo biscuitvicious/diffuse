@@ -3,7 +3,7 @@
 //! Formats full file diff summaries and colored hunks directly to terminal
 //! output.
 
-use diffuse_core::wire::{OutputFile, PipelineOutput};
+use diffuse_core::wire::{OutputFile, OutputRow, PipelineOutput};
 
 use super::{
     row::{prefix_of, render_row_segment, styled_prefix},
@@ -64,35 +64,39 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
     );
     out.push_str(&bar);
 
-    for h in &file.hunks {
-        for r in &h.rows {
-            let pfx = if styled_prefixes {
-                styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, false)
-            } else {
-                let plain = prefix_of(r.kind, r.new_line, r.old_line, r.moved, &r.runs);
-                format!("{plain} ")
-            };
+    let render_rows: Vec<&OutputRow> = if !file.rows.is_empty() {
+        file.rows.iter().collect()
+    } else {
+        file.hunks.iter().flat_map(|h| &h.rows).collect()
+    };
 
-            let seg = render_row_segment(
-                &r.text,
-                r.del_text.as_deref(),
-                &r.spans,
-                r.kind,
-                r.moved,
-                &r.runs,
-                0,
-                usize::MAX,
-                &pfx,
-                false,
-                false,
-                0,
-                true,
-                true,
-                theme,
-            );
-            out.push_str(&seg);
-            out.push('\n');
-        }
+    for r in render_rows {
+        let pfx = if styled_prefixes {
+            styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, false)
+        } else {
+            let plain = prefix_of(r.kind, r.new_line, r.old_line, r.moved, &r.runs);
+            format!("{plain} ")
+        };
+
+        let seg = render_row_segment(
+            &r.text,
+            r.del_text.as_deref(),
+            &r.spans,
+            r.kind,
+            r.moved,
+            &r.runs,
+            0,
+            usize::MAX,
+            &pfx,
+            false,
+            false,
+            0,
+            true,
+            true,
+            theme,
+        );
+        out.push_str(&seg);
+        out.push('\n');
     }
 
     out
@@ -101,22 +105,22 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use diffuse_core::PipelineOptions;
 
     #[test]
     fn test_output_ends_with_terminal_reset() {
         let diff = "diff --git a/a.txt b/a.txt\nindex 1111111..2222222 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old line one\n+new line one\n";
-        let contents = [("a.txt".to_string(), "new line one\n".to_string())]
+        let new_content = [("a.txt".to_string(), "new line one\n".to_string())]
             .into_iter()
             .collect();
-        let old_contents = [("a.txt".to_string(), "old line one\n".to_string())]
+        let old_content = [("a.txt".to_string(), "old line one\n".to_string())]
             .into_iter()
             .collect();
         let out = diffuse_core::pipeline::run_pipeline_full(
             diff,
-            &contents,
-            Some(&old_contents),
-            None,
-            None,
+            Some(new_content),
+            Some(old_content),
+            PipelineOptions::default(),
         );
         let rendered = render_pipeline_output(&out, &DiffuseTheme::MAGIC, true);
         assert!(
