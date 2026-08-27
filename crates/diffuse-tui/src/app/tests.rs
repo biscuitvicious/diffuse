@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::{command::TuiCommand, view::hunk_divider_text};
 
