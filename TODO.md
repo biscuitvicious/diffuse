@@ -3,6 +3,7 @@
 ## 1. Rust Binary & Standalone TUI
 - [x] **Standalone Rust TUI**: Full terminal user interface in the `diffuse` binary equivalent to the Pi extension's interactive review UI.
 - [x] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
+- [ ] **Migrate TUI layout rendering to ratatui**: Migrate custom TUI layout, buffer rendering, and terminal primitives to `ratatui`.
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
 - [x] **CLI UX & subcommands**: Explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse -p`/`--pager`, `-U`/`--context`).
 - [x] ~~**Direct git access via git crate**~~: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`). (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
@@ -19,6 +20,7 @@
 - [x] **Non-wrapping mode with horizontal scrolling**: Option to disable line wrapping and horizontally scroll wide rows (`h`/`l`, `^`/`$`).
 - [x] **Scrollbar(s)**: Visual scrollbar indicators for both file navigation and viewport position.
 - [x] **Untracked files support**: Detect and display untracked files in the repository (collapsed by default).
+- [ ] **Switch to Markdown mode in TUI**: Add a TUI key shortcut for switching to Markdown mode.
 
 ## 4. Notes & Review State
 - [ ] **File-level notes on file header**: Make it possible to add/delete/etc notes to a file using the same key shortcuts (`m`, `d`, etc.) but on the file header.
@@ -30,6 +32,8 @@
 - [ ] **Widen golden corpus**: Expand captured fixtures to 50–100+ realistic code diffs across diverse programming languages.
 - [ ] **Multi-language diversity**: Rust, C/C++, Go, Zig, TypeScript, JavaScript, Python, JSON, YAML, Markdown, SQL, Shell.
 - [x] **Automated fixture harvesting tool**: CLI tool (`diffuse-harvest` in `crates/diffuse/src/bin/harvest.rs`) to harvest diffs + old/new file snapshots from repository histories.
+- [ ] **Per-golden dedicated directories & plain file storage**: Update golden to extract the file content out of the golden JSON configuration and store as plain files with the format `crates-diffuse-tui-src-main.{old,new}.rs.gz` (slashes replaced with dashes). Store files in a directory explicitly dedicated to that golden so each golden has its own directory of fixtures.
+- [ ] **JSON Lines golden fixtures (`<corpus>.wire.jsonl.gz`)**: Store and validate jsonl golden fixtures `<corpus>.wire.jsonl.gz`.
 
 ## 6. Performance Engineering & Algorithm Modernization
 - [x] **Production Performance Optimizations**: Top 5 hot-path optimizations across tokenizer, TUI flat row indexing, precomputed similarity tokens, DP scratch arena, zero-allocation pipeline, and UTF-8 string slicing. (See [Production Performance Optimizations](plan/done/Production%20Performance%20Optimizations.md))
@@ -37,8 +41,10 @@
 
 ## 7. Execution Context & CLI
 - [x] **Support `-C` (change directory) option**: Conceptually `chdir` to the given directory before scanning for repositories, loading files, and resolving all relative paths. Must be honoured everywhere (git discovery, file I/O, config, golden/corpus paths, etc.). Supports single or multiple sequential `-C` flags (e.g. `diffuse -C <parent> -C <child>`).
-- [ ] **Markdown output format (`--markdown` / `-m`)**: Support emitting diff output in GitHub-Flavored Markdown (GFM) format (e.g. diff code blocks, collapsible file `<details>`, and change summary tables) suitable for pasting into PR comments, reviews, and issue trackers.
+- [x] ~~**Markdown output format (`--markdown` / `-m`)**~~: Support emitting diff output in GitHub-Flavored Markdown (GFM) format (e.g. diff code blocks, collapsible file `<details>`, and change summary tables) suitable for pasting into PR comments, reviews, and issue trackers. (See [Markdown Output Format](plan/done/Markdown%20Output%20Format.md))
+- [ ] **Raw mode CLI argument (`--raw`)**: Add `--raw` argument to CLI, rendering the diff in exactly the same way as the "raw mode" of the TUI (`R` keybinding).
 
 ## 8. Codebase Architecture & Modularization
 - [x] ~~**Split `diffuse-tui/src/app.rs` into focused modules**~~: Decompose the monolithic ~5,200-line `app.rs` into logically distinct submodules with single responsibilities (e.g. `state.rs`, `navigation.rs`, `layout.rs`, `expansion.rs`, `render.rs`, `events.rs`, etc.). (See [Split AppState](plan/done/Split%20AppState.md))
 - [x] ~~**Unified crate namespace refactoring (`diffuse::core`, `diffuse::tui`, etc.)**~~: Restructure workspace crate layout and facades so external and internal usage references modules via `diffuse::core::*`, `diffuse::tui::*`, `diffuse::render::*`, and `diffuse::syntax::*`. (See [Unified Crate Namespace](plan/done/Unified%20Crate%20Namespace.md))
+- [ ] **Centralized ANSI module & theming engine refactor**: Capture all styling and colorization strings & related logic in an ANSI module. Replace all usages of direct ANSI escapes and related logic with the ANSI module. Update GUIDELINES with this rule (no direct ANSI escapes). Make every single color the responsibility of the theming engine. Default to auto-generation of style colors using coloring logic, while allowing for targeted overrides through configuration (theme base + overrides, or completely new themes through config). Remove the old-old theme configuration if it's still there.

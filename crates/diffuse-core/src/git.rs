@@ -447,9 +447,14 @@ pub fn stream_git_repo_to_producer(
                     continue;
                 }
                 let line_count = content.lines().count();
-                let synthetic_diff = format!(
+                let mut synthetic_diff = format!(
                     "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{line_count} @@\n"
                 );
+                for line in content.lines() {
+                    synthetic_diff.push('+');
+                    synthetic_diff.push_str(line);
+                    synthetic_diff.push('\n');
+                }
                 let parsed_files = crate::parse::parse_diff(&synthetic_diff);
                 for mut f in parsed_files {
                     f.status = crate::parse::FileStatus::Untracked;
@@ -769,6 +774,9 @@ mod tests {
             .find(|f| f.path == "untracked.rs")
             .expect("untracked.rs must be in pipeline output");
         assert_eq!(untracked_file.status, "untracked");
+        assert!(!untracked_file.hunks.is_empty());
+        assert_eq!(untracked_file.hunks[0].rows.len(), 1);
+        assert_eq!(untracked_file.hunks[0].rows[0].text, "fn untracked() {}");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

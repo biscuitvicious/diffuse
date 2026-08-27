@@ -51,6 +51,9 @@ All fixture files in `tests/golden/` are gzip-compressed (`.gz`) to save reposit
    It locks the hand-tuned visual preferences (strike/fill minimums, anchor pairings,
    move-block shape, reverse-stretch). It changes only when a rendering preference is
    deliberately changed — under the review discipline below.
+4. **`<name>.markdown.md.gz`** (or `<name>.markdown.md`) — the frozen *GitHub-Flavored Markdown*
+   output. It locks the summary table metrics, collapsible details, and diff code block representation.
+   Changes whenever markdown formatting or engine behavior is deliberately updated.
 
 ## Building a new golden fixture
 

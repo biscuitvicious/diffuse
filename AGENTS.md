@@ -81,6 +81,7 @@ Every bug fix, behavior adjustment, or new feature must expand the test corpus w
 2. **Confirm initial failure**: Run the test to verify that it fails in the expected way, proving that the test suite actually catches the bug or missing capability.
 3. **Implement the change**: Write the minimal code needed to fulfill the requirement.
 4. **Verify passing run**: Ensure `cargo test` and `npm test` pass cleanly, permanently expanding the test suite to guard against regressions.
+5. **Verify 100% branch coverage**: All new code and code paths must achieve 100% **branch coverage** with comprehensive unit tests exercising every conditional, match arm, and edge case (see [`GUIDELINES.md § Test-First Methodology & 100% Branch Coverage`](file:///home/daniel/lab/diffuse/GUIDELINES.md#test-first-methodology--100-branch-coverage)).
 
 ## Test Performance Invariants
 

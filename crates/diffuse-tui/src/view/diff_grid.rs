@@ -117,7 +117,7 @@ pub fn render_hunk_divider_segment(
     if is_current {
         format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
     } else {
-        format!("\x1b[1m\x1b[38;5;214m{txt_str}\x1b[0m")
+        format!("\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
     }
 }
 
@@ -153,7 +153,7 @@ pub fn render_bottom_gap_divider_segment(
     if is_current {
         format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
     } else {
-        format!("\x1b[1m\x1b[38;5;214m{txt_str}\x1b[0m")
+        format!("\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
     }
 }
 
@@ -250,8 +250,8 @@ mod tests {
         let h = dummy_hunk();
         let regular = render_hunk_divider(0, &h, 8, false, 80);
         assert!(
-            regular.contains("38;5;214m"),
-            "regular hunk divider must use orange 214 foreground"
+            regular.contains("38;5;220m"),
+            "regular hunk divider must use golden-amber 220 foreground"
         );
 
         let current = render_hunk_divider(0, &h, 8, true, 80);

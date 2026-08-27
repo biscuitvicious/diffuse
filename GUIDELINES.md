@@ -17,6 +17,17 @@
 - **Explicit Early Return on Preconditions**: When handling functions that legitimately return `Option` or `Result`, propagate precondition failures or unexpected states early and explicitly with `?` rather than continuing execution with invalid default values.
 - **Judicious Application**: Distinguish structural invariants (which should fail fast) from external inputs, optional user state, or legitimate missing elements (e.g., empty repos or non-existent notes), which should remain handled gracefully.
 
+## Test-First Methodology & 100% Branch Coverage
+
+- **Test-First Discipline**: In addition to the "test-first with failing test" methodology of writing new code, every code path added must have 100% **branch coverage** through comprehensive unit tests.
+- **Exhaustive Branch Verification**: All conditionals, match arms, edge cases, error fallbacks, and parameter variations must be explicitly exercised by targeted unit tests (`#[test]`) to prevent dead branches or untested regression vulnerabilities.
+
+## ANSI & Theming Encapsulation (No Direct ANSI Escapes)
+
+- **No Direct ANSI Escapes**: Direct ANSI escape sequences (e.g., `\x1b[...]`, raw terminal codes, hardcoded escape strings) must never be scattered across modules, views, renderers, or TUI logic.
+- **Theming Engine Authority**: Every single color, attribute, style, and terminal escape sequence is the sole responsibility of the centralized theming engine and dedicated ANSI module.
+- **Algorithmic Generation & Overrides**: The theming system must default to auto-generating harmonious style colors using coloring logic, while allowing for targeted overrides through configuration (theme base + overrides, or completely new themes through config).
+
 ## Build & Installation Conventions
 
 - **`cargo install --locked`**: Always use `--locked` when installing binaries locally (e.g., `cargo install --locked --path crates/diffuse --force`) to ensure deterministic builds strictly bound to the pinned versions in `Cargo.lock`.

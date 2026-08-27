@@ -380,12 +380,26 @@ fn test_markdown_github_alerts_and_blockquotes() {
 
 #[test]
 fn test_markdown_html_tags() {
-    let html = "<details><summary>Title</summary></details>";
+    let html = "<summary><b>plan/Markdown Output Format.md</b> <code>(deleted: -118 +0 ~0)</code></summary>";
     let toks = markdown_tokens(html);
+    let reconstructed: String = toks.iter().map(|t| t.text).collect();
+    assert_eq!(reconstructed, html);
+
     assert!(
         toks.iter()
-            .any(|t| t.color == "syntaxKeyword" && t.text.contains("<details>")),
-        "html tag must be classified as syntaxKeyword"
+            .any(|t| t.color == "syntaxKeyword" && t.text == "<summary>")
+    );
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "syntaxKeyword" && t.text == "<b>")
+    );
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "mdBold" && t.text == "plan/Markdown Output Format.md")
+    );
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "syntaxString" && t.text == "(deleted: -118 +0 ~0)")
     );
 }
 
@@ -406,4 +420,23 @@ fn test_markdown_agents_md_lines() {
         println!("Reconstructed: {reconstructed:?}");
         assert_eq!(reconstructed, line);
     }
+}
+
+#[test]
+fn test_markdown_list_item_with_code() {
+    let line = "1. Export `pub mod markdown;` and `pub use markdown::{MarkdownOptions, render_file_markdown, render_markdown_output};` from `diffuse-render`.";
+    let toks = markdown_tokens(line);
+    for t in &toks {
+        eprintln!("tok: text={:?} color={:?}", t.text, t.color);
+    }
+}
+
+#[test]
+fn test_markdown_horizontal_rule_separator() {
+    let md = "---\n";
+    let toks = markdown_tokens(md);
+    assert_eq!(toks.len(), 1);
+    assert!(toks[0].text.starts_with("---"));
+    assert_eq!(toks[0].color, "mdRule");
+    assert_eq!(toks[0].sgr, Some(MD_SGR_BOLD));
 }

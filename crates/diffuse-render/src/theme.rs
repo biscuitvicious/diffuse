@@ -189,6 +189,7 @@ impl DiffuseTheme {
                 "syntaxString" => Some("\x1b[38;5;114m"),
                 "mdLink" => Some("\x1b[38;5;75m"),
                 "mdUrl" | "mdStrike" | "syntaxComment" | "muted" => Some("\x1b[38;5;243m"),
+                "mdRule" => Some("\x1b[38;5;220m"),
                 "accent" | "mdDelim" => Some("\x1b[38;5;51m"),
                 _ => Self::fallback_named_color(color),
             }

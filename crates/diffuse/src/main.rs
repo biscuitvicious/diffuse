@@ -28,7 +28,7 @@ use diffuse::{
         streaming::{spawn_git_stream_pipeline, stream_diff_pipeline},
         wire::PipelineOutput,
     },
-    render::{default_theme, render_file_diff},
+    render::{MarkdownOptions, default_theme, render_file_diff, render_markdown_output},
     tui::run_streaming_interactive_tui,
 };
 
@@ -66,6 +66,12 @@ struct Args {
     /// processed).
     #[arg(long, global = true)]
     jsonl: bool,
+    /// Emit diff in GitHub-Flavored Markdown (GFM) format.
+    #[arg(short = 'm', long, global = true)]
+    markdown: bool,
+    /// Control ANSI colorization ('always', 'never', or 'auto').
+    #[arg(long, value_name = "WHEN", default_value = "auto", global = true)]
+    color: String,
     /// Run in non-interactive pager mode (print colored diff to terminal).
     #[arg(short = 'p', long, global = true)]
     pager: bool,
@@ -90,7 +96,8 @@ enum SubCommand {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         git_args: Vec<String>,
     },
-    /// Parse a diff and emit structured token-stream JSON or JSON Lines.
+    /// Parse a diff and emit structured token-stream JSON, JSON Lines, or
+    /// Markdown.
     Parse {
         /// Read raw diff or JSON payload from file instead of stdin.
         #[arg(long)]
@@ -101,6 +108,9 @@ enum SubCommand {
         /// Emit JSON Lines.
         #[arg(long)]
         jsonl: bool,
+        /// Emit GitHub-Flavored Markdown.
+        #[arg(short = 'm', long)]
+        markdown: bool,
     },
 }
 
@@ -259,16 +269,29 @@ fn main() -> io::Result<()> {
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();
 
-    let (explicit_cmd, git_args, is_json, is_jsonl, diff_opt) = match &args.command {
+    let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, diff_opt) = match &args.command {
         Some(SubCommand::Review {
             git_args: sub_git_args,
         }) => {
             let mut ga = args.git_args.clone();
             ga.extend(sub_git_args.iter().cloned());
-            (Some("review"), ga, args.json, args.jsonl, args.diff.clone())
+            (
+                Some("review"),
+                ga,
+                args.json,
+                args.jsonl,
+                args.markdown,
+                args.diff.clone(),
+            )
         }
-        Some(SubCommand::Parse { diff, json, jsonl }) => {
-            let j = if !*json && !*jsonl {
+        Some(SubCommand::Parse {
+            diff,
+            json,
+            jsonl,
+            markdown,
+        }) => {
+            let md = *markdown || args.markdown;
+            let j = if !*json && !*jsonl && !md {
                 true
             } else {
                 *json || args.json
@@ -279,6 +302,7 @@ fn main() -> io::Result<()> {
                 Vec::new(),
                 j,
                 jl,
+                md,
                 diff.clone().or_else(|| args.diff.clone()),
             )
         }
@@ -287,11 +311,12 @@ fn main() -> io::Result<()> {
             args.git_args.clone(),
             args.json,
             args.jsonl,
+            args.markdown,
             args.diff.clone(),
         ),
     };
 
-    let no_tui = args.no_tui || args.pager;
+    let no_tui = args.no_tui || args.pager || is_markdown;
 
     // Peek a piped stdin only when the routing decision depends on its
     // content (no git args, no explicit contract flags, no explicit subcommand).
@@ -320,8 +345,9 @@ fn main() -> io::Result<()> {
     };
 
     // Standalone reviewer: `diffuse [git-args...]` or `diffuse review
-    // [git-args...]` When either end is non-interactive or --pager/--no-tui is
-    // requested, render the full ANSI diff instead of the TUI.
+    // [git-args...]` When either end is non-interactive or
+    // --pager/--no-tui/--markdown is requested, render the full ANSI diff or
+    // GFM Markdown instead of the TUI.
     if !is_json_contract {
         let repo_root = env::current_dir()?;
         let notes_path = args
@@ -344,8 +370,9 @@ fn main() -> io::Result<()> {
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines);
 
-        // Interactive TUI only when both ends are real terminals and not in pager mode;
-        // any piped or redirected end falls back to the full ANSI render.
+        // Interactive TUI only when both ends are real terminals and not in pager or
+        // markdown mode; any piped or redirected end falls back to the full
+        // ANSI or Markdown render.
         if !no_tui && stdin_tty && stdout_tty {
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
@@ -371,6 +398,44 @@ fn main() -> io::Result<()> {
                 git_args.clone(),
                 args.expand_lines,
             )?;
+        } else if is_markdown {
+            let (consumer, meta_rx) = spawn_git_stream_pipeline(
+                repo_root.clone(),
+                git_args.clone(),
+                Vec::new(),
+                false,
+                ENGINE_CONTEXT,
+                pipeline_opts,
+                None,
+            );
+            if let Ok(Err(e)) = meta_rx.recv() {
+                eprintln!("diffuse: {e}");
+                std::process::exit(2);
+            }
+            let files: Vec<_> = consumer.collect();
+            let out = PipelineOutput {
+                files,
+                branch: String::new(),
+                untracked_skipped: Vec::new(),
+            };
+            let colorize = match args.color.as_str() {
+                "always" => true,
+                "never" => false,
+                _ => stdout_tty,
+            };
+            let md_opts = MarkdownOptions {
+                colorize,
+                ..MarkdownOptions::default()
+            };
+            let md = render_markdown_output(&out, &md_opts);
+            let mut stdout = io::stdout().lock();
+            if let Err(e) = stdout.write_all(md.as_bytes()) {
+                if e.kind() == io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(e);
+            }
+            let _ = stdout.flush();
         } else {
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
@@ -437,16 +502,51 @@ fn main() -> io::Result<()> {
         }))
     });
 
+    let colorize = match args.color.as_str() {
+        "always" => true,
+        "never" => false,
+        _ => stdout_tty,
+    };
+    let md_opts = MarkdownOptions {
+        colorize,
+        ..MarkdownOptions::default()
+    };
+
     match payload {
         InputPayload::Batch(inputs) => {
             let outputs: Vec<_> = inputs
                 .into_iter()
                 .map(|i| process_input(i, &args))
                 .collect();
-            println!("{}", serde_json::to_string(&outputs).expect("serialize"));
+            if is_markdown {
+                let mut stdout = io::stdout().lock();
+                for out in &outputs {
+                    let md = render_markdown_output(out, &md_opts);
+                    if let Err(e) = stdout.write_all(md.as_bytes()) {
+                        if e.kind() == io::ErrorKind::BrokenPipe {
+                            return Ok(());
+                        }
+                        return Err(e);
+                    }
+                }
+                let _ = stdout.flush();
+            } else {
+                println!("{}", serde_json::to_string(&outputs).expect("serialize"));
+            }
         }
         InputPayload::Single(input) => {
-            if is_jsonl {
+            if is_markdown {
+                let output = process_input(*input, &args);
+                let md = render_markdown_output(&output, &md_opts);
+                let mut stdout = io::stdout().lock();
+                if let Err(e) = stdout.write_all(md.as_bytes()) {
+                    if e.kind() == io::ErrorKind::BrokenPipe {
+                        return Ok(());
+                    }
+                    return Err(e);
+                }
+                let _ = stdout.flush();
+            } else if is_jsonl {
                 let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
                 let notes_path = notes_file_path
                     .as_ref()

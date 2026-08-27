@@ -364,3 +364,12 @@ fn test_mod_row_subline_transformation_invariants() {
         // and common spans reflect preserved portions.
     }
 }
+
+#[test]
+fn test_doc_comment_subword_merge() {
+    let old = "    /// Parse a diff and emit structured token-stream JSON or JSON Lines.";
+    let new = "    /// Parse a diff and emit structured token-stream JSON, JSON Lines, or";
+    let r = mk(old, new);
+    let runs = merged_runs(&r);
+    assert_eq!(project_new_runs(&runs), new);
+}

@@ -1,9 +1,9 @@
 # Markdown Output Format & GFM Diff Exporter
 
-- [ ] Phase 1 — Markdown Renderer Core & Options (`diffuse-render/src/markdown.rs`)
-- [ ] Phase 2 — Facade Re-Exports & Top-Level Engine Integration
-- [ ] Phase 3 — CLI Argument Parsing & Direct Markdown Dispatch
-- [ ] Phase 4 — Unit Tests, CLI Integration Tests & Acceptance Verification
+- [x] Phase 1 — Markdown Renderer Core & Options (`diffuse-render/src/markdown.rs`)
+- [x] Phase 2 — Facade Re-Exports & Top-Level Engine Integration
+- [x] Phase 3 — CLI Argument Parsing & Direct Markdown Dispatch
+- [x] Phase 4 — Unit Tests, CLI Integration Tests & Acceptance Verification
 
 ---
 

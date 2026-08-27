@@ -46,7 +46,10 @@ pub use diffuse_core::{
     pipeline::{run_pipeline, run_pipeline_full},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
 };
-pub use diffuse_render::{DiffuseTheme, default_theme, render_file_diff, render_pipeline_output};
+pub use diffuse_render::{
+    DiffuseTheme, MarkdownOptions, default_theme, render_file_diff, render_file_markdown,
+    render_markdown_output, render_pipeline_output,
+};
 pub use diffuse_tui::run_streaming_interactive_tui;
 
 /// Common imports and prelude traits for diffuse consumers.
@@ -60,7 +63,8 @@ pub mod prelude {
         wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
     };
     pub use diffuse_render::{
-        DiffuseTheme, default_theme, render_file_diff, render_pipeline_output,
+        DiffuseTheme, MarkdownOptions, default_theme, render_file_diff, render_file_markdown,
+        render_markdown_output, render_pipeline_output,
     };
     pub use diffuse_syntax::registry::lang_profile;
     pub use diffuse_tui::run_streaming_interactive_tui;
@@ -96,5 +100,9 @@ mod tests {
         let theme = default_theme();
         let rendered = render_pipeline_output(&out, &theme, false);
         assert!(!rendered.is_empty());
+
+        let md = render_markdown_output(&out, &MarkdownOptions::default());
+        assert!(md.contains("### Diff Summary"));
+        assert!(md.contains("```diff"));
     }
 }

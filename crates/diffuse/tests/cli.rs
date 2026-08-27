@@ -529,3 +529,87 @@ fn test_cli_context_flag() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+/// `diffuse -m` emits valid GitHub-Flavored Markdown diff output.
+#[test]
+fn test_cli_markdown_flag() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-m")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&repo_dir);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse -m must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("### Diff Summary"),
+        "stdout must contain summary table: {stdout}"
+    );
+    assert!(
+        stdout.contains("<details open>"),
+        "stdout must contain details: {stdout}"
+    );
+    assert!(
+        stdout.contains("```diff"),
+        "stdout must contain diff code blocks: {stdout}"
+    );
+}
+
+/// `cat diff | diffuse -m` emits valid Markdown from piped stdin.
+#[test]
+fn test_cli_markdown_piped_diff() {
+    let diff = "diff --git a/hello.rs b/hello.rs\n--- a/hello.rs\n+++ b/hello.rs\n@@ -1,1 +1,1 @@\n-hello\n+world\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-m")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(diff.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "piped diffuse -m must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("### Diff Summary"));
+    assert!(stdout.contains("`hello.rs`"));
+    assert!(stdout.contains("-hello\n+world"));
+}
+
+/// `diffuse -m --color=always` emits ANSI color codes in Markdown output.
+#[test]
+fn test_cli_markdown_color_flag() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-m")
+        .arg("--color=always")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+    let _ = fs::remove_dir_all(&repo_dir);
+
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\x1b["));
+    assert!(stdout.contains("\x1b[0m"));
+    assert!(stdout.contains("Diff Summary"));
+}

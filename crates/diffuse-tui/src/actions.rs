@@ -3,8 +3,7 @@
 use std::{fs, path::Path, process::Command};
 
 use crate::core::{
-    ENGINE_CONTEXT, PipelineOptions, git::load_git_repo, notes::now_millis,
-    pipeline::run_pipeline_full,
+    ENGINE_CONTEXT, PipelineOptions, git::load_git_repo, pipeline::run_pipeline_full,
 };
 
 use super::app::AppState;
@@ -107,12 +106,20 @@ fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
     Some((old_start, new_start))
 }
 
+static PATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Apply a patch string via `git apply`.
 pub fn apply_patch(repo_root: &Path, patch: &str, flags: &[&str]) -> Result<(), String> {
+    let count = PATCH_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
     let tmp = std::env::temp_dir().join(format!(
-        "diffuse-patch-{}-{}.patch",
+        "diffuse-patch-{}-{}-{}.patch",
         std::process::id(),
-        now_millis()
+        nanos,
+        count
     ));
 
     fs::write(&tmp, patch).map_err(|e| format!("failed to write tmp patch: {e}"))?;

@@ -669,6 +669,115 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
     }
 }
 
+fn expected_markdown_path(name: &str) -> PathBuf {
+    golden_dir().join(format!("{name}.markdown.md"))
+}
+
+fn print_markdown_diff(name: &str, actual: &str, expected: &str) {
+    eprintln!("\n----- MARKDOWN DIFF [{name}] -----");
+    let expected_lines: Vec<&str> = expected.lines().collect();
+    let actual_lines: Vec<&str> = actual.lines().collect();
+    let diff = difflib::unified_diff(
+        &expected_lines,
+        &actual_lines,
+        &format!("{name}.markdown.md (expected)"),
+        &format!("{name}.markdown.md (actual)"),
+        "",
+        "",
+        3,
+    );
+    for line in diff {
+        eprintln!("{line}");
+    }
+    eprintln!("----- END MARKDOWN DIFF -----\n");
+}
+
+fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
+    let opts = diffuse::render::MarkdownOptions::default();
+    let actual_md = diffuse::render::render_markdown_output(output, &opts);
+    let md_path = expected_markdown_path(name);
+
+    if std::env::var("GEN_GOLDEN").is_ok()
+        || std::env::var("UPDATE_MARKDOWN").is_ok()
+        || std::env::var("UPDATE_MD").is_ok()
+    {
+        write_gz(&md_path, actual_md.as_bytes())
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", md_path.display()));
+        eprintln!(
+            "{name}: markdown static golden updated ({}.gz)",
+            md_path.display()
+        );
+        return;
+    }
+
+    let expected_md = read_maybe_gz_to_string(&md_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
+            md_path.display()
+        )
+    });
+
+    if actual_md != expected_md {
+        print_markdown_diff(name, &actual_md, &expected_md);
+        panic!(
+            "[{name}] markdown output deviates from expected static golden ({}.gz). See markdown diff above. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to update.",
+            md_path.display()
+        );
+    }
+}
+
+fn run_bin_markdown_leg(name: &str) {
+    let p = golden_dir().join(format!("{name}.json"));
+    let raw = read_maybe_gz_to_string(&p).expect("read fixture file");
+    let input = raw.into_bytes();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-m")
+        .arg("--color=never")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn the diffuse binary in markdown mode");
+    {
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .expect("stdin")
+            .write_all(&input)
+            .expect("write the fixture");
+    }
+    let out = child.wait_with_output().expect("wait for the bin");
+    assert!(
+        out.status.success(),
+        "[{name}] the bin exited non-zero in markdown mode: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bin_md = String::from_utf8_lossy(&out.stdout).into_owned();
+    let md_path = expected_markdown_path(name);
+
+    if std::env::var("GEN_GOLDEN").is_ok()
+        || std::env::var("UPDATE_MARKDOWN").is_ok()
+        || std::env::var("UPDATE_MD").is_ok()
+    {
+        return;
+    }
+
+    let expected_md = read_maybe_gz_to_string(&md_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
+            md_path.display()
+        )
+    });
+
+    if bin_md != expected_md {
+        print_markdown_diff(name, &bin_md, &expected_md);
+        panic!(
+            "[{name}] bin markdown output deviates from expected static golden ({}.gz). See markdown diff above.",
+            md_path.display()
+        );
+    }
+}
+
 fn run_lib_leg(name: &str, min: usize) {
     let fixture = load_fixture(name);
     let new_content = if fixture.new_content.is_empty() {
@@ -815,6 +924,7 @@ macro_rules! corpus_tests {
                     };
                     let output = run_pipeline(&fixture.diff, new_content);
                     assert_render_matches(&output, $name);
+                    assert_markdown_matches(&output, $name);
                 }
                 if $has_oracle {
                     run_oracle_for_corpus($name);
@@ -824,6 +934,9 @@ macro_rules! corpus_tests {
             #[test]
             fn bin_leg() {
                 run_bin_leg($name, $min);
+                if $has_render {
+                    run_bin_markdown_leg($name);
+                }
             }
         }
     };

@@ -629,11 +629,7 @@ fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedTo
                         text: &text[cursor..r_start],
                     });
                 }
-                f(ClassifiedToken {
-                    color: "syntaxKeyword",
-                    sgr: None,
-                    text: &text[r_start..r_end],
-                });
+                for_each_html_token(&text[r_start..r_end], f);
                 cursor = r_end;
             }
             Event::Rule => {
@@ -645,8 +641,8 @@ fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedTo
                     });
                 }
                 f(ClassifiedToken {
-                    color: "border",
-                    sgr: None,
+                    color: "mdRule",
+                    sgr: Some(MD_SGR_BOLD),
                     text: &text[r_start..r_end],
                 });
                 cursor = r_end;
@@ -670,6 +666,68 @@ fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedTo
         f(ClassifiedToken {
             color,
             sgr: active_sgr,
+            text: remaining,
+        });
+    }
+}
+
+fn for_each_html_token<'a>(html: &'a str, f: &mut dyn FnMut(ClassifiedToken<'a>)) {
+    static HTML_TAG: OnceLock<Regex> = OnceLock::new();
+    let re = HTML_TAG
+        .get_or_init(|| Regex::new(r"<(/?[a-zA-Z0-9_-]+)([^>]*)>").expect("html tag regex"));
+    let mut last = 0usize;
+    let mut in_bold = false;
+    let mut in_code = false;
+
+    for m in re.find_iter(html) {
+        if m.start() > last {
+            let inner_text = &html[last..m.start()];
+            let (color, sgr) = if in_code {
+                ("syntaxString", None)
+            } else if in_bold {
+                ("mdBold", Some(MD_SGR_BOLD))
+            } else {
+                ("text", None)
+            };
+            f(ClassifiedToken {
+                color,
+                sgr,
+                text: inner_text,
+            });
+        }
+
+        let tag_str = m.as_str();
+        if tag_str.starts_with("<b") || tag_str.starts_with("<strong") {
+            in_bold = true;
+        } else if tag_str.starts_with("</b") || tag_str.starts_with("</strong") {
+            in_bold = false;
+        } else if tag_str.starts_with("<code") {
+            in_code = true;
+        } else if tag_str.starts_with("</code") {
+            in_code = false;
+        }
+
+        f(ClassifiedToken {
+            color: "syntaxKeyword",
+            sgr: None,
+            text: tag_str,
+        });
+
+        last = m.end();
+    }
+
+    if last < html.len() {
+        let remaining = &html[last..];
+        let (color, sgr) = if in_code {
+            ("syntaxString", None)
+        } else if in_bold {
+            ("mdBold", Some(MD_SGR_BOLD))
+        } else {
+            ("text", None)
+        };
+        f(ClassifiedToken {
+            color,
+            sgr,
             text: remaining,
         });
     }
