@@ -3,7 +3,7 @@
 //! Formats full file diff summaries and colored hunks directly to terminal
 //! output.
 
-use diffuse_core::wire::{OutputFile, OutputRow, PipelineOutput};
+use crate::core::wire::{OutputFile, OutputRow, PipelineOutput};
 
 use super::{
     row::{prefix_of, render_row_segment, styled_prefix},
@@ -105,7 +105,7 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diffuse_core::PipelineOptions;
+    use crate::core::PipelineOptions;
 
     #[test]
     fn test_output_ends_with_terminal_reset() {
@@ -116,7 +116,7 @@ mod tests {
         let old_content = [("a.txt".to_string(), "old line one\n".to_string())]
             .into_iter()
             .collect();
-        let out = diffuse_core::pipeline::run_pipeline_full(
+        let out = crate::core::pipeline::run_pipeline_full(
             diff,
             Some(new_content),
             Some(old_content),

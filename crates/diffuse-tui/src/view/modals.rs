@@ -1,6 +1,4 @@
-use diffuse_core::wire::PipelineOutput;
-
-use crate::finder::FileFinderState;
+use crate::{core::wire::PipelineOutput, finder::FileFinderState};
 
 /// Render the `?` key-bindings modal as full-width overlay lines.
 pub fn render_help_modal(width: usize) -> Vec<String> {

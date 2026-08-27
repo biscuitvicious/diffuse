@@ -7,8 +7,8 @@ set -euo pipefail
 
 TOOLCHAIN="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
 if [ -n "$TOOLCHAIN" ]; then
-  cargo "+$TOOLCHAIN" install --locked --path crates/diffuse-cli --force "$@"
+  cargo "+$TOOLCHAIN" install --locked --path crates/diffuse --force "$@"
 else
-  cargo install --locked --path crates/diffuse-cli --force "$@"
+  cargo install --locked --path crates/diffuse --force "$@"
 fi
 echo "diffuse binary installed to $(which diffuse)"

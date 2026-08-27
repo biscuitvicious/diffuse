@@ -1,7 +1,15 @@
-use diffuse_core::PipelineOptions;
-use diffuse_tui::{AppState, TuiCommand};
+use diffuse_tui::{
+    AppState, TuiCommand,
+    core::{
+        PipelineOptions,
+        notes::notes_for_file,
+        pipeline::{PipelineInput, run_pipeline_full},
+        wire::PipelineOutput,
+    },
+    view::{diff_grid::FILE_HEADER_INDICATOR_COL, hunk_divider_text},
+};
 
-fn sample_output() -> diffuse_core::wire::PipelineOutput {
+fn sample_output() -> PipelineOutput {
     let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
 index 1111111..2222222 100644
 --- a/filesystem.rs
@@ -26,7 +34,7 @@ index 1111111..2222222 100644
     )]
     .into_iter()
     .collect();
-    diffuse_core::pipeline::run_pipeline_full(
+    run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -34,7 +42,7 @@ index 1111111..2222222 100644
     )
 }
 
-fn two_hunk_gap_output() -> diffuse_core::wire::PipelineOutput {
+fn two_hunk_gap_output() -> PipelineOutput {
     let diff = r#"diff --git a/sample.rs b/sample.rs
 index 1111111..2222222 100644
 --- a/sample.rs
@@ -49,78 +57,86 @@ index 1111111..2222222 100644
  // line 6
  // line 7
  // line 8
-@@ -23,9 +24,9 @@
+@@ -20,8 +21,9 @@
+ // line 20
+ // line 21
+ // line 22
  // line 23
++// inserted two
  // line 24
  // line 25
  // line 26
--// line 27 old
-+// line 27 new
- // line 28
- // line 29
- // line 30
- // line 31
+ // line 27
 "#;
-    let mut old_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 27 {
-            old_lines.push("// line 27 old".to_string());
-        } else {
-            old_lines.push(format!("// line {i}"));
-        }
-    }
-    let mut new_lines = Vec::new();
-    for i in 1..=40 {
-        if i == 5 {
-            new_lines.push("// inserted one".to_string());
-        }
-        if i == 28 {
-            new_lines.push("// line 27 new".to_string());
-        } else {
-            new_lines.push(format!("// line {i}"));
-        }
-    }
+    let new_lines: Vec<String> = (1..=30)
+        .map(|i| {
+            if i == 5 {
+                "// inserted one".to_string()
+            } else if i == 25 {
+                "// inserted two".to_string()
+            } else {
+                format!("// line {i}")
+            }
+        })
+        .collect();
+    let old_lines: Vec<String> = (1..=28).map(|i| format!("// line {i}")).collect();
     let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
     let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    diffuse_core::pipeline::PipelineInput::new(diff)
+    PipelineInput::new(diff)
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run()
 }
 
-fn multi_file_output() -> diffuse_core::wire::PipelineOutput {
-    let diff = r#"diff --git a/a.rs b/a.rs
+fn multi_file_output() -> PipelineOutput {
+    let diff = r#"diff --git a/file1.rs b/file1.rs
 index 1111111..2222222 100644
---- a/a.rs
-+++ b/a.rs
+--- a/file1.rs
++++ b/file1.rs
 @@ -1,3 +1,3 @@
-- old a
-+ new a
-diff --git a/b.rs b/b.rs
-index 1111111..2222222 100644
---- a/b.rs
-+++ b/b.rs
+ fn a() {}
+-fn b() {}
++fn b_mod() {}
+ fn c() {}
+diff --git a/file2.rs b/file2.rs
+index 3333333..4444444 100644
+--- a/file2.rs
++++ b/file2.rs
 @@ -1,3 +1,3 @@
-- old b
-+ new b
+ fn x() {}
+-fn y() {}
++fn y_mod() {}
+ fn z() {}
 "#;
     let new_content = [
-        ("a.rs".to_string(), "new a\n".to_string()),
-        ("b.rs".to_string(), "new b\n".to_string()),
+        (
+            "file1.rs".to_string(),
+            "fn a() {}\nfn b_mod() {}\nfn c() {}\n".to_string(),
+        ),
+        (
+            "file2.rs".to_string(),
+            "fn x() {}\nfn y_mod() {}\nfn z() {}\n".to_string(),
+        ),
     ]
     .into_iter()
     .collect();
     let old_content = [
-        ("a.rs".to_string(), "old a\n".to_string()),
-        ("b.rs".to_string(), "old b\n".to_string()),
+        (
+            "file1.rs".to_string(),
+            "fn a() {}\nfn b() {}\nfn c() {}\n".to_string(),
+        ),
+        (
+            "file2.rs".to_string(),
+            "fn x() {}\nfn y() {}\nfn z() {}\n".to_string(),
+        ),
     ]
     .into_iter()
     .collect();
-    diffuse_core::pipeline::run_pipeline_full(
+    run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -175,7 +191,7 @@ fn test_file_collapse_toggle_and_click() {
     let click_row = state.last_viewport_start + header_vis.saturating_sub(state.scroll);
     state.execute(TuiCommand::MouseClick {
         row: click_row,
-        col: diffuse_tui::view::diff_grid::FILE_HEADER_INDICATOR_COL,
+        col: FILE_HEADER_INDICATOR_COL,
         shift: false,
     });
     assert!(state.collapsed_files.contains(&0));
@@ -268,18 +284,12 @@ fn test_notes_commit_and_delete_via_public_api() {
     state.note_draft = Some("review this".into());
     state.commit_note_draft();
     assert!(state.note_draft.is_none());
-    assert_eq!(
-        diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).count(),
-        1
-    );
+    assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 1);
     let frame = state.render_frame(100, 30);
     assert!(frame.contains("💬"), "committed note must show callout");
 
     state.delete_notes();
-    assert_eq!(
-        diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).count(),
-        0
-    );
+    assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 0);
     let _ = std::fs::remove_file(path);
 }
 
@@ -379,7 +389,7 @@ fn test_hunk_divider_click_expands_and_stays_pinned() {
     let click_row = state.last_viewport_start + div_vis.saturating_sub(state.scroll);
 
     let h = &state.output.files[fi].hunks[1];
-    let txt = diffuse_tui::view::hunk_divider_text(1, h, gap_before);
+    let txt = hunk_divider_text(1, h, gap_before);
     let col = txt
         .find("▲▲")
         .map(|i| txt[..i].chars().count())
@@ -460,12 +470,7 @@ new file mode 100644
     let new_content = [("new_stream.rs".to_string(), "new content\n".to_string())]
         .into_iter()
         .collect();
-    let out = diffuse_core::pipeline::run_pipeline_full(
-        diff,
-        Some(new_content),
-        None,
-        PipelineOptions::default(),
-    );
+    let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let new_file = out
         .files
         .into_iter()

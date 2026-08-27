@@ -19,4 +19,4 @@
 
 ## Build & Installation Conventions
 
-- **`cargo install --locked`**: Always use `--locked` when installing binaries locally (e.g., `cargo install --locked --path crates/diffuse-cli --force`) to ensure deterministic builds strictly bound to the pinned versions in `Cargo.lock`.
+- **`cargo install --locked`**: Always use `--locked` when installing binaries locally (e.g., `cargo install --locked --path crates/diffuse --force`) to ensure deterministic builds strictly bound to the pinned versions in `Cargo.lock`.

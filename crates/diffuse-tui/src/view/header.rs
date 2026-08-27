@@ -3,8 +3,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use diffuse_core::wire::OutputFile;
-use diffuse_render::slice_by_visual_width;
+use crate::{core::wire::OutputFile, render::slice_by_visual_width};
 
 /// Calculate the visible column width of a string by ignoring ANSI escape
 /// sequences and using unicode-width for wide chars (emojis, CJK, etc.).

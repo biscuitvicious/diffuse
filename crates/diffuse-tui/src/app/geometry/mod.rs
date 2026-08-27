@@ -2,10 +2,10 @@
 
 use std::collections::HashMap;
 
-use crate::view::{
-    bottom_gap_divider_text, file_header_text, header::visible_width, hunk_divider_text,
+use crate::{
+    render::display_text,
+    view::{bottom_gap_divider_text, file_header_text, header::visible_width, hunk_divider_text},
 };
-use diffuse_render::display_text;
 
 use super::AppState;
 

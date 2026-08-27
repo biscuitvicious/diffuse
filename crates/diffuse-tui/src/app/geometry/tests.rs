@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use crate::{
     app::AppState,
+    core::{PipelineOptions, parse::RowKind, pipeline::run_pipeline_full, wire::PipelineOutput},
     view::{truncate_pad, visible_width},
 };
-use diffuse_core::{PipelineOptions, wire::PipelineOutput};
 
 fn sample_output() -> PipelineOutput {
     let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
@@ -12,7 +12,7 @@ index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
 @@ -1025,6 +1025,8 @@ fn test() {
-     let x = 1;
+      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
 +    let y = 2;
@@ -31,7 +31,7 @@ index 1111111..2222222 100644
     )]
     .into_iter()
     .collect();
-    diffuse_core::pipeline::run_pipeline_full(
+    run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -71,7 +71,7 @@ fn sample_output_two_hunks() -> PipelineOutput {
     let old_content = [("foo.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    diffuse_core::pipeline::run_pipeline_full(
+    run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -142,12 +142,7 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
 
-    let out = diffuse_core::pipeline::run_pipeline_full(
-        diff,
-        Some(new_content),
-        None,
-        PipelineOptions::default(),
-    );
+    let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let mut state = AppState::new(
         out,
         "test_repo".into(),
@@ -160,11 +155,7 @@ index 1111111..2222222 100644
     let add_row = state
         .flat
         .iter()
-        .position(|r| {
-            state
-                .row_of(r)
-                .is_some_and(|row| row.kind == diffuse_core::parse::RowKind::Add)
-        })
+        .position(|r| state.row_of(r).is_some_and(|row| row.kind == RowKind::Add))
         .unwrap();
     state.row_idx = add_row;
 

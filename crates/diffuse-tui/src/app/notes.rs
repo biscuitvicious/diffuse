@@ -1,7 +1,11 @@
 //! Notes — draft commit/delete and callout generation.
 
-use diffuse_core::notes::Side;
 use std::collections::HashMap;
+
+use crate::core::notes::{
+    ReviewNote, Side, add_note, note_runs, notes_for_file, now_millis, remove_notes,
+    save_notes,
+};
 
 use super::AppState;
 
@@ -40,8 +44,8 @@ impl AppState {
             (file.path.clone(), c, c, r.new_line.is_some())
         };
         self.note_id_counter += 1;
-        let created_at = diffuse_core::notes::now_millis();
-        let note = diffuse_core::notes::ReviewNote {
+        let created_at = now_millis();
+        let note = ReviewNote {
             id: format!(
                 "{:x}-{:x}-{:x}",
                 created_at,
@@ -55,8 +59,8 @@ impl AppState {
             text,
             created_at,
         };
-        diffuse_core::notes::add_note(&mut self.notes, &self.repo, note);
-        let _ = diffuse_core::notes::save_notes(&self.notes_path, &self.notes);
+        add_note(&mut self.notes, &self.repo, note);
+        let _ = save_notes(&self.notes_path, &self.notes);
         self.confirmed_sel = None;
         self.anchor = None;
     }
@@ -83,24 +87,10 @@ impl AppState {
             };
             (file.path.clone(), c, c)
         };
-        let new_removed = diffuse_core::notes::remove_notes(
-            &mut self.notes,
-            &self.repo,
-            &file,
-            Side::New,
-            start,
-            end,
-        );
-        let old_removed = diffuse_core::notes::remove_notes(
-            &mut self.notes,
-            &self.repo,
-            &file,
-            Side::Old,
-            start,
-            end,
-        );
+        let new_removed = remove_notes(&mut self.notes, &self.repo, &file, Side::New, start, end);
+        let old_removed = remove_notes(&mut self.notes, &self.repo, &file, Side::Old, start, end);
         let removed = new_removed + old_removed;
-        let _ = diffuse_core::notes::save_notes(&self.notes_path, &self.notes);
+        let _ = save_notes(&self.notes_path, &self.notes);
         self.confirmed_sel = None;
         self.anchor = None;
         self.status_message = Some((
@@ -126,7 +116,7 @@ impl AppState {
         };
         let file_idx = self.current_file_idx();
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
-        for n in diffuse_core::notes::notes_for_file(&self.notes, &self.repo, &f.path) {
+        for n in notes_for_file(&self.notes, &self.repo, &f.path) {
             let mut at: Option<usize> = None;
             for (i, item) in self.flat.iter().enumerate() {
                 if item.file_idx != file_idx {
@@ -151,7 +141,7 @@ impl AppState {
                 format!("{}-{}", n.start, n.end)
             };
             let mut body = String::new();
-            for r in diffuse_core::notes::note_runs(&n.text) {
+            for r in note_runs(&n.text) {
                 let color = r.color.as_deref().unwrap_or("warning");
                 body.push_str(&self.theme.render_token(color, &r.text, "ctx", None, r.sgr));
             }
@@ -164,16 +154,23 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        app::AppState,
+        core::{
+            PipelineOptions,
+            notes::{load_notes, notes_for_file},
+            pipeline::run_pipeline_full,
+            wire::PipelineOutput,
+        },
+    };
 
-    use crate::app::AppState;
-
-    fn sample_output() -> diffuse_core::wire::PipelineOutput {
+    fn sample_output() -> PipelineOutput {
         let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
 index 1111111..2222222 100644
 --- a/filesystem.rs
 +++ b/filesystem.rs
 @@ -1025,6 +1025,8 @@ fn test() {
-     let x = 1;
+      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
 +    let y = 2;
@@ -186,11 +183,11 @@ index 1111111..2222222 100644
         )]
         .into_iter()
         .collect();
-        diffuse_core::pipeline::run_pipeline_full(
+        run_pipeline_full(
             diff,
             Some(new_content),
             Some(old_content),
-            diffuse_core::PipelineOptions::default(),
+            PipelineOptions::default(),
         )
     }
 
@@ -208,8 +205,7 @@ index 1111111..2222222 100644
         state.commit_note_draft();
         assert!(state.note_draft.is_none());
 
-        let notes: Vec<_> =
-            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).collect();
+        let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].text, "check this **carefully**");
         assert!(
@@ -217,9 +213,9 @@ index 1111111..2222222 100644
             "note must anchor to a real row coordinate"
         );
 
-        let on_disk = diffuse_core::notes::load_notes(&notes_path);
+        let on_disk = load_notes(&notes_path);
         assert_eq!(
-            diffuse_core::notes::notes_for_file(&on_disk, "test_repo", &file).count(),
+            notes_for_file(&on_disk, "test_repo", &file).count(),
             1,
             "commit must persist through the notes DB file"
         );
@@ -233,14 +229,14 @@ index 1111111..2222222 100644
 
         state.delete_notes();
         assert!(
-            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file)
+            notes_for_file(&state.notes, "test_repo", &file)
                 .next()
                 .is_none(),
             "delete must remove the note from the DB"
         );
-        let on_disk2 = diffuse_core::notes::load_notes(&notes_path);
+        let on_disk2 = load_notes(&notes_path);
         assert!(
-            diffuse_core::notes::notes_for_file(&on_disk2, "test_repo", &file)
+            notes_for_file(&on_disk2, "test_repo", &file)
                 .next()
                 .is_none(),
             "delete must persist the removal"

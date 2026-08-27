@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "diff-engine token-stream & terminal renderer"
 
+[lib]
+name = "diffuse"
+path = "src/lib.rs"
+
 [[bin]]
 name = "diffuse"
 path = "src/main.rs"

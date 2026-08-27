@@ -20,8 +20,11 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use crate::{app::AppState, command::TuiCommand};
-    use diffuse_core::PipelineOptions;
+    use crate::{
+        app::AppState,
+        command::TuiCommand,
+        core::{PipelineOptions, pipeline::run_pipeline_full},
+    };
 
     #[test]
     fn test_clicking_file_header_triangle_toggles_collapse() {
@@ -50,7 +53,7 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
         let mut state = AppState::new(
-            diffuse_core::pipeline::run_pipeline_full(
+            run_pipeline_full(
                 diff,
                 Some(new_content),
                 Some(old_content),

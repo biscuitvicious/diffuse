@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     lcs::char_slice,
     parse::{Row, Spans},
+    syntax::{prelude::is_ascii_word_char, registry::first_ascii_word},
 };
-use diffuse_syntax::{prelude::is_ascii_word_char, registry::first_ascii_word};
 
 /// The semantic classification of a token run in a diff row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]

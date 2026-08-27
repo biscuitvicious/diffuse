@@ -1,5 +1,7 @@
-use crate::app::AppState;
-use diffuse_core::PipelineOptions;
+use crate::{
+    app::AppState,
+    core::{PipelineOptions, pipeline::run_pipeline_full, wire::PipelineOutput},
+};
 
 #[test]
 fn test_app_state_scroll_through_all_rows() {
@@ -28,7 +30,7 @@ index 1111111..2222222 100644
     .into_iter()
     .collect();
 
-    let out = diffuse_core::pipeline::run_pipeline_full(
+    let out = run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -111,12 +113,7 @@ index 1111111..2222222 100644
     .into_iter()
     .collect();
 
-    let out = diffuse_core::pipeline::run_pipeline_full(
-        diff,
-        Some(new_content),
-        None,
-        PipelineOptions::default(),
-    );
+    let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let mut state = AppState::new(
         out,
         "test_repo".into(),
@@ -178,12 +175,7 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
     .collect();
 
     let mut state = AppState::new(
-        diffuse_core::pipeline::run_pipeline_full(
-            &diff,
-            Some(new_content),
-            None,
-            PipelineOptions::default(),
-        ),
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         std::env::temp_dir().join("diffuse-test-notes.json"),
     );
@@ -223,12 +215,7 @@ fn test_goto_line_preserves_viewport_margin_above() {
     let new_content = [("big.rs".to_string(), lines)].into_iter().collect();
 
     let mut state = AppState::new(
-        diffuse_core::pipeline::run_pipeline_full(
-            &diff,
-            Some(new_content),
-            None,
-            PipelineOptions::default(),
-        ),
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         std::env::temp_dir().join("diffuse-test-notes.json"),
     );
@@ -257,12 +244,7 @@ fn test_move_bottom_preserves_viewport_margin_below() {
     let new_content = [("big.rs".to_string(), lines)].into_iter().collect();
 
     let mut state = AppState::new(
-        diffuse_core::pipeline::run_pipeline_full(
-            &diff,
-            Some(new_content),
-            None,
-            PipelineOptions::default(),
-        ),
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         std::env::temp_dir().join("diffuse-test-notes.json"),
     );
@@ -284,7 +266,7 @@ fn test_move_bottom_preserves_viewport_margin_below() {
 #[test]
 fn test_viewport_margin_rounding_half_up() {
     let mut state = AppState::new(
-        diffuse_core::wire::PipelineOutput {
+        PipelineOutput {
             files: Vec::new(),
             branch: String::new(),
             untracked_skipped: Vec::new(),
@@ -346,12 +328,7 @@ fn test_next_and_prev_file_navigation_centers_banner_with_margin() {
     .collect();
 
     let mut state = AppState::new(
-        diffuse_core::pipeline::run_pipeline_full(
-            &diff,
-            Some(new_content),
-            None,
-            PipelineOptions::default(),
-        ),
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         std::env::temp_dir().join("diffuse-test-notes.json"),
     );

@@ -1,5 +1,9 @@
 //! Native Diffuse Interactive TUI Engine.
 
+pub use diffuse_core as core;
+pub use diffuse_render as render;
+pub use diffuse_syntax as syntax;
+
 pub mod actions;
 pub mod app;
 pub mod command;
@@ -21,7 +25,11 @@ pub use types::{FlatRow, HunkMeta, HunkStart, Selection};
 
 use std::{io, path::PathBuf, sync::mpsc::Receiver, time::Duration};
 
-use diffuse_core::wire::{OutputFile, PipelineOutput};
+use crate::core::{
+    DEFAULT_EXPAND_LINES,
+    streaming::GitRepoMeta,
+    wire::{OutputFile, PipelineOutput},
+};
 
 /// Launch and run the interactive TUI application with live streaming file
 /// ingestion.
@@ -29,7 +37,7 @@ use diffuse_core::wire::{OutputFile, PipelineOutput};
 pub fn run_streaming_interactive_tui(
     initial_output: PipelineOutput,
     streaming_rx: Option<Receiver<OutputFile>>,
-    meta_rx: Option<Receiver<Result<diffuse_core::streaming::GitRepoMeta, String>>>,
+    meta_rx: Option<Receiver<Result<GitRepoMeta, String>>>,
     repo: String,
     notes_path: PathBuf,
     repo_root: PathBuf,
@@ -137,6 +145,6 @@ pub fn run_interactive_tui(
         notes_path,
         repo_root,
         git_args,
-        diffuse_core::DEFAULT_EXPAND_LINES,
+        DEFAULT_EXPAND_LINES,
     )
 }

@@ -1,4 +1,4 @@
-use diffuse_core::wire::OutputFile;
+use crate::core::wire::OutputFile;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileMatch {
@@ -155,7 +155,7 @@ fn fuzzy_subsequence(text: &str, pattern: &str) -> Option<(i64, Vec<usize>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diffuse_core::counts::FileCounts;
+    use crate::core::counts::FileCounts;
 
     fn sample_file(path: &str) -> OutputFile {
         OutputFile {

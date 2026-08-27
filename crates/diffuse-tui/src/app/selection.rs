@@ -102,10 +102,12 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use crate::{
+        app::AppState,
+        core::{PipelineOptions, pipeline::run_pipeline_full, wire::PipelineOutput},
+    };
 
-    use crate::app::AppState;
-
-    fn sample_output() -> diffuse_core::wire::PipelineOutput {
+    fn sample_output() -> PipelineOutput {
         let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
 index 1111111..2222222 100644
 --- a/filesystem.rs
@@ -124,11 +126,11 @@ index 1111111..2222222 100644
         )]
         .into_iter()
         .collect();
-        diffuse_core::pipeline::run_pipeline_full(
+        run_pipeline_full(
             diff,
             Some(new_content),
             Some(old_content),
-            diffuse_core::PipelineOptions::default(),
+            PipelineOptions::default(),
         )
     }
 

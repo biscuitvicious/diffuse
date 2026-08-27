@@ -1,8 +1,13 @@
 //! Diff grid row, hunk divider, and file header line formatting.
 
 use super::header::truncate_pad;
-use diffuse_core::wire::{OutputFile, OutputHunk};
-use diffuse_render::slice_by_visual_width;
+use crate::{
+    core::{
+        parse::RowKind,
+        wire::{OutputFile, OutputHunk},
+    },
+    render::slice_by_visual_width,
+};
 
 /// Char column of the collapse/expand triangle in [`file_header_text`].
 pub const FILE_HEADER_INDICATOR_COL: usize = 12;
@@ -74,9 +79,9 @@ pub fn hunk_divider_text(hi: usize, hunk: &OutputHunk, hidden_gap: usize) -> Str
     let mut mods: usize = 0;
     for r in &hunk.rows {
         match r.kind {
-            diffuse_core::parse::RowKind::Del => dels += 1,
-            diffuse_core::parse::RowKind::Add => adds += 1,
-            diffuse_core::parse::RowKind::Mod => mods += 1,
+            RowKind::Del => dels += 1,
+            RowKind::Add => adds += 1,
+            RowKind::Mod => mods += 1,
             _ => {}
         }
     }
@@ -164,7 +169,7 @@ pub fn render_bottom_gap_divider(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diffuse_core::{
+    use crate::core::{
         counts::FileCounts,
         wire::{OutputFile, OutputHunk},
     };
@@ -262,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_hunk_divider_span_includes_context() {
-        use diffuse_core::{parse::RowKind, wire::OutputRow};
+        use crate::core::{parse::RowKind, wire::OutputRow};
         let mk = |kind: RowKind| OutputRow {
             kind,
             new_line: None,

@@ -15,18 +15,22 @@ use std::{
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
-use diffuse_core::{
-    DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions,
-    git::load_git_repo,
-    notes::{
-        NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
-        save_notes,
+use diffuse::{
+    DEFAULT_EXPAND_LINES,
+    core::{
+        DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions,
+        git::load_git_repo,
+        notes::{
+            NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
+            save_notes,
+        },
+        pipeline::run_pipeline_full,
+        streaming::{spawn_git_stream_pipeline, stream_diff_pipeline},
+        wire::PipelineOutput,
     },
-    pipeline::run_pipeline_full,
-    wire::PipelineOutput,
+    render::{default_theme, render_file_diff},
+    tui::run_streaming_interactive_tui,
 };
-use diffuse_render::default_theme;
-use diffuse_tui::run_streaming_interactive_tui;
 
 /// The diffuse diff-engine CLI.
 #[derive(Parser, Debug)]
@@ -53,7 +57,7 @@ struct Args {
     context: usize,
     /// Number of context lines to expand when activating a hidden gap separator
     /// (default: 6).
-    #[arg(long, default_value_t = diffuse_core::DEFAULT_EXPAND_LINES, global = true)]
+    #[arg(long, default_value_t = DEFAULT_EXPAND_LINES, global = true)]
     expand_lines: usize,
     /// Emit raw token-stream JSON (for machine/extension integration).
     #[arg(long, global = true)]
@@ -343,7 +347,7 @@ fn main() -> io::Result<()> {
         // Interactive TUI only when both ends are real terminals and not in pager mode;
         // any piped or redirected end falls back to the full ANSI render.
         if !no_tui && stdin_tty && stdout_tty {
-            let (consumer, meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
+            let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
                 git_args.clone(),
                 Vec::new(),
@@ -368,7 +372,7 @@ fn main() -> io::Result<()> {
                 args.expand_lines,
             )?;
         } else {
-            let (consumer, meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
+            let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
                 git_args.clone(),
                 Vec::new(),
@@ -384,7 +388,7 @@ fn main() -> io::Result<()> {
             let theme = default_theme();
             let mut stdout = io::stdout().lock();
             for file in consumer {
-                let rendered = diffuse_render::render_file_diff(&file, &theme, true);
+                let rendered = render_file_diff(&file, &theme, true);
                 if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         return Ok(());
@@ -454,7 +458,7 @@ fn main() -> io::Result<()> {
                     .with_notes(Some(loaded_db), args.repo.clone().or(input.repo.clone()))
                     .with_visual_context(input.context.unwrap_or(args.context))
                     .with_expand_lines(args.expand_lines);
-                let consumer = diffuse_core::streaming::stream_diff_pipeline(
+                let consumer = stream_diff_pipeline(
                     &input.diff,
                     input.new_content,
                     input.old_content,

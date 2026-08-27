@@ -1,8 +1,9 @@
 //! Flat synchronization — streaming append and reload with cursor preservation.
 
-use diffuse_core::wire::{OutputFile, PipelineOutput};
-
-use crate::types::{FlatRow, HunkStart};
+use crate::{
+    core::wire::{OutputFile, PipelineOutput},
+    types::{FlatRow, HunkStart},
+};
 
 use super::AppState;
 
@@ -212,10 +213,13 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use crate::app::AppState;
-    use diffuse_core::{
-        PipelineOptions,
-        wire::{OutputFile, PipelineOutput},
+    use crate::{
+        app::AppState,
+        core::{
+            PipelineOptions,
+            streaming::stream_diff_pipeline,
+            wire::{OutputFile, PipelineOutput},
+        },
     };
     #[test]
     fn test_incremental_file_append_and_streaming_navigation() {
@@ -227,7 +231,7 @@ mod tests {
         .into_iter()
         .collect();
 
-        let consumer = diffuse_core::streaming::stream_diff_pipeline(
+        let consumer = stream_diff_pipeline(
             diff,
             Some(new_content),
             None,

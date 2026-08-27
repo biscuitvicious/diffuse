@@ -16,7 +16,7 @@ use std::{
     time::Instant,
 };
 
-use diffuse_core::{PipelineOptions, streaming::stream_diff_pipeline, wire::OutputFile};
+use diffuse::core::{PipelineOptions, streaming::stream_diff_pipeline, wire::OutputFile};
 
 static REPO_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(100);
 

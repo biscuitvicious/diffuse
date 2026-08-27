@@ -2,7 +2,10 @@
 
 use std::{fs, path::Path, process::Command};
 
-use diffuse_core::PipelineOptions;
+use crate::core::{
+    ENGINE_CONTEXT, PipelineOptions, git::load_git_repo, notes::now_millis,
+    pipeline::run_pipeline_full,
+};
 
 use super::app::AppState;
 
@@ -33,7 +36,7 @@ pub fn hunk_patch(state: &AppState, repo_root: &Path, base_args: &[String]) -> O
     cmd.arg("diff")
         .arg("-M")
         .arg("--no-color")
-        .arg(format!("-U{}", diffuse_core::ENGINE_CONTEXT))
+        .arg(format!("-U{}", ENGINE_CONTEXT))
         .args(base_args)
         .arg("--")
         .arg(&f.path)
@@ -109,7 +112,7 @@ pub fn apply_patch(repo_root: &Path, patch: &str, flags: &[&str]) -> Result<(), 
     let tmp = std::env::temp_dir().join(format!(
         "diffuse-patch-{}-{}.patch",
         std::process::id(),
-        diffuse_core::notes::now_millis()
+        now_millis()
     ));
 
     fs::write(&tmp, patch).map_err(|e| format!("failed to write tmp patch: {e}"))?;
@@ -278,19 +281,13 @@ pub fn reload_diff(
     repo_root: &Path,
     git_args: &[String],
 ) -> Result<(), String> {
-    let git_res = diffuse_core::git::load_git_repo(
-        repo_root,
-        git_args,
-        &[],
-        false,
-        diffuse_core::ENGINE_CONTEXT,
-    )
-    .map_err(|e| format!("failed to reload git repo: {e}"))?;
+    let git_res = load_git_repo(repo_root, git_args, &[], false, ENGINE_CONTEXT)
+        .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
         .with_notes(Some(state.notes.clone()), Some(state.repo.clone()))
         .with_expand_lines(state.expand_lines);
-    let mut new_out = diffuse_core::pipeline::run_pipeline_full(
+    let mut new_out = run_pipeline_full(
         &git_res.diff,
         Some(git_res.new_content),
         Some(git_res.old_content),
@@ -368,15 +365,8 @@ mod tests {
     #[test]
     fn test_git_stage_unstage_reload_flow() {
         let (repo_root, notes_path) = setup_test_git_repo();
-        let git_res = diffuse_core::git::load_git_repo(
-            &repo_root,
-            &[],
-            &[],
-            false,
-            diffuse_core::ENGINE_CONTEXT,
-        )
-        .unwrap();
-        let out = diffuse_core::pipeline::run_pipeline_full(
+        let git_res = load_git_repo(&repo_root, &[], &[], false, ENGINE_CONTEXT).unwrap();
+        let out = run_pipeline_full(
             &git_res.diff,
             Some(git_res.new_content),
             Some(git_res.old_content),
@@ -398,15 +388,9 @@ mod tests {
 
         // Reload diff with --cached
         let cached_args = vec!["--cached".to_string()];
-        let git_res_cached = diffuse_core::git::load_git_repo(
-            &repo_root,
-            &cached_args,
-            &[],
-            false,
-            diffuse_core::ENGINE_CONTEXT,
-        )
-        .unwrap();
-        let out_cached = diffuse_core::pipeline::run_pipeline_full(
+        let git_res_cached =
+            load_git_repo(&repo_root, &cached_args, &[], false, ENGINE_CONTEXT).unwrap();
+        let out_cached = run_pipeline_full(
             &git_res_cached.diff,
             Some(git_res_cached.new_content),
             Some(git_res_cached.old_content),
@@ -429,15 +413,8 @@ mod tests {
     #[test]
     fn test_git_discard_flow() {
         let (repo_root, notes_path) = setup_test_git_repo();
-        let git_res = diffuse_core::git::load_git_repo(
-            &repo_root,
-            &[],
-            &[],
-            false,
-            diffuse_core::ENGINE_CONTEXT,
-        )
-        .unwrap();
-        let out = diffuse_core::pipeline::run_pipeline_full(
+        let git_res = load_git_repo(&repo_root, &[], &[], false, ENGINE_CONTEXT).unwrap();
+        let out = run_pipeline_full(
             &git_res.diff,
             Some(git_res.new_content),
             Some(git_res.old_content),

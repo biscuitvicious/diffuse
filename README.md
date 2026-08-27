@@ -52,31 +52,25 @@ frozen in PLAN.md §2 — renderers are written against the contract, not
 the internals, so a new renderer (or a redesigned engine) doesn't break
 the other side.
 
-## Layout
+## Workspace Layout & Unified Namespace
 
 ```
-src/              the engine (lib + bin)
-  lib.rs        the engine API (module tree)
-  main.rs       the binary: a CLI that reads a diff and emits the token
-                streams as JSON
-  parse.rs      diff → files, hunks, rows
-  lcs.rs        the word-level diff: tokenizing, the LCS, the spans
-  similarity.rs line-similarity scoring (the pairing's metric)
-  moves.rs      move detection + the block-move rule
-  tail.rs       the brace-anchor helpers
-  collapse.rs   the pairing: stretch, reverse-stretch, reflow, ordering
-  merge.rs      the token-stream merge per row
-  counts.rs     the add/del/mod/moved counts
-  syntax.rs     the semantic token classification (keyword, string, …)
+crates/
+  diffuse/          the facade library (`diffuse::core`, `diffuse::tui`, etc.) + CLI binary
+    src/lib.rs      facade exports & prelude
+    src/main.rs     `diffuse` binary (TUI / pager / streaming JSON)
+    src/bin/harvest.rs `diffuse-harvest` fixture generator tool
+  diffuse-core/     the diff engine: parsing, sequence alignment, clustering, wire formats
+  diffuse-render/   ANSI terminal stylization, color themes, raw diff output
+  diffuse-syntax/   language profiles, token classification, markdown fence detection
+  diffuse-tui/      interactive terminal review TUI, state machines, command dispatch
 tests/
-  golden.rs     the acceptance test (two legs)
-  golden/       the SHARED frozen diff corpus + its locked expected output
-                (the extension's golden walk reads it from here too)
-extension/        the extensions home — one subdir per agent
-  pi/             the pi review extension — the engine's first renderer (TS)
-    review.ts     the whole extension (single file, pi loads it as-is)
-    bin/diffuse   the BUNDLED diffuse binary (scripts/build-bin.sh)
-    test/         the unit + golden suites (npm test; npm run test:rust)
+  golden/           the SHARED frozen diff corpus + its locked expected output
+extension/          the extensions home — one subdir per agent
+  pi/               the pi review extension — the engine's first renderer (TS)
+    review.ts       the whole extension (single file, pi loads it as-is)
+    bin/diffuse     the BUNDLED diffuse binary (scripts/build-bin.sh)
+    test/           the unit + golden suites (npm test)
 ```
 
 ## Build & test

@@ -290,13 +290,15 @@ fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diffuse_core::{PipelineOptions, wire::PipelineOutput};
+    use crate::core::{
+        PipelineOptions, notes::now_millis, pipeline::run_pipeline_full, wire::PipelineOutput,
+    };
 
     fn unique_notes_path() -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
             "diffuse-test-notes-{}-{}.json",
             std::process::id(),
-            diffuse_core::notes::now_millis()
+            now_millis()
         ))
     }
 
@@ -340,7 +342,7 @@ index 1111111..2222222 100644
         .into_iter()
         .collect();
         AppState::new(
-            diffuse_core::pipeline::run_pipeline_full(
+            run_pipeline_full(
                 diff,
                 Some(new_content),
                 Some(old_content),
@@ -612,12 +614,7 @@ index 3333333..4444444 100644
         .collect();
 
         let mut s = AppState::new(
-            diffuse_core::pipeline::run_pipeline_full(
-                diff,
-                Some(new_content),
-                None,
-                PipelineOptions::default(),
-            ),
+            run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default()),
             "test_repo".into(),
             unique_notes_path(),
         );

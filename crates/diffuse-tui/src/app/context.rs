@@ -1,7 +1,13 @@
-use super::AppState;
+use crate::core::{
+    DEFAULT_CONTEXT_LINES,
+    parse::{RowKind, Spans},
+    wire::{OutputFile, OutputHunk, OutputRow},
+};
 
-use super::anchor::{CursorAnchor, DividerAnchors, DividerFallback};
-use diffuse_core::wire::{OutputFile, OutputRow};
+use super::{
+    AppState,
+    anchor::{CursorAnchor, DividerAnchors, DividerFallback},
+};
 
 impl AppState {
     /// Expand ALL hidden lines across all hunks in the repository.
@@ -50,7 +56,7 @@ impl AppState {
         }
 
         let old_hunk = f.hunks.remove(hi);
-        let new_hunks = Self::reset_hunk_slices(&old_hunk, diffuse_core::DEFAULT_CONTEXT_LINES);
+        let new_hunks = Self::reset_hunk_slices(&old_hunk, DEFAULT_CONTEXT_LINES);
         let count = new_hunks.len();
         f.hunks.splice(hi..hi, new_hunks);
 
@@ -95,15 +101,12 @@ impl AppState {
     /// Split and trim an `OutputHunk`'s rows around change blocks so that every
     /// change has at most `default_ctx` surrounding context lines, and any
     /// interior context run > 2 * default_ctx forms a new hunk divider gap.
-    pub fn reset_hunk_slices(
-        hunk: &diffuse_core::wire::OutputHunk,
-        default_ctx: usize,
-    ) -> Vec<diffuse_core::wire::OutputHunk> {
+    pub fn reset_hunk_slices(hunk: &OutputHunk, default_ctx: usize) -> Vec<OutputHunk> {
         let change_indices: Vec<usize> = hunk
             .rows
             .iter()
             .enumerate()
-            .filter(|(_, r)| r.kind != diffuse_core::parse::RowKind::Ctx)
+            .filter(|(_, r)| r.kind != RowKind::Ctx)
             .map(|(i, _)| i)
             .collect();
 
@@ -112,7 +115,7 @@ impl AppState {
             if trimmed_rows.len() > default_ctx {
                 trimmed_rows.truncate(default_ctx);
             }
-            return vec![diffuse_core::wire::OutputHunk {
+            return vec![OutputHunk {
                 old_start: hunk.old_start,
                 old_count: trimmed_rows.len() as u32,
                 new_start: hunk.new_start,
@@ -153,7 +156,7 @@ impl AppState {
             let old_count = old_end.saturating_sub(old_start) + 1;
             let new_count = new_end.saturating_sub(new_start) + 1;
 
-            new_hunks.push(diffuse_core::wire::OutputHunk {
+            new_hunks.push(OutputHunk {
                 old_start,
                 old_count,
                 new_start,
@@ -165,10 +168,10 @@ impl AppState {
         new_hunks
     }
 
-    fn count_output_hunk_ctx(h: &diffuse_core::wire::OutputHunk) -> (u32, u32) {
+    fn count_output_hunk_ctx(h: &OutputHunk) -> (u32, u32) {
         let mut above = 0u32;
         for r in &h.rows {
-            if r.kind == diffuse_core::parse::RowKind::Ctx {
+            if r.kind == RowKind::Ctx {
                 above += 1;
             } else {
                 break;
@@ -176,7 +179,7 @@ impl AppState {
         }
         let mut below = 0u32;
         for r in h.rows.iter().rev() {
-            if r.kind == diffuse_core::parse::RowKind::Ctx {
+            if r.kind == RowKind::Ctx {
                 below += 1;
             } else {
                 break;
@@ -245,12 +248,12 @@ impl AppState {
                     .unwrap_or_default();
                 let runs = Self::get_line_runs(f, new_num, &text);
                 down_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
+                    kind: RowKind::Ctx,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
                     del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
+                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     moved: false,
@@ -331,12 +334,12 @@ impl AppState {
                     .unwrap_or_default();
                 let runs = Self::get_line_runs(f, new_num, &text);
                 down_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
+                    kind: RowKind::Ctx,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
                     del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
+                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     moved: false,
@@ -458,12 +461,12 @@ impl AppState {
                     .unwrap_or_default();
                 let runs = Self::get_line_runs(f, new_num, &text);
                 up_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
+                    kind: RowKind::Ctx,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
                     del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
+                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     moved: false,
@@ -525,12 +528,12 @@ impl AppState {
                     .unwrap_or_default();
                 let runs = Self::get_line_runs(f, new_num, &text);
                 up_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
+                    kind: RowKind::Ctx,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
                     del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
+                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     moved: false,
@@ -626,12 +629,12 @@ impl AppState {
                 .unwrap_or_default();
             let runs = Self::get_line_runs(f, new_num, &text);
             OutputRow {
-                kind: diffuse_core::parse::RowKind::Ctx,
+                kind: RowKind::Ctx,
                 new_line: Some(new_num),
                 old_line: Some(old_num),
                 text,
                 del_text: None,
-                spans: diffuse_core::parse::Spans::default(),
+                spans: Spans::default(),
                 runs,
                 wholesale: false,
                 moved: false,

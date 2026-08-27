@@ -2,13 +2,15 @@
 
 use std::{collections::HashSet, path::PathBuf};
 
-use diffuse_core::{
-    notes::NotesDB,
-    wire::{OutputFile, PipelineOutput},
+use crate::{
+    core::{
+        DEFAULT_EXPAND_LINES,
+        notes::{NotesDB, load_notes},
+        wire::{OutputFile, PipelineOutput},
+    },
+    render::DiffuseTheme,
+    types::{FlatRow, HunkMeta, HunkStart, Selection},
 };
-use diffuse_render::DiffuseTheme;
-
-use crate::types::{FlatRow, HunkMeta, HunkStart, Selection};
 
 mod anchor;
 mod collapse;
@@ -108,7 +110,7 @@ impl AppState {
             should_quit: false,
             status_message: None,
             viewport_height: 20,
-            notes: diffuse_core::notes::load_notes(&notes_path),
+            notes: load_notes(&notes_path),
             notes_path,
             hunk_starts,
             hunk_meta,
@@ -123,7 +125,7 @@ impl AppState {
             is_dragging_scrollbar: false,
             last_viewport_start: 2,
             is_streaming: false,
-            expand_lines: diffuse_core::DEFAULT_EXPAND_LINES,
+            expand_lines: DEFAULT_EXPAND_LINES,
             scroll_pin: None,
         }
     }

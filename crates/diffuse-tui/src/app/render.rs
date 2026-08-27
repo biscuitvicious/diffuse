@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 
-use diffuse_render::{render_raw_row, render_row_segment, slice_by_visual_width, styled_prefix};
-
-use crate::view::{
-    file_header_text,
-    header::{render_bottom_ribbon, render_header_bar, render_status_bar, visible_width},
-    hunk_divider_text,
-    modals::{render_finder_modal, render_help_modal},
-    render_bottom_gap_divider, render_file_header_segment, render_hunk_divider_segment,
+use crate::{
+    core::parse::RowKind,
+    render::{render_raw_row, render_row_segment, slice_by_visual_width, styled_prefix},
+    view::{
+        file_header_text,
+        header::{render_bottom_ribbon, render_header_bar, render_status_bar, visible_width},
+        hunk_divider_text,
+        modals::{render_finder_modal, render_help_modal},
+        render_bottom_gap_divider, render_file_header_segment, render_hunk_divider_segment,
+    },
 };
 
 use super::AppState;
@@ -232,7 +234,7 @@ impl AppState {
                         let piece = slice_by_visual_width(&sep_text, start_col, text_cols);
                         let is_last_seg = s_idx + 1 == seg_count;
                         lines.push(render_raw_row(
-                            diffuse_core::parse::RowKind::Ctx,
+                            RowKind::Ctx,
                             "",
                             &piece,
                             is_selected,

@@ -9,8 +9,12 @@
 use std::{collections::HashMap, env, fs, path::PathBuf, process};
 
 use clap::Parser;
-use diffuse_core::{DEFAULT_CONTEXT_LINES, git::load_git_repo};
 use serde::Serialize;
+
+use diffuse::core::{
+    DEFAULT_CONTEXT_LINES,
+    git::{load_git_repo, run_git},
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -86,7 +90,7 @@ fn main() {
     };
 
     let revision = if worktree {
-        let head = diffuse_core::git::run_git(&repo_root, &["rev-parse", "HEAD"])
+        let head = run_git(&repo_root, &["rev-parse", "HEAD"])
             .unwrap_or_default()
             .trim()
             .to_string();

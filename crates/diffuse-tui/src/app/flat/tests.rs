@@ -1,5 +1,14 @@
-use crate::{app::AppState, view::hunk_divider_text};
-use diffuse_core::{PipelineOptions, wire::PipelineOutput};
+use crate::{
+    app::AppState,
+    core::{
+        PipelineOptions,
+        counts::FileCounts,
+        parse::RowKind,
+        pipeline::run_pipeline_full,
+        wire::{OutputFile, OutputHunk, OutputRow, PipelineOutput},
+    },
+    view::hunk_divider_text,
+};
 
 fn sample_output_two_hunks() -> PipelineOutput {
     let diff = "diff --git a/foo.rs b/foo.rs\n--- a/foo.rs\n+++ b/foo.rs\n@@ -1,3 +1,4 @@\n fn a() {\n+    let x = 1;\n     return 1;\n }\n@@ -30,3 +31,4 @@ fn b() {\n fn b() {\n+    let y = 2;\n     return 2;\n }\n";
@@ -35,7 +44,7 @@ fn sample_output_two_hunks() -> PipelineOutput {
     let old_content = [("foo.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    diffuse_core::pipeline::run_pipeline_full(
+    run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -94,27 +103,22 @@ index 1111111..2222222 100644
     .into_iter()
     .collect();
 
-    let mut out = diffuse_core::pipeline::run_pipeline_full(
-        diff,
-        Some(new_content),
-        None,
-        PipelineOptions::default(),
-    );
+    let mut out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     // Add an untracked file to output
-    out.files.push(diffuse_core::wire::OutputFile {
+    out.files.push(OutputFile {
         path: "untracked.rs".to_string(),
         status: "untracked".to_string(),
         new_line_count: 1,
         old_line_count: 0,
         new_content: vec!["fn new_untracked() {}".to_string()],
         old_content: Vec::new(),
-        hunks: vec![diffuse_core::wire::OutputHunk {
+        hunks: vec![OutputHunk {
             old_start: 0,
             old_count: 0,
             new_start: 1,
             new_count: 1,
-            rows: vec![diffuse_core::wire::OutputRow {
-                kind: diffuse_core::parse::RowKind::Add,
+            rows: vec![OutputRow {
+                kind: RowKind::Add,
                 new_line: Some(1),
                 old_line: None,
                 text: "fn new_untracked() {}".to_string(),
@@ -126,7 +130,7 @@ index 1111111..2222222 100644
             }],
         }],
         raw_hunks: Vec::new(),
-        counts: diffuse_core::counts::FileCounts {
+        counts: FileCounts {
             adds: 1,
             dels: 0,
             mods: 0,
@@ -237,7 +241,7 @@ index 1111111..2222222 100644
     let old_content = [("cache.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    let output = diffuse_core::pipeline::run_pipeline_full(
+    let output = run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),

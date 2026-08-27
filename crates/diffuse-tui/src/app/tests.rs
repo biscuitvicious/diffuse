@@ -1,9 +1,17 @@
 use super::*;
-use crate::{command::TuiCommand, view::hunk_divider_text};
+use crate::{
+    command::TuiCommand,
+    core::{
+        PipelineOptions,
+        notes::{load_notes, notes_for_file},
+        parse::RowKind,
+        pipeline::{PipelineInput, run_pipeline_full},
+        wire::PipelineOutput,
+    },
+    view::hunk_divider_text,
+};
 
-use diffuse_core::PipelineOptions;
-
-fn sample_output() -> diffuse_core::wire::PipelineOutput {
+fn sample_output() -> PipelineOutput {
     let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
 index 1111111..2222222 100644
 --- a/filesystem.rs
@@ -28,7 +36,7 @@ index 1111111..2222222 100644
     )]
     .into_iter()
     .collect();
-    diffuse_core::pipeline::run_pipeline_full(
+    run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -63,7 +71,7 @@ index 1111111..2222222 100644
     .into_iter()
     .collect();
     let mut state = AppState::new(
-        diffuse_core::pipeline::run_pipeline_full(
+        run_pipeline_full(
             diff,
             Some(new_content),
             Some(old_content),
@@ -135,8 +143,7 @@ fn test_note_commit_persists_and_deletes() {
     state.commit_note_draft();
     assert!(state.note_draft.is_none());
 
-    let notes: Vec<_> =
-        diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).collect();
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].text, "check this **carefully**");
     assert!(
@@ -144,9 +151,9 @@ fn test_note_commit_persists_and_deletes() {
         "note must anchor to a real row coordinate"
     );
 
-    let on_disk = diffuse_core::notes::load_notes(&notes_path);
+    let on_disk = load_notes(&notes_path);
     assert_eq!(
-        diffuse_core::notes::notes_for_file(&on_disk, "test_repo", &file).count(),
+        notes_for_file(&on_disk, "test_repo", &file).count(),
         1,
         "commit must persist through the notes DB file"
     );
@@ -160,14 +167,14 @@ fn test_note_commit_persists_and_deletes() {
 
     state.delete_notes();
     assert!(
-        diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file)
+        notes_for_file(&state.notes, "test_repo", &file)
             .next()
             .is_none(),
         "delete must remove the note from the DB"
     );
-    let on_disk2 = diffuse_core::notes::load_notes(&notes_path);
+    let on_disk2 = load_notes(&notes_path);
     assert!(
-        diffuse_core::notes::notes_for_file(&on_disk2, "test_repo", &file)
+        notes_for_file(&on_disk2, "test_repo", &file)
             .next()
             .is_none(),
         "delete must persist the removal"
@@ -310,11 +317,10 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
     state.toggle_raw_diff();
     assert!(state.raw_diff);
 
-    let del = state.flat.iter().find(|fr| {
-        state
-            .row_of(fr)
-            .is_some_and(|r| r.kind == diffuse_core::parse::RowKind::Del)
-    });
+    let del = state
+        .flat
+        .iter()
+        .find(|fr| state.row_of(fr).is_some_and(|r| r.kind == RowKind::Del));
     assert!(
         del.is_some()
             && state
@@ -325,9 +331,9 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
         "the mod pair must un-collapse into a - line"
     );
     let add = state.flat.iter().find(|fr| {
-        state.row_of(fr).is_some_and(|r| {
-            r.kind == diffuse_core::parse::RowKind::Add && r.text.contains("new comment")
-        })
+        state
+            .row_of(fr)
+            .is_some_and(|r| r.kind == RowKind::Add && r.text.contains("new comment"))
     });
     assert!(add.is_some(), "the mod pair must un-collapse into a + line");
 
@@ -358,14 +364,14 @@ fn test_raw_diff_toggle_anchors_cursor() {
         state.move_down();
     }
     let r = state.row_of(&state.flat[state.row_idx]).unwrap();
-    assert_eq!(r.kind, diffuse_core::parse::RowKind::Mod);
+    assert_eq!(r.kind, RowKind::Mod);
     assert_eq!(r.new_line, Some(1026));
 
     state.toggle_raw_diff();
     let r = state.row_of(&state.flat[state.row_idx]).unwrap();
     assert_eq!(
         r.kind,
-        diffuse_core::parse::RowKind::Add,
+        RowKind::Add,
         "the cursor resolves to the + line of the pair"
     );
     assert_eq!(r.new_line, Some(1026), "same coordinate after the switch");
@@ -396,7 +402,7 @@ fn test_raw_diff_exact_input_reproduction() {
     .into_iter()
     .collect();
 
-    let out = diffuse_core::pipeline::run_pipeline_full(
+    let out = run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -410,7 +416,7 @@ fn test_raw_diff_exact_input_reproduction() {
     state.toggle_raw_diff();
     assert!(state.raw_diff);
 
-    let kinds: Vec<diffuse_core::parse::RowKind> = state
+    let kinds: Vec<RowKind> = state
         .flat
         .iter()
         .filter(|r| !r.is_file_header && !r.is_hunk_divider)
@@ -421,13 +427,13 @@ fn test_raw_diff_exact_input_reproduction() {
     assert_eq!(
         kinds,
         vec![
-            diffuse_core::parse::RowKind::Del,
-            diffuse_core::parse::RowKind::Del,
-            diffuse_core::parse::RowKind::Del,
-            diffuse_core::parse::RowKind::Add,
-            diffuse_core::parse::RowKind::Add,
-            diffuse_core::parse::RowKind::Add,
-            diffuse_core::parse::RowKind::Ctx,
+            RowKind::Del,
+            RowKind::Del,
+            RowKind::Del,
+            RowKind::Add,
+            RowKind::Add,
+            RowKind::Add,
+            RowKind::Ctx,
         ],
         "raw diff must reproduce the exact hunk row sequence from the input diff"
     );
@@ -451,12 +457,7 @@ fn test_toggle_raw_diff_preserves_cursor_screen_pivot() {
     let new_content = [("test.rs".to_string(), lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    let out = diffuse_core::pipeline::run_pipeline_full(
-        diff,
-        Some(new_content),
-        None,
-        PipelineOptions::default(),
-    );
+    let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let mut state = AppState::new(
         out,
         "test_repo".into(),
@@ -502,12 +503,7 @@ fn test_raw_diff_no_right_padding_or_scrollbar() {
     let new_content = [("test.rs".to_string(), "let short = 2;\n".to_string())]
         .into_iter()
         .collect();
-    let out = diffuse_core::pipeline::run_pipeline_full(
-        diff,
-        Some(new_content),
-        None,
-        PipelineOptions::default(),
-    );
+    let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let mut state = AppState::new(
         out,
         "test_repo".into(),
@@ -549,12 +545,7 @@ fn test_raw_diff_wrapped_line_no_false_trailing_highlight() {
         )]
         .into_iter()
         .collect();
-    let out = diffuse_core::pipeline::run_pipeline_full(
-        diff,
-        Some(new_content),
-        None,
-        PipelineOptions::default(),
-    );
+    let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let mut state = AppState::new(
         out,
         "test_repo".into(),
@@ -603,7 +594,7 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
         )]
         .into_iter()
         .collect();
-    let out = diffuse_core::pipeline::run_pipeline_full(
+    let out = run_pipeline_full(
         diff,
         Some(new_content),
         Some(old_content),
@@ -625,9 +616,9 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
         .flat
         .iter()
         .position(|r| {
-            state.row_of(r).is_some_and(|row| {
-                row.kind == diffuse_core::parse::RowKind::Del && row.old_line == Some(82)
-            })
+            state
+                .row_of(r)
+                .is_some_and(|row| row.kind == RowKind::Del && row.old_line == Some(82))
         })
         .expect("must find deleted line 82 in raw diff");
     state.row_idx = del_idx;
@@ -790,8 +781,7 @@ index 6f6222d..4aa7a1d 100644
      }
  }
 "#;
-    let out =
-        diffuse_core::pipeline::run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
     let mut state = AppState::new(
         out,
         "mirage".into(),
@@ -1077,7 +1067,7 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
 
     // Verify prepended context rows in H2 have syntax runs
     let first_row = &state.output.files[fi].hunks[1].rows[0];
-    assert_eq!(first_row.kind, diffuse_core::parse::RowKind::Ctx);
+    assert_eq!(first_row.kind, RowKind::Ctx);
     assert!(
         !first_row.runs.is_empty(),
         "expanded context row must have syntax token runs"
@@ -1098,7 +1088,7 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
 
     // Verify appended context rows in H1 have syntax runs
     let last_h1_row = state.output.files[fi].hunks[0].rows.last().unwrap();
-    assert_eq!(last_h1_row.kind, diffuse_core::parse::RowKind::Ctx);
+    assert_eq!(last_h1_row.kind, RowKind::Ctx);
     assert!(
         !last_h1_row.runs.is_empty(),
         "expanded context row must have syntax token runs"
@@ -1247,7 +1237,7 @@ index 1111111..2222222 100644
     let old_contents = [("TODO.md".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    let output = diffuse_core::pipeline::PipelineInput::new(diff)
+    let output = PipelineInput::new(diff)
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
@@ -1358,7 +1348,7 @@ index 1111111..2222222 100644
     let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    let output = diffuse_core::pipeline::PipelineInput::new(diff)
+    let output = PipelineInput::new(diff)
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
@@ -1532,7 +1522,7 @@ index 1111111..2222222 100644
     let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    let output = diffuse_core::pipeline::PipelineInput::new(diff)
+    let output = PipelineInput::new(diff)
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
@@ -1648,7 +1638,7 @@ index 1111111..2222222 100644
     let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    let output = diffuse_core::pipeline::PipelineInput::new(diff)
+    let output = PipelineInput::new(diff)
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
@@ -1789,7 +1779,7 @@ index 1111111..2222222 100644
     let old_contents = [("wide.rs".to_string(), old_lines.join("\n") + "\n")]
         .into_iter()
         .collect();
-    let output = diffuse_core::pipeline::PipelineInput::new(diff)
+    let output = PipelineInput::new(diff)
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();

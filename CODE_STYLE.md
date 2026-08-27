@@ -33,7 +33,7 @@ Imports are organized into distinct groups separated by a single blank line, ord
 
 1. **Standard Library**: `use std::{...};`
 2. **Third-Party Dependencies**: `use regex::...;`, `use serde::...;`, `use clap::...;`
-3. **Workspace Crates**: (if multi-crate workspace)
+3. **Workspace & Facade Crates**: When consuming diffuse functionality from integration tests, binaries, or external crates, import via the unified facade (`use diffuse::{core, render, syntax, tui};` or `use diffuse::prelude::*;`). Within internal subcrates, upstream workspace crates are accessed via local crate facades (`use crate::core::...;`, `use crate::syntax::...;`, `use crate::render::...;`), keeping implementation files completely free of raw `diffuse_*` crate prefixes.
 4. **Current Crate**: `use crate::{...};`
 5. **Parent / Super Modules**: `use super::*;` (primarily in test submodules)
 

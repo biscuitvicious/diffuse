@@ -1,8 +1,12 @@
 //! Flat model — construction and indexing of the visual flat list.
 
-use diffuse_core::wire::{OutputFile, PipelineOutput};
-
-use crate::types::{FlatRow, HunkMeta, HunkStart};
+use crate::{
+    core::{
+        parse::RowKind,
+        wire::{OutputFile, PipelineOutput},
+    },
+    types::{FlatRow, HunkMeta, HunkStart},
+};
 
 use super::AppState;
 
@@ -208,7 +212,7 @@ impl AppState {
             .map(|h| {
                 let mut above = 0usize;
                 for r in &h.rows {
-                    if r.kind == diffuse_core::parse::RowKind::Ctx {
+                    if r.kind == RowKind::Ctx {
                         above += 1;
                     } else {
                         break;
@@ -216,7 +220,7 @@ impl AppState {
                 }
                 let mut below = 0usize;
                 for r in h.rows.iter().rev() {
-                    if r.kind == diffuse_core::parse::RowKind::Ctx {
+                    if r.kind == RowKind::Ctx {
                         below += 1;
                     } else {
                         break;

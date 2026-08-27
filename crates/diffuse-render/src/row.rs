@@ -4,7 +4,7 @@
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::theme::{DiffuseTheme, S_ADD, S_DEL, S_MOD, S_MOV};
-use diffuse_core::{
+use crate::core::{
     lcs::char_slice,
     merge::RunKind,
     parse::{RowKind, Spans},
@@ -246,15 +246,11 @@ pub fn render_row_segment(
     };
     let del_bg = S_DEL.tint_bg();
 
-    let has_subwords = runs
-        .iter()
-        .any(|t| t.kind == diffuse_core::merge::RunKind::Add)
-        && runs
-            .iter()
-            .any(|t| t.kind != diffuse_core::merge::RunKind::Add);
+    let has_subwords =
+        runs.iter().any(|t| t.kind == RunKind::Add) && runs.iter().any(|t| t.kind != RunKind::Add);
     let is_expansion_add = kind == RowKind::Add && del_text.is_some();
 
-    let base_bg = |tok_kind: diffuse_core::merge::RunKind| -> &str {
+    let base_bg = |tok_kind: RunKind| -> &str {
         if is_ctx {
             if selected {
                 "\x1b[48;5;237m"
@@ -263,9 +259,9 @@ pub fn render_row_segment(
             } else {
                 ""
             }
-        } else if tok_kind == diffuse_core::merge::RunKind::Del {
+        } else if tok_kind == RunKind::Del {
             del_bg
-        } else if tok_kind == diffuse_core::merge::RunKind::Add
+        } else if tok_kind == RunKind::Add
             && (is_mod_row || has_subwords || is_expansion_add)
             && !is_pure_del_mod
         {
@@ -337,8 +333,8 @@ pub fn render_row_segment(
             }
             let bg = base_bg(tok.kind);
             let tok_kind_str = match tok.kind {
-                diffuse_core::merge::RunKind::Add => "add",
-                diffuse_core::merge::RunKind::Del => "del",
+                RunKind::Add => "add",
+                RunKind::Del => "del",
                 _ => "ctx",
             };
             let row_kind_str = match kind {
@@ -348,7 +344,7 @@ pub fn render_row_segment(
                 _ => "ctx",
             };
 
-            if tok.kind == diffuse_core::merge::RunKind::Del {
+            if tok.kind == RunKind::Del {
                 let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
                 let reset = "\x1b[39m";
                 out.push_str(bg);
@@ -410,8 +406,8 @@ pub fn render_row_segment(
 
         let bg = base_bg(tok.kind);
         let tok_kind_str = match tok.kind {
-            diffuse_core::merge::RunKind::Add => "add",
-            diffuse_core::merge::RunKind::Del => "del",
+            RunKind::Add => "add",
+            RunKind::Del => "del",
             _ => "ctx",
         };
         let row_kind_str = match kind {
@@ -421,7 +417,7 @@ pub fn render_row_segment(
             _ => "ctx",
         };
 
-        if tok.kind == diffuse_core::merge::RunKind::Del {
+        if tok.kind == RunKind::Del {
             let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
             let reset = "\x1b[39m";
             out.push_str(bg);
@@ -535,7 +531,7 @@ pub fn render_raw_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use diffuse_core::{merge::RunKind, wire::OutputRun};
+    use crate::core::{merge::RunKind, wire::OutputRun};
 
     #[test]
     fn test_prefix_gutters() {

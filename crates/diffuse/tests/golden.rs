@@ -30,12 +30,17 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use diffuse_core::{
-    lcs::char_len,
-    merge::{RunKind, display_text},
-    parse::{Row, RowKind},
-    pipeline::run_pipeline,
-    wire::PipelineOutput,
+use diffuse::{
+    core::{
+        apply::{apply_file_diff, apply_hunk_rows},
+        lcs::char_len,
+        merge::{RunKind, display_text, is_wholesale_mod},
+        parse::{Row, RowKind},
+        pipeline::run_pipeline,
+        wire::PipelineOutput,
+    },
+    render::{default_theme, encode_sgr, render_pipeline_output},
+    syntax::registry::lang_profile,
 };
 
 #[derive(Deserialize, Serialize)]
@@ -287,7 +292,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 }
                 if r.kind == RowKind::Mod {
                     check!(
-                        r.wholesale == diffuse_core::merge::is_wholesale_mod(&Row::from(r)),
+                        r.wholesale == is_wholesale_mod(&Row::from(r)),
                         "{}: the wire wholesale flag matches the engine",
                         f.path
                     );
@@ -327,8 +332,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             // Pin the contract: the lang either resolves to a profile or is
             // empty — a non-empty unknown is a normalization regression.
             assert!(
-                fence.lang.is_empty()
-                    || diffuse_syntax::registry::lang_profile(&fence.lang).is_some(),
+                fence.lang.is_empty() || lang_profile(&fence.lang).is_some(),
                 "{}: fence {i} lang `{}` is not a normalized profile key (got a raw doctest tag?)",
                 f.path,
                 fence.lang
@@ -634,9 +638,9 @@ fn print_render_diff(name: &str, actual: &str, expected: &str) {
 }
 
 fn assert_render_matches(output: &PipelineOutput, name: &str) {
-    let theme = diffuse_render::default_theme();
-    let actual_raw = diffuse_render::render_pipeline_output(output, &theme, true);
-    let actual_encoded = diffuse_render::encode_sgr(&actual_raw);
+    let theme = default_theme();
+    let actual_raw = render_pipeline_output(output, &theme, true);
+    let actual_encoded = encode_sgr(&actual_raw);
     let render_path = expected_render_path(name);
 
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_RENDER").is_ok() {
@@ -743,7 +747,7 @@ fn run_oracle_for_corpus(name: &str) {
         let slice = file_diff_slice(&fixture.diff, path);
         assert!(!slice.is_empty(), "{name}: no diff slice for {path}");
         let old_vec: Vec<String> = old.split('\n').map(String::from).collect();
-        let applied = diffuse_core::apply::apply_file_diff(&slice, &old_vec);
+        let applied = apply_file_diff(&slice, &old_vec);
         let expected: Vec<String> = new.split('\n').map(String::from).collect();
         assert_eq!(
             applied, expected,
@@ -756,7 +760,7 @@ fn run_oracle_for_corpus(name: &str) {
     } else {
         Some(fixture.new_content.clone())
     };
-    let wire = diffuse_core::pipeline::run_pipeline(&fixture.diff, new_content);
+    let wire = run_pipeline(&fixture.diff, new_content);
     assert_eq!(
         wire.reverse().reverse(),
         wire,
@@ -776,8 +780,7 @@ fn run_oracle_for_corpus(name: &str) {
             let expected: Vec<String> = new.split('\n').map(String::from).collect();
 
             if let Some(f_reconstructed) = reconstructed.iter().find(|f| f.path == *path) {
-                let applied_forward =
-                    diffuse_core::apply::apply_hunk_rows(&f_reconstructed.hunks, &old_vec);
+                let applied_forward = apply_hunk_rows(&f_reconstructed.hunks, &old_vec);
                 assert_eq!(
                     applied_forward, expected,
                     "[{name}:{path}] apply(old, wire.reconstruct()) != new"
@@ -785,8 +788,7 @@ fn run_oracle_for_corpus(name: &str) {
             }
 
             if let Some(f_rev_reconstructed) = reconstructed_rev.iter().find(|f| f.path == *path) {
-                let applied_backward =
-                    diffuse_core::apply::apply_hunk_rows(&f_rev_reconstructed.hunks, &expected);
+                let applied_backward = apply_hunk_rows(&f_rev_reconstructed.hunks, &expected);
                 assert_eq!(
                     applied_backward, old_vec,
                     "[{name}:{path}] apply(new, wire.reverse().reconstruct()) != old"

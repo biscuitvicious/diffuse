@@ -1,8 +1,12 @@
 //! Row queries — coordinate and content access over the flat list.
 
-use diffuse_core::wire::{OutputFile, OutputRow, PipelineOutput};
-
-use crate::types::FlatRow;
+use crate::{
+    core::{
+        pipeline::context_line_runs,
+        wire::{OutputFile, OutputRow, OutputRun, PipelineOutput},
+    },
+    types::FlatRow,
+};
 
 use super::AppState;
 
@@ -91,11 +95,7 @@ impl AppState {
         row.new_line.or(row.old_line)
     }
 
-    pub(crate) fn get_line_runs(
-        f: &OutputFile,
-        line_num: u32,
-        line_text: &str,
-    ) -> Vec<diffuse_core::wire::OutputRun> {
+    pub(crate) fn get_line_runs(f: &OutputFile, line_num: u32, line_text: &str) -> Vec<OutputRun> {
         let line_idx = (line_num.saturating_sub(1)) as usize;
         if let Some(runs) = f.content_runs.get(line_idx)
             && !runs.is_empty()
@@ -103,7 +103,7 @@ impl AppState {
             return runs.clone();
         }
         let ext = f.path.rsplit('.').next().unwrap_or("");
-        diffuse_core::pipeline::context_line_runs(line_text, Some(line_num), ext)
+        context_line_runs(line_text, Some(line_num), ext)
     }
 
     pub(crate) fn flat_pos_of_coord(

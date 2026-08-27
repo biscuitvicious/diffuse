@@ -20,7 +20,7 @@ the pi review extension. The extension is a **thin client**: `/review`
 resolves the git repository, stops the pi TUI, and spawns the bundled
 `diffuse` binary (`bin/diffuse`) in interactive TUI mode with `stdio: "inherit"`.
 All diff parsing, rendering, TUI interaction, note persistence, and git actions
-are owned entirely by the native Rust implementation in `src/`.
+are owned entirely by the native Rust implementation in `crates/`.
 
 ## Engine Development & Specification
 
@@ -28,7 +28,7 @@ The engine, terminal renderer, and interactive reviewer TUI are all natively imp
 
 In this active development phase:
 
-- **Rust is the Canonical Reference**: The Rust codebase (`src/`) is the source of truth for all engine, render, and TUI behavior.
+- **Rust is the Canonical Reference**: The Rust codebase (`crates/`) is the source of truth for all engine, render, and TUI behavior.
 - **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust) and the smoke suite in `extension/pi/`.
 - **Behavior Improvements & Visual Tuning**: Subword boundaries, reflow pairing, move detection, syntax highlighting, and rendering aesthetics are actively refined to deliver the best visual diff experience.
 - **Golden Corpus**: `tests/golden/` serves as the acceptance baseline
