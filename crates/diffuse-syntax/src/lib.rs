@@ -29,7 +29,10 @@ pub mod registry;
 /// `use crate::prelude::*`.
 pub mod prelude {
     pub use super::{
-        classifier::{ClassifiedToken, classify_line, classify_tokens, markdown_tokens},
+        classifier::{
+            ClassifiedToken, classify_line, classify_tokens, for_each_classified_token,
+            for_each_markdown_token, markdown_tokens,
+        },
         fence::{FenceRegion, fence_regions, region_at},
         profile::{
             BlockDelimStyle, LangProfile, MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE,

@@ -27,6 +27,7 @@ gix = { version = "0.87", default-features = false, features = ["basic", "revisi
 rayon = "1.12"
 rustc-hash = "2"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+pulldown-cmark = { version = "0.13", default-features = false }
 
 [profile.dev.package.regex]
 opt-level = 3

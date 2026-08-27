@@ -295,3 +295,115 @@ fn fence_regions_unclosed_ignore_block_does_not_invert_subsequent_prose() {
         "line 6 prose comment is NOT inside a code fence region"
     );
 }
+
+#[test]
+fn test_markdown_exact_text_preservation_invariant() {
+    let samples = [
+        "# Heading 1",
+        "### Subheading with `inline code` and **bold**",
+        "| Header A | Header B |\n|---|---|\n| cell 1 | cell 2 |",
+        "- [ ] open task item\n- [x] completed task item",
+        "> [!NOTE]\n> This is a helpful callout note with [link](https://example.com).",
+        "> [!WARNING]\n> High risk operation ahead.",
+        "<details open><summary>Summary Title</summary>Content</details>",
+        "Plain text with *italic*, ~~strikethrough~~, and `code` span.",
+        "---",
+        "***\n___",
+    ];
+
+    for sample in samples {
+        let mut reconstructed = String::new();
+        for_each_markdown_token(sample, |t| {
+            reconstructed.push_str(t.text);
+        });
+        assert_eq!(
+            reconstructed, sample,
+            "Reconstructed token stream must match original text byte-for-byte"
+        );
+    }
+}
+
+#[test]
+fn test_markdown_tables_and_borders() {
+    let table = "| Col A | Col B |\n|---|---|\n| 1 | 2 |";
+    let toks = markdown_tokens(table);
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "border" && t.text.contains('|')),
+        "table pipes must be styled as border"
+    );
+    assert!(
+        toks.iter()
+            .any(|t| t.sgr == Some(MD_SGR_BOLD) && t.text.contains("Col A")),
+        "table head must be bold"
+    );
+}
+
+#[test]
+fn test_markdown_task_list_markers() {
+    let task = "- [ ] todo\n- [x] done";
+    let toks = markdown_tokens(task);
+    assert!(
+        toks.iter().any(|t| t.text.contains("[ ]")),
+        "unchecked task list marker"
+    );
+    assert!(
+        toks.iter().any(|t| t.text.contains("[x]")),
+        "checked task list marker"
+    );
+}
+
+#[test]
+fn test_markdown_github_alerts_and_blockquotes() {
+    let note = "> [!NOTE]\n> Important note body";
+    let toks = markdown_tokens(note);
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "accent" && t.text.contains('>')),
+        "blockquote chevron must be accent"
+    );
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "syntaxFunction" && t.sgr == Some(MD_SGR_BOLD)),
+        "note alert must have syntaxFunction bold styling"
+    );
+
+    let warning = "> [!WARNING]\n> Be careful";
+    let w_toks = markdown_tokens(warning);
+    assert!(
+        w_toks
+            .iter()
+            .any(|t| t.color == "syntaxKeyword" && t.sgr == Some(MD_SGR_BOLD)),
+        "warning alert must have syntaxKeyword bold styling"
+    );
+}
+
+#[test]
+fn test_markdown_html_tags() {
+    let html = "<details><summary>Title</summary></details>";
+    let toks = markdown_tokens(html);
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "syntaxKeyword" && t.text.contains("<details>")),
+        "html tag must be classified as syntaxKeyword"
+    );
+}
+
+#[test]
+fn test_markdown_agents_md_lines() {
+    let lines = [
+        "Project-wide conventions live in the root [`AGENTS.md`](../AGENTS.md); this",
+        "1. **`<name>.json.gz`** (or `<name>.json`) — the frozen *input* fixture: the captured `git diff`,",
+        "2. **`<name>.wire.json.gz`** (or `<name>.wire.json`) — the frozen *wire-contract output* (the",
+        "3. **`<name>.render.txt.gz`** (or `<name>.render.txt`) — the frozen *terminal rendered* output.",
+        "The Rust acceptance (`tests/golden.rs`) proves the engine + the wire",
+    ];
+
+    for line in lines {
+        let toks = markdown_tokens(line);
+        let reconstructed: String = toks.iter().map(|t| t.text).collect();
+        println!("Original:      {line:?}");
+        println!("Reconstructed: {reconstructed:?}");
+        assert_eq!(reconstructed, line);
+    }
+}

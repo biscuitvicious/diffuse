@@ -303,146 +303,374 @@ pub fn for_each_markdown_token<'a>(text: &'a str, mut f: impl FnMut(ClassifiedTo
 }
 
 fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedToken<'a>)) {
-    static HEADING: OnceLock<Regex> = OnceLock::new();
-    static MD_INLINE: OnceLock<Regex> = OnceLock::new();
-    let heading =
-        HEADING.get_or_init(|| Regex::new(r"^(#{1,6})(\s+)(.*)$").expect("the md heading"));
-    if let Some(h) = heading.captures(text) {
-        f(ClassifiedToken {
-            color: "accent",
-            sgr: None,
-            text: h.get(1).unwrap().as_str(),
-        });
-        f(ClassifiedToken {
-            color: "text",
-            sgr: None,
-            text: h.get(2).unwrap().as_str(),
-        });
-        f(ClassifiedToken {
-            color: "accent",
-            sgr: Some(MD_SGR_BOLD),
-            text: h.get(3).unwrap().as_str(),
-        });
+    if text.is_empty() {
         return;
     }
-    let re = MD_INLINE.get_or_init(|| {
-        Regex::new(
-            r"(`[^`\n]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\s\n][^*\n]*\*|\[[^\]\n]+\](?:\([^)\n]+\))?)",
-        )
-        .expect("the md inline")
-    });
-    let mut last = 0usize;
-    for m in re.find_iter(text) {
-        if m.start() > last {
-            f(ClassifiedToken {
-                color: "text",
-                sgr: None,
-                text: &text[last..m.start()],
-            });
-        }
-        let tok = m.as_str();
-        if tok.starts_with('`') {
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "`",
-            });
-            f(ClassifiedToken {
-                color: "syntaxString",
-                sgr: None,
-                text: &tok[1..tok.len() - 1],
-            });
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "`",
-            });
-        } else if tok.starts_with("~~") {
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "~~",
-            });
-            for_each_md_inner_token(&tok[2..tok.len() - 2], MD_SGR_STRIKE, "mdStrike", &mut *f);
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "~~",
-            });
-        } else if tok.starts_with("**") {
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "**",
-            });
-            for_each_md_inner_token(&tok[2..tok.len() - 2], MD_SGR_BOLD, "mdBold", &mut *f);
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "**",
-            });
-        } else if tok.starts_with('[') {
-            if let Some(close) = tok.find("](") {
-                f(ClassifiedToken {
-                    color: "accent",
-                    sgr: None,
-                    text: "[",
-                });
-                for_each_md_inner_token(&tok[1..close], MD_SGR_UNDERLINE, "mdLink", &mut *f);
-                f(ClassifiedToken {
-                    color: "accent",
-                    sgr: None,
-                    text: "](",
-                });
-                f(ClassifiedToken {
-                    color: "mdUrl",
-                    sgr: Some(MD_SGR_UNDERLINE),
-                    text: &tok[close + 2..tok.len() - 1],
-                });
-                f(ClassifiedToken {
-                    color: "accent",
-                    sgr: None,
-                    text: ")",
-                });
-            } else {
-                f(ClassifiedToken {
-                    color: "accent",
-                    sgr: None,
-                    text: "[",
-                });
-                for_each_md_inner_token(
-                    &tok[1..tok.len() - 1],
-                    MD_SGR_UNDERLINE,
-                    "mdLink",
-                    &mut *f,
-                );
-                f(ClassifiedToken {
-                    color: "accent",
-                    sgr: None,
-                    text: "]",
-                });
-            }
-        } else {
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "*",
-            });
-            for_each_md_inner_token(&tok[1..tok.len() - 1], MD_SGR_ITALIC, "mdItalic", &mut *f);
-            f(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "*",
-            });
-        }
 
-        last = m.end();
+    use pulldown_cmark::{BlockQuoteKind, Event, Options, Parser, Tag, TagEnd};
+
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_FOOTNOTES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+    options.insert(Options::ENABLE_GFM);
+
+    let parser = Parser::new_ext(text, options);
+    let mut cursor = 0usize;
+
+    // Active formatting state stacks
+    let mut active_sgr: Option<u32> = None;
+    let mut active_color: &'static str = "text";
+    let mut is_heading = false;
+    let mut is_table_head = false;
+
+    for (event, range) in parser.into_offset_iter() {
+        let r_start = range.start.min(text.len());
+        let r_end = range.end.min(text.len());
+
+        match event {
+            Event::Start(tag) => {
+                match tag {
+                    Tag::Heading { .. } => {
+                        is_heading = true;
+                        active_sgr = Some(MD_SGR_BOLD);
+                        active_color = "accent";
+                        // Emit any leading hashes/spaces
+                        if cursor < r_end {
+                            let head_slice = &text[cursor..r_end];
+                            if let Some(pos) = head_slice.find(|c: char| c != '#' && c != ' ') {
+                                let hash_end = cursor + pos;
+                                let hashes = text[cursor..hash_end].trim_end();
+                                let spaces = &text[cursor + hashes.len()..hash_end];
+                                if !hashes.is_empty() {
+                                    f(ClassifiedToken {
+                                        color: "accent",
+                                        sgr: None,
+                                        text: hashes,
+                                    });
+                                }
+                                if !spaces.is_empty() {
+                                    f(ClassifiedToken {
+                                        color: "text",
+                                        sgr: None,
+                                        text: spaces,
+                                    });
+                                }
+                                cursor = hash_end;
+                            }
+                        }
+                    }
+                    Tag::Strong => {
+                        if cursor < r_start {
+                            f(ClassifiedToken {
+                                color: "accent",
+                                sgr: None,
+                                text: &text[cursor..r_start],
+                            });
+                            cursor = r_start;
+                        }
+                        active_sgr = Some(MD_SGR_BOLD);
+                        active_color = "mdBold";
+                    }
+                    Tag::Emphasis => {
+                        if cursor < r_start {
+                            f(ClassifiedToken {
+                                color: "accent",
+                                sgr: None,
+                                text: &text[cursor..r_start],
+                            });
+                            cursor = r_start;
+                        }
+                        active_sgr = Some(MD_SGR_ITALIC);
+                        active_color = "mdItalic";
+                    }
+                    Tag::Strikethrough => {
+                        if cursor < r_start {
+                            f(ClassifiedToken {
+                                color: "accent",
+                                sgr: None,
+                                text: &text[cursor..r_start],
+                            });
+                            cursor = r_start;
+                        }
+                        active_sgr = Some(MD_SGR_STRIKE);
+                        active_color = "mdStrike";
+                    }
+                    Tag::Link { .. } => {
+                        if cursor < r_start {
+                            f(ClassifiedToken {
+                                color: "accent",
+                                sgr: None,
+                                text: &text[cursor..r_start],
+                            });
+                            cursor = r_start;
+                        }
+                        active_sgr = Some(MD_SGR_UNDERLINE);
+                        active_color = "mdLink";
+                    }
+                    Tag::TableHead => {
+                        is_table_head = true;
+                        active_sgr = Some(MD_SGR_BOLD);
+                        active_color = "accent";
+                    }
+                    Tag::BlockQuote(alert) => {
+                        if cursor < r_start {
+                            f(ClassifiedToken {
+                                color: "accent",
+                                sgr: None,
+                                text: &text[cursor..r_start],
+                            });
+                            cursor = r_start;
+                        }
+                        if let Some(kind) = alert {
+                            match kind {
+                                BlockQuoteKind::Note | BlockQuoteKind::Tip => {
+                                    active_color = "syntaxFunction";
+                                }
+                                BlockQuoteKind::Important | BlockQuoteKind::Warning => {
+                                    active_color = "syntaxKeyword";
+                                }
+                                BlockQuoteKind::Caution => {
+                                    active_color = "syntaxType";
+                                }
+                            }
+                            active_sgr = Some(MD_SGR_BOLD);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::End(tag_end) => match tag_end {
+                TagEnd::Heading(_) => {
+                    is_heading = false;
+                    active_sgr = None;
+                    active_color = "text";
+                    if cursor < r_end {
+                        f(ClassifiedToken {
+                            color: "accent",
+                            sgr: Some(MD_SGR_BOLD),
+                            text: &text[cursor..r_end],
+                        });
+                        cursor = r_end;
+                    }
+                }
+                TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough => {
+                    if cursor < r_end {
+                        f(ClassifiedToken {
+                            color: "accent",
+                            sgr: None,
+                            text: &text[cursor..r_end],
+                        });
+                        cursor = r_end;
+                    }
+                    active_sgr = None;
+                    active_color = if is_heading || is_table_head {
+                        "accent"
+                    } else {
+                        "text"
+                    };
+                }
+                TagEnd::Link => {
+                    if cursor < r_end {
+                        let link_tail = &text[cursor..r_end];
+                        if let Some(close_bracket) = link_tail.find("](") {
+                            f(ClassifiedToken {
+                                color: "accent",
+                                sgr: None,
+                                text: &link_tail[..close_bracket + 2],
+                            });
+                            let url_and_paren = &link_tail[close_bracket + 2..];
+                            if let Some(paren) = url_and_paren.rfind(')') {
+                                f(ClassifiedToken {
+                                    color: "mdUrl",
+                                    sgr: Some(MD_SGR_UNDERLINE),
+                                    text: &url_and_paren[..paren],
+                                });
+                                f(ClassifiedToken {
+                                    color: "accent",
+                                    sgr: None,
+                                    text: &url_and_paren[paren..],
+                                });
+                            } else {
+                                f(ClassifiedToken {
+                                    color: "mdUrl",
+                                    sgr: Some(MD_SGR_UNDERLINE),
+                                    text: url_and_paren,
+                                });
+                            }
+                        } else {
+                            f(ClassifiedToken {
+                                color: "accent",
+                                sgr: None,
+                                text: link_tail,
+                            });
+                        }
+                        cursor = r_end;
+                    }
+                    active_sgr = None;
+                    active_color = "text";
+                }
+                TagEnd::TableHead => {
+                    is_table_head = false;
+                    active_sgr = None;
+                    active_color = "text";
+                }
+                TagEnd::BlockQuote(_) => {
+                    active_sgr = None;
+                    active_color = "text";
+                }
+                _ => {}
+            },
+            Event::Code(_) => {
+                if cursor < r_start {
+                    let gap = &text[cursor..r_start];
+                    let (gap_color, gap_sgr) = if gap.contains('|') {
+                        ("border", None)
+                    } else if gap.starts_with('>')
+                        || gap.starts_with('-')
+                        || gap.starts_with('*')
+                        || gap.starts_with('#')
+                        || gap.starts_with('[')
+                        || gap.ends_with(']')
+                        || gap.starts_with('`')
+                        || gap.starts_with('~')
+                    {
+                        ("accent", None)
+                    } else {
+                        (active_color, active_sgr)
+                    };
+                    f(ClassifiedToken {
+                        color: gap_color,
+                        sgr: gap_sgr,
+                        text: gap,
+                    });
+                }
+                let code_slice = &text[r_start..r_end];
+                let num_ticks = code_slice.chars().take_while(|&c| c == '`').count();
+                if num_ticks > 0 && code_slice.len() >= num_ticks * 2 {
+                    f(ClassifiedToken {
+                        color: "accent",
+                        sgr: None,
+                        text: &code_slice[..num_ticks],
+                    });
+                    f(ClassifiedToken {
+                        color: "syntaxString",
+                        sgr: active_sgr,
+                        text: &code_slice[num_ticks..code_slice.len() - num_ticks],
+                    });
+                    f(ClassifiedToken {
+                        color: "accent",
+                        sgr: None,
+                        text: &code_slice[code_slice.len() - num_ticks..],
+                    });
+                } else {
+                    f(ClassifiedToken {
+                        color: "syntaxString",
+                        sgr: active_sgr,
+                        text: code_slice,
+                    });
+                }
+                cursor = r_end;
+            }
+            Event::Text(_) => {
+                if cursor < r_start {
+                    let gap = &text[cursor..r_start];
+                    let (gap_color, gap_sgr) = if gap.contains('|') {
+                        ("border", None)
+                    } else if gap.starts_with('>')
+                        || gap.starts_with('-')
+                        || gap.starts_with('*')
+                        || gap.starts_with('#')
+                        || gap.starts_with('[')
+                        || gap.ends_with(']')
+                        || gap.starts_with('`')
+                        || gap.starts_with('~')
+                    {
+                        ("accent", None)
+                    } else {
+                        (active_color, active_sgr)
+                    };
+                    f(ClassifiedToken {
+                        color: gap_color,
+                        sgr: gap_sgr,
+                        text: gap,
+                    });
+                }
+                let tok_slice = &text[r_start..r_end];
+                f(ClassifiedToken {
+                    color: active_color,
+                    sgr: active_sgr,
+                    text: tok_slice,
+                });
+                cursor = r_end;
+            }
+            Event::TaskListMarker(_) => {
+                if cursor < r_start {
+                    f(ClassifiedToken {
+                        color: "accent",
+                        sgr: None,
+                        text: &text[cursor..r_start],
+                    });
+                }
+                f(ClassifiedToken {
+                    color: "accent",
+                    sgr: Some(MD_SGR_BOLD),
+                    text: &text[r_start..r_end],
+                });
+                cursor = r_end;
+            }
+            Event::Html(_) | Event::InlineHtml(_) => {
+                if cursor < r_start {
+                    f(ClassifiedToken {
+                        color: "accent",
+                        sgr: None,
+                        text: &text[cursor..r_start],
+                    });
+                }
+                f(ClassifiedToken {
+                    color: "syntaxKeyword",
+                    sgr: None,
+                    text: &text[r_start..r_end],
+                });
+                cursor = r_end;
+            }
+            Event::Rule => {
+                if cursor < r_start {
+                    f(ClassifiedToken {
+                        color: "accent",
+                        sgr: None,
+                        text: &text[cursor..r_start],
+                    });
+                }
+                f(ClassifiedToken {
+                    color: "border",
+                    sgr: None,
+                    text: &text[r_start..r_end],
+                });
+                cursor = r_end;
+            }
+            _ => {}
+        }
     }
-    if last < text.len() {
+
+    if cursor < text.len() {
+        let remaining = &text[cursor..];
+        let color = if remaining.contains('|') {
+            "border"
+        } else if remaining.starts_with('>')
+            || remaining.starts_with('-')
+            || remaining.starts_with('*')
+        {
+            "accent"
+        } else {
+            active_color
+        };
         f(ClassifiedToken {
-            color: "text",
-            sgr: None,
-            text: &text[last..],
+            color,
+            sgr: active_sgr,
+            text: remaining,
         });
     }
 }
