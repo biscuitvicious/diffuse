@@ -6,7 +6,7 @@ use std::{
 };
 
 use diffuse_core::{
-    notes::{NotesDB, Side},
+    notes::NotesDB,
     wire::{OutputFile, OutputRow, PipelineOutput},
 };
 use diffuse_render::{
@@ -25,10 +25,14 @@ use crate::{
     },
 };
 
+mod collapse;
+mod finder;
 mod flat;
 mod geometry;
 mod navigation;
+mod notes;
 mod query;
+mod selection;
 mod sync;
 
 pub struct AppState {
@@ -73,6 +77,43 @@ pub struct AppState {
     /// verbatim instead of re-clamping around the cursor — until the cursor
     /// moves or new user input arrives (see `execute`).
     scroll_pin: Option<(usize, usize)>,
+}
+
+/// Which neighbour row a merged-divider expansion should lock in place.
+///
+/// `BelowRow`: the row just below the divider (▲▲ fills from the top side,
+/// insertions land above the anchor). `AboveRow`: the row just above the
+/// divider (▼▼ fills from the bottom side, insertions land below the anchor,
+/// so the upper content never moves).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DividerFallback {
+    BelowRow,
+    AboveRow,
+}
+
+/// Everything needed to restore the viewport after a hunk-divider expansion:
+/// the cursor anchor, the divider's screen position, and both neighbour rows
+/// (as coordinates plus their pre-click text screen positions) for merge
+/// fallbacks.
+struct DividerAnchors {
+    cursor: CursorAnchor,
+    div_screen_y: usize,
+    below: Option<CursorAnchor>,
+    below_text_screen_y: Option<usize>,
+    above: Option<CursorAnchor>,
+    above_text_screen_y: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CursorAnchor {
+    FileHeader(usize),
+    HunkDivider(usize, usize),
+    Coord {
+        file_idx: usize,
+        new_line: Option<u32>,
+        old_line: Option<u32>,
+    },
+    Index(usize),
 }
 
 impl AppState {
@@ -156,161 +197,6 @@ impl AppState {
 
     pub fn current_flat_row(&self) -> Option<&FlatRow> {
         self.flat.get(self.row_idx)
-    }
-
-    /// Commit the note draft onto the current row (or active selection) and
-    /// persist it through the notes DB. Mirrors the reference
-    /// `commitNoteAction`.
-    pub fn commit_note_draft(&mut self) {
-        let text = match self.note_draft.take() {
-            Some(t) => t.trim().to_string(),
-            None => return,
-        };
-        if text.is_empty() {
-            return;
-        }
-        let (file, start, end, is_new) = if let Some(sel) = self.compute_selection() {
-            let file = self
-                .output
-                .files
-                .get(sel.file_idx)
-                .expect("selection file_idx out of bounds in output.files");
-            (file.path.clone(), sel.start, sel.end, sel.side_is_new)
-        } else {
-            let Some(file) = self.current_file() else {
-                return;
-            };
-            let Some(row) = self.current_flat_row() else {
-                return;
-            };
-            let Some(r) = self.row_of(row) else {
-                return;
-            };
-            let Some(c) = Self::row_coord(r) else {
-                return;
-            };
-            (file.path.clone(), c, c, r.new_line.is_some())
-        };
-        self.note_id_counter += 1;
-        let created_at = diffuse_core::notes::now_millis();
-        let note = diffuse_core::notes::ReviewNote {
-            id: format!(
-                "{:x}-{:x}-{:x}",
-                created_at,
-                std::process::id(),
-                self.note_id_counter
-            ),
-            file,
-            side: if is_new { Side::New } else { Side::Old },
-            start,
-            end,
-            text,
-            created_at,
-        };
-        diffuse_core::notes::add_note(&mut self.notes, &self.repo, note);
-        let _ = diffuse_core::notes::save_notes(&self.notes_path, &self.notes);
-        self.confirmed_sel = None;
-        self.anchor = None;
-    }
-
-    /// Delete notes overlapping the current row or active selection.
-    /// Persists immediately.
-    pub fn delete_notes(&mut self) {
-        let (file, start, end) = if let Some(sel) = self.compute_selection() {
-            let file = self
-                .output
-                .files
-                .get(sel.file_idx)
-                .expect("selection file_idx out of bounds in output.files");
-            (file.path.clone(), sel.start, sel.end)
-        } else {
-            let Some(file) = self.current_file() else {
-                return;
-            };
-            let Some(row) = self.current_flat_row() else {
-                return;
-            };
-            let Some(c) = self.flat_row_coord(row) else {
-                return;
-            };
-            (file.path.clone(), c, c)
-        };
-        let new_removed = diffuse_core::notes::remove_notes(
-            &mut self.notes,
-            &self.repo,
-            &file,
-            Side::New,
-            start,
-            end,
-        );
-        let old_removed = diffuse_core::notes::remove_notes(
-            &mut self.notes,
-            &self.repo,
-            &file,
-            Side::Old,
-            start,
-            end,
-        );
-        let removed = new_removed + old_removed;
-        let _ = diffuse_core::notes::save_notes(&self.notes_path, &self.notes);
-        self.confirmed_sel = None;
-        self.anchor = None;
-        self.status_message = Some((
-            if removed > 0 {
-                format!(
-                    "deleted {removed} note{}",
-                    if removed == 1 { "" } else { "s" }
-                )
-            } else {
-                "no note here".to_string()
-            },
-            removed > 0,
-        ));
-    }
-
-    /// Map of flat-row index → pre-rendered note callout lines for the
-    /// current file (`💬 [start-end] <markdown>`). A note anchors to the
-    /// LAST row whose coordinate falls in its range, else the file's first
-    /// row — mirroring the reference `noteByRow`.
-    fn note_callouts(&self) -> HashMap<usize, Vec<String>> {
-        let Some(f) = self.current_file() else {
-            return HashMap::new();
-        };
-        let file_idx = self.current_file_idx();
-        let mut out: HashMap<usize, Vec<String>> = HashMap::new();
-        for n in diffuse_core::notes::notes_for_file(&self.notes, &self.repo, &f.path) {
-            let mut at: Option<usize> = None;
-            for (i, item) in self.flat.iter().enumerate() {
-                if item.file_idx != file_idx {
-                    continue;
-                }
-                if let Some(c) = self.flat_row_coord(item)
-                    && c >= n.start
-                    && c <= n.end
-                {
-                    at = Some(i);
-                }
-            }
-            let at = at.unwrap_or_else(|| {
-                self.flat
-                    .iter()
-                    .position(|it| it.file_idx == file_idx)
-                    .unwrap_or(0)
-            });
-            let where_str = if n.end == n.start {
-                format!("{}", n.start)
-            } else {
-                format!("{}-{}", n.start, n.end)
-            };
-            let mut body = String::new();
-            for r in diffuse_core::notes::note_runs(&n.text) {
-                let color = r.color.as_deref().unwrap_or("warning");
-                body.push_str(&self.theme.render_token(color, &r.text, "ctx", None, r.sgr));
-            }
-            let line = format!("\x1b[38;5;220m   💬 [{}] \x1b[39m{}", where_str, body);
-            out.entry(at).or_default().push(line);
-        }
-        out
     }
 
     /// Render full visual screen frame as a String of ANSI terminal lines.
@@ -717,38 +603,6 @@ impl AppState {
         out
     }
 
-    pub fn open_file_finder(&mut self) {
-        let mut finder =
-            crate::finder::FileFinderState::new(&self.output.files, self.row_idx, self.scroll);
-        // Default selected match to the current file
-        let cur_fi = self.current_file_idx();
-        if let Some(pos) = finder.matches.iter().position(|m| m.file_idx == cur_fi) {
-            finder.selected_idx = pos;
-        }
-        self.file_finder = Some(finder);
-    }
-
-    pub fn cancel_file_finder(&mut self) {
-        if let Some(finder) = self.file_finder.take() {
-            self.row_idx = finder.initial_row_idx;
-            self.scroll = finder.initial_scroll;
-        }
-    }
-
-    pub fn confirm_file_finder(&mut self) {
-        self.file_finder = None;
-    }
-
-    pub fn track_finder_selection(&mut self) {
-        if let Some(fi) = self
-            .file_finder
-            .as_ref()
-            .and_then(super::finder::FileFinderState::selected_file_idx)
-        {
-            self.goto_file_idx(fi);
-        }
-    }
-
     /// Switch between the visual (reflowed) and raw unified-diff
     /// representations, anchoring the cursor at its exact line: capture
     /// `(file, coord, side)`, rebuild the other view, jump to the
@@ -928,59 +782,6 @@ impl AppState {
         self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
     }
 
-    pub fn toggle_file_collapse(&mut self, fi: usize) {
-        if self.collapsed_files.contains(&fi) {
-            self.collapsed_files.remove(&fi);
-        } else {
-            self.collapsed_files.insert(fi);
-        }
-        self.rebuild_flat_preserving_cursor(fi);
-    }
-
-    pub fn toggle_current_file_collapse(&mut self) {
-        let fi = self.current_file_idx();
-        self.toggle_file_collapse(fi);
-    }
-}
-
-/// Which neighbour row a merged-divider expansion should lock in place.
-///
-/// `BelowRow`: the row just below the divider (▲▲ fills from the top side,
-/// insertions land above the anchor). `AboveRow`: the row just above the
-/// divider (▼▼ fills from the bottom side, insertions land below the anchor,
-/// so the upper content never moves).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DividerFallback {
-    BelowRow,
-    AboveRow,
-}
-
-/// Everything needed to restore the viewport after a hunk-divider expansion:
-/// the cursor anchor, the divider's screen position, and both neighbour rows
-/// (as coordinates plus their pre-click text screen positions) for merge
-/// fallbacks.
-struct DividerAnchors {
-    cursor: CursorAnchor,
-    div_screen_y: usize,
-    below: Option<CursorAnchor>,
-    below_text_screen_y: Option<usize>,
-    above: Option<CursorAnchor>,
-    above_text_screen_y: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum CursorAnchor {
-    FileHeader(usize),
-    HunkDivider(usize, usize),
-    Coord {
-        file_idx: usize,
-        new_line: Option<u32>,
-        old_line: Option<u32>,
-    },
-    Index(usize),
-}
-
-impl AppState {
     /// Locate the flat index of the content row in `file_idx` matching the
     /// given new/old line coordinate, skipping file headers and hunk
     /// dividers.
@@ -1954,100 +1755,6 @@ impl AppState {
         true
     }
 
-    /// Line-coordinate selection over the current file, mirroring the
-    /// reference `computeSelection`: anchor..cursor snapped to coordinate
-    /// rows and clamped to the file. With no active anchor, the confirmed
-    /// selection is returned when it lives in the current file.
-    pub fn compute_selection(&self) -> Option<Selection> {
-        let Some(anchor) = self.anchor else {
-            return self
-                .confirmed_sel
-                .filter(|s| s.file_idx == self.current_file_idx());
-        };
-        let c_file = self.current_file_idx();
-        let mut lo = anchor.min(self.row_idx);
-        let mut hi = anchor.max(self.row_idx);
-        if self.flat.get(anchor).map(|r| r.file_idx) != Some(c_file) {
-            lo = self.first_row_of_file(c_file);
-        }
-        let fs = self.first_row_of_file(c_file);
-        let fe = self.last_row_of_file(c_file);
-        lo = lo.min(fe).max(fs);
-        hi = hi.min(fe).max(fs);
-        if hi < lo {
-            hi = lo;
-        }
-        lo = self.next_coord_row(lo);
-        hi = self.prev_coord_row(hi);
-        let first = self.flat.get(lo)?;
-        let last = self.flat.get(hi)?;
-        let r_first = self.row_of(first)?;
-        let r_last = self.row_of(last)?;
-        let side_is_new = r_first.new_line.is_some() || r_last.new_line.is_some();
-        let f = Self::row_coord(r_first)?;
-        let l = Self::row_coord(r_last)?;
-        Some(Selection {
-            file_idx: c_file,
-            start: f.min(l),
-            end: f.max(l),
-            side_is_new,
-        })
-    }
-
-    /// `v`/`V`: start the anchor at the cursor, or confirm the range into a
-    /// selection. Mirror of the reference `v` handler.
-    pub fn start_or_confirm_selection(&mut self) {
-        match self.anchor {
-            None => {
-                self.anchor = Some(self.row_idx);
-                self.sel_pivot = Some(self.row_idx);
-                self.confirmed_sel = None;
-            }
-            Some(_) => {
-                self.confirmed_sel = self.compute_selection();
-                self.anchor = None;
-            }
-        }
-    }
-
-    /// Set of flat rows inside the visual selection band (anchor active or a
-    /// confirmed selection), mirroring `component_render`'s band computation.
-    fn band_rows(&self) -> Vec<bool> {
-        let mut set = vec![false; self.flat.len()];
-        if let Some(anchor) = self.anchor {
-            let c_file = self.current_file_idx();
-            let lo = anchor.min(self.row_idx);
-            let hi = anchor.max(self.row_idx);
-            let lo = if self.flat.get(anchor).map(|r| r.file_idx) != Some(c_file) {
-                self.first_row_of_file(c_file)
-            } else {
-                lo
-            };
-            let fs = self.first_row_of_file(c_file);
-            let fe = self.last_row_of_file(c_file);
-            for i in fs.max(lo)..=fe.min(hi) {
-                if i < set.len() {
-                    set[i] = true;
-                }
-            }
-        } else if let Some(conf) = &self.confirmed_sel
-            && conf.file_idx == self.current_file_idx()
-        {
-            for (i, item) in self.flat.iter().enumerate() {
-                if item.file_idx != conf.file_idx {
-                    continue;
-                }
-                if let Some(c) = self.flat_row_coord(item)
-                    && c >= conf.start
-                    && c <= conf.end
-                {
-                    set[i] = true;
-                }
-            }
-        }
-        set
-    }
-
     /// Execute a high-level user command to mutate application state.
     pub fn execute(&mut self, cmd: TuiCommand) {
         // New user input invalidates a viewport pin — except the trailing
@@ -2426,146 +2133,6 @@ index 1111111..2222222 100644
     }
 
     #[test]
-    fn test_clicking_file_header_triangle_toggles_collapse() {
-        let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
-index 1111111..2222222 100644
---- a/filesystem.rs
-+++ b/filesystem.rs
-@@ -1025,6 +1025,8 @@ fn test() {
-     let x = 1;
--    // old comment — em dash
-+    // new comment — em dash updated
-+    let y = 2;
- }
-"#;
-        let new_content = [(
-            "filesystem.rs".to_string(),
-            "fn test() {\n    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}\n"
-                .to_string(),
-        )]
-        .into_iter()
-        .collect();
-        let old_content = [(
-            "filesystem.rs".to_string(),
-            "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),
-        )]
-        .into_iter()
-        .collect();
-        let mut state = AppState::new(
-            diffuse_core::pipeline::run_pipeline_full(
-                diff,
-                Some(new_content),
-                Some(old_content),
-                PipelineOptions::default(),
-            ),
-            "test_repo".into(),
-            std::env::temp_dir().join("diffuse-test-notes-header-triangle.json"),
-        );
-        state.render_frame(120, 30);
-
-        assert!(!state.collapsed_files.contains(&0), "starts expanded");
-        let initial_len = state.flat.len();
-
-        // Click exactly on the ▼ triangle (char col 12) on the header row
-        let header_vis = state
-            .visual_geometry(state.last_content_width)
-            .0
-            .first()
-            .copied()
-            .unwrap_or(0);
-        let click_row = state.last_viewport_start + header_vis.saturating_sub(state.scroll);
-
-        state.execute(TuiCommand::MouseClick {
-            row: click_row,
-            col: crate::view::diff_grid::FILE_HEADER_INDICATOR_COL,
-            shift: false,
-        });
-        assert!(
-            state.collapsed_files.contains(&0),
-            "clicking the triangle must collapse the file"
-        );
-        assert_eq!(state.flat.len(), 1, "collapsed to header only");
-
-        // Expand again via the (now ▸) triangle
-        state.execute(TuiCommand::MouseClick {
-            row: click_row,
-            col: crate::view::diff_grid::FILE_HEADER_INDICATOR_COL,
-            shift: false,
-        });
-        assert!(
-            !state.collapsed_files.contains(&0),
-            "clicking again must expand the file"
-        );
-        assert_eq!(state.flat.len(), initial_len);
-
-        // A click elsewhere on the header must NOT toggle — it selects.
-        state.execute(TuiCommand::MouseClick {
-            row: click_row,
-            col: crate::view::diff_grid::FILE_HEADER_INDICATOR_COL + 10,
-            shift: false,
-        });
-        assert!(
-            !state.collapsed_files.contains(&0),
-            "non-triangle header clicks must not collapse"
-        );
-    }
-
-    #[test]
-    fn test_note_commit_persists_and_deletes() {
-        let notes_path = std::env::temp_dir().join(format!(
-            "diffuse-test-note-lifecycle-{}.json",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&notes_path);
-        let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
-
-        let file = state.current_file().unwrap().path.clone();
-        state.note_draft = Some("check this **carefully**".into());
-        state.commit_note_draft();
-        assert!(state.note_draft.is_none());
-
-        let notes: Vec<_> =
-            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).collect();
-        assert_eq!(notes.len(), 1);
-        assert_eq!(notes[0].text, "check this **carefully**");
-        assert!(
-            notes[0].start > 0,
-            "note must anchor to a real row coordinate"
-        );
-
-        let on_disk = diffuse_core::notes::load_notes(&notes_path);
-        assert_eq!(
-            diffuse_core::notes::notes_for_file(&on_disk, "test_repo", &file).count(),
-            1,
-            "commit must persist through the notes DB file"
-        );
-
-        let frame = state.render_frame(100, 30);
-        assert!(
-            frame.contains("💬"),
-            "a committed note must render a callout: {:.200}",
-            frame
-        );
-
-        state.delete_notes();
-        assert!(
-            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file)
-                .next()
-                .is_none(),
-            "delete must remove the note from the DB"
-        );
-        let on_disk2 = diffuse_core::notes::load_notes(&notes_path);
-        assert!(
-            diffuse_core::notes::notes_for_file(&on_disk2, "test_repo", &file)
-                .next()
-                .is_none(),
-            "delete must persist the removal"
-        );
-
-        let _ = std::fs::remove_file(notes_path);
-    }
-
-    #[test]
     fn test_help_modal_toggles_and_renders() {
         let mut state = AppState::new(
             sample_output(),
@@ -2586,106 +2153,6 @@ index 1111111..2222222 100644
             "help modal must render when enabled"
         );
         assert!(with_help.contains("toggle syntax"));
-    }
-
-    #[test]
-    fn test_selection_anchor_span_snaps_to_coord_rows() {
-        let mut state = AppState::new(
-            sample_output(),
-            "test_repo".into(),
-            std::env::temp_dir().join("diffuse-test-notes.json"),
-        );
-        // flat[0] is the file header (no coordinate); AppState starts on the
-        // first coordinate row (1020). The engine pads the hunk with empty
-        // above-context rows (1022-1024), then the real rows: ctx
-        // " let x = 1;" (1025), the mod pair (1026), the add (1027). Walk to
-        // the first real row, anchor, extend over the mod.
-        for _ in 0..3 {
-            state.move_down();
-        }
-        state.start_or_confirm_selection();
-        state.move_down();
-        state.move_down();
-
-        let sel = state
-            .compute_selection()
-            .expect("anchor over coordinate rows must yield a selection");
-        assert_eq!(sel.file_idx, 0);
-        assert!(sel.start < sel.end, "range must span two rows");
-        assert_eq!(sel.start, 1025);
-        assert_eq!(sel.end, 1027);
-        assert!(
-            sel.side_is_new,
-            "a range led by a new-side row is a new-side selection"
-        );
-    }
-
-    #[test]
-    fn test_selection_v_confirm_clears_anchor_and_band_renders() {
-        let mut state = AppState::new(
-            sample_output(),
-            "test_repo".into(),
-            std::env::temp_dir().join("diffuse-test-notes.json"),
-        );
-        for _ in 0..3 {
-            state.move_down();
-        }
-        state.start_or_confirm_selection();
-        state.move_down();
-        state.move_down();
-
-        let frame = state.render_frame(100, 30);
-        assert!(
-            frame.contains("\x1b[48;5;240m"),
-            "an active anchor must band the rows between anchor and cursor"
-        );
-
-        state.start_or_confirm_selection();
-        assert!(state.anchor.is_none(), "confirming clears the anchor");
-        let sel = state
-            .confirmed_sel
-            .expect("confirm must record a selection");
-        assert_eq!(sel.start, 1025);
-        assert_eq!(sel.end, 1027);
-
-        let frame2 = state.render_frame(100, 30);
-        assert!(
-            frame2.contains("\x1b[48;5;240m"),
-            "a confirmed selection must keep banding its coordinate range"
-        );
-    }
-
-    #[test]
-    fn test_selection_requires_coord_rows() {
-        let mut state = AppState::new(
-            sample_output(),
-            "test_repo".into(),
-            std::env::temp_dir().join("diffuse-test-notes.json"),
-        );
-        // Anchor on the file header (no coordinate) and confirm in place: the
-        // range collapses onto the header which carries no line number, so
-        // the reference computes no selection.
-        state.move_up();
-        state.start_or_confirm_selection();
-        state.start_or_confirm_selection();
-        assert!(state.anchor.is_none());
-        assert!(state.confirmed_sel.is_none(), "header has no coordinate");
-
-        // Anchoring on the header then walking onto a coordinate row snaps
-        // the low end down to the first coordinate row of the file.
-        let mut state = AppState::new(
-            sample_output(),
-            "test_repo".into(),
-            std::env::temp_dir().join("diffuse-test-notes.json"),
-        );
-        state.move_up();
-        state.start_or_confirm_selection();
-        state.move_down();
-        let sel = state
-            .compute_selection()
-            .expect("anchor over the header must snap to a coordinate row");
-        assert_eq!(sel.start, 1022, "snap to the first padded ctx row");
-        assert_eq!(sel.end, 1022);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 - [x] Phase 1 — Scaffolding & Flat Model
 - [x] Phase 2 — Geometry & Navigation
-- [ ] Phase 3 — Selection, Notes, Finder & Collapse
+- [x] Phase 3 — Selection, Notes, Finder & Collapse
 - [ ] Phase 4 — Anchoring & Context Expansion
 - [ ] Phase 5 — Rendering & Dispatch
 
