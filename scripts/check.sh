@@ -9,6 +9,7 @@ fmt_mode=apply
 clippy_mode=apply
 no_test=false
 no_extension=false
+no_install=false
 
 # Option parsing loop
 while [[ $# -gt 0 ]]; do
@@ -27,6 +28,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-extension)
             no_extension=true
+            shift
+            ;;
+        --no-install)
+            no_install=true
             shift
             ;;
         *)
@@ -102,6 +107,23 @@ if [ "$no_extension" != true ] && [ -d "extension/pi" ]; then
     (cd extension/pi && npm test --ignore-scripts)
     t_end=$(date +%s%N)
     echo "-----{ EXTENSION: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
+fi
+
+# 6. Automatic Release Install & Extension Sync
+if [ "$no_install" != true ]; then
+    echo
+    echo "-----{ INSTALL: RELEASE BINARY & PI EXTENSION }-----"
+    t_start=$(date +%s%N)
+    if [ -f "scripts/install.sh" ]; then
+        ./scripts/install.sh
+    else
+        cargo install --locked --path crates/diffuse --force
+    fi
+    if [ -f "extension/pi/scripts/install.sh" ]; then
+        ./extension/pi/scripts/install.sh
+    fi
+    t_end=$(date +%s%N)
+    echo "-----{ INSTALL: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
 fi
 
 total_end=$(date +%s%N)

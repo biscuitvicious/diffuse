@@ -10,6 +10,7 @@ diffuse-core = { workspace = true }
 diffuse-render = { workspace = true }
 diffuse-syntax = { workspace = true }
 crossterm = { workspace = true }
+ratatui = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 serde = { workspace = true }

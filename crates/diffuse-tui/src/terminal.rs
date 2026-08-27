@@ -14,11 +14,12 @@ use crossterm::{
         size as terminal_size,
     },
 };
+use ratatui::{Frame, Terminal, backend::CrosstermBackend};
 
 /// RAII Guard that manages terminal raw mode, alternate screen buffer, and
-/// mouse capture.
+/// mouse capture using Ratatui with a Crossterm backend.
 pub struct TerminalGuard {
-    stdout: Stdout,
+    terminal: Terminal<CrosstermBackend<Stdout>>,
     active: bool,
 }
 
@@ -34,8 +35,10 @@ impl TerminalGuard {
             cursor::Hide
         )?;
         stdout.flush()?;
+        let backend = CrosstermBackend::new(stdout);
+        let terminal = Terminal::new(backend)?;
         Ok(Self {
-            stdout,
+            terminal,
             active: true,
         })
     }
@@ -45,13 +48,13 @@ impl TerminalGuard {
     pub fn suspend(&mut self) -> io::Result<()> {
         if self.active {
             execute!(
-                self.stdout,
+                self.terminal.backend_mut(),
                 LeaveAlternateScreen,
                 DisableMouseCapture,
                 cursor::Show
             )?;
             disable_raw_mode()?;
-            self.stdout.flush()?;
+            self.terminal.backend_mut().flush()?;
             self.active = false;
         }
         Ok(())
@@ -62,12 +65,13 @@ impl TerminalGuard {
         if !self.active {
             enable_raw_mode()?;
             execute!(
-                self.stdout,
+                self.terminal.backend_mut(),
                 EnterAlternateScreen,
                 EnableMouseCapture,
                 cursor::Hide
             )?;
-            self.stdout.flush()?;
+            self.terminal.backend_mut().flush()?;
+            self.terminal.clear()?;
             self.active = true;
         }
         Ok(())
@@ -75,7 +79,10 @@ impl TerminalGuard {
 
     /// Query the current terminal dimensions (columns, rows).
     pub fn size(&self) -> (u16, u16) {
-        terminal_size().unwrap_or((80, 24))
+        self.terminal
+            .size()
+            .map(|s| (s.width, s.height))
+            .unwrap_or_else(|_| terminal_size().unwrap_or((80, 24)))
     }
 
     /// Poll for terminal events with a timeout.
@@ -87,11 +94,20 @@ impl TerminalGuard {
         }
     }
 
+    /// Draw a frame using Ratatui.
+    pub fn draw<F>(&mut self, f: F) -> io::Result<()>
+    where
+        F: FnOnce(&mut Frame),
+    {
+        self.terminal.draw(f)?;
+        Ok(())
+    }
+
     /// Write raw ANSI bytes directly to the terminal stdout.
     pub fn write_frame(&mut self, frame: &str) -> io::Result<()> {
-        execute!(self.stdout, cursor::MoveTo(0, 0))?;
-        self.stdout.write_all(frame.as_bytes())?;
-        self.stdout.flush()?;
+        execute!(self.terminal.backend_mut(), cursor::MoveTo(0, 0))?;
+        self.terminal.backend_mut().write_all(frame.as_bytes())?;
+        self.terminal.backend_mut().flush()?;
         Ok(())
     }
 }
@@ -99,5 +115,34 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = self.suspend();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        layout::Rect,
+        widgets::{Block, Borders, Paragraph},
+    };
+
+    #[test]
+    fn test_ratatui_test_backend_draw() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|f| {
+                let size = f.area();
+                assert_eq!(size, Rect::new(0, 0, 40, 10));
+                let p =
+                    Paragraph::new("diffuse review").block(Block::default().borders(Borders::ALL));
+                f.render_widget(p, size);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        assert_eq!(buffer[(1, 1)].symbol(), "d");
     }
 }

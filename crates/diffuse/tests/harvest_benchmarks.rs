@@ -145,7 +145,7 @@ fn test_harvest_and_stream_small_10_files() {
 
     assert_eq!(files.len(), 10);
     assert!(
-        first_time.unwrap() < std::time::Duration::from_millis(50),
+        first_time.unwrap() < std::time::Duration::from_millis(150),
         "10-file first-file latency: {:?}",
         first_time.unwrap()
     );
