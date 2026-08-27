@@ -1,7 +1,7 @@
 # Ratatui TUI Layout & Rendering Migration
 
 - [x] Phase 1 — Terminal Backend & Ratatui Shell Integration (`crates/diffuse-tui`)
-- [ ] Phase 2 — Layout Architecture & Structural Components (Header, Status Bar, Bottom Ribbon)
+- [x] Phase 2 — Layout Architecture & Structural Components (Header, Status Bar, Bottom Ribbon)
 - [ ] Phase 3 — Modal Overlays (File Finder, Help Modal, Note Draft)
 - [ ] Phase 4 — Core Diff Grid & Scrollbar Widget Migration
 - [ ] Phase 5 — Mouse Coordinate Hit-Testing & External Editor Suspension

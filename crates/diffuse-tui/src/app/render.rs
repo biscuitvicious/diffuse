@@ -1,11 +1,21 @@
 use std::collections::HashMap;
 
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout},
+    style::{Color, Style},
+    widgets::Paragraph,
+};
+
 use crate::{
     core::parse::RowKind,
     render::{render_raw_row, render_row_segment, slice_by_visual_width, styled_prefix},
     view::{
-        file_header_text,
-        header::{render_bottom_ribbon, render_header_bar, render_status_bar, visible_width},
+        bottom_ribbon_lines, file_header_text,
+        header::{
+            header_bar_line, render_bottom_ribbon, render_header_bar, render_status_bar,
+            status_bar_line, visible_width,
+        },
         hunk_divider_text,
         modals::{render_finder_modal, render_help_modal},
         render_bottom_gap_divider, render_file_header_segment, render_hunk_divider_segment,
@@ -596,5 +606,107 @@ impl AppState {
         let max_rows = self.viewport_height.max(1);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
+    }
+
+    /// Render visual frame to a Ratatui [`Frame`] with structured layout
+    /// components.
+    pub fn render_ratatui_frame(&mut self, f: &mut Frame) {
+        let area = f.area();
+        let width = area.width as usize;
+        let cur_fi = self.current_file_idx();
+        let file = match self.output.files.get(cur_fi) {
+            Some(file) => file,
+            None => {
+                let p = Paragraph::new(" No diff to display.")
+                    .style(Style::default().fg(Color::Indexed(244)));
+                f.render_widget(p, area);
+                return;
+            }
+        };
+
+        let has_status_msg = self.status_message.is_some();
+        let has_note_draft = self.note_draft.is_some();
+
+        let mut constraints = vec![
+            Constraint::Length(1), // Header bar
+            Constraint::Length(1), // Secondary status bar
+        ];
+        if has_status_msg {
+            constraints.push(Constraint::Length(1));
+        }
+        if has_note_draft {
+            constraints.push(Constraint::Length(1));
+        }
+        constraints.push(Constraint::Min(1)); // Main diff area
+        constraints.push(Constraint::Length(2)); // Bottom ribbon
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area);
+
+        let mut chunk_idx = 0;
+
+        // 1. Header Bar
+        let header_line = header_bar_line(&self.repo, file);
+        f.render_widget(Paragraph::new(header_line), chunks[chunk_idx]);
+        chunk_idx += 1;
+
+        // 2. Status Bar
+        let status_ctx = crate::view::StatusBarContext {
+            cur_fi,
+            total_files: self.output.files.len(),
+            cur_hunk: self.current_hunk().unwrap_or(0),
+            total_hunks: file.hunks.len().max(1),
+            raw_diff: self.raw_diff,
+            col_offset: self.col_offset,
+            num_buffer: &self.num_buffer,
+            branch: &self.output.branch,
+            width,
+            is_streaming: self.is_streaming,
+        };
+        let status_line = status_bar_line(status_ctx);
+        f.render_widget(Paragraph::new(status_line), chunks[chunk_idx]);
+        chunk_idx += 1;
+
+        // 3. Status Message
+        if let Some((ref msg, is_ok)) = self.status_message {
+            let color = if is_ok {
+                Color::Indexed(120)
+            } else {
+                Color::Indexed(203)
+            };
+            let p = Paragraph::new(format!(" {msg}")).style(Style::default().fg(color));
+            f.render_widget(p, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
+
+        // 4. Note Draft
+        if let Some(ref draft) = self.note_draft {
+            let loc = format!(
+                "{}:{}",
+                file.path,
+                self.current_flat_row()
+                    .and_then(|fr| self.flat_row_coord(fr))
+                    .unwrap_or(0)
+            );
+            let p = Paragraph::new(format!(
+                " Note on {loc}: {draft}_  [ctrl+enter save · esc cancel]"
+            ))
+            .style(Style::default().fg(Color::Indexed(220)));
+            f.render_widget(p, chunks[chunk_idx]);
+            chunk_idx += 1;
+        }
+
+        let diff_area = chunks[chunk_idx];
+        chunk_idx += 1;
+        let ribbon_area = chunks[chunk_idx];
+
+        // 5. Bottom Ribbon
+        let (div_line, rib_line) = bottom_ribbon_lines(width);
+        f.render_widget(Paragraph::new(vec![div_line, rib_line]), ribbon_area);
+
+        // Update viewport metrics for diff area
+        self.viewport_height = diff_area.height as usize;
     }
 }

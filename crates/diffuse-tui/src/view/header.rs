@@ -209,9 +209,183 @@ pub fn render_bottom_ribbon(width: usize) -> (String, String) {
     (divider, ribbon)
 }
 
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+};
+
+/// Render the review header bar as a styled Ratatui [`Line`].
+pub fn header_bar_line(repo: &str, file: &OutputFile) -> Line<'static> {
+    let counts = &file.counts;
+    let note_count = file.notes.len();
+    let note_s = format!(
+        "{note_count} note{}",
+        if note_count == 1 { "" } else { "s" }
+    );
+    let mut spans = vec![
+        Span::styled(
+            " Review: ",
+            Style::default()
+                .fg(Color::Indexed(231))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            repo.to_string(),
+            Style::default()
+                .fg(Color::Indexed(117))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::default().fg(Color::Indexed(240))),
+        Span::styled(
+            file.path.clone(),
+            Style::default()
+                .fg(Color::Indexed(231))
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" ({}) · ", file.status),
+            Style::default().fg(Color::Indexed(244)),
+        ),
+        Span::styled(
+            format!("+{}", counts.adds),
+            Style::default().fg(Color::Indexed(120)),
+        ),
+    ];
+    if counts.dels > 0 {
+        spans.push(Span::styled(
+            format!(" −{}", counts.dels),
+            Style::default().fg(Color::Indexed(203)),
+        ));
+    }
+    if counts.mods > 0 {
+        spans.push(Span::styled(
+            format!(" ~{}", counts.mods),
+            Style::default().fg(Color::Indexed(220)),
+        ));
+    }
+    if counts.movs > 0 {
+        spans.push(Span::styled(
+            format!(" ≈{} moved", counts.movs),
+            Style::default().fg(Color::Indexed(183)),
+        ));
+    }
+    spans.push(Span::styled(
+        format!(" · {note_s}"),
+        Style::default().fg(Color::Indexed(244)),
+    ));
+
+    Line::from(spans).style(Style::default().bg(Color::Indexed(237)))
+}
+
+/// Render the secondary status bar as a styled Ratatui [`Line`].
+pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
+    let mut spans = vec![
+        Span::raw(" "),
+        Span::styled(
+            format!("{}/{} files", ctx.cur_fi + 1, ctx.total_files),
+            Style::default()
+                .fg(Color::Indexed(183))
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if ctx.is_streaming {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            "● streaming...",
+            Style::default()
+                .fg(Color::Indexed(117))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.push(Span::styled(
+        " · ",
+        Style::default().fg(Color::Indexed(240)),
+    ));
+    spans.push(Span::styled(
+        format!("hunk {}/{}", ctx.cur_hunk + 1, ctx.total_hunks),
+        Style::default()
+            .fg(Color::Indexed(220))
+            .add_modifier(Modifier::BOLD),
+    ));
+    if ctx.raw_diff {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            "raw diff",
+            Style::default()
+                .fg(Color::Indexed(220))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if ctx.col_offset > 0 {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            format!("col {}+", ctx.col_offset),
+            Style::default().fg(Color::Indexed(244)),
+        ));
+    }
+    if !ctx.num_buffer.is_empty() {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            format!("go {}", ctx.num_buffer),
+            Style::default()
+                .fg(Color::Indexed(221))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if !ctx.branch.is_empty() {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            "branch:",
+            Style::default().fg(Color::Indexed(244)),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            ctx.branch.to_string(),
+            Style::default()
+                .fg(Color::Indexed(252))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Render the bottom navigation key-bindings ribbon as styled Ratatui
+/// [`Line`]s.
+pub fn bottom_ribbon_lines(width: usize) -> (Line<'static>, Line<'static>) {
+    let divider = Line::from(Span::styled(
+        format!(" {}", "─".repeat(width.saturating_sub(2).min(60))),
+        Style::default().fg(Color::Indexed(244)),
+    ));
+    let ribbon_text = truncate_pad(
+        " [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help",
+        width.saturating_sub(1),
+    );
+    let ribbon = Line::from(Span::styled(
+        ribbon_text,
+        Style::default().fg(Color::Indexed(244)),
+    ));
+    (divider, ribbon)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::counts::FileCounts;
 
     #[test]
     fn test_render_status_bar_styling() {
@@ -240,5 +414,57 @@ mod tests {
             rendered.contains("38;5;220m"),
             "hunk count in status bar must have golden-amber tint 220"
         );
+    }
+
+    #[test]
+    fn test_ratatui_header_and_status_lines() {
+        let file = OutputFile {
+            path: "src/main.rs".to_string(),
+            status: "modified".to_string(),
+            new_line_count: 10,
+            old_line_count: 10,
+            new_content: vec![],
+            old_content: vec![],
+            hunks: vec![],
+            raw_hunks: vec![],
+            counts: FileCounts {
+                adds: 5,
+                dels: 2,
+                mods: 1,
+                movs: 0,
+            },
+            fences: vec![],
+            notes: vec![],
+            content_runs: vec![],
+            rows: vec![],
+        };
+
+        let header_line = header_bar_line("diffuse", &file);
+        assert!(header_line.to_string().contains("Review: diffuse"));
+        assert!(header_line.to_string().contains("src/main.rs"));
+        assert!(header_line.to_string().contains("+5 −2 ~1"));
+
+        let ctx = StatusBarContext {
+            cur_fi: 0,
+            total_files: 2,
+            cur_hunk: 0,
+            total_hunks: 1,
+            raw_diff: false,
+            col_offset: 4,
+            num_buffer: "12",
+            branch: "main",
+            width: 80,
+            is_streaming: true,
+        };
+        let status_line = status_bar_line(ctx);
+        assert!(status_line.to_string().contains("1/2 files"));
+        assert!(status_line.to_string().contains("streaming..."));
+        assert!(status_line.to_string().contains("col 4+"));
+        assert!(status_line.to_string().contains("go 12"));
+        assert!(status_line.to_string().contains("branch: main"));
+
+        let (div, rib) = bottom_ribbon_lines(80);
+        assert!(div.to_string().contains("──"));
+        assert!(rib.to_string().contains("[j/k]move"));
     }
 }

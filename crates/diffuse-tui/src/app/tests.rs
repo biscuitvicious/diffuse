@@ -1867,3 +1867,58 @@ index 1111111..2222222 100644
         "two presses on a 10-line gap must fully consume and merge it"
     );
 }
+
+#[test]
+fn test_render_ratatui_frame_layout() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+ fn hello() {
+-    println!("old");
++    println!("new");
+ }
+"#;
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-ratatui-notes.json"),
+    );
+    state.status_message = Some(("Saved note".to_string(), true));
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    // First line must contain "Review: diffuse"
+    let mut line0 = String::new();
+    for x in 0..80 {
+        line0.push_str(buffer[(x, 0)].symbol());
+    }
+    assert!(line0.contains("Review: diffuse"));
+    assert!(line0.contains("src/lib.rs"));
+
+    // Second line must contain files and hunks badge
+    let mut line1 = String::new();
+    for x in 0..80 {
+        line1.push_str(buffer[(x, 1)].symbol());
+    }
+    assert!(line1.contains("1/1 files"));
+    assert!(line1.contains("hunk 1/1"));
+
+    // Third line must contain the status message "Saved note"
+    let mut line2 = String::new();
+    for x in 0..80 {
+        line2.push_str(buffer[(x, 2)].symbol());
+    }
+    assert!(line2.contains("Saved note"));
+}

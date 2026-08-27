@@ -11,7 +11,8 @@ pub use diff_grid::{
     render_hunk_divider, render_hunk_divider_segment,
 };
 pub use header::{
-    StatusBarContext, render_bottom_ribbon, render_header_bar, render_status_bar, truncate_pad,
-    visible_width, wrap_text_by_visual_width,
+    StatusBarContext, bottom_ribbon_lines, header_bar_line, render_bottom_ribbon,
+    render_header_bar, render_status_bar, status_bar_line, truncate_pad, visible_width,
+    wrap_text_by_visual_width,
 };
 pub use modals::{render_finder_modal, render_help_modal};
