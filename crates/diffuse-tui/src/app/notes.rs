@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use crate::core::notes::{
-    ReviewNote, Side, add_note, note_runs, notes_for_file, now_millis, remove_notes,
-    save_notes,
+    ReviewNote, Side, add_note, note_runs, notes_for_file, now_millis, remove_notes, save_notes,
 };
 
 use super::AppState;
