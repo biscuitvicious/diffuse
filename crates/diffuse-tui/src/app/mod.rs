@@ -7,7 +7,7 @@ use std::{
 
 use diffuse_core::{
     notes::NotesDB,
-    wire::{OutputFile, OutputRow, PipelineOutput},
+    wire::{OutputFile, PipelineOutput},
 };
 use diffuse_render::{
     DiffuseTheme, render_raw_row, render_row_segment, slice_by_visual_width, styled_prefix,
@@ -25,7 +25,9 @@ use crate::{
     },
 };
 
+mod anchor;
 mod collapse;
+mod context;
 mod finder;
 mod flat;
 mod geometry;
@@ -77,43 +79,6 @@ pub struct AppState {
     /// verbatim instead of re-clamping around the cursor — until the cursor
     /// moves or new user input arrives (see `execute`).
     scroll_pin: Option<(usize, usize)>,
-}
-
-/// Which neighbour row a merged-divider expansion should lock in place.
-///
-/// `BelowRow`: the row just below the divider (▲▲ fills from the top side,
-/// insertions land above the anchor). `AboveRow`: the row just above the
-/// divider (▼▼ fills from the bottom side, insertions land below the anchor,
-/// so the upper content never moves).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DividerFallback {
-    BelowRow,
-    AboveRow,
-}
-
-/// Everything needed to restore the viewport after a hunk-divider expansion:
-/// the cursor anchor, the divider's screen position, and both neighbour rows
-/// (as coordinates plus their pre-click text screen positions) for merge
-/// fallbacks.
-struct DividerAnchors {
-    cursor: CursorAnchor,
-    div_screen_y: usize,
-    below: Option<CursorAnchor>,
-    below_text_screen_y: Option<usize>,
-    above: Option<CursorAnchor>,
-    above_text_screen_y: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum CursorAnchor {
-    FileHeader(usize),
-    HunkDivider(usize, usize),
-    Coord {
-        file_idx: usize,
-        new_line: Option<u32>,
-        old_line: Option<u32>,
-    },
-    Index(usize),
 }
 
 impl AppState {
@@ -781,980 +746,9 @@ impl AppState {
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
     }
+}
 
-    /// Locate the flat index of the content row in `file_idx` matching the
-    /// given new/old line coordinate, skipping file headers and hunk
-    /// dividers.
-    fn capture_cursor_anchor(&self) -> (CursorAnchor, usize) {
-        let old_vis = self.cursor_visual_line();
-        let screen_y = old_vis.saturating_sub(self.scroll);
-
-        let anchor = if let Some(fr) = self.current_flat_row() {
-            if fr.is_file_header {
-                CursorAnchor::FileHeader(fr.file_idx)
-            } else if fr.is_hunk_divider {
-                CursorAnchor::HunkDivider(fr.file_idx, fr.hunk_idx)
-            } else if let Some(r) = self.row_of(fr) {
-                CursorAnchor::Coord {
-                    file_idx: fr.file_idx,
-                    new_line: r.new_line,
-                    old_line: r.old_line,
-                }
-            } else {
-                CursorAnchor::Index(self.row_idx)
-            }
-        } else {
-            CursorAnchor::Index(self.row_idx)
-        };
-
-        (anchor, screen_y)
-    }
-
-    fn restore_cursor_anchor(&mut self, anchor: CursorAnchor, screen_y: usize, _sep_shift: usize) {
-        let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_raw_flat(&self.output, &self.collapsed_files)
-        } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files)
-        };
-        self.flat = flat;
-        self.hunk_starts = hunk_starts;
-
-        let found_pos = match anchor {
-            CursorAnchor::FileHeader(fi) => self
-                .flat
-                .iter()
-                .position(|fr| fr.file_idx == fi && fr.is_file_header),
-            CursorAnchor::HunkDivider(fi, hi) => self
-                .flat
-                .iter()
-                .position(|fr| fr.file_idx == fi && fr.is_hunk_divider && fr.hunk_idx == hi),
-            CursorAnchor::Coord {
-                file_idx,
-                new_line,
-                old_line,
-            } => self.flat.iter().position(|fr| {
-                fr.file_idx == file_idx
-                    && !fr.is_file_header
-                    && !fr.is_hunk_divider
-                    && self.row_of(fr).is_some_and(|r| {
-                        if let Some(nl) = new_line {
-                            r.new_line == Some(nl)
-                        } else if let Some(ol) = old_line {
-                            r.old_line == Some(ol)
-                        } else {
-                            false
-                        }
-                    })
-            }),
-            CursorAnchor::Index(idx) => Some(idx),
-        };
-
-        if let Some(pos) = found_pos {
-            self.row_idx = pos;
-        } else if self.row_idx >= self.flat.len() {
-            self.row_idx = self.flat.len().saturating_sub(1);
-        }
-
-        let new_vis = self.cursor_visual_line();
-        let (_starts, _counts, _seg, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
-        let max_rows = self.viewport_height.max(1);
-        let max_scroll = total_vis_lines.saturating_sub(max_rows);
-        self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
-    }
-
-    fn capture_divider_anchor(&self, fi: usize, hi: usize) -> DividerAnchors {
-        let (cursor, _cursor_screen_y) = self.capture_cursor_anchor();
-        let (starts, counts, seg_counts, _) = self.visual_geometry(self.last_content_width);
-        let div_start = self
-            .hunk_starts
-            .iter()
-            .find(|hs| hs.file == fi && hs.hunk == hi)
-            .map(|hs| hs.flat);
-        let div_vis = div_start
-            .map(|flat| starts[flat])
-            .unwrap_or_else(|| self.cursor_visual_line());
-        let div_screen_y = div_vis.saturating_sub(self.scroll);
-
-        // Flat indices that carry leading hunk-divider segments.
-        let div_flats: HashSet<usize> = self.hunk_starts.iter().map(|hs| hs.flat).collect();
-        // Visual offset of a flat entry's text from its block start (leading
-        // divider segments, if any).
-        let text_off = |pos: usize| -> usize {
-            if div_flats.contains(&pos) {
-                counts[pos].saturating_sub(seg_counts[pos])
-            } else {
-                0
-            }
-        };
-        let coord_of = |pos: usize| -> Option<CursorAnchor> {
-            let fr = self.flat.get(pos)?;
-            if fr.is_file_header || fr.is_hunk_divider {
-                return None;
-            }
-            let r = self.row_of(fr)?;
-            Some(CursorAnchor::Coord {
-                file_idx: fr.file_idx,
-                new_line: r.new_line,
-                old_line: r.old_line,
-            })
-        };
-
-        // The divider renders as leading segments of the hunk's first row
-        // entry, so that entry *is* the row just below the divider. The row
-        // above is the previous flat entry (the last row of the previous hunk).
-        let below = div_start.and_then(coord_of);
-        let below_text_screen_y = div_start
-            .map(|flat| starts[flat] + text_off(flat))
-            .map(|vis| vis.saturating_sub(self.scroll));
-        let above = div_start
-            .filter(|flat| *flat > 0)
-            .and_then(|flat| coord_of(flat - 1));
-        let above_text_screen_y = div_start
-            .filter(|flat| *flat > 0)
-            .map(|flat| starts[flat - 1] + text_off(flat - 1))
-            .map(|vis| vis.saturating_sub(self.scroll));
-
-        DividerAnchors {
-            cursor,
-            div_screen_y,
-            below,
-            below_text_screen_y,
-            above,
-            above_text_screen_y,
-        }
-    }
-
-    fn restore_divider_pivot(
-        &mut self,
-        anchors: DividerAnchors,
-        fi: usize,
-        hi: usize,
-        fallback: DividerFallback,
-    ) {
-        let cursor_anchor = anchors.cursor;
-        let div_screen_y = anchors.div_screen_y;
-        let (flat, hunk_starts) = if self.raw_diff {
-            Self::build_raw_flat(&self.output, &self.collapsed_files)
-        } else {
-            Self::build_visual_flat(&self.output, &self.collapsed_files)
-        };
-        self.flat = flat;
-        self.hunk_starts = hunk_starts;
-
-        let found_pos = match cursor_anchor {
-            CursorAnchor::FileHeader(f) => self
-                .flat
-                .iter()
-                .position(|fr| fr.file_idx == f && fr.is_file_header),
-            CursorAnchor::HunkDivider(f, h) => self
-                .flat
-                .iter()
-                .position(|fr| fr.file_idx == f && fr.is_hunk_divider && fr.hunk_idx == h),
-            CursorAnchor::Coord {
-                file_idx,
-                new_line,
-                old_line,
-            } => self.flat_pos_of_coord(file_idx, new_line, old_line),
-            CursorAnchor::Index(idx) => Some(idx),
-        };
-
-        // When an expansion merged the hunks, the divider no longer exists;
-        // lock the chosen neighbour row (below for top-side fills, above for
-        // bottom-side fills) at its pre-click screen position.
-        let divider_gone = !self
-            .hunk_starts
-            .iter()
-            .any(|hs| hs.file == fi && hs.hunk == hi);
-        let (fallback_anchor, fallback_screen_y) = match fallback {
-            DividerFallback::BelowRow => (anchors.below, anchors.below_text_screen_y),
-            DividerFallback::AboveRow => (anchors.above, anchors.above_text_screen_y),
-        };
-        let fallback_pos = fallback_anchor.and_then(|a| match a {
-            CursorAnchor::Coord {
-                file_idx,
-                new_line,
-                old_line,
-            } => self.flat_pos_of_coord(file_idx, new_line, old_line),
-            _ => None,
-        });
-
-        match (found_pos, divider_gone, fallback_pos) {
-            (Some(pos), _, _) => self.row_idx = pos,
-            (None, true, Some(fpos)) => self.row_idx = fpos,
-            (None, _, _) if self.row_idx >= self.flat.len() => {
-                self.row_idx = self.flat.len().saturating_sub(1);
-            }
-            (None, _, _) => {}
-        }
-
-        // Pivot screen view around the divider line — or, when the merge
-        // removed it, around the locked neighbour row.
-        let (starts, counts, seg_counts, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
-        let div_flats: HashSet<usize> = self.hunk_starts.iter().map(|hs| hs.flat).collect();
-        let text_vis = |pos: usize| -> usize {
-            let off = if div_flats.contains(&pos) {
-                counts[pos].saturating_sub(seg_counts[pos])
-            } else {
-                0
-            };
-            starts[pos] + off
-        };
-        let div_vis = self
-            .hunk_starts
-            .iter()
-            .find(|hs| hs.file == fi && hs.hunk == hi)
-            .map(|hs| starts[hs.flat])
-            .or_else(|| {
-                if divider_gone {
-                    fallback_pos.map(text_vis)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| self.cursor_visual_line());
-        let pivot_screen_y = if divider_gone {
-            fallback_screen_y.unwrap_or(div_screen_y)
-        } else {
-            div_screen_y
-        };
-
-        let max_rows = self.viewport_height.max(1);
-        let max_scroll = total_vis_lines.saturating_sub(max_rows);
-        let new_scroll = div_vis.saturating_sub(pivot_screen_y).min(max_scroll);
-        self.scroll = new_scroll;
-        self.scroll_pin = Some((new_scroll, self.row_idx));
-    }
-
-    /// Expand ALL hidden lines across all hunks in the repository.
-    pub fn expand_all_hidden(&mut self) {
-        let (anchor, screen_y) = self.capture_cursor_anchor();
-        for fi in 0..self.output.files.len() {
-            let mut made_progress = true;
-            while made_progress {
-                made_progress = false;
-                let num_hunks = self.output.files[fi].hunks.len();
-                for hi in (0..num_hunks).rev() {
-                    if self.expand_hunk_above(fi, hi) {
-                        made_progress = true;
-                    }
-                    if self.expand_hunk_below(fi, hi) {
-                        made_progress = true;
-                    }
-                }
-            }
-        }
-        let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
-        self.flat = flat;
-        self.hunk_starts = hunk_starts;
-        self.restore_cursor_anchor(anchor, screen_y, 0);
-    }
-
-    /// Reset the current hunk's context lines back to the default width (4),
-    /// splitting it back into separate hunks with dividers if any interior
-    /// context run exceeds 2 * DEFAULT_CONTEXT_LINES.
-    pub fn reset_current_hunk(&mut self) -> bool {
-        let fi = self.current_file_idx();
-        let Some(hi) = self.current_hunk() else {
-            return false;
-        };
-        self.reset_hunk_at(fi, hi)
-    }
-
-    /// Reset hunk `hi` in file `fi`.
-    pub fn reset_hunk_at(&mut self, fi: usize, hi: usize) -> bool {
-        let (anchor, screen_y) = self.capture_cursor_anchor();
-        let Some(f) = self.output.files.get_mut(fi) else {
-            return false;
-        };
-        if hi >= f.hunks.len() {
-            return false;
-        }
-
-        let old_hunk = f.hunks.remove(hi);
-        let new_hunks = Self::reset_hunk_slices(&old_hunk, diffuse_core::DEFAULT_CONTEXT_LINES);
-        let count = new_hunks.len();
-        f.hunks.splice(hi..hi, new_hunks);
-
-        // Rebuild f.rows from f.hunks
-        f.rows = f.hunks.iter().flat_map(|h| h.rows.clone()).collect();
-
-        // Rebuild hunk_meta for file
-        if fi < self.hunk_meta.len() {
-            let mut new_meta = Vec::with_capacity(f.hunks.len());
-            for h in &f.hunks {
-                let (above, below) = Self::count_output_hunk_ctx(h);
-                new_meta.push(crate::types::HunkMeta {
-                    above: above as usize,
-                    below: below as usize,
-                });
-            }
-            self.hunk_meta[fi] = new_meta;
-        }
-
-        let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
-        self.flat = flat;
-        self.hunk_starts = hunk_starts;
-        self.restore_cursor_anchor(anchor, screen_y, 0);
-        count > 0
-    }
-
-    /// Reset all hunks in all files back to the default context width.
-    pub fn reset_all_context(&mut self) {
-        let (anchor, screen_y) = self.capture_cursor_anchor();
-        for fi in 0..self.output.files.len() {
-            let num_hunks = self.output.files[fi].hunks.len();
-            for hi in (0..num_hunks).rev() {
-                self.reset_hunk_at(fi, hi);
-            }
-        }
-        let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
-        self.flat = flat;
-        self.hunk_starts = hunk_starts;
-        self.restore_cursor_anchor(anchor, screen_y, 0);
-    }
-
-    /// Split and trim an `OutputHunk`'s rows around change blocks so that every
-    /// change has at most `default_ctx` surrounding context lines, and any
-    /// interior context run > 2 * default_ctx forms a new hunk divider gap.
-    pub fn reset_hunk_slices(
-        hunk: &diffuse_core::wire::OutputHunk,
-        default_ctx: usize,
-    ) -> Vec<diffuse_core::wire::OutputHunk> {
-        let change_indices: Vec<usize> = hunk
-            .rows
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| r.kind != diffuse_core::parse::RowKind::Ctx)
-            .map(|(i, _)| i)
-            .collect();
-
-        if change_indices.is_empty() {
-            let mut trimmed_rows = hunk.rows.clone();
-            if trimmed_rows.len() > default_ctx {
-                trimmed_rows.truncate(default_ctx);
-            }
-            return vec![diffuse_core::wire::OutputHunk {
-                old_start: hunk.old_start,
-                old_count: trimmed_rows.len() as u32,
-                new_start: hunk.new_start,
-                new_count: trimmed_rows.len() as u32,
-                rows: trimmed_rows,
-            }];
-        }
-
-        let mut hunk_slices: Vec<(usize, usize)> = Vec::new();
-        let first_change = change_indices[0];
-        let mut current_hunk_start = first_change.saturating_sub(default_ctx);
-
-        for pair in change_indices.windows(2) {
-            let prev_change = pair[0];
-            let next_change = pair[1];
-            let ctx_between = next_change.saturating_sub(prev_change + 1);
-
-            if ctx_between > 2 * default_ctx {
-                let current_hunk_end = (prev_change + default_ctx).min(next_change - 1);
-                hunk_slices.push((current_hunk_start, current_hunk_end));
-                current_hunk_start = next_change.saturating_sub(default_ctx);
-            }
-        }
-
-        let last_change = *change_indices.last().unwrap();
-        let last_hunk_end = (last_change + default_ctx).min(hunk.rows.len().saturating_sub(1));
-        hunk_slices.push((current_hunk_start, last_hunk_end));
-
-        let mut new_hunks = Vec::new();
-        for (s_idx, e_idx) in hunk_slices {
-            let rows = hunk.rows[s_idx..=e_idx].to_vec();
-            let first_row = rows.first().unwrap();
-            let last_row = rows.last().unwrap();
-            let old_start = first_row.old_line.unwrap_or(hunk.old_start);
-            let new_start = first_row.new_line.unwrap_or(hunk.new_start);
-            let old_end = last_row.old_line.unwrap_or(old_start);
-            let new_end = last_row.new_line.unwrap_or(new_start);
-            let old_count = old_end.saturating_sub(old_start) + 1;
-            let new_count = new_end.saturating_sub(new_start) + 1;
-
-            new_hunks.push(diffuse_core::wire::OutputHunk {
-                old_start,
-                old_count,
-                new_start,
-                new_count,
-                rows,
-            });
-        }
-
-        new_hunks
-    }
-
-    fn count_output_hunk_ctx(h: &diffuse_core::wire::OutputHunk) -> (u32, u32) {
-        let mut above = 0u32;
-        for r in &h.rows {
-            if r.kind == diffuse_core::parse::RowKind::Ctx {
-                above += 1;
-            } else {
-                break;
-            }
-        }
-        let mut below = 0u32;
-        for r in h.rows.iter().rev() {
-            if r.kind == diffuse_core::parse::RowKind::Ctx {
-                below += 1;
-            } else {
-                break;
-            }
-        }
-        (above, below)
-    }
-
-    /// Check if the cursor is positioned on a hunk divider.
-    pub fn is_cursor_on_hunk_divider(&self) -> Option<(usize, usize)> {
-        for hs in &self.hunk_starts {
-            if hs.flat == self.row_idx {
-                return Some((hs.file, hs.hunk));
-            }
-        }
-        None
-    }
-
-    /// Expand context lines above hunk `hi` in `file[fi]` by
-    /// `self.expand_lines`.
-    pub fn expand_hunk_above(&mut self, fi: usize, hi: usize) -> bool {
-        let anchors = self.capture_divider_anchor(fi, hi);
-        let expanded = self.expand_hunk_above_mutate(fi, hi);
-        if expanded {
-            self.restore_divider_pivot(anchors, fi, hi, DividerFallback::AboveRow);
-        }
-        expanded
-    }
-
-    /// Mutate-only core of [`Self::expand_hunk_above`]: no viewport capture or
-    /// restore.
-    fn expand_hunk_above_mutate(&mut self, fi: usize, hi: usize) -> bool {
-        let Some(f) = self.output.files.get_mut(fi) else {
-            return false;
-        };
-        if hi >= f.hunks.len() {
-            return false;
-        }
-
-        let step = self.expand_lines.max(1);
-
-        if hi == 0 {
-            let h0 = &f.hunks[0];
-            let min_start = h0.new_start.min(h0.old_start);
-            if min_start <= 1 {
-                return false;
-            }
-            let gap_count = (min_start - 1) as usize;
-            let down_count = gap_count.min(step);
-            let old_start_line = (h0.old_start.saturating_sub(down_count as u32)).max(1);
-            let new_start_line = (h0.new_start.saturating_sub(down_count as u32)).max(1);
-
-            let mut down_rows = Vec::with_capacity(down_count);
-            for k in 0..down_count {
-                let old_num = old_start_line + k as u32;
-                let new_num = new_start_line + k as u32;
-                let text = f
-                    .new_content
-                    .get((new_num.saturating_sub(1)) as usize)
-                    .cloned()
-                    .or_else(|| {
-                        f.old_content
-                            .get((old_num.saturating_sub(1)) as usize)
-                            .cloned()
-                    })
-                    .unwrap_or_default();
-                let runs = Self::get_line_runs(f, new_num, &text);
-                down_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
-                    new_line: Some(new_num),
-                    old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
-                    runs,
-                    wholesale: false,
-                    moved: false,
-                });
-            }
-
-            let mut new_h0_rows = down_rows.clone();
-            new_h0_rows.extend(std::mem::take(&mut f.hunks[0].rows));
-            f.hunks[0].rows = new_h0_rows;
-            f.hunks[0].old_start -= down_count as u32;
-            f.hunks[0].new_start -= down_count as u32;
-            f.hunks[0].old_count += down_count as u32;
-            f.hunks[0].new_count += down_count as u32;
-            if fi < self.hunk_meta.len() && !self.hunk_meta[fi].is_empty() {
-                self.hunk_meta[fi][0].above += down_count;
-            }
-
-            f.rows.splice(0..0, down_rows);
-
-            let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
-            self.flat = flat;
-            self.hunk_starts = hunk_starts;
-
-            if let Some(hs) = self
-                .hunk_starts
-                .iter()
-                .find(|hs| hs.file == fi && hs.hunk == 0)
-            {
-                self.row_idx = hs.flat;
-                self.vis_line = 0;
-            }
-
-            return true;
-        } else {
-            let prev_hi = hi - 1;
-            let next_hi = hi;
-            let h1 = &f.hunks[prev_hi];
-            let h2 = &f.hunks[next_hi];
-
-            let h1_old_end = h1.old_start.saturating_add(h1.old_count.saturating_sub(1));
-            let h1_new_end = h1.new_start.saturating_add(h1.new_count.saturating_sub(1));
-            let h2_old_start = h2.old_start;
-            let h2_new_start = h2.new_start;
-
-            let gap_old_start = h1_old_end + 1;
-            let gap_old_end = h2_old_start.saturating_sub(1);
-            let gap_new_start = h1_new_end + 1;
-            let gap_new_end = h2_new_start.saturating_sub(1);
-
-            let gap_count = if gap_old_end >= gap_old_start {
-                (gap_old_end - gap_old_start + 1) as usize
-            } else if gap_new_end >= gap_new_start {
-                (gap_new_end - gap_new_start + 1) as usize
-            } else {
-                0
-            };
-
-            if gap_count == 0 {
-                return false;
-            }
-
-            let down_count = gap_count.min(step);
-            let remaining_gap = gap_count - down_count;
-
-            let mut down_rows = Vec::with_capacity(down_count);
-            for k in 0..down_count {
-                let old_num = (gap_old_end - down_count as u32 + 1) + k as u32;
-                let new_num = (gap_new_end - down_count as u32 + 1) + k as u32;
-                let text = f
-                    .new_content
-                    .get((new_num.saturating_sub(1)) as usize)
-                    .cloned()
-                    .or_else(|| {
-                        f.old_content
-                            .get((old_num.saturating_sub(1)) as usize)
-                            .cloned()
-                    })
-                    .unwrap_or_default();
-                let runs = Self::get_line_runs(f, new_num, &text);
-                down_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
-                    new_line: Some(new_num),
-                    old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
-                    runs,
-                    wholesale: false,
-                    moved: false,
-                });
-            }
-
-            if remaining_gap == 0 {
-                let h2 = f.hunks.remove(next_hi);
-                f.hunks[prev_hi].rows.extend(down_rows.clone());
-                f.hunks[prev_hi].rows.extend(h2.rows);
-                f.hunks[prev_hi].old_count =
-                    (h2.old_start + h2.old_count).saturating_sub(f.hunks[prev_hi].old_start);
-                f.hunks[prev_hi].new_count =
-                    (h2.new_start + h2.new_count).saturating_sub(f.hunks[prev_hi].new_start);
-
-                if fi < self.hunk_meta.len() && next_hi < self.hunk_meta[fi].len() {
-                    let h2_meta = self.hunk_meta[fi].remove(next_hi);
-                    if prev_hi < self.hunk_meta[fi].len() {
-                        self.hunk_meta[fi][prev_hi].below = h2_meta.below;
-                    }
-                }
-            } else {
-                let mut new_h2_rows = down_rows.clone();
-                new_h2_rows.extend(std::mem::take(&mut f.hunks[next_hi].rows));
-                f.hunks[next_hi].rows = new_h2_rows;
-                f.hunks[next_hi].old_start -= down_count as u32;
-                f.hunks[next_hi].new_start -= down_count as u32;
-                f.hunks[next_hi].old_count += down_count as u32;
-                f.hunks[next_hi].new_count += down_count as u32;
-                if fi < self.hunk_meta.len() && next_hi < self.hunk_meta[fi].len() {
-                    self.hunk_meta[fi][next_hi].above += down_count;
-                }
-            }
-            f.rows = f.hunks.iter().flat_map(|h| h.rows.clone()).collect();
-        }
-
-        true
-    }
-
-    /// Expand context lines below hunk `hi` in `file[fi]` by
-    /// `self.expand_lines`.
-    pub fn expand_hunk_below(&mut self, fi: usize, hi: usize) -> bool {
-        enum LastHunkState {
-            Divider(DividerAnchors),
-            Cursor(CursorAnchor, usize),
-        }
-        let is_last_hunk = self
-            .output
-            .files
-            .get(fi)
-            .is_some_and(|f| hi + 1 >= f.hunks.len());
-        let last_hunk_state = if is_last_hunk {
-            let (anchor, screen_y) = self.capture_cursor_anchor();
-            LastHunkState::Cursor(anchor, screen_y)
-        } else {
-            LastHunkState::Divider(self.capture_divider_anchor(fi, hi + 1))
-        };
-        let expanded = self.expand_hunk_below_mutate(fi, hi);
-        if !expanded {
-            return false;
-        }
-        match last_hunk_state {
-            LastHunkState::Cursor(anchor, screen_y) => {
-                self.restore_cursor_anchor(anchor, screen_y, 0);
-            }
-            LastHunkState::Divider(anchors) => {
-                self.restore_divider_pivot(anchors, fi, hi + 1, DividerFallback::BelowRow);
-            }
-        }
-        true
-    }
-
-    /// Mutate-only core of [`Self::expand_hunk_below`]: no viewport capture or
-    /// restore.
-    fn expand_hunk_below_mutate(&mut self, fi: usize, hi: usize) -> bool {
-        let _is_last_hunk = {
-            let Some(f) = self.output.files.get(fi) else {
-                return false;
-            };
-            hi + 1 >= f.hunks.len()
-        };
-
-        let step = self.expand_lines.max(1);
-
-        let Some(f) = self.output.files.get_mut(fi) else {
-            return false;
-        };
-        if hi >= f.hunks.len() {
-            return false;
-        }
-
-        if hi + 1 == f.hunks.len() {
-            let h1 = &f.hunks[hi];
-            let h1_new_end = h1.new_start.saturating_add(h1.new_count.saturating_sub(1));
-            let h1_old_end = h1.old_start.saturating_add(h1.old_count.saturating_sub(1));
-            let total_lines = f.new_line_count.max(f.old_line_count) as u32;
-            if h1_new_end >= total_lines && h1_old_end >= total_lines {
-                return false;
-            }
-            let gap_count = (total_lines - h1_new_end.max(h1_old_end)) as usize;
-            if gap_count == 0 {
-                return false;
-            }
-            let up_count = gap_count.min(step);
-
-            let mut up_rows = Vec::with_capacity(up_count);
-            for k in 0..up_count {
-                let old_num = h1_old_end + 1 + k as u32;
-                let new_num = h1_new_end + 1 + k as u32;
-                let text = f
-                    .new_content
-                    .get((new_num.saturating_sub(1)) as usize)
-                    .cloned()
-                    .or_else(|| {
-                        f.old_content
-                            .get((old_num.saturating_sub(1)) as usize)
-                            .cloned()
-                    })
-                    .unwrap_or_default();
-                let runs = Self::get_line_runs(f, new_num, &text);
-                up_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
-                    new_line: Some(new_num),
-                    old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
-                    runs,
-                    wholesale: false,
-                    moved: false,
-                });
-            }
-
-            f.hunks[hi].rows.extend(up_rows.clone());
-            f.hunks[hi].old_count += up_count as u32;
-            f.hunks[hi].new_count += up_count as u32;
-            if fi < self.hunk_meta.len() && hi < self.hunk_meta[fi].len() {
-                self.hunk_meta[fi][hi].below += up_count;
-            }
-
-            f.rows.extend(up_rows);
-        } else {
-            let prev_hi = hi;
-            let next_hi = hi + 1;
-            let h1 = &f.hunks[prev_hi];
-            let h2 = &f.hunks[next_hi];
-
-            let h1_old_end = h1.old_start.saturating_add(h1.old_count.saturating_sub(1));
-            let h1_new_end = h1.new_start.saturating_add(h1.new_count.saturating_sub(1));
-            let h2_old_start = h2.old_start;
-            let h2_new_start = h2.new_start;
-
-            let gap_old_start = h1_old_end + 1;
-            let gap_old_end = h2_old_start.saturating_sub(1);
-            let gap_new_start = h1_new_end + 1;
-            let gap_new_end = h2_new_start.saturating_sub(1);
-
-            let gap_count = if gap_old_end >= gap_old_start {
-                (gap_old_end - gap_old_start + 1) as usize
-            } else if gap_new_end >= gap_new_start {
-                (gap_new_end - gap_new_start + 1) as usize
-            } else {
-                0
-            };
-
-            if gap_count == 0 {
-                return false;
-            }
-
-            let up_count = gap_count.min(step);
-            let remaining_gap = gap_count - up_count;
-
-            let mut up_rows = Vec::with_capacity(up_count);
-            for k in 0..up_count {
-                let old_num = gap_old_start + k as u32;
-                let new_num = gap_new_start + k as u32;
-                let text = f
-                    .new_content
-                    .get((new_num.saturating_sub(1)) as usize)
-                    .cloned()
-                    .or_else(|| {
-                        f.old_content
-                            .get((old_num.saturating_sub(1)) as usize)
-                            .cloned()
-                    })
-                    .unwrap_or_default();
-                let runs = Self::get_line_runs(f, new_num, &text);
-                up_rows.push(OutputRow {
-                    kind: diffuse_core::parse::RowKind::Ctx,
-                    new_line: Some(new_num),
-                    old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: diffuse_core::parse::Spans::default(),
-                    runs,
-                    wholesale: false,
-                    moved: false,
-                });
-            }
-
-            if remaining_gap == 0 {
-                let h2 = f.hunks.remove(next_hi);
-                f.hunks[prev_hi].rows.extend(up_rows.clone());
-                f.hunks[prev_hi].rows.extend(h2.rows);
-                f.hunks[prev_hi].old_count =
-                    (h2.old_start + h2.old_count).saturating_sub(f.hunks[prev_hi].old_start);
-                f.hunks[prev_hi].new_count =
-                    (h2.new_start + h2.new_count).saturating_sub(f.hunks[prev_hi].new_start);
-
-                if fi < self.hunk_meta.len() && next_hi < self.hunk_meta[fi].len() {
-                    let h2_meta = self.hunk_meta[fi].remove(next_hi);
-                    if prev_hi < self.hunk_meta[fi].len() {
-                        self.hunk_meta[fi][prev_hi].below = h2_meta.below;
-                    }
-                }
-            } else {
-                f.hunks[prev_hi].rows.extend(up_rows.clone());
-                f.hunks[prev_hi].old_count += up_count as u32;
-                f.hunks[prev_hi].new_count += up_count as u32;
-                if fi < self.hunk_meta.len() && prev_hi < self.hunk_meta[fi].len() {
-                    self.hunk_meta[fi][prev_hi].below += up_count;
-                }
-            }
-            f.rows = f.hunks.iter().flat_map(|h| h.rows.clone()).collect();
-        }
-
-        true
-    }
-
-    /// Expand the hidden gap around the divider between hunks `hi` and
-    /// `hi + 1`, splitting it equally: `(n+1)/2` lines upwards and
-    /// `n - (n+1)/2` downwards (each side capped by `self.expand_lines`).
-    /// The boundary between the two halves pivots at the divider's old screen
-    /// position: the top half unfolds above it (pushing prior content up),
-    /// the bottom half below it. When the whole gap is consumed the hunks
-    /// merge into one.
-    pub fn expand_hunk_both(&mut self, fi: usize, hi: usize) -> bool {
-        let anchors = self.capture_divider_anchor(fi, hi + 1);
-        let Some(f) = self.output.files.get_mut(fi) else {
-            return false;
-        };
-        if hi + 1 >= f.hunks.len() {
-            return false;
-        }
-
-        let step = self.expand_lines.max(1);
-        let (h1_new_end, h1_old_end) = {
-            let h1 = &f.hunks[hi];
-            (
-                h1.new_start.saturating_add(h1.new_count.saturating_sub(1)),
-                h1.old_start.saturating_add(h1.old_count.saturating_sub(1)),
-            )
-        };
-        let (h2_old_start, h2_new_start) = (f.hunks[hi + 1].old_start, f.hunks[hi + 1].new_start);
-
-        let gap_old_start = h1_old_end + 1;
-        let gap_old_end = h2_old_start.saturating_sub(1);
-        let gap_new_start = h1_new_end + 1;
-        let gap_new_end = h2_new_start.saturating_sub(1);
-
-        let gap_count = if gap_old_end >= gap_old_start {
-            (gap_old_end - gap_old_start + 1) as usize
-        } else if gap_new_end >= gap_new_start {
-            (gap_new_end - gap_new_start + 1) as usize
-        } else {
-            0
-        };
-        if gap_count == 0 {
-            return false;
-        }
-
-        let n = gap_count as u32;
-        let top_half = (n.saturating_add(1) / 2) as usize;
-        let top_take = top_half.min(step);
-        let bottom_take = (n as usize).saturating_sub(top_half).min(step);
-
-        let make_row = |old_num: u32, new_num: u32, f: &OutputFile| -> OutputRow {
-            let text = f
-                .new_content
-                .get((new_num.saturating_sub(1)) as usize)
-                .cloned()
-                .or_else(|| {
-                    f.old_content
-                        .get((old_num.saturating_sub(1)) as usize)
-                        .cloned()
-                })
-                .unwrap_or_default();
-            let runs = Self::get_line_runs(f, new_num, &text);
-            OutputRow {
-                kind: diffuse_core::parse::RowKind::Ctx,
-                new_line: Some(new_num),
-                old_line: Some(old_num),
-                text,
-                del_text: None,
-                spans: diffuse_core::parse::Spans::default(),
-                runs,
-                wholesale: false,
-                moved: false,
-            }
-        };
-
-        // Upward side: rows appended to the END of hunk `hi`.
-        let mut top_rows = Vec::with_capacity(top_take);
-        for k in 0..top_take {
-            top_rows.push(make_row(
-                gap_old_start + k as u32,
-                gap_new_start + k as u32,
-                f,
-            ));
-        }
-        // Downward side: rows prepended to the START of hunk `hi + 1`.
-        let mut bottom_rows = Vec::with_capacity(bottom_take);
-        for k in 0..bottom_take {
-            bottom_rows.push(make_row(
-                gap_old_end.saturating_sub((bottom_take - k - 1) as u32),
-                gap_new_end.saturating_sub((bottom_take - k - 1) as u32),
-                f,
-            ));
-        }
-
-        let merged = top_take + bottom_take == gap_count;
-
-        f.hunks[hi].rows.extend(top_rows.clone());
-        {
-            let mut new_h2_rows = bottom_rows.clone();
-            new_h2_rows.extend(std::mem::take(&mut f.hunks[hi + 1].rows));
-            f.hunks[hi + 1].rows = new_h2_rows;
-        }
-
-        if merged {
-            let h2 = f.hunks.remove(hi + 1);
-            f.hunks[hi].rows.extend(h2.rows);
-            f.hunks[hi].old_count =
-                (h2.old_start + h2.old_count).saturating_sub(f.hunks[hi].old_start);
-            f.hunks[hi].new_count =
-                (h2.new_start + h2.new_count).saturating_sub(f.hunks[hi].new_start);
-            if fi < self.hunk_meta.len() && hi + 1 < self.hunk_meta[fi].len() {
-                let h2_meta = self.hunk_meta[fi].remove(hi + 1);
-                if hi < self.hunk_meta[fi].len() {
-                    self.hunk_meta[fi][hi].below = h2_meta.below;
-                }
-            }
-        } else {
-            f.hunks[hi].old_count += top_take as u32;
-            f.hunks[hi].new_count += top_take as u32;
-            f.hunks[hi + 1].old_start -= bottom_take as u32;
-            f.hunks[hi + 1].new_start -= bottom_take as u32;
-            f.hunks[hi + 1].old_count += bottom_take as u32;
-            f.hunks[hi + 1].new_count += bottom_take as u32;
-            if fi < self.hunk_meta.len() && hi < self.hunk_meta[fi].len() {
-                if !self.hunk_meta[fi].is_empty() {
-                    self.hunk_meta[fi][hi].below += top_take;
-                }
-                if hi + 1 < self.hunk_meta[fi].len() {
-                    self.hunk_meta[fi][hi + 1].above += bottom_take;
-                }
-            }
-        }
-        f.rows = f.hunks.iter().flat_map(|h| h.rows.clone()).collect();
-
-        // Viewport pivot: the boundary between the upward half and the
-        // downward half stays exactly where the divider was on screen. The
-        // top half unfolds above it (pushing the content above up), the
-        // bottom half below it.
-        let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
-        self.flat = flat;
-        self.hunk_starts = hunk_starts;
-        let (starts, _counts, _seg, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
-        // The boundary is the first downward-side row; when the divider
-        // survived it is that divider's own leading segments.
-        let boundary_vis = if merged {
-            bottom_rows
-                .first()
-                .and_then(|r| r.new_line)
-                .and_then(|nl| self.flat_pos_of_coord(fi, Some(nl), None))
-                .map(|pos| starts[pos])
-        } else {
-            self.hunk_starts
-                .iter()
-                .find(|hs| hs.file == fi && hs.hunk == hi + 1)
-                .map(|hs| starts[hs.flat])
-        };
-        if let Some(boundary_vis) = boundary_vis {
-            let max_rows = self.viewport_height.max(1);
-            let max_scroll = total_vis_lines.saturating_sub(max_rows);
-            let new_scroll = boundary_vis
-                .saturating_sub(anchors.div_screen_y)
-                .min(max_scroll);
-            self.scroll = new_scroll;
-            self.scroll_pin = Some((new_scroll, self.row_idx));
-        }
-        true
-    }
-
+impl AppState {
     /// Execute a high-level user command to mutate application state.
     pub fn execute(&mut self, cmd: TuiCommand) {
         // New user input invalidates a viewport pin — except the trailing
@@ -2133,6 +1127,146 @@ index 1111111..2222222 100644
     }
 
     #[test]
+    fn test_clicking_file_header_triangle_toggles_collapse() {
+        let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
+index 1111111..2222222 100644
+--- a/filesystem.rs
++++ b/filesystem.rs
+@@ -1025,6 +1025,8 @@ fn test() {
+     let x = 1;
+-    // old comment — em dash
++    // new comment — em dash updated
++    let y = 2;
+ }
+"#;
+        let new_content = [(
+            "filesystem.rs".to_string(),
+            "fn test() {\n    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}\n"
+                .to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let old_content = [(
+            "filesystem.rs".to_string(),
+            "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let mut state = AppState::new(
+            diffuse_core::pipeline::run_pipeline_full(
+                diff,
+                Some(new_content),
+                Some(old_content),
+                PipelineOptions::default(),
+            ),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes-header-triangle.json"),
+        );
+        state.render_frame(120, 30);
+
+        assert!(!state.collapsed_files.contains(&0), "starts expanded");
+        let initial_len = state.flat.len();
+
+        // Click exactly on the ▼ triangle (char col 12) on the header row
+        let header_vis = state
+            .visual_geometry(state.last_content_width)
+            .0
+            .first()
+            .copied()
+            .unwrap_or(0);
+        let click_row = state.last_viewport_start + header_vis.saturating_sub(state.scroll);
+
+        state.execute(TuiCommand::MouseClick {
+            row: click_row,
+            col: crate::view::diff_grid::FILE_HEADER_INDICATOR_COL,
+            shift: false,
+        });
+        assert!(
+            state.collapsed_files.contains(&0),
+            "clicking the triangle must collapse the file"
+        );
+        assert_eq!(state.flat.len(), 1, "collapsed to header only");
+
+        // Expand again via the (now ▸) triangle
+        state.execute(TuiCommand::MouseClick {
+            row: click_row,
+            col: crate::view::diff_grid::FILE_HEADER_INDICATOR_COL,
+            shift: false,
+        });
+        assert!(
+            !state.collapsed_files.contains(&0),
+            "clicking again must expand the file"
+        );
+        assert_eq!(state.flat.len(), initial_len);
+
+        // A click elsewhere on the header must NOT toggle — it selects.
+        state.execute(TuiCommand::MouseClick {
+            row: click_row,
+            col: crate::view::diff_grid::FILE_HEADER_INDICATOR_COL + 10,
+            shift: false,
+        });
+        assert!(
+            !state.collapsed_files.contains(&0),
+            "non-triangle header clicks must not collapse"
+        );
+    }
+
+    #[test]
+    fn test_note_commit_persists_and_deletes() {
+        let notes_path = std::env::temp_dir().join(format!(
+            "diffuse-test-note-lifecycle-{}.json",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&notes_path);
+        let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+
+        let file = state.current_file().unwrap().path.clone();
+        state.note_draft = Some("check this **carefully**".into());
+        state.commit_note_draft();
+        assert!(state.note_draft.is_none());
+
+        let notes: Vec<_> =
+            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file).collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].text, "check this **carefully**");
+        assert!(
+            notes[0].start > 0,
+            "note must anchor to a real row coordinate"
+        );
+
+        let on_disk = diffuse_core::notes::load_notes(&notes_path);
+        assert_eq!(
+            diffuse_core::notes::notes_for_file(&on_disk, "test_repo", &file).count(),
+            1,
+            "commit must persist through the notes DB file"
+        );
+
+        let frame = state.render_frame(100, 30);
+        assert!(
+            frame.contains("💬"),
+            "a committed note must render a callout: {:.200}",
+            frame
+        );
+
+        state.delete_notes();
+        assert!(
+            diffuse_core::notes::notes_for_file(&state.notes, "test_repo", &file)
+                .next()
+                .is_none(),
+            "delete must remove the note from the DB"
+        );
+        let on_disk2 = diffuse_core::notes::load_notes(&notes_path);
+        assert!(
+            diffuse_core::notes::notes_for_file(&on_disk2, "test_repo", &file)
+                .next()
+                .is_none(),
+            "delete must persist the removal"
+        );
+
+        let _ = std::fs::remove_file(notes_path);
+    }
+
+    #[test]
     fn test_help_modal_toggles_and_renders() {
         let mut state = AppState::new(
             sample_output(),
@@ -2153,6 +1287,106 @@ index 1111111..2222222 100644
             "help modal must render when enabled"
         );
         assert!(with_help.contains("toggle syntax"));
+    }
+
+    #[test]
+    fn test_selection_anchor_span_snaps_to_coord_rows() {
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+        // flat[0] is the file header (no coordinate); AppState starts on the
+        // first coordinate row (1020). The engine pads the hunk with empty
+        // above-context rows (1022-1024), then the real rows: ctx
+        // " let x = 1;" (1025), the mod pair (1026), the add (1027). Walk to
+        // the first real row, anchor, extend over the mod.
+        for _ in 0..3 {
+            state.move_down();
+        }
+        state.start_or_confirm_selection();
+        state.move_down();
+        state.move_down();
+
+        let sel = state
+            .compute_selection()
+            .expect("anchor over coordinate rows must yield a selection");
+        assert_eq!(sel.file_idx, 0);
+        assert!(sel.start < sel.end, "range must span two rows");
+        assert_eq!(sel.start, 1025);
+        assert_eq!(sel.end, 1027);
+        assert!(
+            sel.side_is_new,
+            "a range led by a new-side row is a new-side selection"
+        );
+    }
+
+    #[test]
+    fn test_selection_v_confirm_clears_anchor_and_band_renders() {
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+        for _ in 0..3 {
+            state.move_down();
+        }
+        state.start_or_confirm_selection();
+        state.move_down();
+        state.move_down();
+
+        let frame = state.render_frame(100, 30);
+        assert!(
+            frame.contains("\x1b[48;5;240m"),
+            "an active anchor must band the rows between anchor and cursor"
+        );
+
+        state.start_or_confirm_selection();
+        assert!(state.anchor.is_none(), "confirming clears the anchor");
+        let sel = state
+            .confirmed_sel
+            .expect("confirm must record a selection");
+        assert_eq!(sel.start, 1025);
+        assert_eq!(sel.end, 1027);
+
+        let frame2 = state.render_frame(100, 30);
+        assert!(
+            frame2.contains("\x1b[48;5;240m"),
+            "a confirmed selection must keep banding its coordinate range"
+        );
+    }
+
+    #[test]
+    fn test_selection_requires_coord_rows() {
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+        // Anchor on the file header (no coordinate) and confirm in place: the
+        // range collapses onto the header which carries no line number, so
+        // the reference computes no selection.
+        state.move_up();
+        state.start_or_confirm_selection();
+        state.start_or_confirm_selection();
+        assert!(state.anchor.is_none());
+        assert!(state.confirmed_sel.is_none(), "header has no coordinate");
+
+        // Anchoring on the header then walking onto a coordinate row snaps
+        // the low end down to the first coordinate row of the file.
+        let mut state = AppState::new(
+            sample_output(),
+            "test_repo".into(),
+            std::env::temp_dir().join("diffuse-test-notes.json"),
+        );
+        state.move_up();
+        state.start_or_confirm_selection();
+        state.move_down();
+        let sel = state
+            .compute_selection()
+            .expect("anchor over the header must snap to a coordinate row");
+        assert_eq!(sel.start, 1022, "snap to the first padded ctx row");
+        assert_eq!(sel.end, 1022);
     }
 
     #[test]
