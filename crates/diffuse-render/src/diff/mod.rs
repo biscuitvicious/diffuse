@@ -3,10 +3,13 @@
 //! Formats full file diff summaries and colored hunks directly to terminal
 //! output.
 
-use crate::core::wire::{OutputFile, OutputRow, PipelineOutput};
+use crate::core::{
+    parse::RowKind,
+    wire::{OutputFile, OutputRow, PipelineOutput},
+};
 
 use super::{
-    row::{prefix_of, render_row_segment, styled_prefix},
+    row::{prefix_of, render_raw_row, render_row_segment, styled_prefix},
     theme::DiffuseTheme,
 };
 
@@ -113,6 +116,79 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
             for r in &h.rows {
                 render_row(r, &mut out);
             }
+        }
+    }
+
+    out
+}
+
+/// Render complete pipeline output in raw mode: flat green/red text with no
+/// subword highlighting and no mod rows, equivalent to the TUI's `R` (raw diff)
+/// toggle.
+pub fn render_raw_pipeline_output(output: &PipelineOutput) -> String {
+    let mut out = String::new();
+    for f in &output.files {
+        out.push_str(&render_raw_file_diff(f));
+    }
+    out.push_str("\x1b[0m");
+    out
+}
+
+/// Render a single file's diff in raw mode: flat green/red text on default
+/// black background, colorized number gutter, only - and + rows (no mod rows),
+/// and `@@` hunk headers, equivalent to the TUI's `R` toggle.
+pub fn render_raw_file_diff(file: &OutputFile) -> String {
+    let hunks = if !file.raw_hunks.is_empty() {
+        &file.raw_hunks
+    } else {
+        &file.hunks
+    };
+    let total_rows: usize = hunks.iter().map(|h| h.rows.len() + 1).sum();
+    let mut out = String::with_capacity(total_rows * 128 + 256);
+
+    // Same file header as styled mode.
+    let counts = &file.counts;
+    let note_str = format!(
+        "{} note{}",
+        file.notes.len(),
+        if file.notes.len() == 1 { "" } else { "s" }
+    );
+    let mov_str = if counts.movs > 0 {
+        format!(" \x1b[38;5;117m≈{}\x1b[39m moved", counts.movs)
+    } else {
+        String::new()
+    };
+    let mod_str = if counts.mods > 0 {
+        format!(" \x1b[38;5;214m~{}\x1b[39m", counts.mods)
+    } else {
+        String::new()
+    };
+    let del_str = if counts.dels > 0 {
+        format!(" \x1b[38;5;167m-{}\x1b[39m", counts.dels)
+    } else {
+        String::new()
+    };
+    let add_str = format!("\x1b[38;5;120m+{}\x1b[39m", counts.adds);
+    let bar = format!(
+        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{} · {} \x1b[0m\n",
+        file.path, file.status, add_str, del_str, mod_str, mov_str, note_str
+    );
+    out.push_str(&bar);
+
+    for h in hunks {
+        let sep_text = format!(
+            "@@ -{},{} +{},{} @@",
+            h.old_start, h.old_count, h.new_start, h.new_count
+        );
+        let hunk_header = render_raw_row(RowKind::Ctx, "", &sep_text, false, false, true);
+        out.push_str(&hunk_header);
+        out.push('\n');
+
+        for r in &h.rows {
+            let pfx = styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, true);
+            let row = render_raw_row(r.kind, &pfx, &r.text, false, false, true);
+            out.push_str(&row);
+            out.push('\n');
         }
     }
 

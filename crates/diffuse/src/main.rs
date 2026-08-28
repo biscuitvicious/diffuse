@@ -28,7 +28,10 @@ use diffuse::{
         streaming::{spawn_git_stream_pipeline, stream_diff_pipeline},
         wire::PipelineOutput,
     },
-    render::{MarkdownOptions, default_theme, render_file_diff, render_markdown_output},
+    render::{
+        MarkdownOptions, default_theme, render_file_diff, render_markdown_output,
+        render_raw_file_diff, render_raw_pipeline_output,
+    },
     tui::run_streaming_interactive_tui,
 };
 
@@ -78,6 +81,10 @@ struct Args {
     /// Disable interactive TUI mode (alias for --pager).
     #[arg(long, global = true)]
     no_tui: bool,
+    /// Emit raw colorized diff (flat green/red, no subword highlighting).
+    /// Equivalent to the TUI's R (raw diff) toggle.
+    #[arg(long, global = true)]
+    raw: bool,
 
     #[command(subcommand)]
     command: Option<SubCommand>,
@@ -111,6 +118,9 @@ enum SubCommand {
         /// Emit GitHub-Flavored Markdown.
         #[arg(short = 'm', long)]
         markdown: bool,
+        /// Emit raw colorized diff (flat green/red, no subword highlighting).
+        #[arg(long)]
+        raw: bool,
     },
 }
 
@@ -269,54 +279,60 @@ fn main() -> io::Result<()> {
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();
 
-    let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, diff_opt) = match &args.command {
-        Some(SubCommand::Review {
-            git_args: sub_git_args,
-        }) => {
-            let mut ga = args.git_args.clone();
-            ga.extend(sub_git_args.iter().cloned());
-            (
-                Some("review"),
-                ga,
+    let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
+        match &args.command {
+            Some(SubCommand::Review {
+                git_args: sub_git_args,
+            }) => {
+                let mut ga = args.git_args.clone();
+                ga.extend(sub_git_args.iter().cloned());
+                (
+                    Some("review"),
+                    ga,
+                    args.json,
+                    args.jsonl,
+                    args.markdown,
+                    args.raw,
+                    args.diff.clone(),
+                )
+            }
+            Some(SubCommand::Parse {
+                diff,
+                json,
+                jsonl,
+                markdown,
+                raw,
+            }) => {
+                let md = *markdown || args.markdown;
+                let rw = *raw || args.raw;
+                let j = if !*json && !*jsonl && !md && !rw {
+                    true
+                } else {
+                    *json || args.json
+                };
+                let jl = *jsonl || args.jsonl;
+                (
+                    Some("parse"),
+                    Vec::new(),
+                    j,
+                    jl,
+                    md,
+                    rw,
+                    diff.clone().or_else(|| args.diff.clone()),
+                )
+            }
+            None => (
+                None,
+                args.git_args.clone(),
                 args.json,
                 args.jsonl,
                 args.markdown,
+                args.raw,
                 args.diff.clone(),
-            )
-        }
-        Some(SubCommand::Parse {
-            diff,
-            json,
-            jsonl,
-            markdown,
-        }) => {
-            let md = *markdown || args.markdown;
-            let j = if !*json && !*jsonl && !md {
-                true
-            } else {
-                *json || args.json
-            };
-            let jl = *jsonl || args.jsonl;
-            (
-                Some("parse"),
-                Vec::new(),
-                j,
-                jl,
-                md,
-                diff.clone().or_else(|| args.diff.clone()),
-            )
-        }
-        None => (
-            None,
-            args.git_args.clone(),
-            args.json,
-            args.jsonl,
-            args.markdown,
-            args.diff.clone(),
-        ),
-    };
+            ),
+        };
 
-    let no_tui = args.no_tui || args.pager || is_markdown;
+    let no_tui = args.no_tui || args.pager || is_markdown || is_raw;
 
     // Peek a piped stdin only when the routing decision depends on its
     // content (no git args, no explicit contract flags, no explicit subcommand).
@@ -450,15 +466,27 @@ fn main() -> io::Result<()> {
                 eprintln!("diffuse: {e}");
                 std::process::exit(2);
             }
-            let theme = default_theme();
             let mut stdout = io::stdout().lock();
-            for file in consumer {
-                let rendered = render_file_diff(&file, &theme, true);
-                if let Err(e) = stdout.write_all(rendered.as_bytes()) {
-                    if e.kind() == io::ErrorKind::BrokenPipe {
-                        return Ok(());
+            if is_raw {
+                for file in consumer {
+                    let rendered = render_raw_file_diff(&file);
+                    if let Err(e) = stdout.write_all(rendered.as_bytes()) {
+                        if e.kind() == io::ErrorKind::BrokenPipe {
+                            return Ok(());
+                        }
+                        return Err(e);
                     }
-                    return Err(e);
+                }
+            } else {
+                let theme = default_theme();
+                for file in consumer {
+                    let rendered = render_file_diff(&file, &theme, true);
+                    if let Err(e) = stdout.write_all(rendered.as_bytes()) {
+                        if e.kind() == io::ErrorKind::BrokenPipe {
+                            return Ok(());
+                        }
+                        return Err(e);
+                    }
                 }
             }
             let _ = stdout.write_all(b"\x1b[0m");
@@ -494,7 +522,20 @@ fn main() -> io::Result<()> {
             eprintln!("diffuse: {e}");
             std::process::exit(2);
         }
-        if is_jsonl {
+        if is_raw {
+            let mut stdout = io::stdout().lock();
+            for file in consumer {
+                let rendered = render_raw_file_diff(&file);
+                if let Err(e) = stdout.write_all(rendered.as_bytes()) {
+                    if e.kind() == io::ErrorKind::BrokenPipe {
+                        return Ok(());
+                    }
+                    return Err(e);
+                }
+            }
+            let _ = stdout.write_all(b"\x1b[0m");
+            let _ = stdout.flush();
+        } else if is_jsonl {
             let mut stdout = io::stdout().lock();
             for file in consumer {
                 if let Err(e) = diffuse::core::wire::jsonl::emit_file_jsonl(&file, &mut stdout) {
@@ -580,6 +621,18 @@ fn main() -> io::Result<()> {
                     }
                 }
                 let _ = stdout.flush();
+            } else if is_raw {
+                let mut stdout = io::stdout().lock();
+                for out in &outputs {
+                    let rendered = render_raw_pipeline_output(out);
+                    if let Err(e) = stdout.write_all(rendered.as_bytes()) {
+                        if e.kind() == io::ErrorKind::BrokenPipe {
+                            return Ok(());
+                        }
+                        return Err(e);
+                    }
+                }
+                let _ = stdout.flush();
             } else if is_jsonl {
                 let mut stdout = io::stdout().lock();
                 for out in &outputs {
@@ -605,6 +658,17 @@ fn main() -> io::Result<()> {
                 let md = render_markdown_output(&output, &md_opts);
                 let mut stdout = io::stdout().lock();
                 if let Err(e) = stdout.write_all(md.as_bytes()) {
+                    if e.kind() == io::ErrorKind::BrokenPipe {
+                        return Ok(());
+                    }
+                    return Err(e);
+                }
+                let _ = stdout.flush();
+            } else if is_raw {
+                let output = process_input(*input, &args);
+                let rendered = render_raw_pipeline_output(&output);
+                let mut stdout = io::stdout().lock();
+                if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         return Ok(());
                     }

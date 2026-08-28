@@ -46,8 +46,7 @@
 
 ## 7. Execution Context & CLI
 - [x] **Support `-C` (change directory) option**: Conceptually `chdir` to the given directory before scanning for repositories, loading files, and resolving all relative paths. Must be honoured everywhere (git discovery, file I/O, config, golden/corpus paths, etc.). Supports single or multiple sequential `-C` flags (e.g. `diffuse -C <parent> -C <child>`).
-- [x] ~~**Markdown output format (`--markdown` / `-m`)**~~: Support emitting diff output in GitHub-Flavored Markdown (GFM) format (e.g. diff code blocks, collapsible file `<details>`, and change summary tables) suitable for pasting into PR comments, reviews, and issue trackers. (See [Markdown Output Format](plan/done/Markdown%20Output%20Format.md))
-- [ ] **Raw mode CLI argument (`--raw`)**: Add `--raw` argument to CLI, rendering the diff in exactly the same way as the "raw mode" of the TUI (`R` keybinding).
+- [x] **Raw mode CLI argument (`--raw`)**: Add `--raw` argument to CLI, rendering the diff in exactly the same way as the "raw mode" of the TUI (`R` keybinding).
 
 ## 8. Codebase Architecture & Modularization
 - [x] ~~**Split `diffuse-tui/src/app.rs` into focused modules**~~: Decompose the monolithic ~5,200-line `app.rs` into logically distinct submodules with single responsibilities (e.g. `state.rs`, `navigation.rs`, `layout.rs`, `expansion.rs`, `render.rs`, `events.rs`, etc.). (See [Split AppState](plan/done/Split%20AppState.md))

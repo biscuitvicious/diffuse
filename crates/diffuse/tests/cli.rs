@@ -602,3 +602,113 @@ fn test_cli_markdown_color_flag() {
     assert!(stdout.contains("\x1b[0m"));
     assert!(stdout.contains("Diff Summary"));
 }
+
+/// `diffuse --raw` on a git repo emits flat green/red colorized output:
+/// no JSON, no subword spans, plain unified-diff-style coloring.
+#[test]
+fn test_cli_raw_flag_emits_ansi_not_json() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--raw")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse --raw must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Must have ANSI color codes
+    assert!(
+        stdout.contains("\x1b["),
+        "raw output must contain ANSI codes, got: {:.200}",
+        stdout
+    );
+    // Must NOT be JSON
+    assert!(
+        !stdout.trim_start().starts_with('{'),
+        "raw output must not be JSON, got: {:.200}",
+        stdout
+    );
+    // Raw mode uses flat green (120) for additions and red (203) for deletions
+    assert!(
+        stdout.contains("\x1b[38;5;120m") || stdout.contains("\x1b[38;5;203m"),
+        "raw output must contain raw-mode fg colors, got: {:.200}",
+        stdout
+    );
+}
+
+/// `diffuse --raw` on piped diff input emits flat colorized output.
+#[test]
+fn test_cli_raw_flag_with_piped_diff() {
+    let diff = "diff --git a/hello.rs b/hello.rs\n\
+index 0000000..1111111 100644\n\
+--- a/hello.rs\n\
++++ b/hello.rs\n\
+@@ -1,2 +1,2 @@\n\
+ fn main() {\n\
+-    println!(\"hello\");\n\
++    println!(\"world\");\n\
+ }\n";
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--raw")
+        .arg("--color=always")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(diff.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "piped diffuse --raw must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("\x1b[38;5;120m") || stdout.contains("\x1b[38;5;203m"),
+        "raw output must use raw-mode colors, got: {:.300}",
+        stdout
+    );
+    // Must contain hunk header
+    assert!(
+        stdout.contains("@@ -1,2 +1,2 @@"),
+        "raw output must contain hunk header, got: {stdout}"
+    );
+    // Number gutter and change type symbols are styled
+    assert!(
+        stdout.contains("\x1b[38;5;120m+") || stdout.contains("\x1b[38;5;203m-"),
+        "change type symbols must be colorized, got: {stdout}"
+    );
+    assert!(!stdout.trim_start().starts_with('{'), "must not be JSON");
+}
+
+/// `diffuse parse --raw` on a git repo emits raw ANSI diff.
+#[test]
+fn test_cli_parse_raw_subcommand() {
+    let repo_dir = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .args(["parse", "--raw"])
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("\x1b["));
+    assert!(!stdout.trim_start().starts_with('{'));
+}
