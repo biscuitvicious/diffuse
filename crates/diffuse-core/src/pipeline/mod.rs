@@ -250,7 +250,9 @@ pub fn process_single_diff_file(
 
     mark_moves(&mut f);
 
-    f.hunks.iter_mut().for_each(|h| {
+    use rayon::prelude::*;
+
+    f.hunks.par_iter_mut().for_each(|h| {
         h.rows = collapse_hunk_rows(
             h,
             Some(old_lines.as_slice()),
@@ -275,7 +277,7 @@ pub fn process_single_diff_file(
 
     let hunks_out: Vec<OutputHunk> = f
         .hunks
-        .iter()
+        .par_iter()
         .map(|h| {
             let mut rows_out = Vec::with_capacity(h.rows.len());
             for r in &h.rows {
@@ -346,28 +348,6 @@ pub fn process_single_diff_file(
         _ => Vec::new(),
     };
 
-    let lines_for_runs = if !new_lines.is_empty() {
-        &new_lines
-    } else {
-        &old_lines
-    };
-    let content_runs: Vec<Vec<OutputRun>> = lines_for_runs
-        .iter()
-        .enumerate()
-        .map(|(li, line_text)| {
-            let mut runs = Vec::new();
-            for_each_ctx_line_token(line_text, Some((li + 1) as u32), profile, &regions, |tk| {
-                runs.push(OutputRun {
-                    kind: RunKind::Ctx,
-                    color: Some(std::borrow::Cow::Borrowed(tk.color)),
-                    sgr: tk.sgr,
-                    text: tk.text.to_string().into(),
-                });
-            });
-            runs
-        })
-        .collect();
-
     let status = match f.status {
         crate::parse::FileStatus::Added => "added".to_string(),
         crate::parse::FileStatus::Deleted => "deleted".to_string(),
@@ -395,7 +375,7 @@ pub fn process_single_diff_file(
             })
             .collect(),
         notes: notes_out,
-        content_runs,
+        content_runs: Vec::new(),
         rows: build_visible(&f.hunks, opts.expand_lines)
             .into_iter()
             .map(|vis| {

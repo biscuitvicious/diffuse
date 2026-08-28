@@ -2,7 +2,10 @@
 
 - [x] Phase 1 — Inline Test Module Decoupling Across Workspace Crates
 - [x] Phase 2 — Test Suite Profiling, Hot-Spot Elimination & Latency Budget Enforcement
-- [·] Phase 3 — Golden Fixture JSON Format Deconstruction & Dedicated Per-Corpus File Storage
+- [x] Phase 3 — Golden Fixture JSON Format Deconstruction & Dedicated Per-Corpus File Storage
+- [x] Phase 4 — Wire JSON Format Optimization
+- [x] Phase 5 — Streaming Line-by-Line JSONL Protocol & Granular Section Headers
+- [ ] Phase 6 — Replace Temp File Handling in Tests with `tempfile` Crate
 
 ---
 

@@ -13,6 +13,8 @@ use crate::{
     parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind, Spans},
 };
 
+pub mod jsonl;
+
 /// The top-level wire contract payload containing processed file diffs, branch
 /// name, and untracked file metadata.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

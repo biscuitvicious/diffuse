@@ -438,26 +438,24 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
         // 1. Verify reconstructed content completeness (only when present — lib_leg
         //    populates these in-memory; bin_leg decodes from wire JSON which omits them
         //    as of the slim format, so we skip these checks when the vecs are empty).
-        if !f.new_content.is_empty()
-            && f.status != "deleted" && f.new_line_count > 0 {
-                check!(
-                    f.new_content.len() == f.new_line_count,
-                    "{}: new_content len {} != new_line_count {}",
-                    f.path,
-                    f.new_content.len(),
-                    f.new_line_count
-                );
-            }
-        if !f.old_content.is_empty()
-            && f.status != "added" && f.old_line_count > 0 {
-                check!(
-                    f.old_content.len() == f.old_line_count,
-                    "{}: old_content len {} != old_line_count {}",
-                    f.path,
-                    f.old_content.len(),
-                    f.old_line_count
-                );
-            }
+        if !f.new_content.is_empty() && f.status != "deleted" && f.new_line_count > 0 {
+            check!(
+                f.new_content.len() == f.new_line_count,
+                "{}: new_content len {} != new_line_count {}",
+                f.path,
+                f.new_content.len(),
+                f.new_line_count
+            );
+        }
+        if !f.old_content.is_empty() && f.status != "added" && f.old_line_count > 0 {
+            check!(
+                f.old_content.len() == f.old_line_count,
+                "{}: old_content len {} != old_line_count {}",
+                f.path,
+                f.old_content.len(),
+                f.old_line_count
+            );
+        }
 
         // 2. Verify visible rows completeness and accuracy (only when present)
         if !f.rows.is_empty() {
@@ -731,22 +729,45 @@ fn wire_outputs_match(a: &PipelineOutput, b: &PipelineOutput) -> bool {
             .all(|(fa, fb)| wire_files_match(fa, fb))
 }
 
+fn expected_wire_jsonl_path(name: &str) -> PathBuf {
+    golden_dir().join(name).join("wire.jsonl")
+}
+
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     let wire_path = expected_wire_path(name);
+    let wire_jsonl_path = expected_wire_jsonl_path(name);
     let gz_wire_path = golden_dir().join(format!("{name}.wire.json.gz"));
+    let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
+
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
         let actual_pretty = format!(
             "{}\n",
             serde_json::to_string_pretty(output).expect("serialize pretty JSON")
         );
+        let mut jsonl_buf = Vec::new();
+        for file in &output.files {
+            diffuse::core::wire::jsonl::emit_file_jsonl(file, &mut jsonl_buf)
+                .expect("emit_file_jsonl");
+        }
+
         if gz_wire_path.exists() || name.contains("history") {
             write_gz(&gz_wire_path, actual_pretty.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_wire_path.display()));
-            eprintln!("{name}: compressed wire JSON updated ({})", gz_wire_path.display());
+            write_gz(&gz_wire_jsonl_path, &jsonl_buf)
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_wire_jsonl_path.display()));
+            eprintln!(
+                "{name}: compressed wire JSON & JSONL updated ({})",
+                gz_wire_path.display()
+            );
         } else {
             write_file_plain(&wire_path, actual_pretty.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
-            eprintln!("{name}: wire JSON updated ({})", wire_path.display());
+            write_file_plain(&wire_jsonl_path, &jsonl_buf)
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
+            eprintln!(
+                "{name}: wire JSON & JSONL updated ({})",
+                wire_path.display()
+            );
         }
         return;
     }
@@ -987,29 +1008,130 @@ fn run_bin_leg(name: &str, min: usize) {
     let fixture = load_fixture(name);
     let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--jsonl")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn the diffuse binary");
-    {
+        .expect("spawn the diffuse binary in --jsonl mode");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    let writer_thread = std::thread::spawn(move || {
         use std::io::Write;
-        child
-            .stdin
-            .take()
-            .expect("stdin")
-            .write_all(&input)
-            .expect("write the fixture");
+        let _ = stdin.write_all(&input);
+        let _ = stdin.flush();
+    });
+
+    let wire_jsonl_path = expected_wire_jsonl_path(name);
+    let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
+
+    let expected_reader: Box<dyn std::io::BufRead> = if wire_jsonl_path.exists() {
+        let expected_file = fs::File::open(&wire_jsonl_path).unwrap_or_else(|e| {
+            panic!(
+                "[{name}] failed to open expected wire.jsonl at {}: {e}",
+                wire_jsonl_path.display()
+            )
+        });
+        Box::new(std::io::BufReader::new(expected_file))
+    } else {
+        let gz_file = fs::File::open(&gz_wire_jsonl_path).unwrap_or_else(|e| {
+            panic!(
+                "[{name}] failed to open expected wire.jsonl at {} or {}: {e}",
+                wire_jsonl_path.display(),
+                gz_wire_jsonl_path.display()
+            )
+        });
+        let decoder = flate2::read::GzDecoder::new(gz_file);
+        Box::new(std::io::BufReader::new(decoder))
+    };
+    use std::io::BufRead;
+    let mut expected_reader = expected_reader;
+    let mut actual_reader = std::io::BufReader::new(child.stdout.take().expect("stdout"));
+
+    let mut failures = Vec::new();
+    let mut line_idx = 0;
+    let mut expected_line = String::new();
+    let mut actual_line = String::new();
+    let mut records = Vec::new();
+
+    loop {
+        expected_line.clear();
+        actual_line.clear();
+        let exp_len = expected_reader.read_line(&mut expected_line).unwrap_or(0);
+        let act_len = actual_reader.read_line(&mut actual_line).unwrap_or(0);
+
+        if exp_len == 0 && act_len == 0 {
+            break;
+        }
+
+        line_idx += 1;
+
+        if exp_len == 0 {
+            failures.push(format!(
+                "Line {line_idx}: unexpected extra output from binary: {:?}",
+                actual_line.trim()
+            ));
+            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                break;
+            }
+            continue;
+        }
+        if act_len == 0 {
+            failures.push(format!(
+                "Line {line_idx}: unexpected EOF from binary, expected: {:?}",
+                expected_line.trim()
+            ));
+            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                break;
+            }
+            continue;
+        }
+
+        let exp_trimmed = expected_line.trim();
+        let act_trimmed = actual_line.trim();
+
+        if exp_trimmed != act_trimmed {
+            failures.push(format!(
+                "Line {line_idx} mismatch:\n  actual:   {act_trimmed}\n  expected: {exp_trimmed}"
+            ));
+            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                break;
+            }
+        }
+
+        if let Ok(rec) = serde_json::from_str::<diffuse::core::wire::jsonl::WireRecord>(act_trimmed)
+        {
+            records.push(rec);
+        }
     }
-    let out = child.wait_with_output().expect("wait for the bin");
+
+    let _ = writer_thread.join();
+    let status = child.wait().expect("wait for child");
     assert!(
-        out.status.success(),
-        "[{name}] the bin exited non-zero: {}",
-        String::from_utf8_lossy(&out.stderr)
+        status.success(),
+        "[{name}] the bin exited non-zero with status {status:?}"
     );
-    let decoded: PipelineOutput =
-        serde_json::from_slice(&out.stdout).expect("decode the bin's token-stream JSON");
+
+    if !failures.is_empty() {
+        eprintln!(
+            "\n----- WIRE JSONL DIFF [{name}] — showing first {} mismatch(es) -----",
+            failures.len()
+        );
+        for f in &failures {
+            eprintln!("  {f}");
+        }
+        eprintln!("----- END WIRE JSONL DIFF -----\n");
+        panic!("[{name}] wire JSONL output deviates from expected static golden. See diff above.");
+    }
+
+    let decoded_files =
+        diffuse::core::wire::jsonl::decode_jsonl_records(records).expect("decode records");
+    let decoded = PipelineOutput {
+        files: decoded_files,
+        branch: String::new(),
+        untracked_skipped: vec![],
+    };
     walk_and_assert(&decoded, name, min);
-    assert_wire_json_matches(&decoded, name);
 }
 
 /// Slice a single path's portion out of a multi-file diff: from its

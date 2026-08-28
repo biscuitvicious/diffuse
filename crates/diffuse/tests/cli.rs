@@ -128,15 +128,31 @@ fn jsonl_streaming_emits_valid_json_lines() {
     assert_eq!(out.status.code(), Some(0));
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.len(), 2, "must emit exactly two JSON lines");
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert!(!lines.is_empty(), "must emit JSON lines");
 
-    for line in lines {
-        let val: serde_json::Value = serde_json::from_str(line).expect("valid JSON line");
-        assert!(val.get("path").is_some());
-        assert!(val.get("counts").is_some());
-        assert!(val.get("hunks").is_some());
+    for line in &lines {
+        let rec: diffuse::core::wire::jsonl::WireRecord =
+            serde_json::from_str(line).expect("valid WireRecord JSON line");
+        match rec {
+            diffuse::core::wire::jsonl::WireRecord::FileHeader(h) => {
+                assert!(!h.path.is_empty());
+            }
+            diffuse::core::wire::jsonl::WireRecord::HunkHeader(_) => {}
+            diffuse::core::wire::jsonl::WireRecord::Line(l) => {
+                assert!(!l.text.is_empty());
+            }
+            diffuse::core::wire::jsonl::WireRecord::FileFooter(f) => {
+                assert!(!f.path.is_empty());
+            }
+        }
     }
+
+    let decoded =
+        diffuse::core::wire::jsonl::decode_jsonl_str(&stdout).expect("valid JSONL stream");
+    assert_eq!(decoded.len(), 2, "must decode exactly two files");
+    assert_eq!(decoded[0].path, "a.txt");
+    assert_eq!(decoded[1].path, "b.txt");
 }
 
 #[test]
@@ -446,12 +462,15 @@ index 0000000..1111111 100644
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.trim().lines().collect();
-    assert_eq!(lines.len(), 1, "must emit 1 JSON line for 1 file");
+    assert!(!lines.is_empty(), "must emit JSONL lines");
     assert!(
         lines[0].starts_with('{'),
         "must be JSON line, got: {}",
         lines[0]
     );
+    let decoded = diffuse::core::wire::jsonl::decode_jsonl_str(&stdout).expect("decode jsonl");
+    assert_eq!(decoded.len(), 1, "must decode 1 file");
+    assert_eq!(decoded[0].path, "hello.rs");
 }
 
 /// `diffuse parse --diff <file>` should read diff from file and emit JSON.

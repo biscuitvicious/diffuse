@@ -467,6 +467,56 @@ fn main() -> io::Result<()> {
         return Ok(());
     }
 
+    if diff_opt.is_none() && stdin_tty && piped_stdin.is_empty() {
+        let repo_root = env::current_dir()?;
+        let notes_path = args
+            .notes_file
+            .as_ref()
+            .map(Path::new)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(default_notes_path);
+        let loaded_db = load_notes(&notes_path);
+        let pipeline_opts = PipelineOptions::default()
+            .with_notes(Some(loaded_db), args.repo.clone())
+            .with_visual_context(args.context)
+            .with_expand_lines(args.expand_lines);
+
+        let (consumer, meta_rx) = spawn_git_stream_pipeline(
+            repo_root,
+            git_args,
+            Vec::new(),
+            false,
+            ENGINE_CONTEXT,
+            pipeline_opts,
+            None,
+        );
+        if let Ok(Err(e)) = meta_rx.recv() {
+            eprintln!("diffuse: {e}");
+            std::process::exit(2);
+        }
+        if is_jsonl {
+            let mut stdout = io::stdout().lock();
+            for file in consumer {
+                if let Err(e) = diffuse::core::wire::jsonl::emit_file_jsonl(&file, &mut stdout) {
+                    if e.kind() == io::ErrorKind::BrokenPipe {
+                        return Ok(());
+                    }
+                    return Err(e);
+                }
+            }
+            let _ = stdout.flush();
+        } else {
+            let files: Vec<_> = consumer.collect();
+            let out = PipelineOutput {
+                files,
+                branch: String::new(),
+                untracked_skipped: Vec::new(),
+            };
+            println!("{}", serde_json::to_string(&out).expect("serialize"));
+        }
+        return Ok(());
+    }
+
     let raw = match &diff_opt {
         Some(path) => fs::read_to_string(path)?,
         None => {
@@ -530,6 +580,21 @@ fn main() -> io::Result<()> {
                     }
                 }
                 let _ = stdout.flush();
+            } else if is_jsonl {
+                let mut stdout = io::stdout().lock();
+                for out in &outputs {
+                    for file in &out.files {
+                        if let Err(e) =
+                            diffuse::core::wire::jsonl::emit_file_jsonl(file, &mut stdout)
+                        {
+                            if e.kind() == io::ErrorKind::BrokenPipe {
+                                return Ok(());
+                            }
+                            return Err(e);
+                        }
+                    }
+                }
+                let _ = stdout.flush();
             } else {
                 println!("{}", serde_json::to_string(&outputs).expect("serialize"));
             }
@@ -567,8 +632,7 @@ fn main() -> io::Result<()> {
                 );
                 let mut stdout = io::stdout().lock();
                 for file in consumer {
-                    if let Ok(line) = serde_json::to_string(&file)
-                        && let Err(e) = writeln!(stdout, "{line}")
+                    if let Err(e) = diffuse::core::wire::jsonl::emit_file_jsonl(&file, &mut stdout)
                     {
                         if e.kind() == io::ErrorKind::BrokenPipe {
                             return Ok(());
@@ -576,6 +640,7 @@ fn main() -> io::Result<()> {
                         return Err(e);
                     }
                 }
+                let _ = stdout.flush();
             } else {
                 let output = process_input(*input, &args);
                 println!("{}", serde_json::to_string(&output).expect("serialize"));
