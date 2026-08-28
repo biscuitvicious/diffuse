@@ -26,6 +26,7 @@ fn handle_paste_event(state: &mut AppState, text: &str) {
     }
 }
 
+#[tracing::instrument(level = "trace", skip(state), fields(code = ?key.code, modifiers = ?key.modifiers))]
 fn handle_key_event(state: &mut AppState, key: KeyEvent) {
     // Help Modal Mode (swallows all background keys, closes on Esc/?/q/Enter/Space)
     if state.show_help {

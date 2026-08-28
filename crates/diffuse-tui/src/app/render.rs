@@ -150,6 +150,7 @@ impl AppState {
     /// `(file, coord, side)`, rebuild the other view, jump to the
     /// equivalent row (same coordinate, preferring the same side), and
     /// preserve the visual screen-y pivot position.
+    #[tracing::instrument(level = "trace", skip(self), fields(cur_raw = self.raw_diff, cur_row = self.row_idx, cur_file = self.current_file_idx()))]
     pub fn toggle_raw_diff(&mut self) {
         let old_vis = self.cursor_visual_line();
         let screen_y = old_vis.saturating_sub(self.scroll);

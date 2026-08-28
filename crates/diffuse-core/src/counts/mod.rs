@@ -25,6 +25,7 @@ impl FileCounts {
 }
 
 /// Display counts: moves are neither added nor removed; mods are one row.
+#[tracing::instrument(level = "trace", ret, skip(f), fields(path = %f.path))]
 pub fn file_counts(f: &DiffFile) -> FileCounts {
     let mut adds = 0usize;
     let mut dels = 0usize;

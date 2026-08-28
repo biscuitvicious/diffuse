@@ -20,6 +20,7 @@ impl MyersOnD {
 
     /// Compute the shortest edit script transforming sequence A into sequence
     /// B.
+    #[tracing::instrument(level = "trace", ret, skip_all, fields(n = a.len(), m = b.len()))]
     pub fn diff<T: PartialEq>(a: &[T], b: &[T]) -> Vec<EditOp> {
         let n = a.len();
         let m = b.len();

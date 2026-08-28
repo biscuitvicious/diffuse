@@ -264,6 +264,7 @@ fn route_mode(
 }
 
 fn main() -> io::Result<()> {
+    let _ = diffuse::core::logging::init_tracing_subscriber();
     let args = Args::parse();
 
     for dir in &args.directory {

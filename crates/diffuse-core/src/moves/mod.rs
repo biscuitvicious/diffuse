@@ -12,6 +12,7 @@ type RowPos = (usize, usize);
 /// Mark exact-content del/add pairs as *moved*: the same line at a new
 /// position (e.g. renumbered sections) — rendered muted and excluded from
 /// the change counts. Matching is greedy per file (a multiset of add texts).
+#[tracing::instrument(level = "trace", skip(f), fields(path = %f.path, hunk_count = f.hunks.len()))]
 pub fn mark_moves(f: &mut DiffFile) {
     // Leading-indent-insensitive: a line reflowed to a different indentation
     // is still a move, not a change. Trailing whitespace is NOT stripped —

@@ -11,3 +11,4 @@ diffuse-syntax = { workspace = true }
 regex = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
+tracing = { workspace = true }

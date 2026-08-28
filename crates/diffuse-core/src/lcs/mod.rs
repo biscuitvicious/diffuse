@@ -802,6 +802,7 @@ pub type WordSpans = Spans;
  * runs of tokens that have no LCS counterpart; a line with no counterpart
  * (pure add/del) yields no spans (the line-level shade covers it).
  */
+#[tracing::instrument(level = "trace", ret, skip_all, fields(old_len = old_text.len(), new_len = new_text.len()))]
 pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
     let ot: Vec<&str> = tokenize_line(old_text).collect();
     let nt: Vec<&str> = tokenize_line(new_text).collect();

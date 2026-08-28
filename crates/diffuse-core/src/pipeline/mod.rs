@@ -166,6 +166,7 @@ pub fn run_pipeline_with_notes(
 }
 
 /// Run the pipeline over Arc<String> inputs without string duplication.
+#[tracing::instrument(level = "trace", ret, skip(diff, new_content, old_content, opts), fields(diff_bytes = diff.len(), new_file_count = new_content.as_ref().map(|m| m.len()), old_file_count = old_content.as_ref().map(|m| m.len()), visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn run_pipeline_arc(
     diff: std::sync::Arc<String>,
     new_content: Option<HashMap<String, std::sync::Arc<String>>>,
@@ -185,15 +186,18 @@ pub fn run_pipeline_arc(
 
 /// Run the pipeline over a diff + optional new-file contents + optional
 /// old-file contents + pipeline options; produce the wire-contract output.
+#[tracing::instrument(level = "trace", ret, skip(diff, new_content, old_content, opts), fields(new_file_count = new_content.as_ref().map(|m| m.len()), old_file_count = old_content.as_ref().map(|m| m.len()), visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn run_pipeline_full(
     diff: impl Into<String>,
     new_content: Option<HashMap<String, String>>,
     old_content: Option<HashMap<String, String>>,
     opts: PipelineOptions,
 ) -> PipelineOutput {
-    let out_files =
+    let out_files: Vec<OutputFile> =
         crate::streaming::stream_diff_pipeline(diff, new_content, old_content, opts, None)
             .collect();
+
+    tracing::debug!(file_count = out_files.len(), "Completed diff pipeline");
 
     PipelineOutput {
         files: out_files,
@@ -211,6 +215,7 @@ fn split_content_lines(s: &str) -> Vec<&str> {
 
 /// Run pipeline diffing, alignment, move detection, and syntax classification
 /// on a single parsed diff file using the specified pipeline options.
+#[tracing::instrument(level = "trace", ret, skip(f, new_content, old_content, _diff_fallback, opts), fields(path = %f.path, status = ?f.status, hunks = f.hunks.len(), new_bytes = new_content.map(|s| s.len()), old_bytes = old_content.map(|s| s.len())))]
 pub fn process_single_diff_file(
     mut f: DiffFile,
     new_content: Option<&str>,
@@ -356,6 +361,67 @@ pub fn process_single_diff_file(
         crate::parse::FileStatus::Untracked => "untracked".to_string(),
     };
 
+    let rows: Vec<OutputRow> = build_visible(&f.hunks, opts.expand_lines)
+        .into_iter()
+        .map(|vis| {
+            let r = vis.row;
+            let runs = if matches!(
+                r,
+                Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
+            ) {
+                colored_runs(&r, profile, &regions)
+            } else {
+                let mut runs = Vec::new();
+                for_each_ctx_line_token(
+                    r.text(),
+                    match vis.side {
+                        Some(VisibleSide::New) => r.new_line(),
+                        Some(VisibleSide::Old) => None,
+                        None => r.new_line().or_else(|| r.old_line()),
+                    },
+                    profile,
+                    &regions,
+                    |tk| {
+                        runs.push(OutputRun {
+                            kind: RunKind::Ctx,
+                            color: Some(std::borrow::Cow::Borrowed(tk.color)),
+                            sgr: tk.sgr,
+                            text: tk.text.to_string().into(),
+                        });
+                    },
+                );
+                runs
+            };
+            let (new_line, old_line) = match (&r, vis.side) {
+                (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
+                    (r.new_line(), None)
+                }
+                (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => (None, r.old_line()),
+                (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
+                (Row::Sep(_), _) => (None, None),
+            };
+            let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
+            OutputRow {
+                kind: r.kind(),
+                new_line,
+                old_line,
+                text: r.text().to_string(),
+                del_text: r.del_text().map(String::from),
+                spans: r.spans().cloned().unwrap_or_default(),
+                runs,
+                wholesale,
+                moved: r.is_moved(),
+            }
+        })
+        .collect();
+
+    tracing::debug!(
+        path = %f.path,
+        hunk_count = hunks_out.len(),
+        row_count = rows.len(),
+        "Finished processing diff file"
+    );
+
     OutputFile {
         path: f.path.clone(),
         status,
@@ -376,61 +442,7 @@ pub fn process_single_diff_file(
             .collect(),
         notes: notes_out,
         content_runs: Vec::new(),
-        rows: build_visible(&f.hunks, opts.expand_lines)
-            .into_iter()
-            .map(|vis| {
-                let r = vis.row;
-                let runs = if matches!(
-                    r,
-                    Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
-                ) {
-                    colored_runs(&r, profile, &regions)
-                } else {
-                    let mut runs = Vec::new();
-                    for_each_ctx_line_token(
-                        r.text(),
-                        match vis.side {
-                            Some(VisibleSide::New) => r.new_line(),
-                            Some(VisibleSide::Old) => None,
-                            None => r.new_line().or_else(|| r.old_line()),
-                        },
-                        profile,
-                        &regions,
-                        |tk| {
-                            runs.push(OutputRun {
-                                kind: RunKind::Ctx,
-                                color: Some(std::borrow::Cow::Borrowed(tk.color)),
-                                sgr: tk.sgr,
-                                text: tk.text.to_string().into(),
-                            });
-                        },
-                    );
-                    runs
-                };
-                let (new_line, old_line) = match (&r, vis.side) {
-                    (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
-                        (r.new_line(), None)
-                    }
-                    (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => {
-                        (None, r.old_line())
-                    }
-                    (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
-                    (Row::Sep(_), _) => (None, None),
-                };
-                let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
-                OutputRow {
-                    kind: r.kind(),
-                    new_line,
-                    old_line,
-                    text: r.text().to_string(),
-                    del_text: r.del_text().map(String::from),
-                    spans: r.spans().cloned().unwrap_or_default(),
-                    runs,
-                    wholesale,
-                    moved: r.is_moved(),
-                }
-            })
-            .collect(),
+        rows,
     }
 }
 

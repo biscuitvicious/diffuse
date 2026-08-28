@@ -204,8 +204,7 @@ impl Iterator for StreamingConsumer {
 
 /// Spawns an asynchronous streaming pipeline with `N = (num_cpus / 2).max(1)`
 /// workers.
-/// Spawns an asynchronous streaming pipeline with `N = (num_cpus / 2).max(1)`
-/// workers.
+#[tracing::instrument(level = "trace", skip(opts), fields(workers = worker_count, visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn spawn_streaming_pipeline(
     worker_count: Option<usize>,
     opts: PipelineOptions,
@@ -276,6 +275,7 @@ pub fn spawn_streaming_pipeline(
 
 /// Convenience helper to parse a diff and immediately spawn a streaming
 /// pipeline using Arc<String> content maps to avoid allocations.
+#[tracing::instrument(level = "trace", skip(diff, new_content, old_content, opts), fields(diff_bytes = diff.len(), visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn stream_diff_pipeline_arc(
     diff: Arc<String>,
     mut new_content: Option<std::collections::HashMap<String, Arc<String>>>,
@@ -330,6 +330,7 @@ pub struct GitRepoMeta {
 ///    contents.
 /// 3. Returns a `StreamingConsumer` receiving ordered `OutputFile`s and a
 ///    receiver for `GitRepoMeta`.
+#[tracing::instrument(level = "trace", skip(paths, opts), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), cached, context, visual_context = opts.visual_context))]
 pub fn spawn_git_stream_pipeline(
     repo_root: std::path::PathBuf,
     base_args: Vec<String>,

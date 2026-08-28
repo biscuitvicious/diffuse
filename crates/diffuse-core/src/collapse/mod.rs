@@ -47,6 +47,7 @@ pub struct PairingContext<'a> {
 /// with its word-diff spans baked in.
 ///
 /// Composed of 4 pure passes over the diff AST.
+#[tracing::instrument(level = "trace", ret, skip(h, old_content, new_content, profile), fields(old_start = h.old_start, new_start = h.new_start, row_count = h.rows.len()))]
 pub fn collapse_hunk_rows(
     h: &Hunk,
     old_content: Option<&[&str]>,

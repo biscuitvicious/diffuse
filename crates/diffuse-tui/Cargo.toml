@@ -16,6 +16,7 @@ unicode-width = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 flate2 = { workspace = true }

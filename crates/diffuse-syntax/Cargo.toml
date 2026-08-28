@@ -8,3 +8,4 @@ description = "Syntax highlighting, language profiles, token classifier, and fen
 [dependencies]
 regex = { workspace = true }
 pulldown-cmark = { workspace = true }
+tracing = { workspace = true }

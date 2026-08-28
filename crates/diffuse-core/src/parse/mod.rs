@@ -494,6 +494,7 @@ fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32, &str)> {
 
 /// Parse a `git diff` into files, hunks, and rows. The `git diff -U0`
 /// flavor: hunks carry only add/del rows; the context is synthesized later.
+#[tracing::instrument(level = "trace", ret, skip(raw), fields(diff_len = raw.len()))]
 pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
     let mut files: Vec<DiffFile> = Vec::new();
     let mut cur: Option<DiffFile> = None;

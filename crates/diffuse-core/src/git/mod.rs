@@ -135,6 +135,7 @@ pub struct GitFileItem {
     pub no_content: bool,
 }
 
+#[derive(Debug)]
 pub struct LoadGitResult {
     pub diff: String,
     pub new_content: HashMap<String, String>,
@@ -276,6 +277,7 @@ pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<Stri
 ///// Progressive streaming producer for git diff and blob retrieval.
 /// Directly emits `FileJob`s to `StreamingProducer` as each file's diff chunk
 /// is encountered.
+#[tracing::instrument(level = "trace", skip(paths, producer, meta_tx), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), cached, context))]
 pub fn stream_git_repo_to_producer(
     repo_root: &Path,
     base_args: &[String],
@@ -295,6 +297,7 @@ pub fn stream_git_repo_to_producer(
     }
 
     let branch = get_current_branch(repo_root);
+    tracing::info!(branch = %branch, "Streaming git repository diff");
 
     let mut untracked_skipped = Vec::new();
     let refs = resolve_refs(repo_root, base_args, cached);
@@ -478,6 +481,7 @@ pub fn stream_git_repo_to_producer(
     producer.finish();
 }
 
+#[tracing::instrument(level = "trace", ret, err, skip(paths), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), cached, context))]
 pub fn load_git_repo(
     repo_root: &Path,
     base_args: &[String],

@@ -22,6 +22,7 @@ impl HirschbergLcs {
     }
 
     /// Compute index pairings (a_idx, b_idx) forming the LCS in linear space.
+    #[tracing::instrument(level = "trace", ret, skip_all, fields(n = a.len(), m = b.len()))]
     pub fn lcs<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
         let mut pairs = Vec::new();
         Self::hirschberg_recursive(a, b, 0, 0, &mut pairs);

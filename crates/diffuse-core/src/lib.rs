@@ -11,6 +11,7 @@ pub mod collapse;
 pub mod counts;
 pub mod git;
 pub mod lcs;
+pub mod logging;
 pub mod merge;
 pub mod moves;
 pub mod notes;

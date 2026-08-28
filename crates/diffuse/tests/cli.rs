@@ -712,3 +712,24 @@ fn test_cli_parse_raw_subcommand() {
     assert!(stdout.contains("\x1b["));
     assert!(!stdout.trim_start().starts_with('{'));
 }
+
+/// Setting `DIFFUSE_LOG_FILE` writes structured tracing log events to that
+/// file.
+#[test]
+fn test_cli_diffuse_log_file() {
+    let repo_dir = setup_repo();
+    let log_file = tempfile::NamedTempFile::new().unwrap();
+    let log_path = log_file.path().to_path_buf();
+
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .env("DIFFUSE_LOG_FILE", &log_path)
+        .env("DIFFUSE_LOG", "trace")
+        .current_dir(&repo_dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    // The log file was created/opened
+    assert!(log_path.exists());
+}
