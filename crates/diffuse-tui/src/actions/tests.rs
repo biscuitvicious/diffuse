@@ -1,3 +1,5 @@
+use std::fs;
+
 use super::*;
 
 #[test]
@@ -10,27 +12,13 @@ fn test_parse_hunk_header() {
     assert_eq!(parse_hunk_header("invalid"), None);
 }
 
-static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-fn setup_test_git_repo() -> (std::path::PathBuf, std::path::PathBuf) {
-    let count = TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "diffuse-git-actions-{}-{}-{}",
-        std::process::id(),
-        nanos,
-        count
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+fn setup_test_git_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
 
     let run = |args: &[&str]| {
         let out = Command::new("git")
             .args(args)
-            .current_dir(&dir)
+            .current_dir(dir.path())
             .output()
             .unwrap();
         assert!(
@@ -43,24 +31,25 @@ fn setup_test_git_repo() -> (std::path::PathBuf, std::path::PathBuf) {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    fs::write(dir.join("file.rs"), "fn one() {}\nfn two() {}\n").unwrap();
+    fs::write(dir.path().join("file.rs"), "fn one() {}\nfn two() {}\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "init"]);
 
     // Modify file.rs
     fs::write(
-        dir.join("file.rs"),
+        dir.path().join("file.rs"),
         "fn one() {\n    println!(\"1\");\n}\nfn two() {}\n",
     )
     .unwrap();
 
-    let notes_path = dir.join("notes.json");
+    let notes_path = dir.path().join("notes.json");
     (dir, notes_path)
 }
 
 #[test]
 fn test_git_stage_unstage_reload_flow() {
-    let (repo_root, notes_path) = setup_test_git_repo();
+    let (repo_dir, notes_path) = setup_test_git_repo();
+    let repo_root = repo_dir.path().to_path_buf();
     let git_res = load_git_repo(&repo_root, &[], &[], false, ENGINE_CONTEXT).unwrap();
     let out = run_pipeline_full(
         &git_res.diff,
@@ -102,13 +91,12 @@ fn test_git_stage_unstage_reload_flow() {
     // Reload cached diff - should now be clean
     reload_diff(&mut state, &repo_root, &cached_args).unwrap();
     assert!(state.output.files.is_empty(), "index is now clean");
-
-    let _ = fs::remove_dir_all(&repo_root);
 }
 
 #[test]
 fn test_git_discard_flow() {
-    let (repo_root, notes_path) = setup_test_git_repo();
+    let (repo_dir, notes_path) = setup_test_git_repo();
+    let repo_root = repo_dir.path().to_path_buf();
     let git_res = load_git_repo(&repo_root, &[], &[], false, ENGINE_CONTEXT).unwrap();
     let out = run_pipeline_full(
         &git_res.diff,
@@ -132,6 +120,4 @@ fn test_git_discard_flow() {
         state.output.files.is_empty(),
         "working tree is clean after discard"
     );
-
-    let _ = fs::remove_dir_all(&repo_root);
 }

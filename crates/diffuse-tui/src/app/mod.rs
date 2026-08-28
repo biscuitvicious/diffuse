@@ -155,4 +155,9 @@ impl AppState {
 }
 
 #[cfg(test)]
+pub(crate) fn temp_notes_path() -> PathBuf {
+    PathBuf::from("/nonexistent-diffuse-test-notes.json")
+}
+
+#[cfg(test)]
 mod tests;

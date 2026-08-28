@@ -5,7 +5,7 @@
 - [x] Phase 3 — Golden Fixture JSON Format Deconstruction & Dedicated Per-Corpus File Storage
 - [x] Phase 4 — Wire JSON Format Optimization
 - [x] Phase 5 — Streaming Line-by-Line JSONL Protocol & Granular Section Headers
-- [ ] Phase 6 — Replace Temp File Handling in Tests with `tempfile` Crate
+- [x] Phase 6 — Replace Temp File Handling in Tests with `tempfile` Crate
 
 ---
 

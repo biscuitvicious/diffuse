@@ -1,6 +1,6 @@
 //! Interactive Git Actions for Diffuse TUI (stage, unstage, discard, reload).
 
-use std::{fs, path::Path, process::Command};
+use std::{path::Path, process::Command};
 
 use crate::core::{
     ENGINE_CONTEXT, PipelineOptions, git::load_git_repo, pipeline::run_pipeline_full,
@@ -106,35 +106,30 @@ fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
     Some((old_start, new_start))
 }
 
-static PATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Apply a patch string via `git apply`.
 pub fn apply_patch(repo_root: &Path, patch: &str, flags: &[&str]) -> Result<(), String> {
-    let count = PATCH_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let tmp = std::env::temp_dir().join(format!(
-        "diffuse-patch-{}-{}-{}.patch",
-        std::process::id(),
-        nanos,
-        count
-    ));
+    use std::io::Write as _;
+    let mut tmp = tempfile::Builder::new()
+        .prefix("diffuse-patch-")
+        .suffix(".patch")
+        .tempfile()
+        .map_err(|e| format!("failed to create tmp patch: {e}"))?;
 
-    fs::write(&tmp, patch).map_err(|e| format!("failed to write tmp patch: {e}"))?;
+    tmp.write_all(patch.as_bytes())
+        .map_err(|e| format!("failed to write tmp patch: {e}"))?;
+    tmp.flush()
+        .map_err(|e| format!("failed to flush tmp patch: {e}"))?;
 
     let check = Command::new("git")
         .arg("apply")
         .arg("--check")
         .args(flags)
-        .arg(&tmp)
+        .arg(tmp.path())
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("git apply --check failed: {e}"))?;
 
     if !check.status.success() {
-        let _ = fs::remove_file(&tmp);
         let err = String::from_utf8_lossy(&check.stderr);
         return Err(format!("patch does not apply: {}", err.trim()));
     }
@@ -142,12 +137,10 @@ pub fn apply_patch(repo_root: &Path, patch: &str, flags: &[&str]) -> Result<(), 
     let res = Command::new("git")
         .arg("apply")
         .args(flags)
-        .arg(&tmp)
+        .arg(tmp.path())
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("git apply failed: {e}"))?;
-
-    let _ = fs::remove_file(&tmp);
 
     if !res.status.success() {
         let err = String::from_utf8_lossy(&res.stderr);

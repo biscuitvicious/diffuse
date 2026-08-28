@@ -1,5 +1,5 @@
 use crate::{
-    app::AppState,
+    app::{AppState, temp_notes_path},
     core::{PipelineOptions, pipeline::run_pipeline_full, wire::PipelineOutput},
 };
 
@@ -36,11 +36,7 @@ index 1111111..2222222 100644
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
 
     // Step down through every single row and verify render_frame never panics
     for _ in 0..state.flat.len() + 5 {
@@ -114,11 +110,7 @@ index 1111111..2222222 100644
     .collect();
 
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-pgdn.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     state.render_frame(80, 20);
     assert_eq!(state.scroll, 0);
 
@@ -177,7 +169,7 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
     let mut state = AppState::new(
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
+        temp_notes_path(),
     );
     state.viewport_height = 20;
 
@@ -217,7 +209,7 @@ fn test_goto_line_preserves_viewport_margin_above() {
     let mut state = AppState::new(
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
+        temp_notes_path(),
     );
     state.viewport_height = 20;
 
@@ -246,7 +238,7 @@ fn test_move_bottom_preserves_viewport_margin_below() {
     let mut state = AppState::new(
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
+        temp_notes_path(),
     );
     state.viewport_height = 20;
 
@@ -272,7 +264,7 @@ fn test_viewport_margin_rounding_half_up() {
             untracked_skipped: Vec::new(),
         },
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
+        temp_notes_path(),
     );
 
     state.viewport_height = 0;
@@ -330,7 +322,7 @@ fn test_next_and_prev_file_navigation_centers_banner_with_margin() {
     let mut state = AppState::new(
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
+        temp_notes_path(),
     );
     state.viewport_height = 20;
 

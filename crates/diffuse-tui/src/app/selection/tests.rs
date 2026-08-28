@@ -1,5 +1,5 @@
 use crate::{
-    app::AppState,
+    app::{AppState, temp_notes_path},
     core::{PipelineOptions, pipeline::run_pipeline_full, wire::PipelineOutput},
 };
 
@@ -38,11 +38,7 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_selection_anchor_span_snaps_to_coord_rows() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     // flat[0] is the file header (no coordinate); AppState starts on the
     // first coordinate row (1020). The engine pads the hunk with empty
     // above-context rows (1022-1024), then the real rows: ctx
@@ -70,11 +66,7 @@ fn test_selection_anchor_span_snaps_to_coord_rows() {
 
 #[test]
 fn test_selection_v_confirm_clears_anchor_and_band_renders() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     for _ in 0..3 {
         state.move_down();
     }
@@ -105,11 +97,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
 
 #[test]
 fn test_selection_requires_coord_rows() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     // Anchor on the file header (no coordinate) and confirm in place: the
     // range collapses onto the header which carries no line number, so
     // the reference computes no selection.
@@ -121,11 +109,7 @@ fn test_selection_requires_coord_rows() {
 
     // Anchoring on the header then walking onto a coordinate row snaps
     // the low end down to the first coordinate row of the file.
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     state.move_up();
     state.start_or_confirm_selection();
     state.move_down();

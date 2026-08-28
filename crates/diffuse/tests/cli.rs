@@ -3,9 +3,8 @@
 //! never try to open the interactive TUI.
 
 use std::{
-    env, fs,
-    path::PathBuf,
-    process::{self, Command, Stdio},
+    fs,
+    process::{Command, Stdio},
 };
 
 /// `diffuse < /dev/null | cat` with no git args and no JSON payload must
@@ -16,11 +15,10 @@ use std::{
 fn empty_piped_stdin_routes_to_standalone_reviewer() {
     // A provably NON-git dir: the standalone path fails with the repo error
     // (exit 2); the JSON path would exit 0 with `{"files":[]}`.
-    let dir = env::temp_dir().join(format!("diffuse-cli-route-{}", process::id()));
-    fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -28,7 +26,6 @@ fn empty_piped_stdin_routes_to_standalone_reviewer() {
         .unwrap();
     drop(child.stdin.take()); // close stdin immediately: EOF, no payload
     let out = child.wait_with_output().unwrap();
-    let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(
         out.status.code(),
@@ -49,7 +46,7 @@ fn empty_piped_stdin_routes_to_standalone_reviewer() {
 fn piped_stdout_renders_not_json_and_not_tui() {
     let dir = setup_repo();
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -57,7 +54,6 @@ fn piped_stdout_renders_not_json_and_not_tui() {
         .unwrap();
     drop(child.stdin.take());
     let out = child.wait_with_output().unwrap();
-    let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(out.status.code(), Some(0), "render must succeed");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -77,18 +73,13 @@ fn piped_stdout_renders_not_json_and_not_tui() {
     );
 }
 
-static REPO_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
-
-fn setup_repo() -> PathBuf {
-    let id = REPO_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = env::temp_dir().join(format!("diffuse-cli-repo-{}-{}", process::id(), id));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+fn setup_repo() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
 
     let run = |args: &[&str]| {
         let out = Command::new("git")
             .args(args)
-            .current_dir(&dir)
+            .current_dir(dir.path())
             .output()
             .unwrap();
         assert!(
@@ -101,11 +92,11 @@ fn setup_repo() -> PathBuf {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "init"]);
-    fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
-    fs::write(dir.join("b.txt"), "hello\nworld\n").unwrap();
+    fs::write(dir.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    fs::write(dir.path().join("b.txt"), "hello\nworld\n").unwrap();
     dir
 }
 
@@ -160,7 +151,7 @@ fn non_tui_mode_handles_broken_pipe_cleanly() {
     let dir = setup_repo();
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("--no-tui")
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()
@@ -169,21 +160,16 @@ fn non_tui_mode_handles_broken_pipe_cleanly() {
     // Drop stdout pipe reader immediately to simulate `diffuse | head -n 1`
     drop(child.stdout.take());
     let _ = child.wait();
-
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn large_changeset_progressive_streaming_performance() {
-    let id = REPO_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = env::temp_dir().join(format!("diffuse-bench-repo-{}-{}", process::id(), id));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
     let run = |args: &[&str]| {
         let out = Command::new("git")
             .args(args)
-            .current_dir(&dir)
+            .current_dir(dir.path())
             .output()
             .unwrap();
         assert!(out.status.success());
@@ -196,7 +182,7 @@ fn large_changeset_progressive_streaming_performance() {
     // Create 60 files
     for i in 0..60 {
         fs::write(
-            dir.join(format!("file_{i}.rs")),
+            dir.path().join(format!("file_{i}.rs")),
             format!("fn func_{i}() {{\n    println!(\"hello {i}\");\n}}\n"),
         )
         .unwrap();
@@ -207,7 +193,7 @@ fn large_changeset_progressive_streaming_performance() {
     // Modify all 60 files
     for i in 0..60 {
         fs::write(
-            dir.join(format!("file_{i}.rs")),
+            dir.path().join(format!("file_{i}.rs")),
             format!("fn func_{i}() {{\n    println!(\"modified {i}\");\n}}\n"),
         )
         .unwrap();
@@ -216,7 +202,7 @@ fn large_changeset_progressive_streaming_performance() {
     let start = std::time::Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("--no-tui")
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -239,8 +225,6 @@ fn large_changeset_progressive_streaming_performance() {
 
     let status = child.wait().unwrap();
     assert!(status.success());
-
-    let _ = fs::remove_dir_all(&dir);
 }
 
 /// `diffuse -C <dir>` from an external non-git directory must change directory
@@ -248,19 +232,15 @@ fn large_changeset_progressive_streaming_performance() {
 #[test]
 fn test_c_flag_changes_directory() {
     let repo_dir = setup_repo();
-    let outside_dir = env::temp_dir().join(format!("diffuse-outside-{}", process::id()));
-    fs::create_dir_all(&outside_dir).unwrap();
+    let outside_dir = tempfile::tempdir().unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("-C")
-        .arg(&repo_dir)
+        .arg(repo_dir.path())
         .arg("--no-tui")
-        .current_dir(&outside_dir)
+        .current_dir(outside_dir.path())
         .output()
         .unwrap();
-
-    let _ = fs::remove_dir_all(&outside_dir);
-    let _ = fs::remove_dir_all(&repo_dir);
 
     assert_eq!(
         out.status.code(),
@@ -279,8 +259,8 @@ fn test_c_flag_changes_directory() {
 /// <child>`).
 #[test]
 fn test_multiple_c_flags_evaluate_sequentially() {
-    let parent = env::temp_dir().join(format!("diffuse-parent-{}", process::id()));
-    let child_repo = parent.join("sub_repo");
+    let parent = tempfile::tempdir().unwrap();
+    let child_repo = parent.path().join("sub_repo");
     fs::create_dir_all(&child_repo).unwrap();
 
     let run = |args: &[&str]| {
@@ -299,21 +279,17 @@ fn test_multiple_c_flags_evaluate_sequentially() {
     run(&["commit", "-qm", "nested init"]);
     fs::write(child_repo.join("nested.rs"), "fn nested_mod() {}\n").unwrap();
 
-    let outside = env::temp_dir().join(format!("diffuse-outside-2-{}", process::id()));
-    fs::create_dir_all(&outside).unwrap();
+    let outside = tempfile::tempdir().unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("-C")
-        .arg(&parent)
+        .arg(parent.path())
         .arg("-C")
         .arg("sub_repo")
         .arg("--no-tui")
-        .current_dir(&outside)
+        .current_dir(outside.path())
         .output()
         .unwrap();
-
-    let _ = fs::remove_dir_all(&outside);
-    let _ = fs::remove_dir_all(&parent);
 
     assert_eq!(
         out.status.code(),
@@ -476,9 +452,8 @@ index 0000000..1111111 100644
 /// `diffuse parse --diff <file>` should read diff from file and emit JSON.
 #[test]
 fn test_cli_parse_with_diff_file() {
-    let dir = env::temp_dir().join(format!("diffuse-diff-file-{}", process::id()));
-    fs::create_dir_all(&dir).unwrap();
-    let diff_file = dir.join("test.patch");
+    let dir = tempfile::tempdir().unwrap();
+    let diff_file = dir.path().join("test.patch");
     fs::write(
         &diff_file,
         "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-1\n+2\n",
@@ -491,8 +466,6 @@ fn test_cli_parse_with_diff_file() {
         .arg(&diff_file)
         .output()
         .unwrap();
-
-    let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(
         out.status.code(),
@@ -508,15 +481,14 @@ fn test_cli_parse_with_diff_file() {
 /// `diffuse review HEAD~1 --pager` reviews specified commit range.
 #[test]
 fn test_cli_review_commit_range() {
-    let repo_dir = setup_repo();
+    let repo = setup_repo();
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("review")
         .arg("HEAD~1")
         .arg("-p")
-        .current_dir(&repo_dir)
+        .current_dir(repo.path())
         .output()
         .unwrap();
-    let _ = fs::remove_dir_all(&repo_dir);
 
     assert_eq!(
         out.status.code(),
@@ -531,15 +503,14 @@ fn test_cli_review_commit_range() {
 /// `diffuse -U 3 -p` honors context flag.
 #[test]
 fn test_cli_context_flag() {
-    let repo_dir = setup_repo();
+    let repo = setup_repo();
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("-U")
         .arg("3")
         .arg("-p")
-        .current_dir(&repo_dir)
+        .current_dir(repo.path())
         .output()
         .unwrap();
-    let _ = fs::remove_dir_all(&repo_dir);
 
     assert_eq!(
         out.status.code(),
@@ -552,13 +523,12 @@ fn test_cli_context_flag() {
 /// `diffuse -m` emits valid GitHub-Flavored Markdown diff output.
 #[test]
 fn test_cli_markdown_flag() {
-    let repo_dir = setup_repo();
+    let repo = setup_repo();
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("-m")
-        .current_dir(&repo_dir)
+        .current_dir(repo.path())
         .output()
         .unwrap();
-    let _ = fs::remove_dir_all(&repo_dir);
 
     assert_eq!(
         out.status.code(),

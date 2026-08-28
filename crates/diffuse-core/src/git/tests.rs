@@ -2,10 +2,8 @@ use super::*;
 
 #[test]
 fn test_load_git_repo_non_repo_errors() {
-    let dir = std::env::temp_dir().join(format!("diffuse-nonrepo-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
-    let result = load_git_repo(&dir, &[], &[], false, 6);
-    let _ = std::fs::remove_dir_all(&dir);
+    let tmp = tempfile::tempdir().unwrap();
+    let result = load_git_repo(tmp.path(), &[], &[], false, 6);
     assert!(
         result.is_err(),
         "a non-git directory must error instead of silently yielding an empty diff"
@@ -38,14 +36,13 @@ fn test_resolve_refs_caret_exclamation() {
 
 #[test]
 fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
-    let dir = std::env::temp_dir().join(format!("diffuse-untracked-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
 
     let run = |args: &[&str]| {
         let out = std::process::Command::new("git")
             .args(args)
-            .current_dir(&dir)
+            .current_dir(dir)
             .output()
             .unwrap();
         assert!(out.status.success());
@@ -61,7 +58,7 @@ fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
     // Create untracked file
     std::fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
 
-    let res = load_git_repo(&dir, &[], &[], false, 6).unwrap();
+    let res = load_git_repo(dir, &[], &[], false, 6).unwrap();
     assert!(
         res.diff.contains("untracked.rs"),
         "diff must contain synthetic diff for untracked.rs"
@@ -86,20 +83,17 @@ fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
     assert!(!untracked_file.hunks.is_empty());
     assert_eq!(untracked_file.hunks[0].rows.len(), 1);
     assert_eq!(untracked_file.hunks[0].rows[0].text, "fn untracked() {}");
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn test_load_git_blobs_batch() {
-    let dir = std::env::temp_dir().join(format!("diffuse-batch-blob-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
 
     let run = |args: &[&str]| {
         let out = std::process::Command::new("git")
             .args(args)
-            .current_dir(&dir)
+            .current_dir(dir)
             .output()
             .unwrap();
         assert!(out.status.success());
@@ -124,7 +118,7 @@ fn test_load_git_blobs_batch() {
         "HEAD:nonexistent.txt".to_string(),
     ];
 
-    let blobs = load_git_blobs_batch(&dir, &specs);
+    let blobs = load_git_blobs_batch(dir, &specs);
     assert_eq!(
         blobs.get("HEAD:f1.txt").map(|s| s.as_str()),
         Some("content 1 mod\n")
@@ -138,20 +132,17 @@ fn test_load_git_blobs_batch() {
         Some("content 1\n")
     );
     assert!(!blobs.contains_key("HEAD:nonexistent.txt"));
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn test_load_git_blobs_native() {
-    let dir = std::env::temp_dir().join(format!("diffuse-native-blob-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
 
     let run = |args: &[&str]| {
         let out = std::process::Command::new("git")
             .args(args)
-            .current_dir(&dir)
+            .current_dir(dir)
             .output()
             .unwrap();
         assert!(out.status.success());
@@ -176,7 +167,7 @@ fn test_load_git_blobs_native() {
         "HEAD:missing.txt".to_string(),
     ];
 
-    let blobs = load_git_blobs_native(&dir, &specs);
+    let blobs = load_git_blobs_native(dir, &specs);
     assert_eq!(
         blobs.get("HEAD:f1.txt").map(|s| s.as_str()),
         Some("hello native mod\n")
@@ -190,6 +181,4 @@ fn test_load_git_blobs_native() {
         Some("hello native\n")
     );
     assert!(!blobs.contains_key("HEAD:missing.txt"));
-
-    let _ = std::fs::remove_dir_all(&dir);
 }

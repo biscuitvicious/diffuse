@@ -753,8 +753,9 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
         if gz_wire_path.exists() || name.contains("history") {
             write_gz(&gz_wire_path, actual_pretty.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_wire_path.display()));
-            write_gz(&gz_wire_jsonl_path, &jsonl_buf)
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_wire_jsonl_path.display()));
+            write_gz(&gz_wire_jsonl_path, &jsonl_buf).unwrap_or_else(|e| {
+                panic!("failed to write {}: {e}", gz_wire_jsonl_path.display())
+            });
             eprintln!(
                 "{name}: compressed wire JSON & JSONL updated ({})",
                 gz_wire_path.display()

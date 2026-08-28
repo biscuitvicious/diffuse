@@ -1,5 +1,5 @@
 use crate::{
-    app::AppState,
+    app::{AppState, temp_notes_path},
     command::TuiCommand,
     core::{PipelineOptions, pipeline::run_pipeline_full},
 };
@@ -14,7 +14,7 @@ index 1111111..2222222 100644
      let x = 1;
 -    // old comment — em dash
 +    // new comment — em dash updated
-+    let y = 2;
+     let y = 2;
  }
 "#;
     let new_content = [(
@@ -38,7 +38,7 @@ index 1111111..2222222 100644
             PipelineOptions::default(),
         ),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-header-triangle.json"),
+        temp_notes_path(),
     );
     state.render_frame(120, 30);
 

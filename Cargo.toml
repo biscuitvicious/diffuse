@@ -29,6 +29,7 @@ rayon = "1.12"
 rustc-hash = "2"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 pulldown-cmark = { version = "0.13", default-features = false }
+tempfile = "3"
 
 [profile.dev.package.regex]
 opt-level = 3

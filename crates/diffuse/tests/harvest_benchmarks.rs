@@ -8,35 +8,24 @@
 //! 4. Fixture generation via diffuse-harvest matching golden schema and passing
 //!    apply_oracle.
 
-use std::{
-    collections::HashMap,
-    env, fs,
-    path::PathBuf,
-    process::{self, Command},
-    time::Instant,
-};
+use std::{collections::HashMap, env, fs, process::Command, time::Instant};
 
 use diffuse::core::{PipelineOptions, streaming::stream_diff_pipeline, wire::OutputFile};
-
-static REPO_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(100);
 
 fn create_synthetic_multilang_repo(
     file_count: usize,
 ) -> (
-    PathBuf,
+    tempfile::TempDir,
     String,
     HashMap<String, String>,
     HashMap<String, String>,
 ) {
-    let id = REPO_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = env::temp_dir().join(format!("diffuse-harvest-bench-{}-{}", process::id(), id));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(&dir).unwrap();
+    let dir = tempfile::tempdir().unwrap();
 
     let run = |args: &[&str]| {
         let out = Command::new("git")
             .args(args)
-            .current_dir(&dir)
+            .current_dir(dir.path())
             .output()
             .unwrap();
         assert!(out.status.success());
@@ -92,7 +81,7 @@ fn create_synthetic_multilang_repo(
             ),
         };
 
-        let file_path = dir.join(&filename);
+        let file_path = dir.path().join(&filename);
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).unwrap();
         }
@@ -106,13 +95,13 @@ fn create_synthetic_multilang_repo(
 
     // 2. Apply modifications
     for (filename, new_body) in &new_contents {
-        let file_path = dir.join(filename);
+        let file_path = dir.path().join(filename);
         fs::write(&file_path, new_body).unwrap();
     }
 
     let out = Command::new("git")
         .args(["diff", "-U6", "--no-color", "HEAD"])
-        .current_dir(&dir)
+        .current_dir(dir.path())
         .output()
         .unwrap();
     let diff = String::from_utf8(out.stdout).unwrap();
@@ -311,12 +300,12 @@ fn test_harvest_and_stream_massive_1000_files() {
 #[test]
 fn test_harvest_cli_tool_generates_valid_fixture() {
     let (dir, _, _, _) = create_synthetic_multilang_repo(8);
-    let fixture_path = dir.join("harvested_fixture.json");
+    let fixture_path = dir.path().join("harvested_fixture.json");
 
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse-harvest"))
         .arg("HEAD")
         .arg("--repo")
-        .arg(&dir)
+        .arg(dir.path())
         .arg("--output")
         .arg(&fixture_path)
         .output()
@@ -338,8 +327,6 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
 
     let contents_map = val["newContent"].as_object().unwrap();
     assert_eq!(contents_map.len(), 8);
-
-    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

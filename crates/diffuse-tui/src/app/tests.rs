@@ -82,7 +82,7 @@ index 1111111..2222222 100644
             PipelineOptions::default(),
         ),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-header-triangle.json"),
+        temp_notes_path(),
     );
     state.render_frame(120, 30);
 
@@ -135,11 +135,8 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_note_commit_persists_and_deletes() {
-    let notes_path = std::env::temp_dir().join(format!(
-        "diffuse-test-note-lifecycle-{}.json",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&notes_path);
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
     let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
 
     let file = state.current_file().unwrap().path.clone();
@@ -183,17 +180,11 @@ fn test_note_commit_persists_and_deletes() {
             .is_none(),
         "delete must persist the removal"
     );
-
-    let _ = std::fs::remove_file(notes_path);
 }
 
 #[test]
 fn test_help_modal_toggles_and_renders() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
 
     let plain = state.render_frame(100, 30);
     assert!(
@@ -212,11 +203,7 @@ fn test_help_modal_toggles_and_renders() {
 
 #[test]
 fn test_selection_anchor_span_snaps_to_coord_rows() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     // flat[0] is the file header (no coordinate); AppState starts on the
     // first coordinate row (1020). The engine pads the hunk with empty
     // above-context rows (1022-1024), then the real rows: ctx
@@ -244,11 +231,7 @@ fn test_selection_anchor_span_snaps_to_coord_rows() {
 
 #[test]
 fn test_selection_v_confirm_clears_anchor_and_band_renders() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     for _ in 0..3 {
         state.move_down();
     }
@@ -279,11 +262,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
 
 #[test]
 fn test_selection_requires_coord_rows() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     // Anchor on the file header (no coordinate) and confirm in place: the
     // range collapses onto the header which carries no line number, so
     // the reference computes no selection.
@@ -295,11 +274,7 @@ fn test_selection_requires_coord_rows() {
 
     // Anchoring on the header then walking onto a coordinate row snaps
     // the low end down to the first coordinate row of the file.
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     state.move_up();
     state.start_or_confirm_selection();
     state.move_down();
@@ -312,11 +287,7 @@ fn test_selection_requires_coord_rows() {
 
 #[test]
 fn test_raw_diff_uncollapses_mod_and_renders() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     assert!(!state.raw_diff);
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -358,11 +329,7 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
 
 #[test]
 fn test_raw_diff_toggle_anchors_cursor() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     // flat[5] is the mod pair (new 1026); walk onto it.
     for _ in 0..4 {
         state.move_down();
@@ -412,11 +379,7 @@ fn test_raw_diff_exact_input_reproduction() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-raw-group.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     state.toggle_raw_diff();
     assert!(state.raw_diff);
 
@@ -462,11 +425,7 @@ fn test_toggle_raw_diff_preserves_cursor_screen_pivot() {
         .into_iter()
         .collect();
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-pivot.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     state.viewport_height = 10;
     state.last_content_width = 80;
     state.render_frame(80, 10);
@@ -508,11 +467,7 @@ fn test_raw_diff_no_right_padding_or_scrollbar() {
         .into_iter()
         .collect();
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-no-pad.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     state.viewport_height = 20;
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -550,11 +505,7 @@ fn test_raw_diff_wrapped_line_no_false_trailing_highlight() {
         .into_iter()
         .collect();
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-wrapped.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     state.viewport_height = 20;
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -585,7 +536,7 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
 +/// LRU cache for path resolution results with modtime validation and
   context line 83
   context line 84
-"#;
+ "#;
     let new_content = [(
             "cache.rs".to_string(),
             "context line 80\ncontext line 81\n/// LRU cache for path resolution results with modtime validation and\ncontext line 83\ncontext line 84\n".to_string(),
@@ -604,11 +555,7 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-del-to-mod.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     state.viewport_height = 20;
 
     // Switch to raw diff
@@ -786,11 +733,7 @@ index 6f6222d..4aa7a1d 100644
  }
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "mirage".into(),
-        std::env::temp_dir().join("diffuse-test-cache-lines.json"),
-    );
+    let mut state = AppState::new(out, "mirage".into(), temp_notes_path());
 
     // Exact reproduction test matching user's terminal geometry (74 rows, 300 cols)
     // on mirage.work
@@ -941,12 +884,7 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
     let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
 
-    let mut state = AppState::new(
-        output,
-        "mirage".into(),
-        std::env::temp_dir().join("diffuse-mirage-notes-sep.json"),
-    )
-    .with_expand_lines(6);
+    let mut state = AppState::new(output, "mirage".into(), temp_notes_path()).with_expand_lines(6);
 
     // Find cache.rs file index
     let fi = state
@@ -1038,12 +976,7 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
 
-    let mut state = AppState::new(
-        output,
-        "mirage".into(),
-        std::env::temp_dir().join("diffuse-mirage-notes-arrows.json"),
-    )
-    .with_expand_lines(6);
+    let mut state = AppState::new(output, "mirage".into(), temp_notes_path()).with_expand_lines(6);
 
     // Find cache.rs file index
     let fi = state
@@ -1190,12 +1123,7 @@ index 111..222 100644
             .collect();
     let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
 
-    let mut state = AppState::new(
-        output,
-        "mirage".into(),
-        std::env::temp_dir().join("diffuse-mirage-notes-reset.json"),
-    )
-    .with_expand_lines(6);
+    let mut state = AppState::new(output, "mirage".into(), temp_notes_path()).with_expand_lines(6);
 
     let fi = state
         .output
@@ -1267,11 +1195,7 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-h1.json"),
-    );
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
 
     let fi = 0;
     let gap = state.hunk_leading_gap(fi, 0);
@@ -1378,12 +1302,8 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-both.json"),
-    )
-    .with_expand_lines(12);
+    let mut state =
+        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(12);
 
     let fi = 0;
     assert_eq!(state.output.files[fi].hunks.len(), 2);
@@ -1552,12 +1472,8 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-wrapped-arrows.json"),
-    )
-    .with_expand_lines(6);
+    let mut state =
+        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
 
     let fi = 0;
     // Narrow terminal: divider text (~60 chars) wraps across two segments
@@ -1668,12 +1584,8 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-up-pinned-cursor.json"),
-    )
-    .with_expand_lines(6);
+    let mut state =
+        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
 
     let fi = 0;
 
@@ -1809,12 +1721,8 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-two-up-wrapped.json"),
-    )
-    .with_expand_lines(6);
+    let mut state =
+        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
 
     let fi = 0;
     assert_eq!(state.output.files[fi].hunks.len(), 2);
@@ -1908,11 +1816,7 @@ fn test_render_ratatui_frame_layout() {
  }
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-ratatui-notes.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
     state.status_message = Some(("Saved note".to_string(), true));
 
     let backend = TestBackend::new(80, 24);
@@ -1973,11 +1877,7 @@ fn test_render_ratatui_frame_modals_overlay() {
  }
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-ratatui-modals.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
 
     // 1. Help Modal Active
     state.show_help = true;
@@ -2038,11 +1938,7 @@ fn test_render_ratatui_frame_scrolling_clean_spans() {
 +checksum = "2222"
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-ratatui-scroll.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -2092,11 +1988,7 @@ fn test_render_ratatui_frame_note_modal_overlay_with_range_selection() {
 +fn new_three() {}
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-ratatui-note-modal.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
 
     // Select range
     state.start_or_confirm_selection();
@@ -2144,11 +2036,7 @@ fn test_render_ratatui_frame_mouse_hit_testing() {
  fn three() {}
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-mouse-hit.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -2178,11 +2066,7 @@ fn test_render_ratatui_frame_mouse_hit_testing() {
 fn test_event_paste_into_note_modal() {
     let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-paste-note.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
 
     state.execute(TuiCommand::StartNoteDraft);
     assert_eq!(state.note_draft, Some(String::new()));
@@ -2204,11 +2088,7 @@ fn test_event_paste_into_note_modal() {
 fn test_event_paste_into_file_finder() {
     let diff = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-paste-finder.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
 
     state.execute(TuiCommand::OpenFileFinder);
     assert!(state.file_finder.is_some());
@@ -2231,11 +2111,7 @@ fn test_note_modal_margins_with_scrollbar() {
     }
 
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "diffuse".into(),
-        std::env::temp_dir().join("diffuse-test-scrollbar-modal.json"),
-    );
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
 
     state.execute(TuiCommand::StartNoteDraft);
     assert!(state.note_draft.is_some());

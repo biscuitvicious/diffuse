@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use crate::{
-    app::AppState,
+    app::{AppState, temp_notes_path},
     core::{
         PipelineOptions,
         counts::FileCounts,
@@ -58,7 +58,7 @@ fn test_hunk_starts_and_navigation() {
     let mut state = AppState::new(
         sample_output_two_hunks(),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
+        temp_notes_path(),
     );
     assert_eq!(state.hunk_starts.len(), 2, "both hunks must be located");
     // Start from file header (row 0), next jumps to hunk 1's start
@@ -144,11 +144,7 @@ index 1111111..2222222 100644
         rows: Vec::new(),
     });
 
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-untracked.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
 
     assert!(
         state.collapsed_files.contains(&1),
@@ -249,11 +245,7 @@ index 1111111..2222222 100644
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(
-        output,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
-    );
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
 
     assert_eq!(state.hunk_starts.len(), 2, "must find 2 hunk starts");
 
@@ -293,11 +285,7 @@ fn test_mirage_golden_cache_rs_hunk_divider() {
     ));
     let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
-    let mut state = AppState::new(
-        output,
-        "mirage".into(),
-        std::env::temp_dir().join("diffuse-mirage-notes.json"),
-    );
+    let mut state = AppState::new(output, "mirage".into(), temp_notes_path());
 
     // Find cache.rs file index
     let fi = state

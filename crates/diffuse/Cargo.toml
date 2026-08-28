@@ -30,3 +30,4 @@ flate2 = { workspace = true }
 [dev-dependencies]
 difflib = { workspace = true }
 rayon = { workspace = true }
+tempfile = { workspace = true }

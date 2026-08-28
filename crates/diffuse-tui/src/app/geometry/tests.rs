@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    app::AppState,
+    app::{AppState, temp_notes_path},
     core::{PipelineOptions, parse::RowKind, pipeline::run_pipeline_full, wire::PipelineOutput},
     view::{truncate_pad, visible_width},
 };
@@ -84,11 +84,7 @@ fn test_word_wrap_and_visual_subline_navigation() {
     let mut out = sample_output();
     // Add a very long line to file 0
     out.files[0].rows[0].text = "A".repeat(150);
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-wrap.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     // content_width = 80 - 1 (sb) = 79. text_cols = 79 - 6 = 73.
     // 150 chars -> 3 segments (73 + 73 + 4).
     let seg_count = state.row_seg_count(state.row_idx, 79);
@@ -143,11 +139,7 @@ index 1111111..2222222 100644
         .collect();
 
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(
-        out,
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-raw-wrap.json"),
-    );
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     state.toggle_raw_diff();
     assert!(state.raw_diff);
 
@@ -182,7 +174,7 @@ fn test_hunk_divider_renders_and_extent_lift() {
     let mut state = AppState::new(
         sample_output_two_hunks(),
         "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes.json"),
+        temp_notes_path(),
     );
 
     let frame = state.render_frame(120, 80);
@@ -220,11 +212,7 @@ fn test_hunk_divider_renders_and_extent_lift() {
 
 #[test]
 fn test_render_frame_lines_do_not_overflow_width() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-overflow.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     for width in [40, 60, 80, 100, 120] {
         for height in [15, 24, 30, 40] {
             let frame = state.render_frame(width, height);
@@ -241,11 +229,7 @@ fn test_render_frame_lines_do_not_overflow_width() {
 
 #[test]
 fn test_current_line_highlight_covers_gutter() {
-    let mut state = AppState::new(
-        sample_output(),
-        "test_repo".into(),
-        std::env::temp_dir().join("diffuse-test-notes-gutter.json"),
-    );
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
     // Context row selected
     state.row_idx = 1;
     let frame_ctx = state.render_frame(80, 24);

@@ -43,11 +43,8 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_note_commit_persists_and_deletes() {
-    let notes_path = std::env::temp_dir().join(format!(
-        "diffuse-test-note-lifecycle-{}.json",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&notes_path);
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
     let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
 
     let file = state.current_file().unwrap().path.clone();
@@ -91,6 +88,4 @@ fn test_note_commit_persists_and_deletes() {
             .is_none(),
         "delete must persist the removal"
     );
-
-    let _ = std::fs::remove_file(notes_path);
 }

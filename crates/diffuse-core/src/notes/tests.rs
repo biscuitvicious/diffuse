@@ -1,7 +1,7 @@
 //! Unit tests for note persistence, markdown formatting, and querying.
 
 use super::*;
-use std::{env, ffi::OsString, fs, path::PathBuf, process};
+use std::{ffi::OsString, path::PathBuf};
 
 #[test]
 fn test_state_dir_prefers_xdg_state_home() {
@@ -92,7 +92,8 @@ fn test_notes_remove() {
 
 #[test]
 fn test_notes_persistence() {
-    let file = env::temp_dir().join(format!("diffuse_test_notes_{}.json", process::id()));
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let file = tmp.path();
 
     let mut db = NotesDB::new();
     add_note(
@@ -109,15 +110,13 @@ fn test_notes_persistence() {
         },
     );
 
-    save_notes(&file, &db).unwrap();
+    save_notes(file, &db).unwrap();
 
-    let loaded = load_notes(&file);
+    let loaded = load_notes(file);
     assert_eq!(loaded.len(), 1);
     let loaded_notes: Vec<_> = notes_for_file(&loaded, "repo1", "lib.rs").collect();
     assert_eq!(loaded_notes.len(), 1);
     assert_eq!(loaded_notes[0].text, "**important**");
-
-    let _ = fs::remove_file(file);
 }
 
 #[test]
