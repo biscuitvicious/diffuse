@@ -756,19 +756,11 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
             write_gz(&gz_wire_jsonl_path, &jsonl_buf).unwrap_or_else(|e| {
                 panic!("failed to write {}: {e}", gz_wire_jsonl_path.display())
             });
-            eprintln!(
-                "{name}: compressed wire JSON & JSONL updated ({})",
-                gz_wire_path.display()
-            );
         } else {
             write_file_plain(&wire_path, actual_pretty.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
             write_file_plain(&wire_jsonl_path, &jsonl_buf)
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
-            eprintln!(
-                "{name}: wire JSON & JSONL updated ({})",
-                wire_path.display()
-            );
         }
         return;
     }
@@ -812,17 +804,9 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
         if gz_render_path.exists() || name.contains("history") {
             write_gz(&gz_render_path, actual_encoded.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_render_path.display()));
-            eprintln!(
-                "{name}: render static golden updated ({})",
-                gz_render_path.display()
-            );
         } else {
             write_file_plain(&render_path, actual_encoded.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
-            eprintln!(
-                "{name}: render static golden updated ({})",
-                render_path.display()
-            );
         }
         return;
     }
@@ -869,17 +853,9 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
         if gz_md_path.exists() || name.contains("history") {
             write_gz(&gz_md_path, actual_md.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_md_path.display()));
-            eprintln!(
-                "{name}: markdown static golden updated ({})",
-                gz_md_path.display()
-            );
         } else {
             write_file_plain(&md_path, actual_md.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", md_path.display()));
-            eprintln!(
-                "{name}: markdown static golden updated ({})",
-                md_path.display()
-            );
         }
         return;
     }
