@@ -38,7 +38,7 @@
 - [ ] **Multi-language diversity**: Rust, C/C++, Go, Zig, TypeScript, JavaScript, Python, JSON, YAML, Markdown, SQL, Shell.
 - [ ] **TOML syntax highlighting for `Cargo.lock` & configuration files**: Support TOML syntax highlighting for `Cargo.lock` and other well-established TOML configuration filenames / locations.
 - [x] ~~**Per-golden dedicated directories & plain file storage**~~: Extract file contents out of golden JSON into dedicated per-corpus directories (`tests/golden/<corpus>/`) storing uncompressed plain files (`diff.patch`, `meta.json`, `files/<stem>.{old,new}.<ext>`). (See [Inline Test Decoupling & Test Suite Performance](plan/Inline%20Test%20Decoupling%20&%20Test%20Suite%20Performance.md))
-- [ ] **JSON Lines golden fixtures (`<corpus>.wire.jsonl.gz`)**: Store and validate jsonl golden fixtures `<corpus>.wire.jsonl.gz`.
+- [x] ~~**JSON Lines golden fixtures (`<corpus>.wire.jsonl.gz`)**~~: Store and validate jsonl golden fixtures `<corpus>.wire.jsonl.gz`.
 
 ## 6. Performance Engineering & Algorithm Modernization
 - [x] **Production Performance Optimizations**: Top 5 hot-path optimizations across tokenizer, TUI flat row indexing, precomputed similarity tokens, DP scratch arena, zero-allocation pipeline, and UTF-8 string slicing. (See [Production Performance Optimizations](plan/done/Production%20Performance%20Optimizations.md))
