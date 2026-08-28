@@ -6,11 +6,13 @@
 pub use diffuse_core as core;
 pub use diffuse_syntax as syntax;
 
+pub mod ansi;
 pub mod diff;
 pub mod markdown;
 pub mod row;
 pub mod theme;
 
+pub use ansi::*;
 pub use diff::*;
 pub use markdown::*;
 pub use row::*;

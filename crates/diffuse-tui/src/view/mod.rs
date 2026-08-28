@@ -20,3 +20,17 @@ pub use modals::{
     ansi_to_ratatui_line, render_finder_modal, render_finder_modal_widget, render_help_modal,
     render_help_modal_widget, render_note_modal_widget,
 };
+
+use crate::render::AnsiColor;
+use ratatui::style::Color;
+
+/// Convert an [`AnsiColor`] to a Ratatui [`Color`].
+#[inline]
+#[must_use]
+pub fn to_color(c: AnsiColor) -> Color {
+    match c {
+        AnsiColor::Reset => Color::Reset,
+        AnsiColor::Index(i) => Color::Indexed(i),
+        AnsiColor::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}

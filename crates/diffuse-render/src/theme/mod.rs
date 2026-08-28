@@ -4,7 +4,10 @@
 //! tints, cursor backgrounds, and SGR modifiers matching the canonical
 //! reviewer.
 
-pub const FG_RESET: &str = "\x1b[39m";
+pub mod palette;
+pub use palette::*;
+
+pub use crate::ansi::{FG_RESET, decode_sgr, encode_sgr, sgr_off, strip_ansi};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowStyle {
@@ -97,17 +100,6 @@ pub const S_MOV: RowStyle = RowStyle {
     fill_cursor_bg_str: "\x1b[48;5;237m",
     fg: "muted",
 };
-
-/// Get the SGR reset code corresponding to an SGR modifier.
-pub fn sgr_off(sgr: u32) -> Option<u32> {
-    match sgr {
-        1 => Some(22), // bold off
-        3 => Some(23), // italic off
-        4 => Some(24), // underline off
-        9 => Some(29), // strikethrough off
-        _ => None,
-    }
-}
 
 /// A token color classifier and ANSI stylizer.
 #[derive(Clone, Debug)]
@@ -209,8 +201,7 @@ impl DiffuseTheme {
         if let Some(s) = sgr
             && let Some(off) = sgr_off(s)
         {
-            use std::fmt::Write;
-            let _ = write!(out, "\x1b[{off}m");
+            out.push_str(off);
         }
     }
 
@@ -239,73 +230,6 @@ impl DiffuseTheme {
             _ => None,
         }
     }
-}
-
-/// Convert ANSI escape sequences `\x1b[...m` to readable golden markup `{...}`.
-pub fn encode_sgr(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len());
-    let mut last_copied = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
-            let mut j = i + 2;
-            let mut is_sgr = true;
-            while j < bytes.len() && bytes[j] != b'm' {
-                if !matches!(bytes[j], b'0'..=b'9' | b';') {
-                    is_sgr = false;
-                    break;
-                }
-                j += 1;
-            }
-            if is_sgr && j < bytes.len() && bytes[j] == b'm' {
-                out.push_str(&s[last_copied..i]);
-                out.push('{');
-                out.push_str(&s[i + 2..j]);
-                out.push('}');
-                i = j + 1;
-                last_copied = i;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out.push_str(&s[last_copied..]);
-    out
-}
-
-/// Convert readable golden markup `{...}` back to ANSI escape sequences
-/// `\x1b[...m`.
-pub fn decode_sgr(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = String::with_capacity(s.len() + 32);
-    let mut last_copied = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'{' {
-            let mut j = i + 1;
-            let mut is_sgr = true;
-            while j < bytes.len() && bytes[j] != b'}' {
-                if !matches!(bytes[j], b'0'..=b'9' | b';') {
-                    is_sgr = false;
-                    break;
-                }
-                j += 1;
-            }
-            if is_sgr && j < bytes.len() && bytes[j] == b'}' {
-                out.push_str(&s[last_copied..i]);
-                out.push_str("\x1b[");
-                out.push_str(&s[i + 1..j]);
-                out.push('m');
-                i = j + 1;
-                last_copied = i;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out.push_str(&s[last_copied..]);
-    out
 }
 
 pub fn default_theme() -> DiffuseTheme {

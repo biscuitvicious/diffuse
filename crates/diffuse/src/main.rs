@@ -490,7 +490,7 @@ fn main() -> io::Result<()> {
                     }
                 }
             }
-            let _ = stdout.write_all(b"\x1b[0m");
+            let _ = stdout.write_all(diffuse::render::ansi::SGR_RESET.as_bytes());
             let _ = stdout.flush();
         }
         return Ok(());
@@ -534,7 +534,7 @@ fn main() -> io::Result<()> {
                     return Err(e);
                 }
             }
-            let _ = stdout.write_all(b"\x1b[0m");
+            let _ = stdout.write_all(diffuse::render::ansi::SGR_RESET.as_bytes());
             let _ = stdout.flush();
         } else if is_jsonl {
             let mut stdout = io::stdout().lock();
