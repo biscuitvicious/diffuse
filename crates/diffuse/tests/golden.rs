@@ -37,7 +37,7 @@ use diffuse::{
         lcs::char_len,
         merge::{RunKind, display_text, is_wholesale_mod},
         parse::{Row, RowKind},
-        wire::PipelineOutput,
+        wire::{OutputFile, PipelineOutput},
     },
     render::{default_theme, encode_sgr, render_pipeline_output},
     syntax::registry::lang_profile,
@@ -57,49 +57,10 @@ struct Fixture {
     old_content: HashMap<String, String>,
 }
 
-use flate2::read::GzDecoder;
-use std::{
-    io::Read as _,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 fn golden_dir() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let in_pkg = manifest.join("tests/golden");
-    if in_pkg.exists() {
-        in_pkg
-    } else {
-        manifest.join("../../tests/golden")
-    }
-}
-
-fn read_maybe_gz_to_string(path: &Path) -> std::io::Result<String> {
-    if path.exists() {
-        let bytes = fs::read(path)?;
-        if path.extension().is_some_and(|ext| ext == "gz") {
-            let mut decoder = GzDecoder::new(&bytes[..]);
-            let mut s = String::new();
-            decoder.read_to_string(&mut s)?;
-            Ok(s)
-        } else {
-            Ok(String::from_utf8(bytes)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?)
-        }
-    } else {
-        let gz_path = PathBuf::from(format!("{}.gz", path.display()));
-        if gz_path.exists() {
-            let bytes = fs::read(&gz_path)?;
-            let mut decoder = GzDecoder::new(&bytes[..]);
-            let mut s = String::new();
-            decoder.read_to_string(&mut s)?;
-            Ok(s)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("neither {} nor {}.gz found", path.display(), path.display()),
-            ))
-        }
-    }
+    PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden"))
 }
 
 fn write_file_plain(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -107,17 +68,10 @@ fn write_file_plain(path: &Path, data: &[u8]) -> std::io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::write(path, data)?;
-    let gz_path = PathBuf::from(format!("{}.gz", path.display()));
-    if gz_path.exists() {
-        let _ = fs::remove_file(gz_path);
-    }
     Ok(())
 }
 
 static FIXTURE_CACHE: LazyLock<Mutex<HashMap<String, Arc<Fixture>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-
-static EXPECTED_WIRE_STR_CACHE: LazyLock<Mutex<HashMap<String, Arc<String>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 static EXPECTED_RENDER_CACHE: LazyLock<Mutex<HashMap<String, Arc<String>>>> =
@@ -146,41 +100,35 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         return Arc::clone(f);
     }
     let corpus_dir = golden_dir().join(name);
-    let f = if corpus_dir.is_dir() {
-        let patch_path = corpus_dir.join("diff.patch");
-        let diff = read_maybe_gz_to_string(&patch_path)
-            .unwrap_or_else(|e| panic!("failed reading diff.patch for {name}: {e}"));
-        let meta_path = corpus_dir.join("meta.json");
-        let meta_raw = read_maybe_gz_to_string(&meta_path)
-            .unwrap_or_else(|e| panic!("failed reading meta.json for {name}: {e}"));
-        let meta: CorpusMeta = serde_json::from_str(&meta_raw)
-            .unwrap_or_else(|e| panic!("failed parsing meta.json for {name}: {e}"));
-        let mut new_content = HashMap::new();
-        let mut old_content = HashMap::new();
-        let files_dir = corpus_dir.join("files");
-        for record in meta.files {
-            if let Some(new_file) = record.new {
-                let new_path = files_dir.join(&new_file);
-                let content = read_maybe_gz_to_string(&new_path)
-                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", new_path.display()));
-                new_content.insert(record.path.clone(), content);
-            }
-            if let Some(old_file) = record.old {
-                let old_path = files_dir.join(&old_file);
-                let content = read_maybe_gz_to_string(&old_path)
-                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", old_path.display()));
-                old_content.insert(record.path, content);
-            }
+    let patch_path = corpus_dir.join("diff.patch");
+    let diff = fs::read_to_string(&patch_path)
+        .unwrap_or_else(|e| panic!("failed reading diff.patch for {name}: {e}"));
+    let meta_path = corpus_dir.join("meta.json");
+    let meta_raw = fs::read_to_string(&meta_path)
+        .unwrap_or_else(|e| panic!("failed reading meta.json for {name}: {e}"));
+    let meta: CorpusMeta = serde_json::from_str(&meta_raw)
+        .unwrap_or_else(|e| panic!("failed parsing meta.json for {name}: {e}"));
+    let mut new_content = HashMap::new();
+    let mut old_content = HashMap::new();
+    let files_dir = corpus_dir.join("files");
+    for record in meta.files {
+        if let Some(new_file) = record.new {
+            let new_path = files_dir.join(&new_file);
+            let content = fs::read_to_string(&new_path)
+                .unwrap_or_else(|e| panic!("failed reading {}: {e}", new_path.display()));
+            new_content.insert(record.path.clone(), content);
         }
-        Fixture {
-            diff,
-            new_content,
-            old_content,
+        if let Some(old_file) = record.old {
+            let old_path = files_dir.join(&old_file);
+            let content = fs::read_to_string(&old_path)
+                .unwrap_or_else(|e| panic!("failed reading {}: {e}", old_path.display()));
+            old_content.insert(record.path, content);
         }
-    } else {
-        let p = golden_dir().join(format!("{name}.json"));
-        let raw = read_maybe_gz_to_string(&p).expect("the frozen fixture");
-        serde_json::from_str(&raw).expect("fixture JSON parses")
+    }
+    let f = Fixture {
+        diff,
+        new_content,
+        old_content,
     };
     let arc = Arc::new(f);
     cache.insert(name.to_string(), Arc::clone(&arc));
@@ -188,53 +136,15 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
 }
 
 fn expected_wire_path(name: &str) -> PathBuf {
-    let corpus_dir = golden_dir().join(name);
-    if corpus_dir.is_dir() {
-        corpus_dir.join("wire.json")
-    } else {
-        golden_dir().join(format!("{name}.wire.json"))
-    }
-}
-
-fn load_expected_wire_str(name: &str) -> Arc<String> {
-    let mut cache = EXPECTED_WIRE_STR_CACHE.lock().unwrap();
-    if let Some(out) = cache.get(name) {
-        return Arc::clone(out);
-    }
-    let wire_path = expected_wire_path(name);
-    let expected_str = read_maybe_gz_to_string(&wire_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read expected wire JSON for {name} from {}: {e}",
-            wire_path.display()
-        )
-    });
-    let parsed: PipelineOutput = serde_json::from_str(&expected_str)
-        .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
-    let normalized = format!(
-        "{}\n",
-        serde_json::to_string_pretty(&parsed).expect("serialize pretty JSON")
-    );
-    let arc = Arc::new(normalized);
-    cache.insert(name.to_string(), Arc::clone(&arc));
-    arc
+    golden_dir().join(name).join("wire.json")
 }
 
 fn expected_render_path(name: &str) -> PathBuf {
-    let corpus_dir = golden_dir().join(name);
-    if corpus_dir.is_dir() {
-        corpus_dir.join("render.txt")
-    } else {
-        golden_dir().join(format!("{name}.render.txt"))
-    }
+    golden_dir().join(name).join("render.txt")
 }
 
 fn expected_markdown_path(name: &str) -> PathBuf {
-    let corpus_dir = golden_dir().join(name);
-    if corpus_dir.is_dir() {
-        corpus_dir.join("markdown.md")
-    } else {
-        golden_dir().join(format!("{name}.markdown.md"))
-    }
+    golden_dir().join(name).join("markdown.md")
 }
 
 fn load_expected_render(name: &str) -> Arc<String> {
@@ -243,7 +153,7 @@ fn load_expected_render(name: &str) -> Arc<String> {
         return Arc::clone(r);
     }
     let render_path = expected_render_path(name);
-    let expected = read_maybe_gz_to_string(&render_path).unwrap_or_else(|e| {
+    let expected = fs::read_to_string(&render_path).unwrap_or_else(|e| {
         panic!(
             "Failed to read expected render output for {name} from {}: {e}",
             render_path.display()
@@ -695,23 +605,68 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
     eprintln!("----- END WIRE DIFF -----\n");
 }
 
+static EXPECTED_WIRE_CACHE: LazyLock<Mutex<HashMap<String, Arc<PipelineOutput>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
+    let mut cache = EXPECTED_WIRE_CACHE.lock().unwrap();
+    if let Some(out) = cache.get(name) {
+        return Arc::clone(out);
+    }
+    let wire_path = expected_wire_path(name);
+    let expected_str = fs::read_to_string(&wire_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected wire JSON for {name} from {}: {e}",
+            wire_path.display()
+        )
+    });
+    let parsed: PipelineOutput = serde_json::from_str(&expected_str)
+        .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
+    let arc = Arc::new(parsed);
+    cache.insert(name.to_string(), Arc::clone(&arc));
+    arc
+}
+
+fn wire_files_match(a: &OutputFile, b: &OutputFile) -> bool {
+    a.path == b.path
+        && a.status == b.status
+        && a.new_line_count == b.new_line_count
+        && a.old_line_count == b.old_line_count
+        && a.new_content == b.new_content
+        && a.old_content == b.old_content
+        && a.hunks == b.hunks
+        && a.counts == b.counts
+        && a.fences == b.fences
+        && a.notes == b.notes
+        && a.content_runs == b.content_runs
+        && a.rows == b.rows
+}
+
+fn wire_outputs_match(a: &PipelineOutput, b: &PipelineOutput) -> bool {
+    a.branch == b.branch
+        && a.untracked_skipped == b.untracked_skipped
+        && a.files.len() == b.files.len()
+        && a.files
+            .iter()
+            .zip(&b.files)
+            .all(|(fa, fb)| wire_files_match(fa, fb))
+}
+
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     let wire_path = expected_wire_path(name);
-    let actual_pretty = format!(
-        "{}\n",
-        serde_json::to_string_pretty(output).expect("serialize pretty JSON")
-    );
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
+        let actual_pretty = format!(
+            "{}\n",
+            serde_json::to_string_pretty(output).expect("serialize pretty JSON")
+        );
         write_file_plain(&wire_path, actual_pretty.as_bytes())
             .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
         eprintln!("{name}: wire JSON updated ({})", wire_path.display());
         return;
     }
-    let expected_str = load_expected_wire_str(name);
-    if actual_pretty != *expected_str.as_ref() {
-        let expected_output: PipelineOutput = serde_json::from_str(expected_str.as_ref()).unwrap();
-        let actual_output: PipelineOutput = serde_json::from_str(&actual_pretty).unwrap();
-        print_wire_diff(name, &actual_output, &expected_output);
+    let expected = load_expected_wire(name);
+    if !wire_outputs_match(output, expected.as_ref()) {
+        print_wire_diff(name, output, expected.as_ref());
         panic!(
             "[{name}] wire JSON output deviates from expected static golden ({}). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update.",
             wire_path.display()
@@ -801,7 +756,7 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
         return;
     }
 
-    let expected_md = read_maybe_gz_to_string(&md_path).unwrap_or_else(|e| {
+    let expected_md = fs::read_to_string(&md_path).unwrap_or_else(|e| {
         panic!(
             "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
             md_path.display()
@@ -811,7 +766,7 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
     if actual_md != expected_md {
         print_markdown_diff(name, &actual_md, &expected_md);
         panic!(
-            "[{name}] markdown output deviates from expected static golden ({}.gz). See markdown diff above. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to update.",
+            "[{name}] markdown output deviates from expected static golden ({}). See markdown diff above. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to update.",
             md_path.display()
         );
     }
@@ -852,7 +807,7 @@ fn run_bin_markdown_leg(name: &str) {
         return;
     }
 
-    let expected_md = read_maybe_gz_to_string(&md_path).unwrap_or_else(|e| {
+    let expected_md = fs::read_to_string(&md_path).unwrap_or_else(|e| {
         panic!(
             "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
             md_path.display()
@@ -862,7 +817,7 @@ fn run_bin_markdown_leg(name: &str) {
     if bin_md != expected_md {
         print_markdown_diff(name, &bin_md, &expected_md);
         panic!(
-            "[{name}] bin markdown output deviates from expected static golden ({}.gz). See markdown diff above.",
+            "[{name}] bin markdown output deviates from expected static golden ({}). See markdown diff above.",
             md_path.display()
         );
     }

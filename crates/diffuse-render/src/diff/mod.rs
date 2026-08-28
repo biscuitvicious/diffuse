@@ -64,13 +64,7 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
     );
     out.push_str(&bar);
 
-    let render_rows: Vec<&OutputRow> = if !file.rows.is_empty() {
-        file.rows.iter().collect()
-    } else {
-        file.hunks.iter().flat_map(|h| &h.rows).collect()
-    };
-
-    for r in render_rows {
+    let render_row = |r: &OutputRow, out: &mut String| {
         let pfx = if styled_prefixes {
             styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, false)
         } else {
@@ -97,6 +91,18 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
         );
         out.push_str(&seg);
         out.push('\n');
+    };
+
+    if !file.rows.is_empty() {
+        for r in &file.rows {
+            render_row(r, &mut out);
+        }
+    } else {
+        for h in &file.hunks {
+            for r in &h.rows {
+                render_row(r, &mut out);
+            }
+        }
     }
 
     out

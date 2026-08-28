@@ -243,17 +243,69 @@ impl DiffuseTheme {
 
 /// Convert ANSI escape sequences `\x1b[...m` to readable golden markup `{...}`.
 pub fn encode_sgr(s: &str) -> String {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(r"\x1b\[([0-9;]*)m").unwrap());
-    re.replace_all(s, "{$1}").to_string()
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut last_copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            let mut j = i + 2;
+            let mut is_sgr = true;
+            while j < bytes.len() && bytes[j] != b'm' {
+                if !matches!(bytes[j], b'0'..=b'9' | b';') {
+                    is_sgr = false;
+                    break;
+                }
+                j += 1;
+            }
+            if is_sgr && j < bytes.len() && bytes[j] == b'm' {
+                out.push_str(&s[last_copied..i]);
+                out.push('{');
+                out.push_str(&s[i + 2..j]);
+                out.push('}');
+                i = j + 1;
+                last_copied = i;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&s[last_copied..]);
+    out
 }
 
 /// Convert readable golden markup `{...}` back to ANSI escape sequences
 /// `\x1b[...m`.
 pub fn decode_sgr(s: &str) -> String {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(r"\{([0-9;]*)\}").unwrap());
-    re.replace_all(s, "\x1b[${1}m").to_string()
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + 32);
+    let mut last_copied = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            let mut j = i + 1;
+            let mut is_sgr = true;
+            while j < bytes.len() && bytes[j] != b'}' {
+                if !matches!(bytes[j], b'0'..=b'9' | b';') {
+                    is_sgr = false;
+                    break;
+                }
+                j += 1;
+            }
+            if is_sgr && j < bytes.len() && bytes[j] == b'}' {
+                out.push_str(&s[last_copied..i]);
+                out.push_str("\x1b[");
+                out.push_str(&s[i + 1..j]);
+                out.push('m');
+                i = j + 1;
+                last_copied = i;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out.push_str(&s[last_copied..]);
+    out
 }
 
 pub fn default_theme() -> DiffuseTheme {

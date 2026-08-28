@@ -1,3 +1,5 @@
+use std::{fs, path::Path};
+
 use crate::{
     app::AppState,
     core::{
@@ -285,27 +287,11 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_mirage_golden_cache_rs_hunk_divider() {
-    let json_str = {
-        let plain = std::path::Path::new("../../tests/golden/mirage-2025-08/wire.json");
-        let plain_fallback = std::path::Path::new("tests/golden/mirage-2025-08/wire.json");
-        if plain.exists() {
-            std::fs::read_to_string(plain).unwrap()
-        } else if plain_fallback.exists() {
-            std::fs::read_to_string(plain_fallback).unwrap()
-        } else {
-            use flate2::read::GzDecoder;
-            use std::io::Read;
-            let file = std::fs::File::open("../../tests/golden/mirage-2025-08/wire.json.gz")
-                .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08/wire.json.gz"))
-                .or_else(|_| std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz"))
-                .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
-                .expect("must open mirage-2025-08 wire.json");
-            let mut gz = GzDecoder::new(file);
-            let mut s = String::new();
-            gz.read_to_string(&mut s).unwrap();
-            s
-        }
-    };
+    let wire_path = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/golden/mirage-2025-08/wire.json"
+    ));
+    let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
     let mut state = AppState::new(
         output,

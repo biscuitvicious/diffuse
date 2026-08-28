@@ -142,4 +142,15 @@ Where all path slashes `/` in repository file paths are normalized to dashes `-`
 - Update `stream_diff_pipeline` to emit progressive line-level JSONL events for low-latency streaming consumption.
 - Add comprehensive unit tests and benchmarks verifying 100% branch coverage and latency guarantees.
 
+---
+
+## 6. Phase 6 — Replace Temp File Handling in Tests with `tempfile` Crate
+
+**Goal:** Standardize and modernize temporary file and directory handling across all test suites using the `tempfile` crate:
+- Replace manual temporary file path generation (e.g. `std::env::temp_dir().join(...)` and ad-hoc temp paths) with `tempfile::NamedTempFile` and `tempfile::tempdir()`.
+- Ensure automatic cleanup on test drop, avoiding file collisions, leaks, or leftover files in `/tmp` across concurrent test executions.
+- Audit all unit and integration tests across `diffuse-core`, `diffuse-tui`, `diffuse-render`, `diffuse-syntax`, and `diffuse`.
+
+
+
 
