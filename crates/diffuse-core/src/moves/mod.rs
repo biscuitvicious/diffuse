@@ -154,6 +154,17 @@ pub fn mark_moves(f: &mut DiffFile) {
             f.hunks[ah].rows[ar] = Row::Add(new_line.clone());
         }
     }
+
+    crate::ensure!(
+        f.hunks.iter().flat_map(|h| &h.rows).all(|r| {
+            if let Row::Mov { old_line, new_line } = r {
+                key(&old_line.text) == key(&new_line.text)
+            } else {
+                true
+            }
+        }),
+        "Every Row::Mov must have matching trimmed text on old and new sides"
+    );
 }
 
 #[cfg(test)]

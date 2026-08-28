@@ -57,3 +57,7 @@
 ## 9. Observability, Tracing & Logging
 - [x] **Tokio tracing & structured logging**: Add tokio tracing logging (copy setup from `mirage/logging.rs` et al). Instrument key methods with tokio method call tracing (`#[instrument]`). Log method call parameters and return value/error, skipping parameters which are big (e.g. large diff strings, file contents, whole AST vectors). (See [Tokio Tracing & Structured Logging](plan/done/Tokio%20Tracing%20&%20Structured%20Logging.md))
 
+## 10. Verification, Integrity & Design by Contract (DbC)
+- [x] **Design by Contract (DbC) method contracts**: Integrate preconditions (`require!`), postconditions (`ensure!`), and internal state invariants (`invariant!`) across algorithms, AST transforms, streaming channels, syntax classifiers, and TUI coordinate mappers with zero release overhead. (See [Design by Contract (DbC) Integration](plan/done/Design%20by%20Contract%20(DbC)%20Integration.md))
+
+

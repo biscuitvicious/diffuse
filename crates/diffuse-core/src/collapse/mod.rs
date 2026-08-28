@@ -76,14 +76,32 @@ pub fn collapse_hunk_rows(
     let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &pairing_ctx);
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
-    pass_sort_ordered_walk(
+    let res = pass_sort_ordered_walk(
         h,
         p2.out,
         &p3.meaningful_dels,
         &p3.kept_adds,
         &p2.add_spans,
         p3.reflow_ctx,
-    )
+    );
+
+    crate::ensure!(
+        res.iter().all(|r| match r {
+            Row::Mod {
+                old_line, new_line, ..
+            } => old_line.num.get() > 0 && new_line.num.get() > 0,
+            Row::Ctx(c) => c.old_pos.get() > 0 && c.new_pos.get() > 0,
+            Row::Add(a) => a.num.get() > 0,
+            Row::Del(d) => d.num.get() > 0,
+            Row::Mov {
+                old_line, new_line, ..
+            } => old_line.num.get() > 0 && new_line.num.get() > 0,
+            Row::Sep(_) => true,
+        }),
+        "All collapsed rows must have valid, non-zero line coordinates"
+    );
+
+    res
 }
 
 /// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow

@@ -9,6 +9,7 @@ pub mod apply;
 pub mod cluster;
 pub mod collapse;
 pub mod counts;
+pub mod dbc;
 pub mod git;
 pub mod lcs;
 pub mod logging;

@@ -26,6 +26,22 @@ impl HirschbergLcs {
     pub fn lcs<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
         let mut pairs = Vec::new();
         Self::hirschberg_recursive(a, b, 0, 0, &mut pairs);
+
+        crate::ensure!(
+            pairs.len() <= a.len().min(b.len()),
+            "LCS pairing length cannot exceed minimum input length"
+        );
+        crate::ensure!(
+            pairs.windows(2).all(|w| w[0].0 < w[1].0 && w[0].1 < w[1].1),
+            "LCS pairs must be strictly monotonically increasing"
+        );
+        crate::ensure!(
+            pairs
+                .iter()
+                .all(|&(ai, bi)| ai < a.len() && bi < b.len() && a[ai] == b[bi]),
+            "LCS pairs must point to equal elements within slice bounds"
+        );
+
         pairs
     }
 

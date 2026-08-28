@@ -837,16 +837,40 @@ pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
     } else {
         0.0
     };
-    if !has_anchors && ratio < 0.25 {
-        return WordSpans {
+    let res = if !has_anchors && ratio < 0.25 {
+        WordSpans {
             del: vec![(0, char_len(old_text))],
             add: vec![(0, char_len(new_text))],
-        };
-    }
-    WordSpans {
-        del: merge_whitespace_gaps(old_text, spans_from(old_text, &ot, &matched_old)),
-        add: merge_whitespace_gaps(new_text, spans_from(new_text, &nt, &matched_new)),
-    }
+        }
+    } else {
+        WordSpans {
+            del: merge_whitespace_gaps(old_text, spans_from(old_text, &ot, &matched_old)),
+            add: merge_whitespace_gaps(new_text, spans_from(new_text, &nt, &matched_new)),
+        }
+    };
+
+    crate::ensure!(
+        res.del
+            .iter()
+            .all(|&(start, end)| start <= end && end <= char_len(old_text)),
+        "WordSpans del spans must fall within old_text bounds"
+    );
+    crate::ensure!(
+        res.add
+            .iter()
+            .all(|&(start, end)| start <= end && end <= char_len(new_text)),
+        "WordSpans add spans must fall within new_text bounds"
+    );
+    crate::ensure!(
+        res.del.windows(2).all(|w| w[0].1 <= w[1].0),
+        "WordSpans del spans must be non-overlapping and sorted"
+    );
+    crate::ensure!(
+        res.add.windows(2).all(|w| w[0].1 <= w[1].0),
+        "WordSpans add spans must be non-overlapping and sorted"
+    );
+
+    res
 }
 
 fn merge_whitespace_gaps(text: &str, spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {

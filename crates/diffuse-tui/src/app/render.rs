@@ -323,6 +323,13 @@ impl AppState {
         let max_rows = self.viewport_height.max(1);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
+
+        if cfg!(debug_assertions) && !self.flat.is_empty() {
+            debug_assert!(
+                self.row_idx < self.flat.len(),
+                "Cursor row_idx must remain within flat row bounds after view toggle"
+            );
+        }
     }
 
     /// Render visual frame to a Ratatui [`Frame`] with structured layout

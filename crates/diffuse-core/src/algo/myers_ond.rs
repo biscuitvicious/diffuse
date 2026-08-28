@@ -134,6 +134,22 @@ impl MyersOnD {
         }
 
         ops.reverse();
+
+        crate::ensure!(
+            ops.iter()
+                .filter(|op| matches!(op, EditOp::Keep { .. } | EditOp::Delete { .. }))
+                .count()
+                == n,
+            "MyersOnD edit script must account for all elements in slice A"
+        );
+        crate::ensure!(
+            ops.iter()
+                .filter(|op| matches!(op, EditOp::Keep { .. } | EditOp::Insert { .. }))
+                .count()
+                == m,
+            "MyersOnD edit script must account for all elements in slice B"
+        );
+
         ops
     }
 }

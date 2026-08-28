@@ -130,6 +130,16 @@ pub fn classify_tokens<'a>(
 ) -> Vec<ClassifiedToken<'a>> {
     let mut out = Vec::new();
     for_each_classified_token(text, profile, |t| out.push(t));
+
+    if cfg!(debug_assertions) {
+        let total_len: usize = out.iter().map(|t| t.text.len()).sum();
+        debug_assert_eq!(
+            total_len,
+            text.len(),
+            "Classified tokens must partition input text exactly"
+        );
+    }
+
     out
 }
 

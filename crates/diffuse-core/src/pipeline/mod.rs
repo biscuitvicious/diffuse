@@ -422,7 +422,7 @@ pub fn process_single_diff_file(
         "Finished processing diff file"
     );
 
-    OutputFile {
+    let res = OutputFile {
         path: f.path.clone(),
         status,
         new_line_count: f.new_line_count,
@@ -443,7 +443,15 @@ pub fn process_single_diff_file(
         notes: notes_out,
         content_runs: Vec::new(),
         rows,
-    }
+    };
+
+    crate::ensure!(!res.path.is_empty(), "OutputFile path must not be empty");
+    crate::ensure!(
+        !res.raw_hunks.is_empty(),
+        "OutputFile must contain raw hunks"
+    );
+
+    res
 }
 
 /// The merged runs with the semantic syntax colors on the common/add runs.

@@ -15,12 +15,22 @@ pub struct FileCounts {
 
 impl FileCounts {
     pub fn reverse(&self) -> Self {
-        FileCounts {
+        let rev = FileCounts {
             adds: self.dels,
             dels: self.adds,
             mods: self.mods,
             movs: self.movs,
-        }
+        };
+
+        crate::ensure!(
+            rev.adds == self.dels
+                && rev.dels == self.adds
+                && rev.mods == self.mods
+                && rev.movs == self.movs,
+            "FileCounts::reverse must swap adds and dels while preserving mods and movs"
+        );
+
+        rev
     }
 }
 
@@ -44,12 +54,19 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
     }
     // Each moved add represents one relocated line-pair (the matching del is
     // absorbed or displayed muted — either way it is not a change).
-    FileCounts {
+    let counts = FileCounts {
         adds,
         dels,
         mods,
         movs,
-    }
+    };
+
+    crate::ensure!(
+        counts.adds == adds && counts.dels == dels && counts.mods == mods && counts.movs == movs,
+        "Calculated FileCounts must match row accumulations"
+    );
+
+    counts
 }
 
 #[cfg(test)]

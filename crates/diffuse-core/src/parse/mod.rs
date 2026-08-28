@@ -633,6 +633,14 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
         files.push(c);
     }
     files.retain(|f| !f.path.is_empty() && !f.hunks.is_empty());
+
+    crate::ensure!(
+        files
+            .iter()
+            .all(|f| !f.path.is_empty() && !f.hunks.is_empty()),
+        "All parsed DiffFiles must have a non-empty path and at least one hunk"
+    );
+
     files
 }
 
