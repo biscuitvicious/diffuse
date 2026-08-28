@@ -35,25 +35,16 @@ The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.txt` golden renders. `tests/golden/` is
 the single canonical copy.
 
-## Fixture file types per corpus
+## Fixture file structure per corpus
 
-All fixture files in `tests/golden/` are gzip-compressed (`.gz`) to save repository space (reducing ~92MB of uncompressed JSON down to ~3.9MB), and test runners support transparent decompression:
+All fixture files live under dedicated subdirectories `tests/golden/<corpus>/` as plain, uncompressed files for optimal git visual tracking and diffing:
 
-1. **`<name>.json.gz`** (or `<name>.json`) — the frozen *input* fixture: the captured `git diff`,
-   post-patch file contents, and (for `opt-*`) pre-patch `old_contents`.
-   **Never regenerated** except when the corpus itself is deliberately
-   changed (rare, human sign-off only).
-2. **`<name>.wire.json.gz`** (or `<name>.wire.json`) — the frozen *wire-contract output* (the
-   token-stream JSON) of the lib leg; both legs must match it
-   byte-for-byte. Changes whenever engine behavior **deliberately**
-   changes — under the review discipline below.
-3. **`<name>.render.txt.gz`** (or `<name>.render.txt`) — the frozen *terminal rendered* output.
-   It locks the hand-tuned visual preferences (strike/fill minimums, anchor pairings,
-   move-block shape, reverse-stretch). It changes only when a rendering preference is
-   deliberately changed — under the review discipline below.
-4. **`<name>.markdown.md.gz`** (or `<name>.markdown.md`) — the frozen *GitHub-Flavored Markdown*
-   output. It locks the summary table metrics, collapsible details, and diff code block representation.
-   Changes whenever markdown formatting or engine behavior is deliberately updated.
+1. **`diff.patch`** — the frozen unified diff patch.
+2. **`meta.json`** — records the harvested `revision` and the list of file path to snapshot mappings (`files/*.old` and `files/*.new`).
+3. **`files/<stem>.old.<ext>` / `files/<stem>.new.<ext>`** — individual uncompressed snapshots for old and new file contents (with path slashes `/` normalized to dashes `-` and the side marker preceding the original extension for automatic syntax highlighting and editor recognition).
+4. **`wire.json`** — the frozen *wire-contract output* (token-stream JSON) of the lib leg; both legs match it byte-for-byte. Changes whenever engine behavior **deliberately** changes.
+5. **`render.txt`** — the frozen *terminal rendered* output. It locks the hand-tuned visual preferences (strike/fill minimums, anchor pairings, move-block shape, reverse-stretch).
+6. **`markdown.md`** — the frozen *GitHub-Flavored Markdown* output locking table metrics and code representation.
 
 ## Building a new golden fixture
 

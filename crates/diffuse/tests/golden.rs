@@ -24,8 +24,9 @@
 
 use std::{
     collections::HashMap,
-    fs,
+    fs::{self},
     process::{Command, Stdio},
+    sync::{Arc, LazyLock, Mutex},
 };
 
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,6 @@ use diffuse::{
         lcs::char_len,
         merge::{RunKind, display_text, is_wholesale_mod},
         parse::{Row, RowKind},
-        pipeline::run_pipeline,
         wire::PipelineOutput,
     },
     render::{default_theme, encode_sgr, render_pipeline_output},
@@ -47,19 +47,19 @@ use diffuse::{
 #[serde(rename_all = "camelCase")]
 struct Fixture {
     diff: String,
-    #[serde(default)]
+    #[serde(default, alias = "contents")]
     new_content: HashMap<String, String>,
     /// The OLD file contents (the opt-* commits carry this; the original
     /// corpora don't). The apply-oracle (PLAN.md §4 Phase 6) uses it to
     /// prove `apply(diff, old) == new` mechanically — the diff is a semantic
     /// program, not just a render.
-    #[serde(default)]
+    #[serde(default, alias = "old_contents")]
     old_content: HashMap<String, String>,
 }
 
-use flate2::{Compression, read::GzDecoder, write::GzEncoder};
+use flate2::read::GzDecoder;
 use std::{
-    io::{Read as _, Write as _},
+    io::Read as _,
     path::{Path, PathBuf},
 };
 
@@ -102,36 +102,154 @@ fn read_maybe_gz_to_string(path: &Path) -> std::io::Result<String> {
     }
 }
 
-fn write_gz(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let gz_path = if path.extension().is_some_and(|ext| ext == "gz") {
-        path.to_path_buf()
-    } else {
-        PathBuf::from(format!("{}.gz", path.display()))
-    };
-    let file = fs::File::create(&gz_path)?;
-    let mut encoder = GzEncoder::new(file, Compression::best());
-    encoder.write_all(data)?;
-    encoder.finish()?;
-    if path.exists() && path != gz_path {
-        let _ = fs::remove_file(path);
+fn write_file_plain(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, data)?;
+    let gz_path = PathBuf::from(format!("{}.gz", path.display()));
+    if gz_path.exists() {
+        let _ = fs::remove_file(gz_path);
     }
     Ok(())
 }
 
-use std::sync::{Arc, LazyLock, Mutex};
-
 static FIXTURE_CACHE: LazyLock<Mutex<HashMap<String, Arc<Fixture>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static EXPECTED_WIRE_STR_CACHE: LazyLock<Mutex<HashMap<String, Arc<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static EXPECTED_RENDER_CACHE: LazyLock<Mutex<HashMap<String, Arc<String>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+#[derive(Deserialize, Serialize)]
+struct MetaFileRecord {
+    path: String,
+    #[serde(default)]
+    old: Option<String>,
+    #[serde(default)]
+    new: Option<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+struct CorpusMeta {
+    #[serde(default)]
+    revision: String,
+    #[serde(default)]
+    files: Vec<MetaFileRecord>,
+}
 
 fn load_fixture(name: &str) -> Arc<Fixture> {
     let mut cache = FIXTURE_CACHE.lock().unwrap();
     if let Some(f) = cache.get(name) {
         return Arc::clone(f);
     }
-    let p = golden_dir().join(format!("{name}.json"));
-    let raw = read_maybe_gz_to_string(&p).expect("the frozen fixture");
-    let f: Fixture = serde_json::from_str(&raw).expect("fixture JSON parses");
+    let corpus_dir = golden_dir().join(name);
+    let f = if corpus_dir.is_dir() {
+        let patch_path = corpus_dir.join("diff.patch");
+        let diff = read_maybe_gz_to_string(&patch_path)
+            .unwrap_or_else(|e| panic!("failed reading diff.patch for {name}: {e}"));
+        let meta_path = corpus_dir.join("meta.json");
+        let meta_raw = read_maybe_gz_to_string(&meta_path)
+            .unwrap_or_else(|e| panic!("failed reading meta.json for {name}: {e}"));
+        let meta: CorpusMeta = serde_json::from_str(&meta_raw)
+            .unwrap_or_else(|e| panic!("failed parsing meta.json for {name}: {e}"));
+        let mut new_content = HashMap::new();
+        let mut old_content = HashMap::new();
+        let files_dir = corpus_dir.join("files");
+        for record in meta.files {
+            if let Some(new_file) = record.new {
+                let new_path = files_dir.join(&new_file);
+                let content = read_maybe_gz_to_string(&new_path)
+                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", new_path.display()));
+                new_content.insert(record.path.clone(), content);
+            }
+            if let Some(old_file) = record.old {
+                let old_path = files_dir.join(&old_file);
+                let content = read_maybe_gz_to_string(&old_path)
+                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", old_path.display()));
+                old_content.insert(record.path, content);
+            }
+        }
+        Fixture {
+            diff,
+            new_content,
+            old_content,
+        }
+    } else {
+        let p = golden_dir().join(format!("{name}.json"));
+        let raw = read_maybe_gz_to_string(&p).expect("the frozen fixture");
+        serde_json::from_str(&raw).expect("fixture JSON parses")
+    };
     let arc = Arc::new(f);
+    cache.insert(name.to_string(), Arc::clone(&arc));
+    arc
+}
+
+fn expected_wire_path(name: &str) -> PathBuf {
+    let corpus_dir = golden_dir().join(name);
+    if corpus_dir.is_dir() {
+        corpus_dir.join("wire.json")
+    } else {
+        golden_dir().join(format!("{name}.wire.json"))
+    }
+}
+
+fn load_expected_wire_str(name: &str) -> Arc<String> {
+    let mut cache = EXPECTED_WIRE_STR_CACHE.lock().unwrap();
+    if let Some(out) = cache.get(name) {
+        return Arc::clone(out);
+    }
+    let wire_path = expected_wire_path(name);
+    let expected_str = read_maybe_gz_to_string(&wire_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected wire JSON for {name} from {}: {e}",
+            wire_path.display()
+        )
+    });
+    let parsed: PipelineOutput = serde_json::from_str(&expected_str)
+        .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
+    let normalized = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&parsed).expect("serialize pretty JSON")
+    );
+    let arc = Arc::new(normalized);
+    cache.insert(name.to_string(), Arc::clone(&arc));
+    arc
+}
+
+fn expected_render_path(name: &str) -> PathBuf {
+    let corpus_dir = golden_dir().join(name);
+    if corpus_dir.is_dir() {
+        corpus_dir.join("render.txt")
+    } else {
+        golden_dir().join(format!("{name}.render.txt"))
+    }
+}
+
+fn expected_markdown_path(name: &str) -> PathBuf {
+    let corpus_dir = golden_dir().join(name);
+    if corpus_dir.is_dir() {
+        corpus_dir.join("markdown.md")
+    } else {
+        golden_dir().join(format!("{name}.markdown.md"))
+    }
+}
+
+fn load_expected_render(name: &str) -> Arc<String> {
+    let mut cache = EXPECTED_RENDER_CACHE.lock().unwrap();
+    if let Some(r) = cache.get(name) {
+        return Arc::clone(r);
+    }
+    let render_path = expected_render_path(name);
+    let expected = read_maybe_gz_to_string(&render_path).unwrap_or_else(|e| {
+        panic!(
+            "Failed to read expected render output for {name} from {}: {e}",
+            render_path.display()
+        )
+    });
+    let arc = Arc::new(expected);
     cache.insert(name.to_string(), Arc::clone(&arc));
     arc
 }
@@ -578,44 +696,27 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
 }
 
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
-    let wire_path = golden_dir().join(format!("{name}.wire.json"));
-    if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
-        let actual_pretty = format!(
-            "{}\n",
-            serde_json::to_string_pretty(output).expect("serialize pretty JSON")
-        );
-        write_gz(&wire_path, actual_pretty.as_bytes())
-            .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
-        eprintln!("{name}: wire JSON updated ({}.gz)", wire_path.display());
-        return;
-    }
-    let expected_str = read_maybe_gz_to_string(&wire_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read expected wire JSON for {name} from {}: {e}",
-            wire_path.display()
-        )
-    });
-    let expected_output: PipelineOutput = serde_json::from_str(&expected_str)
-        .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
-
+    let wire_path = expected_wire_path(name);
     let actual_pretty = format!(
         "{}\n",
         serde_json::to_string_pretty(output).expect("serialize pretty JSON")
     );
-    let actual_output: PipelineOutput = serde_json::from_str(&actual_pretty)
-        .unwrap_or_else(|e| panic!("[{name}] failed to parse serialized wire JSON: {e}"));
-
-    if actual_output != expected_output {
+    if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
+        write_file_plain(&wire_path, actual_pretty.as_bytes())
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
+        eprintln!("{name}: wire JSON updated ({})", wire_path.display());
+        return;
+    }
+    let expected_str = load_expected_wire_str(name);
+    if actual_pretty != *expected_str.as_ref() {
+        let expected_output: PipelineOutput = serde_json::from_str(expected_str.as_ref()).unwrap();
+        let actual_output: PipelineOutput = serde_json::from_str(&actual_pretty).unwrap();
         print_wire_diff(name, &actual_output, &expected_output);
         panic!(
-            "[{name}] wire JSON output deviates from expected static golden ({}.gz). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update.",
+            "[{name}] wire JSON output deviates from expected static golden ({}). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update.",
             wire_path.display()
         );
     }
-}
-
-fn expected_render_path(name: &str) -> PathBuf {
-    golden_dir().join(format!("{name}.render.txt"))
 }
 
 fn print_render_diff(name: &str, actual: &str, expected: &str) {
@@ -644,33 +745,23 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
     let render_path = expected_render_path(name);
 
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_RENDER").is_ok() {
-        write_gz(&render_path, actual_encoded.as_bytes())
+        write_file_plain(&render_path, actual_encoded.as_bytes())
             .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
         eprintln!(
-            "{name}: render static golden updated ({}.gz)",
+            "{name}: render static golden updated ({})",
             render_path.display()
         );
         return;
     }
 
-    let expected_encoded = read_maybe_gz_to_string(&render_path).unwrap_or_else(|e| {
+    let expected_encoded = load_expected_render(name);
+    if actual_encoded != *expected_encoded.as_ref() {
+        print_render_diff(name, &actual_encoded, expected_encoded.as_ref());
         panic!(
-            "Failed to read expected render output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to create/update.",
-            render_path.display()
-        )
-    });
-
-    if actual_encoded != expected_encoded {
-        print_render_diff(name, &actual_encoded, &expected_encoded);
-        panic!(
-            "[{name}] terminal render output deviates from expected static golden ({}.gz). See render diff above. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to update.",
+            "[{name}] terminal render output deviates from expected static golden ({}). See render diff above. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to update.",
             render_path.display()
         );
     }
-}
-
-fn expected_markdown_path(name: &str) -> PathBuf {
-    golden_dir().join(format!("{name}.markdown.md"))
 }
 
 fn print_markdown_diff(name: &str, actual: &str, expected: &str) {
@@ -701,10 +792,10 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
         || std::env::var("UPDATE_MARKDOWN").is_ok()
         || std::env::var("UPDATE_MD").is_ok()
     {
-        write_gz(&md_path, actual_md.as_bytes())
+        write_file_plain(&md_path, actual_md.as_bytes())
             .unwrap_or_else(|e| panic!("failed to write {}: {e}", md_path.display()));
         eprintln!(
-            "{name}: markdown static golden updated ({}.gz)",
+            "{name}: markdown static golden updated ({})",
             md_path.display()
         );
         return;
@@ -727,9 +818,8 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
 }
 
 fn run_bin_markdown_leg(name: &str) {
-    let p = golden_dir().join(format!("{name}.json"));
-    let raw = read_maybe_gz_to_string(&p).expect("read fixture file");
-    let input = raw.into_bytes();
+    let fixture = load_fixture(name);
+    let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("-m")
         .arg("--color=never")
@@ -778,22 +868,32 @@ fn run_bin_markdown_leg(name: &str) {
     }
 }
 
-fn run_lib_leg(name: &str, min: usize) {
+fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     let fixture = load_fixture(name);
     let new_content = if fixture.new_content.is_empty() {
         None
     } else {
         Some(fixture.new_content.clone())
     };
-    let output = run_pipeline(&fixture.diff, new_content);
+    let old_content = if fixture.old_content.is_empty() {
+        None
+    } else {
+        Some(fixture.old_content.clone())
+    };
+    let output = diffuse::core::pipeline::run_pipeline_full(
+        &fixture.diff,
+        new_content,
+        old_content,
+        diffuse::core::pipeline::PipelineOptions::default(),
+    );
     walk_and_assert(&output, name, min);
     assert_wire_json_matches(&output, name);
+    (fixture, output)
 }
 
 fn run_bin_leg(name: &str, min: usize) {
-    let p = golden_dir().join(format!("{name}.json"));
-    let raw = read_maybe_gz_to_string(&p).expect("read fixture file");
-    let input = raw.into_bytes();
+    let fixture = load_fixture(name);
+    let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -847,8 +947,7 @@ fn file_diff_slice(diff: &str, path: &str) -> String {
     diff[si..ni].to_string()
 }
 
-fn run_oracle_for_corpus(name: &str) {
-    let fixture = load_fixture(name);
+fn run_oracle_for_corpus(name: &str, fixture: &Fixture, wire: &PipelineOutput) {
     for (path, new) in &fixture.new_content {
         let Some(old) = fixture.old_content.get(path) else {
             continue;
@@ -864,15 +963,9 @@ fn run_oracle_for_corpus(name: &str) {
         );
     }
 
-    let new_content = if fixture.new_content.is_empty() {
-        None
-    } else {
-        Some(fixture.new_content.clone())
-    };
-    let wire = run_pipeline(&fixture.diff, new_content);
     assert_eq!(
         wire.reverse().reverse(),
-        wire,
+        *wire,
         "[{name}] wire.reverse().reverse() == wire"
     );
 
@@ -889,7 +982,12 @@ fn run_oracle_for_corpus(name: &str) {
             let expected: Vec<String> = new.split('\n').map(String::from).collect();
 
             if let Some(f_reconstructed) = reconstructed.iter().find(|f| f.path == *path) {
-                let applied_forward = apply_hunk_rows(&f_reconstructed.hunks, &old_vec);
+                let hunks = if !f_reconstructed.raw_hunks.is_empty() {
+                    &f_reconstructed.raw_hunks
+                } else {
+                    &f_reconstructed.hunks
+                };
+                let applied_forward = apply_hunk_rows(hunks, &old_vec);
                 assert_eq!(
                     applied_forward, expected,
                     "[{name}:{path}] apply(old, wire.reconstruct()) != new"
@@ -897,7 +995,12 @@ fn run_oracle_for_corpus(name: &str) {
             }
 
             if let Some(f_rev_reconstructed) = reconstructed_rev.iter().find(|f| f.path == *path) {
-                let applied_backward = apply_hunk_rows(&f_rev_reconstructed.hunks, &expected);
+                let hunks_rev = if !f_rev_reconstructed.raw_hunks.is_empty() {
+                    &f_rev_reconstructed.raw_hunks
+                } else {
+                    &f_rev_reconstructed.hunks
+                };
+                let applied_backward = apply_hunk_rows(hunks_rev, &expected);
                 assert_eq!(
                     applied_backward, old_vec,
                     "[{name}:{path}] apply(new, wire.reverse().reconstruct()) != old"
@@ -914,20 +1017,13 @@ macro_rules! corpus_tests {
 
             #[test]
             fn golden_acceptance() {
-                run_lib_leg($name, $min);
+                let (fixture, output) = run_lib_leg($name, $min);
                 if $has_render {
-                    let fixture = load_fixture($name);
-                    let new_content = if fixture.new_content.is_empty() {
-                        None
-                    } else {
-                        Some(fixture.new_content.clone())
-                    };
-                    let output = run_pipeline(&fixture.diff, new_content);
                     assert_render_matches(&output, $name);
                     assert_markdown_matches(&output, $name);
                 }
                 if $has_oracle {
-                    run_oracle_for_corpus($name);
+                    run_oracle_for_corpus($name, &fixture, &output);
                 }
             }
 

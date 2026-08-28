@@ -932,14 +932,27 @@ index 6f6222d..4aa7a1d 100644
 
 #[test]
 fn test_separator_expand_by_enter_and_click_and_merge() {
-    use flate2::read::GzDecoder;
-    use std::io::Read;
-    let file = std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz")
-        .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
-        .expect("must open mirage-2025-08.wire.json.gz");
-    let mut gz = GzDecoder::new(file);
-    let mut json_str = String::new();
-    gz.read_to_string(&mut json_str).unwrap();
+    let json_str = {
+        let plain = std::path::Path::new("../../tests/golden/mirage-2025-08/wire.json");
+        let plain_fallback = std::path::Path::new("tests/golden/mirage-2025-08/wire.json");
+        if plain.exists() {
+            std::fs::read_to_string(plain).unwrap()
+        } else if plain_fallback.exists() {
+            std::fs::read_to_string(plain_fallback).unwrap()
+        } else {
+            use flate2::read::GzDecoder;
+            use std::io::Read;
+            let file = std::fs::File::open("../../tests/golden/mirage-2025-08/wire.json.gz")
+                .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08/wire.json.gz"))
+                .or_else(|_| std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz"))
+                .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
+                .expect("must open mirage-2025-08 wire.json");
+            let mut gz = GzDecoder::new(file);
+            let mut s = String::new();
+            gz.read_to_string(&mut s).unwrap();
+            s
+        }
+    };
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
 
     let mut state = AppState::new(
@@ -1032,14 +1045,27 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
 
 #[test]
 fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
-    use flate2::read::GzDecoder;
-    use std::io::Read;
-    let file = std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz")
-        .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
-        .expect("must open mirage-2025-08.wire.json.gz");
-    let mut gz = GzDecoder::new(file);
-    let mut json_str = String::new();
-    gz.read_to_string(&mut json_str).unwrap();
+    let json_str = {
+        let plain = std::path::Path::new("../../tests/golden/mirage-2025-08/wire.json");
+        let plain_fallback = std::path::Path::new("tests/golden/mirage-2025-08/wire.json");
+        if plain.exists() {
+            std::fs::read_to_string(plain).unwrap()
+        } else if plain_fallback.exists() {
+            std::fs::read_to_string(plain_fallback).unwrap()
+        } else {
+            use flate2::read::GzDecoder;
+            use std::io::Read;
+            let file = std::fs::File::open("../../tests/golden/mirage-2025-08/wire.json.gz")
+                .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08/wire.json.gz"))
+                .or_else(|_| std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz"))
+                .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
+                .expect("must open mirage-2025-08 wire.json");
+            let mut gz = GzDecoder::new(file);
+            let mut s = String::new();
+            gz.read_to_string(&mut s).unwrap();
+            s
+        }
+    };
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
 
     let mut state = AppState::new(
@@ -1156,15 +1182,43 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
 
 #[test]
 fn test_expand_all_and_reset_context_re_inserts_hunk_dividers() {
-    use flate2::read::GzDecoder;
-    use std::io::Read;
-    let file = std::fs::File::open("../../tests/golden/mirage-2025-08.wire.json.gz")
-        .or_else(|_| std::fs::File::open("tests/golden/mirage-2025-08.wire.json.gz"))
-        .expect("must open mirage-2025-08.wire.json.gz");
-    let mut gz = GzDecoder::new(file);
-    let mut json_str = String::new();
-    gz.read_to_string(&mut json_str).unwrap();
-    let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+    let diff = r#"diff --git a/cache.rs b/cache.rs
+index 111..222 100644
+--- a/cache.rs
++++ b/cache.rs
+@@ -1,5 +1,5 @@
+ fn h1() {
+-    let x = 1;
++    let x = 10;
+ }
+@@ -30,5 +30,5 @@
+ fn h2() {
+-    let y = 2;
++    let y = 20;
+ }
+@@ -60,5 +60,5 @@
+ fn h3() {
+-    let z = 3;
++    let z = 30;
+ }
+"#;
+    let mut new_lines = Vec::new();
+    for i in 1..=80 {
+        if i == 2 {
+            new_lines.push("    let x = 10;".to_string());
+        } else if i == 31 {
+            new_lines.push("    let y = 20;".to_string());
+        } else if i == 61 {
+            new_lines.push("    let z = 30;".to_string());
+        } else {
+            new_lines.push(format!("// context line {i}"));
+        }
+    }
+    let new_content: std::collections::HashMap<String, String> =
+        [("cache.rs".to_string(), new_lines.join("\n"))]
+            .into_iter()
+            .collect();
+    let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
 
     let mut state = AppState::new(
         output,

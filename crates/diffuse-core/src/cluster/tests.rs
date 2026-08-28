@@ -367,26 +367,44 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
     } else {
         manifest.join("../../tests/golden")
     };
-    let raw = {
-        let json_path = dir.join(format!("{name}.json"));
-        let gz_path = dir.join(format!("{name}.json.gz"));
-        if gz_path.exists() {
+    let diff = {
+        let corpus_dir = dir.join(name);
+        let patch_gz = corpus_dir.join("diff.patch.gz");
+        let patch_plain = corpus_dir.join("diff.patch");
+        let legacy_gz = dir.join(format!("{name}.json.gz"));
+        let legacy_plain = dir.join(format!("{name}.json"));
+        if patch_gz.exists() {
             use std::io::Read as _;
-            let bytes = fs::read(&gz_path)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", gz_path.display()));
+            let bytes = fs::read(&patch_gz)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", patch_gz.display()));
             let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
             let mut s = String::new();
             decoder
                 .read_to_string(&mut s)
                 .expect("valid decompressed gzip");
             s
+        } else if patch_plain.exists() {
+            fs::read_to_string(&patch_plain)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", patch_plain.display()))
+        } else if legacy_gz.exists() {
+            use std::io::Read as _;
+            let bytes = fs::read(&legacy_gz)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", legacy_gz.display()));
+            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+            let mut s = String::new();
+            decoder
+                .read_to_string(&mut s)
+                .expect("valid decompressed gzip");
+            let f: Fixture = serde_json::from_str(&s).unwrap();
+            f.diff
         } else {
-            fs::read_to_string(&json_path)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", json_path.display()))
+            let raw = fs::read_to_string(&legacy_plain)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", legacy_plain.display()));
+            let f: Fixture = serde_json::from_str(&raw).unwrap();
+            f.diff
         }
     };
-    let fixture: Fixture = serde_json::from_str(&raw).unwrap();
-    let files = Arc::new(parse_diff(&fixture.diff));
+    let files = Arc::new(parse_diff(&diff));
     let num_threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
