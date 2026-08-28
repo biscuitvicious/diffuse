@@ -16,7 +16,18 @@ pub fn render_pipeline_output(
     theme: &DiffuseTheme,
     styled_prefixes: bool,
 ) -> String {
-    let mut out = String::new();
+    let total_rows: usize = output
+        .files
+        .iter()
+        .map(|f| {
+            if !f.rows.is_empty() {
+                f.rows.len()
+            } else {
+                f.hunks.iter().map(|h| h.rows.len()).sum()
+            }
+        })
+        .sum();
+    let mut out = String::with_capacity(total_rows * 128 + output.files.len() * 256 + 16);
 
     for f in &output.files {
         out.push_str(&render_file_diff(f, theme, styled_prefixes));

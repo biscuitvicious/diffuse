@@ -350,13 +350,21 @@ pub fn process_single_diff_file(
         })
         .collect();
 
+    let status = match f.status {
+        crate::parse::FileStatus::Added => "added".to_string(),
+        crate::parse::FileStatus::Deleted => "deleted".to_string(),
+        crate::parse::FileStatus::Modified => "modified".to_string(),
+        crate::parse::FileStatus::Renamed => "renamed".to_string(),
+        crate::parse::FileStatus::Untracked => "untracked".to_string(),
+    };
+
     OutputFile {
         path: f.path.clone(),
-        status: format!("{:?}", f.status).to_lowercase(),
+        status,
         new_line_count: f.new_line_count,
         old_line_count: f.old_line_count,
-        new_content: f.new_content.clone(),
-        old_content: f.old_content.clone(),
+        new_content: std::mem::take(&mut f.new_content),
+        old_content: std::mem::take(&mut f.old_content),
         hunks: hunks_out,
         raw_hunks: raw_hunks_out,
         counts,
@@ -575,12 +583,14 @@ fn for_each_ctx_line_token<'a>(
 ) {
     let is_delimiter = if regions.is_empty() {
         false
+    } else if let Some(n) = new_line {
+        let idx = regions.partition_point(|rg| rg.end + 1 < n);
+        (idx < regions.len()
+            && (n + 1 == regions[idx].start || (n > 0 && n - 1 == regions[idx].end)))
+            || (idx + 1 < regions.len()
+                && (n + 1 == regions[idx + 1].start || (n > 0 && n - 1 == regions[idx + 1].end)))
     } else {
-        new_line.is_some_and(|n| {
-            regions
-                .iter()
-                .any(|rg| n + 1 == rg.start || (n > 0 && n - 1 == rg.end))
-        })
+        false
     };
     if is_delimiter {
         if let Some(strip) = profile.and_then(|p| p.fence_strip.as_ref())

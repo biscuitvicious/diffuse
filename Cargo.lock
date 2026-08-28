@@ -448,6 +448,7 @@ dependencies = [
  "diffuse-syntax",
  "diffuse-tui",
  "flate2",
+ "rayon",
  "serde",
  "serde_json",
 ]

@@ -99,7 +99,12 @@ pub fn fence_regions<S: AsRef<str>>(
 /// The line's region (if its line number is inside a fence region's code
 /// span) — the renderer's ctx/tail rows look up their line's language here.
 pub fn region_at(regions: &[FenceRegion], line: u32) -> Option<&FenceRegion> {
-    regions.iter().find(|r| r.start <= line && line <= r.end)
+    let idx = regions.partition_point(|r| r.end < line);
+    if idx < regions.len() && regions[idx].start <= line && line <= regions[idx].end {
+        Some(&regions[idx])
+    } else {
+        None
+    }
 }
 
 /// Resolve the `LangProfile` for a `FenceRegion` (via its `lang` tag).

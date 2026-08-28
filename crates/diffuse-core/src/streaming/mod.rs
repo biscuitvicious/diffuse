@@ -290,17 +290,12 @@ pub fn stream_diff_pipeline(
     for (idx, f) in parsed.into_iter().enumerate() {
         let new_c = new_content.as_mut().and_then(|nc| nc.remove(&f.path));
         let old_c = old_content.as_mut().and_then(|oc| oc.remove(&f.path));
-        let needs_fallback = old_c.is_none();
         producer.push(FileJob {
             idx,
             file: f,
             new_content: new_c,
             old_content: old_c,
-            diff_fallback: if needs_fallback {
-                Some(diff_str.clone())
-            } else {
-                None
-            },
+            diff_fallback: None,
         });
     }
     producer.finish();

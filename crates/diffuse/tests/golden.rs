@@ -111,18 +111,32 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     let mut new_content = HashMap::new();
     let mut old_content = HashMap::new();
     let files_dir = corpus_dir.join("files");
-    for record in meta.files {
-        if let Some(new_file) = record.new {
-            let new_path = files_dir.join(&new_file);
-            let content = fs::read_to_string(&new_path)
-                .unwrap_or_else(|e| panic!("failed reading {}: {e}", new_path.display()));
-            new_content.insert(record.path.clone(), content);
+
+    use rayon::prelude::*;
+    let records = meta.files;
+    let loaded: Vec<(String, Option<String>, Option<String>)> = records
+        .into_par_iter()
+        .map(|record| {
+            let new_str = record.new.as_ref().map(|new_file| {
+                let new_path = files_dir.join(new_file);
+                fs::read_to_string(&new_path)
+                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", new_path.display()))
+            });
+            let old_str = record.old.as_ref().map(|old_file| {
+                let old_path = files_dir.join(old_file);
+                fs::read_to_string(&old_path)
+                    .unwrap_or_else(|e| panic!("failed reading {}: {e}", old_path.display()))
+            });
+            (record.path, new_str, old_str)
+        })
+        .collect();
+
+    for (path, new_str, old_str) in loaded {
+        if let Some(new_c) = new_str {
+            new_content.insert(path.clone(), new_c);
         }
-        if let Some(old_file) = record.old {
-            let old_path = files_dir.join(&old_file);
-            let content = fs::read_to_string(&old_path)
-                .unwrap_or_else(|e| panic!("failed reading {}: {e}", old_path.display()));
-            old_content.insert(record.path, content);
+        if let Some(old_c) = old_str {
+            old_content.insert(path, old_c);
         }
     }
     let f = Fixture {
@@ -614,13 +628,13 @@ fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
         return Arc::clone(out);
     }
     let wire_path = expected_wire_path(name);
-    let expected_str = fs::read_to_string(&wire_path).unwrap_or_else(|e| {
+    let bytes = fs::read(&wire_path).unwrap_or_else(|e| {
         panic!(
             "Failed to read expected wire JSON for {name} from {}: {e}",
             wire_path.display()
         )
     });
-    let parsed: PipelineOutput = serde_json::from_str(&expected_str)
+    let parsed: PipelineOutput = serde_json::from_slice(&bytes)
         .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
     let arc = Arc::new(parsed);
     cache.insert(name.to_string(), Arc::clone(&arc));
