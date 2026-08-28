@@ -189,7 +189,7 @@ fn test_run_pipeline_full_with_old_contents() {
     );
     let runs = &mod_row.unwrap().runs;
     let del_run = runs.iter().find(|r| r.kind == RunKind::Del);
-    assert_eq!(del_run.map(|r| r.text.as_str()), Some("resolved_"));
+    assert_eq!(del_run.map(|r| r.text.as_ref()), Some("resolved_"));
 }
 
 #[test]

@@ -46,15 +46,15 @@ use diffuse::{
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Fixture {
-    diff: String,
+    diff: Arc<String>,
     #[serde(default, alias = "contents")]
-    new_content: HashMap<String, String>,
+    new_content: HashMap<String, Arc<String>>,
     /// The OLD file contents (the opt-* commits carry this; the original
     /// corpora don't). The apply-oracle (PLAN.md §4 Phase 6) uses it to
     /// prove `apply(diff, old) == new` mechanically — the diff is a semantic
     /// program, not just a render.
     #[serde(default, alias = "old_contents")]
-    old_content: HashMap<String, String>,
+    old_content: HashMap<String, Arc<String>>,
 }
 
 use std::path::{Path, PathBuf};
@@ -95,9 +95,27 @@ struct CorpusMeta {
 }
 
 fn load_fixture(name: &str) -> Arc<Fixture> {
-    let mut cache = FIXTURE_CACHE.lock().unwrap();
-    if let Some(f) = cache.get(name) {
-        return Arc::clone(f);
+    {
+        let cache = FIXTURE_CACHE.lock().unwrap();
+        if let Some(f) = cache.get(name) {
+            return Arc::clone(f);
+        }
+    }
+    let gz_fixture_path = golden_dir().join(format!("{name}.json.gz"));
+    if gz_fixture_path.exists() {
+        let bytes = fs::read(&gz_fixture_path)
+            .unwrap_or_else(|e| panic!("failed reading {}: {e}", gz_fixture_path.display()));
+        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut s)
+            .unwrap_or_else(|e| panic!("failed decoding {}: {e}", gz_fixture_path.display()));
+        let f: Fixture = serde_json::from_str(&s).unwrap_or_else(|e| {
+            panic!("failed parsing JSON in {}: {e}", gz_fixture_path.display())
+        });
+        let arc = Arc::new(f);
+        let mut cache = FIXTURE_CACHE.lock().unwrap();
+        cache.insert(name.to_string(), Arc::clone(&arc));
+        return arc;
     }
     let corpus_dir = golden_dir().join(name);
     let patch_path = corpus_dir.join("diff.patch");
@@ -133,18 +151,19 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
 
     for (path, new_str, old_str) in loaded {
         if let Some(new_c) = new_str {
-            new_content.insert(path.clone(), new_c);
+            new_content.insert(path.clone(), Arc::new(new_c));
         }
         if let Some(old_c) = old_str {
-            old_content.insert(path, old_c);
+            old_content.insert(path, Arc::new(old_c));
         }
     }
     let f = Fixture {
-        diff,
+        diff: Arc::new(diff),
         new_content,
         old_content,
     };
     let arc = Arc::new(f);
+    let mut cache = FIXTURE_CACHE.lock().unwrap();
     cache.insert(name.to_string(), Arc::clone(&arc));
     arc
 }
@@ -276,7 +295,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 }
                 // The runs concatenate to the display text; del runs carry
                 // no color (the strike is the renderer's), common/add do.
-                let concat: String = r.runs.iter().map(|x| x.text.as_str()).collect();
+                let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
                 let expected = display_text(&Row::from(r));
                 check!(
                     concat == expected,
@@ -299,7 +318,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .runs
                         .iter()
                         .filter(|x| x.kind != RunKind::Del)
-                        .map(|x| x.text.as_str())
+                        .map(|x| x.text.as_ref())
                         .collect();
                     check!(
                         kept == r.text,
@@ -474,7 +493,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                     f.path,
                     ri
                 );
-                let concat: String = r.runs.iter().map(|x| x.text.as_str()).collect();
+                let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
                 check!(
                     concat == r.text,
                     "{}: visible ctx row {} runs concat {:?} != text {:?}",
@@ -623,9 +642,11 @@ static EXPECTED_WIRE_CACHE: LazyLock<Mutex<HashMap<String, Arc<PipelineOutput>>>
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
-    let mut cache = EXPECTED_WIRE_CACHE.lock().unwrap();
-    if let Some(out) = cache.get(name) {
-        return Arc::clone(out);
+    {
+        let cache = EXPECTED_WIRE_CACHE.lock().unwrap();
+        if let Some(out) = cache.get(name) {
+            return Arc::clone(out);
+        }
     }
     let wire_path = expected_wire_path(name);
     let bytes = fs::read(&wire_path).unwrap_or_else(|e| {
@@ -637,6 +658,7 @@ fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
     let parsed: PipelineOutput = serde_json::from_slice(&bytes)
         .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
     let arc = Arc::new(parsed);
+    let mut cache = EXPECTED_WIRE_CACHE.lock().unwrap();
     cache.insert(name.to_string(), Arc::clone(&arc));
     arc
 }
@@ -838,7 +860,9 @@ fn run_bin_markdown_leg(name: &str) {
 }
 
 fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
+    let t0 = std::time::Instant::now();
     let fixture = load_fixture(name);
+    let _t_load = t0.elapsed();
     let new_content = if fixture.new_content.is_empty() {
         None
     } else {
@@ -849,8 +873,8 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     } else {
         Some(fixture.old_content.clone())
     };
-    let output = diffuse::core::pipeline::run_pipeline_full(
-        &fixture.diff,
+    let output = diffuse::core::pipeline::run_pipeline_arc(
+        Arc::clone(&fixture.diff),
         new_content,
         old_content,
         diffuse::core::pipeline::PipelineOptions::default(),

@@ -76,8 +76,8 @@ fn guarded_dels(
     profile: Option<&LangProfile>,
 ) -> FxHashSet<usize> {
     let mut skip = FxHashSet::default();
-    let new_trimmed_set: Option<FxHashSet<&str>> =
-        new_content.map(|c| c.iter().map(|l| l.trim()).collect());
+    let mut new_trimmed_set: Option<FxHashSet<&str>> = None;
+    let has_any_moved = h.rows.iter().any(|a| a.is_moved());
 
     for (ri, r) in h.rows.iter().enumerate() {
         if !matches!(r, Row::Del(_)) {
@@ -88,7 +88,8 @@ fn guarded_dels(
             continue;
         }
         let r_trim = r.text().trim();
-        let was_moved = !r_trim.is_empty()
+        let was_moved = has_any_moved
+            && !r_trim.is_empty()
             && h.rows.iter().any(|a| {
                 a.is_moved() && (a.old_line() == r.old_line() || a.text().trim() == r_trim)
             });
@@ -116,12 +117,17 @@ fn guarded_dels(
             .rows
             .iter()
             .any(|a| a.kind() == crate::parse::RowKind::Add && a.text().trim() == r_trim);
-        if !r_trim.is_empty()
-            && !tail_candidate
-            && !has_same_hunk_add
-            && new_trimmed_set.as_ref().is_some_and(|s| s.contains(r_trim))
-        {
-            skip.insert(ri);
+        if !r_trim.is_empty() && !tail_candidate && !has_same_hunk_add {
+            let in_new = if let Some(nc) = new_content {
+                let set =
+                    new_trimmed_set.get_or_insert_with(|| nc.iter().map(|l| l.trim()).collect());
+                set.contains(r_trim)
+            } else {
+                false
+            };
+            if in_new {
+                skip.insert(ri);
+            }
         }
     }
     skip

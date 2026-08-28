@@ -225,6 +225,6 @@ fn test_normalize_note_text_multiline() {
 fn test_note_runs_multiline_html_behavior() {
     let input = "  Hello   `world`  \n\nand   **bold text**  ";
     let runs = note_runs(input);
-    let full_rendered: String = runs.iter().map(|r| r.text.as_str()).collect();
+    let full_rendered: String = runs.iter().map(|r| r.text.as_ref()).collect();
     assert_eq!(full_rendered, "Hello `world` and **bold text**");
 }

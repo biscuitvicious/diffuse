@@ -24,9 +24,9 @@ use crate::{
 pub struct FileJob {
     pub idx: usize,
     pub file: DiffFile,
-    pub new_content: Option<String>,
-    pub old_content: Option<String>,
-    pub diff_fallback: Option<String>,
+    pub new_content: Option<Arc<String>>,
+    pub old_content: Option<Arc<String>>,
+    pub diff_fallback: Option<Arc<String>>,
 }
 
 /// Priority wrapper for `FileJob`.
@@ -229,9 +229,9 @@ pub fn spawn_streaming_pipeline(
             while let Some(job) = q.pop() {
                 let out_file = process_single_diff_file(
                     job.file,
-                    job.new_content.as_deref(),
-                    job.old_content.as_deref(),
-                    job.diff_fallback.as_deref(),
+                    job.new_content.as_deref().map(|s| s.as_str()),
+                    job.old_content.as_deref().map(|s| s.as_str()),
+                    job.diff_fallback.as_deref().map(|s| s.as_str()),
                     &opts,
                 );
                 if p_tx
@@ -275,16 +275,15 @@ pub fn spawn_streaming_pipeline(
 }
 
 /// Convenience helper to parse a diff and immediately spawn a streaming
-/// pipeline.
-pub fn stream_diff_pipeline(
-    diff: impl Into<String>,
-    mut new_content: Option<std::collections::HashMap<String, String>>,
-    mut old_content: Option<std::collections::HashMap<String, String>>,
+/// pipeline using Arc<String> content maps to avoid allocations.
+pub fn stream_diff_pipeline_arc(
+    diff: Arc<String>,
+    mut new_content: Option<std::collections::HashMap<String, Arc<String>>>,
+    mut old_content: Option<std::collections::HashMap<String, Arc<String>>>,
     opts: PipelineOptions,
     worker_count: Option<usize>,
 ) -> StreamingConsumer {
-    let diff_str = diff.into();
-    let parsed = crate::parse::parse_diff(&diff_str);
+    let parsed = crate::parse::parse_diff(&diff);
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
 
     for (idx, f) in parsed.into_iter().enumerate() {
@@ -301,6 +300,21 @@ pub fn stream_diff_pipeline(
     producer.finish();
 
     consumer
+}
+
+/// Convenience helper to parse a diff and immediately spawn a streaming
+/// pipeline.
+pub fn stream_diff_pipeline(
+    diff: impl Into<String>,
+    new_content: Option<std::collections::HashMap<String, String>>,
+    old_content: Option<std::collections::HashMap<String, String>>,
+    opts: PipelineOptions,
+    worker_count: Option<usize>,
+) -> StreamingConsumer {
+    let diff_arc: Arc<String> = Arc::new(diff.into());
+    let new_arc = new_content.map(|m| m.into_iter().map(|(k, v)| (k, Arc::new(v))).collect());
+    let old_arc = old_content.map(|m| m.into_iter().map(|(k, v)| (k, Arc::new(v))).collect());
+    stream_diff_pipeline_arc(diff_arc, new_arc, old_arc, opts, worker_count)
 }
 
 /// Metadata discovered asynchronously from the git repository.

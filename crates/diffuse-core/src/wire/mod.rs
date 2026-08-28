@@ -263,7 +263,7 @@ pub struct OutputRun {
     /// underline) the renderer applies with the color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sgr: Option<u32>,
-    pub text: String,
+    pub text: Cow<'static, str>,
 }
 
 impl OutputRun {

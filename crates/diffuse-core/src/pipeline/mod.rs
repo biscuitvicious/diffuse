@@ -165,6 +165,24 @@ pub fn run_pipeline_with_notes(
     )
 }
 
+/// Run the pipeline over Arc<String> inputs without string duplication.
+pub fn run_pipeline_arc(
+    diff: std::sync::Arc<String>,
+    new_content: Option<HashMap<String, std::sync::Arc<String>>>,
+    old_content: Option<HashMap<String, std::sync::Arc<String>>>,
+    opts: PipelineOptions,
+) -> PipelineOutput {
+    let out_files =
+        crate::streaming::stream_diff_pipeline_arc(diff, new_content, old_content, opts, None)
+            .collect();
+
+    PipelineOutput {
+        files: out_files,
+        branch: String::new(),
+        untracked_skipped: Vec::new(),
+    }
+}
+
 /// Run the pipeline over a diff + optional new-file contents + optional
 /// old-file contents + pipeline options; produce the wire-contract output.
 pub fn run_pipeline_full(
@@ -343,7 +361,7 @@ pub fn process_single_diff_file(
                     kind: RunKind::Ctx,
                     color: Some(std::borrow::Cow::Borrowed(tk.color)),
                     sgr: tk.sgr,
-                    text: tk.text.to_string(),
+                    text: tk.text.to_string().into(),
                 });
             });
             runs
@@ -403,7 +421,7 @@ pub fn process_single_diff_file(
                                 kind: RunKind::Ctx,
                                 color: Some(std::borrow::Cow::Borrowed(tk.color)),
                                 sgr: tk.sgr,
-                                text: tk.text.to_string(),
+                                text: tk.text.to_string().into(),
                             });
                         },
                     );
@@ -463,7 +481,7 @@ pub fn colored_runs(
                     kind,
                     color: Some(std::borrow::Cow::Borrowed(t.color)),
                     sgr: t.sgr,
-                    text: t.text.to_string(),
+                    text: t.text.to_string().into(),
                 });
             });
         } else {
@@ -471,7 +489,7 @@ pub fn colored_runs(
                 kind: RunKind::Del,
                 color: None,
                 sgr: None,
-                text: r.text().to_string(),
+                text: r.text().to_string().into(),
             });
         }
         return out;
@@ -500,7 +518,7 @@ pub fn colored_runs(
                         kind: RunKind::Del,
                         color: None,
                         sgr: None,
-                        text: run.text.to_string(),
+                        text: run.text.to_string().into(),
                     },
                 );
             } else {
@@ -519,7 +537,7 @@ pub fn colored_runs(
                             kind: run.kind,
                             color: Some(std::borrow::Cow::Borrowed(t.color)),
                             sgr: t.sgr,
-                            text: t.text.to_string(),
+                            text: t.text.to_string().into(),
                         },
                     );
                 });
@@ -532,7 +550,7 @@ pub fn colored_runs(
                                 kind: run.kind,
                                 color: Some(std::borrow::Cow::Borrowed(t.color)),
                                 sgr: t.sgr,
-                                text: t.text.to_string(),
+                                text: t.text.to_string().into(),
                             },
                         );
                     };
@@ -568,7 +586,7 @@ fn push_output_run(out: &mut Vec<OutputRun>, run: OutputRun) {
         && last.color == run.color
         && last.sgr == run.sgr
     {
-        last.text.push_str(&run.text);
+        last.text.to_mut().push_str(&run.text);
         return;
     }
     out.push(run);
@@ -682,7 +700,7 @@ pub fn context_line_runs(line_text: &str, line_num: Option<u32>, ext: &str) -> V
             kind: crate::merge::RunKind::Ctx,
             color: Some(std::borrow::Cow::Borrowed(tk.color)),
             sgr: tk.sgr,
-            text: tk.text.to_string(),
+            text: tk.text.to_string().into(),
         });
     });
     runs

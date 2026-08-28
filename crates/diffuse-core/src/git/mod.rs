@@ -400,9 +400,9 @@ pub fn stream_git_repo_to_producer(
             producer.push(crate::streaming::FileJob {
                 idx: *idx,
                 file: f,
-                new_content: new_c,
-                old_content: old_c,
-                diff_fallback: fallback,
+                new_content: new_c.map(Into::into),
+                old_content: old_c.map(Into::into),
+                diff_fallback: fallback.map(Into::into),
             });
             *idx += 1;
         }
@@ -461,9 +461,9 @@ pub fn stream_git_repo_to_producer(
                     producer.push(crate::streaming::FileJob {
                         idx: file_idx,
                         file: f,
-                        new_content: Some(content.clone()),
+                        new_content: Some(content.clone().into()),
                         old_content: None,
-                        diff_fallback: Some(synthetic_diff.clone()),
+                        diff_fallback: Some(synthetic_diff.clone().into()),
                     });
                     file_idx += 1;
                 }

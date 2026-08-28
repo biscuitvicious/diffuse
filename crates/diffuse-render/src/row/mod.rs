@@ -159,7 +159,7 @@ pub fn display_text(
         && !runs.is_empty();
 
     let full_text = if use_merged {
-        runs.iter().map(|r| r.text.as_str()).collect::<String>()
+        runs.iter().map(|r| r.text.as_ref()).collect::<String>()
     } else {
         text.to_string()
     };

@@ -146,13 +146,13 @@ index 444..555 100644
     let (producer, consumer) = spawn_streaming_pipeline(Some(4), PipelineOptions::default());
 
     for (idx, f) in files.into_iter().enumerate() {
-        let nc = new_content.get(&f.path).cloned();
+        let nc = new_content.get(&f.path).map(|s| Arc::new(s.clone()));
         producer.push(FileJob {
             idx,
             file: f,
             new_content: nc,
             old_content: None,
-            diff_fallback: Some(diff.to_string()),
+            diff_fallback: Some(Arc::new(diff.to_string())),
         });
     }
     producer.finish();

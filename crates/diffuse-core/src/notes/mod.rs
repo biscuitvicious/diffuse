@@ -287,7 +287,7 @@ pub fn note_runs(text: &str) -> Vec<OutputRun> {
             kind: RunKind::Ctx,
             color: Some(std::borrow::Cow::Borrowed(t.color)),
             sgr: t.sgr,
-            text: t.text.to_string(),
+            text: t.text.to_string().into(),
         })
         .collect()
 }
