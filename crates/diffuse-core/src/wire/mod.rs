@@ -48,9 +48,9 @@ pub struct OutputFile {
     pub status: String,
     pub new_line_count: usize,
     pub old_line_count: usize,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing)]
     pub new_content: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing)]
     pub old_content: Vec<String>,
     pub hunks: Vec<OutputHunk>,
     #[serde(default, skip_serializing)]
@@ -65,10 +65,10 @@ pub struct OutputFile {
     pub notes: Vec<OutputNote>,
     /// Pre-classified syntax token runs for all context/content lines of the
     /// file.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing)]
     pub content_runs: Vec<Vec<OutputRun>>,
     /// Pre-assembled row sequence for default context.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing)]
     pub rows: Vec<OutputRow>,
 }
 

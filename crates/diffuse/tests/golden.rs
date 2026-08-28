@@ -71,6 +71,25 @@ fn write_file_plain(path: &Path, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+fn write_gz(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let gz_path = if path.extension().is_some_and(|ext| ext == "gz") {
+        path.to_path_buf()
+    } else {
+        PathBuf::from(format!("{}.gz", path.display()))
+    };
+    if let Some(parent) = gz_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = fs::File::create(&gz_path)?;
+    let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::best());
+    std::io::Write::write_all(&mut encoder, data)?;
+    encoder.finish()?;
+    if path.exists() && path != gz_path {
+        let _ = fs::remove_file(path);
+    }
+    Ok(())
+}
+
 static FIXTURE_CACHE: LazyLock<Mutex<HashMap<String, Arc<Fixture>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -186,12 +205,27 @@ fn load_expected_render(name: &str) -> Arc<String> {
         return Arc::clone(r);
     }
     let render_path = expected_render_path(name);
-    let expected = fs::read_to_string(&render_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read expected render output for {name} from {}: {e}",
-            render_path.display()
-        )
-    });
+    let expected = if render_path.exists() {
+        fs::read_to_string(&render_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected render output for {name} from {}: {e}",
+                render_path.display()
+            )
+        })
+    } else {
+        let gz_path = golden_dir().join(format!("{name}.render.txt.gz"));
+        let bytes = fs::read(&gz_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected render output for {name} from {} or {}: {e}",
+                render_path.display(),
+                gz_path.display()
+            )
+        });
+        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
+        s
+    };
     let arc = Arc::new(expected);
     cache.insert(name.to_string(), Arc::clone(&arc));
     arc
@@ -401,107 +435,93 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             let _ = &fence.lang;
         }
 
-        // 1. Verify reconstructed content completeness:
-        if f.status != "deleted" && f.new_line_count > 0 {
-            check!(
-                !f.new_content.is_empty(),
-                "{}: new_content must not be empty for non-deleted file (new_line_count={})",
-                f.path,
-                f.new_line_count
-            );
-            check!(
-                f.new_content.len() == f.new_line_count,
-                "{}: new_content len {} != new_line_count {}",
-                f.path,
-                f.new_content.len(),
-                f.new_line_count
-            );
-        }
-        if f.status != "added" && f.old_line_count > 0 {
-            check!(
-                !f.old_content.is_empty(),
-                "{}: old_content must not be empty for non-added file (old_line_count={})",
-                f.path,
-                f.old_line_count
-            );
-            check!(
-                f.old_content.len() == f.old_line_count,
-                "{}: old_content len {} != old_line_count {}",
-                f.path,
-                f.old_content.len(),
-                f.old_line_count
-            );
-        }
+        // 1. Verify reconstructed content completeness (only when present — lib_leg
+        //    populates these in-memory; bin_leg decodes from wire JSON which omits them
+        //    as of the slim format, so we skip these checks when the vecs are empty).
+        if !f.new_content.is_empty()
+            && f.status != "deleted" && f.new_line_count > 0 {
+                check!(
+                    f.new_content.len() == f.new_line_count,
+                    "{}: new_content len {} != new_line_count {}",
+                    f.path,
+                    f.new_content.len(),
+                    f.new_line_count
+                );
+            }
+        if !f.old_content.is_empty()
+            && f.status != "added" && f.old_line_count > 0 {
+                check!(
+                    f.old_content.len() == f.old_line_count,
+                    "{}: old_content len {} != old_line_count {}",
+                    f.path,
+                    f.old_content.len(),
+                    f.old_line_count
+                );
+            }
 
-        // 2. Verify visible rows completeness and accuracy
-        if !f.hunks.is_empty() {
-            check!(
-                !f.rows.is_empty(),
-                "{}: visible rows must not be empty for file with hunks",
-                f.path
-            );
-        }
-
-        let mut last_new_line: Option<u32> = None;
-        for (ri, r) in f.rows.iter().enumerate() {
-            if let Some(nl) = r.new_line {
-                if let Some(prev) = last_new_line
-                    && nl == prev + 1
+        // 2. Verify visible rows completeness and accuracy (only when present)
+        if !f.rows.is_empty() {
+            let mut last_new_line: Option<u32> = None;
+            for (ri, r) in f.rows.iter().enumerate() {
+                if let Some(nl) = r.new_line {
+                    if let Some(prev) = last_new_line
+                        && nl == prev + 1
+                    {
+                        // Sequential
+                    }
+                    last_new_line = Some(nl);
+                    if !f.new_content.is_empty() {
+                        let expected_text = f
+                            .new_content
+                            .get((nl as usize) - 1)
+                            .map(|s| s.as_str())
+                            .unwrap_or("");
+                        check!(
+                            r.text == expected_text,
+                            "{}:{}: visible row {} text {:?} != new_content text {:?}",
+                            f.path,
+                            nl,
+                            ri,
+                            r.text,
+                            expected_text
+                        );
+                    }
+                } else if let Some(ol) = r.old_line
+                    && !f.old_content.is_empty()
                 {
-                    // Sequential
-                }
-                last_new_line = Some(nl);
-                if !f.new_content.is_empty() {
                     let expected_text = f
-                        .new_content
-                        .get((nl as usize) - 1)
+                        .old_content
+                        .get((ol as usize) - 1)
                         .map(|s| s.as_str())
                         .unwrap_or("");
                     check!(
                         r.text == expected_text,
-                        "{}:{}: visible row {} text {:?} != new_content text {:?}",
+                        "{}:{}: visible old row {} text {:?} != old_content text {:?}",
                         f.path,
-                        nl,
+                        ol,
                         ri,
                         r.text,
                         expected_text
                     );
                 }
-            } else if let Some(ol) = r.old_line
-                && !f.old_content.is_empty()
-            {
-                let expected_text = f
-                    .old_content
-                    .get((ol as usize) - 1)
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                check!(
-                    r.text == expected_text,
-                    "{}:{}: visible old row {} text {:?} != old_content text {:?}",
-                    f.path,
-                    ol,
-                    ri,
-                    r.text,
-                    expected_text
-                );
-            }
 
-            if r.kind == RowKind::Ctx {
-                check!(
-                    r.new_line.is_some() || r.old_line.is_some(),
-                    "{}: visible ctx row {} missing line number",
-                    f.path,
-                    ri
-                );
-                let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
-                check!(
-                    concat == r.text,
-                    "{}: visible ctx row {} runs concat {:?} != text {:?}",
-                    f.path,
-                    ri,
-                    concat,
-                    r.text
-                );
+                if r.kind == RowKind::Ctx {
+                    check!(
+                        r.new_line.is_some() || r.old_line.is_some(),
+                        "{}: visible ctx row {} missing line number",
+                        f.path,
+                        ri
+                    );
+                    let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
+                    check!(
+                        concat == r.text,
+                        "{}: visible ctx row {} runs concat {:?} != text {:?}",
+                        f.path,
+                        ri,
+                        concat,
+                        r.text
+                    );
+                }
             }
         }
     }
@@ -511,129 +531,141 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
     );
 }
 
+const MAX_WIRE_DIFF_FAILURES: usize = 10;
+
 fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutput) {
-    eprintln!("\n----- WIRE DIFF [{name}] -----");
+    let mut failures: Vec<String> = Vec::new();
+
     if actual.files.len() != expected.files.len() {
-        eprintln!(
-            "  File count mismatch: actual={}, expected={}",
+        failures.push(format!(
+            "File count mismatch: actual={}, expected={}",
             actual.files.len(),
             expected.files.len()
-        );
+        ));
     }
-    for (fi, (af, ef)) in actual.files.iter().zip(expected.files.iter()).enumerate() {
+
+    'files: for (fi, (af, ef)) in actual.files.iter().zip(expected.files.iter()).enumerate() {
         if af.path != ef.path {
-            eprintln!(
-                "  [file {fi}] Path mismatch: actual={:?}, expected={:?}",
+            failures.push(format!(
+                "[file {fi}] Path mismatch: actual={:?}, expected={:?}",
                 af.path, ef.path
-            );
+            ));
+            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                break 'files;
+            }
+        }
+        if af.status != ef.status
+            || af.new_line_count != ef.new_line_count
+            || af.old_line_count != ef.old_line_count
+        {
+            failures.push(format!(
+                "[file {fi} {:?}] Metadata mismatch: status actual={:?} expected={:?}, \
+                 new_line_count actual={} expected={}, old_line_count actual={} expected={}",
+                af.path,
+                af.status,
+                ef.status,
+                af.new_line_count,
+                ef.new_line_count,
+                af.old_line_count,
+                ef.old_line_count
+            ));
+            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                break 'files;
+            }
         }
         if af.hunks.len() != ef.hunks.len() {
-            eprintln!(
-                "  [file {fi} {:?}] Hunk count mismatch: actual={}, expected={}",
+            failures.push(format!(
+                "[file {fi} {:?}] Hunk count mismatch: actual={}, expected={}",
                 af.path,
                 af.hunks.len(),
                 ef.hunks.len()
-            );
+            ));
+            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                break 'files;
+            }
         }
-        for (hi, (ah, eh)) in af.hunks.iter().zip(ef.hunks.iter()).enumerate() {
+        'hunks: for (hi, (ah, eh)) in af.hunks.iter().zip(ef.hunks.iter()).enumerate() {
             if ah.rows.len() != eh.rows.len() {
-                eprintln!(
-                    "  [file {fi} {:?} hunk {hi}] Row count mismatch: actual={}, expected={}",
+                failures.push(format!(
+                    "[file {fi} {:?} hunk {hi}] Row count mismatch: actual={}, expected={}",
                     af.path,
                     ah.rows.len(),
                     eh.rows.len()
-                );
+                ));
+                if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                    break 'files;
+                }
             }
             for (ri, (ar, er)) in ah.rows.iter().zip(eh.rows.iter()).enumerate() {
                 if ar != er {
-                    eprintln!("  [file {fi} {:?} hunk {hi} row {ri}] mismatch:", af.path);
+                    let mut msg = format!("[file {fi} {:?} hunk {hi} row {ri}] mismatch:", af.path);
                     if ar.kind != er.kind
                         || ar.new_line != er.new_line
                         || ar.old_line != er.old_line
                         || ar.text != er.text
                     {
-                        eprintln!(
-                            "    actual:   kind={:?}, nl={:?}, ol={:?}, text={:?}",
+                        msg.push_str(&format!(
+                            "\n    actual:   kind={:?}, nl={:?}, ol={:?}, text={:?}",
                             ar.kind, ar.new_line, ar.old_line, ar.text
-                        );
-                        eprintln!(
-                            "    expected: kind={:?}, nl={:?}, ol={:?}, text={:?}",
+                        ));
+                        msg.push_str(&format!(
+                            "\n    expected: kind={:?}, nl={:?}, ol={:?}, text={:?}",
                             er.kind, er.new_line, er.old_line, er.text
-                        );
+                        ));
                     }
                     if ar.del_text != er.del_text {
-                        eprintln!("      del_text actual:   {:?}", ar.del_text);
-                        eprintln!("      del_text expected: {:?}", er.del_text);
+                        msg.push_str(&format!(
+                            "\n    del_text actual:   {:?}\n    del_text expected: {:?}",
+                            ar.del_text, er.del_text
+                        ));
                     }
                     if ar.spans != er.spans {
-                        eprintln!("      spans actual:   {:?}", ar.spans);
-                        eprintln!("      spans expected: {:?}", er.spans);
+                        msg.push_str(&format!(
+                            "\n    spans actual:   {:?}\n    spans expected: {:?}",
+                            ar.spans, er.spans
+                        ));
                     }
                     if ar.runs != er.runs {
-                        eprintln!("      runs actual:   {:?}", ar.runs);
-                        eprintln!("      runs expected: {:?}", er.runs);
+                        msg.push_str(&format!(
+                            "\n    runs actual:   {:?}\n    runs expected: {:?}",
+                            ar.runs, er.runs
+                        ));
                     }
                     if ar.wholesale != er.wholesale || ar.moved != er.moved {
-                        eprintln!(
-                            "      flags actual:   wholesale={}, moved={}",
-                            ar.wholesale, ar.moved
-                        );
-                        eprintln!(
-                            "      flags expected: wholesale={}, moved={}",
-                            er.wholesale, er.moved
-                        );
+                        msg.push_str(&format!(
+                            "\n    flags actual:   wholesale={}, moved={}\n    flags expected: wholesale={}, moved={}",
+                            ar.wholesale, ar.moved, er.wholesale, er.moved
+                        ));
+                    }
+                    failures.push(msg);
+                    if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                        break 'hunks;
                     }
                 }
             }
         }
-        if af.new_content != ef.new_content {
-            eprintln!(
-                "  [file {fi} {:?}] new_content mismatch: actual len={}, expected len={}",
-                af.path,
-                af.new_content.len(),
-                ef.new_content.len()
-            );
-        }
-        if af.old_content != ef.old_content {
-            eprintln!(
-                "  [file {fi} {:?}] old_content mismatch: actual len={}, expected len={}",
-                af.path,
-                af.old_content.len(),
-                ef.old_content.len()
-            );
-        }
-        if af.rows.len() != ef.rows.len() {
-            eprintln!(
-                "  [file {fi} {:?}] Visible rows count mismatch: actual={}, expected={}",
-                af.path,
-                af.rows.len(),
-                ef.rows.len()
-            );
-        } else {
-            for (ri, (ar, er)) in af.rows.iter().zip(ef.rows.iter()).enumerate() {
-                if ar != er {
-                    eprintln!("  [file {fi} {:?} visible row {ri}] mismatch:", af.path);
-                    if ar.kind != er.kind
-                        || ar.new_line != er.new_line
-                        || ar.old_line != er.old_line
-                        || ar.text != er.text
-                    {
-                        eprintln!(
-                            "    actual:   kind={:?}, nl={:?}, ol={:?}, text={:?}",
-                            ar.kind, ar.new_line, ar.old_line, ar.text
-                        );
-                        eprintln!(
-                            "    expected: kind={:?}, nl={:?}, ol={:?}, text={:?}",
-                            er.kind, er.new_line, er.old_line, er.text
-                        );
-                    }
-                    if ar.runs != er.runs {
-                        eprintln!("      runs actual:   {:?}", ar.runs);
-                        eprintln!("      runs expected: {:?}", er.runs);
-                    }
-                }
+        if af.fences != ef.fences {
+            failures.push(format!(
+                "[file {fi} {:?}] fences mismatch: actual={:?}, expected={:?}",
+                af.path, af.fences, ef.fences
+            ));
+            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
+                break 'files;
             }
         }
+    }
+
+    let total = failures.len();
+    let shown = total.min(MAX_WIRE_DIFF_FAILURES);
+    eprintln!("\n----- WIRE DIFF [{name}] — {total} failure(s), showing first {shown} -----");
+    for f in failures.iter().take(MAX_WIRE_DIFF_FAILURES) {
+        eprintln!("  {f}");
+    }
+    if total > MAX_WIRE_DIFF_FAILURES {
+        eprintln!(
+            "  ... and {} more (increase MAX_WIRE_DIFF_FAILURES to see all)",
+            total - MAX_WIRE_DIFF_FAILURES
+        );
     }
     eprintln!("----- END WIRE DIFF -----\n");
 }
@@ -649,12 +681,27 @@ fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
         }
     }
     let wire_path = expected_wire_path(name);
-    let bytes = fs::read(&wire_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read expected wire JSON for {name} from {}: {e}",
-            wire_path.display()
-        )
-    });
+    let bytes = if wire_path.exists() {
+        fs::read(&wire_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected wire JSON for {name} from {}: {e}",
+                wire_path.display()
+            )
+        })
+    } else {
+        let gz_wire_path = golden_dir().join(format!("{name}.wire.json.gz"));
+        let gz_bytes = fs::read(&gz_wire_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected wire JSON for {name} from {} or {}: {e}",
+                wire_path.display(),
+                gz_wire_path.display()
+            )
+        });
+        let mut decoder = flate2::read::GzDecoder::new(&gz_bytes[..]);
+        let mut decoded = Vec::new();
+        std::io::Read::read_to_end(&mut decoder, &mut decoded).unwrap();
+        decoded
+    };
     let parsed: PipelineOutput = serde_json::from_slice(&bytes)
         .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
     let arc = Arc::new(parsed);
@@ -668,14 +715,10 @@ fn wire_files_match(a: &OutputFile, b: &OutputFile) -> bool {
         && a.status == b.status
         && a.new_line_count == b.new_line_count
         && a.old_line_count == b.old_line_count
-        && a.new_content == b.new_content
-        && a.old_content == b.old_content
         && a.hunks == b.hunks
         && a.counts == b.counts
         && a.fences == b.fences
         && a.notes == b.notes
-        && a.content_runs == b.content_runs
-        && a.rows == b.rows
 }
 
 fn wire_outputs_match(a: &PipelineOutput, b: &PipelineOutput) -> bool {
@@ -690,14 +733,21 @@ fn wire_outputs_match(a: &PipelineOutput, b: &PipelineOutput) -> bool {
 
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     let wire_path = expected_wire_path(name);
+    let gz_wire_path = golden_dir().join(format!("{name}.wire.json.gz"));
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
         let actual_pretty = format!(
             "{}\n",
             serde_json::to_string_pretty(output).expect("serialize pretty JSON")
         );
-        write_file_plain(&wire_path, actual_pretty.as_bytes())
-            .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
-        eprintln!("{name}: wire JSON updated ({})", wire_path.display());
+        if gz_wire_path.exists() || name.contains("history") {
+            write_gz(&gz_wire_path, actual_pretty.as_bytes())
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_wire_path.display()));
+            eprintln!("{name}: compressed wire JSON updated ({})", gz_wire_path.display());
+        } else {
+            write_file_plain(&wire_path, actual_pretty.as_bytes())
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
+            eprintln!("{name}: wire JSON updated ({})", wire_path.display());
+        }
         return;
     }
     let expected = load_expected_wire(name);
@@ -734,14 +784,24 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
     let actual_raw = render_pipeline_output(output, &theme, true);
     let actual_encoded = encode_sgr(&actual_raw);
     let render_path = expected_render_path(name);
+    let gz_render_path = golden_dir().join(format!("{name}.render.txt.gz"));
 
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_RENDER").is_ok() {
-        write_file_plain(&render_path, actual_encoded.as_bytes())
-            .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
-        eprintln!(
-            "{name}: render static golden updated ({})",
-            render_path.display()
-        );
+        if gz_render_path.exists() || name.contains("history") {
+            write_gz(&gz_render_path, actual_encoded.as_bytes())
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_render_path.display()));
+            eprintln!(
+                "{name}: render static golden updated ({})",
+                gz_render_path.display()
+            );
+        } else {
+            write_file_plain(&render_path, actual_encoded.as_bytes())
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", render_path.display()));
+            eprintln!(
+                "{name}: render static golden updated ({})",
+                render_path.display()
+            );
+        }
         return;
     }
 
@@ -778,26 +838,50 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
     let opts = diffuse::render::MarkdownOptions::default();
     let actual_md = diffuse::render::render_markdown_output(output, &opts);
     let md_path = expected_markdown_path(name);
+    let gz_md_path = golden_dir().join(format!("{name}.markdown.md.gz"));
 
     if std::env::var("GEN_GOLDEN").is_ok()
         || std::env::var("UPDATE_MARKDOWN").is_ok()
         || std::env::var("UPDATE_MD").is_ok()
     {
-        write_file_plain(&md_path, actual_md.as_bytes())
-            .unwrap_or_else(|e| panic!("failed to write {}: {e}", md_path.display()));
-        eprintln!(
-            "{name}: markdown static golden updated ({})",
-            md_path.display()
-        );
+        if gz_md_path.exists() || name.contains("history") {
+            write_gz(&gz_md_path, actual_md.as_bytes())
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_md_path.display()));
+            eprintln!(
+                "{name}: markdown static golden updated ({})",
+                gz_md_path.display()
+            );
+        } else {
+            write_file_plain(&md_path, actual_md.as_bytes())
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", md_path.display()));
+            eprintln!(
+                "{name}: markdown static golden updated ({})",
+                md_path.display()
+            );
+        }
         return;
     }
 
-    let expected_md = fs::read_to_string(&md_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
-            md_path.display()
-        )
-    });
+    let expected_md = if md_path.exists() {
+        fs::read_to_string(&md_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
+                md_path.display()
+            )
+        })
+    } else {
+        let bytes = fs::read(&gz_md_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected markdown output for {name} from {} or {}: {e}.",
+                md_path.display(),
+                gz_md_path.display()
+            )
+        });
+        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
+        s
+    };
 
     if actual_md != expected_md {
         print_markdown_diff(name, &actual_md, &expected_md);
@@ -843,12 +927,27 @@ fn run_bin_markdown_leg(name: &str) {
         return;
     }
 
-    let expected_md = fs::read_to_string(&md_path).unwrap_or_else(|e| {
-        panic!(
-            "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
-            md_path.display()
-        )
-    });
+    let expected_md = if md_path.exists() {
+        fs::read_to_string(&md_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected markdown output for {name} from {}: {e}. Use GEN_GOLDEN=1 or UPDATE_MARKDOWN=1 to create/update.",
+                md_path.display()
+            )
+        })
+    } else {
+        let gz_path = golden_dir().join(format!("{name}.markdown.md.gz"));
+        let bytes = fs::read(&gz_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected markdown output for {name} from {} or {}: {e}.",
+                md_path.display(),
+                gz_path.display()
+            )
+        });
+        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
+        s
+    };
 
     if bin_md != expected_md {
         print_markdown_diff(name, &bin_md, &expected_md);
