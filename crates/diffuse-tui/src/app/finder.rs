@@ -15,21 +15,12 @@ impl AppState {
     }
 
     pub fn cancel_file_finder(&mut self) {
-        if let Some(finder) = self.file_finder.take() {
-            self.row_idx = finder.initial_row_idx;
-            self.scroll = finder.initial_scroll;
-        }
-    }
-
-    pub fn confirm_file_finder(&mut self) {
         self.file_finder = None;
     }
 
-    pub fn track_finder_selection(&mut self) {
-        if let Some(fi) = self
-            .file_finder
-            .as_ref()
-            .and_then(crate::finder::FileFinderState::selected_file_idx)
+    pub fn confirm_file_finder(&mut self) {
+        if let Some(finder) = self.file_finder.take()
+            && let Some(fi) = finder.selected_file_idx()
         {
             self.goto_file_idx(fi);
         }

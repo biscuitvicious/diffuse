@@ -3,8 +3,9 @@
 ## 1. Rust Binary & Standalone TUI
 - [x] **Standalone Rust TUI**: Full terminal user interface in the `diffuse` binary equivalent to the Pi extension's interactive review UI.
 - [x] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
-- [ ] **Migrate TUI layout rendering to ratatui**: Migrate custom TUI layout, buffer rendering, and terminal primitives to `ratatui`.
+- [x] ~~**Migrate TUI layout rendering to ratatui**~~: Migrate custom TUI layout, buffer rendering, and terminal primitives to `ratatui`. (See [Ratatui TUI Layout & Rendering Migration](plan/Ratatui%20Migration.md))
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
+- [ ] **Theme styling (deeper black & muted red/green backgrounds)**: Tune default theme palette to make the background more black and mute the red (deletion) and green (addition) background shades for enhanced contrast and reduced eye fatigue.
 - [x] **CLI UX & subcommands**: Explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse -p`/`--pager`, `-U`/`--context`).
 - [x] ~~**Direct git access via git crate**~~: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`). (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
 
@@ -13,6 +14,7 @@
 - [x] ~~**Incremental diff line streaming (JSONL)**~~: Stream and render individual tokenized rows/lines progressively over a JSON Lines protocol. (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
 
 ## 3. UI, Navigation & Display Features
+- [ ] **Selection round: Shift-Up/Down selection**: Add Shift-Up/Down to start a selection, ends when shift is released. Pressing `v` while selecting clears the selection.
 - [ ] **Hunk dividers as selectable rows**: Make hunk dividers "normal" rows that the cursor can select and receive key shortcuts (e.g. `Enter`, `m`, `s`) like file headers and diff lines, instead of click-only expansion targets.
 - [ ] **Subline selection with automatic clipboard copy**: Support character-level / subline selection start and end coordinates with automatic copying of selected text to the system clipboard upon selection confirmation / mouse release.
 - [ ] **Command palette**: Searchable menu of all available commands and their key shortcuts. Divided into 1) contextual commands applicable to the current row (file header, hunk divider, or diff line/selection), and 2) global commands.
@@ -23,6 +25,7 @@
 - [ ] **Switch to Markdown mode in TUI**: Add a TUI key shortcut for switching to Markdown mode.
 
 ## 4. Notes & Review State
+- [ ] **Selectable notes, note editing, formatting viewer & targeted deletion**: Make note callouts selectable rows so the cursor can navigate directly onto individual notes (`j`/`k`). Enables 1) editing an existing note in the note modal by pressing `m`/`Enter` when focused on that note, 2) key binding to view a note in a popup modal with its original multiline formatting preserved, and 3) disambiguated note deletion (`d`) when multiple notes exist on the same line or range.
 - [ ] **File-level notes on file header**: Make it possible to add/delete/etc notes to a file using the same key shortcuts (`m`, `d`, etc.) but on the file header.
 - [ ] **Mark notes as done / resolved**: Ability to mark review notes as done and display them collapsed.
 - [ ] **Project-local notes storage (git metadata)**: Store review notes directly in project git metadata / refs by default rather than global database storage.
@@ -48,4 +51,5 @@
 ## 8. Codebase Architecture & Modularization
 - [x] ~~**Split `diffuse-tui/src/app.rs` into focused modules**~~: Decompose the monolithic ~5,200-line `app.rs` into logically distinct submodules with single responsibilities (e.g. `state.rs`, `navigation.rs`, `layout.rs`, `expansion.rs`, `render.rs`, `events.rs`, etc.). (See [Split AppState](plan/done/Split%20AppState.md))
 - [x] ~~**Unified crate namespace refactoring (`diffuse::core`, `diffuse::tui`, etc.)**~~: Restructure workspace crate layout and facades so external and internal usage references modules via `diffuse::core::*`, `diffuse::tui::*`, `diffuse::render::*`, and `diffuse::syntax::*`. (See [Unified Crate Namespace](plan/done/Unified%20Crate%20Namespace.md))
+- [ ] **Migrate all inline tests to submodule pattern**: Move inline `mod tests { ... }` blocks inside `x.rs` into dedicated submodules (`x/tests.rs` or `x/mod.rs` + `x/tests.rs`) across all workspace crates to keep component source files focused and clean.
 - [ ] **Centralized ANSI module & theming engine refactor**: Capture all styling and colorization strings & related logic in an ANSI module. Replace all usages of direct ANSI escapes and related logic with the ANSI module. Update GUIDELINES with this rule (no direct ANSI escapes). Make every single color the responsibility of the theming engine. Default to auto-generation of style colors using coloring logic, while allowing for targeted overrides through configuration (theme base + overrides, or completely new themes through config). Remove the old-old theme configuration if it's still there.

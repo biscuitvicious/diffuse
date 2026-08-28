@@ -97,7 +97,6 @@ impl AppState {
                     finder.query = q;
                     finder.update_matches(&self.output.files);
                 }
-                self.track_finder_selection();
             }
             TuiCommand::StartSelection | TuiCommand::ConfirmSelection => {
                 self.start_or_confirm_selection();

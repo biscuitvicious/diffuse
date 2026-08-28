@@ -456,7 +456,6 @@ fn dp_oracle_opt_4() {
 }
 
 #[test]
-#[ignore = "massive history stress test (run with cargo test -- --ignored)"]
 fn dp_oracle_diffuse_history_mid() {
     assert!(run_dp_oracle_on_corpus("diffuse-history-mid") > 0);
 }

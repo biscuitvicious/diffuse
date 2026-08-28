@@ -7,11 +7,14 @@ use std::{
 
 use crossterm::{
     cursor,
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    event::{
+        self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-        size as terminal_size,
+        size as terminal_size, supports_keyboard_enhancement,
     },
 };
 use ratatui::{Frame, Terminal, backend::CrosstermBackend};
@@ -21,6 +24,7 @@ use ratatui::{Frame, Terminal, backend::CrosstermBackend};
 pub struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     active: bool,
+    enhanced_keyboard: bool,
 }
 
 impl TerminalGuard {
@@ -28,18 +32,28 @@ impl TerminalGuard {
     pub fn enter() -> io::Result<Self> {
         let mut stdout = stdout();
         enable_raw_mode()?;
+        let enhanced_keyboard = supports_keyboard_enhancement().unwrap_or(false);
+        if enhanced_keyboard {
+            let _ = execute!(
+                stdout,
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
+        }
         execute!(
             stdout,
             EnterAlternateScreen,
             EnableMouseCapture,
+            EnableBracketedPaste,
             cursor::Hide
         )?;
         stdout.flush()?;
         let backend = CrosstermBackend::new(stdout);
-        let terminal = Terminal::new(backend)?;
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
         Ok(Self {
             terminal,
             active: true,
+            enhanced_keyboard,
         })
     }
 
@@ -47,10 +61,14 @@ impl TerminalGuard {
     /// editor).
     pub fn suspend(&mut self) -> io::Result<()> {
         if self.active {
+            if self.enhanced_keyboard {
+                let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
+            }
             execute!(
                 self.terminal.backend_mut(),
                 LeaveAlternateScreen,
                 DisableMouseCapture,
+                DisableBracketedPaste,
                 cursor::Show
             )?;
             disable_raw_mode()?;
@@ -64,10 +82,19 @@ impl TerminalGuard {
     pub fn resume(&mut self) -> io::Result<()> {
         if !self.active {
             enable_raw_mode()?;
+            if self.enhanced_keyboard {
+                let _ = execute!(
+                    self.terminal.backend_mut(),
+                    PushKeyboardEnhancementFlags(
+                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    )
+                );
+            }
             execute!(
                 self.terminal.backend_mut(),
                 EnterAlternateScreen,
                 EnableMouseCapture,
+                EnableBracketedPaste,
                 cursor::Hide
             )?;
             self.terminal.backend_mut().flush()?;

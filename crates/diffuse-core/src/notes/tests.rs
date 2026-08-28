@@ -138,3 +138,93 @@ fn test_render_note_markdown_inline() {
     assert_eq!(colors[2], "mdBold");
     assert_eq!(colors[6], "syntaxString");
 }
+
+#[test]
+fn test_render_note_markdown_underscores_and_asterisks() {
+    let text = "**Markdown** __note!__ and *italic* _also italic_";
+    let tokens = render_note_markdown(text);
+
+    let texts: Vec<&str> = tokens.iter().map(|t| t.text).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "**",
+            "Markdown",
+            "**",
+            " ",
+            "__",
+            "note!",
+            "__",
+            " and ",
+            "*",
+            "italic",
+            "*",
+            " ",
+            "_",
+            "also italic",
+            "_"
+        ]
+    );
+
+    let colors: Vec<&str> = tokens.iter().map(|t| t.color).collect();
+    assert_eq!(
+        colors,
+        vec![
+            "accent", "mdBold", "accent", "warning", "accent", "mdBold", "accent", "warning",
+            "accent", "mdItalic", "accent", "warning", "accent", "mdItalic", "accent"
+        ]
+    );
+
+    // Verify SGR modifiers are set for bold and italic inner content
+    assert_eq!(tokens[1].sgr, Some(crate::syntax::profile::MD_SGR_BOLD));
+    assert_eq!(tokens[5].sgr, Some(crate::syntax::profile::MD_SGR_BOLD));
+    assert_eq!(tokens[9].sgr, Some(crate::syntax::profile::MD_SGR_ITALIC));
+    assert_eq!(tokens[13].sgr, Some(crate::syntax::profile::MD_SGR_ITALIC));
+}
+
+#[test]
+fn test_normalize_note_text_multiline() {
+    let single = "Single line without trailing whitespace";
+    let norm_single = normalize_note_text(single);
+    assert!(
+        matches!(norm_single, Cow::Borrowed(_)),
+        "Single line should return Cow::Borrowed"
+    );
+    assert_eq!(norm_single, single);
+
+    let single_word = "  Word   ";
+    let norm_word = normalize_note_text(single_word);
+    assert!(
+        matches!(norm_word, Cow::Borrowed(_)),
+        "Single word should return Cow::Borrowed slice"
+    );
+    assert_eq!(norm_word, "Word");
+
+    let single_trailing = "   Single line with trailing whitespace   ";
+    let norm_trailing = normalize_note_text(single_trailing);
+    assert!(
+        matches!(norm_trailing, Cow::Borrowed(_)),
+        "Trimmed multi-word line without internal whitespace runs should return Cow::Borrowed subslice"
+    );
+    assert_eq!(norm_trailing, "Single line with trailing whitespace");
+
+    let multi_whitespace =
+        "  Hello   world\t\twith   multiple   spaces  \n  and\ttabs\n\nand newlines   ";
+    let norm_ws = normalize_note_text(multi_whitespace);
+    assert!(
+        matches!(norm_ws, Cow::Owned(_)),
+        "Collapsed whitespace should return Cow::Owned"
+    );
+    assert_eq!(
+        norm_ws,
+        "Hello world with multiple spaces and tabs and newlines"
+    );
+}
+
+#[test]
+fn test_note_runs_multiline_html_behavior() {
+    let input = "  Hello   `world`  \n\nand   **bold text**  ";
+    let runs = note_runs(input);
+    let full_rendered: String = runs.iter().map(|r| r.text.as_str()).collect();
+    assert_eq!(full_rendered, "Hello `world` and **bold text**");
+}

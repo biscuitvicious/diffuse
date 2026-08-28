@@ -4,6 +4,8 @@
 //! suitable for pull request descriptions, issue comments, code review bots,
 //! and terminal Markdown viewers with optional ANSI colorization.
 
+use std::borrow::Cow;
+
 use crate::{
     core::{
         parse::RowKind,
@@ -67,6 +69,14 @@ pub fn file_raw_counts(file: &OutputFile) -> (usize, usize) {
     (dels, adds)
 }
 
+fn format_md_path(path: &str) -> Cow<'_, str> {
+    if path.contains('\t') {
+        Cow::Owned(path.replace('\t', "⇥"))
+    } else {
+        Cow::Borrowed(path)
+    }
+}
+
 /// Render an entire [`PipelineOutput`] as GitHub-Flavored Markdown.
 pub fn render_markdown_output(output: &PipelineOutput, options: &MarkdownOptions) -> String {
     let mut out = String::new();
@@ -115,7 +125,7 @@ pub fn render_markdown_output(output: &PipelineOutput, options: &MarkdownOptions
             let (dels, adds) = file_raw_counts(file);
             let row = format!(
                 "| `{}` | `{}` | -{} | +{} |",
-                file.path.trim(),
+                format_md_path(&file.path),
                 file.status,
                 dels,
                 adds
@@ -142,6 +152,7 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
     let theme = DiffuseTheme::MAGIC;
     let (dels, adds) = file_raw_counts(file);
     let stats = format!("{}: -{} +{}", file.status, dels, adds);
+    let md_path = format_md_path(&file.path);
 
     if options.collapsible {
         let is_open = options.default_open && file.status != "untracked";
@@ -149,14 +160,13 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
         let open_tag = format!("<details{}>", open_attr);
         let summary_tag = format!(
             "<summary><b>{}</b> <code>({})</code></summary>",
-            file.path.trim(),
-            stats
+            md_path, stats
         );
         push_md_line(&mut out, &open_tag, options.colorize, &theme);
         push_md_line(&mut out, &summary_tag, options.colorize, &theme);
         out.push('\n');
     } else {
-        let header = format!("### {} `({})`", file.path.trim(), stats);
+        let header = format!("### {} `({})`", md_path, stats);
         push_md_line(&mut out, &header, options.colorize, &theme);
         out.push('\n');
     }
@@ -1043,5 +1053,51 @@ mod tests {
         let md = render_markdown_output(&output, &MarkdownOptions::default());
         let expected_diff = "```diff\n@@ -1,2 +1,3 @@\n-old line 1\n-old line 2\n+new line 1\n+new line 2\n+new line 3\n```";
         assert!(md.contains(expected_diff));
+    }
+
+    #[test]
+    fn test_render_markdown_paths_preserve_spaces_and_indicate_tabs() {
+        let output = PipelineOutput {
+            files: vec![
+                OutputFile {
+                    path: "file with space ".to_string(),
+                    status: "modified".to_string(),
+                    new_line_count: 1,
+                    old_line_count: 1,
+                    new_content: vec![],
+                    old_content: vec![],
+                    hunks: vec![],
+                    raw_hunks: vec![],
+                    counts: FileCounts::default(),
+                    fences: vec![],
+                    notes: vec![],
+                    content_runs: vec![],
+                    rows: vec![],
+                },
+                OutputFile {
+                    path: "file\twith\ttab".to_string(),
+                    status: "added".to_string(),
+                    new_line_count: 1,
+                    old_line_count: 0,
+                    new_content: vec![],
+                    old_content: vec![],
+                    hunks: vec![],
+                    raw_hunks: vec![],
+                    counts: FileCounts::default(),
+                    fences: vec![],
+                    notes: vec![],
+                    content_runs: vec![],
+                    rows: vec![],
+                },
+            ],
+            branch: "main".to_string(),
+            untracked_skipped: vec![],
+        };
+
+        let md = render_markdown_output(&output, &MarkdownOptions::default());
+        assert!(md.contains("`file with space `"));
+        assert!(md.contains("<summary><b>file with space </b>"));
+        assert!(md.contains("`file⇥with⇥tab`"));
+        assert!(md.contains("<summary><b>file⇥with⇥tab</b>"));
     }
 }

@@ -531,6 +531,7 @@ fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedTo
                     } else if gap.starts_with('>')
                         || gap.starts_with('-')
                         || gap.starts_with('*')
+                        || gap.starts_with('_')
                         || gap.starts_with('#')
                         || gap.starts_with('[')
                         || gap.ends_with(']')
@@ -582,6 +583,7 @@ fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedTo
                     } else if gap.starts_with('>')
                         || gap.starts_with('-')
                         || gap.starts_with('*')
+                        || gap.starts_with('_')
                         || gap.starts_with('#')
                         || gap.starts_with('[')
                         || gap.ends_with(']')
@@ -658,6 +660,7 @@ fn for_each_markdown_token_dyn<'a>(text: &'a str, f: &mut dyn FnMut(ClassifiedTo
         } else if remaining.starts_with('>')
             || remaining.starts_with('-')
             || remaining.starts_with('*')
+            || remaining.starts_with('_')
         {
             "accent"
         } else {

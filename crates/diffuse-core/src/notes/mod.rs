@@ -1,6 +1,7 @@
 //! Note storage, persistence, and markdown rendering for review notes.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     env,
     ffi::OsString,
@@ -15,9 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     merge::RunKind,
     syntax::{
-        classifier::{ClassifiedToken, classify_tokens},
-        md_inner_tokens,
-        profile::{MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE},
+        classifier::{ClassifiedToken, classify_tokens, for_each_markdown_token},
         registry::lang_profile,
     },
     wire::OutputRun,
@@ -219,132 +218,70 @@ pub fn render_note_markdown<'a>(text: &'a str) -> Vec<ClassifiedToken<'a>> {
         return out;
     }
 
-    static MD_INLINE: OnceLock<Regex> = OnceLock::new();
-    let re = MD_INLINE.get_or_init(|| {
-        Regex::new(
-            r"(`[^`\n]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\s\n][^*\n]*\*|\[[^\]\n]+\]\([^)\n]+\))",
-        )
-        .expect("the md inline")
-    });
-
     let mut out = Vec::new();
-    let mut last = 0usize;
-    for m in re.find_iter(text) {
-        if m.start() > last {
-            out.push(ClassifiedToken {
-                color: "warning",
-                sgr: None,
-                text: &text[last..m.start()],
-            });
+    for_each_markdown_token(text, |mut t| {
+        if t.color == "text" {
+            t.color = "warning";
         }
-        let tok = m.as_str();
-        if tok.starts_with('`') {
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "`",
-            });
-            out.push(ClassifiedToken {
-                color: "syntaxString",
-                sgr: None,
-                text: &tok[1..tok.len() - 1],
-            });
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "`",
-            });
-        } else if tok.starts_with("~~") {
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "~~",
-            });
-            out.extend(md_inner_tokens(
-                &tok[2..tok.len() - 2],
-                MD_SGR_STRIKE,
-                "mdStrike",
-            ));
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "~~",
-            });
-        } else if tok.starts_with("**") {
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "**",
-            });
-            out.extend(md_inner_tokens(
-                &tok[2..tok.len() - 2],
-                MD_SGR_BOLD,
-                "mdBold",
-            ));
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "**",
-            });
-        } else if tok.starts_with('[') {
-            let close = tok.find("](").unwrap_or(0);
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "[",
-            });
-            out.push(ClassifiedToken {
-                color: "mdLink",
-                sgr: Some(MD_SGR_UNDERLINE),
-                text: &tok[1..close],
-            });
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "](",
-            });
-            out.push(ClassifiedToken {
-                color: "mdUrl",
-                sgr: Some(MD_SGR_UNDERLINE),
-                text: &tok[close + 2..tok.len() - 1],
-            });
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: ")",
-            });
-        } else {
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "*",
-            });
-            out.extend(md_inner_tokens(
-                &tok[1..tok.len() - 1],
-                MD_SGR_ITALIC,
-                "mdItalic",
-            ));
-            out.push(ClassifiedToken {
-                color: "accent",
-                sgr: None,
-                text: "*",
-            });
-        }
-        last = m.end();
-    }
-    if last < text.len() {
-        out.push(ClassifiedToken {
-            color: "warning",
-            sgr: None,
-            text: &text[last..],
-        });
-    }
+        out.push(t);
+    });
     out
+}
+
+/// Normalize non-fenced note text for inline callout rendering:
+/// - Strips leading and trailing whitespace
+/// - Collapses all runs of whitespace (spaces, tabs, newlines) into a single
+///   space
+/// - Returns `Cow::Borrowed` when no whitespace normalization is needed
+pub fn normalize_note_text<'a>(text: &'a str) -> Cow<'a, str> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Cow::Borrowed("");
+    }
+
+    let mut prev_is_space = false;
+    let mut needs_rebuild = false;
+    for b in trimmed.bytes() {
+        if b == b' ' {
+            if prev_is_space {
+                needs_rebuild = true;
+                break;
+            }
+            prev_is_space = true;
+        } else if b.is_ascii_whitespace() {
+            needs_rebuild = true;
+            break;
+        } else {
+            prev_is_space = false;
+        }
+    }
+
+    if !needs_rebuild {
+        return Cow::Borrowed(trimmed);
+    }
+
+    let mut words = trimmed.split_whitespace();
+    let first = words.next().unwrap_or("");
+    let mut out = String::with_capacity(trimmed.len());
+    out.push_str(first);
+    for w in words {
+        out.push(' ');
+        out.push_str(w);
+    }
+    Cow::Owned(out)
 }
 
 /// Convert note classified tokens to `OutputRun` wire format.
 pub fn note_runs(text: &str) -> Vec<OutputRun> {
-    render_note_markdown(text)
+    static FENCE: OnceLock<Regex> = OnceLock::new();
+    let fence_re =
+        FENCE.get_or_init(|| Regex::new(r"^\s*```([A-Za-z0-9_+-]*)\s*$").expect("note fence"));
+    let normalized = if fence_re.is_match(text) {
+        Cow::Borrowed(text)
+    } else {
+        normalize_note_text(text)
+    };
+    render_note_markdown(&normalized)
         .into_iter()
         .map(|t| OutputRun {
             kind: RunKind::Ctx,

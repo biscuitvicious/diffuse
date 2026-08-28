@@ -15,9 +15,9 @@ else
 fi
 if [ "$PROFILE" = "release" ]; then
 	$CARGO build --release --bin diffuse
-	cp target/release/diffuse extension/pi/bin/diffuse
+	cp --remove-destination target/release/diffuse extension/pi/bin/diffuse
 else
 	$CARGO build --bin diffuse
-	cp target/debug/diffuse extension/pi/bin/diffuse
+	cp --remove-destination target/debug/diffuse extension/pi/bin/diffuse
 fi
 echo "bundled: extension/pi/bin/diffuse ($PROFILE)"

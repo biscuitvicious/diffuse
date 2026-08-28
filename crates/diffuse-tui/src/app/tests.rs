@@ -1,3 +1,5 @@
+use ratatui::{Terminal, backend::TestBackend};
+
 use super::*;
 use crate::{
     command::TuiCommand,
@@ -1921,4 +1923,338 @@ fn test_render_ratatui_frame_layout() {
         line2.push_str(buffer[(x, 2)].symbol());
     }
     assert!(line2.contains("Saved note"));
+
+    // Viewport area must contain diff grid lines (e.g. file header or hunk content)
+    let mut grid_text = String::new();
+    for y in 3..22 {
+        for x in 0..80 {
+            grid_text.push_str(buffer[(x, y)].symbol());
+        }
+        grid_text.push('\n');
+    }
+    assert!(grid_text.contains("fn hello()") || grid_text.contains("src/lib.rs"));
+}
+
+#[test]
+fn test_render_ratatui_frame_modals_overlay() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,2 @@
+ fn hello() {
+-    println!("old");
++    println!("new");
+ }
+"#;
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-ratatui-modals.json"),
+    );
+
+    // 1. Help Modal Active
+    state.show_help = true;
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut text = String::new();
+    for y in 0..24 {
+        for x in 0..80 {
+            text.push_str(buffer[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
+    assert!(text.contains("KEY BINDINGS"));
+    assert!(text.contains("? / Esc close"));
+
+    // 2. File Finder Modal Active
+    state.show_help = false;
+    state.open_file_finder();
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut text = String::new();
+    for y in 0..24 {
+        for x in 0..80 {
+            text.push_str(buffer[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
+    assert!(text.contains("FIND FILE"));
+    assert!(text.contains("src/lib.rs"));
+}
+
+#[test]
+fn test_render_ratatui_frame_scrolling_clean_spans() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let diff = r#"diff --git a/Cargo.lock b/Cargo.lock
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1,5 +1,5 @@
+ [[package]]
+-name = "old_dep"
++name = "new_dep"
+ version = "0.1.0"
+-checksum = "1111"
++checksum = "2222"
+"#;
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-ratatui-scroll.json"),
+    );
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    // Scroll down and up
+    for _ in 0..5 {
+        state.move_down();
+        terminal
+            .draw(|f| {
+                state.render_ratatui_frame(f);
+            })
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut full_text = String::new();
+        for y in 0..24 {
+            for x in 0..80 {
+                full_text.push_str(buffer[(x, y)].symbol());
+            }
+            full_text.push('\n');
+        }
+
+        // Must NOT contain raw ANSI escapes or leaked SGR numbers
+        assert!(!full_text.contains("\x1b["), "Must not leak raw ESC");
+        assert!(!full_text.contains("48;5;"), "Must not leak bg SGR codes");
+        assert!(!full_text.contains("38;5;"), "Must not leak fg SGR codes");
+        assert!(
+            !full_text.contains("29m"),
+            "Must not leak strikethrough reset SGR"
+        );
+    }
+}
+
+#[test]
+fn test_render_ratatui_frame_note_modal_overlay_with_range_selection() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+-fn old_one() {}
+-fn old_two() {}
+-fn old_three() {}
++fn new_one() {}
++fn new_two() {}
++fn new_three() {}
+"#;
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-ratatui-note-modal.json"),
+    );
+
+    // Select range
+    state.start_or_confirm_selection();
+    state.move_down();
+    state.move_down();
+    state.note_draft = Some("multiline\nnote draft".into());
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut text = String::new();
+    for y in 0..24 {
+        for x in 0..80 {
+            text.push_str(buffer[(x, y)].symbol());
+        }
+        text.push('\n');
+    }
+
+    assert!(
+        text.contains("NOTE on src/lib.rs:1-3"),
+        "Must show range 1-3 in modal title: {text}"
+    );
+    assert!(text.contains("multiline"), "Must show multiline content");
+    assert!(text.contains("note draft"), "Must show second line");
+}
+
+#[test]
+fn test_render_ratatui_frame_mouse_hit_testing() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ fn one() {}
+-fn two_old() {}
++fn two_new() {}
+ fn three() {}
+"#;
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-mouse-hit.json"),
+    );
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    assert_eq!(
+        state.last_viewport_start, 2,
+        "Viewport starts after header and status bars"
+    );
+    assert!(state.viewport_height > 0);
+
+    // Click on row 3 (which is viewport row 1, selecting row_idx 1)
+    state.execute(TuiCommand::MouseClick {
+        row: 3,
+        col: 10,
+        shift: false,
+    });
+    assert_eq!(state.row_idx, 1);
+}
+
+#[test]
+fn test_event_paste_into_note_modal() {
+    let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-paste-note.json"),
+    );
+
+    state.execute(TuiCommand::StartNoteDraft);
+    assert_eq!(state.note_draft, Some(String::new()));
+
+    crate::event::handle_event(
+        &mut state,
+        crossterm::event::Event::Paste(
+            "This is a pasted multiline note\nwith multiple lines of text.".to_string(),
+        ),
+    );
+
+    assert_eq!(
+        state.note_draft.as_deref(),
+        Some("This is a pasted multiline note\nwith multiple lines of text.")
+    );
+}
+
+#[test]
+fn test_event_paste_into_file_finder() {
+    let diff = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-paste-finder.json"),
+    );
+
+    state.execute(TuiCommand::OpenFileFinder);
+    assert!(state.file_finder.is_some());
+
+    crate::event::handle_event(
+        &mut state,
+        crossterm::event::Event::Paste("main".to_string()),
+    );
+
+    assert_eq!(state.file_finder.as_ref().unwrap().query, "main");
+}
+
+#[test]
+fn test_note_modal_margins_with_scrollbar() {
+    // Generate enough lines to trigger a scrollbar
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,50 @@\n-old\n");
+    for i in 1..=50 {
+        diff.push_str(&format!("+new line {i}\n"));
+    }
+
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        std::env::temp_dir().join("diffuse-test-scrollbar-modal.json"),
+    );
+
+    state.execute(TuiCommand::StartNoteDraft);
+    assert!(state.note_draft.is_some());
+
+    let backend = TestBackend::new(50, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    // Locate the top border of the note modal
+    let mut found_border_y = None;
+    for y in 0..20 {
+        if buffer[(1, y)].symbol() == "╭" {
+            found_border_y = Some(y);
+            break;
+        }
+    }
+
+    let y = found_border_y.expect("must find top border ╭ at col 1");
+    assert_eq!(
+        buffer[(0, y)].symbol(),
+        " ",
+        "Col 0 must be left margin space"
+    );
+    assert_eq!(buffer[(1, y)].symbol(), "╭", "Col 1 must be left border ╭");
+    assert_eq!(
+        buffer[(47, y)].symbol(),
+        "╮",
+        "Col 47 must be right border ╮"
+    );
+    assert_eq!(
+        buffer[(48, y)].symbol(),
+        " ",
+        "Col 48 must be right margin space before scrollbar"
+    );
+    assert_eq!(
+        buffer[(49, y)].symbol(),
+        "█",
+        "Col 49 must be scrollbar thumb"
+    );
 }

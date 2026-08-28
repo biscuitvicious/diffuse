@@ -98,9 +98,7 @@ pub fn run_streaming_interactive_tui(
         }
 
         if dirty {
-            let (width, height) = size;
-            let frame = state.render_frame(width as usize, height as usize);
-            guard.write_frame(&frame)?;
+            guard.draw(|f| state.render_ratatui_frame(f))?;
             dirty = false;
         }
 
@@ -112,6 +110,9 @@ pub fn run_streaming_interactive_tui(
 
         if let Some(event) = guard.poll_event(poll_duration)? {
             handle_event(&mut state, event);
+            while let Ok(Some(next_event)) = guard.poll_event(Duration::ZERO) {
+                handle_event(&mut state, next_event);
+            }
             dirty = true;
         }
 

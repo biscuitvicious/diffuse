@@ -125,3 +125,39 @@ fn test_diff_components_reverse_involution() {
     assert_eq!(rev_mod.old_line(), Some(42));
     assert_eq!(rev_mod.reverse(), mod_row);
 }
+
+#[test]
+fn test_parse_diff_tab_terminated_paths() {
+    let diff = "diff --git a/plan/Ratatui Migration.md b/plan/Ratatui Migration.md\t
+--- a/plan/Ratatui Migration.md\t
++++ b/plan/Ratatui Migration.md\t
+@@ -1,1 +1,2 @@
+ # Heading
++New Line
+";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "plan/Ratatui Migration.md");
+    assert!(!files[0].path.ends_with('\t'));
+}
+
+#[test]
+fn test_parse_diff_quoted_paths_with_trailing_spaces_and_tabs() {
+    let diff = "diff --git \"a/file with space \" \"b/file with space \"
+--- \"a/file with space \"
++++ \"b/file with space \"
+@@ -1,1 +1,1 @@
+-old
++new
+diff --git \"a/file\\twith\\ttab\" \"b/file\\twith\\ttab\"
+--- \"a/file\\twith\\ttab\"
++++ \"b/file\\twith\\ttab\"
+@@ -1,1 +1,1 @@
+-old
++new
+";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0].path, "file with space ");
+    assert_eq!(files[1].path, "file\twith\ttab");
+}

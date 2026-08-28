@@ -11,11 +11,37 @@ pub fn handle_event(state: &mut AppState, event: Event) {
     match event {
         Event::Key(key) => handle_key_event(state, key),
         Event::Mouse(mouse) => handle_mouse_event(state, mouse),
+        Event::Paste(text) => handle_paste_event(state, &text),
         _ => {}
     }
 }
 
+fn handle_paste_event(state: &mut AppState, text: &str) {
+    if let Some(ref mut draft) = state.note_draft {
+        draft.push_str(text);
+    } else if let Some(ref mut finder) = state.file_finder {
+        finder.query.push_str(text);
+        let files = state.output.files.clone();
+        finder.update_matches(&files);
+    }
+}
+
 fn handle_key_event(state: &mut AppState, key: KeyEvent) {
+    // Help Modal Mode (swallows all background keys, closes on Esc/?/q/Enter/Space)
+    if state.show_help {
+        match (key.modifiers, key.code) {
+            (_, KeyCode::Esc)
+            | (_, KeyCode::Char('?'))
+            | (KeyModifiers::NONE, KeyCode::Char('q'))
+            | (KeyModifiers::NONE, KeyCode::Enter)
+            | (KeyModifiers::NONE, KeyCode::Char(' ')) => {
+                state.show_help = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // File Finder Dialog Mode
     if state.file_finder.is_some() {
         match (key.modifiers, key.code) {
@@ -32,7 +58,6 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                 if let Some(finder) = &mut state.file_finder {
                     finder.move_up();
                 }
-                state.track_finder_selection();
             }
             (_, KeyCode::Down)
             | (KeyModifiers::CONTROL, KeyCode::Char('n'))
@@ -40,7 +65,6 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                 if let Some(finder) = &mut state.file_finder {
                     finder.move_down();
                 }
-                state.track_finder_selection();
             }
             (_, KeyCode::Backspace) => {
                 let files = state.output.files.clone();
@@ -48,7 +72,6 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                     finder.query.pop();
                     finder.update_matches(&files);
                 }
-                state.track_finder_selection();
             }
             (KeyModifiers::NONE, KeyCode::Char(c)) | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                 let files = state.output.files.clone();
@@ -56,7 +79,6 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                     finder.query.push(c);
                     finder.update_matches(&files);
                 }
-                state.track_finder_selection();
             }
             _ => {}
         }
@@ -65,19 +87,33 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
 
     // Note Draft Editing Mode draft typing
     if let Some(ref mut draft) = state.note_draft {
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+        let is_save = (key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(
+                key.code,
+                KeyCode::Char('s') | KeyCode::Char('d') | KeyCode::Enter
+            ))
+            || (key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(key.code, KeyCode::Char('s')));
+        if is_save {
             state.execute(TuiCommand::CommitNoteDraft);
+            return;
+        }
+
+        let is_newline = key.code == KeyCode::Enter
+            || key.code == KeyCode::Char('\n')
+            || (key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(
+                    key.code,
+                    KeyCode::Char('j') | KeyCode::Char('n') | KeyCode::Char('o')
+                ));
+        if is_newline {
+            draft.push('\n');
             return;
         }
 
         match key.code {
             KeyCode::Esc => {
                 state.execute(TuiCommand::CancelNoteDraft);
-            }
-            KeyCode::Enter => {
-                // One-line draft: Enter commits. A literal '\n' would break the
-                // single-line status rendering.
-                state.execute(TuiCommand::CommitNoteDraft);
             }
             KeyCode::Backspace => {
                 draft.pop();
@@ -354,17 +390,105 @@ index 1111111..2222222 100644
     }
 
     #[test]
-    fn test_note_draft_enter_commits_without_newline() {
+    fn test_note_draft_enter_inserts_newline() {
         let mut s = state_with_draft();
+        s.note_draft = Some("line 1".into());
         handle_event(
             &mut s,
             Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         );
-        assert!(
-            s.note_draft.is_none(),
-            "Enter must commit the draft, got {:?}",
-            s.note_draft
+        assert_eq!(
+            s.note_draft.as_deref(),
+            Some("line 1\n"),
+            "Enter must insert a newline in multiline draft"
         );
+    }
+
+    #[test]
+    fn test_note_draft_shift_and_alt_enter_insert_newline() {
+        let mut s = state_with_draft();
+        s.note_draft = Some("line 1".into());
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+        );
+        assert_eq!(
+            s.note_draft.as_deref(),
+            Some("line 1\n"),
+            "Shift+Enter must insert a newline in multiline draft"
+        );
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)),
+        );
+        assert_eq!(
+            s.note_draft.as_deref(),
+            Some("line 1\n\n"),
+            "Alt+Enter must insert a newline in multiline draft"
+        );
+    }
+
+    #[test]
+    fn test_note_draft_ctrl_j_n_o_insert_newline() {
+        let mut s = state_with_draft();
+        s.note_draft = Some("hello".into());
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+        );
+        assert_eq!(s.note_draft.as_deref(), Some("hello\n"));
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL)),
+        );
+        assert_eq!(s.note_draft.as_deref(), Some("hello\n\n"));
+
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+        );
+        assert_eq!(s.note_draft.as_deref(), Some("hello\n\n\n"));
+    }
+
+    #[test]
+    fn test_help_modal_key_handling_dismiss_and_swallow() {
+        let mut s = state_with_draft();
+        s.show_help = true;
+
+        // Pressing '@' while help is open must NOT open file finder
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE)),
+        );
+        assert!(s.show_help, "Help modal should stay open");
+        assert!(s.file_finder.is_none(), "File finder must not open");
+
+        // Pressing 'q' while help is open must close help, not quit app
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+        );
+        assert!(!s.show_help, "Help modal should close on 'q'");
+        assert!(!s.should_quit, "App must not quit on 'q' inside help modal");
+
+        // Re-open help and test '?' dismissal
+        s.show_help = true;
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::NONE)),
+        );
+        assert!(!s.show_help, "Help modal should close on '?'");
+
+        // Re-open help and test 'Esc' dismissal
+        s.show_help = true;
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+        );
+        assert!(!s.show_help, "Help modal should close on 'Esc'");
     }
 
     #[test]
@@ -375,6 +499,23 @@ index 1111111..2222222 100644
             Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
         );
         assert!(s.note_draft.is_none());
+    }
+
+    #[test]
+    fn test_note_draft_ctrl_s_and_ctrl_d_commit() {
+        let mut s = state_with_draft();
+        handle_event(
+            &mut s,
+            Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+        );
+        assert!(s.note_draft.is_none());
+
+        let mut s2 = state_with_draft();
+        handle_event(
+            &mut s2,
+            Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+        );
+        assert!(s2.note_draft.is_none());
     }
 
     #[test]
@@ -466,7 +607,7 @@ index 1111111..2222222 100644
         s.note_draft = Some("Range note test".into());
         handle_event(
             &mut s,
-            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
         );
 
         let empty = Vec::new();
@@ -495,7 +636,7 @@ index 1111111..2222222 100644
         s.note_draft = Some("To be deleted".into());
         handle_event(
             &mut s,
-            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
         );
 
         // Delete with range selection
@@ -643,15 +784,15 @@ index 3333333..4444444 100644
         assert_eq!(finder.matches[0].path, "banana.rs");
         assert_eq!(
             s.current_file_idx(),
-            1,
-            "immediately jumped to banana.rs live"
+            0,
+            "does not auto-jump to banana.rs before confirmation"
         );
-        assert!(
-            s.flat[s.row_idx].is_file_header,
-            "must display from the file banner row"
+        assert_eq!(
+            s.row_idx, initial_row,
+            "stays on initial row while searching"
         );
 
-        // Esc cancels and restores initial position
+        // Esc cancels and closes finder
         handle_event(
             &mut s,
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),

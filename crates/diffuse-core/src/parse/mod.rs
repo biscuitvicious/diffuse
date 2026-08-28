@@ -406,7 +406,7 @@ impl DiffFile {
 }
 
 fn unquote_git_path(raw: &str) -> String {
-    let mut s = raw;
+    let mut s = raw.trim_end_matches(['\r', '\n']);
     if s.starts_with('"') {
         let end = if s.ends_with('"') {
             s.len() - 1
@@ -425,16 +425,40 @@ fn unquote_git_path(raw: &str) -> String {
 
 /// The `+++`/`---` path (minus the a/ b/ prefix, unquoted).
 fn hunk_path(sign: &str, line: &str) -> Option<String> {
-    let p = &line[4..];
+    let p_full = &line[4..];
+    let p = if let Some(rest) = p_full.strip_prefix('"') {
+        if let Some(end_quote) = rest.find('"') {
+            &p_full[..=end_quote + 1]
+        } else {
+            p_full.trim_end_matches(['\r', '\n'])
+        }
+    } else {
+        p_full
+            .split('\t')
+            .next()
+            .unwrap_or(p_full)
+            .trim_end_matches(['\r', '\n'])
+    };
+
     if p == "/dev/null" {
         return None;
     }
-    let stripped = p
-        .strip_prefix("b/")
-        .or_else(|| p.strip_prefix("a/"))
-        .unwrap_or(p);
+    let stripped = if p.starts_with('"') {
+        if let Some(rest) = p.strip_prefix("\"b/") {
+            format!("\"{rest}")
+        } else if let Some(rest) = p.strip_prefix("\"a/") {
+            format!("\"{rest}")
+        } else {
+            p.to_string()
+        }
+    } else {
+        p.strip_prefix("b/")
+            .or_else(|| p.strip_prefix("a/"))
+            .unwrap_or(p)
+            .to_string()
+    };
     let _ = sign;
-    Some(unquote_git_path(stripped))
+    Some(unquote_git_path(&stripped))
 }
 
 fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32, &str)> {

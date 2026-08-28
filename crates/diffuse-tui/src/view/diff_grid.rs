@@ -166,6 +166,85 @@ pub fn render_bottom_gap_divider(
     render_bottom_gap_divider_segment(hidden_gap, is_current, 0, content_width)
 }
 
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+};
+
+/// Render a file header banner row as a styled Ratatui [`Line`].
+pub fn file_header_line(
+    file: &OutputFile,
+    is_collapsed: bool,
+    is_selected: bool,
+    is_current: bool,
+    in_band: bool,
+    content_width: usize,
+) -> Line<'static> {
+    let bar = file_header_text(file, is_collapsed);
+    let bar_str = truncate_pad(&bar, content_width);
+    let style = if is_selected {
+        Style::default()
+            .bg(Color::Indexed(241))
+            .fg(Color::Indexed(219))
+            .add_modifier(Modifier::BOLD)
+    } else if in_band || is_current {
+        Style::default()
+            .bg(Color::Indexed(239))
+            .fg(Color::Indexed(219))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .bg(Color::Indexed(237))
+            .fg(Color::Indexed(183))
+            .add_modifier(Modifier::BOLD)
+    };
+    Line::from(Span::styled(bar_str, style))
+}
+
+/// Render a hunk header divider as a styled Ratatui [`Line`].
+pub fn hunk_divider_line(
+    hi: usize,
+    hunk: &OutputHunk,
+    hidden_gap: usize,
+    is_current: bool,
+    content_width: usize,
+) -> Line<'static> {
+    let txt = hunk_divider_text(hi, hunk, hidden_gap);
+    let txt_str = truncate_pad(&txt, content_width);
+    let style = if is_current {
+        Style::default()
+            .bg(Color::Indexed(237))
+            .fg(Color::Indexed(220))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::Indexed(220))
+            .add_modifier(Modifier::BOLD)
+    };
+    Line::from(Span::styled(txt_str, style))
+}
+
+/// Render a bottom gap divider as a styled Ratatui [`Line`].
+pub fn bottom_gap_divider_line(
+    hidden_gap: usize,
+    is_current: bool,
+    content_width: usize,
+) -> Line<'static> {
+    let txt = bottom_gap_divider_text(hidden_gap);
+    let txt_str = truncate_pad(&txt, content_width);
+    let style = if is_current {
+        Style::default()
+            .bg(Color::Indexed(237))
+            .fg(Color::Indexed(220))
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::Indexed(220))
+            .add_modifier(Modifier::BOLD)
+    };
+    Line::from(Span::styled(txt_str, style))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,5 +401,42 @@ mod tests {
         let bottom = render_bottom_gap_divider(80, false, 80);
         assert!(bottom.contains("───── 80 lines hidden · ▲▲ ─────"));
         assert!(!bottom.contains("▼"));
+    }
+
+    #[test]
+    fn test_ratatui_diff_grid_lines() {
+        let file = OutputFile {
+            path: "src/main.rs".to_string(),
+            status: "modified".to_string(),
+            new_line_count: 10,
+            old_line_count: 10,
+            new_content: vec![],
+            old_content: vec![],
+            hunks: vec![],
+            raw_hunks: vec![],
+            counts: Default::default(),
+            fences: vec![],
+            notes: vec![],
+            content_runs: vec![],
+            rows: vec![],
+        };
+
+        let f_line = file_header_line(&file, false, false, false, false, 80);
+        assert!(f_line.to_string().contains("src/main.rs"));
+        assert!(f_line.to_string().contains("▼"));
+
+        let hunk = OutputHunk {
+            old_start: 1,
+            old_count: 5,
+            new_start: 1,
+            new_count: 6,
+            rows: vec![],
+        };
+        let h_line = hunk_divider_line(0, &hunk, 10, true, 80);
+        assert!(h_line.to_string().contains("H1"));
+        assert!(h_line.to_string().contains("10 hidden"));
+
+        let b_line = bottom_gap_divider_line(5, false, 80);
+        assert!(b_line.to_string().contains("5 lines hidden"));
     }
 }
