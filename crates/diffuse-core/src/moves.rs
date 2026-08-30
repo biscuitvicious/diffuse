@@ -217,16 +217,55 @@ pub fn mark_moves(f: &mut DiffFile) {
 
             if !first_moved || first_trivial || !has_nontrivial_move {
                 unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));
-            } else {
-                // If only isolated trivial lines at the end of the run moved,
-                // unmark them
-                for i in 0..run.len() {
-                    let pos = run[i];
-                    if moved_dels.contains(&pos) {
-                        let text = f.hunks[pos.0].rows[pos.1].text();
-                        if is_trivial_line(text) && i > 0 && !moved_dels.contains(&run[i - 1]) {
-                            unmark_positions.push(pos);
-                        }
+                return;
+            }
+
+            // Block Move Cohesion Rule:
+            // In a multi-line deletion run (e.g. deleting a function), isolated matches
+            // (e.g. single-line attributes like `#[test]`, closing braces `}`, or
+            // interior method calls) are coincidental boilerplate, NOT code
+            // relocations.
+            //
+            // A deletion run is only marked moved if:
+            // - The ENTIRE deletion run moved, OR
+            // - A contiguous prefix block of >= 2 lines starting at run[0] moved.
+            // Otherwise, all lines in the deletion run remain normal deletions.
+            if run.len() > 1 {
+                let moved_in_run: Vec<RowPos> = run
+                    .iter()
+                    .copied()
+                    .filter(|pos| moved_dels.contains(pos))
+                    .collect();
+                if moved_in_run.len() < 2
+                    || !moved_dels.contains(&run[0])
+                    || moved_in_run.len() < run.len()
+                {
+                    let prefix_len = run
+                        .iter()
+                        .take_while(|pos| moved_dels.contains(pos))
+                        .count();
+                    if prefix_len < 2 || prefix_len < moved_in_run.len() {
+                        unmark_positions.extend(moved_in_run);
+                        return;
+                    } else {
+                        unmark_positions.extend(
+                            run.iter()
+                                .skip(prefix_len)
+                                .copied()
+                                .filter(|pos| moved_dels.contains(pos)),
+                        );
+                    }
+                }
+            }
+
+            // If only isolated trivial lines at the end of the run moved,
+            // unmark them
+            for i in 0..run.len() {
+                let pos = run[i];
+                if moved_dels.contains(&pos) {
+                    let text = f.hunks[pos.0].rows[pos.1].text();
+                    if is_trivial_line(text) && i > 0 && !moved_dels.contains(&run[i - 1]) {
+                        unmark_positions.push(pos);
                     }
                 }
             }

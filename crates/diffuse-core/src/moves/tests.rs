@@ -295,3 +295,86 @@ fn whitespace_only_lines_are_not_moves() {
         }
     }
 }
+
+#[test]
+fn test_boilerplate_attribute_alone_in_deleted_function_is_not_a_move() {
+    let mut f = file(vec![
+        hunk(vec![
+            del(446, "#[test]"),
+            del(447, "fn dp_oracle_mirage() {"),
+            del(
+                448,
+                "    assert!(run_dp_oracle_on_corpus(\"mirage-2025-08\") > 0);",
+            ),
+            del(449, "}"),
+        ]),
+        hunk(vec![
+            add(684, "#[test]"),
+            add(
+                685,
+                "fn test_doc_comment_partial_truncation_pairs_as_mod() {",
+            ),
+            add(686, "    let rs = lang_profile(\"rs\");"),
+            add(687, "}"),
+        ]),
+    ]);
+    mark_moves(&mut f);
+
+    for h in &f.hunks {
+        for r in &h.rows {
+            assert!(
+                !r.is_moved(),
+                "boilerplate line {:?} in un-moved block must NOT be marked moved",
+                r.text()
+            );
+        }
+    }
+}
+
+#[test]
+fn test_cohesive_function_move_with_boilerplate_attribute() {
+    let mut f = file(vec![
+        hunk(vec![
+            del(100, "#[test]"),
+            del(101, "fn moved_helper() {"),
+            del(102, "    assert_eq!(compute_hash(), 42);"),
+            del(103, "}"),
+        ]),
+        hunk(vec![
+            add(500, "#[test]"),
+            add(501, "fn moved_helper() {"),
+            add(502, "    assert_eq!(compute_hash(), 42);"),
+            add(503, "}"),
+        ]),
+    ]);
+    mark_moves(&mut f);
+
+    let moved_adds: Vec<_> = f.hunks[1].rows.iter().filter(|r| r.is_moved()).collect();
+    assert_eq!(
+        moved_adds.len(),
+        4,
+        "all 4 lines of cohesive relocated function must be marked moved"
+    );
+    let moved_dels: Vec<_> = f.hunks[0]
+        .rows
+        .iter()
+        .filter(|r| r.is_moved())
+        .collect();
+    assert_eq!(
+        moved_dels.len(),
+        4,
+        "all 4 del source lines must be marked moved"
+    );
+}
+
+#[test]
+fn test_standalone_unique_statement_move() {
+    let mut f = file(vec![
+        hunk(vec![del(10, "register_custom_hook(&mut registry);")]),
+        hunk(vec![add(90, "register_custom_hook(&mut registry);")]),
+    ]);
+    mark_moves(&mut f);
+
+    assert!(f.hunks[0].rows[0].is_moved());
+    assert!(f.hunks[1].rows[0].is_moved());
+}
