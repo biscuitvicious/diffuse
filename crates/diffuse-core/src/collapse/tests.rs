@@ -1512,7 +1512,6 @@ fn test_multiline_statement_expansion_preserves_closing_delimiter() {
         "row 83 must not mark `);` as added; it should be common: add_spans={add_texts_83:?}"
     );
 }
-
 #[test]
 fn wrap_tail_reflow_keeps_source_strike() {
     // A fmt re-wrap: the old line's tail `b[j-1]` wraps onto its own new

@@ -68,13 +68,11 @@
 ## 10. Verification, Integrity & Design by Contract (DbC)
 - [x] **Design by Contract (DbC) method contracts**: Integrate preconditions (`require!`), postconditions (`ensure!`), and internal state invariants (`invariant!`) across algorithms, AST transforms, streaming channels, syntax classifiers, and TUI coordinate mappers with zero release overhead. (See [Design by Contract (DbC) Integration](plan/done/Design%20by%20Contract%20(DbC)%20Integration.md))
 
+## 11. LCS Engine — Future Investigations
+
 ## 12. Code Cleanup
 
 - [x] ~~**Remove unnecessary `split('\n')` on row text in apply module**~~: `apply/mod.rs` splits row text on `\n` before iterating, but rows are always single lines from the diff parser. Direct text usage avoids redundant iterations and allocations.
-
-## 11. LCS Engine — Future Investigations
-
-
 - [ ] **Whitespace sub-matching in LCS pipeline**: Currently all whitespace within a line is tokenised as a single run (e.g. `"        "` for 8 spaces, `"            "` for 12). Two whitespace tokens that differ are treated as fully unequal by the LCS, so an indentation increase from 8→12 spaces is shown as a full deletion of the 8-space token and a full addition of the 12-space token rather than a 4-space add followed by an 8-space common context.
 
   The desired behaviour: when both sides have a leading whitespace run and one is *contained within* (i.e. is a prefix of) the other, the DP engine should split the tokens so the common prefix appears as context and only the extra spaces appear as a del/add. For example:

@@ -274,3 +274,24 @@ fn trailing_blank_line_missing_at_target_site_does_not_move() {
         "unrelated blank line 70 must NOT be marked moved"
     );
 }
+
+#[test]
+fn whitespace_only_lines_are_not_moves() {
+    let mut f = file(vec![
+        hunk(vec![del(1, ""), del(2, "    ")]),
+        hunk(vec![add(10, ""), add(11, "    ")]),
+    ]);
+    mark_moves(&mut f);
+
+    for h in &f.hunks {
+        for r in &h.rows {
+            if r.text().trim().is_empty() {
+                assert!(
+                    !r.is_moved(),
+                    "whitespace-only line {:?} must NOT be marked moved",
+                    r.text()
+                );
+            }
+        }
+    }
+}
