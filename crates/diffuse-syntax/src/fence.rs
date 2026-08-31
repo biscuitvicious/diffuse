@@ -56,9 +56,10 @@ pub fn fence_regions<S: AsRef<str>>(
                 }
                 Some(_) => {
                     if !captured_tag.is_empty() {
-                        // A tagged fence line (`/// ```ignore`) is an opening fence — if a
-                        // previous fence was unclosed, close it at n-1 and start a new region at
-                        // n+1.
+                        // A tagged fence line (`/// ```ignore`) is an opening
+                        // fence — if a previous fence
+                        // was unclosed, close it at n-1 and start a new region
+                        // at n+1.
                         if region_start < n {
                             regions.push(FenceRegion {
                                 start: region_start,

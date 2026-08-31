@@ -114,7 +114,8 @@ index 1111111..2222222 100644
     state.render_frame(80, 20);
     assert_eq!(state.scroll, 0);
 
-    // 1st pg down moves cursor to bottom of current visible page without scrolling
+    // 1st pg down moves cursor to bottom of current visible page without
+    // scrolling
     state.page_down();
     assert_eq!(state.scroll, 0);
     assert!(state.row_idx > 0);

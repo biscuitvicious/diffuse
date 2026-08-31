@@ -45,7 +45,11 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
         for r in &h.rows {
             match r {
                 Row::Add(_) => adds += 1,
-                Row::Del(_) => dels += 1,
+                Row::Del(del_line) => {
+                    if !del_line.moved {
+                        dels += 1;
+                    }
+                }
                 Row::Mod { .. } => mods += 1,
                 Row::Mov { .. } => movs += 1,
                 Row::Ctx(_) | Row::Sep(_) => {}

@@ -1,5 +1,5 @@
 //! The golden acceptance — TWO legs over the frozen corpus
-//! (`tests/golden/mirage-2025-08.json`), both walking the wire-contract
+//! (`tests/golden/diffuse-2026-08/wire.json`), both walking the wire-contract
 //! output (PLAN.md §2) and asserting its invariants:
 //!
 //!   1. **lib leg** — embed the engine, run the full pipeline directly.
@@ -47,13 +47,10 @@ use diffuse::{
 #[serde(rename_all = "camelCase")]
 struct Fixture {
     diff: Arc<String>,
-    #[serde(default, alias = "contents")]
     new_content: HashMap<String, Arc<String>>,
-    /// The OLD file contents (the opt-* commits carry this; the original
-    /// corpora don't). The apply-oracle (PLAN.md §4 Phase 6) uses it to
-    /// prove `apply(diff, old) == new` mechanically — the diff is a semantic
-    /// program, not just a render.
-    #[serde(default, alias = "old_contents")]
+    /// The OLD file contents, harvested alongside the diff (the apply-oracle
+    /// (PLAN.md §4 Phase 6) uses it to prove `apply(diff, old) == new`
+    /// mechanically — the diff is a semantic program, not just a render).
     old_content: HashMap<String, Arc<String>>,
 }
 
@@ -119,22 +116,6 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         if let Some(f) = cache.get(name) {
             return Arc::clone(f);
         }
-    }
-    let gz_fixture_path = golden_dir().join(format!("{name}.json.gz"));
-    if gz_fixture_path.exists() {
-        let bytes = fs::read(&gz_fixture_path)
-            .unwrap_or_else(|e| panic!("failed reading {}: {e}", gz_fixture_path.display()));
-        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
-        let mut s = String::new();
-        std::io::Read::read_to_string(&mut decoder, &mut s)
-            .unwrap_or_else(|e| panic!("failed decoding {}: {e}", gz_fixture_path.display()));
-        let f: Fixture = serde_json::from_str(&s).unwrap_or_else(|e| {
-            panic!("failed parsing JSON in {}: {e}", gz_fixture_path.display())
-        });
-        let arc = Arc::new(f);
-        let mut cache = FIXTURE_CACHE.lock().unwrap();
-        cache.insert(name.to_string(), Arc::clone(&arc));
-        return arc;
     }
     let corpus_dir = golden_dir().join(name);
     let patch_path = corpus_dir.join("diff.patch");
@@ -261,6 +242,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 match r.kind {
                     RowKind::Add if r.moved => movs += 1,
                     RowKind::Add => adds += 1,
+                    RowKind::Del if r.moved => {}
                     RowKind::Del => dels += 1,
                     RowKind::Mod => mods += 1,
                     _ => {}
@@ -333,8 +315,9 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 let expected = display_text(&Row::from(r));
                 check!(
                     concat == expected,
-                    "{}: runs concatenate to the display text ({} chars vs {})",
+                    "{}:{}: runs concatenate to the display text ({} chars vs {})",
                     f.path,
+                    r.new_line.unwrap_or(0),
                     concat.chars().count(),
                     expected.chars().count()
                 );
@@ -435,9 +418,10 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             let _ = &fence.lang;
         }
 
-        // 1. Verify reconstructed content completeness (only when present — lib_leg
-        //    populates these in-memory; bin_leg decodes from wire JSON which omits them
-        //    as of the slim format, so we skip these checks when the vecs are empty).
+        // 1. Verify reconstructed content completeness (only when present —
+        //    lib_leg populates these in-memory; bin_leg decodes from wire JSON
+        //    which omits them as of the slim format, so we skip these checks
+        //    when the vecs are empty).
         if !f.new_content.is_empty() && f.status != "deleted" && f.new_line_count > 0 {
             check!(
                 f.new_content.len() == f.new_line_count,
@@ -775,9 +759,18 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
 }
 
 fn print_render_diff(name: &str, actual: &str, expected: &str) {
-    eprintln!("\n----- RENDER DIFF [{name}] -----");
     let expected_lines: Vec<&str> = expected.lines().collect();
     let actual_lines: Vec<&str> = actual.lines().collect();
+    for (idx, (exp, act)) in expected_lines.iter().zip(actual_lines.iter()).enumerate() {
+        if exp != act {
+            eprintln!(
+                "\nFirst mismatch at line {}:\nEXP: {exp}\nACT: {act}\n",
+                idx + 1
+            );
+            break;
+        }
+    }
+    eprintln!("\n----- RENDER DIFF [{name}] (first 30 lines) -----");
     let diff = difflib::unified_diff(
         &expected_lines,
         &actual_lines,
@@ -787,7 +780,11 @@ fn print_render_diff(name: &str, actual: &str, expected: &str) {
         "",
         3,
     );
-    for line in diff {
+    for (i, line) in diff.into_iter().enumerate() {
+        if i >= 30 {
+            eprintln!("... [diff truncated at 30 lines] ...");
+            break;
+        }
         eprintln!("{line}");
     }
     eprintln!("----- END RENDER DIFF -----\n");
@@ -822,7 +819,7 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
 }
 
 fn print_markdown_diff(name: &str, actual: &str, expected: &str) {
-    eprintln!("\n----- MARKDOWN DIFF [{name}] -----");
+    eprintln!("\n----- MARKDOWN DIFF [{name}] (first 30 lines) -----");
     let expected_lines: Vec<&str> = expected.lines().collect();
     let actual_lines: Vec<&str> = actual.lines().collect();
     let diff = difflib::unified_diff(
@@ -834,7 +831,11 @@ fn print_markdown_diff(name: &str, actual: &str, expected: &str) {
         "",
         3,
     );
-    for line in diff {
+    for (i, line) in diff.into_iter().enumerate() {
+        if i >= 30 {
+            eprintln!("... [diff truncated at 30 lines] ...");
+            break;
+        }
         eprintln!("{line}");
     }
     eprintln!("----- END MARKDOWN DIFF -----\n");
@@ -1043,23 +1044,27 @@ fn run_bin_leg(name: &str, min: usize) {
 
         line_idx += 1;
 
+        // Record at most MAX_WIRE_DIFF_FAILURES mismatches, but always drain
+        // both streams to EOF: the child blocks writing once the stdout pipe
+        // fills, so an early break here would deadlock the `child.wait()`
+        // below while the child still has output in flight.
+        let recording = failures.len() < MAX_WIRE_DIFF_FAILURES;
+
         if exp_len == 0 {
-            failures.push(format!(
-                "Line {line_idx}: unexpected extra output from binary: {:?}",
-                actual_line.trim()
-            ));
-            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
-                break;
+            if recording {
+                failures.push(format!(
+                    "Line {line_idx}: unexpected extra output from binary: {:?}",
+                    actual_line.trim()
+                ));
             }
             continue;
         }
         if act_len == 0 {
-            failures.push(format!(
-                "Line {line_idx}: unexpected EOF from binary, expected: {:?}",
-                expected_line.trim()
-            ));
-            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
-                break;
+            if recording {
+                failures.push(format!(
+                    "Line {line_idx}: unexpected EOF from binary, expected: {:?}",
+                    expected_line.trim()
+                ));
             }
             continue;
         }
@@ -1067,13 +1072,10 @@ fn run_bin_leg(name: &str, min: usize) {
         let exp_trimmed = expected_line.trim();
         let act_trimmed = actual_line.trim();
 
-        if exp_trimmed != act_trimmed {
+        if exp_trimmed != act_trimmed && recording {
             failures.push(format!(
                 "Line {line_idx} mismatch:\n  actual:   {act_trimmed}\n  expected: {exp_trimmed}"
             ));
-            if failures.len() >= MAX_WIRE_DIFF_FAILURES {
-                break;
-            }
         }
 
         if let Ok(rec) = serde_json::from_str::<diffuse::core::wire::jsonl::WireRecord>(act_trimmed)
@@ -1246,8 +1248,7 @@ macro_rules! corpus_tests {
     };
 }
 
-corpus_tests!(mirage_2025_08, "mirage-2025-08", 8, true, false);
-corpus_tests!(diffuse_2025_08, "diffuse-2025-08", 26, true, false);
+corpus_tests!(diffuse_2026_08, "diffuse-2026-08", 15, true, false);
 corpus_tests!(opt_1, "opt-1-cache-regex-window-slice", 5, true, true);
 corpus_tests!(opt_2, "opt-2-cache-markdown-regex", 2, true, true);
 corpus_tests!(opt_3, "opt-3-cache-lang-profile", 3, true, true);

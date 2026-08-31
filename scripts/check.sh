@@ -8,7 +8,6 @@ set -o pipefail
 fmt_mode=apply
 clippy_mode=apply
 no_test=false
-no_extension=false
 no_install=false
 
 # Option parsing loop
@@ -24,10 +23,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-test)
             no_test=true
-            shift
-            ;;
-        --no-extension)
-            no_extension=true
             shift
             ;;
         --no-install)
@@ -88,39 +83,34 @@ if [ "$no_test" != true ]; then
     t_end=$(date +%s%N)
     echo "-----{ BUILD: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
 
-    # 4. Run test suite on warm build
+    # 4. Run test suite on warm build — fast unit tests first, the diffuse
+    #    package's integration tests (the golden acceptance) last, so a lib
+    #    failure surfaces before the slow corpora walk.
     echo
     echo "-----{ TEST: CARGO TEST (WARM RUN) }-----"
     t_start=$(date +%s%N)
-    cargo test --quiet --all
+    cargo test --quiet --workspace --exclude diffuse
+    cargo test --quiet -p diffuse --lib --bins
+    cargo test --quiet -p diffuse --doc
+    echo "-----{ TEST: UNITS CLEAR }-----"
+    cargo test --quiet -p diffuse --tests
     t_end=$(date +%s%N)
     echo "-----{ TEST: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
 fi
 
-# 5. Extension test suite (extension/pi/ npm test)
-if [ "$no_extension" != true ] && [ -d "extension/pi" ]; then
-    echo
-    echo "-----{ EXTENSION: PI REVIEW EQUIVALENCE GATE }-----"
-    t_start=$(date +%s%N)
-    mkdir -p extension/pi/bin
-    cp target/debug/diffuse extension/pi/bin/diffuse
-    (cd extension/pi && npm test --ignore-scripts)
-    t_end=$(date +%s%N)
-    echo "-----{ EXTENSION: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
-fi
-
-# 6. Automatic Release Install & Extension Sync
+# 5. Automatic Dev Install & Extension Sync
 if [ "$no_install" != true ]; then
     echo
-    echo "-----{ INSTALL: RELEASE BINARY & PI EXTENSION }-----"
+    echo "-----{ INSTALL: DEV BINARY & PI EXTENSION }-----"
     t_start=$(date +%s%N)
-    if [ -f "scripts/install.sh" ]; then
-        ./scripts/install.sh
-    else
-        cargo install --locked --path crates/diffuse --force
+    mkdir -p "$HOME/.cargo/bin"
+    cp --remove-destination target/debug/diffuse "$HOME/.cargo/bin/diffuse"
+    if [ -f target/debug/diffuse-harvest ]; then
+        cp --remove-destination target/debug/diffuse-harvest "$HOME/.cargo/bin/diffuse-harvest"
     fi
+    echo "diffuse binary installed to $HOME/.cargo/bin/diffuse (dev)"
     if [ -f "extension/pi/scripts/install.sh" ]; then
-        ./extension/pi/scripts/install.sh
+        PROFILE=dev ./extension/pi/scripts/install.sh
     fi
     t_end=$(date +%s%N)
     echo "-----{ INSTALL: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"

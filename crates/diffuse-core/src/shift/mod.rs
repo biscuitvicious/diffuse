@@ -416,8 +416,8 @@ pub fn pass_shift_hunk(h: &Hunk, profile: Option<&crate::syntax::profile::LangPr
             continue;
         }
 
-        // Look for an interior or leading closing delimiter inside the additions that
-        // precedes a declaration
+        // Look for an interior or leading closing delimiter inside the
+        // additions that precedes a declaration
         for k in 0..add_count {
             let row_idx = start + k;
             let needed = calculate_needed_shift_down(&new_hunk, start, end, row_idx, profile);

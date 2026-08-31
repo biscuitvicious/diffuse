@@ -12,3 +12,7 @@ else
   cargo install --locked --path crates/diffuse --force "$@"
 fi
 echo "diffuse binary installed to $(which diffuse)"
+
+if [ -f "extension/pi/scripts/install.sh" ]; then
+  PROFILE=release ./extension/pi/scripts/install.sh
+fi

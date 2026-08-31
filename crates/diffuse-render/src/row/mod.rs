@@ -3,12 +3,15 @@
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::theme::{DiffuseTheme, S_ADD, S_DEL, S_MOD, S_MOV};
-use crate::core::{
-    lcs::char_slice,
-    merge::RunKind,
-    parse::{RowKind, Spans},
-    wire::OutputRun,
+use super::theme::{DiffuseTheme, FG_RESET};
+use crate::{
+    ansi::AnsiColor,
+    core::{
+        lcs::char_slice,
+        merge::RunKind,
+        parse::{RowKind, Spans},
+        wire::OutputRun,
+    },
 };
 
 /// Check whether a row consists solely of common/context runs.
@@ -65,7 +68,7 @@ pub fn pad4(num: Option<u32>) -> String {
     pad4_bytes(num, &mut buf).to_string()
 }
 
-/// Generate plain 6-character prefix gutter (` 123 + `).
+/// Generate plain 6-character prefix gutter (` 123 + `, ` 123≈+`, ` 123≈-`).
 pub fn prefix_of(
     kind: RowKind,
     new_line: Option<u32>,
@@ -79,15 +82,102 @@ pub fn prefix_of(
     }
     match kind {
         RowKind::Add => {
-            let icon = if moved { S_MOV.icon } else { S_ADD.icon };
-            format!("{} {}", pad4_bytes(new_line, &mut buf), icon)
+            if moved {
+                format!("{}≈+", pad4_bytes(new_line, &mut buf))
+            } else {
+                format!("{} +", pad4_bytes(new_line, &mut buf))
+            }
         }
         RowKind::Del => {
-            let icon = if moved { S_MOV.icon } else { S_DEL.icon };
-            format!("{} {}", pad4_bytes(old_line, &mut buf), icon)
+            if moved {
+                format!("{}≈-", pad4_bytes(old_line, &mut buf))
+            } else {
+                format!("{} -", pad4_bytes(old_line, &mut buf))
+            }
         }
-        RowKind::Mod => format!("{} {}", pad4_bytes(new_line, &mut buf), S_MOD.icon),
-        _ => format!("{}  ", pad4_bytes(new_line.or(old_line), &mut buf)),
+        RowKind::Mod => format!("{} ~", pad4_bytes(new_line, &mut buf)),
+        _ => {
+            if moved {
+                format!("{}≈+", pad4_bytes(new_line.or(old_line), &mut buf))
+            } else {
+                format!("{}  ", pad4_bytes(new_line.or(old_line), &mut buf))
+            }
+        }
+    }
+}
+
+/// Generate styled ANSI 6-character prefix gutter with color highlights and
+/// theme support.
+pub fn styled_prefix_themed(
+    kind: RowKind,
+    new_line: Option<u32>,
+    old_line: Option<u32>,
+    moved: bool,
+    runs: &[OutputRun],
+    in_hunk: bool,
+    theme: &DiffuseTheme,
+) -> String {
+    let mut buf = [b' '; 4];
+    if is_common_only_row(kind, runs) {
+        let pad = pad4_bytes(new_line, &mut buf);
+        let color = if in_hunk {
+            theme.palette.ctx_gutter_in_hunk
+        } else {
+            theme.palette.ctx_gutter_out_hunk
+        };
+        let color_fg = color.fg_code();
+        return format!("{color_fg}{pad}  {FG_RESET}\x1b[23m");
+    }
+    match kind {
+        RowKind::Del => {
+            let pad = pad4_bytes(old_line, &mut buf);
+            if moved {
+                let num_fg = theme.palette.mov_gutter_num.italic_fg_code();
+                let mov_fg = theme.palette.mov_gutter_icon.fg_code();
+                let del_fg = theme.palette.del_gutter_icon.fg_code();
+                format!("{num_fg}{pad}\x1b[23m{mov_fg}≈{del_fg}-{FG_RESET}\x1b[23m")
+            } else {
+                let num_fg = theme.palette.del_gutter_num.italic_fg_code();
+                let icon_fg = theme.palette.del_gutter_icon.fg_code();
+                format!("{num_fg}{pad}\x1b[23m {icon_fg}-{FG_RESET}\x1b[23m")
+            }
+        }
+        RowKind::Add => {
+            let pad = pad4_bytes(new_line, &mut buf);
+            if moved {
+                let num_fg = theme.palette.mov_gutter_num.fg_code();
+                let mov_fg = theme.palette.mov_gutter_icon.fg_code();
+                let add_fg = theme.palette.add_gutter_icon.fg_code();
+                format!("{num_fg}{pad}{mov_fg}≈{add_fg}+{FG_RESET}\x1b[23m")
+            } else {
+                let num_fg = theme.palette.add_gutter_num.fg_code();
+                let icon_fg = theme.palette.add_gutter_icon.fg_code();
+                format!("{num_fg}{pad} {icon_fg}+{FG_RESET}\x1b[23m")
+            }
+        }
+        RowKind::Mod => {
+            let pad = pad4_bytes(new_line, &mut buf);
+            let num_fg = theme.palette.mod_gutter_num.fg_code();
+            let icon_fg = theme.palette.mod_gutter_icon.fg_code();
+            format!("{num_fg}{pad} {icon_fg}~{FG_RESET}\x1b[23m")
+        }
+        _ => {
+            let pad = pad4_bytes(new_line.or(old_line), &mut buf);
+            if moved {
+                let num_fg = theme.palette.mov_gutter_num.fg_code();
+                let mov_fg = theme.palette.mov_gutter_icon.fg_code();
+                let icon_fg = theme.palette.add_gutter_icon.fg_code();
+                format!("{num_fg}{pad}{mov_fg}≈{icon_fg}+{FG_RESET}\x1b[23m")
+            } else {
+                let color = if in_hunk {
+                    theme.palette.ctx_gutter_in_hunk
+                } else {
+                    theme.palette.ctx_gutter_out_hunk
+                };
+                let color_fg = color.fg_code();
+                format!("{color_fg}{pad}  {FG_RESET}\x1b[23m")
+            }
+        }
     }
 }
 
@@ -100,47 +190,15 @@ pub fn styled_prefix(
     runs: &[OutputRun],
     in_hunk: bool,
 ) -> String {
-    let fg_reset = "\x1b[39m\x1b[23m";
-    let mut buf = [b' '; 4];
-    if is_common_only_row(kind, runs) {
-        let pad = pad4_bytes(new_line, &mut buf);
-        let color = if in_hunk { "38;5;252" } else { "38;5;242" };
-        return format!("\x1b[{color}m{pad}  {fg_reset}");
-    }
-    match kind {
-        RowKind::Del => {
-            let pad = pad4_bytes(old_line, &mut buf);
-            let icon = if moved {
-                format!("\x1b[38;5;117m{}", S_MOV.icon)
-            } else {
-                format!("\x1b[38;5;203m{}", S_DEL.icon)
-            };
-            format!("\x1b[3;38;5;174m{pad}\x1b[23m {icon}{fg_reset}")
-        }
-        RowKind::Add => {
-            let pad = pad4_bytes(new_line, &mut buf);
-            let icon = if moved {
-                format!("\x1b[38;5;117m{}", S_MOV.icon)
-            } else {
-                format!("\x1b[38;5;120m{}", S_ADD.icon)
-            };
-            format!("\x1b[38;5;151m{pad} {icon}{fg_reset}")
-        }
-        RowKind::Mod => {
-            let pad = pad4_bytes(new_line, &mut buf);
-            format!("\x1b[38;5;253m{pad} \x1b[38;5;214m{}{fg_reset}", S_MOD.icon)
-        }
-        _ => {
-            if moved {
-                let pad = pad4_bytes(new_line.or(old_line), &mut buf);
-                format!("\x1b[38;5;147m{pad} \x1b[38;5;117m{}{fg_reset}", S_MOV.icon)
-            } else {
-                let pad = pad4_bytes(new_line.or(old_line), &mut buf);
-                let color = if in_hunk { "38;5;252" } else { "38;5;242" };
-                format!("\x1b[{color}m{pad}  {fg_reset}")
-            }
-        }
-    }
+    styled_prefix_themed(
+        kind,
+        new_line,
+        old_line,
+        moved,
+        runs,
+        in_hunk,
+        &DiffuseTheme::from_env(),
+    )
 }
 
 /// Extract display text of a row considering word diff and column offset.
@@ -176,7 +234,7 @@ pub fn display_text(
 pub fn render_row_segment(
     text: &str,
     del_text: Option<&str>,
-    spans: &Spans,
+    _spans: &Spans,
     kind: RowKind,
     moved: bool,
     runs: &[OutputRun],
@@ -193,58 +251,76 @@ pub fn render_row_segment(
     let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
     let is_del_row = kind == RowKind::Del;
     let is_mod_row = kind == RowKind::Mod;
-    let is_pure_del_mod = is_mod_row && is_pure_deletion_mod(spans, text);
 
     // The visual-selection band: one neutral shade applied across the whole
     // row (distinct from the cursor's per-style lift).
-    let band_bg = "\x1b[48;5;240m";
+    let band_bg = theme.palette.band_bg.bg_code();
+    let ctx_cursor_bg = theme.palette.ctx_cursor_bg.bg_code();
+    let ctx_tint_bg = match theme.palette.ctx_tint_bg {
+        AnsiColor::Reset => String::new(),
+        color => color.bg_code(),
+    };
+
+    let s_mov = theme.row_style(RowKind::Ctx);
+    let s_mod = theme.row_style(RowKind::Mod);
+    let s_del = theme.row_style(RowKind::Del);
+    let s_add = theme.row_style(RowKind::Add);
+
+    let s_mov_cursor_bg = s_mov.cursor_bg();
+    let s_mov_tint_bg = s_mov.tint_bg();
+    let s_mod_cursor_bg = s_mod.cursor_bg();
+    let s_mod_tint_bg = s_mod.tint_bg();
+    let s_del_cursor_bg = s_del.cursor_bg();
+    let s_del_tint_bg = s_del.tint_bg();
+    let s_add_cursor_bg = s_add.cursor_bg();
+    let s_add_tint_bg = s_add.tint_bg();
 
     let line_bg: &str = if is_ctx {
         if selected {
-            "\x1b[48;5;237m"
+            &ctx_cursor_bg
         } else if band {
-            band_bg
+            &band_bg
         } else {
-            ""
+            &ctx_tint_bg
         }
     } else if moved {
         if selected {
-            S_MOV.cursor_bg()
+            &s_mov_cursor_bg
         } else if band {
-            band_bg
+            &band_bg
         } else {
-            S_MOV.tint_bg()
+            &s_mov_tint_bg
         }
     } else if is_mod_row {
         if selected {
-            S_MOD.cursor_bg()
+            &s_mod_cursor_bg
         } else if band {
-            band_bg
+            &band_bg
         } else {
-            S_MOD.tint_bg()
+            &s_mod_tint_bg
         }
     } else if is_del_row {
         if selected {
-            S_DEL.cursor_bg()
+            &s_del_cursor_bg
         } else if band {
-            band_bg
+            &band_bg
         } else {
-            S_DEL.tint_bg()
+            &s_del_tint_bg
         }
     } else if selected {
-        S_ADD.cursor_bg()
+        &s_add_cursor_bg
     } else if band {
-        band_bg
+        &band_bg
     } else {
-        S_ADD.tint_bg()
+        &s_add_tint_bg
     };
 
     let word_bg = if selected {
-        S_MOD.fill_cursor_bg()
+        s_mod.fill_cursor_bg()
     } else {
-        S_MOD.fill_bg()
+        s_mod.fill_bg()
     };
-    let del_bg = S_DEL.tint_bg();
+    let del_bg = s_del.tint_bg();
 
     let has_subwords =
         runs.iter().any(|t| t.kind == RunKind::Add) && runs.iter().any(|t| t.kind != RunKind::Add);
@@ -253,19 +329,16 @@ pub fn render_row_segment(
     let base_bg = |tok_kind: RunKind| -> &str {
         if is_ctx {
             if selected {
-                "\x1b[48;5;237m"
+                &ctx_cursor_bg
             } else if band {
-                band_bg
+                &band_bg
             } else {
-                ""
+                &ctx_tint_bg
             }
         } else if tok_kind == RunKind::Del {
-            del_bg
-        } else if tok_kind == RunKind::Add
-            && (is_mod_row || has_subwords || is_expansion_add)
-            && !is_pure_del_mod
-        {
-            word_bg
+            &del_bg
+        } else if tok_kind == RunKind::Add && (is_mod_row || has_subwords || is_expansion_add) {
+            &word_bg
         } else {
             line_bg
         }
@@ -273,9 +346,10 @@ pub fn render_row_segment(
 
     let is_full_row = seg_start == 0 && seg_end == usize::MAX && col_offset == 0;
 
-    let has_styled_prefix = prefix.starts_with("\x1b[") || selected || band;
+    let has_styled_prefix =
+        prefix.starts_with("\x1b[") || selected || band || !ctx_tint_bg.is_empty();
     let lead_bg = if has_styled_prefix { line_bg } else { "" };
-    let trail_bg = if selected || band || !is_ctx {
+    let trail_bg = if selected || band || !is_ctx || !ctx_tint_bg.is_empty() {
         line_bg
     } else {
         ""
@@ -283,7 +357,7 @@ pub fn render_row_segment(
 
     if is_del_row {
         let bg = if is_ctx { "" } else { line_bg };
-        let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
+        let del_fg = s_del.fg.fg_code();
         let reset = "\x1b[39m";
         let piece = if is_full_row {
             text
@@ -299,13 +373,13 @@ pub fn render_row_segment(
     }
 
     if runs.is_empty() {
-        let bg = if is_ctx {
+        let bg: &str = if is_ctx {
             if selected {
-                "\x1b[48;5;237m"
+                &ctx_cursor_bg
             } else if band {
-                band_bg
+                &band_bg
             } else {
-                ""
+                &ctx_tint_bg
             }
         } else {
             line_bg
@@ -345,11 +419,11 @@ pub fn render_row_segment(
             };
 
             if tok.kind == RunKind::Del {
-                let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
+                let del_fg = s_del.fg.fg_code();
                 let reset = "\x1b[39m";
                 out.push_str(bg);
                 out.push_str("\x1b[9m");
-                out.push_str(del_fg);
+                out.push_str(&del_fg);
                 out.push_str(&tok.text);
                 out.push_str(reset);
                 out.push_str("\x1b[29m");
@@ -418,11 +492,11 @@ pub fn render_row_segment(
         };
 
         if tok.kind == RunKind::Del {
-            let del_fg = DiffuseTheme::fallback_named_color(S_DEL.fg).unwrap_or("");
+            let del_fg = s_del.fg.fg_code();
             let reset = "\x1b[39m";
             out.push_str(bg);
             out.push_str("\x1b[9m");
-            out.push_str(del_fg);
+            out.push_str(&del_fg);
             out.push_str(&sub_piece);
             out.push_str(reset);
             out.push_str("\x1b[29m");
@@ -472,31 +546,49 @@ pub fn slice_by_visual_width(text: &str, start_col: usize, max_cols: usize) -> S
     out
 }
 
-/// Render a row in the raw unified-diff representation: the 6-character
-/// line-number gutter plus the line text in flat green/red/muted text color
-/// on a default black background (or cursor/band background when selected).
-pub fn render_raw_row(
+/// Render a row in the raw unified-diff representation with theme support.
+pub fn render_raw_row_themed(
     kind: RowKind,
     prefix: &str,
     text: &str,
     selected: bool,
     band: bool,
     highlight_trailing: bool,
+    theme: &DiffuseTheme,
 ) -> String {
-    let (fg, sub_bg, sub_fg) = match kind {
-        RowKind::Add => ("\x1b[38;5;120m", "\x1b[48;5;28m", "\x1b[38;5;151m"),
-        RowKind::Del => ("\x1b[38;5;203m", "\x1b[48;5;88m", "\x1b[38;5;167m"),
-        _ => ("\x1b[38;5;255m", "\x1b[48;5;238m", "\x1b[38;5;244m"),
+    let (fg_color, sub_bg_color, sub_fg_color) = match kind {
+        RowKind::Add => (
+            theme.palette.add_gutter_icon,
+            theme.palette.add_fill_bg,
+            theme.palette.add_gutter_num,
+        ),
+        RowKind::Del => (
+            theme.palette.del_gutter_icon,
+            theme.palette.del_cursor_bg,
+            theme.palette.del_gutter_num,
+        ),
+        _ => (
+            theme.palette.ctx_gutter_in_hunk,
+            theme.palette.ctx_cursor_bg,
+            theme.palette.ctx_gutter_out_hunk,
+        ),
     };
+    let fg = fg_color.fg_code();
+    let sub_bg = sub_bg_color.bg_code();
+    let sub_fg = sub_fg_color.fg_code();
 
-    let bg = if selected {
-        "\x1b[48;5;237m"
+    let bg_color = if selected {
+        theme.palette.ctx_cursor_bg
     } else if band {
-        "\x1b[48;5;240m"
+        theme.palette.band_bg
     } else {
-        ""
+        theme.palette.ctx_tint_bg
     };
-    let reset_bg = if bg.is_empty() { "\x1b[49m" } else { bg };
+    let bg = match bg_color {
+        AnsiColor::Reset => String::new(),
+        color => color.bg_code(),
+    };
+    let reset_bg = if bg.is_empty() { "\x1b[49m" } else { &bg };
 
     let trailing_len = if highlight_trailing {
         text.len() - text.trim_end_matches(|c: char| c.is_whitespace()).len()
@@ -520,12 +612,34 @@ pub fn render_raw_row(
     }
 
     if selected || band {
-        out.push_str(bg);
+        out.push_str(&bg);
     } else {
         out.push_str("\x1b[49m");
     }
     out.push_str("\x1b[39m\x1b[22m");
     out
+}
+
+/// Render a row in the raw unified-diff representation: the 6-character
+/// line-number gutter plus the line text in flat green/red/muted text color
+/// on a default black background (or cursor/band background when selected).
+pub fn render_raw_row(
+    kind: RowKind,
+    prefix: &str,
+    text: &str,
+    selected: bool,
+    band: bool,
+    highlight_trailing: bool,
+) -> String {
+    render_raw_row_themed(
+        kind,
+        prefix,
+        text,
+        selected,
+        band,
+        highlight_trailing,
+        &DiffuseTheme::from_env(),
+    )
 }
 
 #[cfg(test)]

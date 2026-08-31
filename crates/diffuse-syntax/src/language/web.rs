@@ -54,8 +54,15 @@ pub const KEYWORDS: &[&str] = &[
     "yield",
 ];
 
+pub const OPERATORS: &[&str] = &[
+    "!=", "!==", "%=", "&&", "&&=", "&=", "**", "**=", "*=", "++", "+=", "--", "-=", "->", "/=",
+    "<<", "<<=", "<=", "==", "===", "=>", ">=", ">>", ">>=", ">>>", ">>>=", "??", "??=", "^=",
+    "|=", "||", "||=",
+];
+
 pub fn profile() -> LangProfile {
     LangProfile {
+        name: "web",
         keywords: KEYWORDS,
         line_comment: true,
         block_comment: true,
@@ -90,6 +97,7 @@ pub fn profile() -> LangProfile {
             "export const ",
             "export let ",
         ],
+        operators: OPERATORS,
         scope_stop_prefixes: &[
             "class ",
             "interface ",

@@ -32,8 +32,14 @@ pub const KEYWORDS: &[&str] = &[
     "var",
 ];
 
+pub const OPERATORS: &[&str] = &[
+    "!=", "%=", "&&", "&=", "*=", "++", "+=", "--", "-=", "->", "/=", ":=", "<<", "<<=", "<=",
+    "==", "=>", ">=", ">>", ">>=", "^=", "|=", "||",
+];
+
 pub fn profile() -> LangProfile {
     LangProfile {
+        name: "go",
         keywords: KEYWORDS,
         line_comment: true,
         block_comment: true,
@@ -48,6 +54,7 @@ pub fn profile() -> LangProfile {
             Regex::new(r"^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z0-9_]+)").expect("go fn_decl"),
         ),
         decl_prefixes: &["func ", "type ", "var ", "const ", "package ", "import "],
+        operators: OPERATORS,
         scope_stop_prefixes: &["type ", "package ", "import "],
     }
 }

@@ -34,11 +34,13 @@ impl RowKind {
     }
 }
 
-/// A line deletion: (`line_num`, text).
+/// A line deletion: (`line_num`, text, moved).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DelLine {
     pub num: LineNum,
     pub text: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub moved: bool,
 }
 
 impl DelLine {
@@ -47,6 +49,16 @@ impl DelLine {
         Self {
             num,
             text: text.into(),
+            moved: false,
+        }
+    }
+
+    #[inline]
+    pub fn new_moved(num: LineNum, text: impl Into<String>) -> Self {
+        Self {
+            num,
+            text: text.into(),
+            moved: true,
         }
     }
 }
@@ -243,7 +255,11 @@ impl Row {
 
     #[inline]
     pub fn is_moved(&self) -> bool {
-        matches!(self, Row::Mov { .. })
+        match self {
+            Row::Mov { .. } => true,
+            Row::Del(del_line) => del_line.moved,
+            _ => false,
+        }
     }
 
     pub fn reverse(&self) -> Self {

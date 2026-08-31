@@ -117,8 +117,9 @@ impl TokenInterner {
             return id;
         }
         let id = self.map.len() as u32;
-        // The token string slices are valid for the scope of the cluster DP solve
-        // during which the interner is populated and used before being cleared.
+        // The token string slices are valid for the scope of the cluster DP
+        // solve during which the interner is populated and used before
+        // being cleared.
         let static_token: &'static str = unsafe { std::mem::transmute(token) };
         self.map.insert(static_token, id);
         self.ws.push(token_is_ws(token));

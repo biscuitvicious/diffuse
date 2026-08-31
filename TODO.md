@@ -60,4 +60,16 @@
 ## 10. Verification, Integrity & Design by Contract (DbC)
 - [x] **Design by Contract (DbC) method contracts**: Integrate preconditions (`require!`), postconditions (`ensure!`), and internal state invariants (`invariant!`) across algorithms, AST transforms, streaming channels, syntax classifiers, and TUI coordinate mappers with zero release overhead. (See [Design by Contract (DbC) Integration](plan/done/Design%20by%20Contract%20(DbC)%20Integration.md))
 
+## 11. LCS Engine — Future Investigations
 
+
+- [ ] **Whitespace sub-matching in LCS pipeline**: Currently all whitespace within a line is tokenised as a single run (e.g. `"        "` for 8 spaces, `"            "` for 12). Two whitespace tokens that differ are treated as fully unequal by the LCS, so an indentation increase from 8→12 spaces is shown as a full deletion of the 8-space token and a full addition of the 12-space token rather than a 4-space add followed by an 8-space common context.
+
+  The desired behaviour: when both sides have a leading whitespace run and one is *contained within* (i.e. is a prefix of) the other, the DP engine should split the tokens so the common prefix appears as context and only the extra spaces appear as a del/add. For example:
+
+  ```
+  del: "        " (8 sp)   add: "            " (12 sp)
+  →   {+ 4sp +}  8sp (ctx)     instead of  ~~8sp~~  {+ 12sp +}
+  ```
+
+  This likely requires either (a) treating whitespace as significant in the LCS (no skipping) and allowing partial whitespace token matches, or (b) a dedicated pre-pass that splits a leading-WS token into a shared-prefix part + a delta part before the LCS sees them. Investigate the right level to introduce this — the tokeniser, the per-line LCS, or the word-span post-processing step — and whether it interacts cleanly with the existing whitespace skip heuristics in `raw_lcs_pairs_with_lookahead`.

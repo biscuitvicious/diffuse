@@ -146,7 +146,8 @@ pub fn partition_hunk_segments<'a>(
             continue;
         }
 
-        // Collect preceding context lines from immediately preceding Ctx rows (up to 6)
+        // Collect preceding context lines from immediately preceding Ctx rows
+        // (up to 6)
         let mut preceding_ctx = Vec::new();
         let mut ctx_idx = i;
         while ctx_idx > 0
@@ -212,7 +213,8 @@ pub fn partition_hunk_segments<'a>(
             }
         }
 
-        // Collect following context lines from immediately following Ctx rows (up to 6)
+        // Collect following context lines from immediately following Ctx rows
+        // (up to 6)
         let mut following_ctx = Vec::new();
         let mut f_idx = i;
         while f_idx < hunk.rows.len()

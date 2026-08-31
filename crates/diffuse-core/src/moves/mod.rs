@@ -115,6 +115,9 @@ pub fn mark_moves(f: &mut DiffFile) {
                 old_line: del_line,
                 new_line: add_line,
             };
+            if let Row::Del(d) = &mut f.hunks[hi].rows[ri] {
+                d.moved = true;
+            }
             pair_of.insert(del_pos, pos);
             moved_dels.insert(del_pos);
         }
@@ -146,8 +149,13 @@ pub fn mark_moves(f: &mut DiffFile) {
             unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));
         }
     }
-    // Un-mark a moved del's paired add (revert back to Row::Add).
+    // Un-mark a moved del's paired add (revert back to Row::Add) and reset
+    // del.moved.
     for pos in unmark_positions {
+        let (hi, ri) = pos;
+        if let Row::Del(d) = &mut f.hunks[hi].rows[ri] {
+            d.moved = false;
+        }
         if let Some(&(ah, ar)) = pair_of.get(&pos)
             && let Row::Mov { new_line, .. } = &f.hunks[ah].rows[ar]
         {

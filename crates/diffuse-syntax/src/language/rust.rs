@@ -45,8 +45,14 @@ pub const KEYWORDS: &[&str] = &[
     "yield",
 ];
 
+pub const OPERATORS: &[&str] = &[
+    "!=", "%=", "&&", "&=", "*=", "+=", "-=", "->", "..", "...", "..=", "/=", "::", "<<", "<<=",
+    "<=", "==", "=>", ">=", ">>", ">>=", "^=", "|=", "||",
+];
+
 pub fn profile() -> LangProfile {
     LangProfile {
+        name: "rust",
         keywords: KEYWORDS,
         line_comment: true,
         block_comment: true,
@@ -89,6 +95,7 @@ pub fn profile() -> LangProfile {
             "mod ",
             "type ",
         ],
+        operators: OPERATORS,
         scope_stop_prefixes: &[
             "struct ",
             "pub struct ",

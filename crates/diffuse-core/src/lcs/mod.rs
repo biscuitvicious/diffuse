@@ -10,7 +10,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::parse::Spans;
+use crate::{parse::Spans, syntax::profile::LangProfile};
 
 /// Slice `s` by char offsets (the port's span convention). The JS
 /// `String.slice(start, end)` clamps out-of-range indices and returns an
@@ -340,7 +340,11 @@ pub fn token_is_alnum(t: &str) -> bool {
 }
 
 /// Computes unambiguous unique token anchors (Patience diff pre-pass).
-pub fn unique_token_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
+pub fn unique_token_anchors(
+    a: &[&str],
+    b: &[&str],
+    profile: Option<&LangProfile>,
+) -> Vec<(usize, usize)> {
     let mut a_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
     for (i, &t) in a.iter().enumerate() {
         let entry = a_counts.entry(t).or_insert((0, i));
@@ -351,11 +355,12 @@ pub fn unique_token_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
         let entry = b_counts.entry(t).or_insert((0, j));
         entry.0 += 1;
     }
+    let is_anchor = |t: &str| token_is_alnum(t) || profile.is_some_and(|p| p.is_operator_anchor(t));
     let mut common_unique = Vec::new();
     for (&t, &(count_a, idx_a)) in &a_counts {
         if count_a == 1
             && !token_is_ws(t)
-            && token_is_alnum(t)
+            && is_anchor(t)
             && let Some(&(count_b, idx_b)) = b_counts.get(t)
             && count_b == 1
         {
@@ -397,6 +402,21 @@ pub fn unique_token_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
     }
     lis.reverse();
     lis
+}
+
+/// Counts consecutive non-whitespace tokens that match between `a[i..]` and
+/// `b[j..]`.  Used to prefer a later occurrence of a repeated token when it
+/// starts a longer contiguous shared run.
+fn contiguous_non_ws_run(a: &[&str], b: &[&str], mut i: usize, mut j: usize) -> usize {
+    let mut len = 0;
+    while i < a.len() && j < b.len() && a[i] == b[j] {
+        if !token_is_ws(a[i]) {
+            len += 1;
+        }
+        i += 1;
+        j += 1;
+    }
+    len
 }
 
 /// Core LCS backtrace over string slices.
@@ -451,6 +471,28 @@ pub fn raw_lcs_pairs_with_lookahead(
                 j += 1;
                 continue;
             }
+            // When skipping a[i] is free w.r.t. LCS length, prefer a later
+            // occurrence of b[j] in a if it begins a strictly longer
+            // contiguous run of matching non-ws tokens.  This prevents the
+            // first (e.g. a variable binding) occurrence of a repeated
+            // identifier from being matched instead of the second (e.g. a
+            // function call) occurrence that shares a longer common suffix
+            // with b.  When the runs tie (repeated structural prefixes, e.g.
+            // `· ${` in template strings) the first match wins — the later
+            // occurrence is never strictly longer there, so no extra guard is
+            // needed.
+            if !token_is_ws(a[i]) && i + 1 < n && dp[idx(i + 1, j)] == dp[idx(i, j)] {
+                let cur_run = contiguous_non_ws_run(a, b, i, j);
+                let has_better = (i + 1..n).any(|k| {
+                    a[k] == b[j]
+                        && dp[idx(k, j)] == dp[idx(i, j)]
+                        && contiguous_non_ws_run(a, b, k, j) > cur_run
+                });
+                if has_better {
+                    i += 1;
+                    continue;
+                }
+            }
             pairs.insert(i, j);
             i += 1;
             j += 1;
@@ -486,7 +528,21 @@ pub fn raw_lcs_pairs_with_lookahead(
 /// Combines recursive Patience unique token anchoring with run-continuation
 /// LCS.
 pub fn lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
-    lcs_pairs_recursive(a, b, None, None)
+    lcs_pairs_recursive(a, b, None, None, None)
+}
+
+/// LCS backtrace with optional syntax profile for operator anchor awareness.
+pub fn lcs_pairs_with_profile(
+    a: &[&str],
+    b: &[&str],
+    profile: Option<&LangProfile>,
+) -> FxHashMap<usize, usize> {
+    lcs_pairs_recursive(a, b, None, None, profile)
+}
+
+#[inline]
+fn is_subword_token(t: &str) -> bool {
+    t == "_" || token_is_alnum(t)
 }
 
 /// Recursive Patience LCS backtrace with anchor lookahead context.
@@ -495,11 +551,12 @@ pub fn lcs_pairs_recursive(
     b: &[&str],
     next_a: Option<&str>,
     next_b: Option<&str>,
+    profile: Option<&LangProfile>,
 ) -> FxHashMap<usize, usize> {
     if a.is_empty() || b.is_empty() {
         return FxHashMap::default();
     }
-    let anchors = unique_token_anchors(a, b);
+    let anchors = unique_token_anchors(a, b, profile);
     if anchors.is_empty() {
         return raw_lcs_pairs_with_lookahead(a, b, next_a, next_b);
     }
@@ -507,19 +564,38 @@ pub fn lcs_pairs_recursive(
     let mut a_prev = 0;
     let mut b_prev = 0;
     for &(ai, bi) in &anchors {
-        if ai > a_prev && bi > b_prev {
-            let sub_pairs =
-                lcs_pairs_recursive(&a[a_prev..ai], &b[b_prev..bi], Some(a[ai]), Some(b[bi]));
+        let mut back_a = ai;
+        let mut back_b = bi;
+        while back_a > a_prev
+            && back_b > b_prev
+            && is_subword_token(a[back_a - 1])
+            && is_subword_token(b[back_b - 1])
+            && a[back_a - 1] == b[back_b - 1]
+        {
+            back_a -= 1;
+            back_b -= 1;
+        }
+
+        if back_a > a_prev && back_b > b_prev {
+            let sub_pairs = lcs_pairs_recursive(
+                &a[a_prev..back_a],
+                &b[b_prev..back_b],
+                Some(a[back_a]),
+                Some(b[back_b]),
+                profile,
+            );
             for (si, sj) in sub_pairs {
                 pairs.insert(a_prev + si, b_prev + sj);
             }
         }
-        pairs.insert(ai, bi);
+        for (k_a, k_b) in (back_a..=ai).zip(back_b..=bi) {
+            pairs.insert(k_a, k_b);
+        }
         a_prev = ai + 1;
         b_prev = bi + 1;
     }
     if a_prev < a.len() && b_prev < b.len() {
-        let sub_pairs = lcs_pairs_recursive(&a[a_prev..], &b[b_prev..], next_a, next_b);
+        let sub_pairs = lcs_pairs_recursive(&a[a_prev..], &b[b_prev..], next_a, next_b, profile);
         for (si, sj) in sub_pairs {
             pairs.insert(a_prev + si, b_prev + sj);
         }
@@ -536,18 +612,32 @@ pub fn lcs_pairs_anchored(
     let mut a_prev = 0;
     let mut b_prev = 0;
     for &(ai, bi) in anchors {
-        if ai > a_prev && bi > b_prev {
+        let mut back_a = ai;
+        let mut back_b = bi;
+        while back_a > a_prev
+            && back_b > b_prev
+            && is_subword_token(a[back_a - 1])
+            && is_subword_token(b[back_b - 1])
+            && a[back_a - 1] == b[back_b - 1]
+        {
+            back_a -= 1;
+            back_b -= 1;
+        }
+
+        if back_a > a_prev && back_b > b_prev {
             let sub_pairs = raw_lcs_pairs_with_lookahead(
-                &a[a_prev..ai],
-                &b[b_prev..bi],
-                Some(a[ai]),
-                Some(b[bi]),
+                &a[a_prev..back_a],
+                &b[b_prev..back_b],
+                Some(a[back_a]),
+                Some(b[back_b]),
             );
             for (si, sj) in sub_pairs {
                 pairs.insert(a_prev + si, b_prev + sj);
             }
         }
-        pairs.insert(ai, bi);
+        for (k_a, k_b) in (back_a..=ai).zip(back_b..=bi) {
+            pairs.insert(k_a, k_b);
+        }
         a_prev = ai + 1;
         b_prev = bi + 1;
     }
@@ -804,13 +894,26 @@ pub type WordSpans = Spans;
  */
 #[tracing::instrument(level = "trace", ret, skip_all, fields(old_len = old_text.len(), new_len = new_text.len()))]
 pub fn word_spans(old_text: &str, new_text: &str) -> WordSpans {
+    word_spans_with_profile(old_text, new_text, None)
+}
+
+/**
+ * Word-level change spans between an old and a new line with active syntax
+ * profile.
+ */
+#[tracing::instrument(level = "trace", ret, skip_all, fields(old_len = old_text.len(), new_len = new_text.len()))]
+pub fn word_spans_with_profile(
+    old_text: &str,
+    new_text: &str,
+    profile: Option<&LangProfile>,
+) -> WordSpans {
     let ot: Vec<&str> = tokenize_line(old_text).collect();
     let nt: Vec<&str> = tokenize_line(new_text).collect();
     // Cap: long lines fall back to whole-line highlighting.
     if ot.len() * nt.len() > 40_000 {
         return WordSpans::default();
     }
-    let anchors = unique_token_anchors(&ot, &nt);
+    let anchors = unique_token_anchors(&ot, &nt, profile);
     let has_anchors = !anchors.is_empty();
     let pairs = if has_anchors {
         lcs_pairs_anchored(&ot, &nt, &anchors)

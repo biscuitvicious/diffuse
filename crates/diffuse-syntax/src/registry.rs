@@ -74,7 +74,14 @@ pub fn fence_lang_ext(tag: &str) -> &str {
 // Profile registry
 // ---------------------------------------------------------------------------
 
-pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
+/// All registered file extensions supported by the registry.
+pub const REGISTERED_EXTENSIONS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "py", "sh", "bash", "c", "h", "cpp", "hpp", "java",
+    "go", "md", "markdown", "toml", "yaml", "yml", "json",
+];
+
+/// Returns all distinct language profiles registered in the syntax system.
+pub fn all_registered_profiles() -> [&'static LangProfile; 9] {
     static RS: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(rust::profile);
     static WEB: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(web::profile);
     static PY: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(python::profile);
@@ -86,20 +93,36 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
         std::sync::LazyLock::new(config::toml_yaml_profile);
     static JSON: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::json_profile);
 
+    [
+        &*RS,
+        &*WEB,
+        &*PY,
+        &*SH,
+        &*C_FAM,
+        &*GO,
+        &*MD,
+        &*TOML_YAML,
+        &*JSON,
+    ]
+}
+
+pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
+    let [rs, web, py, sh, c_fam, go, md, toml_yaml, json] = all_registered_profiles();
+
     // Fence ids are LANGUAGE names (` ```rust `); the profiles are keyed by
     // the file EXTENSIONS (`rs`). Map the common aliases — and the rust
     // doctest attribute lists — so a labeled fence actually highlights.
     let ext = fence_lang_ext(ext);
     match ext {
-        "rs" => Some(&*RS),
-        "ts" | "tsx" | "js" | "jsx" | "mjs" => Some(&*WEB),
-        "py" => Some(&*PY),
-        "sh" | "bash" => Some(&*SH),
-        "c" | "h" | "cpp" | "hpp" | "java" => Some(&*C_FAM),
-        "go" => Some(&*GO),
-        "md" | "markdown" => Some(&*MD),
-        "toml" | "yaml" | "yml" => Some(&*TOML_YAML),
-        "json" => Some(&*JSON),
+        "rs" => Some(rs),
+        "ts" | "tsx" | "js" | "jsx" | "mjs" => Some(web),
+        "py" => Some(py),
+        "sh" | "bash" => Some(sh),
+        "c" | "h" | "cpp" | "hpp" | "java" => Some(c_fam),
+        "go" => Some(go),
+        "md" | "markdown" => Some(md),
+        "toml" | "yaml" | "yml" => Some(toml_yaml),
+        "json" => Some(json),
         _ => None,
     }
 }

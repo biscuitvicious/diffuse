@@ -19,6 +19,8 @@ pub enum BlockDelimStyle {
 /// A per-language syntax profile.
 #[derive(Debug)]
 pub struct LangProfile {
+    /// Canonical language name (e.g. "rust", "typescript", "python").
+    pub name: &'static str,
     /// Sorted keyword slice for `O(log n)` binary-search lookup.
     pub keywords: &'static [&'static str],
     /// `#` to end of line is a comment (python/shell/yaml/toml/markdown).
@@ -57,6 +59,8 @@ pub struct LangProfile {
     /// Prefixes that introduce declarations/items in this language.
     /// Used to break multi-line statement expansion in `pass_assemble_mods`.
     pub decl_prefixes: &'static [&'static str],
+    /// Sorted multi-character operators for `O(log n)` binary-search lookup.
+    pub operators: &'static [&'static str],
     /// Structural scope-boundary prefixes — items that delimit top-level scopes
     /// and act as hard stops in `fn_of`'s backward scan (class, struct, impl,
     /// …). Distinct from `decl_prefixes` which may include variable
@@ -69,6 +73,12 @@ impl LangProfile {
     /// slice).
     pub fn is_keyword(&self, word: &str) -> bool {
         self.keywords.binary_search(&word).is_ok()
+    }
+
+    /// Whether `t` is a recognized multi-character operator in this language.
+    #[inline]
+    pub fn is_operator_anchor(&self, t: &str) -> bool {
+        self.operators.binary_search(&t).is_ok()
     }
 
     /// Whether a line acts as an opening delimiter of a syntactic block.

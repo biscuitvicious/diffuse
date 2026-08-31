@@ -155,8 +155,8 @@ index 1111111..2222222 100644
         "tracked file (index 0) must be expanded by default"
     );
 
-    // The flat sequence must contain rows for file 0, but only the header row for
-    // file 1
+    // The flat sequence must contain rows for file 0, but only the header row
+    // for file 1
     let file_1_rows: Vec<_> = state.flat.iter().filter(|r| r.file_idx == 1).collect();
     assert_eq!(
         file_1_rows.len(),
@@ -262,8 +262,8 @@ index 1111111..2222222 100644
         "current_hunk must be 1 when on the first row of Hunk 2"
     );
 
-    // Render frame with viewport covering hunk 2 start: must show H2 divider with
-    // hidden lines gap and buttons
+    // Render frame with viewport covering hunk 2 start: must show H2 divider
+    // with hidden lines gap and buttons
     let gap = state.hunk_leading_gap(0, 1);
     let frame = state.render_frame(120, 40);
     let h2_txt = hunk_divider_text(1, &state.output.files[0].hunks[1], gap);
@@ -278,30 +278,30 @@ index 1111111..2222222 100644
 }
 
 #[test]
-fn test_mirage_golden_cache_rs_hunk_divider() {
+fn test_diffuse_golden_plan_md_hunk_divider() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/mirage-2025-08/wire.json"
+        "/../../tests/golden/diffuse-2026-08/wire.json"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
+    let json_str = fs::read_to_string(wire_path).expect("must read diffuse-2026-08/wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
-    let mut state = AppState::new(output, "mirage".into(), temp_notes_path());
+    let mut state = AppState::new(output, "diffuse".into(), temp_notes_path());
 
-    // Find cache.rs file index
+    // Find PLAN.md file index
     let fi = state
         .output
         .files
         .iter()
-        .position(|f| f.path.contains("cache.rs"))
-        .expect("cache.rs must exist");
+        .position(|f| f.path.contains("PLAN.md"))
+        .expect("PLAN.md must exist");
 
-    // Jump to cache.rs
-    let cache_file_row = state
+    // Jump to PLAN.md
+    let plan_file_row = state
         .flat
         .iter()
         .position(|fr| fr.file_idx == fi && fr.is_file_header)
-        .expect("file header row for cache.rs");
-    state.jump_to_row(cache_file_row, false);
+        .expect("file header row for PLAN.md");
+    state.jump_to_row(plan_file_row, false);
 
     let frame = state.render_frame(140, 40);
     assert!(frame.contains("H1"), "must contain H1 divider");

@@ -6,8 +6,14 @@ fn test_prefix_gutters() {
     let r_add = prefix_of(RowKind::Add, Some(42), None, false, &[]);
     assert_eq!(r_add, "  42 +");
 
+    let r_add_mov = prefix_of(RowKind::Add, Some(42), None, true, &[]);
+    assert_eq!(r_add_mov, "  42≈+");
+
     let r_del = prefix_of(RowKind::Del, None, Some(10), false, &[]);
     assert_eq!(r_del, "  10 -");
+
+    let r_del_mov = prefix_of(RowKind::Del, None, Some(10), true, &[]);
+    assert_eq!(r_del_mov, "  10≈-");
 
     let r_mod = prefix_of(RowKind::Mod, Some(55), Some(54), false, &[]);
     assert_eq!(r_mod, "  55 ~");
@@ -271,7 +277,148 @@ fn test_render_raw_row_trailing_whitespace() {
     assert!(del_trailing.contains("  41 - "));
     assert!(del_trailing.contains("\x1b[38;5;203mfoo();"));
     assert!(
-        del_trailing.contains("\x1b[48;5;88m\x1b[9m\x1b[38;5;167m  \x1b[29m\x1b[49m"),
+        del_trailing.contains("\x1b[48;5;88m\x1b[9m\x1b[38;5;174m  \x1b[29m\x1b[49m"),
         "deleted trailing spaces must have subline highlight and reset background to default"
+    );
+}
+
+#[test]
+fn test_render_moved_row_with_indentation_subwords() {
+    let theme = DiffuseTheme::MAGIC;
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Common,
+            color: Some("text".into()),
+            sgr: None,
+            text: "    ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Add,
+            color: Some("text".into()),
+            sgr: None,
+            text: "    ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Common,
+            color: Some("syntaxFunction".into()),
+            sgr: None,
+            text: "foo()".into(),
+        },
+    ];
+    let prefix = "  10≈+ ";
+    let spans = Spans {
+        del: vec![(0, 4)],
+        add: vec![(0, 8)],
+    };
+    let rendered = render_row_segment(
+        "        foo()",
+        Some("    foo()"),
+        &spans,
+        RowKind::Add,
+        true, // moved = true
+        &runs,
+        0,
+        usize::MAX,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    // Gutter prefix
+    assert!(rendered.contains("  10≈+ "));
+    // Subline addition fill on the 4 added indentation spaces
+    assert!(
+        rendered.contains("\x1b[48;5;28m"),
+        "added indentation spaces on moved row must receive green subline fill"
+    );
+}
+
+#[test]
+fn test_render_mod_row_with_indentation_subwords() {
+    let theme = DiffuseTheme::MAGIC;
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Common,
+            color: Some("text".into()),
+            sgr: None,
+            text: "    ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Add,
+            color: Some("text".into()),
+            sgr: None,
+            text: "    ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Common,
+            color: Some("syntaxFunction".into()),
+            sgr: None,
+            text: "bar()".into(),
+        },
+    ];
+    let prefix = "  20 ~ ";
+    let spans = Spans {
+        del: vec![(0, 4)],
+        add: vec![(0, 8)],
+    };
+    let rendered = render_row_segment(
+        "        bar()",
+        Some("    bar()"),
+        &spans,
+        RowKind::Mod,
+        false,
+        &runs,
+        0,
+        usize::MAX,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(rendered.contains("  20 ~ "));
+    assert!(
+        rendered.contains("\x1b[48;5;28m"),
+        "added indentation spaces on mod row must receive green subline fill"
+    );
+}
+
+#[test]
+fn test_render_moved_source_del_row() {
+    let theme = DiffuseTheme::MAGIC;
+    let s_del = theme.row_style(RowKind::Del);
+    let runs = vec![OutputRun {
+        kind: RunKind::Del,
+        color: None,
+        sgr: None,
+        text: "    foo()".into(),
+    }];
+    let prefix = "  15≈- ";
+    let rendered = render_row_segment(
+        "    foo()",
+        None,
+        &Spans::default(),
+        RowKind::Del,
+        true, // moved = true (source of move)
+        &runs,
+        0,
+        usize::MAX,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(rendered.contains("  15≈- "));
+    assert!(
+        rendered.contains(&s_del.fg.fg_code()),
+        "deleted source of move must have deletion foreground color"
     );
 }

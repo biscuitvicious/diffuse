@@ -440,3 +440,51 @@ fn test_markdown_horizontal_rule_separator() {
     assert_eq!(toks[0].color, "mdRule");
     assert_eq!(toks[0].sgr, Some(MD_SGR_BOLD));
 }
+
+#[test]
+fn test_all_profiles_operators_sorted() {
+    for prof in all_registered_profiles() {
+        let mut sorted = prof.operators.to_vec();
+        sorted.sort();
+        assert_eq!(
+            prof.operators,
+            sorted.as_slice(),
+            "operators in profile `{}` not sorted. Expected:\n{:?}",
+            prof.name,
+            sorted
+        );
+        for &op in prof.operators {
+            assert!(
+                prof.is_operator_anchor(op),
+                "is_operator_anchor failed for `{op}` in profile `{}`",
+                prof.name
+            );
+        }
+        assert!(
+            !prof.is_operator_anchor("not_an_operator"),
+            "non-operator returned true for profile `{}`",
+            prof.name
+        );
+    }
+}
+
+#[test]
+fn test_registered_extensions_resolve() {
+    for &ext in REGISTERED_EXTENSIONS {
+        assert!(
+            lang_profile(ext).is_some(),
+            "registered extension `{ext}` must resolve to a valid LangProfile"
+        );
+    }
+}
+
+#[test]
+fn test_first_ascii_word() {
+    assert_eq!(first_ascii_word("let x = 1;"), Some("let"));
+    assert_eq!(first_ascii_word("    fn main()"), Some("fn"));
+    assert_eq!(first_ascii_word("//! comment"), None);
+    assert_eq!(first_ascii_word(".map()"), None);
+    assert_eq!(first_ascii_word("+ x"), None);
+    assert_eq!(first_ascii_word("   "), None);
+    assert_eq!(first_ascii_word("!!!"), None);
+}

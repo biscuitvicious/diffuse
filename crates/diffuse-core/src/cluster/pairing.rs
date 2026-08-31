@@ -1,9 +1,7 @@
 //! The DP pairing bridge: `solve_cluster` as a drop-in replacement for the
 //! legacy `pass_pairing`'s greedy scoring — the switchover's fidelity-first
 //! step. Legacy passes 2–4 (span assembly, reflow filtering, ordered walk)
-//! run UNCHANGED on top. The target: the frozen `mirage-2025-08` wire,
-//! byte-identical; other corpora are allowed drift while the DP replaces
-//! the greedy heuristics.
+//! run UNCHANGED on top.
 //!
 //! Fidelity rules:
 //! - The legacy guard set (moved rows, was-moved dels, dels whose content

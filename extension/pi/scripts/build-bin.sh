@@ -1,12 +1,13 @@
 #!/bin/sh
-# Build the diffuse binary and bundle it with the extension (bin/diffuse next
-# to review.ts) — the extension ships with the engine it was tested against.
+# Build the diffuse binary.  The binary stays in target/ — install.sh
+# copies it from there directly into the extension destination, so there
+# is no intermediate extension/pi/bin/ copy step.
 #
 #   ./scripts/build-bin.sh            # release (default — small, fast)
 #   PROFILE=debug ./scripts/build-bin.sh
 set -e
 cd "$(dirname "$(readlink -f "$0")")/../../.." # the workspace root
-PROFILE="${PROFILE:-dev}"
+PROFILE="${PROFILE:-release}"
 TOOLCHAIN="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
 if [ -n "$TOOLCHAIN" ]; then
   CARGO="cargo +$TOOLCHAIN"
@@ -15,9 +16,8 @@ else
 fi
 if [ "$PROFILE" = "release" ]; then
 	$CARGO build --release --bin diffuse
-	cp --remove-destination target/release/diffuse extension/pi/bin/diffuse
+	echo "built: target/release/diffuse"
 else
 	$CARGO build --bin diffuse
-	cp --remove-destination target/debug/diffuse extension/pi/bin/diffuse
+	echo "built: target/debug/diffuse"
 fi
-echo "bundled: extension/pi/bin/diffuse ($PROFILE)"

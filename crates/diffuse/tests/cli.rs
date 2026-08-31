@@ -733,3 +733,44 @@ fn test_cli_diffuse_log_file() {
     // The log file was created/opened
     assert!(log_path.exists());
 }
+
+/// The JSON payload stdin contract (`{diff, contents, oldContents}` → wire
+/// JSON) — the shape the pi extension's backend pipes into `diffuse --json`.
+#[test]
+fn test_json_payload_stdin_wire_contract() {
+    let payload = r#"{
+        "diff": "diff --git a/test.rs b/test.rs\nindex 0000000..1111111 100644\n--- a/test.rs\n+++ b/test.rs\n@@ -1 +1 @@\n-old\n+new\n",
+        "contents": { "test.rs": "new\n" },
+        "oldContents": { "test.rs": "old\n" }
+    }"#;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--json")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    use std::io::Write as _;
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(payload.as_bytes())
+        .unwrap();
+    drop(child.stdin.take());
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "diffuse --json must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let wire: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&out.stdout))
+        .expect("stdout must be wire JSON");
+    assert_eq!(wire["files"].as_array().unwrap().len(), 1);
+    assert_eq!(wire["files"][0]["path"], "test.rs");
+    assert_eq!(wire["files"][0]["hunks"].as_array().unwrap().len(), 1);
+}

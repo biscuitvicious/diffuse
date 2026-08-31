@@ -31,3 +31,10 @@
 ## Build & Installation Conventions
 
 - **`cargo install --locked`**: Always use `--locked` when installing binaries locally (e.g., `cargo install --locked --path crates/diffuse --force`) to ensure deterministic builds strictly bound to the pinned versions in `Cargo.lock`.
+
+## Golden Corpus Harvesting
+
+- **Pinned Revisions Only**: Harvested corpora must pin the exact harvested history. `diffuse-harvest` resolves every revision expression to absolute full commit ids before harvesting, so a fixture recorded as `HEAD~150..HEAD` can never silently re-resolve to a different window — always harvest against explicit, absolute ranges.
+- **No Embedded Contents**: The diff and the old/new side snapshots travel as separate corpus files (`diff.patch`, `files/*.old.*`, `files/*.new.*`) recorded by `meta.json`; fixture JSON carries metadata (revision, path mapping) only — never `diff`/`contents`/`oldContents` blobs.
+- **No Self-Referential Harvests**: Golden corpora must not diff the golden tree itself (`--exclude tests/golden`); a corpus that ingests its own history balloons into megabytes of meta-noise.
+- **Regeneration Contract**: Regeneration (`GEN_GOLDEN`) re-runs the engine over the frozen inputs only — it never re-harvests, and it must stay byte-for-byte reproducible from the recorded revision.

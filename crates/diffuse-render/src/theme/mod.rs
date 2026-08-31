@@ -12,104 +12,137 @@ pub use crate::ansi::{FG_RESET, decode_sgr, encode_sgr, sgr_off, strip_ansi};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowStyle {
     pub icon: &'static str,
-    pub tint: u8,
-    pub cursor: u8,
-    pub fill: Option<u8>,
-    pub fill_cursor: Option<u8>,
-    pub tint_bg_str: &'static str,
-    pub cursor_bg_str: &'static str,
-    pub fill_bg_str: &'static str,
-    pub fill_cursor_bg_str: &'static str,
-    pub fg: &'static str,
+    pub tint_bg: crate::ansi::AnsiColor,
+    pub cursor_bg: crate::ansi::AnsiColor,
+    pub fill_bg: Option<crate::ansi::AnsiColor>,
+    pub fill_cursor_bg: Option<crate::ansi::AnsiColor>,
+    pub fg: crate::ansi::AnsiColor,
 }
 
 impl RowStyle {
-    /// `\x1b[48;5;{tint}m` — the row's resting background.
     #[inline]
-    pub fn tint_bg(&self) -> &'static str {
-        self.tint_bg_str
+    #[must_use]
+    pub fn tint_bg(&self) -> String {
+        self.tint_bg.bg_code()
     }
 
-    /// `\x1b[48;5;{cursor}m` — the row's selected (lifted) background.
     #[inline]
-    pub fn cursor_bg(&self) -> &'static str {
-        self.cursor_bg_str
+    #[must_use]
+    pub fn cursor_bg(&self) -> String {
+        self.cursor_bg.bg_code()
     }
 
-    /// `\x1b[48;5;{fill}m` — the mod rows' word-fill background.
     #[inline]
-    pub fn fill_bg(&self) -> &'static str {
-        self.fill_bg_str
+    #[must_use]
+    pub fn fill_bg(&self) -> String {
+        self.fill_bg.map_or_else(String::new, |c| c.bg_code())
     }
 
-    /// `\x1b[48;5;{fill_cursor}m` — the selected word-fill background.
     #[inline]
-    pub fn fill_cursor_bg(&self) -> &'static str {
-        self.fill_cursor_bg_str
+    #[must_use]
+    pub fn fill_cursor_bg(&self) -> String {
+        self.fill_cursor_bg
+            .map_or_else(String::new, |c| c.bg_code())
     }
 }
 
 pub const S_ADD: RowStyle = RowStyle {
     icon: "+",
-    tint: 22,
-    cursor: 28,
-    fill: Some(28),
-    fill_cursor: Some(34),
-    tint_bg_str: "\x1b[48;5;22m",
-    cursor_bg_str: "\x1b[48;5;28m",
-    fill_bg_str: "\x1b[48;5;28m",
-    fill_cursor_bg_str: "\x1b[48;5;34m",
-    fg: "toolDiffAdded",
+    tint_bg: crate::ansi::AnsiColor::Index(22),
+    cursor_bg: crate::ansi::AnsiColor::Index(28),
+    fill_bg: Some(crate::ansi::AnsiColor::Index(28)),
+    fill_cursor_bg: Some(crate::ansi::AnsiColor::Index(34)),
+    fg: crate::ansi::AnsiColor::Index(150),
 };
 
 pub const S_DEL: RowStyle = RowStyle {
     icon: "-",
-    tint: 52,
-    cursor: 88,
-    fill: None,
-    fill_cursor: None,
-    tint_bg_str: "\x1b[48;5;52m",
-    cursor_bg_str: "\x1b[48;5;88m",
-    fill_bg_str: "\x1b[48;5;52m",
-    fill_cursor_bg_str: "\x1b[48;5;88m",
-    fg: "toolDiffRemoved",
+    tint_bg: crate::ansi::AnsiColor::Index(52),
+    cursor_bg: crate::ansi::AnsiColor::Index(88),
+    fill_bg: None,
+    fill_cursor_bg: None,
+    fg: crate::ansi::AnsiColor::Index(167),
 };
 
 pub const S_MOD: RowStyle = RowStyle {
     icon: "~",
-    tint: 236,
-    cursor: 237,
-    fill: Some(28),
-    fill_cursor: Some(34),
-    tint_bg_str: "\x1b[48;5;236m",
-    cursor_bg_str: "\x1b[48;5;237m",
-    fill_bg_str: "\x1b[48;5;28m",
-    fill_cursor_bg_str: "\x1b[48;5;34m",
-    fg: "toolDiffContext",
+    tint_bg: crate::ansi::AnsiColor::Index(236),
+    cursor_bg: crate::ansi::AnsiColor::Index(237),
+    fill_bg: Some(crate::ansi::AnsiColor::Index(28)),
+    fill_cursor_bg: Some(crate::ansi::AnsiColor::Index(34)),
+    fg: crate::ansi::AnsiColor::Index(244),
 };
 
 pub const S_MOV: RowStyle = RowStyle {
     icon: "≈",
-    tint: 236,
-    cursor: 237,
-    fill: None,
-    fill_cursor: None,
-    tint_bg_str: "\x1b[48;5;236m",
-    cursor_bg_str: "\x1b[48;5;237m",
-    fill_bg_str: "\x1b[48;5;236m",
-    fill_cursor_bg_str: "\x1b[48;5;237m",
-    fg: "muted",
+    tint_bg: crate::ansi::AnsiColor::Index(236),
+    cursor_bg: crate::ansi::AnsiColor::Index(237),
+    fill_bg: None,
+    fill_cursor_bg: None,
+    fg: crate::ansi::AnsiColor::Index(244),
 };
 
-/// A token color classifier and ANSI stylizer.
-#[derive(Clone, Debug)]
+/// A token color classifier and ANSI stylizer backed by a [`ThemePalette`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DiffuseTheme {
     pub name: &'static str,
+    pub palette: ThemePalette,
 }
 
 impl DiffuseTheme {
-    pub const MAGIC: Self = Self { name: "magic" };
-    pub const LEGACY: Self = Self { name: "legacy" };
+    pub const MAGIC: Self = Self {
+        name: "magic",
+        palette: ThemePalette::default_magic(),
+    };
+    pub const DEEP_BLACK: Self = Self {
+        name: "deep_black",
+        palette: ThemePalette::deep_black(),
+    };
+    pub const LEGACY: Self = Self {
+        name: "legacy",
+        palette: ThemePalette::legacy(),
+    };
+
+    /// Get the row background and icon style for the specified diff row kind
+    /// under this theme.
+    #[must_use]
+    pub fn row_style(&self, kind: diffuse_core::parse::RowKind) -> RowStyle {
+        use diffuse_core::parse::RowKind;
+        match kind {
+            RowKind::Add => RowStyle {
+                icon: "+",
+                tint_bg: self.palette.add_tint_bg,
+                cursor_bg: self.palette.add_cursor_bg,
+                fill_bg: Some(self.palette.add_fill_bg),
+                fill_cursor_bg: Some(self.palette.add_fill_cursor_bg),
+                fg: self.palette.add_fg,
+            },
+            RowKind::Del => RowStyle {
+                icon: "-",
+                tint_bg: self.palette.del_tint_bg,
+                cursor_bg: self.palette.del_cursor_bg,
+                fill_bg: None,
+                fill_cursor_bg: None,
+                fg: self.palette.del_fg,
+            },
+            RowKind::Mod => RowStyle {
+                icon: "~",
+                tint_bg: self.palette.mod_tint_bg,
+                cursor_bg: self.palette.mod_cursor_bg,
+                fill_bg: Some(self.palette.mod_fill_bg),
+                fill_cursor_bg: Some(self.palette.mod_fill_cursor_bg),
+                fg: self.palette.mod_fg,
+            },
+            _ => RowStyle {
+                icon: "≈",
+                tint_bg: self.palette.mov_tint_bg,
+                cursor_bg: self.palette.mov_cursor_bg,
+                fill_bg: None,
+                fill_cursor_bg: None,
+                fg: self.palette.mov_fg,
+            },
+        }
+    }
 
     /// Render a syntax/markdown token directly into an output buffer.
     pub fn write_token(
@@ -121,78 +154,27 @@ impl DiffuseTheme {
         sgr: Option<u32>,
         out: &mut String,
     ) {
-        let is_add = row_kind == "add" || tok_kind == Some("add");
-        let is_del = row_kind == "del" || tok_kind == Some("del");
-
-        let ansi_color: Option<&'static str> = if self.name == "legacy" {
-            let mut c = color;
-            if c == "mdBold" {
-                c = "syntaxType";
-            } else if c == "mdItalic" || c == "mdUrl" || c == "mdStrike" {
-                c = "muted";
-            } else if c == "mdLink" {
-                c = "text";
-            } else if c == "mdDelim" {
-                c = "accent";
-            }
-
-            if is_add && (c == "syntaxComment" || c == "muted") {
-                Some("\x1b[38;5;250m")
-            } else if c == "syntaxType" {
-                Some("\x1b[38;5;173m")
-            } else {
-                Self::fallback_named_color(c)
-            }
-        } else if is_add {
-            match color {
-                "mdBold" => Some("\x1b[38;5;172m"),
-                "syntaxType" | "syntaxNumber" => Some("\x1b[38;5;221m"),
-                "syntaxKeyword" => Some("\x1b[38;5;147m"),
-                "syntaxFunction" => Some("\x1b[38;5;123m"),
-                "syntaxOperator" | "mdLink" => Some("\x1b[38;5;117m"),
-                "syntaxComment" => Some("\x1b[38;5;150m"),
-                "mdItalic" | "muted" => Some("\x1b[38;5;229m"),
-                "syntaxString" => Some("\x1b[38;5;121m"),
-                "mdUrl" | "mdStrike" => Some("\x1b[38;5;250m"),
-                "accent" | "mdDelim" => Some("\x1b[38;5;51m"),
-                _ => Self::fallback_named_color(color),
-            }
-        } else if is_del {
-            match color {
-                "mdBold" | "syntaxType" | "syntaxNumber" => Some("\x1b[38;5;222m"),
-                "syntaxKeyword" => Some("\x1b[38;5;183m"),
-                "syntaxFunction" => Some("\x1b[38;5;159m"),
-                "syntaxOperator" | "mdLink" => Some("\x1b[38;5;153m"),
-                "mdItalic" | "syntaxComment" | "muted" => Some("\x1b[38;5;224m"),
-                "syntaxString" => Some("\x1b[38;5;122m"),
-                "mdUrl" | "mdStrike" => Some("\x1b[38;5;248m"),
-                "accent" | "mdDelim" => Some("\x1b[38;5;51m"),
-                _ => Self::fallback_named_color(color),
-            }
+        use diffuse_core::parse::RowKind;
+        let rk = if row_kind == "add" || tok_kind == Some("add") {
+            RowKind::Add
+        } else if row_kind == "del" || tok_kind == Some("del") {
+            RowKind::Del
+        } else if row_kind == "mod" {
+            RowKind::Mod
         } else {
-            match color {
-                "mdBold" => Some("\x1b[38;5;172m"),
-                "syntaxType" => Some("\x1b[38;5;173m"),
-                "syntaxKeyword" => Some("\x1b[38;5;141m"),
-                "syntaxFunction" => Some("\x1b[38;5;117m"),
-                "syntaxNumber" => Some("\x1b[38;5;179m"),
-                "syntaxOperator" => Some("\x1b[38;5;110m"),
-                "mdItalic" => Some("\x1b[38;5;187m"),
-                "syntaxString" => Some("\x1b[38;5;114m"),
-                "mdLink" => Some("\x1b[38;5;75m"),
-                "mdUrl" | "mdStrike" | "syntaxComment" | "muted" => Some("\x1b[38;5;243m"),
-                "mdRule" => Some("\x1b[38;5;220m"),
-                "accent" | "mdDelim" => Some("\x1b[38;5;51m"),
-                _ => Self::fallback_named_color(color),
-            }
+            RowKind::Ctx
         };
+
+        let ansi_color = self
+            .palette
+            .syntax_token_color(color, rk, self.name == "legacy");
 
         if let Some(s) = sgr {
             use std::fmt::Write;
             let _ = write!(out, "\x1b[{s}m");
         }
         if let Some(c) = ansi_color {
-            out.push_str(c);
+            c.write_fg(out).ok();
             out.push_str(text);
             out.push_str(FG_RESET);
         } else {
@@ -206,6 +188,7 @@ impl DiffuseTheme {
     }
 
     /// Render a syntax/markdown token to styled ANSI text.
+    #[must_use]
     pub fn render_token(
         &self,
         color: &str,
@@ -219,6 +202,11 @@ impl DiffuseTheme {
         out
     }
 
+    #[must_use]
+    pub fn fallback_color(&self, name: &str) -> Option<crate::ansi::AnsiColor> {
+        self.palette.named_color(name)
+    }
+
     pub fn fallback_named_color(name: &str) -> Option<&'static str> {
         match name {
             "toolDiffAdded" => Some("\x1b[38;5;150m"),
@@ -226,8 +214,31 @@ impl DiffuseTheme {
             "toolDiffContext" | "muted" => Some("\x1b[38;5;244m"),
             "warning" => Some("\x1b[38;5;220m"),
             "border" => Some("\x1b[38;5;240m"),
-            "accent" => Some("\x1b[38;5;214m"),
             _ => None,
+        }
+    }
+
+    /// Resolve a theme by name (`"magic"`, `"deep_black"`, `"legacy"`).
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_lowercase().as_str() {
+            "magic" => Some(Self::MAGIC),
+            "deep_black" | "deep-black" | "dark" | "black" => Some(Self::DEEP_BLACK),
+            "legacy" => Some(Self::LEGACY),
+            _ => None,
+        }
+    }
+
+    /// Resolve the active theme from the `DIFFUSE_THEME` environment variable,
+    /// falling back to the default `magic` theme if unset or invalid.
+    #[must_use]
+    pub fn from_env() -> Self {
+        if let Ok(val) = std::env::var("DIFFUSE_THEME")
+            && let Some(theme) = Self::from_name(&val)
+        {
+            theme
+        } else {
+            Self::MAGIC
         }
     }
 }

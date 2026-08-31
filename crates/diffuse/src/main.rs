@@ -336,7 +336,8 @@ fn main() -> io::Result<()> {
     let no_tui = args.no_tui || args.pager || is_markdown || is_raw;
 
     // Peek a piped stdin only when the routing decision depends on its
-    // content (no git args, no explicit contract flags, no explicit subcommand).
+    // content (no git args, no explicit contract flags, no explicit
+    // subcommand).
     let mut piped_stdin = String::new();
     if explicit_cmd.is_none()
         && !stdin_tty
@@ -387,9 +388,9 @@ fn main() -> io::Result<()> {
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines);
 
-        // Interactive TUI only when both ends are real terminals and not in pager or
-        // markdown mode; any piped or redirected end falls back to the full
-        // ANSI or Markdown render.
+        // Interactive TUI only when both ends are real terminals and not in
+        // pager or markdown mode; any piped or redirected end falls
+        // back to the full ANSI or Markdown render.
         if !no_tui && stdin_tty && stdout_tty {
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),

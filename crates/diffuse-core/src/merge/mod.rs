@@ -304,6 +304,7 @@ pub fn del_pairing(
             if is_compare_op {
                 let first_op_char = del_op.chars().next().unwrap();
                 let mut op_best: Option<usize> = None;
+                let mut op_best_char: Option<usize> = None;
                 let mut op_best_gap = usize::MAX;
                 for c in *as0..*ae {
                     if let Some(ch) = char_at(add_text, c)
@@ -313,15 +314,22 @@ pub fn del_pairing(
                         if g < op_best_gap {
                             op_best_gap = g;
                             op_best = Some(i);
-                            op_anchor.insert(j, c);
+                            op_best_char = Some(c);
                         }
                     }
                 }
-                if let Some(ob) = op_best {
+                // The op match must still compete across add spans — the
+                // winner is the smallest op gap, not the last span scanned
+                // (an unconditional win crossed the pairing when several
+                // spans contain `<`/`>` chars).
+                if let Some(ob) = op_best
+                    && op_best_gap < best_gap
+                {
                     best = Some(ob);
-                    best_gap = 0; // op wins over any gap rule
-                    continue;
+                    best_gap = op_best_gap;
+                    op_anchor.insert(j, op_best_char.expect("op char"));
                 }
+                continue;
             }
             let first = char_at(add_text, *as0);
             let gap = del_start.abs_diff(add_start)
@@ -452,8 +460,9 @@ pub fn merged_runs_from_texts<'a>(
                 add: Some(add_spans[*ai]),
             });
         } else {
-            // del_pos[j] is already the exact display position (del_display_positions
-            // applied the add-correction); just clamp to the new-text length.
+            // del_pos[j] is already the exact display position
+            // (del_display_positions applied the add-correction);
+            // just clamp to the new-text length.
             let add_len = char_len_of(add_text);
             let ins = del_pos[j].min(add_len);
             events.push(Ev {
@@ -487,6 +496,61 @@ pub fn merged_runs_from_texts<'a>(
             if let Some(aspan) = ev.add {
                 let add_text_span = char_slice(add_text, aspan.0, aspan.1);
                 if all_ws(del_text_span) && all_ws(add_text_span) {
+                    let is_leading = dspan.0 == 0 && aspan.0 == 0;
+                    if is_leading {
+                        // For leading indentation, align changes to the first
+                        // possible location
+                        // (normally col 0) so whitespace changes line up
+                        // cleanly across rows
+                        // with different indentation levels without jagged
+                        // edges.
+                        let d_bytes = del_text_span.as_bytes();
+                        let a_bytes = add_text_span.as_bytes();
+                        if d_bytes.len() < a_bytes.len() {
+                            let diff = a_bytes.len() - d_bytes.len();
+                            let mut suffix_match = 0;
+                            while suffix_match < d_bytes.len()
+                                && d_bytes[d_bytes.len() - 1 - suffix_match]
+                                    == a_bytes[a_bytes.len() - 1 - suffix_match]
+                            {
+                                suffix_match += 1;
+                            }
+                            if suffix_match == d_bytes.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Add,
+                                    text: &add_text_span[..diff],
+                                });
+                                runs.push(Run {
+                                    kind: RunKind::Common,
+                                    text: &add_text_span[diff..],
+                                });
+                                pos = aspan.1;
+                                continue;
+                            }
+                        } else if d_bytes.len() > a_bytes.len() {
+                            let diff = d_bytes.len() - a_bytes.len();
+                            let mut suffix_match = 0;
+                            while suffix_match < a_bytes.len()
+                                && d_bytes[d_bytes.len() - 1 - suffix_match]
+                                    == a_bytes[a_bytes.len() - 1 - suffix_match]
+                            {
+                                suffix_match += 1;
+                            }
+                            if suffix_match == a_bytes.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Del,
+                                    text: &del_text_span[..diff],
+                                });
+                                runs.push(Run {
+                                    kind: RunKind::Common,
+                                    text: add_text_span,
+                                });
+                                pos = aspan.1;
+                                continue;
+                            }
+                        }
+                    }
+
                     // The shared prefix is the ACTUAL matching chars — a
                     // type change (`\t` vs 4 spaces) shares nothing: the
                     // tab strikes, the spaces fill, both subworded.

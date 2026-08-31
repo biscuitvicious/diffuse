@@ -607,8 +607,8 @@ fn test_render_markdown_diff_prefix_resets_fg_color() {
             ..MarkdownOptions::default()
         },
     );
-    // The prefix '-' is red and immediately reset with \x1b[39m so "1. Export " is
-    // not red
+    // The prefix '-' is red and immediately reset with \x1b[39m so "1. Export "
+    // is not red
     assert!(md.contains("\x1b[38;5;203m-\x1b[39m1. Export "));
 }
 

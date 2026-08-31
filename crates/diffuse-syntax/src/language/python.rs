@@ -11,8 +11,14 @@ pub const KEYWORDS: &[&str] = &[
     "with", "yield",
 ];
 
+pub const OPERATORS: &[&str] = &[
+    "!=", "%=", "&=", "**", "**=", "*=", "+=", "-=", "->", "//", "//=", "/=", ":=", "<<", "<<=",
+    "<=", "==", ">=", ">>", ">>=", "^=", "|=",
+];
+
 pub fn profile() -> LangProfile {
     LangProfile {
+        name: "python",
         keywords: KEYWORDS,
         hash_comment: true,
         line_comment: false,
@@ -25,6 +31,7 @@ pub fn profile() -> LangProfile {
         block_style: BlockDelimStyle::IndentColon,
         fn_decl: Some(Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z0-9_]+)").expect("py fn_decl")),
         decl_prefixes: &["def ", "async def ", "class "],
+        operators: OPERATORS,
         scope_stop_prefixes: &["class "],
     }
 }

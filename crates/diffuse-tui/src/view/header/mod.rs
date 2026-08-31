@@ -214,8 +214,13 @@ use ratatui::{
     text::{Line, Span},
 };
 
-/// Render the review header bar as a styled Ratatui [`Line`].
-pub fn header_bar_line(repo: &str, file: &OutputFile) -> Line<'static> {
+/// Render the review header bar as a styled Ratatui [`Line`] with theme
+/// support.
+pub fn header_bar_line_themed(
+    repo: &str,
+    file: &OutputFile,
+    theme: &crate::render::DiffuseTheme,
+) -> Line<'static> {
     let counts = &file.counts;
     let note_count = file.notes.len();
     let note_s = format!(
@@ -274,7 +279,14 @@ pub fn header_bar_line(repo: &str, file: &OutputFile) -> Line<'static> {
         Style::default().fg(Color::Indexed(244)),
     ));
 
-    Line::from(spans).style(Style::default().bg(Color::Indexed(237)))
+    let bg = crate::view::to_color(theme.palette.header_bar_bg);
+
+    Line::from(spans).style(Style::default().bg(bg))
+}
+
+/// Render the review header bar as a styled Ratatui [`Line`].
+pub fn header_bar_line(repo: &str, file: &OutputFile) -> Line<'static> {
+    header_bar_line_themed(repo, file, &crate::render::DiffuseTheme::from_env())
 }
 
 /// Render the secondary status bar as a styled Ratatui [`Line`].

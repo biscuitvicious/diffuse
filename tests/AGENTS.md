@@ -22,13 +22,12 @@ discipline for any change in golden output.
 
 | corpus | rust walk | render golden | notes |
 |---|---|---|---|
-| `mirage-2025-08` | ✅ | ✅ | the original hand-tuned baseline |
-| `diffuse-2025-08` | ✅ | ✅ | the engine diffing its own repo |
+| `diffuse-2026-08` | ✅ | ✅ | the engine diffing its own repo |
 | `opt-1-cache-regex-window-slice` | ✅ | ✅ | perf commit captured as fixture |
 | `opt-2-cache-markdown-regex` | ✅ | ✅ | perf commit captured as fixture |
 | `opt-3-cache-lang-profile` | ✅ | ✅ | perf commit captured as fixture |
 | `opt-4-manual-scanner-prefilter` | ✅ | ✅ | perf commit captured as fixture |
-| `diffuse-history-mid` | ✅ (`--ignored`) | ❌ | huge wire-only stress test (`cargo test -- --ignored`) |
+| `diffuse-history-mid` | ✅ | ✅ (gz) | pinned 100-commit window, absolute ids |
 | `untracked-files` | ✅ | ✅ | untracked additions & status representation |
 
 The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)
@@ -37,10 +36,14 @@ the single canonical copy.
 
 ## Fixture file structure per corpus
 
-All fixture files live under dedicated subdirectories `tests/golden/<corpus>/` as plain, uncompressed files for optimal git visual tracking and diffing:
+All fixture files live under dedicated subdirectories `tests/golden/<corpus>/`.
+Snapshot corpora store plain, uncompressed files for optimal git visual
+tracking and diffing; history corpora store the frozen outputs gzipped
+(`.wire.json.gz`, `.render.txt.gz`, `.markdown.md.gz`, `.wire.jsonl.gz`).
+Each corpus contains:
 
 1. **`diff.patch`** — the frozen unified diff patch.
-2. **`meta.json`** — records the harvested `revision` and the list of file path to snapshot mappings (`files/*.old` and `files/*.new`).
+2. **`meta.json`** — records the harvested `revision` (pinned to absolute full commit ids) and the list of file path to snapshot mappings (`files/*.old` and `files/*.new`).
 3. **`files/<stem>.old.<ext>` / `files/<stem>.new.<ext>`** — individual uncompressed snapshots for old and new file contents (with path slashes `/` normalized to dashes `-` and the side marker preceding the original extension for automatic syntax highlighting and editor recognition).
 4. **`wire.json`** — the frozen *wire-contract output* (token-stream JSON) of the lib leg; both legs match it byte-for-byte. Changes whenever engine behavior **deliberately** changes.
 5. **`render.txt`** — the frozen *terminal rendered* output. It locks the hand-tuned visual preferences (strike/fill minimums, anchor pairings, move-block shape, reverse-stretch).
@@ -50,43 +53,33 @@ All fixture files live under dedicated subdirectories `tests/golden/<corpus>/` a
 
 A new corpus is a **deliberate corpus change** — it requires human
 sign-off (root `AGENTS.md`). The fixture lands in `tests/golden/` as the
-single canonical copy shared by the Rust acceptance and the extension's
-walk.
+single canonical copy of the Rust acceptance.
 
 ### 1. Pick the source repo and range
 
-- **Snapshot corpora** (`<repo>-<date>`, e.g. `mirage-2025-08`): a small,
-  curated diff exercising the paths under development. Rendered goldens
-  (`.golden.txt`) are generated for these.
+- **Snapshot corpora** (`<repo>-<date>`, e.g. `diffuse-2026-08`): a small,
+  curated diff exercising the paths under development.
 - **History corpora** (`<repo>-history-mid`, e.g. `diffuse-history-mid`):
-  a whole-evolution stress corpus — `HEAD~<midpoint>..HEAD` of a repo, with
-  the midpoint capped at **250 commits** (past that the fixture grows past
-  usefulness: multi-MB JSON, minutes-long walks). These are **wire-only**:
-  they get `.wire.json` but no `.golden.txt` (the TS render walk is too
-  slow) and are excluded from the extension's `CORPORA` list.
+  a whole-evolution stress corpus — a fixed window of a repo's history
+  (e.g. `HEAD~100..HEAD`), never so large the fixture stops being useful
+  (multi-MB JSON, minutes-long walks).
 
-### 2. Build the fixture JSON
+Always harvest with **absolute ranges** (`diffuse-harvest` resolves any
+expression to full commit ids, so the recorded revision can never
+re-resolve to a different window) and exclude the golden tree itself
+(`--exclude tests/golden`) — a corpus must not ingest its own history.
 
-Schema — `tests/golden/<name>.json`:
+### 2. Harvest the corpus
 
-```json
-{
-  "diff": "<full unified git diff for the range>",
-  "contents":    { "<path>": "<full file content at HEAD>", ... },
-  "old_contents": { "<path>": "<full file content at range base>", ... }
-}
+```sh
+diffuse-harvest --exclude tests/golden -o tests/golden/<name> <base>..<head>
 ```
 
-- `contents` (post-patch) feeds the pipeline's context expansion and the
-  on-disk coverage walk; `old_contents` (pre-patch) is what
-  `apply_oracle` needs to mechanically prove `apply(diff, old) == new` —
-  **always include it** (corpora without it silently skip the oracle per
-  file).
-- Extract both sides via `git show <rev>:<path>` for every file named in
-  the diff's `diff --git` headers.
-- **Drop binary files**: the engine is line-oriented — remove their diff
-  sections and their contents (look for `Binary files … differ`); decode
-  text with `errors='replace'` so no fixture build dies on odd bytes.
+The harvester writes `diff.patch`, the old/new side snapshots under
+`files/`, and `meta.json` (the pinned revision plus the path→snapshot
+mapping). The old-side snapshots are what `apply_oracle` needs to
+mechanically prove `apply(diff, old) == new` — a range harvest always
+carries them.
 
 ### 3. Probe before wiring
 
@@ -94,28 +87,22 @@ Run the pipeline + the cluster DP verifier over the raw fixture first
 (e.g., verifying pipeline timing, cluster count, transition histogram,
 and absence of projection failures). A corpus that trips invariant
 failures or pathological runtime should be fixed or rejected **before**
-it joins `CORPORA` — a frozen corpus that fails is a blocker, not a
+it joins `corpus_tests!` — a frozen corpus that fails is a blocker, not a
 signal.
 
 ### 4. Wire it in
 
-- `tests/golden.rs` → `CORPORA`: add `("<name>", <min_files>)` — the
+- `tests/golden.rs` → `corpus_tests!`: add
+  `(<mod_name>, "<name>", <min_files>, <has_render>, <has_oracle>)` — the
   floor is a sanity assertion that the corpus actually loaded; pick the
   real file count minus a little slack.
-- `extension/pi/test/golden.test.ts` → `CORPORA`: **only** for snapshot
-  corpora that get a rendered golden. History corpora stay out (the
-  render walk is too slow).
 
 ### 5. Generate the expected outputs
 
-- **wire.json** — `GEN_GOLDEN=1 cargo test --test golden` (rewrites every
-  corpus's wire file; unchanged ones rewrite byte-identically, so it is
-  safe). Or scope by temporarily commenting `CORPORA` down to the new
-  name.
-- **golden.txt** (snapshot corpora only) — `GEN_GOLDEN=1 GOLDEN_CORPUS=<name>
-  node --experimental-transform-types extension/pi/test/golden.test.ts`
-  (full-regen flag is fine here: a NEW golden has no prior expectation to
-  surgically diff against).
+- **wire/render/markdown** — `GEN_GOLDEN=1 cargo test --test golden`
+  (writes every corpus's frozen outputs; unchanged ones rewrite
+  byte-identically, so it is safe). The individual flags `UPDATE_WIRE`,
+  `UPDATE_RENDER`, `UPDATE_MARKDOWN` scope a single output type.
 
 ### 6. Review & land
 
@@ -126,24 +113,17 @@ signal.
 
 ## Regeneration mechanics
 
-- **wire.json** — run the rust acceptance with `GEN_GOLDEN=1` or
-  `UPDATE_WIRE=1` (e.g. `UPDATE_WIRE=1 cargo test --test golden`). Without
-  the flag, a mismatch prints a structured per-row wire diff and fails.
-- **golden.txt** — via the extension's walk, and updates are **surgical**:
-  1. Run without flags first — it reports the exact changed rows.
-  2. `UPDATE_GOLDEN=1 GOLDEN_EXPECT="<rows>" node …/golden.test.ts` — the
-     update verifies the changed set **equals** the expected set (rows are
-     0-based golden line numbers; ranges like `734-740` work;
-     `GOLDEN_CORPUS=<name>` scopes to one corpus).
-  3. `GEN_GOLDEN=1` (full rewrite, no safety guard) is **restricted** to
-     large-scale structural changes only — never for focused fixes.
+- **wire/render/markdown** — run the rust acceptance with `GEN_GOLDEN=1`
+  or the scoped flags (`UPDATE_WIRE=1`, `UPDATE_RENDER=1`,
+  `UPDATE_MARKDOWN=1` — e.g. `UPDATE_WIRE=1 cargo test --test golden`).
+  Without a flag, a mismatch prints a structured per-row diff and fails.
 - **Never regenerate any golden to make a test pass.** A failing golden
   means the engine deviates from the reviewed ideal; find the deviation.
 
 ## Review discipline for golden changes — the signoff gate
 
-**Every change in golden output (`*.wire.json`, `*.golden.txt`) requires
-BOTH agent review and human review.**
+**Every change in golden output (`*.wire.json`, `*.render.txt`,
+`*.markdown.md`) requires BOTH agent review and human review.**
 
 ### Agent review (every time, before presenting the change)
 

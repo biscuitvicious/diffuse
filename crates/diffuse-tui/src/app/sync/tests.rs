@@ -65,45 +65,45 @@ fn test_incremental_file_append_and_streaming_navigation() {
 fn test_streaming_append_file_multi_hunk_with_gap() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/mirage-2025-08/wire.json"
+        "/../../tests/golden/diffuse-2026-08/wire.json"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
+    let json_str = fs::read_to_string(wire_path).expect("must read diffuse-2026-08/wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
 
     // Simulate streaming: start with empty AppState and append files one by one
     let mut empty_output = output.clone();
     empty_output.files.clear();
-    let mut state = AppState::new(empty_output, "mirage".into(), temp_notes_path());
+    let mut state = AppState::new(empty_output, "diffuse".into(), temp_notes_path());
 
     for file in output.files {
         state.append_file(file);
     }
 
-    // Find cache.rs file index
+    // Find PLAN.md file index
     let fi = state
         .output
         .files
         .iter()
-        .position(|f| f.path.contains("cache.rs"))
-        .expect("cache.rs must exist");
+        .position(|f| f.path.contains("PLAN.md"))
+        .expect("PLAN.md must exist");
 
-    // Jump to cache.rs
-    let cache_file_row = state
+    // Jump to PLAN.md
+    let plan_file_row = state
         .flat
         .iter()
         .position(|fr| fr.file_idx == fi && fr.is_file_header)
-        .expect("file header row for cache.rs");
-    state.jump_to_row(cache_file_row, false);
+        .expect("file header row for PLAN.md");
+    state.jump_to_row(plan_file_row, false);
 
-    let cache_hunks: Vec<_> = state
+    let plan_hunks: Vec<_> = state
         .hunk_starts
         .iter()
         .filter(|hs| hs.file == fi)
         .collect();
     assert_eq!(
-        cache_hunks.len(),
+        plan_hunks.len(),
         state.output.files[fi].hunks.len(),
-        "streaming append_file must register hunk starts for all hunks in cache.rs"
+        "streaming append_file must register hunk starts for all hunks in PLAN.md"
     );
 
     let frame = state.render_frame(140, 40);

@@ -46,8 +46,8 @@ impl HuntSzymanskiLcs {
 
         for (i, item) in a.iter().enumerate() {
             if let Some(positions) = b_pos.get(item) {
-                // Process B positions in descending order to avoid multiple matches from the
-                // same A element
+                // Process B positions in descending order to avoid multiple
+                // matches from the same A element
                 for &j in positions.iter().rev() {
                     let k = tails.partition_point(|&node_idx| nodes[node_idx].1 < j);
                     let parent = if k > 0 { Some(tails[k - 1]) } else { None };

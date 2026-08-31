@@ -39,8 +39,9 @@ pub mod prelude {
             MD_SGR_UNDERLINE,
         },
         registry::{
-            ascii_word_prefix, ascii_word_prefix_len, fence_lang_ext, first_ascii_word,
-            is_ascii_word_char, lang_profile,
+            REGISTERED_EXTENSIONS, all_registered_profiles, ascii_word_prefix,
+            ascii_word_prefix_len, fence_lang_ext, first_ascii_word, is_ascii_word_char,
+            lang_profile,
         },
     };
 }

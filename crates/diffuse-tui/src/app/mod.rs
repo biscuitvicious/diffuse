@@ -81,7 +81,8 @@ impl AppState {
 
         let (flat, hunk_starts) = Self::build_visual_flat(&output, &collapsed_files);
 
-        // Start on first coordinate row if available, or first row (e.g. header)
+        // Start on first coordinate row if available, or first row (e.g.
+        // header)
         let start_row = flat
             .iter()
             .position(|r| Self::flat_coord(&output, false, r).is_some())
@@ -105,7 +106,7 @@ impl AppState {
             anchor: None,
             sel_pivot: None,
             confirmed_sel: None,
-            theme: DiffuseTheme::MAGIC,
+            theme: DiffuseTheme::from_env(),
             repo,
             should_quit: false,
             status_message: None,

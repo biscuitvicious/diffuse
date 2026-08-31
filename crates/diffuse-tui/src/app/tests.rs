@@ -735,8 +735,8 @@ index 6f6222d..4aa7a1d 100644
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
     let mut state = AppState::new(out, "mirage".into(), temp_notes_path());
 
-    // Exact reproduction test matching user's terminal geometry (74 rows, 300 cols)
-    // on mirage.work
+    // Exact reproduction test matching user's terminal geometry (74 rows, 300
+    // cols) on mirage.work
     let vis_idx_115 = state
         .flat
         .iter()
@@ -794,8 +794,8 @@ index 6f6222d..4aa7a1d 100644
         state.toggle_raw_diff();
     }
 
-    // Test line 115 and line 141 specifically, across different viewport heights
-    // and scroll positions
+    // Test line 115 and line 141 specifically, across different viewport
+    // heights and scroll positions
     for target_line in [115, 141] {
         for vh in [25, 30, 40, 50] {
             let vis_idx = state
@@ -879,24 +879,24 @@ index 6f6222d..4aa7a1d 100644
 fn test_separator_expand_by_enter_and_click_and_merge() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/mirage-2025-08/wire.json"
+        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.json"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
+    let json_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
 
-    let mut state = AppState::new(output, "mirage".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(output, "opt_1".into(), temp_notes_path()).with_expand_lines(6);
 
-    // Find cache.rs file index
+    // Find collapse/mod.rs file index
     let fi = state
         .output
         .files
         .iter()
-        .position(|f| f.path.contains("cache.rs"))
-        .expect("cache.rs must exist");
+        .position(|f| f.path.contains("collapse/mod.rs"))
+        .expect("collapse/mod.rs must exist");
 
-    // Initial hunk count for cache.rs
+    // Initial hunk count for collapse/mod.rs
     let init_hunk_count = state.output.files[fi].hunks.len();
-    assert_eq!(init_hunk_count, 3, "cache.rs starts with 3 hunks");
+    assert_eq!(init_hunk_count, 8, "collapse/mod.rs starts with 8 hunks");
 
     // Jump to H2 to expand context around the divider via Enter
     let h2_start = state
@@ -971,20 +971,20 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
 fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/mirage-2025-08/wire.json"
+        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.json"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read mirage-2025-08/wire.json");
+    let json_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.json");
     let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
 
-    let mut state = AppState::new(output, "mirage".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(output, "opt_1".into(), temp_notes_path()).with_expand_lines(6);
 
-    // Find cache.rs file index
+    // Find collapse/mod.rs file index
     let fi = state
         .output
         .files
         .iter()
-        .position(|f| f.path.contains("cache.rs"))
-        .expect("cache.rs must exist");
+        .position(|f| f.path.contains("collapse/mod.rs"))
+        .expect("collapse/mod.rs must exist");
 
     let initial_h2_above = state.hunk_meta[fi][1].above;
 
@@ -1025,8 +1025,8 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
         "expanded context row must have syntax token runs"
     );
 
-    // Verify that clicking an arrow on a hunk divider via MouseClick does NOT move
-    // cursor
+    // Verify that clicking an arrow on a hunk divider via MouseClick does NOT
+    // move cursor
     let target_line = 100;
     let line_flat_idx = state
         .flat
@@ -1041,8 +1041,8 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     state.jump_to_row(line_flat_idx, false);
     assert_eq!(state.row_idx, line_flat_idx);
 
-    // Render frame with sufficient height so both H2 divider and target line are in
-    // viewport
+    // Render frame with sufficient height so both H2 divider and target line
+    // are in viewport
     state.render_frame(140, 80);
     let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
     let h2_hunk_start = state
@@ -1067,8 +1067,8 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
         shift: false,
     });
 
-    // Verify cursor is on the expanded hunk divider and divider line y position is
-    // invariant
+    // Verify cursor is on the expanded hunk divider and divider line y position
+    // is invariant
     let (starts_after, _, _, _) = state.visual_geometry(state.last_content_width);
     let h2_div_vis_after = starts_after[state
         .hunk_starts
@@ -1661,10 +1661,10 @@ index 1111111..2222222 100644
 #[test]
 fn test_two_up_arrow_clicks_merge_with_wrapped_rows_and_lock_below_row() {
     // Static conversion of the exploratory worktree probe: two sequential
-    // \u{25b2}\u{25b2} presses on a narrow screen with LONG context rows (they wrap
-    // into several visual segments). The second press consumes the remaining
-    // gap and merges; the row directly below the removed divider must stay
-    // locked at its own pre-click screen position.
+    // \u{25b2}\u{25b2} presses on a narrow screen with LONG context rows (they
+    // wrap into several visual segments). The second press consumes the
+    // remaining gap and merges; the row directly below the removed divider
+    // must stay locked at its own pre-click screen position.
     let diff = r#"diff --git a/wide.rs b/wide.rs
 index 1111111..2222222 100644
 --- a/wide.rs
@@ -1852,7 +1852,8 @@ fn test_render_ratatui_frame_layout() {
     }
     assert!(line2.contains("Saved note"));
 
-    // Viewport area must contain diff grid lines (e.g. file header or hunk content)
+    // Viewport area must contain diff grid lines (e.g. file header or hunk
+    // content)
     let mut grid_text = String::new();
     for y in 3..22 {
         for x in 0..80 {

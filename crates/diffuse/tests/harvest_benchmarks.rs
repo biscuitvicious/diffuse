@@ -300,14 +300,16 @@ fn test_harvest_and_stream_massive_1000_files() {
 #[test]
 fn test_harvest_cli_tool_generates_valid_fixture() {
     let (dir, _, _, _) = create_synthetic_multilang_repo(8);
-    let fixture_path = dir.path().join("harvested_fixture.json");
 
+    // Dir output: diff.patch + files/ snapshots + meta.json with a pinned
+    // absolute revision.
+    let corpus_dir = dir.path().join("harvested_corpus");
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse-harvest"))
         .arg("HEAD")
         .arg("--repo")
         .arg(dir.path())
         .arg("--output")
-        .arg(&fixture_path)
+        .arg(&corpus_dir)
         .output()
         .unwrap();
 
@@ -316,17 +318,60 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
         "diffuse-harvest failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(fixture_path.exists());
+    let meta_text = fs::read_to_string(corpus_dir.join("meta.json")).unwrap();
+    let meta: serde_json::Value = serde_json::from_str(&meta_text).expect("valid meta.json");
+    let revision = meta["revision"].as_str().expect("revision recorded");
+    assert_eq!(
+        revision.len(),
+        40,
+        "revision must be pinned to a full commit id: {revision}"
+    );
+    assert!(
+        revision.chars().all(|c| c.is_ascii_hexdigit()),
+        "revision must be an absolute sha: {revision}"
+    );
+    let files = meta["files"].as_array().unwrap();
+    assert_eq!(files.len(), 8, "every changed path is recorded");
+    let mut new_snapshots = 0;
+    for record in files {
+        if let Some(new_file) = record["new"].as_str() {
+            new_snapshots += 1;
+            assert!(
+                corpus_dir.join("files").join(new_file).exists(),
+                "snapshot file {new_file} must exist"
+            );
+        }
+    }
+    assert_eq!(new_snapshots, 8, "every path carries a new-side snapshot");
+    assert!(corpus_dir.join("diff.patch").exists(), "diff.patch written");
 
+    // Flat JSON output: metadata only — no embedded diff/contents blobs.
+    let fixture_path = dir.path().join("harvested_fixture.json");
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse-harvest"))
+        .arg("HEAD")
+        .arg("--repo")
+        .arg(dir.path())
+        .arg("--output")
+        .arg(&fixture_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "diffuse-harvest failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let json_text = fs::read_to_string(&fixture_path).unwrap();
     let val: serde_json::Value = serde_json::from_str(&json_text).expect("valid fixture JSON");
-
-    assert!(val.get("diff").is_some());
-    assert!(val.get("newContent").is_some());
-    assert!(val.get("oldContent").is_some());
-
-    let contents_map = val["newContent"].as_object().unwrap();
-    assert_eq!(contents_map.len(), 8);
+    assert!(val.get("revision").is_some(), "revision recorded");
+    assert!(val.get("diff").is_none(), "diff must not be embedded");
+    assert!(
+        val.get("newContent").is_none(),
+        "contents must not be embedded"
+    );
+    assert!(
+        val.get("oldContent").is_none(),
+        "old contents must not be embedded"
+    );
 }
 
 #[test]

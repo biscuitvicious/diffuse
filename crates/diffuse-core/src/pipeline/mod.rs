@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use crate::{
     collapse::collapse_hunk_rows,
     counts::file_counts,
-    lcs::word_spans,
+    lcs::word_spans_with_profile,
     merge::{RunKind, is_wholesale_mod, merged_runs},
     moves::mark_moves,
     notes::{NotesDB, note_runs, notes_for_file},
@@ -269,7 +269,7 @@ pub fn process_single_diff_file(
                 && old_line.text != new_line.text
                 && new_line.spans.is_empty()
             {
-                new_line.spans = word_spans(&old_line.text, &new_line.text);
+                new_line.spans = word_spans_with_profile(&old_line.text, &new_line.text, profile);
             }
         }
     });
@@ -503,7 +503,8 @@ pub fn colored_runs(
         let mut full_tokens = cell.borrow_mut();
         full_tokens.clear();
         for_each_ctx_line_token(r.text(), new_line, profile, regions, |t| {
-            // Safety: tokens are only accessed within this block while r.text() is alive.
+            // Safety: tokens are only accessed within this block while r.text()
+            // is alive.
             let tok_static =
                 unsafe { std::mem::transmute::<ClassifiedToken<'_>, ClassifiedToken<'static>>(t) };
             full_tokens.push(tok_static);

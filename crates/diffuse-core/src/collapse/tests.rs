@@ -1427,3 +1427,95 @@ fn test_cross_context_pairing_is_forbidden() {
     assert_eq!(collapsed[2].kind(), RowKind::Add);
     assert_eq!(collapsed[2].new_line(), Some(21));
 }
+
+#[test]
+fn test_multiline_statement_expansion_preserves_closing_delimiter() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "    let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &pairing_ctx);",
+            None,
+            Some(76),
+        ),
+        row(
+            RowKind::Add,
+            "    let p3 = pass_filter_reflows(",
+            Some(76),
+            None,
+        ),
+        row(RowKind::Add, "        h,", Some(77), None),
+        row(RowKind::Add, "        &p2.out,", Some(78), None),
+        row(RowKind::Add, "        &p2.kept_dels,", Some(79), None),
+        row(RowKind::Add, "        &p2.pure_adds,", Some(80), None),
+        row(RowKind::Add, "        &pairing_ctx,", Some(81), None),
+        row(RowKind::Add, "        profile,", Some(82), None),
+        row(RowKind::Add, "    );", Some(83), None),
+    ]);
+
+    let rs = lang_profile("rs");
+    let collapsed = collapse_hunk_rows(&h, None, None, rs);
+
+    // Row on 81 (&pairing_ctx,) should NOT carry `);` as a deleted span
+    let row_81 = collapsed
+        .iter()
+        .find(|r| r.new_line() == Some(81))
+        .expect("row 81");
+    let del_spans_81 = row_81.spans().map(|s| &s.del).cloned().unwrap_or_default();
+    let del_texts_81: Vec<&str> = del_spans_81
+        .iter()
+        .map(|&(s, e)| &row_81.del_text().unwrap()[s..e])
+        .collect();
+    assert!(
+        !del_texts_81.iter().any(|t| t.contains(");")),
+        "row 81 must not delete `);` because `);` is on line 83: del_spans={del_texts_81:?}"
+    );
+
+    // Row on 83 (    );) should recognize `);` as common
+    let row_83 = collapsed
+        .iter()
+        .find(|r| r.new_line() == Some(83))
+        .expect("row 83");
+    let add_spans_83 = row_83.spans().map(|s| &s.add).cloned().unwrap_or_default();
+    let add_texts_83: Vec<&str> = add_spans_83
+        .iter()
+        .map(|&(s, e)| &row_83.text()[s..e])
+        .collect();
+    assert!(
+        !add_texts_83.iter().any(|t| t.contains(");")),
+        "row 83 must not mark `);` as added; it should be common: add_spans={add_texts_83:?}"
+    );
+}
+
+#[test]
+fn wrap_tail_reflow_keeps_source_strike() {
+    // A fmt re-wrap: the old line's tail `b[j-1]` wraps onto its own new
+    // line.  The mod row must still strike the tail that left it — the add
+    // row below materializes the wrapped line, but the source strike is
+    // what tells the reviewer the content moved from here to there.
+    let rs = crate::syntax::registry::lang_profile("rs");
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "        // DP columns: v_cols[j] represents the bit-vector after processing b[j-1]",
+            None,
+            Some(36),
+        ),
+        row(
+            RowKind::Add,
+            "        // DP columns: v_cols[j] represents the bit-vector after processing",
+            Some(36),
+            None,
+        ),
+        row(RowKind::Add, "        // b[j-1]", Some(37), None),
+    ]);
+    let c = collapse_hunk_rows(&h, None, None, rs);
+    assert_eq!(c.len(), 2, "one mod + one add");
+    assert_eq!(c[0].kind(), RowKind::Mod);
+    let spans = c[0].spans().expect("mod spans");
+    assert_eq!(
+        spans.del,
+        vec![(75, 82)],
+        "the wrapped tail ` b[j-1]` stays struck on the mod row; got {spans:?}"
+    );
+    assert_eq!(c[1].kind(), RowKind::Add);
+}

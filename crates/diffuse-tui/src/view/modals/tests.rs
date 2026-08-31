@@ -435,8 +435,8 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
         untracked_skipped: vec![],
     };
 
-    // Test across widths: mobile (44), narrow (60), standard (80), laptop (120),
-    // ultrawide (322)
+    // Test across widths: mobile (44), narrow (60), standard (80), laptop
+    // (120), ultrawide (322)
     for &w in &[44, 60, 80, 120, 322] {
         for sel in 0..file_specs.len() {
             let mut finder = FileFinderState::new(&output.files, 0, 0);
@@ -550,8 +550,8 @@ fn test_finder_modal_proportional_height_scaling() {
     assert!(text.contains("file_0.rs"));
     assert!(text.contains("file_11.rs"));
 
-    // Constrained terminal (height 14): exactly 3 visible files (file_0.rs through
-    // file_2.rs)
+    // Constrained terminal (height 14): exactly 3 visible files (file_0.rs
+    // through file_2.rs)
     let backend_constrained = TestBackend::new(80, 14);
     let mut term_constrained = Terminal::new(backend_constrained).unwrap();
     term_constrained

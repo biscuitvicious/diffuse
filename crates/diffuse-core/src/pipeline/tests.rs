@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use super::*;
 use crate::{
-    merge::RunKind,
+    lcs::word_spans,
+    merge::{RunKind, display_text},
     parse::{AddLine, DelLine, DiffFile, LineNum, Row, RowKind},
 };
 
@@ -293,7 +294,8 @@ runner = "scripts/android-test-runner"
     let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let rows = &output.files[0].rows;
 
-    // 1. Assert that there is NO floating del under [env] (between lines 1 and 6)
+    // 1. Assert that there is NO floating del under [env] (between lines 1 and
+    //    6)
     for r in &rows[..6] {
         assert_ne!(
             r.kind,
@@ -302,8 +304,8 @@ runner = "scripts/android-test-runner"
         );
     }
 
-    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1 Mod
-    //    (old 10 -> new 14)
+    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1
+    //    Mod (old 10 -> new 14)
     let musl_runner = rows.iter().find(|r| r.new_line == Some(14));
     assert!(musl_runner.is_some());
     assert_eq!(musl_runner.unwrap().kind, RowKind::Mod);
@@ -316,15 +318,15 @@ runner = "scripts/android-test-runner"
     assert_eq!(gnu_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(gnu_runner.unwrap().old_line, Some(15));
 
-    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1 Mod
-    //    (old 23 -> new 27)
+    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1
+    //    Mod (old 23 -> new 27)
     let aarch64_musl_runner = rows.iter().find(|r| r.new_line == Some(27));
     assert!(aarch64_musl_runner.is_some());
     assert_eq!(aarch64_musl_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(aarch64_musl_runner.unwrap().old_line, Some(23));
 
-    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod (old
-    //    29 -> new 33)
+    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod
+    //    (old 29 -> new 33)
     let android_runner = rows.iter().find(|r| r.new_line == Some(33));
     assert!(android_runner.is_some());
     assert_eq!(android_runner.unwrap().kind, RowKind::Mod);
@@ -395,4 +397,51 @@ fn test_run_pipeline_with_no_contents_autonomous() {
     assert_eq!(file.hunks[0].rows.len(), 4); // Ctx, Mod, Ctx, Ctx
     assert_eq!(file.new_content.len(), 4);
     assert_eq!(file.old_content.len(), 4);
+}
+
+#[test]
+fn leading_indent_shift_row_runs_satisfy_wire_invariants() {
+    // The 12→20 space indent shift with a mid-line rewrite (merge/mod.rs:558
+    // in the diffuse-history-mid corpus): the wire runs must concatenate to
+    // the row's display text, and stripping the del runs must leave exactly
+    // the new line.
+    let diff = "\
+diff --git a/src/merge/mod.rs b/src/merge/mod.rs
+index 1111111..2222222 100644
+--- a/src/merge/mod.rs
++++ b/src/merge/mod.rs
+@@ -556,8 +556,8 @@
+         }
+             if same_kind && share > 0 {
+-            last.text.push_str(&run.text);
++                    last.text.len() + run.text.len(),
+             } else {
+                 out.push(run.clone());
+";
+    let output = run_pipeline(diff, None);
+    let mut checked = 0;
+    for f in &output.files {
+        for h in &f.hunks {
+            for r in &h.rows {
+                if r.kind != RowKind::Mod {
+                    continue;
+                }
+                checked += 1;
+                let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
+                assert_eq!(
+                    concat,
+                    display_text(&Row::from(r)),
+                    "runs must concatenate to the display text"
+                );
+                let kept: String = r
+                    .runs
+                    .iter()
+                    .filter(|x| x.kind != RunKind::Del)
+                    .map(|x| x.text.as_ref())
+                    .collect();
+                assert_eq!(kept, r.text, "strike-removed runs must be the new line");
+            }
+        }
+    }
+    assert_eq!(checked, 1, "the crafted diff yields exactly one mod row");
 }

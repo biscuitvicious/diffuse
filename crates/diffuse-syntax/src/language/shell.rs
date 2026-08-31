@@ -10,8 +10,11 @@ pub const KEYWORDS: &[&str] = &[
     "unset", "until", "while",
 ];
 
+pub const OPERATORS: &[&str] = &["!=", "&&", "++", "--", "<<", "<=", "==", ">=", ">>", "||"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
+        name: "shell",
         keywords: KEYWORDS,
         hash_comment: true,
         line_comment: false,
@@ -26,6 +29,7 @@ pub fn profile() -> LangProfile {
             Regex::new(r"^\s*(?:function\s+)?([A-Za-z0-9_]+)\s*\(\)").expect("sh fn_decl"),
         ),
         decl_prefixes: &["function "],
+        operators: OPERATORS,
         scope_stop_prefixes: &[],
     }
 }

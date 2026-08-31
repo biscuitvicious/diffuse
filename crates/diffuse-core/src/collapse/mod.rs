@@ -13,7 +13,7 @@ use std::cmp::Ordering;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    lcs::{char_slice, tokenize_line, word_spans},
+    lcs::{char_slice, tokenize_line, word_spans_with_profile},
     parse::{AddLine, DelLine, Hunk, Row, Spans},
     shift::pass_shift_hunk,
     syntax::profile::LangProfile,
@@ -73,7 +73,14 @@ pub fn collapse_hunk_rows(
     let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
 
     // Pass 3: Filter verbatim reflow dels and adds
-    let p3 = pass_filter_reflows(h, &p2.out, &p2.kept_dels, &p2.pure_adds, &pairing_ctx);
+    let p3 = pass_filter_reflows(
+        h,
+        &p2.out,
+        &p2.kept_dels,
+        &p2.pure_adds,
+        &pairing_ctx,
+        profile,
+    );
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
     let res = pass_sort_ordered_walk(
@@ -128,7 +135,7 @@ pub fn pass_assemble_mods(
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
             let del_text = r.text().to_string();
-            let mut spans = word_spans(&del_text, add.text());
+            let mut spans = word_spans_with_profile(&del_text, add.text(), profile);
 
             let mut next_adds = Vec::new();
             let mut k = add_ri + 1;
@@ -140,6 +147,11 @@ pub fn pass_assemble_mods(
             });
 
             if has_deleted_content && let Some(p) = profile {
+                let opens_delim = add.text().trim().ends_with('(')
+                    || add.text().trim().ends_with('{')
+                    || add.text().trim().ends_with('[')
+                    || p.is_import_statement(&del_text);
+
                 while k < h.rows.len()
                     && matches!(h.rows[k], Row::Add(_))
                     && !ctx.pair_of.contains_key(&k)
@@ -149,7 +161,9 @@ pub fn pass_assemble_mods(
                         break;
                     }
                     let is_continuation = p.is_continuation_line(nxt_t);
-                    let is_closing = p.is_expression_close(nxt_t);
+                    let is_closing = p.is_expression_close(nxt_t)
+                        || p.is_block_close(nxt_t)
+                        || del_text.trim_end().ends_with(nxt_t);
                     let matches_del = tokenize_line(nxt_t).into_iter().any(|tok| {
                         !tok.trim().is_empty()
                             && tok.chars().any(char::is_alphanumeric)
@@ -158,22 +172,31 @@ pub fn pass_assemble_mods(
                                 seg.contains(tok)
                             })
                     });
+                    let is_param_or_item = opens_delim
+                        && (nxt_t.ends_with(',')
+                            || nxt_t.ends_with('(')
+                            || nxt_t.ends_with('{')
+                            || nxt_t.ends_with('[')
+                            || p.is_comment_line(nxt_t));
 
-                    if is_closing || is_continuation || matches_del {
+                    if is_closing {
+                        next_adds.push(k);
+                        break;
+                    } else if is_continuation || matches_del {
                         next_adds.push(k);
                         k += 1;
-                        if is_closing {
-                            break;
-                        }
-                    } else if p.is_import_statement(&del_text) {
-                        let has_closing = (k..h.rows.len())
+                    } else if is_param_or_item {
+                        let has_closing = (k + 1..h.rows.len())
                             .take_while(|&idx| {
                                 matches!(h.rows[idx], Row::Add(_))
                                     && !ctx.pair_of.contains_key(&idx)
+                                    && !p.is_decl_break(h.rows[idx].text().trim())
                             })
                             .any(|idx| {
                                 let t = h.rows[idx].text().trim();
-                                p.is_block_close(t) || del_text.trim_end().ends_with(t)
+                                p.is_expression_close(t)
+                                    || p.is_block_close(t)
+                                    || del_text.trim_end().ends_with(t)
                             });
                         if has_closing {
                             next_adds.push(k);
@@ -187,63 +210,26 @@ pub fn pass_assemble_mods(
                 }
             }
 
+            // The mod row always presents its own word-level truth: strike
+            // what left this line, fill what replaced it — even when the
+            // struck content reflows into the continuation adds below
+            // (where the donor distribution shows where it went).  The
+            // source strike is what connects the two; suppressing it made
+            // wrapped tails silently vanish from the diff.
             if !next_adds.is_empty() {
-                let next_adds_text = next_adds
-                    .iter()
-                    .map(|&idx| h.rows[idx].text())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-
-                let mut moved_token_pos = None;
-                for &(ds, de) in &spans.del {
-                    let seg = char_slice(&del_text, ds, de);
-                    let mut pos = ds;
-                    for tok in tokenize_line(seg) {
-                        let start = seg[pos - ds..]
-                            .find(tok)
-                            .map(|off| pos + off)
-                            .unwrap_or(pos);
-                        pos = start + tok.len();
-                        if !tok.trim().is_empty()
-                            && tok.chars().any(char::is_alphanumeric)
-                            && next_adds_text.contains(tok)
-                        {
-                            moved_token_pos = Some(start);
-                            break;
-                        }
-                    }
-                    if moved_token_pos.is_some() {
-                        break;
-                    }
-                }
-
-                if let Some(sp) = moved_token_pos {
-                    let del_head = &del_text[..sp];
-                    spans = word_spans(del_head, add.text());
-                } else {
-                    spans.del.retain(|&(ds, de)| {
-                        let seg = char_slice(&del_text, ds, de);
-                        let tokens: Vec<&str> = tokenize_line(seg)
-                            .filter(|t| !t.trim().is_empty())
-                            .collect();
-                        let has_alpha = tokens.iter().any(|t| t.chars().any(char::is_alphanumeric));
-                        if has_alpha {
-                            let moved = tokens.iter().any(|t| next_adds_text.contains(t));
-                            !moved
-                        } else {
-                            true
-                        }
-                    });
-                }
-
                 for &nxt_i in &next_adds {
                     let add_nxt = &h.rows[nxt_i];
-                    let mut donor_spans = word_spans(&del_text, add_nxt.text());
+                    let mut donor_spans =
+                        word_spans_with_profile(&del_text, add_nxt.text(), profile);
                     let tok_count = tokenize_line(add_nxt.text())
                         .filter(|t| !t.trim().is_empty())
                         .count();
                     let nxt_trim = add_nxt.text().trim();
-                    let is_closing_row = nxt_trim == "};" || nxt_trim == "}" || nxt_trim == ");";
+                    let is_closing_row = profile.is_some_and(|p| {
+                        p.is_expression_close(nxt_trim) || p.is_block_close(nxt_trim)
+                    }) || nxt_trim == "};"
+                        || nxt_trim == "}"
+                        || nxt_trim == ");";
                     let is_opening_row = nxt_trim == "{" || nxt_trim == "(";
 
                     if is_opening_row {
@@ -369,15 +355,7 @@ pub fn pass_assemble_mods(
             };
             out.push(mod_row);
         } else {
-            let is_was_moved = r.is_moved()
-                || r.old_line().is_some_and(|ol| {
-                    h.rows
-                        .iter()
-                        .any(|other| other.old_line() == Some(ol) && other.is_moved())
-                });
-            if !is_was_moved {
-                kept_dels.push(ri);
-            }
+            kept_dels.push(ri);
         }
     }
 
@@ -408,6 +386,7 @@ pub fn pass_filter_reflows(
     kept_dels: &[usize],
     pure_adds: &[usize],
     ctx: &PairingContext,
+    profile: Option<&LangProfile>,
 ) -> ReflowFilter {
     // 1. Dels absorbed into a Mod row: multiline del run whose anchor del was
     // paired with an add row that incorporates this del's text.
@@ -426,11 +405,12 @@ pub fn pass_filter_reflows(
         }
     }
 
-    // 2. Candidate unabsorbed dels that could pair with verbatim standalone adds.
+    // 2. Candidate unabsorbed dels that could pair with verbatim standalone
+    //    adds.
     let candidate_dels: Vec<usize> = kept_dels
         .iter()
         .copied()
-        .filter(|di| !absorbed_dels.contains(di))
+        .filter(|di| !absorbed_dels.contains(di) && !h.rows[*di].is_moved())
         .collect();
 
     // Candidate pure adds that are not moved.
@@ -455,7 +435,7 @@ pub fn pass_filter_reflows(
             if used_dels.contains(&di) {
                 continue;
             }
-            if h.rows[di].text().trim() == at {
+            if h.rows[di].text() == a.text() {
                 used_dels.insert(di);
                 used_adds.insert(ai);
                 reflow_ctx.push(Row::Ctx(CtxLine::new(
@@ -463,6 +443,23 @@ pub fn pass_filter_reflows(
                     a.new_line_num().unwrap_or(LineNum::MIN),
                     a.text().to_string(),
                 )));
+                break;
+            } else if h.rows[di].text().trim() == at {
+                used_dels.insert(di);
+                used_adds.insert(ai);
+                let spans =
+                    crate::lcs::word_spans_with_profile(h.rows[di].text(), a.text(), profile);
+                reflow_ctx.push(Row::Mod {
+                    old_line: crate::parse::DelLine::new(
+                        h.rows[di].old_line_num().unwrap_or(LineNum::MIN),
+                        h.rows[di].text().to_string(),
+                    ),
+                    new_line: crate::parse::AddLine::with_spans(
+                        a.new_line_num().unwrap_or(LineNum::MIN),
+                        a.text(),
+                        spans,
+                    ),
+                });
                 break;
             }
         }
@@ -485,8 +482,9 @@ pub fn pass_filter_reflows(
                 if a.del_text().is_some_and(|dt| dt != a.text()) {
                     return true;
                 }
-                // A local same-position move (old line == new line) is an invisible reshuffle;
-                // true moves across different line numbers survive as Row::Mov.
+                // A local same-position move (old line == new line) is an
+                // invisible reshuffle; true moves across
+                // different line numbers survive as Row::Mov.
                 if a.old_line().is_some() && a.old_line() == a.new_line() {
                     return false;
                 }

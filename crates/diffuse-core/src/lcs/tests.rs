@@ -174,7 +174,7 @@ fn test_patience_unique_token_anchors() {
     let new_line = "async fn handle_request(&self, cx: Context, req: Request) -> Result<Response>";
     let ot: Vec<&str> = tokenize_line(old_line).collect();
     let nt: Vec<&str> = tokenize_line(new_line).collect();
-    let anchors = unique_token_anchors(&ot, &nt);
+    let anchors = unique_token_anchors(&ot, &nt, None);
     assert!(!anchors.is_empty(), "patience anchors found");
     let _pairs = lcs_pairs(&ot, &nt);
     let spans = word_spans(old_line, new_line);
@@ -331,4 +331,80 @@ fn test_char_slice_and_char_len() {
     assert_eq!(char_slice(s_uni, 10, 2), "");
     assert_eq!(char_slice(s_uni, 13, 100), "world");
     assert_eq!(char_slice(s_uni, 50, 100), "");
+}
+
+#[test]
+fn test_subword_token_length_weighting_preserves_operators() {
+    let old_line = "            if h.rows[di].text().trim() == at {";
+    let new_line = "            if h.rows[di].text() == a.text() {";
+    let profile = crate::syntax::registry::lang_profile("rs");
+    let ws = word_spans_with_profile(old_line, new_line, profile);
+
+    assert_eq!(ws.del.len(), 2, "deleted .trim() and at");
+    assert_eq!(char_slice(old_line, ws.del[0].0, ws.del[0].1), ".trim()");
+    assert_eq!(char_slice(old_line, ws.del[1].0, ws.del[1].1), "at");
+
+    assert_eq!(ws.add.len(), 1, "added a.text()");
+    assert_eq!(char_slice(new_line, ws.add[0].0, ws.add[0].1), "a.text()");
+}
+
+#[test]
+fn test_del_identifier_with_common_prefix() {
+    let del = "                    } else if is_closing || is_continuation || matches_del {";
+    let add = "                    } else if is_continuation || matches_del {";
+    let ws = word_spans(del, add);
+    assert_eq!(ws.add.len(), 0);
+    assert_eq!(ws.del.len(), 1);
+    assert_eq!(char_slice(del, ws.del[0].0, ws.del[0].1), "is_closing || ");
+}
+
+#[test]
+fn test_repeated_identifier_prefers_longer_contiguous_match() {
+    let del =
+        "        let first_ascii_word = first_ascii_word(text).map(|w| arena.interner.intern(w));";
+    let add = "            first_ascii_word(text).map(|w| arena.interner.intern(w))";
+    let ws = word_spans(del, add);
+
+    // The second "first_ascii_word" (the function call) must be matched.
+    // Everything before it in del is unmatched as one contiguous run — the 8
+    // leading spaces token is not equal to the 12-space token in add, so it
+    // too lands in the deletion.
+    assert_eq!(ws.del.len(), 2);
+    assert_eq!(
+        char_slice(del, ws.del[0].0, ws.del[0].1),
+        "        let first_ascii_word = "
+    );
+    assert_eq!(char_slice(del, ws.del[1].0, ws.del[1].1), ";");
+
+    // The 12-space indentation token in add is unmatched (no identical token in
+    // del).
+    assert_eq!(ws.add.len(), 1);
+    assert_eq!(char_slice(add, ws.add[0].0, ws.add[0].1), "            ");
+}
+
+#[test]
+fn test_repeated_identifier_raw_lcs_subproblem() {
+    // Directly test raw_lcs_pairs_with_lookahead on the sub-segment that
+    // lcs_pairs_anchored produces for the prefix before the "text" anchor.
+    // Note: '_' is an operator char, so "first_ascii_word" tokenizes into
+    // ["first", "_", "ascii", "_", "word"] — the variable-binding occurrence
+    // spans a[3..7], the function-call occurrence a[11..15], with "(" at
+    // a[16]. b = ["            ", "first", "_", "ascii", "_", "word", "("].
+    let a_sub: Vec<&str> =
+        tokenize_line("        let first_ascii_word = first_ascii_word(").collect();
+    let b_sub: Vec<&str> = tokenize_line("            first_ascii_word(").collect();
+    let pairs = raw_lcs_pairs_with_lookahead(&a_sub, &b_sub, Some("text"), Some("text"));
+    // Must match the SECOND "first_ascii_word" (the function call) and the
+    // trailing "(", NOT the variable-binding occurrence.
+    let a_matched: Vec<usize> = {
+        let mut v: Vec<usize> = pairs.keys().copied().collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        a_matched,
+        vec![11, 12, 13, 14, 15, 16],
+        "must match the function-call occurrence (a[11..15]) + '(', not the \
+         variable binding (a[3..7]); got {a_matched:?}"
+    );
 }

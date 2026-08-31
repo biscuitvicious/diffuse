@@ -128,14 +128,22 @@ Pattern matching variables should mirror the type names they destructure:
 
 ---
 
-## 5. Documentation & Doc Comments
+## 5. Control Flow & Method Structure
+
+### Guard Statements & Early Returns Over Deep Nesting
+- Avoid deeply nested `if`s, `match`es, and checks, preferring instead guard statements, `if let ... else`, and early `break` / `continue` / `return` so that the *main flow* of the method flows cleanly down the function / block with minimum indentation / nested blocks.
+- If a condition is genuinely two legitimate main flows, keep as nested blocks, but consider the possibility of extracting the blocks to their own significant functions instead.
+
+---
+
+## 6. Documentation & Doc Comments
 
 - **Top-Level Module Comments**: Every `.rs` file under `src/` must maintain a top-level module doc comment (`//!`) summarizing its role in the pipeline.
 - **Markdown Identifiers**: Wrap all types, variable names, and code tokens in backticks inside doc comments (enforced by `clippy::doc_markdown`).
 
 ---
 
-## 6. Verification & Tooling
+## 7. Verification & Tooling
 
 ### All-in-One Check Script
 Run [`scripts/check.sh`](file:///home/daniel/lab/diffuse/scripts/check.sh) to format, auto-fix clippy lints, run tests, and verify extension equivalence:

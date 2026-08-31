@@ -257,8 +257,8 @@ pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<Stri
         }
     }
 
-    // If any specs were not found in the gix ODB (e.g. unreferenced index blobs),
-    // fill in missing ones via batch loader
+    // If any specs were not found in the gix ODB (e.g. unreferenced index
+    // blobs), fill in missing ones via batch loader
     if results.len() < specs.len() {
         let missing: Vec<String> = specs
             .iter()

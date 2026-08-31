@@ -9,16 +9,16 @@ use ratatui::{
 
 use crate::{
     core::parse::RowKind,
-    render::{render_raw_row, render_row_segment, slice_by_visual_width, styled_prefix},
+    render::{render_raw_row, render_row_segment, slice_by_visual_width},
     view::{
         bottom_ribbon_lines, file_header_text,
         header::{
-            header_bar_line, render_bottom_ribbon, render_header_bar, render_status_bar,
-            status_bar_line, visible_width,
+            render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line,
+            visible_width,
         },
         hunk_divider_text,
         modals::{render_finder_modal, render_help_modal},
-        render_bottom_gap_divider, render_file_header_segment, render_hunk_divider_segment,
+        render_bottom_gap_divider,
     },
 };
 
@@ -122,8 +122,8 @@ impl AppState {
             lines = render_help_modal(width, height);
         }
 
-        // File finder dialog overlays the full screen with top finder + bottom preview
-        // when active.
+        // File finder dialog overlays the full screen with top finder + bottom
+        // preview when active.
         if let Some(finder) = &self.file_finder {
             lines = render_finder_modal(&self.output, finder, width, height);
         }
@@ -211,7 +211,8 @@ impl AppState {
                 .find(|h| h.file == file && h.hunk == hi)
         {
             if was_raw {
-                // Transitioning from raw to visual: use preceding gap row if present
+                // Transitioning from raw to visual: use preceding gap row if
+                // present
                 if hs.flat > 0
                     && self
                         .flat
@@ -223,7 +224,8 @@ impl AppState {
                     idx = Some(hs.flat);
                 }
             } else {
-                // Transitioning from visual to raw: use hunk_start separator row
+                // Transitioning from visual to raw: use hunk_start separator
+                // row
                 idx = Some(hs.flat);
             }
         }
@@ -282,8 +284,8 @@ impl AppState {
                 }
             }
         }
-        // Priority 5: Proximity fallback (closest line in the same file if target is in
-        // a gap)
+        // Priority 5: Proximity fallback (closest line in the same file if
+        // target is in a gap)
         if idx.is_none() {
             let target = target_new.or(target_old).unwrap_or(0);
             let mut best = None;
@@ -370,7 +372,7 @@ impl AppState {
         let file_path = file.path.clone();
 
         // 1. Header Bar
-        let header_line = header_bar_line(&self.repo, file);
+        let header_line = crate::view::header_bar_line_themed(&self.repo, file, &self.theme);
         f.render_widget(Paragraph::new(header_line), chunks[chunk_idx]);
         chunk_idx += 1;
 
@@ -412,6 +414,11 @@ impl AppState {
             self.render_diff_viewport_lines(width, diff_area.height as usize);
 
         if !self.raw_diff {
+            let thumb_fg = self.theme.palette.scrollbar_thumb.fg_code();
+            let track_fg = self.theme.palette.scrollbar_track.fg_code();
+            let thumb_str = format!("{thumb_fg}█\x1b[0m");
+            let track_str = format!("{track_fg}│\x1b[0m");
+
             for (row_i, gline) in grid_lines.iter_mut().enumerate() {
                 let vis_w = visible_width(gline);
                 if vis_w < content_width {
@@ -420,9 +427,9 @@ impl AppState {
                 gline.push_str("\x1b[0m");
                 if has_scrollbar {
                     let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size {
-                        "\x1b[38;5;248m█\x1b[0m"
+                        &thumb_str
                     } else {
-                        "\x1b[38;5;236m│\x1b[0m"
+                        &track_str
                     };
                     gline.push_str(sb_char);
                 }
@@ -589,13 +596,14 @@ impl AppState {
                 let segs = ((w + content_width - 1) / content_width.max(1)).max(1);
                 for s_idx in 0..segs {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                        lines.push(render_hunk_divider_segment(
+                        lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
                             div_hi,
                             h,
                             hidden_gap,
                             is_cur,
                             s_idx * content_width,
                             content_width,
+                            &self.theme,
                         ));
                     }
                     vis_i += 1;
@@ -612,7 +620,7 @@ impl AppState {
                 let segs = ((w + content_width - 1) / content_width.max(1)).max(1);
                 for s_idx in 0..segs {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                        lines.push(render_file_header_segment(
+                        lines.push(crate::view::diff_grid::render_file_header_segment_themed(
                             file_obj,
                             is_collapsed,
                             is_selected,
@@ -620,6 +628,7 @@ impl AppState {
                             in_band,
                             s_idx * content_width,
                             content_width,
+                            &self.theme,
                         ));
                     }
                     vis_i += 1;
@@ -660,13 +669,14 @@ impl AppState {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let pfx = if s_idx == 0 {
-                            styled_prefix(
+                            crate::render::styled_prefix_themed(
                                 r.kind,
                                 r.new_line,
                                 r.old_line,
                                 r.moved,
                                 &r.runs,
                                 in_hunk_extent,
+                                &self.theme,
                             )
                         } else {
                             "\x1b[38;5;242m      \x1b[39m".to_string()

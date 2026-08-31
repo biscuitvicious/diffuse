@@ -11,8 +11,14 @@ pub const KEYWORDS: &[&str] = &[
     "union", "unsigned", "void", "volatile", "while",
 ];
 
+pub const OPERATORS: &[&str] = &[
+    "!=", "%=", "&&", "&=", "*=", "++", "+=", "--", "-=", "->", "/=", "::", "<<", "<<=", "<=",
+    "==", ">=", ">>", ">>=", "^=", "|=", "||",
+];
+
 pub fn profile() -> LangProfile {
     LangProfile {
+        name: "c_family",
         keywords: KEYWORDS,
         line_comment: true,
         block_comment: true,
@@ -37,6 +43,7 @@ pub fn profile() -> LangProfile {
             "template ",
             "namespace ",
         ],
+        operators: OPERATORS,
         scope_stop_prefixes: &["class ", "struct ", "enum ", "namespace "],
     }
 }

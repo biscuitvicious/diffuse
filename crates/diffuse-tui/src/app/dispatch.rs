@@ -226,7 +226,8 @@ impl AppState {
                             {
                                 let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
                                 if hidden_gap > 0 {
-                                    // The divider may wrap across several visual
+                                    // The divider may wrap across several
+                                    // visual
                                     // segments on narrow screens; translate the
                                     // click into unwrapped text columns.
                                     let seg_off = target_vis - s;

@@ -56,6 +56,9 @@ use crate::{
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
 pub const MAX_BLOCK_K: usize = 10;
 
+/// Default minimum character length for 100% prefix containment bonus.
+pub const DEFAULT_MIN_CONTAINMENT_LEN: usize = 8;
+
 /// The multi-objective weights (plan §3.3). Initial tuning; golden review
 /// gates any change.
 pub struct Weights {
@@ -78,6 +81,8 @@ pub struct Weights {
     pub close_agree_bonus: f64,
     /// Multiplier on line indentation differences.
     pub indent_penalty_factor: f64,
+    /// Minimum trimmed character length for 100% prefix containment bonus.
+    pub min_containment_len: usize,
 }
 
 impl Default for Weights {
@@ -92,6 +97,7 @@ impl Default for Weights {
             head_agree_bonus: 80.0,
             close_agree_bonus: 250.0,
             indent_penalty_factor: 5.0,
+            min_containment_len: DEFAULT_MIN_CONTAINMENT_LEN,
         }
     }
 }
@@ -548,8 +554,8 @@ fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangP
         {
             return true;
         }
-        // In config files (TOML/YAML/INI), every `key = ` is an independent property
-        // declaration
+        // In config files (TOML/YAML/INI), every `key = ` is an independent
+        // property declaration
         if p.hash_comment
             && !p.line_comment
             && !p.block_comment
@@ -869,7 +875,14 @@ pub(crate) fn solve_cluster_with_arena(
         let dt = dp_tokens(&mut arena.interner, text);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
-        let first_ascii_word = first_ascii_word(text).map(|w| arena.interner.intern(w));
+        let first_ascii_word = if comment {
+            let comment_body = trimmed
+                .trim_start_matches(|c: char| !c.is_alphanumeric() && !c.is_whitespace())
+                .trim_start();
+            first_ascii_word(comment_body).map(|w| arena.interner.intern(w))
+        } else {
+            first_ascii_word(text).map(|w| arena.interner.intern(w))
+        };
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.old_close_dist[i];
         let prox_close = if close_dist == usize::MAX {
@@ -916,7 +929,14 @@ pub(crate) fn solve_cluster_with_arena(
         let dt = dp_tokens(&mut arena.interner, text);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
-        let first_ascii_word = first_ascii_word(text).map(|w| arena.interner.intern(w));
+        let first_ascii_word = if comment {
+            let comment_body = trimmed
+                .trim_start_matches(|c: char| !c.is_alphanumeric() && !c.is_whitespace())
+                .trim_start();
+            first_ascii_word(comment_body).map(|w| arena.interner.intern(w))
+        } else {
+            first_ascii_word(text).map(|w| arena.interner.intern(w))
+        };
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.new_close_dist[j];
         let prox_close = if close_dist == usize::MAX {
@@ -1182,10 +1202,11 @@ pub(crate) fn solve_cluster_with_arena(
                         };
 
                     let max_possible_mod_s = base + w.alpha * max_matched as f64
-                        - w.mu * (total - max_matched) as f64
+                        - w.gamma * (total - max_matched) as f64
                         - w.beta
                         + max_syn
                         + max_close
+                        + w.head_agree_bonus
                         + w.epsilon;
                     let mod_threshold = (base - 2.0 * w.beta).max(dp[next_diag].score);
                     if max_possible_mod_s <= mod_threshold {
@@ -1205,15 +1226,30 @@ pub(crate) fn solve_cluster_with_arena(
                         0usize
                     };
                     let unmatched = total.saturating_sub(matched);
-                    let (penalty, syntax) = if is_config_property_match {
+                    let is_prefix_containment = {
+                        let ot_trim = cluster.old_rows[i].text().trim();
+                        let nt_trim = cluster.new_rows[j].text().trim();
+                        let min_len = ot_trim.len().min(nt_trim.len());
+                        min_len >= w.min_containment_len
+                            && (om.comment == nm.comment)
+                            && (om.indent == nm.indent)
+                            && (ot_trim.starts_with(nt_trim) || nt_trim.starts_with(ot_trim))
+                    };
+                    let (penalty, syntax) = if is_config_property_match || is_prefix_containment {
                         let core_unmatched = min_chars.saturating_sub(matched);
                         let length_diff = (total - min_chars) as f64;
                         let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
-                        (pen, max_syn)
+                        let syn = if is_prefix_containment {
+                            max_syn + w.head_agree_bonus
+                        } else {
+                            max_syn
+                        };
+                        (pen, syn)
                     } else {
                         (w.mu * unmatched as f64, max_syn)
                     };
-                    // Distance-based closing-brace proximity bonus, tapering with distance
+                    // Distance-based closing-brace proximity bonus, tapering
+                    // with distance
                     let proximity_old_close = om.prox_close;
                     let proximity_new_close = nm.prox_close;
                     let close_bonus = w.epsilon * proximity_old_close * proximity_new_close;
@@ -1237,6 +1273,7 @@ pub(crate) fn solve_cluster_with_arena(
                     let proximity_gate = if similarity_ratio >= 0.25
                         || is_direct_tail_pair
                         || statement_head_match
+                        || is_prefix_containment
                     {
                         1.0
                     } else {

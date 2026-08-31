@@ -36,7 +36,8 @@ impl BitParallelLcs {
             *mask |= 1u64 << i;
         }
 
-        // DP columns: v_cols[j] represents the bit-vector after processing b[j-1]
+        // DP columns: v_cols[j] represents the bit-vector after processing
+        // b[j-1]
         let mut v_cols = [0u64; 65]; // Support up to N=64 on stack or dynamically if larger
         let mut v_vec = if n < 64 {
             None

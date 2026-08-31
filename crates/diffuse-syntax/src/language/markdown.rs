@@ -6,6 +6,7 @@ use crate::profile::{BlockDelimStyle, LangProfile};
 
 pub fn profile() -> LangProfile {
     LangProfile {
+        name: "markdown",
         keywords: &[],
         hash_comment: true,
         line_comment: false,
@@ -21,6 +22,7 @@ pub fn profile() -> LangProfile {
         block_style: BlockDelimStyle::Braces,
         fn_decl: None,
         decl_prefixes: &[],
+        operators: &[],
         scope_stop_prefixes: &[],
     }
 }

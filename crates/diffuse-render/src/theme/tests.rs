@@ -1,4 +1,5 @@
 use super::*;
+use crate::AnsiColor;
 
 #[test]
 fn test_magic_theme_token_colors() {
@@ -32,4 +33,77 @@ fn test_encode_decode_sgr() {
     assert_eq!(encoded, "{38;5;231}Review: mirage{39}");
     let decoded = decode_sgr(&encoded);
     assert_eq!(decoded, raw);
+}
+
+#[test]
+fn test_deep_black_theme_palette() {
+    let palette = ThemePalette::deep_black();
+    assert_eq!(palette.bg_base, AnsiColor::Index(233));
+    assert_eq!(palette.add_fg, AnsiColor::Index(120));
+    assert_eq!(palette.del_fg, AnsiColor::Index(203));
+    assert_eq!(palette.add_tint_bg, AnsiColor::Rgb(29, 35, 31));
+    assert_eq!(palette.del_tint_bg, AnsiColor::Rgb(48, 18, 20));
+
+    let theme = DiffuseTheme::DEEP_BLACK;
+    assert_eq!(theme.name, "deep_black");
+}
+
+#[test]
+fn test_theme_from_name_and_env() {
+    assert_eq!(DiffuseTheme::from_name("magic"), Some(DiffuseTheme::MAGIC));
+    assert_eq!(
+        DiffuseTheme::from_name("deep_black"),
+        Some(DiffuseTheme::DEEP_BLACK)
+    );
+    assert_eq!(
+        DiffuseTheme::from_name("DARK"),
+        Some(DiffuseTheme::DEEP_BLACK)
+    );
+    assert_eq!(
+        DiffuseTheme::from_name("legacy"),
+        Some(DiffuseTheme::LEGACY)
+    );
+    assert_eq!(DiffuseTheme::from_name("nonexistent"), None);
+
+    unsafe {
+        std::env::set_var("DIFFUSE_THEME", "deep_black");
+        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::DEEP_BLACK);
+        std::env::set_var("DIFFUSE_THEME", "magic");
+        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::MAGIC);
+        std::env::remove_var("DIFFUSE_THEME");
+        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::MAGIC);
+    }
+}
+
+#[test]
+fn test_theme_palette_helpers() {
+    let p = ThemePalette::default_magic();
+    assert_eq!(
+        p.file_header_colors(true, false, false),
+        (p.file_header_bg_selected, p.file_header_fg_selected)
+    );
+    assert_eq!(
+        p.file_header_colors(false, true, false),
+        (p.file_header_bg_current, p.file_header_fg_current)
+    );
+    assert_eq!(
+        p.file_header_colors(false, false, true),
+        (p.file_header_bg_current, p.file_header_fg_current)
+    );
+    assert_eq!(
+        p.file_header_colors(false, false, false),
+        (p.file_header_bg_rest, p.file_header_fg_rest)
+    );
+
+    assert_eq!(
+        p.hunk_divider_colors(true),
+        (p.hunk_divider_bg_current, p.hunk_divider_fg)
+    );
+    assert_eq!(
+        p.hunk_divider_colors(false),
+        (p.hunk_divider_bg_rest, p.hunk_divider_fg)
+    );
+
+    assert_eq!(p.named_color("warning"), Some(AnsiColor::Index(220)));
+    assert_eq!(p.named_color("nonexistent"), None);
 }

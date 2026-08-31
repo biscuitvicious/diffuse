@@ -209,8 +209,8 @@ impl AppState {
         }
 
         if self.row_idx == target_row && self.vis_line == target_vis_line {
-            // Already at bottom -> scroll 1/3 of viewport down and place cursor at new
-            // bottom
+            // Already at bottom -> scroll 1/3 of viewport down and place cursor
+            // at new bottom
             let step = ((max_rows * 2 + 3) / 6).max(1);
             self.scroll_to_visual(self.scroll + step);
             let new_bottom_vis = (self.scroll + max_rows)
@@ -265,7 +265,8 @@ impl AppState {
         }
 
         if self.row_idx == target_row && self.vis_line == target_vis_line {
-            // Already at top -> scroll 1/3 of viewport up and place cursor at new top
+            // Already at top -> scroll 1/3 of viewport up and place cursor at
+            // new top
             let max_rows = self.viewport_height.max(4);
             let step = ((max_rows * 2 + 3) / 6).max(1);
             self.scroll_to_visual(self.scroll.saturating_sub(step));

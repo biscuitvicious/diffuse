@@ -10,6 +10,7 @@ use crate::profile::{BlockDelimStyle, LangProfile};
 /// TOML and YAML — hash comments, colon-indented blocks, no prose.
 pub fn toml_yaml_profile() -> LangProfile {
     LangProfile {
+        name: "toml_yaml",
         keywords: &[],
         hash_comment: true,
         line_comment: false,
@@ -22,6 +23,7 @@ pub fn toml_yaml_profile() -> LangProfile {
         block_style: BlockDelimStyle::IndentColon,
         fn_decl: Some(Regex::new(r"^\s*\[+([A-Za-z0-9_.-]+)\]+").expect("toml section header")),
         decl_prefixes: &["["],
+        operators: &[],
         scope_stop_prefixes: &["["],
     }
 }
@@ -29,6 +31,7 @@ pub fn toml_yaml_profile() -> LangProfile {
 /// JSON — brace structure, no comments.
 pub fn json_profile() -> LangProfile {
     LangProfile {
+        name: "json",
         keywords: &[],
         hash_comment: false,
         line_comment: false,
@@ -41,6 +44,7 @@ pub fn json_profile() -> LangProfile {
         block_style: BlockDelimStyle::Braces,
         fn_decl: None,
         decl_prefixes: &[],
+        operators: &[],
         scope_stop_prefixes: &[],
     }
 }

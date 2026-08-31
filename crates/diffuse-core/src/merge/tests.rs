@@ -1,9 +1,10 @@
 //! Unit tests for token stream merging and multi-line subword projection.
 
 use crate::{
-    lcs::{char_slice, word_spans},
+    lcs::{char_slice, word_spans, word_spans_with_profile},
     merge::*,
     parse::{AddLine, DelLine, LineNum, Row},
+    syntax::registry::lang_profile,
 };
 
 fn mk(del: &str, add: &str) -> Row {
@@ -113,11 +114,10 @@ fn whitespace_minimum() {
     assert_eq!(
         parts,
         vec![
-            ("common", "        "),
             ("add", "    "),
-            ("common", "self.cache.borrow_mut().pop(key);"),
+            ("common", "        self.cache.borrow_mut().pop(key);"),
         ],
-        "8 common + 4 added, never the whole run on each side"
+        "4 added at col 0 + 8 common, never the whole run on each side"
     );
 }
 
@@ -372,4 +372,51 @@ fn test_doc_comment_subword_merge() {
     let r = mk(old, new);
     let runs = merged_runs(&r);
     assert_eq!(project_new_runs(&runs), new);
+}
+
+#[test]
+fn leading_indent_shift_pair_projects_exactly() {
+    // A 12→20 space indent shift with a mid-line rewrite: the leading-ws
+    // alignment in merged_runs_from_texts must keep both projections
+    // disk-exact — stripping del runs leaves the new line, stripping add
+    // runs leaves the old line.
+    let del_text = "            last.text.push_str(&run.text);";
+    let add_text = "                    last.text.len() + run.text.len(),";
+    let spans = word_spans_with_profile(del_text, add_text, lang_profile("rs"));
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+    assert_eq!(
+        project_forward(&runs),
+        add_text,
+        "strike-removed runs must reconstruct the new line"
+    );
+    assert_eq!(
+        project_reverse(&runs),
+        del_text,
+        "add-removed runs must reconstruct the old line"
+    );
+}
+
+#[test]
+fn trailing_generic_pair_projects_exactly() {
+    // The `coalesce_runs` generics row (merge/mod.rs:545 in the
+    // diffuse-history-mid corpus): two `>` del fragments pair with the
+    // `<'a>`-style inserts; the merged display must project exactly in both
+    // directions.
+    let del_text = "pub fn coalesce_runs(runs: Vec<Run>) -> Vec<Run> {";
+    let add_text = "pub fn coalesce_runs<'a>(runs: Vec<Run<'a>>) -> Vec<Run<'a>> {";
+    let spans = Spans {
+        del: vec![(34, 35), (47, 48)],
+        add: vec![(20, 24), (38, 43), (55, 60)],
+    };
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+    assert_eq!(
+        project_forward(&runs),
+        add_text,
+        "strike-removed runs must reconstruct the new line"
+    );
+    assert_eq!(
+        project_reverse(&runs),
+        del_text,
+        "add-removed runs must reconstruct the old line"
+    );
 }

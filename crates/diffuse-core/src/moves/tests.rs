@@ -62,6 +62,16 @@ fn exact_content_pair_marked_moved() {
         "exact-content pair marked moved (add)"
     );
     assert_eq!(moved_add.old_line(), Some(4), "paired with old_line 4");
+
+    let moved_del = f.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.old_line() == Some(4) && r.text() == "moved line")
+        .expect("del");
+    assert!(
+        moved_del.is_moved(),
+        "exact-content pair marked moved (del source)"
+    );
 }
 
 // Port of the block-move rule test: the old find_mount chain

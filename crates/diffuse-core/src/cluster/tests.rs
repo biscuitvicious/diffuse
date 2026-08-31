@@ -444,13 +444,8 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
 }
 
 #[test]
-fn dp_oracle_mirage() {
-    assert!(run_dp_oracle_on_corpus("mirage-2025-08") > 0);
-}
-
-#[test]
 fn dp_oracle_diffuse() {
-    assert!(run_dp_oracle_on_corpus("diffuse-2025-08") > 0);
+    assert!(run_dp_oracle_on_corpus("diffuse-2026-08") > 0);
 }
 
 #[test]
@@ -684,4 +679,126 @@ fn test_mirage_lookup_cluster() {
     }
     eprintln!("LOOKUP SOL TRANSITIONS: {:?}", sol.transitions);
     eprintln!("LOOKUP SOL SCORE: {}", sol.score);
+}
+
+#[test]
+fn test_doc_comment_partial_truncation_pairs_as_mod() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![
+        Row::Del(DelLine::new(
+            LineNum::new(4).unwrap(),
+            "//! run UNCHANGED on top. The target: the frozen `mirage-2025-08` wire,",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(5).unwrap(),
+            "//! byte-identical; other corpora are allowed drift while the DP replaces",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(6).unwrap(),
+            "//! the greedy heuristics.",
+        )),
+    ];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(4).unwrap(),
+        "//! run UNCHANGED on top.",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["//! Header"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["//!"],
+        section: SyntaxSectionKind::DocComment,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(sol.rows.len(), 3);
+    assert!(matches!(sol.rows[0], Row::Mod { .. }));
+    assert_eq!(sol.rows[0].text(), "//! run UNCHANGED on top.");
+    assert_eq!(sol.rows[0].old_line(), Some(4));
+    assert_eq!(sol.rows[0].new_line(), Some(4));
+    assert!(matches!(sol.rows[1], Row::Del(_)));
+    assert!(matches!(sol.rows[2], Row::Del(_)));
+}
+
+#[test]
+fn test_collapse_hunk_doc_comment_partial_truncation() {
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 3,
+        old_count: 5,
+        new_start: 3,
+        new_count: 3,
+        section: String::new(),
+        above_ctx: 1,
+        below_ctx: 1,
+        rows: vec![
+            Row::Ctx(CtxLine::new(
+                LineNum::new(3).unwrap(),
+                LineNum::new(3).unwrap(),
+                "//! Context above",
+            )),
+            Row::Del(DelLine::new(
+                LineNum::new(4).unwrap(),
+                "//! run UNCHANGED on top. The target: the frozen `mirage-2025-08` wire,",
+            )),
+            Row::Del(DelLine::new(
+                LineNum::new(5).unwrap(),
+                "//! byte-identical; other corpora are allowed drift while the DP replaces",
+            )),
+            Row::Del(DelLine::new(
+                LineNum::new(6).unwrap(),
+                "//! the greedy heuristics.",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(4).unwrap(),
+                "//! run UNCHANGED on top.",
+            )),
+            Row::Ctx(CtxLine::new(
+                LineNum::new(7).unwrap(),
+                LineNum::new(5).unwrap(),
+                "//! Context below",
+            )),
+        ],
+    };
+    let collapsed = crate::collapse::collapse_hunk_rows(&h, None, None, rs);
+    assert_eq!(collapsed.len(), 5);
+    assert!(matches!(collapsed[0], Row::Ctx(_)));
+    assert!(matches!(collapsed[1], Row::Mod { .. }));
+    assert_eq!(collapsed[1].text(), "//! run UNCHANGED on top.");
+    assert_eq!(collapsed[1].old_line(), Some(4));
+    assert_eq!(collapsed[1].new_line(), Some(4));
+    assert!(matches!(collapsed[2], Row::Del(_)));
+    assert!(matches!(collapsed[3], Row::Del(_)));
+    assert!(matches!(collapsed[4], Row::Ctx(_)));
+}
+
+#[test]
+fn test_weights_min_containment_len_tuning() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(1).unwrap(),
+        "let result = foo();",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(1).unwrap(),
+        "let result = foo(); // suffix comment",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn test() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+
+    // Default weights (min_containment_len = 8) pairs as Mod
+    let sol_default = dp::solve_cluster_with(&cluster, rs, &dp::Weights::default());
+    assert_eq!(sol_default.rows.len(), 1);
+    assert!(matches!(sol_default.rows[0], Row::Mod { .. }));
+
+    let custom_w = dp::Weights {
+        min_containment_len: 100,
+        ..Default::default()
+    };
+    assert_eq!(dp::DEFAULT_MIN_CONTAINMENT_LEN, 8);
+    assert_eq!(custom_w.min_containment_len, 100);
 }

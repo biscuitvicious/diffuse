@@ -29,6 +29,17 @@ impl AnsiColor {
         }
     }
 
+    /// Format the ANSI italic foreground escape sequence for this color (fused
+    /// SGR).
+    #[must_use]
+    pub fn italic_fg_code(&self) -> String {
+        match self {
+            Self::Reset => "\x1b[3;39m".to_string(),
+            Self::Index(idx) => format!("\x1b[3;38;5;{idx}m"),
+            Self::Rgb(r, g, b) => format!("\x1b[3;38;2;{r};{g};{b}m"),
+        }
+    }
+
     /// Format the ANSI background escape sequence for this color.
     #[must_use]
     pub fn bg_code(&self) -> String {

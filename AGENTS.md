@@ -29,13 +29,21 @@ The engine, terminal renderer, and interactive reviewer TUI are all natively imp
 In this active development phase:
 
 - **Rust is the Canonical Reference**: The Rust codebase (`crates/`) is the source of truth for all engine, render, and TUI behavior.
-- **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust) and the smoke suite in `extension/pi/`.
+- **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust) and the golden corpus acceptance.
 - **Behavior Improvements & Visual Tuning**: Subword boundaries, reflow pairing, move detection, syntax highlighting, and rendering aesthetics are actively refined to deliver the best visual diff experience.
 - **Golden Corpus**: `tests/golden/` serves as the acceptance baseline
   (7 frozen corpora). As rendering and subword improvements land, fixtures
   change only after review — see [`tests/AGENTS.md`](tests/AGENTS.md).
 
 ## The golden — the ground truth
+
+> **Provisional goldens**: the current goldens have not been fully hand
+> reviewed and may be incorrect. This supersedes the blocking regeneration
+> rule below — a golden may be regenerated when the engine's new output is
+> judged better — but **always check**: walk every golden diff and assert
+> strictly-better-or-equivalent per
+> [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md)
+> before accepting it, and flag and pause on anything suspicious.
 
 The golden corpora are the locked, reviewed ideal output of the engine.
 They encode the hand-tuned preferences: the exact strike/fill minimums,
@@ -47,9 +55,8 @@ contract over the frozen corpora in two legs — the **lib leg** (embed the
 engine, run the full pipeline) and the **bin leg** (spawn the built binary,
 feed it the same input, decode its JSON, run the same walk). Both must
 match byte-for-byte; the bin leg exists because the wire contract
-(PLAN.md §2) is itself part of the spec. The rendered golden (the TUI's
-colored scrolldown) is walked by the extension's
-`extension/pi/test/golden.test.ts`, which needs the TS renderer.
+(PLAN.md §2) is itself part of the spec. The same acceptance walks the
+rendered golden (`.render.txt`) and the Markdown output (`.markdown.md`).
 
 **Fixture types, corpus inventory, regeneration commands, and the review
 signoff gate for any golden change live in
@@ -63,24 +70,18 @@ the deviation.
 
 - The spec (the original engine): `extension/pi/review.ts` (pristine
   upstream: `~/lab/pi-review/review.ts` — read-only).
-- The reference's own tests: `extension/pi/test/review.test.ts` (unit
-  blocks — Phase 3 ports each ENGINE-side block to a `#[test]` with the
-  same inputs and expectations; the renderer-side blocks stay in TS and
-  run with the extension).
-- The reference's golden walk: `extension/pi/test/golden.test.ts` — the
-  rendered acceptance walk over the shared corpora in `tests/golden/`.
-- The corpus: `tests/golden/` — the single canonical copy, shared by the
-  Rust acceptance and the extension's walk. Fixture types, regeneration
+- The corpus: `tests/golden/` — the single canonical copy of the Rust
+  acceptance. Fixture types, regeneration
   mechanics, and change policy: [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).
 
 ## Test-first bugfix & feature discipline
 
 Every bug fix, behavior adjustment, or new feature must expand the test corpus with a targeted test covering the exact scenario:
 
-1. **Write the test first**: Before editing implementation code, write a unit or component test (in Rust `#[test]` or TS `review.test.ts`) specifying the desired behavior or reproducing the bug.
+1. **Write the test first**: Before editing implementation code, write a unit or component test (`#[test]` in Rust) specifying the desired behavior or reproducing the bug.
 2. **Confirm initial failure**: Run the test to verify that it fails in the expected way, proving that the test suite actually catches the bug or missing capability.
 3. **Implement the change**: Write the minimal code needed to fulfill the requirement.
-4. **Verify passing run**: Ensure `cargo test` and `npm test` pass cleanly, permanently expanding the test suite to guard against regressions.
+4. **Verify passing run**: Ensure `cargo test` passes cleanly, permanently expanding the test suite to guard against regressions.
 5. **Verify 100% branch coverage**: All new code and code paths must achieve 100% **branch coverage** with comprehensive unit tests exercising every conditional, match arm, and edge case (see [`GUIDELINES.md § Test-First Methodology & 100% Branch Coverage`](file:///home/daniel/lab/diffuse/GUIDELINES.md#test-first-methodology--100-branch-coverage)).
 
 ## Test Performance Invariants
@@ -89,8 +90,8 @@ To keep development iterations instantaneous and prevent CI / pre-commit stalls,
 
 - **Individual Test Latency**: Any individual `#[test]` must execute in **`< 0.5s`**.
 - **Test Binary Latency**: Any test binary (e.g. `diffuse-core`, `diffuse-tui`, `golden.rs`, `harvest_benchmarks.rs`) must complete in **`< 1.5s`**.
-- **Full `./scripts/check.sh` Suite**: The entire `./scripts/check.sh` gate (fmt check, fast clippy, all cargo tests, extension smoke suite) must complete in **`< 3s`** (warm cache, less clippy and compile time).
-- **Massive Scale & Stress Benchmarks**: Any multi-megabyte whole-evolution history stress tests (e.g. `diffuse-history-mid`) or 10,000-file scale generators must be tagged with `#[ignore = "..."]` so normal developer test sweeps remain sub-second while full stress validation is runnable on-demand via `cargo test -- --ignored`.
+- **Full `./scripts/check.sh` Suite**: The entire `./scripts/check.sh` gate (fmt check, fast clippy, all cargo tests) must complete in **`< 3s`** (warm cache, less clippy and compile time).
+- **Massive Scale & Stress Benchmarks**: Any whole-evolution history stress test beyond the standard pinned corpora, or a 10,000-file scale generator, must be tagged with `#[ignore = "..."]` so normal developer test sweeps remain sub-second while full stress validation is runnable on-demand via `cargo test -- --ignored`.
 
 ## Standard workflow
 
@@ -103,8 +104,8 @@ are the test-first discipline above):
    the new behavior (an old expectation breaking is a spec change — review
    it consciously, don't just update it).
 3. **`./scripts/check.sh`** — nightly fmt + clippy `--fix` (both
-   auto-apply), the full cargo test suite, and the extension's `npm test`.
-   Everything must pass cleanly.
+   auto-apply) and the full cargo test suite. Everything must pass
+   cleanly.
 4. **Agent review of golden changes** — walk any wire/golden diffs per
    [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md):
    assert strictly-better-or-equivalent, flag and pause on anything
@@ -129,10 +130,9 @@ are the test-first discipline above):
   [`GUIDELINES.md`](file:///home/daniel/lab/diffuse/GUIDELINES.md).
 - `target/`, `extension/*/node_modules/`, and `extension/pi/bin/` are
   gitignored (build artifacts).
-- The extension's suite runs with `npm test` in `extension/pi/` (rust-only:
-  the unit suite + the golden walk over both corpora). `scripts/build-bin.sh`
-  bundles the diffuse binary; `scripts/install.sh` syncs review.ts + the
-  binary into `~/.pi/agent/extensions/` for pi (`/reload` to pick it up).
+- `extension/pi/scripts/build-bin.sh` builds the diffuse binary;
+  `extension/pi/scripts/install.sh` syncs review.ts + the binary into
+  `~/.pi/agent/extensions/` for pi (`/reload` to pick it up).
 - Commit policy: do not commit without explicit instruction — present a
   summary and ask.
 - Engineering Plans: Follow [`plan/Plan Guidelines.md`](file:///home/daniel/lab/diffuse/plan/Plan%20Guidelines.md)
