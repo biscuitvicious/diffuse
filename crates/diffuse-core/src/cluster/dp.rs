@@ -50,7 +50,10 @@ use crate::{
     lcs::{lcs_matched_chars_ids, lcs_pairs_ids},
     parse::Row,
     similarity::TokenInterner,
-    syntax::{prelude::first_ascii_word, registry::is_ascii_word_char},
+    syntax::{
+        prelude::{CloseDelimiter, first_ascii_word},
+        registry::is_ascii_word_char,
+    },
 };
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
@@ -250,46 +253,6 @@ pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -
         bm.pair_of.insert((li, ti), oi);
     }
     bm
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum CloseDelimiter {
-    #[default]
-    None,
-    BraceSemi,
-    Brace,
-    ParenSemi,
-    Paren,
-}
-
-fn classify_close_tail(text: &str) -> CloseDelimiter {
-    let t = text.trim();
-    if t.ends_with("};") {
-        CloseDelimiter::BraceSemi
-    } else if t.ends_with('}') {
-        CloseDelimiter::Brace
-    } else if t.ends_with(");") {
-        CloseDelimiter::ParenSemi
-    } else if t.ends_with(')') {
-        CloseDelimiter::Paren
-    } else {
-        CloseDelimiter::None
-    }
-}
-
-fn classify_exact_close(text: &str) -> CloseDelimiter {
-    let t = text.trim();
-    if t == "};" {
-        CloseDelimiter::BraceSemi
-    } else if t == "}" {
-        CloseDelimiter::Brace
-    } else if t == ");" {
-        CloseDelimiter::ParenSemi
-    } else if t == ")" {
-        CloseDelimiter::Paren
-    } else {
-        CloseDelimiter::None
-    }
 }
 
 fn is_config_key_char(c: char) -> bool {
@@ -528,6 +491,9 @@ fn block_lcs_fast_precomputed(
     let mut most_n = 0usize;
     let mut moved_lines = 0usize;
     for (li, &count) in line_matched_counts[..k].iter().enumerate() {
+        if count == 0 {
+            return (0, 0, 0);
+        }
         if count > most_n {
             most_n = count;
             most = li;
@@ -673,7 +639,7 @@ pub(crate) struct DpScratchArena {
     dp: Vec<Cell>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 #[repr(u8)]
 enum OpKind {
     #[default]
@@ -773,6 +739,32 @@ pub(crate) fn solve_cluster_with_arena(
         }
     };
     let indent_of = |t: &str| -> usize { t.len() - t.trim_start().len() };
+    let classify_close = |t: &str| -> CloseDelimiter {
+        if let Some(p) = profile {
+            p.classify_close_tail(t)
+        } else {
+            CloseDelimiter::default_classify_tail(t)
+        }
+    };
+    let classify_exact = |t: &str| -> CloseDelimiter {
+        if let Some(p) = profile {
+            p.classify_exact_close(t)
+        } else {
+            CloseDelimiter::default_classify_exact(t)
+        }
+    };
+    fn trim_trailing_delims<'a>(
+        t: &'a str,
+        profile: Option<&crate::syntax::profile::LangProfile>,
+    ) -> &'a str {
+        if let Some(p) = profile {
+            p.trim_trailing_delimiters(t)
+        } else {
+            t.trim_end_matches(|c: char| {
+                c.is_whitespace() || matches!(c, '{' | '}' | ';' | ':' | ',' | ')' | ']')
+            })
+        }
+    }
 
     let compute_close_dist =
         |rows: &[crate::parse::Row], following: &[&str], out: &mut Vec<usize>| {
@@ -900,8 +892,8 @@ pub(crate) fn solve_cluster_with_arena(
         let ends_with_semi = trimmed.ends_with(';');
         let is_stmt_start = is_statement_start(text, profile);
         let config_key = extract_config_key(text).map(|w| arena.interner.intern(w));
-        let close_tail = classify_close_tail(text);
-        let exact_close = classify_exact_close(text);
+        let close_tail = classify_close(text);
+        let exact_close = classify_exact(text);
         let trimmed_id = arena.interner.intern(trimmed);
 
         arena.old_tokens.push(dt);
@@ -954,8 +946,8 @@ pub(crate) fn solve_cluster_with_arena(
         let ends_with_semi = trimmed.ends_with(';');
         let is_stmt_start = is_statement_start(text, profile);
         let config_key = extract_config_key(text).map(|w| arena.interner.intern(w));
-        let close_tail = classify_close_tail(text);
-        let exact_close = classify_exact_close(text);
+        let close_tail = classify_close(text);
+        let exact_close = classify_exact(text);
         let trimmed_id = arena.interner.intern(trimmed);
 
         arena.new_tokens.push(dt);
@@ -1225,16 +1217,29 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         0usize
                     };
-                    let unmatched = total.saturating_sub(matched);
+                    let ot_trim = cluster.old_rows[i].text().trim();
+                    let nt_trim = cluster.new_rows[j].text().trim();
+
                     let is_prefix_containment = {
-                        let ot_trim = cluster.old_rows[i].text().trim();
-                        let nt_trim = cluster.new_rows[j].text().trim();
-                        let min_len = ot_trim.len().min(nt_trim.len());
+                        let ot_strip = trim_trailing_delims(ot_trim, profile);
+                        let nt_strip = trim_trailing_delims(nt_trim, profile);
+                        let min_len = ot_strip.len().min(nt_strip.len());
+                        let is_prefix_at_boundary = |longer: &str, shorter: &str| -> bool {
+                            if let Some(rest) = longer.strip_prefix(shorter) {
+                                rest.is_empty()
+                                    || rest.starts_with(|c: char| {
+                                        c.is_whitespace() || (!c.is_alphanumeric() && c != '_')
+                                    })
+                            } else {
+                                false
+                            }
+                        };
                         min_len >= w.min_containment_len
                             && (om.comment == nm.comment)
-                            && (om.indent == nm.indent)
-                            && (ot_trim.starts_with(nt_trim) || nt_trim.starts_with(ot_trim))
+                            && (is_prefix_at_boundary(ot_strip, nt_strip)
+                                || is_prefix_at_boundary(nt_strip, ot_strip))
                     };
+                    let unmatched = total.saturating_sub(matched);
                     let (penalty, syntax) = if is_config_property_match || is_prefix_containment {
                         let core_unmatched = min_chars.saturating_sub(matched);
                         let length_diff = (total - min_chars) as f64;
@@ -1262,9 +1267,39 @@ pub(crate) fn solve_cluster_with_arena(
                         (om.indent as isize - nm.indent as isize).unsigned_abs() as f64;
                     let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
 
+                    let offset_diff = (i as isize - j as isize).unsigned_abs();
                     let similarity_ratio = matched as f64 / total as f64;
-                    let is_direct_tail_pair =
-                        om.close_dist == 1 && nm.close_dist == 1 && indent_diff == 0.0;
+                    let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
+                        if indent_diff == 0.0 {
+                            true
+                        } else if let Some(p) = profile {
+                            p.is_direct_tail_match(om.close_tail, nm.close_tail, matched)
+                        } else {
+                            CloseDelimiter::default_is_direct_tail_match(
+                                om.close_tail,
+                                nm.close_tail,
+                                matched,
+                            )
+                        }
+                    } else {
+                        false
+                    };
+
+                    let is_valid_mod_pair = if (om.comment || nm.comment) && offset_diff > 0 {
+                        is_prefix_containment || similarity_ratio >= 0.65
+                    } else if om.comment || nm.comment {
+                        similarity_ratio >= 0.35 || is_prefix_containment
+                    } else {
+                        similarity_ratio >= 0.25
+                            || is_direct_tail_pair
+                            || statement_head_match
+                            || is_prefix_containment
+                    };
+
+                    if !is_valid_mod_pair {
+                        continue;
+                    }
+
                     let effective_close_bonus = if is_direct_tail_pair {
                         w.delta
                     } else {
@@ -1295,7 +1330,13 @@ pub(crate) fn solve_cluster_with_arena(
                 }
             }
             // Expand: old i vs new block j..j+k (k >= 2).
-            if has_old && j < n && ot.chars >= 8 && om.is_reflow && om.comment == nm.comment {
+            if has_old
+                && j < n
+                && ot.chars >= 8
+                && om.is_reflow
+                && om.comment == nm.comment
+                && om.indent == nm.indent
+            {
                 for pblock in new_valid_blocks[j].as_slice() {
                     let k = pblock.k;
                     if !mask_overlap(&ot.token_mask, &pblock.mask) {

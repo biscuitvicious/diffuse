@@ -803,3 +803,89 @@ fn test_weights_min_containment_len_tuning() {
     assert_eq!(dp::DEFAULT_MIN_CONTAINMENT_LEN, 8);
     assert_eq!(custom_w.min_containment_len, 100);
 }
+
+#[test]
+fn test_rewritten_comment_block_does_not_pair_across_offset_drift() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![
+        Row::Del(DelLine::new(
+            LineNum::new(132).unwrap(),
+            "    // A del run whose FIRST line did not move is a deleted block, not a",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(133).unwrap(),
+            "    // relocation — the interior \"moved\" lines are coincidental same-text",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(134).unwrap(),
+            "    // matches (the old `find_mount`'s `.iter()/.rfind()/.map()` chain",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(135).unwrap(),
+            "    // verbatim-matching lines inside the NEW `get` method). The move would",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(136).unwrap(),
+            "    // render the new method's chain as ≈ inside a clearly-added block —",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(137).unwrap(),
+            "    // \"`self.filesystems` added, the rest moved?\" — misleading. The whole",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(138).unwrap(),
+            "    // deleted block reads as deleted; the new method reads as added.",
+        )),
+    ];
+    let new_rows = vec![
+        Row::Add(AddLine::new(
+            LineNum::new(133).unwrap(),
+            "    // Block Move Cohesion Rule:",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(134).unwrap(),
+            "    // In a multi-line deletion run (e.g. deleting a function), isolated matches",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(135).unwrap(),
+            "    // (e.g. single-line attributes like `#[test]`, closing braces `}`, or",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(136).unwrap(),
+            "    // interior method calls) are coincidental boilerplate, NOT code",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(137).unwrap(),
+            "    // relocations.",
+        )),
+        Row::Add(AddLine::new(LineNum::new(138).unwrap(), "    //")),
+        Row::Add(AddLine::new(
+            LineNum::new(139).unwrap(),
+            "    // A deletion run is only marked moved if:",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(140).unwrap(),
+            "    // - The ENTIRE deletion run moved, OR",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(141).unwrap(),
+            "    // - A contiguous prefix block of >= 2 lines starting at run[0] moved.",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(142).unwrap(),
+            "    // Otherwise, all lines in the deletion run remain normal deletions.",
+        )),
+    ];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["    }"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["    let mut unmark_positions: Vec<RowPos> = Vec::new();"],
+        section: SyntaxSectionKind::LineComment,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.rows.iter().all(|r| !matches!(r, Row::Mod { .. })),
+        "completely rewritten comment block must NOT pair random lines as Mod"
+    );
+}

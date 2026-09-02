@@ -138,7 +138,7 @@ pub fn pass_assemble_mods(
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
             let del_text = r.text().to_string();
-            let mut spans = word_spans_with_profile(&del_text, add.text(), profile);
+            let spans = word_spans_with_profile(&del_text, add.text(), profile);
 
             let mut next_adds = Vec::new();
             let mut k = add_ri + 1;
@@ -155,60 +155,34 @@ pub fn pass_assemble_mods(
                     || add.text().trim().ends_with('[')
                     || p.is_import_statement(&del_text);
 
-                while k < h.rows.len()
-                    && matches!(h.rows[k], Row::Add(_))
-                    && !ctx.pair_of.contains_key(&k)
-                {
-                    let nxt_t = h.rows[k].text().trim();
-                    if p.is_decl_break(nxt_t) {
-                        break;
-                    }
-                    let is_continuation = p.is_continuation_line(nxt_t);
-                    let is_closing = p.is_expression_close(nxt_t)
-                        || p.is_block_close(nxt_t)
-                        || del_text.trim_end().ends_with(nxt_t);
-                    let matches_del = tokenize_line(nxt_t).into_iter().any(|tok| {
-                        !tok.trim().is_empty()
-                            && tok.chars().any(char::is_alphanumeric)
-                            && spans.del.iter().any(|&(ds, de)| {
-                                let seg = char_slice(&del_text, ds, de);
-                                seg.contains(tok)
-                            })
-                    });
-                    let is_param_or_item = opens_delim
-                        && (nxt_t.ends_with(',')
+                if opens_delim {
+                    while k < h.rows.len()
+                        && matches!(h.rows[k], Row::Add(_))
+                        && !ctx.pair_of.contains_key(&k)
+                    {
+                        let nxt_t = h.rows[k].text().trim();
+                        if p.is_decl_break(nxt_t) {
+                            break;
+                        }
+                        let is_closing = p.is_expression_close(nxt_t)
+                            || p.is_block_close(nxt_t)
+                            || del_text.trim_end().ends_with(nxt_t);
+                        let is_param_or_item = nxt_t.ends_with(',')
                             || nxt_t.ends_with('(')
                             || nxt_t.ends_with('{')
                             || nxt_t.ends_with('[')
-                            || p.is_comment_line(nxt_t));
+                            || p.is_comment_line(nxt_t);
+                        let is_continuation = p.is_continuation_line(nxt_t);
 
-                    if is_closing {
-                        next_adds.push(k);
-                        break;
-                    } else if is_continuation || matches_del {
-                        next_adds.push(k);
-                        k += 1;
-                    } else if is_param_or_item {
-                        let has_closing = (k + 1..h.rows.len())
-                            .take_while(|&idx| {
-                                matches!(h.rows[idx], Row::Add(_))
-                                    && !ctx.pair_of.contains_key(&idx)
-                                    && !p.is_decl_break(h.rows[idx].text().trim())
-                            })
-                            .any(|idx| {
-                                let t = h.rows[idx].text().trim();
-                                p.is_expression_close(t)
-                                    || p.is_block_close(t)
-                                    || del_text.trim_end().ends_with(t)
-                            });
-                        if has_closing {
+                        if is_closing {
+                            next_adds.push(k);
+                            break;
+                        } else if is_param_or_item || is_continuation {
                             next_adds.push(k);
                             k += 1;
                         } else {
                             break;
                         }
-                    } else {
-                        break;
                     }
                 }
             }
@@ -335,23 +309,6 @@ pub fn pass_assemble_mods(
                 }
             }
 
-            let run = ctx.run_of.get(&ri);
-            let reflows: Vec<String> = match run {
-                Some(run) if run.len() > 1 => run
-                    .iter()
-                    .skip(1)
-                    .map(|&d| h.rows[d].text().trim().to_string())
-                    .collect(),
-                _ => Vec::new(),
-            };
-            if !reflows.is_empty() {
-                spans.add.retain(|(as_, ae)| {
-                    let seg = char_slice(add.text(), *as_, *ae);
-                    !reflows
-                        .iter()
-                        .any(|t| !t.is_empty() && seg.contains(t.as_str()))
-                });
-            }
             let mod_row = Row::Mod {
                 old_line: DelLine::new(r.old_line_num().unwrap(), del_text),
                 new_line: AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans),
@@ -408,8 +365,7 @@ pub fn pass_filter_reflows(
         }
     }
 
-    // 2. Candidate unabsorbed dels that could pair with verbatim standalone
-    //    adds.
+    // 2. Candidate unabsorbed dels that could pair with verbatim standalone adds.
     let candidate_dels: Vec<usize> = kept_dels
         .iter()
         .copied()
@@ -468,8 +424,8 @@ pub fn pass_filter_reflows(
         }
     }
 
-    // 4. Meaningful dels: candidate dels that were NOT converted to Ctx, plus
-    //    moved dels that were not absorbed.
+    // 4. Meaningful dels: candidate dels that were NOT converted to Ctx, plus moved
+    //    dels that were not absorbed.
     let meaningful: Vec<usize> = kept_dels
         .iter()
         .copied()

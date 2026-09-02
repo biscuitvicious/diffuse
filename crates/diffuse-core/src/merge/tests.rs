@@ -422,3 +422,79 @@ fn trailing_generic_pair_projects_exactly() {
         "add-removed runs must reconstruct the old line"
     );
 }
+
+#[test]
+fn test_del_span_does_not_jump_over_common_tokens_invertible() {
+    let old = "                if !run.is_empty() && !moved_dels.contains(&run[0]) {";
+    let new = "                    if run.len() > 1";
+    let r = mk(old, new);
+    let runs = merged_runs(&r);
+
+    let old_proj = project_old_runs(&runs);
+    assert_eq!(
+        old_proj, old,
+        "old run projection must perfectly reconstruct the old line"
+    );
+
+    let new_proj = project_new_runs(&runs);
+    assert_eq!(
+        new_proj, new,
+        "new run projection must perfectly reconstruct the new line"
+    );
+}
+
+#[test]
+fn test_colon_space_reconstruction() {
+    let old = "\t\"description\": \"Interactive git-diff review for pi: wrapped hunks with syntax highlighting, persistent margin notes, and hunk-level git staging.\",";
+    let new = "\t\"description\": \"Interactive git-diff review for pi (extension): wrapped hunks with syntax highlighting, persistent margin notes, and hunk-level git staging.\",";
+    let r = mk(old, new);
+    let runs = merged_runs(&r);
+    assert_eq!(project_reverse(&runs), old);
+    assert_eq!(project_forward(&runs), new);
+}
+
+#[test]
+fn test_pi_review_extension_reconstruction() {
+    let old = "the pi review extension (TypeScript renderer + TUI), moved in at PLAN.md";
+    let new = "the pi review extension. The extension is a **thin client**: `/review`";
+    let r = mk(old, new);
+    let runs = merged_runs(&r);
+    assert_eq!(project_reverse(&runs), old);
+    assert_eq!(project_forward(&runs), new);
+}
+
+#[test]
+fn test_golden_txt_line_reconstruction() {
+    let del = "3. **`<name>.golden.txt`** — the frozen *rendered* output (the TUI's";
+    let add = "5. **`render.txt`** — the frozen *terminal rendered* output. It locks the hand-tuned visual preferences (strike/fill minimums, anchor pairings, move-block shape, reverse-stretch).";
+    let r = mk(del, add);
+    let runs = merged_runs(&r);
+    assert_eq!(project_reverse(&runs), del);
+    assert_eq!(project_forward(&runs), add);
+}
+
+#[test]
+fn test_box_drawing_spacing_reconstruction() {
+    let old = "│   ├── package.json        builds the extension bundle";
+    let new =
+        "│        ├── package.json   builds the extension bundle (native diffuse TUI wrapper)";
+    let profile = crate::syntax::registry::lang_profile("md");
+    let ws = crate::lcs::word_spans_with_profile(old, new, profile);
+    let r = Row::Mod {
+        old_line: DelLine::new(LineNum::new(1).unwrap(), old),
+        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), new, ws),
+    };
+    let runs = merged_runs(&r);
+    assert_eq!(project_reverse(&runs), old);
+    assert_eq!(project_forward(&runs), new);
+}
+
+#[test]
+fn test_render_txt_line_96_reconstruction() {
+    let old = "{48;5;236}{38;5;147}  96{38;5;117}≈{38;5;120}+{39}{23}{48;5;28}    {48;5;28}{48;5;28}{38;5;150}//{39}{48;5;28}{48;5;28}{38;5;150} The dels' row ids, in order — the TS iterates {39}{48;5;28}{48;5;28}{38;5;51}`{39}{48;5;28}{48;5;28}h{48;5;28}{48;5;28}{38;5;117}.{39}{48;5;28}{48;5;28}rows{48;5;28}{48;5;28}{38;5;51}`{39}{48;5;28}{48;5;28}{38;5;150}.{39}{48;5;28}{48;5;236}";
+    let new = "{48;5;22}{38;5;151}  96 {38;5;120}+{39}{23}{48;5;22}    {48;5;22}{48;5;22}{38;5;150}//{39}{48;5;22}{48;5;22}{38;5;150} The dels' row ids, in order — the TS iterates {39}{48;5;22}{48;5;22}{38;5;51}`{39}{48;5;22}{48;5;22}h{48;5;22}{48;5;22}{38;5;117}.{39}{48;5;22}{48;5;22}rows{48;5;22}{48;5;22}{38;5;51}`{39}{48;5;22}{48;5;22}{38;5;150}.{39}{48;5;22}{48;5;22}";
+    let spans = crate::lcs::word_spans(old, new);
+    let runs = merged_runs_from_texts(old, new, &spans);
+    let rev = project_reverse(&runs);
+    assert_eq!(rev, old);
+}

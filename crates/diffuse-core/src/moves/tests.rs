@@ -355,11 +355,7 @@ fn test_cohesive_function_move_with_boilerplate_attribute() {
         4,
         "all 4 lines of cohesive relocated function must be marked moved"
     );
-    let moved_dels: Vec<_> = f.hunks[0]
-        .rows
-        .iter()
-        .filter(|r| r.is_moved())
-        .collect();
+    let moved_dels: Vec<_> = f.hunks[0].rows.iter().filter(|r| r.is_moved()).collect();
     assert_eq!(
         moved_dels.len(),
         4,

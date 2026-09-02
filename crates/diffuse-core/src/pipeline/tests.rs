@@ -294,8 +294,7 @@ runner = "scripts/android-test-runner"
     let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let rows = &output.files[0].rows;
 
-    // 1. Assert that there is NO floating del under [env] (between lines 1 and
-    //    6)
+    // 1. Assert that there is NO floating del under [env] (between lines 1 and 6)
     for r in &rows[..6] {
         assert_ne!(
             r.kind,
@@ -304,8 +303,8 @@ runner = "scripts/android-test-runner"
         );
     }
 
-    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1
-    //    Mod (old 10 -> new 14)
+    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1 Mod
+    //    (old 10 -> new 14)
     let musl_runner = rows.iter().find(|r| r.new_line == Some(14));
     assert!(musl_runner.is_some());
     assert_eq!(musl_runner.unwrap().kind, RowKind::Mod);
@@ -318,15 +317,15 @@ runner = "scripts/android-test-runner"
     assert_eq!(gnu_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(gnu_runner.unwrap().old_line, Some(15));
 
-    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1
-    //    Mod (old 23 -> new 27)
+    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1 Mod
+    //    (old 23 -> new 27)
     let aarch64_musl_runner = rows.iter().find(|r| r.new_line == Some(27));
     assert!(aarch64_musl_runner.is_some());
     assert_eq!(aarch64_musl_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(aarch64_musl_runner.unwrap().old_line, Some(23));
 
-    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod
-    //    (old 29 -> new 33)
+    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod (old
+    //    29 -> new 33)
     let android_runner = rows.iter().find(|r| r.new_line == Some(33));
     assert!(android_runner.is_some());
     assert_eq!(android_runner.unwrap().kind, RowKind::Mod);
@@ -565,4 +564,139 @@ fn test_pipeline_pure_rename_renders_entire_file_as_context() {
     assert_eq!(f.hunks[0].rows[2].kind, RowKind::Ctx);
     assert_eq!(f.hunks[0].rows[2].text, "}");
     assert_eq!(f.rows.len(), 3);
+}
+
+#[test]
+fn test_head_commit_hunk_render() {
+    let diff = r#"diff --git a/crates/diffuse-core/src/moves/mod.rs b/crates/diffuse-core/src/moves/mod.rs
+--- a/crates/diffuse-core/src/moves/mod.rs
++++ b/crates/diffuse-core/src/moves/mod.rs
+@@ -143,18 +147,65 @@ pub fn mark_moves(f: &mut DiffFile) {
+             if matches!(r, Row::Del(_)) {
+                 run.push((hi, ri));
+             } else {
+-                // flush the run
+-                if !run.is_empty() && !moved_dels.contains(&run[0]) {
+-                    unmark_positions
+-                        .extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));
++                if !run.is_empty() {
++                    let moved_in_run: Vec<RowPos> = run
++                        .iter()
++                        .copied()
++                        .filter(|pos| moved_dels.contains(pos))
++                        .collect();
++                    if run.len() > 1
++                        && (moved_in_run.len() < 2
++                            || !moved_dels.contains(&run[0])
++                            || moved_in_run.len() < run.len())
++                    {
++                        let prefix_len = run
++                            .iter()
++                            .take_while(|pos| moved_dels.contains(pos))
++                            .count();
++                        if prefix_len < 2 || prefix_len < moved_in_run.len() {
++                            unmark_positions.extend(moved_in_run);
++                        } else {
++                            unmark_positions.extend(
++                                run.iter()
++                                    .skip(prefix_len)
++                                    .copied()
++                                    .filter(|pos| moved_dels.contains(pos)),
++                            );
++                        }
++                    }
++                }
+                 run.clear();
+             }
+         }
+-        if !run.is_empty() && !moved_dels.contains(&run[0]) {
+-            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));
++        if !run.is_empty() {
++            let moved_in_run: Vec<RowPos> = run
++                .iter()
++                .copied()
++                .filter(|pos| moved_dels.contains(pos))
++                .collect();
++            if run.len() > 1
++                && (moved_in_run.len() < 2
++                    || !moved_dels.contains(&run[0])
++                    || moved_in_run.len() < run.len())
++            {
++                let prefix_len = run
++                    .iter()
++                    .take_while(|pos| moved_dels.contains(pos))
++                    .count();
++                if prefix_len < 2 || prefix_len < moved_in_run.len() {
++                    unmark_positions.extend(moved_in_run);
++                } else {
++                    unmark_positions.extend(
++                        run.iter()
++                            .skip(prefix_len)
++                            .copied()
++                            .filter(|pos| moved_dels.contains(pos)),
++                    );
++                }
++            }
+         }
+     }
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+
+    let r150 = rows
+        .iter()
+        .find(|r| r.text.trim() == "if !run.is_empty() {")
+        .expect("line 150 row");
+    assert_eq!(
+        r150.kind,
+        crate::parse::RowKind::Mod,
+        "line 150 should pair with the old if statement as Mod"
+    );
+    assert_eq!(
+        r150.del_text.as_deref().map(str::trim),
+        Some("if !run.is_empty() && !moved_dels.contains(&run[0]) {")
+    );
+    assert_eq!(
+        r150.spans.del,
+        vec![(35, 68)],
+        "parentheses of !run.is_empty() must remain intact and not split"
+    );
+    assert_eq!(r150.spans.add, vec![]);
+
+    let r156 = rows
+        .iter()
+        .find(|r| r.text.trim() == "if run.len() > 1")
+        .expect("line 156 row");
+    assert_eq!(
+        r156.kind,
+        crate::parse::RowKind::Add,
+        "line 156 should be a clean pure Add"
+    );
+    assert_eq!(r156.del_text, None);
+
+    let r166 = rows
+        .iter()
+        .find(|r| r.text.trim() == "unmark_positions.extend(moved_in_run);")
+        .expect("line 166 row");
+    assert_eq!(
+        r166.kind,
+        crate::parse::RowKind::Mod,
+        "line 166 should pair with old receiver line 148 as Mod"
+    );
+    assert_eq!(
+        r166.del_text.as_deref().map(str::trim),
+        Some("unmark_positions")
+    );
+
+    let r_filter = rows
+        .iter()
+        .find(|r| r.text.trim() == ".filter(|pos| moved_dels.contains(pos)),")
+        .expect("filter row");
+    assert_eq!(r_filter.kind, crate::parse::RowKind::Mod);
+    assert_eq!(
+        r_filter.del_text.as_deref().map(str::trim),
+        Some(".extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));")
+    );
 }

@@ -419,6 +419,18 @@ fn contiguous_non_ws_run(a: &[&str], b: &[&str], mut i: usize, mut j: usize) -> 
     len
 }
 
+fn contiguous_non_ws_run_backward(a: &[&str], b: &[&str], mut i: usize, mut j: usize) -> usize {
+    let mut len = 0;
+    while i > 0 && j > 0 && a[i - 1] == b[j - 1] {
+        if !token_is_ws(a[i - 1]) {
+            len += 1;
+        }
+        i -= 1;
+        j -= 1;
+    }
+    len
+}
+
 /// Core LCS backtrace over string slices.
 pub fn raw_lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
     raw_lcs_pairs_with_lookahead(a, b, None, None)
@@ -472,21 +484,20 @@ pub fn raw_lcs_pairs_with_lookahead(
                 continue;
             }
             // When skipping a[i] is free w.r.t. LCS length, prefer a later
-            // occurrence of b[j] in a if it begins a strictly longer
-            // contiguous run of matching non-ws tokens.  This prevents the
-            // first (e.g. a variable binding) occurrence of a repeated
-            // identifier from being matched instead of the second (e.g. a
-            // function call) occurrence that shares a longer common suffix
-            // with b.  When the runs tie (repeated structural prefixes, e.g.
-            // `· ${` in template strings) the first match wins — the later
-            // occurrence is never strictly longer there, so no extra guard is
-            // needed.
+            // occurrence of b[j] in a if it belongs to a strictly longer contiguous
+            // run of matching non-ws tokens (taking into account both forward and backward
+            // contiguous context). This prevents a later occurrence with a short forward
+            // run from breaking an established, longer ongoing contiguous
+            // match.
             if !token_is_ws(a[i]) && i + 1 < n && dp[idx(i + 1, j)] == dp[idx(i, j)] {
-                let cur_run = contiguous_non_ws_run(a, b, i, j);
+                let cur_run =
+                    contiguous_non_ws_run_backward(a, b, i, j) + contiguous_non_ws_run(a, b, i, j);
                 let has_better = (i + 1..n).any(|k| {
                     a[k] == b[j]
                         && dp[idx(k, j)] == dp[idx(i, j)]
-                        && contiguous_non_ws_run(a, b, k, j) > cur_run
+                        && (contiguous_non_ws_run_backward(a, b, k, j)
+                            + contiguous_non_ws_run(a, b, k, j))
+                            > cur_run
                 });
                 if has_better {
                     i += 1;
@@ -911,7 +922,13 @@ pub fn word_spans_with_profile(
     let nt: Vec<&str> = tokenize_line(new_text).collect();
     // Cap: long lines fall back to whole-line highlighting.
     if ot.len() * nt.len() > 40_000 {
-        return WordSpans::default();
+        if old_text == new_text {
+            return WordSpans::default();
+        }
+        return WordSpans {
+            del: vec![(0, char_len(old_text))],
+            add: vec![(0, char_len(new_text))],
+        };
     }
     let anchors = unique_token_anchors(&ot, &nt, profile);
     let has_anchors = !anchors.is_empty();
@@ -947,8 +964,8 @@ pub fn word_spans_with_profile(
         }
     } else {
         WordSpans {
-            del: merge_whitespace_gaps(old_text, spans_from(old_text, &ot, &matched_old)),
-            add: merge_whitespace_gaps(new_text, spans_from(new_text, &nt, &matched_new)),
+            del: spans_from(old_text, &ot, &matched_old),
+            add: spans_from(new_text, &nt, &matched_new),
         }
     };
 
@@ -974,25 +991,6 @@ pub fn word_spans_with_profile(
     );
 
     res
-}
-
-fn merge_whitespace_gaps(text: &str, spans: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
-    if spans.is_empty() {
-        return spans;
-    }
-    let mut merged = Vec::new();
-    let mut current = spans[0];
-    for &(next_start, next_end) in spans.iter().skip(1) {
-        let gap = char_slice(text, current.1, next_start);
-        if !gap.is_empty() && gap.chars().all(char::is_whitespace) {
-            current = (current.0, next_end);
-        } else {
-            merged.push(current);
-            current = (next_start, next_end);
-        }
-    }
-    merged.push(current);
-    merged
 }
 
 #[cfg(test)]

@@ -346,12 +346,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 );
                 // The DISK-EXACT invariant: removing the struck (del) content
                 // from the render must leave exactly the row's new-side line —
-                // what a user would see on disk. The merge guarantees it (the
-                // common/add runs cover the new text; the del runs are the
-                // The DISK-EXACT invariant: removing the struck (del) content
-                // from the render must leave exactly the row's new-side line —
-                // what a user would see on disk. The merge guarantees it (the
-                // common/add runs cover the new text; the del runs are the
+                // A mod or add row's non-del runs concatenate to the new line (the
                 // old fragments), and this walk locks it.
                 if (r.kind == RowKind::Mod || r.kind == RowKind::Add) && r.del_text.is_some() {
                     let kept: String = r
@@ -362,9 +357,27 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .collect();
                     check!(
                         kept == r.text,
-                        "{}:{}: the strike-removed render differs from the new line",
+                        "{}:{}: the strike-removed (forward) render differs from the new line",
                         f.path,
                         r.new_line.unwrap_or(0)
+                    );
+                }
+                if r.kind == RowKind::Mod
+                    && let Some(del_text) = &r.del_text
+                {
+                    let rev: String = r
+                        .runs
+                        .iter()
+                        .filter(|x| x.kind != RunKind::Add)
+                        .map(|x| x.text.as_ref())
+                        .collect();
+                    check!(
+                        &rev == del_text,
+                        "{}:{}: the add-removed (reverse) render differs from the old line. Expected: {:?}, Got: {:?}",
+                        f.path,
+                        r.old_line.unwrap_or(0),
+                        del_text,
+                        rev
                     );
                 }
                 for run in &r.runs {
@@ -441,10 +454,9 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             let _ = &fence.lang;
         }
 
-        // 1. Verify reconstructed content completeness (only when present —
-        //    lib_leg populates these in-memory; bin_leg decodes from wire JSON
-        //    which omits them as of the slim format, so we skip these checks
-        //    when the vecs are empty).
+        // 1. Verify reconstructed content completeness (only when present — lib_leg
+        //    populates these in-memory; bin_leg decodes from wire JSON which omits them
+        //    as of the slim format, so we skip these checks when the vecs are empty).
         if !f.new_content.is_empty() && f.status != "deleted" && f.new_line_count > 0 {
             check!(
                 f.new_content.len() == f.new_line_count,
@@ -1021,6 +1033,7 @@ fn run_bin_leg(name: &str, min: usize) {
         use std::io::Write;
         let _ = stdin.write_all(&input);
         let _ = stdin.flush();
+        drop(stdin);
     });
 
     let wire_jsonl_path = expected_wire_jsonl_path(name);

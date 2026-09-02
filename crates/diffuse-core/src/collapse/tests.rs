@@ -286,10 +286,15 @@ fn reflow_pairing_first_del() {
     );
     let spans = m.spans().expect("spans");
     assert_eq!(spans.del, vec![(13, 22)], "the resolved_ strike only");
-    assert!(
-        spans.add.is_empty(),
-        "the reflowed .iter().any(…) is common"
+    assert_eq!(
+        spans.add,
+        vec![(19, 68)],
+        "the appended method chain is marked added"
     );
+    let runs = crate::merge::merged_runs(m);
+    assert_eq!(crate::merge::project_reverse(&runs), m.del_text().unwrap());
+    assert_eq!(crate::merge::project_forward(&runs), m.text());
+
     // The `let up` one-liner's reflowed tail: the `.find(…)` content of the
     // dropped del feeds back as common, so the `?;` reads common, not added.
     let h2 = hunk(vec![
@@ -318,10 +323,17 @@ fn reflow_pairing_first_del() {
     let m2 = &c2[0];
     let spans2 = m2.spans().expect("spans");
     assert_eq!(spans2.del, vec![(22, 31)], "the resolved_ strike");
-    assert!(
-        spans2.add.is_empty(),
-        "the reflowed .iter().find(…)?; reads common"
+    assert_eq!(
+        spans2.add,
+        vec![(44, 76)],
+        "the appended method chain is marked added"
     );
+    let runs2 = crate::merge::merged_runs(m2);
+    assert_eq!(
+        crate::merge::project_reverse(&runs2),
+        m2.del_text().unwrap()
+    );
+    assert_eq!(crate::merge::project_forward(&runs2), m2.text());
 }
 
 // The modified-pair collapse: the mod is a 1-to-1 row; its section's additions

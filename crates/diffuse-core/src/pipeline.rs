@@ -310,6 +310,11 @@ pub fn process_single_diff_file(
                 && a.spans.is_empty()
             {
                 a.spans = word_spans_with_profile(dt, &a.text, profile);
+            } else if let Row::Mod { old_line, new_line } = r
+                && old_line.text != new_line.text
+                && new_line.spans.is_empty()
+            {
+                new_line.spans = word_spans_with_profile(&old_line.text, &new_line.text, profile);
             }
         }
     });

@@ -505,19 +505,30 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
+    let used_w: usize = spans
+        .iter()
+        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
+        .sum();
+    if used_w < ctx.width {
+        spans.push(Span::raw(" ".repeat(ctx.width - used_w)));
+    }
     Line::from(spans)
 }
 
 /// Render the bottom navigation key-bindings ribbon as styled Ratatui
 /// [`Line`]s.
 pub fn bottom_ribbon_lines(width: usize) -> (Line<'static>, Line<'static>) {
+    let div_str = truncate_pad(
+        &format!(" {}", "─".repeat(width.saturating_sub(2).min(60))),
+        width,
+    );
     let divider = Line::from(Span::styled(
-        format!(" {}", "─".repeat(width.saturating_sub(2).min(60))),
+        div_str,
         Style::default().fg(Color::Indexed(244)),
     ));
     let ribbon_text = truncate_pad(
         " [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help",
-        width.saturating_sub(1),
+        width,
     );
     let ribbon = Line::from(Span::styled(
         ribbon_text,

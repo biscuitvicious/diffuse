@@ -462,3 +462,139 @@ fn test_help_modal_toggle_and_frame_contains_bindings() {
     let plain2 = state.render_frame(100, 30);
     assert!(!plain2.contains("KEY BINDINGS"));
 }
+
+// 13. Visual initial screen layout and rendering
+#[test]
+fn test_initial_screen_rendered_visual_frame() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let mut state = AppState::new(sample_output(), "diffuse".into(), temp_notes_path());
+    let width = 80;
+    let height = 18;
+    let backend = TestBackend::new(width as u16, height as u16);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut screen_lines = Vec::new();
+    for y in 0..height {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buffer[(x as u16, y as u16)].symbol());
+        }
+        screen_lines.push(line);
+    }
+
+    println!("\n┌{}┐", "─".repeat(width));
+    for (y, l) in screen_lines.iter().enumerate() {
+        println!("│{:<width$}│ (row {y:02})", l, width = width);
+    }
+    println!("└{}┘\n", "─".repeat(width));
+
+    // Row 0: Top Review Header Bar
+    assert!(screen_lines[0].starts_with(" Review: diffuse · filesystem.rs"));
+    assert!(screen_lines[0].contains("+1"));
+    assert!(screen_lines[0].contains("~1"));
+
+    // Row 1: Secondary Status Bar
+    assert!(screen_lines[1].starts_with(" 1/1 files · hunk 1/1"));
+
+    // Row 2: File Header Banner in Diff Viewport
+    assert!(screen_lines[2].contains("▼ filesystem.rs"));
+    assert!(screen_lines[2].contains("-0 +1 ~1"));
+
+    // Row 3: Hunk divider with context
+    assert!(screen_lines[3].contains("H1 · 7 lines"));
+    assert!(screen_lines[3].contains("hidden ▼▼"));
+
+    // Row 7..: Diff lines with line numbers and change markers
+    assert!(screen_lines[7].contains("1025"));
+    assert!(screen_lines[7].contains("let x = 1;"));
+    assert!(screen_lines[8].contains("1026"));
+    assert!(screen_lines[8].contains("~"));
+    assert!(screen_lines[8].contains("comment — em dash updated"));
+    assert!(screen_lines[9].contains("1027"));
+    assert!(screen_lines[9].contains("+"));
+    assert!(screen_lines[9].contains("let y = 2;"));
+
+    // Bottom Rows: Divider + Keybindings Ribbon
+    let divider_row = &screen_lines[height - 2];
+    assert!(divider_row.contains("───"));
+    let ribbon_row = &screen_lines[height - 1];
+    assert!(ribbon_row.contains("[j/k]move"));
+    assert!(ribbon_row.contains("[Enter]toggle"));
+    assert!(ribbon_row.contains("[m]note"));
+}
+
+#[test]
+fn test_initial_screen_multi_file_head_diff() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let diff = r#"diff --git a/crates/diffuse-core/src/moves/mod.rs b/crates/diffuse-core/src/moves/mod.rs
+--- a/crates/diffuse-core/src/moves/mod.rs
++++ b/crates/diffuse-core/src/moves/mod.rs
+@@ -140,6 +140,8 @@ pub fn mark_moves(f: &mut DiffFile) {
+             if matches!(r, Row::Del(_)) {
+                 run.push((hi, ri));
+             } else {
+-                // flush the run
++                if !run.is_empty() {
++                    let moved_in_run: Vec<RowPos> = run;
++                }
+diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/moves/tests.rs
+--- a/crates/diffuse-core/src/moves/tests.rs
++++ b/crates/diffuse-core/src/moves/tests.rs
+@@ -1,3 +1,5 @@
++#[test]
++fn test_new() {}
+"#;
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+
+    let width = 100;
+    let height = 20;
+    let backend = TestBackend::new(width as u16, height as u16);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut screen_lines = Vec::new();
+    for y in 0..height {
+        let mut line = String::new();
+        for x in 0..width {
+            line.push_str(buffer[(x as u16, y as u16)].symbol());
+        }
+        screen_lines.push(line);
+    }
+
+    println!("\n┌{}┐", "─".repeat(width));
+    for (y, l) in screen_lines.iter().enumerate() {
+        println!("│{:<width$}│ (row {y:02})", l, width = width);
+    }
+    println!("└{}┘\n", "─".repeat(width));
+
+    // Row 0: Header bar
+    assert!(screen_lines[0].contains("Review: diffuse"));
+    assert!(screen_lines[0].contains("crates/diffuse-core/src/moves/"));
+    assert!(screen_lines[0].contains("mod.rs"));
+
+    // Row 1: Secondary status bar with multi-file counter
+    assert!(screen_lines[1].starts_with(" 1/2 files · hunk 1/1"));
+
+    // Row 2: File header banner
+    assert!(screen_lines[2].contains("▼ mod.rs"));
+
+    // Bottom Navigation Ribbon
+    assert!(screen_lines[height - 1].contains("[j/k]move"));
+    assert!(screen_lines[height - 1].contains("[n/p]file"));
+}

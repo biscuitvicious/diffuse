@@ -124,7 +124,12 @@ pub fn del_display_positions(
     }
     let dtoks: Vec<&str> = crate::lcs::tokenize_line(del_text).collect();
     let atoks: Vec<&str> = crate::lcs::tokenize_line(add_text).collect();
-    let pairs = crate::lcs::lcs_pairs(&dtoks, &atoks);
+    let anchors = crate::lcs::unique_token_anchors(&dtoks, &atoks, None);
+    let pairs = if !anchors.is_empty() {
+        crate::lcs::lcs_pairs_anchored(&dtoks, &atoks, &anchors)
+    } else {
+        crate::lcs::raw_lcs_pairs(&dtoks, &atoks)
+    };
 
     let mut d_spans = Vec::with_capacity(dtoks.len());
     let mut d_pos = 0usize;
@@ -209,62 +214,6 @@ pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
     })
 }
 
-/// The artifact-filtered del spans a mod row shows (see the TS).
-pub fn del_spans_to_show(r: &Row, del_spans_in: Option<&[(usize, usize)]>) -> Vec<(usize, usize)> {
-    let Some(del_text) = r.del_text() else {
-        return Vec::new();
-    };
-    let spans = r.spans();
-    let del_spans: &[(usize, usize)] = match del_spans_in {
-        Some(s) => s,
-        None => spans.map_or(&[], |s| s.del.as_slice()),
-    };
-    del_spans_to_show_texts(del_text, r.text(), del_spans)
-}
-
-/// The artifact-filtered del spans computed directly from texts and spans
-/// without Row allocation.
-pub fn del_spans_to_show_texts(
-    del_text: &str,
-    add_text: &str,
-    del_spans: &[(usize, usize)],
-) -> Vec<(usize, usize)> {
-    del_spans
-        .iter()
-        .filter(|(ds, de)| {
-            let raw = char_slice(del_text, *ds, *de);
-            let t = raw.trim();
-            // A whitespace-only span is a real indent change (8 → 12 spaces
-            // moves the line into a block): show it struck at the line
-            // start. Drop it only when the add's leading run is identical.
-            if t.is_empty() {
-                let leading_len = add_text.len()
-                    - add_text
-                        .trim_start_matches(|c: char| c.is_ascii_whitespace())
-                        .len();
-                let leading = &add_text[..leading_len];
-                return raw != leading;
-            }
-            // A single-span del stays even when its text is inside the add
-            // (`None` → `return None;` is a growth — the mod must have
-            // something struck). With MULTIPLE spans, a span is an absorbed
-            // fragment only when its text sits in the add AT THE SAME
-            // POSITION (`..]` → `..].` — the `]` survives where it was, the
-            // `.` is appended). A word that merely appears elsewhere in the
-            // add (`lower` in the del's `"Found in lower layer"` vs
-            // `?next_lower,` in the add) is a REAL replacement, not
-            // absorption — `r.text.includes(t)` would drop it (the
-            // `lower` → `layer below the top upper` rewrite reads as a pure
-            // fill with no strike).
-            if del_spans.len() <= 1 {
-                return true;
-            }
-            char_slice(add_text, *ds, *de) != t
-        })
-        .copied()
-        .collect()
-}
-
 /// The add-text position of each del span (the del offset minus the del
 /// text removed before it) and the pairing: a del span pairs with the add
 /// span nearest its own position (within a small window — the aligned
@@ -289,18 +238,15 @@ pub fn del_pairing(
                 continue;
             }
             let del_start = del_pos[j];
-            let del_end = del_start + (de - ds);
             let add_start = *as0;
-            let add_end = *ae;
             let same_start = del_start == add_start;
-            let disjoint = del_end <= add_start || add_end <= del_start;
             let ws_pair =
                 all_ws(char_slice(del_text, *ds, *de)) && all_ws(char_slice(add_text, *as0, *ae));
-            if !same_start && !disjoint && !ws_pair {
-                continue;
-            }
             let del_op = char_slice(del_text, *ds, *de).trim();
             let is_compare_op = matches!(del_op, "<" | ">" | "<=" | ">=");
+            if !same_start && !ws_pair && !is_compare_op {
+                continue;
+            }
             if is_compare_op {
                 let first_op_char = del_op.chars().next().unwrap();
                 let mut op_best: Option<usize> = None;
@@ -331,19 +277,8 @@ pub fn del_pairing(
                 }
                 continue;
             }
-            let first = char_at(add_text, *as0);
-            let gap = del_start.abs_diff(add_start)
-                + if first.is_some_and(is_ascii_word_char) {
-                    0
-                } else {
-                    5
-                };
-            if ws_pair {
-                best_gap = 0;
-                best = Some(i);
-                continue;
-            }
-            if gap <= best_gap {
+            let gap = del_start.abs_diff(add_start);
+            if gap < best_gap {
                 best_gap = gap;
                 best = Some(i);
             }
@@ -392,13 +327,28 @@ pub fn is_pure_deletion_mod(r: &Row) -> bool {
 /// standalone removal like `resolved_`) inserts at its own position, and a
 /// The merged runs of a mod row's display.
 pub fn merged_runs<'a>(r: &'a Row) -> Vec<Run<'a>> {
-    static EMPTY_SPANS: Spans = Spans {
-        del: Vec::new(),
-        add: Vec::new(),
+    let Some(del_text) = r.del_text() else {
+        return Vec::new();
     };
-    let del_text = r.del_text().unwrap_or_default();
-    let spans = r.spans().unwrap_or(&EMPTY_SPANS);
-    merged_runs_from_texts(del_text, r.text(), spans)
+    let computed_spans;
+    let spans = match r.spans() {
+        Some(s) if !s.is_empty() || del_text == r.text() => s,
+        _ => {
+            computed_spans = crate::lcs::word_spans(del_text, r.text());
+            &computed_spans
+        }
+    };
+    let runs = merged_runs_from_texts(del_text, r.text(), spans);
+    if matches!(r, Row::Mod { .. }) {
+        let rev = project_reverse(&runs);
+        crate::ensure!(
+            rev == del_text,
+            "1-to-1 Row::Mod project_reverse must perfectly reconstruct old del_text. Expected: {:?}, Got: {:?}",
+            del_text,
+            rev
+        );
+    }
+    runs
 }
 
 /// The ordered common/del/add runs of a mod's merged view from texts and spans
@@ -421,12 +371,12 @@ pub fn merged_runs_from_texts<'a>(
         ];
     }
     let add_spans = &spans.add;
-    let del_spans = del_spans_to_show_texts(del_text, add_text, &spans.del);
+    let del_spans = &spans.del;
     let DelPairing {
         del_pos,
         pair,
         op_anchor,
-    } = del_pairing(&del_spans, add_spans, add_text, del_text);
+    } = del_pairing(del_spans, add_spans, add_text, del_text);
     let mut runs: Vec<Run<'a>> = Vec::new();
     let emit_range = |runs: &mut Vec<Run<'a>>, from: usize, to: usize| {
         if to > from {
@@ -602,7 +552,15 @@ pub fn merged_runs_from_texts<'a>(
     if pos < char_len_of(add_text) {
         emit_range(&mut runs, pos, char_len_of(add_text));
     }
-    coalesce_runs(runs)
+    let res = coalesce_runs(runs);
+    let fwd = project_forward(&res);
+    crate::ensure!(
+        fwd == add_text,
+        "project_forward must perfectly reconstruct new add_text. Expected: {:?}, Got: {:?}",
+        add_text,
+        fwd
+    );
+    res
 }
 
 /// Compress adjacent runs of the same kind into a single run with joined text.

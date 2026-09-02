@@ -724,8 +724,8 @@ fn test_shift_click_and_shift_drag_selection_modification() {
     assert_eq!(initial_sel.end, 1025);
     assert!(s.anchor.is_none(), "not in active drag mode");
 
-    // 2. Shift-Click on row 7 (line 1027): modifies confirmed_sel in place
-    //    without entering active drag
+    // 2. Shift-Click on row 7 (line 1027): modifies confirmed_sel in place without
+    //    entering active drag
     handle_event(
         &mut s,
         Event::Mouse(MouseEvent {

@@ -488,3 +488,257 @@ fn test_first_ascii_word() {
     assert_eq!(first_ascii_word("   "), None);
     assert_eq!(first_ascii_word("!!!"), None);
 }
+
+#[test]
+fn test_close_delimiter_and_profile_syntax_matching() {
+    let rs = lang_profile("rs").expect("rust profile");
+    let py = lang_profile("py").expect("python profile");
+    let sh = lang_profile("sh").expect("shell profile");
+    let c = lang_profile("c").expect("c profile");
+
+    // Rust / Braces closing tails
+    assert_eq!(
+        rs.classify_close_tail("    };"),
+        crate::profile::CloseDelimiter::BraceSemi
+    );
+    assert_eq!(
+        rs.classify_close_tail("    },"),
+        crate::profile::CloseDelimiter::BraceSemi
+    );
+    assert_eq!(
+        rs.classify_close_tail("    }"),
+        crate::profile::CloseDelimiter::Brace
+    );
+    assert_eq!(
+        rs.classify_close_tail("    );"),
+        crate::profile::CloseDelimiter::ParenSemi
+    );
+    assert_eq!(
+        rs.classify_close_tail("    ),"),
+        crate::profile::CloseDelimiter::ParenSemi
+    );
+    assert_eq!(
+        rs.classify_close_tail("    )"),
+        crate::profile::CloseDelimiter::Paren
+    );
+    assert_eq!(
+        rs.classify_close_tail("    ];"),
+        crate::profile::CloseDelimiter::BracketSemi
+    );
+    assert_eq!(
+        rs.classify_close_tail("    ],"),
+        crate::profile::CloseDelimiter::BracketSemi
+    );
+    assert_eq!(
+        rs.classify_close_tail("    ]"),
+        crate::profile::CloseDelimiter::Bracket
+    );
+    assert_eq!(
+        rs.classify_close_tail("    let x = 1;"),
+        crate::profile::CloseDelimiter::None
+    );
+
+    // Exact close
+    assert_eq!(
+        rs.classify_exact_close("};"),
+        crate::profile::CloseDelimiter::BraceSemi
+    );
+    assert_eq!(
+        rs.classify_exact_close("}"),
+        crate::profile::CloseDelimiter::Brace
+    );
+    assert_eq!(
+        rs.classify_exact_close(");"),
+        crate::profile::CloseDelimiter::ParenSemi
+    );
+    assert_eq!(
+        rs.classify_exact_close(")"),
+        crate::profile::CloseDelimiter::Paren
+    );
+    assert_eq!(
+        rs.classify_exact_close("let x = 1;"),
+        crate::profile::CloseDelimiter::None
+    );
+
+    // Python / IndentColon
+    assert_eq!(
+        py.classify_close_tail("    )"),
+        crate::profile::CloseDelimiter::Paren
+    );
+    assert_eq!(
+        py.classify_close_tail("    ]"),
+        crate::profile::CloseDelimiter::Bracket
+    );
+    assert_eq!(
+        py.classify_close_tail("    }"),
+        crate::profile::CloseDelimiter::Brace
+    );
+    assert_eq!(
+        py.classify_close_tail("    pass"),
+        crate::profile::CloseDelimiter::None
+    );
+
+    // Shell / Keywords
+    assert_eq!(
+        sh.classify_close_tail("fi"),
+        crate::profile::CloseDelimiter::Keyword
+    );
+    assert_eq!(
+        sh.classify_close_tail("done"),
+        crate::profile::CloseDelimiter::Keyword
+    );
+    assert_eq!(
+        sh.classify_close_tail("esac"),
+        crate::profile::CloseDelimiter::Keyword
+    );
+    assert_eq!(
+        sh.classify_close_tail("}"),
+        crate::profile::CloseDelimiter::Brace
+    );
+    assert_eq!(
+        sh.classify_close_tail("echo hello"),
+        crate::profile::CloseDelimiter::None
+    );
+
+    // Direct tail match across indentation shifts
+    assert!(rs.is_direct_tail_match(
+        crate::profile::CloseDelimiter::ParenSemi,
+        crate::profile::CloseDelimiter::ParenSemi,
+        10
+    ));
+    assert!(!rs.is_direct_tail_match(
+        crate::profile::CloseDelimiter::ParenSemi,
+        crate::profile::CloseDelimiter::BraceSemi,
+        10
+    ));
+    assert!(!rs.is_direct_tail_match(
+        crate::profile::CloseDelimiter::None,
+        crate::profile::CloseDelimiter::None,
+        10
+    ));
+    assert!(!rs.is_direct_tail_match(
+        crate::profile::CloseDelimiter::ParenSemi,
+        crate::profile::CloseDelimiter::ParenSemi,
+        5
+    ));
+
+    // Python only allows expressions across indentation shifts, not block
+    // delimiters
+    assert!(py.is_direct_tail_match(
+        crate::profile::CloseDelimiter::Paren,
+        crate::profile::CloseDelimiter::Paren,
+        10
+    ));
+    assert!(!py.is_direct_tail_match(
+        crate::profile::CloseDelimiter::Brace,
+        crate::profile::CloseDelimiter::Brace,
+        10
+    ));
+
+    // Method continuation matching
+    assert!(rs.is_method_continuation("    .extend(items);"));
+    assert!(!rs.is_method_continuation("    extend(items);"));
+    assert_eq!(
+        rs.method_continuation_name("    .extend(items);"),
+        Some("extend")
+    );
+    assert_eq!(rs.method_continuation_name("    extend(items);"), None);
+    assert!(rs.contains_method_call("    unmark_positions.extend(moved_in_run);", "extend"));
+    assert!(!rs.contains_method_call("    unmark_positions.extends(moved_in_run);", "extend"));
+    assert!(!rs.contains_method_call("    extend(items);", "extend"));
+
+    // C/C++ supports -> as well as .
+    assert!(c.is_method_continuation("    ->process(data);"));
+    assert_eq!(
+        c.method_continuation_name("    ->process(data);"),
+        Some("process")
+    );
+    assert!(c.contains_method_call("    obj->process(data);", "process"));
+
+    // Full is_method_continuation_match
+    let line_a = "    .extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));";
+    let line_b = "    unmark_positions.extend(moved_in_run);";
+    let tail_a = rs.classify_close_tail(line_a);
+    let tail_b = rs.classify_close_tail(line_b);
+    assert!(rs.is_method_continuation_match(line_a, line_b, tail_a, tail_b, 12));
+    assert!(!rs.is_method_continuation_match(
+        line_a,
+        "unmark_positions.filter(x);",
+        tail_a,
+        tail_b,
+        12
+    ));
+    // Two continuation lines: matching method name succeeds, mismatching method
+    // name fails
+    assert!(rs.is_method_continuation_match(
+        "    .filter(a);",
+        "        .filter(b);",
+        crate::profile::CloseDelimiter::ParenSemi,
+        crate::profile::CloseDelimiter::ParenSemi,
+        10
+    ));
+    assert!(!rs.is_method_continuation_match(
+        "    .filter(a);",
+        "        .extend(b);",
+        crate::profile::CloseDelimiter::ParenSemi,
+        crate::profile::CloseDelimiter::ParenSemi,
+        10
+    ));
+
+    // Default methods on CloseDelimiter
+    assert!(
+        crate::profile::CloseDelimiter::default_is_direct_tail_match(
+            crate::profile::CloseDelimiter::ParenSemi,
+            crate::profile::CloseDelimiter::ParenSemi,
+            10
+        )
+    );
+    assert!(
+        !crate::profile::CloseDelimiter::default_is_direct_tail_match(
+            crate::profile::CloseDelimiter::None,
+            crate::profile::CloseDelimiter::None,
+            10
+        )
+    );
+    assert!(
+        crate::profile::CloseDelimiter::default_is_method_continuation_match(
+            "    .extend(items);",
+            "    list.extend(items);",
+            crate::profile::CloseDelimiter::ParenSemi,
+            crate::profile::CloseDelimiter::ParenSemi,
+            10,
+        )
+    );
+    assert!(
+        !crate::profile::CloseDelimiter::default_is_method_continuation_match(
+            "    .extend(items);",
+            "    .filter(items);",
+            crate::profile::CloseDelimiter::ParenSemi,
+            crate::profile::CloseDelimiter::ParenSemi,
+            10,
+        )
+    );
+
+    // Exact close and direct tail for keywords / indent languages
+    assert_eq!(
+        sh.classify_exact_close("fi"),
+        crate::profile::CloseDelimiter::Keyword
+    );
+    assert!(sh.is_direct_tail_match(
+        crate::profile::CloseDelimiter::Keyword,
+        crate::profile::CloseDelimiter::Keyword,
+        10
+    ));
+    assert_eq!(
+        py.classify_exact_close(")"),
+        crate::profile::CloseDelimiter::Paren
+    );
+
+    // Trailing delimiter trimming
+    assert_eq!(
+        rs.trim_trailing_delimiters("if !run.is_empty() {"),
+        "if !run.is_empty("
+    );
+    assert_eq!(rs.trim_trailing_delimiters("let x = 1;"), "let x = 1");
+    assert_eq!(py.trim_trailing_delimiters("def foo():"), "def foo(");
+}

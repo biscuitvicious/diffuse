@@ -386,7 +386,11 @@ impl AppState {
             &self.theme,
             common_prefix.as_deref(),
         );
-        f.render_widget(Paragraph::new(header_line), chunks[chunk_idx]);
+        let header_bg = crate::view::to_color(self.theme.palette.header_bar_bg);
+        f.render_widget(
+            Paragraph::new(header_line).style(Style::default().bg(header_bg)),
+            chunks[chunk_idx],
+        );
         chunk_idx += 1;
 
         // 2. Status Bar
@@ -447,6 +451,14 @@ impl AppState {
                     };
                     gline.push_str(sb_char);
                 }
+            }
+        } else {
+            for gline in grid_lines.iter_mut() {
+                let vis_w = visible_width(gline);
+                if vis_w < content_width {
+                    gline.push_str(&" ".repeat(content_width - vis_w));
+                }
+                gline.push_str("\x1b[0m");
             }
         }
 
