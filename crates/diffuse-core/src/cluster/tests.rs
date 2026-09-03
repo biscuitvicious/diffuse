@@ -142,7 +142,8 @@ fn signature(sol: &DpSolution) -> Vec<&'static str> {
         .iter()
         .map(|r| match r {
             Row::Mod { .. } => "mod",
-            Row::Mov { .. } => "mov",
+            Row::MovSrc(_) => "mov_src",
+            Row::MovTgt(_) => "mov_tgt",
             Row::Del(_) => "del",
             Row::Add(_) => "add",
             other => panic!("unexpected row in DP output: {other:?}"),
@@ -159,7 +160,7 @@ fn dp_verbatim_line_pairs_as_mov() {
     );
     let rs = lang_profile("rs");
     let sol = solve_cluster(&c, rs);
-    assert_eq!(signature(&sol), ["mov"]);
+    assert_eq!(signature(&sol), ["mov_src", "mov_tgt"]);
     verify_projection(&sol, &c).expect("projection invariant holds");
     assert!(matches!(sol.transitions[0], DpOp::Mov));
 }

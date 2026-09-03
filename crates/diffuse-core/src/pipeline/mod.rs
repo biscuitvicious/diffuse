@@ -21,7 +21,7 @@ use crate::{
     merge::{RunKind, is_wholesale_mod, merged_runs},
     moves::mark_moves,
     notes::{NotesDB, note_runs, notes_for_file},
-    parse::{DiffFile, Row},
+    parse::{DiffFile, Row, RowKind, Spans},
     syntax::{
         classifier::{
             ClassifiedToken, for_each_classified_token, for_each_line_classified_token,
@@ -32,7 +32,10 @@ use crate::{
         registry::{fence_lang_ext, lang_profile},
     },
     visible::{Side as VisibleSide, build_visible},
-    wire::{OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun, PipelineOutput},
+    wire::{
+        MovSide, OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun,
+        PipelineOutput,
+    },
 };
 
 /// Options and configuration controlling the pipeline execution.
@@ -253,10 +256,9 @@ pub fn process_single_diff_file(
     };
     f.old_content = old_lines.iter().map(|s| s.to_string()).collect();
 
-    mark_moves(&mut f);
-
     use rayon::prelude::*;
 
+    // Collapse runs first on pre-move rows (source dels survive the collapse).
     f.hunks.par_iter_mut().for_each(|h| {
         h.rows = collapse_hunk_rows(
             h,
@@ -264,12 +266,20 @@ pub fn process_single_diff_file(
             Some(new_lines.as_slice()),
             profile,
         );
+    });
+
+    // Mark moves after collapse: creates Row::Mov pairs.
+    mark_moves(&mut f);
+
+    // Span-fill for Mov rows that need subword diff spans.
+    f.hunks.par_iter_mut().for_each(|h| {
         for r in &mut h.rows {
-            if let Row::Mov { old_line, new_line } = r
-                && old_line.text != new_line.text
-                && new_line.spans.is_empty()
+            if let Row::MovTgt(a) = r
+                && let Some(ref dt) = a.del_text
+                && dt.as_str() != a.text
+                && a.spans.is_empty()
             {
-                new_line.spans = word_spans_with_profile(&old_line.text, &new_line.text, profile);
+                a.spans = word_spans_with_profile(dt, &a.text, profile);
             }
         }
     });
@@ -286,20 +296,42 @@ pub fn process_single_diff_file(
         .map(|h| {
             let mut rows_out = Vec::with_capacity(h.rows.len());
             for r in &h.rows {
+                let (kind, mov_side, new_line, old_line, del_text, spans) = match r {
+                    Row::MovSrc(del) => (
+                        RowKind::Mov,
+                        Some(MovSide::Src),
+                        None,
+                        Some(del.num.get()),
+                        None,
+                        Spans::default(),
+                    ),
+                    Row::MovTgt(add) => (
+                        RowKind::Mov,
+                        Some(MovSide::Tgt),
+                        Some(add.num.get()),
+                        None,
+                        add.del_text.clone(),
+                        add.spans.clone(),
+                    ),
+                    _ => (
+                        r.kind(),
+                        None,
+                        r.new_line(),
+                        r.old_line(),
+                        r.del_text().map(String::from),
+                        r.spans().cloned().unwrap_or_default(),
+                    ),
+                };
                 rows_out.push(OutputRow {
-                    kind: r.kind(),
-                    new_line: r.new_line(),
-                    old_line: if matches!(r, Row::Add(_) | Row::Mov { .. }) {
-                        None
-                    } else {
-                        r.old_line()
-                    },
+                    kind,
+                    mov_side,
+                    new_line,
+                    old_line,
                     text: r.text().to_string(),
-                    del_text: r.del_text().map(String::from),
-                    spans: r.spans().cloned().unwrap_or_default(),
+                    del_text,
+                    spans,
                     runs: colored_runs(r, profile, &regions),
                     wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
-                    moved: r.is_moved(),
                 });
             }
             OutputHunk {
@@ -318,6 +350,7 @@ pub fn process_single_diff_file(
         for r in &h.rows {
             rows_out.push(OutputRow {
                 kind: r.kind(),
+                mov_side: None,
                 new_line: r.new_line(),
                 old_line: r.old_line(),
                 text: r.text().to_string(),
@@ -325,7 +358,6 @@ pub fn process_single_diff_file(
                 spans: r.spans().cloned().unwrap_or_default(),
                 runs: Vec::new(),
                 wholesale: false,
-                moved: false,
             });
         }
         raw_hunks_out.push(OutputHunk {
@@ -365,9 +397,75 @@ pub fn process_single_diff_file(
         .into_iter()
         .map(|vis| {
             let r = vis.row;
+            let (kind, mov_side, new_line, old_line, del_text, spans) = match &r {
+                Row::MovSrc(del) => (
+                    RowKind::Mov,
+                    Some(MovSide::Src),
+                    None,
+                    Some(del.num.get()),
+                    None,
+                    Spans::default(),
+                ),
+                Row::MovTgt(add) => (
+                    RowKind::Mov,
+                    Some(MovSide::Tgt),
+                    Some(add.num.get()),
+                    None,
+                    add.del_text.clone(),
+                    add.spans.clone(),
+                ),
+                Row::Ctx(_) => {
+                    let (new_line, old_line) = match vis.side {
+                        Some(VisibleSide::New) => (r.new_line(), None),
+                        Some(VisibleSide::Old) => (None, r.old_line()),
+                        None => (r.new_line(), r.old_line()),
+                    };
+                    (
+                        r.kind(),
+                        None,
+                        new_line,
+                        old_line,
+                        r.del_text().map(String::from),
+                        r.spans().cloned().unwrap_or_default(),
+                    )
+                }
+                Row::Mod { .. } => (
+                    r.kind(),
+                    None,
+                    r.new_line(),
+                    r.old_line(),
+                    r.del_text().map(String::from),
+                    r.spans().cloned().unwrap_or_default(),
+                ),
+                Row::Add(_) => (
+                    r.kind(),
+                    None,
+                    r.new_line(),
+                    None,
+                    r.del_text().map(String::from),
+                    r.spans().cloned().unwrap_or_default(),
+                ),
+                Row::Del(_) => (
+                    r.kind(),
+                    None,
+                    None,
+                    r.old_line(),
+                    r.del_text().map(String::from),
+                    r.spans().cloned().unwrap_or_default(),
+                ),
+                Row::Sep(_) => (
+                    r.kind(),
+                    None,
+                    None,
+                    None,
+                    r.del_text().map(String::from),
+                    r.spans().cloned().unwrap_or_default(),
+                ),
+            };
+
             let runs = if matches!(
                 r,
-                Row::Mod { .. } | Row::Add(_) | Row::Mov { .. } | Row::Del(_)
+                Row::Mod { .. } | Row::Add(_) | Row::MovSrc(_) | Row::MovTgt(_) | Row::Del(_)
             ) {
                 colored_runs(&r, profile, &regions)
             } else {
@@ -392,25 +490,18 @@ pub fn process_single_diff_file(
                 );
                 runs
             };
-            let (new_line, old_line) = match (&r, vis.side) {
-                (Row::Ctx(_), Some(VisibleSide::New)) | (Row::Add(_) | Row::Mov { .. }, _) => {
-                    (r.new_line(), None)
-                }
-                (Row::Ctx(_), Some(VisibleSide::Old)) | (Row::Del(_), _) => (None, r.old_line()),
-                (Row::Ctx(_), None) | (Row::Mod { .. }, _) => (r.new_line(), r.old_line()),
-                (Row::Sep(_), _) => (None, None),
-            };
-            let wholesale = matches!(r, Row::Mod { .. }) && is_wholesale_mod(&r);
+
+            let wholesale = matches!(&r, Row::Mod { .. }) && is_wholesale_mod(&r);
             OutputRow {
-                kind: r.kind(),
+                kind,
+                mov_side,
                 new_line,
                 old_line,
                 text: r.text().to_string(),
-                del_text: r.del_text().map(String::from),
-                spans: r.spans().cloned().unwrap_or_default(),
+                del_text,
+                spans,
                 runs,
                 wholesale,
-                moved: r.is_moved(),
             }
         })
         .collect();
@@ -470,8 +561,8 @@ pub fn colored_runs(
         && r.del_text().is_some();
 
     if !use_merged {
-        if matches!(r, Row::Add(_) | Row::Mov { .. } | Row::Ctx(_)) {
-            let kind = if matches!(r, Row::Add(_) | Row::Mov { .. }) {
+        if matches!(r, Row::Add(_) | Row::MovTgt(_) | Row::Ctx(_)) {
+            let kind = if matches!(r, Row::Add(_) | Row::MovTgt(_)) {
                 RunKind::Add
             } else {
                 RunKind::Ctx

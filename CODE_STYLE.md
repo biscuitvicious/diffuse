@@ -109,7 +109,8 @@ We order components of a file, e.g. structs, impls, traits, its impls, etc and s
       Sep(String),
   }
   ```
-- Field names for `Mod` and `Mov` are consistently `old_line: DelLine` and `new_line: AddLine`.
+- Field names for `Mod` are consistently `old_line: DelLine` and `new_line: AddLine`.
+- Move variants are `Row::MovSrc(del_line)` and `Row::MovTgt(add_line)`.
 
 ### Consistent Pattern Matching Variable Names
 Pattern matching variables should mirror the type names they destructure:
@@ -117,7 +118,8 @@ Pattern matching variables should mirror the type names they destructure:
 - `Row::Del(del_line)`
 - `Row::Add(add_line)`
 - `Row::Mod { old_line, new_line }`
-- `Row::Mov { old_line, new_line }`
+- `Row::MovSrc(del_line)`
+- `Row::MovTgt(add_line)`
 
 ### Safe Coordinate & Line Types
 - `LineNum = NonZero<u32>` represents 1-based source file line numbers.

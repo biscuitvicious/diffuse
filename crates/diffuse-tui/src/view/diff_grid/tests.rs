@@ -100,6 +100,7 @@ fn test_hunk_divider_span_includes_context() {
     use crate::core::{parse::RowKind, wire::OutputRow};
     let mk = |kind: RowKind| OutputRow {
         kind,
+        mov_side: None,
         new_line: None,
         old_line: None,
         text: String::new(),
@@ -107,7 +108,6 @@ fn test_hunk_divider_span_includes_context() {
         spans: Default::default(),
         runs: Vec::new(),
         wholesale: false,
-        moved: false,
     };
     let mut h = OutputHunk {
         old_start: 85,

@@ -66,9 +66,9 @@ fn counts_after_modified_pair_collapse() {
             adds: 3,
             dels: 0,
             mods: 1,
-            movs: 0,
+            movs: 1,
         },
-        "counts +3 ~1 — the absorbed reflow leaves no moved rows, the tail lines count as adds"
+        "counts +3 ~1 ~1 — the mod pair, the moved pair, and the tail lines count as adds"
     );
 }
 
@@ -89,24 +89,22 @@ fn counts_plain_del_and_add() {
     assert_eq!(counts.movs, 0);
 }
 
-// A moved pair counts as moved, not as an add or a del.
+// A moved pair counts as one relocation — only the target side counts.
 #[test]
 fn counts_moved_pair_is_neither_add_nor_del() {
     let mut f = file(vec![hunk(vec![del(1, "moved line"), add(1, "moved line")])]);
     mark_moves(&mut f);
     f.hunks[0].rows = collapse_hunk_rows(&f.hunks[0], None, None, None);
     let counts = file_counts(&f);
-    // The moved pair is a pure reflow — fully absorbed: the del drops with
-    // its paired add, nothing survives the collapse (verified against the
-    // TS engine: same all-zero counts).
+    // The moved pair: Row::Mov counts as +1 mov.
     assert_eq!(
         counts,
         FileCounts {
             adds: 0,
             dels: 0,
             mods: 0,
-            movs: 0,
+            movs: 1,
         },
-        "a pure reflow is invisible"
+        "a moved pair counts as one mov"
     );
 }

@@ -34,7 +34,10 @@ impl FileCounts {
     }
 }
 
-/// Display counts: moves are neither added nor removed; mods are one row.
+/// Display counts: each visual row contributes exactly once.
+/// A mod is one logical change (+1 mod). A moved pair is one logical
+/// relocation — only the target side counts (+1 mov); the source side
+/// is absorbed like a mod's old line.
 #[tracing::instrument(level = "trace", ret, skip(f), fields(path = %f.path))]
 pub fn file_counts(f: &DiffFile) -> FileCounts {
     let mut adds = 0usize;
@@ -45,19 +48,13 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
         for r in &h.rows {
             match r {
                 Row::Add(_) => adds += 1,
-                Row::Del(del_line) => {
-                    if !del_line.moved {
-                        dels += 1;
-                    }
-                }
+                Row::Del(_) => dels += 1,
                 Row::Mod { .. } => mods += 1,
-                Row::Mov { .. } => movs += 1,
-                Row::Ctx(_) | Row::Sep(_) => {}
+                Row::MovTgt(_) => movs += 1,
+                Row::MovSrc(_) | Row::Ctx(_) | Row::Sep(_) => {}
             }
         }
     }
-    // Each moved add represents one relocated line-pair (the matching del is
-    // absorbed or displayed muted — either way it is not a change).
     let counts = FileCounts {
         adds,
         dels,

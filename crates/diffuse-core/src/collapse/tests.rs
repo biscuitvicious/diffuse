@@ -34,6 +34,14 @@ fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) 
             let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
             Row::Ctx(CtxLine::new(old_num, new_num, text))
         }
+        RowKind::Mov => {
+            if let Some(old) = old_line.and_then(LineNum::new) {
+                Row::MovSrc(DelLine::new(old, text))
+            } else {
+                let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                Row::MovTgt(AddLine::new(new_num, text))
+            }
+        }
         RowKind::File | RowKind::Sep => Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, text)),
     }
 }
@@ -42,11 +50,8 @@ fn moved_row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<
     let old_num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
     let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
     match kind {
-        RowKind::Del => Row::Del(DelLine::new(old_num, text)),
-        _ => Row::Mov {
-            old_line: DelLine::new(old_num, text),
-            new_line: AddLine::new(new_num, text),
-        },
+        RowKind::Del => Row::MovSrc(DelLine::new(old_num, text)),
+        _ => Row::MovTgt(AddLine::new(new_num, text)),
     }
 }
 
@@ -329,26 +334,42 @@ fn modified_pair_absorbs_section_and_reflow() {
     ])]);
     mark_moves(&mut f);
     let c = collapse_hunk_rows(&f.hunks[0], None, None, None);
-    assert_eq!(c.len(), 4, "collapsed to 4 separate single-line rows");
+    assert_eq!(
+        c.len(),
+        6,
+        "collapsed to 6 rows (mod, extra, blank, mov src, mov tgt, after)"
+    );
     assert_eq!(c[0].kind(), RowKind::Mod, "mod row leads");
     assert_eq!(
         c[1].kind(),
-        RowKind::Add,
-        "extra line is a separate add row"
+        RowKind::Mov,
+        "source moved line appears as MovSrc anchored after mod"
     );
-    assert_eq!(c[1].new_line(), Some(2));
+    assert_eq!(c[1].old_line(), Some(4));
     assert_eq!(
         c[2].kind(),
         RowKind::Add,
-        "blank line is a separate add row"
+        "extra line is a separate add row"
     );
-    assert_eq!(c[2].new_line(), Some(3));
+    assert_eq!(c[2].new_line(), Some(2));
     assert_eq!(
         c[3].kind(),
         RowKind::Add,
+        "blank line is a separate add row"
+    );
+    assert_eq!(c[3].new_line(), Some(3));
+    assert_eq!(
+        c[4].kind(),
+        RowKind::Mov,
+        "target moved line appears as MovTgt"
+    );
+    assert_eq!(c[4].new_line(), Some(4));
+    assert_eq!(
+        c[5].kind(),
+        RowKind::Add,
         "the add after the blank is a separate row"
     );
-    assert_eq!(c[3].new_line(), Some(5));
+    assert_eq!(c[5].new_line(), Some(5));
     let spans = c[0].spans().expect("spans");
     assert_eq!(spans.add.len(), 1, "mod row has baked add spans");
 }
@@ -937,10 +958,10 @@ fn kept_del_anchoring() {
         "anchored del follows its head mod"
     );
     assert_eq!(c[1].old_line(), Some(109));
-    assert_eq!(c[2].kind(), RowKind::Add, "then the moves");
+    assert_eq!(c[2].kind(), RowKind::Mov, "then the moves");
     assert_eq!(c[2].new_line(), Some(143));
     assert!(c[2].is_moved());
-    assert_eq!(c[3].kind(), RowKind::Add, "then the moves");
+    assert_eq!(c[3].kind(), RowKind::Mov, "then the moves");
     assert_eq!(c[3].new_line(), Some(144));
     assert!(c[3].is_moved());
     assert_eq!(c[4].kind(), RowKind::Add, "then pure add");

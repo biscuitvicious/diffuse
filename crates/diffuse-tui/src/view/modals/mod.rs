@@ -350,13 +350,12 @@ pub fn render_finder_modal(
         } else {
             let text_cols = width.saturating_sub(6).max(1);
             for r in f.rows.iter().take(remaining) {
-                let pfx = styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, true);
+                let pfx = styled_prefix(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true);
                 let rendered_row = render_row_segment(
                     &r.text,
                     r.del_text.as_deref(),
                     &r.spans,
                     r.kind,
-                    r.moved,
                     &r.runs,
                     0,
                     text_cols,
@@ -554,13 +553,12 @@ pub fn render_finder_modal_widget(
             )));
         } else {
             for r in file.rows.iter().take(max_preview_rows) {
-                let pfx = styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, true);
+                let pfx = styled_prefix(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true);
                 let rendered_row = render_row_segment(
                     &r.text,
                     r.del_text.as_deref(),
                     &r.spans,
                     r.kind,
-                    r.moved,
                     &r.runs,
                     0,
                     text_cols,

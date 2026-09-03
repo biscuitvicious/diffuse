@@ -1138,7 +1138,19 @@ pub(crate) fn solve_cluster_with_arena(
             if has_old && j < n && om.comment == nm.comment && om.kind.is_compatible(nm.kind) {
                 let next_diag = row_next_idx + j + 1;
                 let nt = &new_tokens[j];
-                if om.trimmed_id == nm.trimmed_id {
+                if ot.ids.is_empty() && nt.ids.is_empty() {
+                    // blank ↔ blank: a trivial full match in one row.
+                    let s = base - w.beta + w.delta;
+                    if s > dp[next_diag].score {
+                        dp[next_diag] = Cell {
+                            score: s,
+                            prev_i: i as u32,
+                            prev_j: j as u32,
+                            k: 1,
+                            op: OpKind::Mod,
+                        };
+                    }
+                } else if om.trimmed_id == nm.trimmed_id {
                     // Verbatim (trim-insensitive) — a Mov.
                     let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
                     let s = base + w.alpha * ot.chars.max(nt.chars) as f64
@@ -1151,18 +1163,6 @@ pub(crate) fn solve_cluster_with_arena(
                             prev_j: j as u32,
                             k: 1,
                             op: OpKind::Mov,
-                        };
-                    }
-                } else if ot.ids.is_empty() && nt.ids.is_empty() {
-                    // blank ↔ blank: a trivial full match in one row.
-                    let s = base - w.beta + w.delta;
-                    if s > dp[next_diag].score {
-                        dp[next_diag] = Cell {
-                            score: s,
-                            prev_i: i as u32,
-                            prev_j: j as u32,
-                            k: 1,
-                            op: OpKind::Mod,
                         };
                     }
                 } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
@@ -1487,11 +1487,11 @@ pub(crate) fn solve_cluster_with_arena(
 
     // Emit rows + transitions in path order.
     let old_line_of = |idx: usize| match &cluster.old_rows[idx] {
-        Row::Del(d) => d.clone(),
+        Row::Del(d) | Row::MovSrc(d) => d.clone(),
         other => panic!("cluster old row is not a Del: {other:?}"),
     };
     let new_line_of = |idx: usize| match &cluster.new_rows[idx] {
-        Row::Add(a) => a.clone(),
+        Row::Add(a) | Row::MovTgt(a) => a.clone(),
         other => panic!("cluster new row is not an Add: {other:?}"),
     };
 
@@ -1508,10 +1508,8 @@ pub(crate) fn solve_cluster_with_arena(
                 transitions.push(DpOp::Add);
             }
             OpKind::Mov => {
-                rows.push(Row::Mov {
-                    old_line: old_line_of(pi),
-                    new_line: new_line_of(pj),
-                });
+                rows.push(Row::MovSrc(old_line_of(pi)));
+                rows.push(Row::MovTgt(new_line_of(pj)));
                 transitions.push(DpOp::Mov);
             }
             OpKind::Mod => {
@@ -1587,9 +1585,9 @@ pub fn verify_projection(sol: &DpSolution, cluster: &ChangeCluster) -> Result<()
         sol.rows
             .iter()
             .filter_map(|r| match r {
-                Row::Del(d) if old_side => Some(d.text.clone()),
-                Row::Add(a) if !old_side => Some(a.text.clone()),
-                Row::Mod { old_line, new_line } | Row::Mov { old_line, new_line } => {
+                Row::Del(d) | Row::MovSrc(d) if old_side => Some(d.text.clone()),
+                Row::Add(a) | Row::MovTgt(a) if !old_side => Some(a.text.clone()),
+                Row::Mod { old_line, new_line } => {
                     if old_side {
                         Some(old_line.text.clone())
                     } else {

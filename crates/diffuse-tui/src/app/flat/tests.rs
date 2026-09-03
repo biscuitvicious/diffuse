@@ -121,6 +121,7 @@ index 1111111..2222222 100644
             new_count: 1,
             rows: vec![OutputRow {
                 kind: RowKind::Add,
+                mov_side: None,
                 new_line: Some(1),
                 old_line: None,
                 text: "fn new_untracked() {}".to_string(),
@@ -128,7 +129,6 @@ index 1111111..2222222 100644
                 spans: Default::default(),
                 runs: Vec::new(),
                 wholesale: false,
-                moved: false,
             }],
         }],
         raw_hunks: Vec::new(),

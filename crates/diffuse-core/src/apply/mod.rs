@@ -132,10 +132,10 @@ pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
                     new_lines.push(ctx_line.text.clone());
                     cursor += 1;
                 }
-                Row::Add(add_line) => {
+                Row::Add(add_line) | Row::MovTgt(add_line) => {
                     new_lines.push(add_line.text.clone());
                 }
-                Row::Del(del_line) => {
+                Row::Del(del_line) | Row::MovSrc(del_line) => {
                     if cursor < out.len() {
                         assert_eq!(
                             &out[cursor],
@@ -148,7 +148,7 @@ pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
                     }
                     cursor += 1;
                 }
-                Row::Mod { old_line, new_line } | Row::Mov { old_line, new_line } => {
+                Row::Mod { old_line, new_line } => {
                     for line in old_line.text.split('\n') {
                         if cursor < out.len() {
                             assert_eq!(
@@ -205,10 +205,10 @@ pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
                 out.push(ctx_line.text.clone());
                 cursor += 1;
             }
-            Row::Add(add_line) => {
+            Row::Add(add_line) | Row::MovTgt(add_line) => {
                 out.push(add_line.text.clone());
             }
-            Row::Del(del_line) => {
+            Row::Del(del_line) | Row::MovSrc(del_line) => {
                 if cursor < old.len() {
                     assert_eq!(
                         &old[cursor],
@@ -219,7 +219,7 @@ pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
                 }
                 cursor += 1;
             }
-            Row::Mod { old_line, new_line } | Row::Mov { old_line, new_line } => {
+            Row::Mod { old_line, new_line } => {
                 for line in old_line.text.split('\n') {
                     if cursor < old.len() {
                         assert_eq!(

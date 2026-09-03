@@ -36,12 +36,12 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
     let mut del_runs: Vec<Vec<usize>> = Vec::new();
     let mut i = 0;
     while i < h.rows.len() {
-        if !matches!(h.rows[i], Row::Del(_)) {
+        if !matches!(h.rows[i], Row::Del(_) | Row::MovSrc(_)) {
             i += 1;
             continue;
         }
         let mut run = vec![i];
-        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_)) {
+        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_) | Row::MovSrc(_)) {
             i += 1;
             run.push(i);
         }
@@ -58,7 +58,7 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
         .rows
         .iter()
         .enumerate()
-        .filter(|(_, r)| matches!(r, Row::Del(_)))
+        .filter(|(_, r)| matches!(r, Row::Del(_) | Row::MovSrc(_)))
         .map(|(i, _)| i)
         .collect();
     (del_runs, run_of, del_ids)
@@ -78,7 +78,7 @@ fn guarded_dels(
     let has_any_moved = h.rows.iter().any(|a| a.is_moved());
 
     for (ri, r) in h.rows.iter().enumerate() {
-        if !matches!(r, Row::Del(_)) {
+        if !matches!(r, Row::Del(_) | Row::MovSrc(_)) {
             continue;
         }
         if r.is_moved() {
@@ -99,7 +99,7 @@ fn guarded_dels(
             is_tail_before_closing(r.old_line(), true, old_content, new_content, profile);
         let tail_candidate = del_is_tail
             && h.rows.iter().any(|a| {
-                a.kind() == crate::parse::RowKind::Add
+                matches!(a, Row::Add(_) | Row::MovTgt(_))
                     && is_tail_before_closing(
                         a.new_line(),
                         false,
@@ -114,7 +114,7 @@ fn guarded_dels(
         let has_same_hunk_add = h
             .rows
             .iter()
-            .any(|a| a.kind() == crate::parse::RowKind::Add && a.text().trim() == r_trim);
+            .any(|a| matches!(a, Row::Add(_) | Row::MovTgt(_)) && a.text().trim() == r_trim);
         if !r_trim.is_empty() && !tail_candidate && !has_same_hunk_add {
             let in_new = if let Some(nc) = new_content {
                 let set =
@@ -174,7 +174,7 @@ pub fn dp_pairing(
         .iter()
         .enumerate()
         .filter_map(|(i, r)| match r {
-            Row::Del(d) => Some((d.num.get(), i)),
+            Row::Del(d) | Row::MovSrc(d) => Some((d.num.get(), i)),
             _ => None,
         })
         .collect();
@@ -183,7 +183,7 @@ pub fn dp_pairing(
         .iter()
         .enumerate()
         .filter_map(|(i, r)| match r {
-            Row::Add(a) => Some((a.num.get(), i)),
+            Row::Add(a) | Row::MovTgt(a) => Some((a.num.get(), i)),
             _ => None,
         })
         .collect();
@@ -232,6 +232,8 @@ pub fn dp_pairing(
                 dp::DpOp::Mod { .. } | dp::DpOp::Mov => {
                     if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni))
                         && !guards.contains(&gd)
+                        && !h.rows[gd].is_moved()
+                        && !h.rows[ga].is_moved()
                         && !pair_of.contains_key(&ga)
                         && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
                     {
@@ -243,6 +245,8 @@ pub fn dp_pairing(
                 dp::DpOp::Expand { anchor, k, .. } => {
                     if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni + anchor))
                         && !guards.contains(&gd)
+                        && !h.rows[gd].is_moved()
+                        && !h.rows[ga].is_moved()
                         && !pair_of.contains_key(&ga)
                         && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
                     {
@@ -254,6 +258,8 @@ pub fn dp_pairing(
                 dp::DpOp::Collapse { anchor, k, .. } => {
                     if let (Some(gd), Some(ga)) = (global_del(oi + anchor), global_add(ni))
                         && !guards.contains(&gd)
+                        && !h.rows[gd].is_moved()
+                        && !h.rows[ga].is_moved()
                         && !pair_of.contains_key(&ga)
                         && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
                     {

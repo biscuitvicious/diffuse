@@ -100,9 +100,8 @@ pub fn collapse_hunk_rows(
             Row::Ctx(c) => c.old_pos.get() > 0 && c.new_pos.get() > 0,
             Row::Add(a) => a.num.get() > 0,
             Row::Del(d) => d.num.get() > 0,
-            Row::Mov {
-                old_line, new_line, ..
-            } => old_line.num.get() > 0 && new_line.num.get() > 0,
+            Row::MovSrc(d) => d.num.get() > 0,
+            Row::MovTgt(a) => a.num.get() > 0,
             Row::Sep(_) => true,
         }),
         "All collapsed rows must have valid, non-zero line coordinates"
@@ -124,7 +123,11 @@ pub fn pass_assemble_mods(
     let mut add_spans: FxHashMap<usize, (Spans, String)> = FxHashMap::default();
 
     for (ri, r) in h.rows.iter().enumerate() {
-        if matches!(r, Row::Add(_) | Row::Mov { .. }) {
+        if matches!(r, Row::MovTgt(_)) {
+            out.push(r.clone());
+        } else if matches!(r, Row::MovSrc(_)) {
+            kept_dels.push(ri);
+        } else if matches!(r, Row::Add(_)) {
             if ctx.pair_of.contains_key(&ri) {
                 continue;
             }
@@ -465,10 +468,18 @@ pub fn pass_filter_reflows(
         }
     }
 
-    // 4. Meaningful dels: candidate dels that were NOT converted to Ctx.
-    let meaningful: Vec<usize> = candidate_dels
-        .into_iter()
-        .filter(|di| !used_dels.contains(di))
+    // 4. Meaningful dels: candidate dels that were NOT converted to Ctx, plus
+    //    moved dels that were not absorbed.
+    let meaningful: Vec<usize> = kept_dels
+        .iter()
+        .copied()
+        .filter(|di| {
+            if h.rows[*di].is_moved() {
+                !absorbed_dels.contains(di)
+            } else {
+                !absorbed_dels.contains(di) && !used_dels.contains(di)
+            }
+        })
         .collect();
 
     // 5. Kept adds: pure_adds that survived (moved adds + adds not converted to
@@ -567,21 +578,15 @@ pub fn pass_sort_ordered_walk(
                     Row::Add(add_line.clone())
                 }
             }
-            Row::Mov { old_line, new_line } => {
+            Row::MovTgt(new_line) => {
                 if let Some((spans, _)) = add_spans.get(&ai) {
-                    Row::Mov {
-                        old_line: old_line.clone(),
-                        new_line: AddLine::with_spans(
-                            new_line.num,
-                            new_line.text.clone(),
-                            spans.clone(),
-                        ),
-                    }
+                    Row::MovTgt(AddLine::with_spans(
+                        new_line.num,
+                        new_line.text.clone(),
+                        spans.clone(),
+                    ))
                 } else {
-                    Row::Mov {
-                        old_line: old_line.clone(),
-                        new_line: new_line.clone(),
-                    }
+                    Row::MovTgt(new_line.clone())
                 }
             }
             _ => h.rows[ai].clone(),

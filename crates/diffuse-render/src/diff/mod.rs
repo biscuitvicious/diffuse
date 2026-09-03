@@ -80,9 +80,9 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
 
     let render_row = |r: &OutputRow, out: &mut String| {
         let pfx = if styled_prefixes {
-            styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, false)
+            styled_prefix(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, false)
         } else {
-            let plain = prefix_of(r.kind, r.new_line, r.old_line, r.moved, &r.runs);
+            let plain = prefix_of(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs);
             format!("{plain} ")
         };
 
@@ -91,7 +91,6 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
             r.del_text.as_deref(),
             &r.spans,
             r.kind,
-            r.moved,
             &r.runs,
             0,
             usize::MAX,
@@ -185,7 +184,7 @@ pub fn render_raw_file_diff(file: &OutputFile) -> String {
         out.push('\n');
 
         for r in &h.rows {
-            let pfx = styled_prefix(r.kind, r.new_line, r.old_line, r.moved, &r.runs, true);
+            let pfx = styled_prefix(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true);
             let row = render_raw_row(r.kind, &pfx, &r.text, false, false, true);
             out.push_str(&row);
             out.push('\n');

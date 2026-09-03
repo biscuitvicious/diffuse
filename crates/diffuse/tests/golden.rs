@@ -37,7 +37,7 @@ use diffuse::{
         lcs::char_len,
         merge::{RunKind, display_text, is_wholesale_mod},
         parse::{Row, RowKind},
-        wire::{OutputFile, PipelineOutput},
+        wire::{MovSide, OutputFile, PipelineOutput},
     },
     render::{default_theme, encode_sgr, render_pipeline_output},
     syntax::registry::lang_profile,
@@ -232,7 +232,8 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
     for f in &out.files {
         check!(!f.path.is_empty(), "a file has an empty path");
         // The header counts must equal a re-walk of the rows
-        // (moves are neither added nor removed; mods are one row).
+        // Each visual row contributes once. A moved pair is one relocation —
+        // only the target side counts as +1 mov; the source side is absorbed.
         let mut adds = 0usize;
         let mut dels = 0usize;
         let mut mods = 0usize;
@@ -240,9 +241,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
         for h in &f.hunks {
             for r in &h.rows {
                 match r.kind {
-                    RowKind::Add if r.moved => movs += 1,
+                    RowKind::Mov => {
+                        if r.mov_side != Some(MovSide::Src) {
+                            movs += 1;
+                        }
+                    }
                     RowKind::Add => adds += 1,
-                    RowKind::Del if r.moved => {}
                     RowKind::Del => dels += 1,
                     RowKind::Mod => mods += 1,
                     _ => {}
@@ -263,6 +267,25 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         r.new_line,
                         r.old_line
                     ),
+                    RowKind::Mov => {
+                        if r.mov_side == Some(MovSide::Src) {
+                            check!(
+                                r.old_line.is_some() && r.new_line.is_none(),
+                                "{}: mov src row has newLine {:?} and oldLine {:?}",
+                                f.path,
+                                r.new_line,
+                                r.old_line
+                            );
+                        } else {
+                            check!(
+                                r.new_line.is_some() && r.old_line.is_none(),
+                                "{}: mov tgt row has newLine {:?} and oldLine {:?}",
+                                f.path,
+                                r.new_line,
+                                r.old_line
+                            );
+                        }
+                    }
                     RowKind::Mod => {
                         check!(
                             r.new_line.is_some() && r.old_line.is_some(),
@@ -613,10 +636,10 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
                             ar.runs, er.runs
                         ));
                     }
-                    if ar.wholesale != er.wholesale || ar.moved != er.moved {
+                    if ar.wholesale != er.wholesale {
                         msg.push_str(&format!(
-                            "\n    flags actual:   wholesale={}, moved={}\n    flags expected: wholesale={}, moved={}",
-                            ar.wholesale, ar.moved, er.wholesale, er.moved
+                            "\n    flags actual:   wholesale={}\n    flags expected: wholesale={}",
+                            ar.wholesale, er.wholesale
                         ));
                     }
                     failures.push(msg);
@@ -977,8 +1000,8 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
         old_content,
         diffuse::core::pipeline::PipelineOptions::default(),
     );
-    walk_and_assert(&output, name, min);
     assert_wire_json_matches(&output, name);
+    walk_and_assert(&output, name, min);
     (fixture, output)
 }
 

@@ -198,7 +198,7 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
         let new_side = h
             .rows
             .iter()
-            .any(|r| matches!(r, Row::Add(_) | Row::Mov { .. } | Row::Mod { .. }));
+            .any(|r| matches!(r, Row::Add(_) | Row::MovTgt(_) | Row::Mod { .. }));
 
         // Expand leading context if needed
         if (h.above_ctx as usize) < budget && h.old_start > 1 && h.new_start > 1 {

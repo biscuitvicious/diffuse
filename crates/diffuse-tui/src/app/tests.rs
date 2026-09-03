@@ -2159,3 +2159,62 @@ fn test_note_modal_margins_with_scrollbar() {
         "Col 49 must be scrollbar thumb"
     );
 }
+
+#[test]
+fn test_mov_target_and_source_render_in_tui() {
+    let wire_path = Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.json"
+    ));
+    let json_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.json");
+    let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+
+    let mut state = AppState::new(output, "opt_1".into(), temp_notes_path());
+
+    // Find collapse/mod.rs file index
+    let fi = state
+        .output
+        .files
+        .iter()
+        .position(|f| f.path.contains("collapse/mod.rs"))
+        .expect("collapse/mod.rs must exist");
+
+    // Jump to collapse/mod.rs
+    let file_start = state.flat.iter().position(|fr| fr.file_idx == fi).unwrap();
+    state.jump_to_row(file_start, false);
+
+    // Find position of row with old_line or new_line around 96
+    let tgt_pos = state
+        .flat
+        .iter()
+        .position(|fr| state.row_of(fr).is_some_and(|r| r.new_line == Some(96)));
+    assert!(tgt_pos.is_some(), "target move row 96 must exist in flat");
+    state.jump_to_row(tgt_pos.unwrap(), false);
+    let frame = state.render_frame(120, 40);
+    let raw_frame = crate::render::strip_ansi(&frame);
+    assert!(
+        raw_frame.contains("96≈+"),
+        "frame must render target move row 96≈+"
+    );
+
+    let src_pos = state.flat.iter().position(|fr| {
+        state.row_of(fr).is_some_and(|r| {
+            r.kind == RowKind::Mov
+                && r.mov_side == Some(crate::core::wire::MovSide::Src)
+                && r.old_line == Some(127)
+        })
+    });
+    assert!(src_pos.is_some(), "source move row 127 must exist in flat");
+
+    state.jump_to_row(src_pos.unwrap(), false);
+    let frame_src = state.render_frame(120, 40);
+    let raw_frame_src = crate::render::strip_ansi(&frame_src);
+    assert!(
+        raw_frame_src.contains("127≈-"),
+        "frame must render source move row 127≈-"
+    );
+    assert!(
+        raw_frame_src.contains("135 -") && !raw_frame_src.contains("135≈-"),
+        "trailing blank line 135 must be regular deletion '-', not move '≈-'"
+    );
+}

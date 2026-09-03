@@ -3,19 +3,13 @@ use crate::core::{merge::RunKind, wire::OutputRun};
 
 #[test]
 fn test_prefix_gutters() {
-    let r_add = prefix_of(RowKind::Add, Some(42), None, false, &[]);
+    let r_add = prefix_of(RowKind::Add, None, Some(42), None, &[]);
     assert_eq!(r_add, "  42 +");
 
-    let r_add_mov = prefix_of(RowKind::Add, Some(42), None, true, &[]);
-    assert_eq!(r_add_mov, "  42≈+");
-
-    let r_del = prefix_of(RowKind::Del, None, Some(10), false, &[]);
+    let r_del = prefix_of(RowKind::Del, None, None, Some(10), &[]);
     assert_eq!(r_del, "  10 -");
 
-    let r_del_mov = prefix_of(RowKind::Del, None, Some(10), true, &[]);
-    assert_eq!(r_del_mov, "  10≈-");
-
-    let r_mod = prefix_of(RowKind::Mod, Some(55), Some(54), false, &[]);
+    let r_mod = prefix_of(RowKind::Mod, None, Some(55), Some(54), &[]);
     assert_eq!(r_mod, "  55 ~");
 }
 
@@ -42,7 +36,6 @@ fn test_render_addition_row_with_subword_styling() {
         None,
         &Spans::default(),
         RowKind::Add,
-        false,
         &runs,
         0,
         13,
@@ -77,7 +70,6 @@ fn test_grapheme_clusters_never_split() {
         None,
         &Spans::default(),
         RowKind::Ctx,
-        false,
         &runs,
         0,
         1,
@@ -101,7 +93,6 @@ fn test_grapheme_clusters_never_split() {
         None,
         &Spans::default(),
         RowKind::Ctx,
-        false,
         &runs,
         0,
         1,
@@ -135,7 +126,6 @@ fn test_syntax_on_toggle_disables_token_colors() {
         None,
         &Spans::default(),
         RowKind::Ctx,
-        false,
         &runs,
         0,
         2,
@@ -156,7 +146,6 @@ fn test_syntax_on_toggle_disables_token_colors() {
         None,
         &Spans::default(),
         RowKind::Ctx,
-        false,
         &runs,
         0,
         2,
@@ -197,7 +186,6 @@ fn test_col_offset_applies_to_token_runs() {
         None,
         &Spans::default(),
         RowKind::Add,
-        false,
         &runs,
         0,
         13,
@@ -315,7 +303,6 @@ fn test_render_moved_row_with_indentation_subwords() {
         Some("    foo()"),
         &spans,
         RowKind::Add,
-        true, // moved = true
         &runs,
         0,
         usize::MAX,
@@ -369,7 +356,6 @@ fn test_render_mod_row_with_indentation_subwords() {
         Some("    bar()"),
         &spans,
         RowKind::Mod,
-        false,
         &runs,
         0,
         usize::MAX,
@@ -404,7 +390,6 @@ fn test_render_moved_source_del_row() {
         None,
         &Spans::default(),
         RowKind::Del,
-        true, // moved = true (source of move)
         &runs,
         0,
         usize::MAX,

@@ -22,6 +22,7 @@ fn sample_output_file() -> OutputFile {
             rows: vec![
                 OutputRow {
                     kind: RowKind::Ctx,
+                    mov_side: None,
                     new_line: Some(1),
                     old_line: Some(1),
                     text: "fn main() {".to_string(),
@@ -34,10 +35,10 @@ fn sample_output_file() -> OutputFile {
                         text: "fn main() {".into(),
                     }],
                     wholesale: false,
-                    moved: false,
                 },
                 OutputRow {
                     kind: RowKind::Mod,
+                    mov_side: None,
                     new_line: Some(2),
                     old_line: Some(2),
                     text: "    println!(\"hello world!\");".to_string(),
@@ -64,10 +65,10 @@ fn sample_output_file() -> OutputFile {
                         },
                     ],
                     wholesale: false,
-                    moved: false,
                 },
                 OutputRow {
                     kind: RowKind::Ctx,
+                    mov_side: None,
                     new_line: Some(3),
                     old_line: Some(3),
                     text: "}".to_string(),
@@ -80,7 +81,6 @@ fn sample_output_file() -> OutputFile {
                         text: "}".into(),
                     }],
                     wholesale: false,
-                    moved: false,
                 },
             ],
         }],

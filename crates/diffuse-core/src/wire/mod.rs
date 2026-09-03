@@ -15,6 +15,14 @@ use crate::{
 
 pub mod jsonl;
 
+/// Identifies which side of a moved line an `OutputRow` represents.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MovSide {
+    Src,
+    Tgt,
+}
+
 /// The top-level wire contract payload containing processed file diffs, branch
 /// name, and untracked file metadata.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -166,6 +174,8 @@ impl OutputHunk {
 #[serde(rename_all = "camelCase")]
 pub struct OutputRow {
     pub kind: RowKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mov_side: Option<MovSide>,
     pub new_line: Option<u32>,
     pub old_line: Option<u32>,
     pub text: String,
@@ -178,7 +188,6 @@ pub struct OutputRow {
     /// decision, baked by the engine so the TS merge machinery can go.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wholesale: bool,
-    pub moved: bool,
 }
 
 impl From<&OutputRow> for Row {
@@ -192,15 +201,6 @@ impl From<&OutputRow> for Row {
             RowKind::Del => {
                 let num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
                 Row::Del(DelLine::new(num, &r.text))
-            }
-            RowKind::Add if r.moved => {
-                let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let del_text = r.del_text.as_deref().unwrap_or(&r.text);
-                Row::Mov {
-                    old_line: DelLine::new(old_num, del_text),
-                    new_line: AddLine::with_spans(new_num, &r.text, r.spans.clone()),
-                }
             }
             RowKind::Add => {
                 let num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
@@ -219,6 +219,22 @@ impl From<&OutputRow> for Row {
                     new_line: AddLine::with_spans(new_num, &r.text, r.spans.clone()),
                 }
             }
+            RowKind::Mov => match r.mov_side {
+                Some(MovSide::Src) => {
+                    let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                    Row::MovSrc(DelLine::new(old_num, &r.text))
+                }
+                Some(MovSide::Tgt) | None => {
+                    let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                    let del_text = r.del_text.as_deref().unwrap_or(&r.text);
+                    Row::MovTgt(AddLine::with_donor(
+                        new_num,
+                        &r.text,
+                        del_text,
+                        r.spans.clone(),
+                    ))
+                }
+            },
             RowKind::File | RowKind::Sep => {
                 Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, r.text.clone()))
             }
@@ -230,6 +246,10 @@ impl OutputRow {
     pub fn reverse(&self) -> Self {
         OutputRow {
             kind: self.kind.reverse(),
+            mov_side: self.mov_side.map(|s| match s {
+                MovSide::Src => MovSide::Tgt,
+                MovSide::Tgt => MovSide::Src,
+            }),
             text: self.del_text.clone().unwrap_or_else(|| self.text.clone()),
             new_line: self.old_line,
             old_line: self.new_line,
@@ -241,7 +261,6 @@ impl OutputRow {
             spans: self.spans.reverse(),
             runs: self.runs.iter().map(OutputRun::reverse).collect(),
             wholesale: self.wholesale,
-            moved: self.moved,
         }
     }
 

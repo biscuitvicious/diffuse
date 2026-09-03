@@ -45,7 +45,7 @@ pub fn build_visible(hunks: &[Hunk], _expand_lines: usize) -> Vec<VisibleRow> {
 fn hunk_has_adds(h: &Hunk) -> bool {
     h.rows
         .iter()
-        .any(|r| matches!(r, Row::Add(_) | Row::Mod { .. } | Row::Mov { .. }))
+        .any(|r| matches!(r, Row::Add(_) | Row::Mod { .. } | Row::MovTgt(_)))
 }
 
 #[cfg(test)]

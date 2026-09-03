@@ -171,13 +171,10 @@ pub fn partition_hunk_segments<'a>(
             let _row_kind = classify_syntax_section(row.text(), profile);
 
             match row {
-                Row::Del(_) => old_rows.push(row.clone()),
-                Row::Add(_) => new_rows.push(row.clone()),
+                Row::Del(_) | Row::MovSrc(_) => old_rows.push(row.clone()),
+                Row::Add(_) | Row::MovTgt(_) => new_rows.push(row.clone()),
                 Row::Mod { old_line, new_line } => {
                     old_rows.push(Row::Del(old_line.clone()));
-                    new_rows.push(Row::Add(new_line.clone()));
-                }
-                Row::Mov { new_line, .. } => {
                     new_rows.push(Row::Add(new_line.clone()));
                 }
                 Row::Ctx(_) | Row::Sep(_) => {}

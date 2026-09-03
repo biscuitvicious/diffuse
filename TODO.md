@@ -63,6 +63,10 @@
 ## 10. Verification, Integrity & Design by Contract (DbC)
 - [x] **Design by Contract (DbC) method contracts**: Integrate preconditions (`require!`), postconditions (`ensure!`), and internal state invariants (`invariant!`) across algorithms, AST transforms, streaming channels, syntax classifiers, and TUI coordinate mappers with zero release overhead. (See [Design by Contract (DbC) Integration](plan/done/Design%20by%20Contract%20(DbC)%20Integration.md))
 
+## 12. Code Cleanup
+
+- [ ] **Remove unnecessary `split('\n')` on row text in apply module**: `apply/mod.rs` splits row text on `\n` before iterating, but rows are always single lines from the diff parser. The for loop always yields exactly one element. Replace with direct text usage.
+
 ## 11. LCS Engine — Future Investigations
 
 

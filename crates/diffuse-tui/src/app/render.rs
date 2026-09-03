@@ -671,9 +671,9 @@ impl AppState {
                         let pfx = if s_idx == 0 {
                             crate::render::styled_prefix_themed(
                                 r.kind,
+                                r.mov_side,
                                 r.new_line,
                                 r.old_line,
-                                r.moved,
                                 &r.runs,
                                 in_hunk_extent,
                                 &self.theme,
@@ -704,7 +704,6 @@ impl AppState {
                                 r.del_text.as_deref(),
                                 &r.spans,
                                 r.kind,
-                                r.moved,
                                 &r.runs,
                                 seg_start,
                                 seg_end,

@@ -249,6 +249,7 @@ impl AppState {
                 let runs = Self::get_line_runs(f, new_num, &text);
                 down_rows.push(OutputRow {
                     kind: RowKind::Ctx,
+                    mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
@@ -256,7 +257,6 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
-                    moved: false,
                 });
             }
 
@@ -335,6 +335,7 @@ impl AppState {
                 let runs = Self::get_line_runs(f, new_num, &text);
                 down_rows.push(OutputRow {
                     kind: RowKind::Ctx,
+                    mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
@@ -342,7 +343,6 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
-                    moved: false,
                 });
             }
 
@@ -462,6 +462,7 @@ impl AppState {
                 let runs = Self::get_line_runs(f, new_num, &text);
                 up_rows.push(OutputRow {
                     kind: RowKind::Ctx,
+                    mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
@@ -469,7 +470,6 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
-                    moved: false,
                 });
             }
 
@@ -529,6 +529,7 @@ impl AppState {
                 let runs = Self::get_line_runs(f, new_num, &text);
                 up_rows.push(OutputRow {
                     kind: RowKind::Ctx,
+                    mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
                     text,
@@ -536,7 +537,6 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
-                    moved: false,
                 });
             }
 
@@ -630,6 +630,7 @@ impl AppState {
             let runs = Self::get_line_runs(f, new_num, &text);
             OutputRow {
                 kind: RowKind::Ctx,
+                mov_side: None,
                 new_line: Some(new_num),
                 old_line: Some(old_num),
                 text,
@@ -637,7 +638,6 @@ impl AppState {
                 spans: Spans::default(),
                 runs,
                 wholesale: false,
-                moved: false,
             }
         };
 

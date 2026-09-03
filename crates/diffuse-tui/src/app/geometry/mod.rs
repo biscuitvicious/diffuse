@@ -47,7 +47,6 @@ impl AppState {
                 &r.text,
                 r.del_text.as_deref(),
                 r.kind,
-                r.moved,
                 &r.runs,
                 self.col_offset,
                 self.word_diff,

@@ -71,9 +71,9 @@ pub fn pad4(num: Option<u32>) -> String {
 /// Generate plain 6-character prefix gutter (` 123 + `, ` 123≈+`, ` 123≈-`).
 pub fn prefix_of(
     kind: RowKind,
+    mov_side: Option<crate::core::wire::MovSide>,
     new_line: Option<u32>,
     old_line: Option<u32>,
-    moved: bool,
     runs: &[OutputRun],
 ) -> String {
     let mut buf = [b' '; 4];
@@ -81,28 +81,17 @@ pub fn prefix_of(
         return format!("{}  ", pad4_bytes(new_line, &mut buf));
     }
     match kind {
-        RowKind::Add => {
-            if moved {
-                format!("{}≈+", pad4_bytes(new_line, &mut buf))
-            } else {
-                format!("{} +", pad4_bytes(new_line, &mut buf))
-            }
-        }
-        RowKind::Del => {
-            if moved {
+        RowKind::Add => format!("{} +", pad4_bytes(new_line, &mut buf)),
+        RowKind::Del => format!("{} -", pad4_bytes(old_line, &mut buf)),
+        RowKind::Mod => format!("{} ~", pad4_bytes(new_line, &mut buf)),
+        RowKind::Mov => {
+            if mov_side == Some(crate::core::wire::MovSide::Src) {
                 format!("{}≈-", pad4_bytes(old_line, &mut buf))
             } else {
-                format!("{} -", pad4_bytes(old_line, &mut buf))
+                format!("{}≈+", pad4_bytes(new_line, &mut buf))
             }
         }
-        RowKind::Mod => format!("{} ~", pad4_bytes(new_line, &mut buf)),
-        _ => {
-            if moved {
-                format!("{}≈+", pad4_bytes(new_line.or(old_line), &mut buf))
-            } else {
-                format!("{}  ", pad4_bytes(new_line.or(old_line), &mut buf))
-            }
-        }
+        _ => format!("{}  ", pad4_bytes(new_line.or(old_line), &mut buf)),
     }
 }
 
@@ -110,9 +99,9 @@ pub fn prefix_of(
 /// theme support.
 pub fn styled_prefix_themed(
     kind: RowKind,
+    mov_side: Option<crate::core::wire::MovSide>,
     new_line: Option<u32>,
     old_line: Option<u32>,
-    moved: bool,
     runs: &[OutputRun],
     in_hunk: bool,
     theme: &DiffuseTheme,
@@ -131,29 +120,15 @@ pub fn styled_prefix_themed(
     match kind {
         RowKind::Del => {
             let pad = pad4_bytes(old_line, &mut buf);
-            if moved {
-                let num_fg = theme.palette.mov_gutter_num.italic_fg_code();
-                let mov_fg = theme.palette.mov_gutter_icon.fg_code();
-                let del_fg = theme.palette.del_gutter_icon.fg_code();
-                format!("{num_fg}{pad}\x1b[23m{mov_fg}≈{del_fg}-{FG_RESET}\x1b[23m")
-            } else {
-                let num_fg = theme.palette.del_gutter_num.italic_fg_code();
-                let icon_fg = theme.palette.del_gutter_icon.fg_code();
-                format!("{num_fg}{pad}\x1b[23m {icon_fg}-{FG_RESET}\x1b[23m")
-            }
+            let num_fg = theme.palette.del_gutter_num.italic_fg_code();
+            let icon_fg = theme.palette.del_gutter_icon.fg_code();
+            format!("{num_fg}{pad}\x1b[23m {icon_fg}-{FG_RESET}\x1b[23m")
         }
         RowKind::Add => {
             let pad = pad4_bytes(new_line, &mut buf);
-            if moved {
-                let num_fg = theme.palette.mov_gutter_num.fg_code();
-                let mov_fg = theme.palette.mov_gutter_icon.fg_code();
-                let add_fg = theme.palette.add_gutter_icon.fg_code();
-                format!("{num_fg}{pad}{mov_fg}≈{add_fg}+{FG_RESET}\x1b[23m")
-            } else {
-                let num_fg = theme.palette.add_gutter_num.fg_code();
-                let icon_fg = theme.palette.add_gutter_icon.fg_code();
-                format!("{num_fg}{pad} {icon_fg}+{FG_RESET}\x1b[23m")
-            }
+            let num_fg = theme.palette.add_gutter_num.fg_code();
+            let icon_fg = theme.palette.add_gutter_icon.fg_code();
+            format!("{num_fg}{pad} {icon_fg}+{FG_RESET}\x1b[23m")
         }
         RowKind::Mod => {
             let pad = pad4_bytes(new_line, &mut buf);
@@ -161,22 +136,28 @@ pub fn styled_prefix_themed(
             let icon_fg = theme.palette.mod_gutter_icon.fg_code();
             format!("{num_fg}{pad} {icon_fg}~{FG_RESET}\x1b[23m")
         }
+        RowKind::Mov => {
+            let num_fg = theme.palette.mov_gutter_num.fg_code();
+            let mov_fg = theme.palette.mov_gutter_icon.fg_code();
+            if mov_side == Some(crate::core::wire::MovSide::Src) {
+                let pad = pad4_bytes(old_line, &mut buf);
+                let del_fg = theme.palette.del_gutter_icon.fg_code();
+                format!("{num_fg}{pad}{mov_fg}≈{del_fg}-{FG_RESET}\x1b[23m")
+            } else {
+                let pad = pad4_bytes(new_line, &mut buf);
+                let add_fg = theme.palette.add_gutter_icon.fg_code();
+                format!("{num_fg}{pad}{mov_fg}≈{add_fg}+{FG_RESET}\x1b[23m")
+            }
+        }
         _ => {
             let pad = pad4_bytes(new_line.or(old_line), &mut buf);
-            if moved {
-                let num_fg = theme.palette.mov_gutter_num.fg_code();
-                let mov_fg = theme.palette.mov_gutter_icon.fg_code();
-                let icon_fg = theme.palette.add_gutter_icon.fg_code();
-                format!("{num_fg}{pad}{mov_fg}≈{icon_fg}+{FG_RESET}\x1b[23m")
+            let color = if in_hunk {
+                theme.palette.ctx_gutter_in_hunk
             } else {
-                let color = if in_hunk {
-                    theme.palette.ctx_gutter_in_hunk
-                } else {
-                    theme.palette.ctx_gutter_out_hunk
-                };
-                let color_fg = color.fg_code();
-                format!("{color_fg}{pad}  {FG_RESET}\x1b[23m")
-            }
+                theme.palette.ctx_gutter_out_hunk
+            };
+            let color_fg = color.fg_code();
+            format!("{color_fg}{pad}  {FG_RESET}\x1b[23m")
         }
     }
 }
@@ -184,17 +165,17 @@ pub fn styled_prefix_themed(
 /// Generate styled ANSI 6-character prefix gutter with color highlights.
 pub fn styled_prefix(
     kind: RowKind,
+    mov_side: Option<crate::core::wire::MovSide>,
     new_line: Option<u32>,
     old_line: Option<u32>,
-    moved: bool,
     runs: &[OutputRun],
     in_hunk: bool,
 ) -> String {
     styled_prefix_themed(
         kind,
+        mov_side,
         new_line,
         old_line,
-        moved,
         runs,
         in_hunk,
         &DiffuseTheme::from_env(),
@@ -206,12 +187,11 @@ pub fn display_text(
     text: &str,
     del_text: Option<&str>,
     kind: RowKind,
-    moved: bool,
     runs: &[OutputRun],
     col_offset: usize,
     word_diff: bool,
 ) -> String {
-    let use_merged = (kind == RowKind::Mod || moved || kind == RowKind::Add)
+    let use_merged = (kind == RowKind::Mod || kind == RowKind::Mov || kind == RowKind::Add)
         && del_text.is_some()
         && word_diff
         && !runs.is_empty();
@@ -236,7 +216,6 @@ pub fn render_row_segment(
     del_text: Option<&str>,
     _spans: &Spans,
     kind: RowKind,
-    moved: bool,
     runs: &[OutputRun],
     seg_start: usize,
     seg_end: usize,
@@ -251,6 +230,7 @@ pub fn render_row_segment(
     let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
     let is_del_row = kind == RowKind::Del;
     let is_mod_row = kind == RowKind::Mod;
+    let is_mov_row = kind == RowKind::Mov;
 
     // The visual-selection band: one neutral shade applied across the whole
     // row (distinct from the cursor's per-style lift).
@@ -261,7 +241,7 @@ pub fn render_row_segment(
         color => color.bg_code(),
     };
 
-    let s_mov = theme.row_style(RowKind::Ctx);
+    let s_mov = theme.row_style(RowKind::Mov);
     let s_mod = theme.row_style(RowKind::Mod);
     let s_del = theme.row_style(RowKind::Del);
     let s_add = theme.row_style(RowKind::Add);
@@ -283,7 +263,7 @@ pub fn render_row_segment(
         } else {
             &ctx_tint_bg
         }
-    } else if moved {
+    } else if is_mov_row {
         if selected {
             &s_mov_cursor_bg
         } else if band {
@@ -362,7 +342,7 @@ pub fn render_row_segment(
         let piece = if is_full_row {
             text
         } else {
-            let disp = display_text(text, del_text, kind, moved, runs, col_offset, word_diff);
+            let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
             let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
             let total_len = slice_graphemes.len();
             let s_idx = seg_start.min(total_len);
@@ -387,7 +367,7 @@ pub fn render_row_segment(
         let piece = if is_full_row {
             text
         } else {
-            let disp = display_text(text, del_text, kind, moved, runs, col_offset, word_diff);
+            let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
             let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
             let total_len = slice_graphemes.len();
             let s_idx = seg_start.min(total_len);
@@ -415,6 +395,7 @@ pub fn render_row_segment(
                 RowKind::Add => "add",
                 RowKind::Del => "del",
                 RowKind::Mod => "mod",
+                RowKind::Mov => "mov",
                 _ => "ctx",
             };
 
@@ -450,7 +431,7 @@ pub fn render_row_segment(
         return out;
     }
 
-    let _disp = display_text(text, del_text, kind, moved, runs, col_offset, word_diff);
+    let _disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
     let mut out = String::new();
     let mut pos = 0usize;
     for tok in runs {
@@ -488,6 +469,7 @@ pub fn render_row_segment(
             RowKind::Add => "add",
             RowKind::Del => "del",
             RowKind::Mod => "mod",
+            RowKind::Mov => "mov",
             _ => "ctx",
         };
 

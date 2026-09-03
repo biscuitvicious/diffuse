@@ -97,39 +97,50 @@ pub fn render_solution<'a>(sol: &'a DpSolution) -> Vec<RenderedRow<'a>> {
     out
 }
 
-/// A `Mov` row: whole-line moved run, or (indentation reflow) the merged
-/// subword runs with the common parts rendered moved.
+/// A `Mov` row: whole-line moved run, or (indentation reflow) the
+/// merged subword runs with the common parts rendered moved.
 fn render_mov_row<'a>(r: &'a Row) -> RenderedRow<'a> {
-    let (old_line, new_line) = match r {
-        Row::Mov { old_line, new_line } => (old_line, new_line),
-        other => panic!("render_mov_row on a non-Mov row: {other:?}"),
-    };
-    if old_line.text == new_line.text {
-        return RenderedRow {
+    match r {
+        Row::MovSrc(del_line) => RenderedRow {
             row: r.clone(),
             spans: Spans::default(),
-            runs: vec![run(RunKind::Mov, &new_line.text)],
-        };
-    }
-    // Indentation reflow: subword via word_spans, common → moved.
-    let ws = word_spans(&old_line.text, &new_line.text);
-    let spans = Spans {
-        del: ws.del.clone(),
-        add: ws.add.clone(),
-    };
-    let mut moved_line = new_line.clone();
-    moved_line.spans = spans.clone();
-    let runs = subword_runs_texts(&old_line.text, &new_line.text, &spans)
-        .into_iter()
-        .map(movify_common)
-        .collect();
-    RenderedRow {
-        row: Row::Mov {
-            old_line: old_line.clone(),
-            new_line: moved_line,
+            runs: vec![run(RunKind::Del, &del_line.text)],
         },
-        spans,
-        runs,
+        Row::MovTgt(new_line) => {
+            if let Some(ref dt) = new_line.del_text {
+                if dt == &new_line.text {
+                    return RenderedRow {
+                        row: r.clone(),
+                        spans: Spans::default(),
+                        runs: vec![run(RunKind::Mov, &new_line.text)],
+                    };
+                }
+                // Indentation reflow: subword via word_spans, common → moved.
+                let ws = word_spans(dt, &new_line.text);
+                let spans = Spans {
+                    del: ws.del.clone(),
+                    add: ws.add.clone(),
+                };
+                let mut moved_line = new_line.clone();
+                moved_line.spans = spans.clone();
+                let runs = subword_runs_texts(dt, &new_line.text, &spans)
+                    .into_iter()
+                    .map(movify_common)
+                    .collect();
+                RenderedRow {
+                    row: Row::MovTgt(moved_line),
+                    spans,
+                    runs,
+                }
+            } else {
+                RenderedRow {
+                    row: r.clone(),
+                    spans: Spans::default(),
+                    runs: vec![run(RunKind::Mov, &new_line.text)],
+                }
+            }
+        }
+        other => panic!("render_mov_row on a non-Mov row: {other:?}"),
     }
 }
 

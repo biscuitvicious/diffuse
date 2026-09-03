@@ -25,6 +25,7 @@ fn sample_output() -> PipelineOutput {
                     rows: vec![
                         OutputRow {
                             kind: RowKind::Ctx,
+                            mov_side: None,
                             text: "fn main() {".to_string(),
                             old_line: Some(1),
                             new_line: Some(1),
@@ -37,10 +38,10 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: None,
                             wholesale: false,
-                            moved: false,
                         },
                         OutputRow {
                             kind: RowKind::Mod,
+                            mov_side: None,
                             text: "    println!(\"Hello diffuse!\");".to_string(),
                             old_line: Some(2),
                             new_line: Some(2),
@@ -53,10 +54,10 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: Some("    println!(\"Hello World!\");".to_string()),
                             wholesale: false,
-                            moved: false,
                         },
                         OutputRow {
                             kind: RowKind::Ctx,
+                            mov_side: None,
                             text: "}".to_string(),
                             old_line: Some(3),
                             new_line: Some(3),
@@ -69,7 +70,6 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: None,
                             wholesale: false,
-                            moved: false,
                         },
                     ],
                 }],
@@ -109,6 +109,7 @@ fn sample_output() -> PipelineOutput {
                     rows: vec![
                         OutputRow {
                             kind: RowKind::Add,
+                            mov_side: None,
                             text: "# Diffuse".to_string(),
                             old_line: None,
                             new_line: Some(1),
@@ -116,10 +117,10 @@ fn sample_output() -> PipelineOutput {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
-                            moved: false,
                         },
                         OutputRow {
                             kind: RowKind::Add,
+                            mov_side: None,
                             text: "Next gen diffs.".to_string(),
                             old_line: None,
                             new_line: Some(2),
@@ -127,7 +128,6 @@ fn sample_output() -> PipelineOutput {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
-                            moved: false,
                         },
                     ],
                 }],
@@ -272,6 +272,7 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                     rows: vec![
                         OutputRow {
                             kind: RowKind::File,
+                            mov_side: None,
                             text: "file header".to_string(),
                             old_line: None,
                             new_line: None,
@@ -279,10 +280,10 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
-                            moved: false,
                         },
                         OutputRow {
                             kind: RowKind::Del,
+                            mov_side: None,
                             text: "old line".to_string(),
                             old_line: Some(1),
                             new_line: None,
@@ -290,10 +291,10 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
-                            moved: false,
                         },
                         OutputRow {
                             kind: RowKind::Sep,
+                            mov_side: None,
                             text: "---".to_string(),
                             old_line: None,
                             new_line: None,
@@ -301,7 +302,6 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
-                            moved: false,
                         },
                     ],
                 }],
@@ -388,6 +388,7 @@ fn test_render_markdown_language_profile_syntax_highlighting() {
                 new_count: 1,
                 rows: vec![OutputRow {
                     kind: RowKind::Mod,
+                    mov_side: None,
                     text: "pub fn new_algo() -> bool { true }".to_string(),
                     old_line: Some(1),
                     new_line: Some(1),
@@ -395,7 +396,6 @@ fn test_render_markdown_language_profile_syntax_highlighting() {
                     runs: vec![], // Empty runs triggers syntax profile classify_tokens fallback
                     del_text: Some("pub fn old_algo() -> bool { false }".to_string()),
                     wholesale: false,
-                    moved: false,
                 }],
             }],
             raw_hunks: vec![],
@@ -493,6 +493,7 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                 rows: vec![
                     OutputRow {
                         kind: RowKind::Del,
+                        mov_side: None,
                         text: "```rust".to_string(),
                         old_line: Some(1),
                         new_line: None,
@@ -500,10 +501,10 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                     OutputRow {
                         kind: RowKind::Del,
+                        mov_side: None,
                         text: "pub struct Config {".to_string(),
                         old_line: Some(2),
                         new_line: None,
@@ -511,10 +512,10 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                     OutputRow {
                         kind: RowKind::Del,
+                        mov_side: None,
                         text: "    pub enabled: bool,".to_string(),
                         old_line: Some(3),
                         new_line: None,
@@ -522,10 +523,10 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                     OutputRow {
                         kind: RowKind::Del,
+                        mov_side: None,
                         text: "```".to_string(),
                         old_line: Some(4),
                         new_line: None,
@@ -533,7 +534,6 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                 ],
             }],
@@ -579,6 +579,7 @@ fn test_render_markdown_diff_prefix_resets_fg_color() {
                 new_count: 0,
                 rows: vec![OutputRow {
                     kind: RowKind::Del,
+                    mov_side: None,
                     text: "1. Export `pub mod markdown;` from crate.".to_string(),
                     old_line: Some(1),
                     new_line: None,
@@ -586,7 +587,6 @@ fn test_render_markdown_diff_prefix_resets_fg_color() {
                     runs: vec![],
                     del_text: None,
                     wholesale: false,
-                    moved: false,
                 }],
             }],
             raw_hunks: vec![],
@@ -631,6 +631,7 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                 rows: vec![
                     OutputRow {
                         kind: RowKind::Del,
+                        mov_side: None,
                         text: "old line 1".to_string(),
                         old_line: Some(1),
                         new_line: None,
@@ -638,10 +639,10 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                     OutputRow {
                         kind: RowKind::Del,
+                        mov_side: None,
                         text: "old line 2".to_string(),
                         old_line: Some(2),
                         new_line: None,
@@ -649,10 +650,10 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                     OutputRow {
                         kind: RowKind::Add,
+                        mov_side: None,
                         text: "new line 1".to_string(),
                         old_line: None,
                         new_line: Some(1),
@@ -660,10 +661,10 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                     OutputRow {
                         kind: RowKind::Add,
+                        mov_side: None,
                         text: "new line 2".to_string(),
                         old_line: None,
                         new_line: Some(2),
@@ -671,10 +672,10 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                     OutputRow {
                         kind: RowKind::Add,
+                        mov_side: None,
                         text: "new line 3".to_string(),
                         old_line: None,
                         new_line: Some(3),
@@ -682,7 +683,6 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
-                        moved: false,
                     },
                 ],
             }],

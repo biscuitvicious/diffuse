@@ -156,8 +156,7 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                         }
                     }
                 }
-                crate::parse::Row::Mod { new_line, .. }
-                | crate::parse::Row::Mov { new_line, .. } => {
+                crate::parse::Row::Mod { new_line, .. } | crate::parse::Row::MovTgt(new_line) => {
                     let num = new_line.num.get() as usize;
                     if num > 0 {
                         while out.len() < num {

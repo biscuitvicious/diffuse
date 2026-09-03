@@ -114,6 +114,7 @@ fn test_ratatui_finder_modal_widget() {
 fn dummy_row(kind: RowKind, line: u32, text: &str) -> crate::core::wire::OutputRow {
     crate::core::wire::OutputRow {
         kind,
+        mov_side: None,
         new_line: Some(line),
         old_line: Some(line),
         text: text.to_string(),
@@ -121,7 +122,6 @@ fn dummy_row(kind: RowKind, line: u32, text: &str) -> crate::core::wire::OutputR
         spans: crate::core::parse::Spans::default(),
         runs: vec![],
         wholesale: false,
-        moved: false,
     }
 }
 

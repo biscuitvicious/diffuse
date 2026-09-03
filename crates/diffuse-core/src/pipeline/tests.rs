@@ -445,3 +445,93 @@ index 1111111..2222222 100644
     }
     assert_eq!(checked, 1, "the crafted diff yields exactly one mod row");
 }
+
+#[test]
+fn test_moved_line_source_in_source_hunk_and_target_in_target_hunk() {
+    let diff = r#"diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,3 +10,2 @@
+ fn alpha() {
+-    moved_statement();
+     remain_a();
+ }
+@@ -50,2 +49,3 @@
+ fn beta() {
++    moved_statement();
+     remain_b();
+ }
+"#;
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let file = &output.files[0];
+    assert_eq!(file.hunks.len(), 2);
+
+    // Hunk 0 (source) has the MovSource row
+    let h0_mov_src = file.hunks[0]
+        .rows
+        .iter()
+        .find(|r| r.mov_side == Some(MovSide::Src));
+    assert!(
+        h0_mov_src.is_some(),
+        "Hunk 0 (source) must contain the MovSide::Src row"
+    );
+    let src_row = h0_mov_src.unwrap();
+    assert_eq!(src_row.old_line, Some(11));
+    assert_eq!(src_row.new_line, None);
+    assert_eq!(src_row.text, "    moved_statement();");
+
+    // Hunk 0 must NOT contain MovSide::Tgt
+    assert!(
+        file.hunks[0]
+            .rows
+            .iter()
+            .all(|r| r.mov_side != Some(MovSide::Tgt)),
+        "Hunk 0 must not contain MovSide::Tgt"
+    );
+
+    // Hunk 1 (target) has the MovTarget row
+    let h1_mov_tgt = file.hunks[1]
+        .rows
+        .iter()
+        .find(|r| r.mov_side == Some(MovSide::Tgt));
+    assert!(
+        h1_mov_tgt.is_some(),
+        "Hunk 1 (target) must contain the MovSide::Tgt row"
+    );
+    let tgt_row = h1_mov_tgt.unwrap();
+    assert_eq!(tgt_row.new_line, Some(50));
+    assert_eq!(tgt_row.text, "    moved_statement();");
+
+    // Hunk 1 must NOT contain MovSide::Src
+    assert!(
+        file.hunks[1]
+            .rows
+            .iter()
+            .all(|r| r.mov_side != Some(MovSide::Src)),
+        "Hunk 1 must not contain MovSide::Src"
+    );
+
+    // In flattened file.rows: the source and target rows must be in separate
+    // positions
+    let src_idx = file
+        .rows
+        .iter()
+        .position(|r| r.mov_side == Some(MovSide::Src))
+        .expect("source row in file.rows");
+    let tgt_idx = file
+        .rows
+        .iter()
+        .position(|r| r.mov_side == Some(MovSide::Tgt))
+        .expect("target row in file.rows");
+
+    assert!(
+        src_idx < tgt_idx,
+        "Source row must appear before target row in file.rows"
+    );
+    // They must not be adjacent (they belong to separate hunks)
+    assert!(
+        tgt_idx - src_idx > 1,
+        "Source and target rows must not be adjacent when separated by hunks: src at {src_idx}, tgt at {tgt_idx}"
+    );
+}

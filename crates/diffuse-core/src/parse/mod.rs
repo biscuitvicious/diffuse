@@ -18,6 +18,7 @@ pub enum RowKind {
     Ctx,
     File,
     Mod,
+    Mov,
     #[serde(skip_serializing)]
     Sep,
 }
@@ -28,6 +29,7 @@ impl RowKind {
             RowKind::Add => RowKind::Del,
             RowKind::Del => RowKind::Add,
             RowKind::Mod => RowKind::Mod,
+            RowKind::Mov => RowKind::Mov,
             RowKind::Ctx | RowKind::Sep => RowKind::Ctx,
             RowKind::File => RowKind::File,
         }
@@ -39,8 +41,6 @@ impl RowKind {
 pub struct DelLine {
     pub num: LineNum,
     pub text: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub moved: bool,
 }
 
 impl DelLine {
@@ -49,16 +49,6 @@ impl DelLine {
         Self {
             num,
             text: text.into(),
-            moved: false,
-        }
-    }
-
-    #[inline]
-    pub fn new_moved(num: LineNum, text: impl Into<String>) -> Self {
-        Self {
-            num,
-            text: text.into(),
-            moved: true,
         }
     }
 }
@@ -141,10 +131,8 @@ pub enum Row {
         old_line: DelLine,
         new_line: AddLine,
     },
-    Mov {
-        old_line: DelLine,
-        new_line: AddLine,
-    },
+    MovSrc(DelLine),
+    MovTgt(AddLine),
     #[serde(skip_serializing)]
     Sep(String),
 }
@@ -186,8 +174,9 @@ impl Row {
         match self {
             Row::Ctx(_) | Row::Sep(_) => RowKind::Ctx,
             Row::Del(_) => RowKind::Del,
-            Row::Add(_) | Row::Mov { .. } => RowKind::Add,
+            Row::Add(_) => RowKind::Add,
             Row::Mod { .. } => RowKind::Mod,
+            Row::MovSrc(_) | Row::MovTgt(_) => RowKind::Mov,
         }
     }
 
@@ -195,9 +184,9 @@ impl Row {
     pub fn text(&self) -> &str {
         match self {
             Row::Ctx(ctx_line) => &ctx_line.text,
-            Row::Del(del_line) => &del_line.text,
-            Row::Add(add_line) => &add_line.text,
-            Row::Mod { new_line, .. } | Row::Mov { new_line, .. } => &new_line.text,
+            Row::Del(del_line) | Row::MovSrc(del_line) => &del_line.text,
+            Row::Add(add_line) | Row::MovTgt(add_line) => &add_line.text,
+            Row::Mod { new_line, .. } => &new_line.text,
             Row::Sep(s) => s.as_str(),
         }
     }
@@ -206,9 +195,9 @@ impl Row {
     pub fn del_text(&self) -> Option<&str> {
         match self {
             Row::Ctx(ctx_line) => Some(&ctx_line.text),
-            Row::Del(del_line) => Some(&del_line.text),
-            Row::Add(add_line) => add_line.del_text.as_deref(),
-            Row::Mod { old_line, .. } | Row::Mov { old_line, .. } => Some(&old_line.text),
+            Row::Del(del_line) | Row::MovSrc(del_line) => Some(&del_line.text),
+            Row::Add(add_line) | Row::MovTgt(add_line) => add_line.del_text.as_deref(),
+            Row::Mod { old_line, .. } => Some(&old_line.text),
             Row::Sep(_) => None,
         }
     }
@@ -217,9 +206,9 @@ impl Row {
     pub fn old_line_num(&self) -> Option<LineNum> {
         match self {
             Row::Ctx(ctx_line) => Some(ctx_line.old_pos),
-            Row::Del(del_line) => Some(del_line.num),
-            Row::Mod { old_line, .. } | Row::Mov { old_line, .. } => Some(old_line.num),
-            Row::Add(_) | Row::Sep(_) => None,
+            Row::Del(del_line) | Row::MovSrc(del_line) => Some(del_line.num),
+            Row::Mod { old_line, .. } => Some(old_line.num),
+            Row::Add(_) | Row::MovTgt(_) | Row::Sep(_) => None,
         }
     }
 
@@ -227,9 +216,9 @@ impl Row {
     pub fn new_line_num(&self) -> Option<LineNum> {
         match self {
             Row::Ctx(ctx_line) => Some(ctx_line.new_pos),
-            Row::Add(add_line) => Some(add_line.num),
-            Row::Mod { new_line, .. } | Row::Mov { new_line, .. } => Some(new_line.num),
-            Row::Del(_) | Row::Sep(_) => None,
+            Row::Add(add_line) | Row::MovTgt(add_line) => Some(add_line.num),
+            Row::Mod { new_line, .. } => Some(new_line.num),
+            Row::Del(_) | Row::MovSrc(_) | Row::Sep(_) => None,
         }
     }
 
@@ -246,20 +235,17 @@ impl Row {
     #[inline]
     pub fn spans(&self) -> Option<&Spans> {
         match self {
-            Row::Add(add_line) if !add_line.spans.is_empty() => Some(&add_line.spans),
-            Row::Mod { new_line, .. } => Some(&new_line.spans),
-            Row::Mov { new_line, .. } if !new_line.spans.is_empty() => Some(&new_line.spans),
+            Row::Add(add_line) | Row::MovTgt(add_line) if !add_line.spans.is_empty() => {
+                Some(&add_line.spans)
+            }
+            Row::Mod { new_line, .. } if !new_line.spans.is_empty() => Some(&new_line.spans),
             _ => None,
         }
     }
 
     #[inline]
     pub fn is_moved(&self) -> bool {
-        match self {
-            Row::Mov { .. } => true,
-            Row::Del(del_line) => del_line.moved,
-            _ => false,
-        }
+        matches!(self, Row::MovSrc(_) | Row::MovTgt(_))
     }
 
     pub fn reverse(&self) -> Self {
@@ -286,14 +272,15 @@ impl Row {
                     new_line.spans.reverse(),
                 ),
             },
-            Row::Mov { old_line, new_line } => Row::Mov {
-                old_line: DelLine::new(new_line.num, new_line.text.clone()),
-                new_line: AddLine::with_spans(
-                    old_line.num,
-                    old_line.text.clone(),
-                    new_line.spans.reverse(),
-                ),
-            },
+            Row::MovSrc(del_line) => Row::MovTgt(AddLine::new(del_line.num, del_line.text.clone())),
+            Row::MovTgt(add_line) => Row::MovSrc(DelLine::new(
+                add_line.num,
+                add_line
+                    .del_text
+                    .as_deref()
+                    .unwrap_or(&add_line.text)
+                    .to_string(),
+            )),
             Row::Sep(s) => Row::Sep(s.clone()),
         }
     }
@@ -335,12 +322,12 @@ pub fn add_count(h: &Hunk) -> u32 {
     let mut has_new = false;
     for r in &h.rows {
         match r {
-            Row::Add(add_line) => {
+            Row::Add(add_line) | Row::MovTgt(add_line) => {
                 let lines = add_line.text.matches('\n').count() as u32;
                 max_new = max_new.max(add_line.num.get() + lines);
                 has_new = true;
             }
-            Row::Mod { new_line, .. } | Row::Mov { new_line, .. } => {
+            Row::Mod { new_line, .. } => {
                 let lines = new_line.text.matches('\n').count() as u32;
                 max_new = max_new.max(new_line.num.get() + lines);
                 has_new = true;

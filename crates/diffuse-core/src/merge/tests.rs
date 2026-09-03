@@ -202,10 +202,12 @@ fn unicode_whitespace_merged_runs() {
         ("\u{3000}self.x", "   self.x"),
     ];
     for (del, add) in cases {
-        let r = Row::Mov {
-            old_line: DelLine::new(LineNum::new(1).unwrap(), del),
-            new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, word_spans(del, add)),
-        };
+        let r = Row::MovTgt(AddLine::with_donor(
+            LineNum::new(1).unwrap(),
+            add,
+            del,
+            word_spans(del, add),
+        ));
         let runs = merged_runs(&r);
         let kinds: Vec<RunKind> = runs.iter().map(|x| x.kind).collect();
         assert!(

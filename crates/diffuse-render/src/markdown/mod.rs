@@ -214,7 +214,7 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
                     RowKind::Del => {
                         push_diff_row(&mut out, '-', &row.text, &mut active_fence_profile, &ctx);
                     }
-                    RowKind::Mod => {
+                    RowKind::Mod | RowKind::Mov => {
                         if let Some(ref del_text) = row.del_text {
                             let mut del_fence = active_fence_profile;
                             push_diff_row(&mut out, '-', del_text, &mut del_fence, &ctx);
