@@ -34,7 +34,7 @@
 
 ## 5. Golden Acceptance & Engine Roadmap
 - [x] ~~**Multi-line expansion subline highlighting flag**~~: When a line is expanded into a multi-line change with a `mod` (`~`) row followed by expanded `add`/`del` rows, support a flag that enables subline-highlighting for continuation lines that belong to a preceding `mod` line (light green added spans, light red deleted spans with strikethroughs). Only lines that *belong* to the preceding `mod` receive subline donor highlights; independent `add`/`del` lines following a `mod` that do not belong together must not be subline-highlighted (rendered as standard normal `add`/`del` lines with dark backgrounds). This should apply universally to *all file types* when a line is expanded across multiple lines with additions/deletions after a `mod` line. (See [Split AppState](plan/done/Split%20AppState.md))
-- [ ] **Visually signal both the source del and the target add of a moved line**: Currently `mark_moves` pairs identical lines across hunks as `Mov` and renders only the target (the add side), dropping the source del. This breaks diff reversibility: you cannot reconstruct the original file from the displayed diff alone because the source location is invisible. Fix: render moved lines with *both* a struck-out ghost at the source hunk (del side, muted/strikethrough style) and a highlighted target at the destination hunk (add side), so the viewer sees where the content came from *and* where it went. The wire contract must carry the source del row for moved lines so renderers can display both sides.
+- [x] ~~**Visually signal both the source del and the target add of a moved line**~~: Render moved lines with both a struck-out ghost at the source hunk (del side, `≈-` with strikethrough) and a highlighted target at the destination hunk (`≈+`), split into `Row::MovSrc` and `Row::MovTgt` with wire serialization.
 - [ ] **Widen golden corpus**: Expand captured fixtures to 50–100+ realistic code diffs across diverse programming languages.
 - [ ] **Multi-language diversity**: Rust, C/C++, Go, Zig, TypeScript, JavaScript, Python, JSON, YAML, Markdown, SQL, Shell.
 - [ ] **TOML syntax highlighting for `Cargo.lock` & configuration files**: Support TOML syntax highlighting for `Cargo.lock` and other well-established TOML configuration filenames / locations.
@@ -65,7 +65,7 @@
 
 ## 12. Code Cleanup
 
-- [ ] **Remove unnecessary `split('\n')` on row text in apply module**: `apply/mod.rs` splits row text on `\n` before iterating, but rows are always single lines from the diff parser. The for loop always yields exactly one element. Replace with direct text usage.
+- [x] ~~**Remove unnecessary `split('\n')` on row text in apply module**~~: `apply/mod.rs` splits row text on `\n` before iterating, but rows are always single lines from the diff parser. Direct text usage avoids redundant iterations and allocations.
 
 ## 11. LCS Engine — Future Investigations
 

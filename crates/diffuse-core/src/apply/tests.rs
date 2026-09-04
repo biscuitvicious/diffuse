@@ -1,4 +1,5 @@
-use super::apply_file_diff;
+use super::{apply_file_diff, apply_hunk_rows, apply_stream};
+use crate::parse::{AddLine, DelLine, Hunk, LineNum, Row};
 
 fn s(lines: &[&str]) -> Vec<String> {
     lines.iter().map(std::string::ToString::to_string).collect()
@@ -42,4 +43,42 @@ fn apply_drops_no_newline_marker() {
     let old = s(&["a", "b"]);
     let diff = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -2,1 +2,1 @@\n-b\n+bee\n\\ No newline at end of file\n";
     assert_eq!(apply_file_diff(diff, &old), s(&["a", "bee"]));
+}
+
+#[test]
+fn apply_hunk_rows_with_mod() {
+    let old = s(&["foo", "bar", "baz"]);
+    let hunk = Hunk {
+        old_start: 2,
+        old_count: 1,
+        new_start: 2,
+        new_count: 1,
+        section: String::new(),
+        above_ctx: 0,
+        below_ctx: 0,
+        rows: vec![Row::Mod {
+            old_line: DelLine::new(LineNum::new(2).unwrap(), "bar"),
+            new_line: AddLine::new(LineNum::new(2).unwrap(), "bar_modified"),
+        }],
+    };
+    assert_eq!(
+        apply_hunk_rows(&[hunk], &old),
+        s(&["foo", "bar_modified", "baz"])
+    );
+}
+
+#[test]
+fn apply_stream_with_mod() {
+    let old = s(&["hello", "world"]);
+    let rows = vec![
+        Row::Mod {
+            old_line: DelLine::new(LineNum::new(1).unwrap(), "hello"),
+            new_line: AddLine::new(LineNum::new(1).unwrap(), "hello,"),
+        },
+        Row::Mod {
+            old_line: DelLine::new(LineNum::new(2).unwrap(), "world"),
+            new_line: AddLine::new(LineNum::new(2).unwrap(), "world!"),
+        },
+    ];
+    assert_eq!(apply_stream(&rows, &old), s(&["hello,", "world!"]));
 }

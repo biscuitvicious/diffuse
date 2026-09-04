@@ -149,22 +149,18 @@ pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
                     cursor += 1;
                 }
                 Row::Mod { old_line, new_line } => {
-                    for line in old_line.text.split('\n') {
-                        if cursor < out.len() {
-                            assert_eq!(
-                                &out[cursor],
-                                line,
-                                "Mod del line mismatch at line {}: expected {:?}, got {:?}",
-                                cursor + 1,
-                                line,
-                                out[cursor]
-                            );
-                        }
-                        cursor += 1;
+                    if cursor < out.len() {
+                        assert_eq!(
+                            &out[cursor],
+                            &old_line.text,
+                            "Mod del line mismatch at line {}: expected {:?}, got {:?}",
+                            cursor + 1,
+                            old_line.text,
+                            out[cursor]
+                        );
                     }
-                    for line in new_line.text.split('\n') {
-                        new_lines.push(line.to_string());
-                    }
+                    cursor += 1;
+                    new_lines.push(new_line.text.clone());
                 }
                 Row::Sep(_) => {}
             }
@@ -220,20 +216,16 @@ pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
                 cursor += 1;
             }
             Row::Mod { old_line, new_line } => {
-                for line in old_line.text.split('\n') {
-                    if cursor < old.len() {
-                        assert_eq!(
-                            &old[cursor],
-                            line,
-                            "apply_stream: mod del mismatch at line {}",
-                            cursor + 1
-                        );
-                    }
-                    cursor += 1;
+                if cursor < old.len() {
+                    assert_eq!(
+                        &old[cursor],
+                        &old_line.text,
+                        "apply_stream: mod del mismatch at line {}",
+                        cursor + 1
+                    );
                 }
-                for line in new_line.text.split('\n') {
-                    out.push(line.to_string());
-                }
+                cursor += 1;
+                out.push(new_line.text.clone());
             }
             Row::Sep(_) => {}
         }
