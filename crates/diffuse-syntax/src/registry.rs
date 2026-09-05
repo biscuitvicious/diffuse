@@ -61,6 +61,7 @@ pub fn fence_lang_ext(tag: &str) -> &str {
             "shell" | "bash" => return "sh",
             "c++" | "cpp" => return "cpp",
             "markdown" | "md" => return "md",
+            "json" | "jsonl" => return "json",
             "ignore" | "no_run" | "should_panic" | "compile_fail" => rust_implied = true,
             "text" | "txt" | "plaintext" | "console" | "log" => return "",
             _ if p.starts_with("edition") || p.starts_with("ignore_") => rust_implied = true,
@@ -77,7 +78,7 @@ pub fn fence_lang_ext(tag: &str) -> &str {
 /// All registered file extensions supported by the registry.
 pub const REGISTERED_EXTENSIONS: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "mjs", "py", "sh", "bash", "c", "h", "cpp", "hpp", "java",
-    "go", "md", "markdown", "toml", "yaml", "yml", "json",
+    "go", "md", "markdown", "toml", "yaml", "yml", "json", "jsonl",
 ];
 
 /// Returns all distinct language profiles registered in the syntax system.
@@ -122,7 +123,7 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
         "go" => Some(go),
         "md" | "markdown" => Some(md),
         "toml" | "yaml" | "yml" => Some(toml_yaml),
-        "json" => Some(json),
+        "json" | "jsonl" => Some(json),
         _ => None,
     }
 }

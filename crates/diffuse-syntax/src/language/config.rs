@@ -31,11 +31,13 @@ pub fn toml_yaml_profile() -> LangProfile {
     }
 }
 
-/// JSON — brace structure, no comments.
+pub const JSON_KEYWORDS: &[&str] = &["false", "null", "true"];
+
+/// JSON & JSON Lines (JSONL) — brace structure, no comments.
 pub fn json_profile() -> LangProfile {
     LangProfile {
         name: "json",
-        keywords: &[],
+        keywords: JSON_KEYWORDS,
         hash_comment: false,
         line_comment: false,
         types_by_case: false,
@@ -47,7 +49,7 @@ pub fn json_profile() -> LangProfile {
         block_style: BlockDelimStyle::Braces,
         fn_decl: None,
         decl_prefixes: &[],
-        operators: &[],
+        operators: &[":"],
         scope_stop_prefixes: &[],
         exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),
         tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),

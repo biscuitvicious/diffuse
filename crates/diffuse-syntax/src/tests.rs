@@ -739,3 +739,99 @@ fn test_close_delimiter_and_profile_syntax_matching() {
     assert_eq!(rs.trim_trailing_delimiters("let x = 1;"), "let x = 1");
     assert_eq!(py.trim_trailing_delimiters("def foo():"), "def foo(");
 }
+
+#[test]
+fn test_json_and_jsonl_syntax_profile() {
+    let json_prof = lang_profile("json").expect("json profile");
+    let jsonl_prof = lang_profile("jsonl").expect("jsonl profile");
+    assert!(
+        std::ptr::eq(json_prof, jsonl_prof),
+        "json and jsonl must share the same canonical profile instance"
+    );
+
+    // Fence tag normalization
+    assert_eq!(fence_lang_ext("json"), "json");
+    assert_eq!(fence_lang_ext("jsonl"), "json");
+
+    // Registered extensions
+    assert!(REGISTERED_EXTENSIONS.contains(&"json"));
+    assert!(REGISTERED_EXTENSIONS.contains(&"jsonl"));
+
+    // Operator anchor
+    assert!(json_prof.is_operator_anchor(":"));
+    assert!(!json_prof.is_operator_anchor("="));
+
+    // Keyword detection
+    assert!(json_prof.is_keyword("true"));
+    assert!(json_prof.is_keyword("false"));
+    assert!(json_prof.is_keyword("null"));
+    assert!(!json_prof.is_keyword("undefined"));
+
+    // Closing delimiter classification
+    assert_eq!(
+        json_prof.classify_close_tail("    },"),
+        crate::profile::CloseDelimiter::BraceSemi
+    );
+    assert_eq!(
+        json_prof.classify_close_tail("    }"),
+        crate::profile::CloseDelimiter::Brace
+    );
+    assert_eq!(
+        json_prof.classify_close_tail("    ],"),
+        crate::profile::CloseDelimiter::BracketSemi
+    );
+    assert_eq!(
+        json_prof.classify_close_tail("    ]"),
+        crate::profile::CloseDelimiter::Bracket
+    );
+
+    // Token classification for JSON
+    let multiline_json = r#"  "enabled": true,"#;
+    let tokens = classify_tokens(multiline_json, Some(json_prof));
+    assert!(
+        tokens
+            .iter()
+            .any(|t| t.color == "syntaxString" && t.text == "\"enabled\""),
+        "property name must be syntaxString"
+    );
+    assert!(
+        tokens
+            .iter()
+            .any(|t| t.color == "syntaxKeyword" && t.text == "true"),
+        "boolean literal must be syntaxKeyword"
+    );
+
+    // Token classification for JSONL row
+    let jsonl_line = r#"{"id": 42, "active": false, "data": null, "name": "diffuse"}"#;
+    let tokens_l = classify_tokens(jsonl_line, Some(jsonl_prof));
+    assert!(
+        tokens_l
+            .iter()
+            .any(|t| t.color == "syntaxNumber" && t.text == "42"),
+        "number must be syntaxNumber"
+    );
+    assert!(
+        tokens_l
+            .iter()
+            .any(|t| t.color == "syntaxKeyword" && t.text == "false"),
+        "false must be syntaxKeyword"
+    );
+    assert!(
+        tokens_l
+            .iter()
+            .any(|t| t.color == "syntaxKeyword" && t.text == "null"),
+        "null must be syntaxKeyword"
+    );
+    assert!(
+        tokens_l
+            .iter()
+            .any(|t| t.color == "syntaxString" && t.text == "\"diffuse\""),
+        "string must be syntaxString"
+    );
+    assert!(
+        tokens_l
+            .iter()
+            .any(|t| t.color == "syntaxOperator" && t.text == ":"),
+        "colon must be syntaxOperator"
+    );
+}
