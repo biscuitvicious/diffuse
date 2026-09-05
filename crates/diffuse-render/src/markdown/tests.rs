@@ -12,6 +12,9 @@ fn sample_output() -> PipelineOutput {
         files: vec![
             OutputFile {
                 path: "src/main.rs".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "modified".to_string(),
                 new_line_count: 10,
                 old_line_count: 10,
@@ -93,9 +96,16 @@ fn sample_output() -> PipelineOutput {
                 }],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
             OutputFile {
                 path: "README.md".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "added".to_string(),
                 new_line_count: 5,
                 old_line_count: 0,
@@ -114,7 +124,12 @@ fn sample_output() -> PipelineOutput {
                             old_line: None,
                             new_line: Some(1),
                             spans: Spans::default(),
-                            runs: vec![],
+                            runs: vec![OutputRun {
+                                kind: RunKind::Add,
+                                color: Some("syntaxHeader".into()),
+                                sgr: None,
+                                text: "# Diffuse".into(),
+                            }],
                             del_text: None,
                             wholesale: false,
                         },
@@ -125,7 +140,12 @@ fn sample_output() -> PipelineOutput {
                             old_line: None,
                             new_line: Some(2),
                             spans: Spans::default(),
-                            runs: vec![],
+                            runs: vec![OutputRun {
+                                kind: RunKind::Add,
+                                color: Some("text".into()),
+                                sgr: None,
+                                text: "Next gen diffs.".into(),
+                            }],
                             del_text: None,
                             wholesale: false,
                         },
@@ -142,6 +162,10 @@ fn sample_output() -> PipelineOutput {
                 notes: vec![],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
         ],
         branch: "main".to_string(),
@@ -157,8 +181,8 @@ fn test_render_markdown_summary_table() {
 
     assert!(md.contains("### Diff Summary"));
     assert!(md.contains("**2 files changed**: **-1** deletions, **+3** additions"));
-    assert!(md.contains("| `src/main.rs` | `modified` | -1 | +1 |"));
-    assert!(md.contains("| `README.md` | `added` | -0 | +2 |"));
+    assert!(md.contains("| `src/main.rs` | `0B` | -1 | +1 |"));
+    assert!(md.contains("| `README.md` | `added, 0B` | -0 | +2 |"));
 }
 
 #[test]
@@ -168,7 +192,7 @@ fn test_render_markdown_collapsible_details() {
     let md = render_markdown_output(&output, &opts);
 
     assert!(md.contains("<details open>"));
-    assert!(md.contains("<summary><b>src/main.rs</b> <code>(modified: -1 +1)</code></summary>"));
+    assert!(md.contains("<summary><b>src/main.rs</b> <code>(0B: -1 +1)</code></summary>"));
     assert!(md.contains("</details>"));
 }
 
@@ -237,7 +261,7 @@ fn test_render_markdown_options_variations() {
     let md1 = render_markdown_output(&output, &opts_no_summary_no_collapse);
     assert!(!md1.contains("### Diff Summary"));
     assert!(!md1.contains("<details"));
-    assert!(md1.contains("### src/main.rs `(modified: -1 +1)`"));
+    assert!(md1.contains("### src/main.rs `(0B: -1 +1)`"));
     assert!(!md1.contains("> [!NOTE]"));
 
     // 2. Collapsible with default_open = false
@@ -259,6 +283,9 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
         files: vec![
             OutputFile {
                 path: "src/lib.rs".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "deleted".to_string(),
                 new_line_count: 0,
                 old_line_count: 3,
@@ -325,9 +352,16 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                 }],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
             OutputFile {
                 path: "empty.txt".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "modified".to_string(),
                 new_line_count: 0,
                 old_line_count: 0,
@@ -340,6 +374,10 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                 notes: vec![],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
         ],
         branch: "main".to_string(),
@@ -376,6 +414,9 @@ fn test_render_markdown_language_profile_syntax_highlighting() {
     let output = PipelineOutput {
         files: vec![OutputFile {
             path: "src/algo.rs".to_string(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
             status: "modified".to_string(),
             new_line_count: 5,
             old_line_count: 5,
@@ -409,6 +450,10 @@ fn test_render_markdown_language_profile_syntax_highlighting() {
             notes: vec![],
             content_runs: vec![],
             rows: vec![],
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
         }],
         branch: "main".to_string(),
         untracked_skipped: vec![],
@@ -434,6 +479,9 @@ fn test_render_markdown_untracked_files_collapsed_by_default() {
         files: vec![
             OutputFile {
                 path: "tracked.rs".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "modified".to_string(),
                 new_line_count: 1,
                 old_line_count: 1,
@@ -446,9 +494,16 @@ fn test_render_markdown_untracked_files_collapsed_by_default() {
                 notes: vec![],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
             OutputFile {
                 path: "untracked.rs".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "untracked".to_string(),
                 new_line_count: 1,
                 old_line_count: 0,
@@ -461,6 +516,10 @@ fn test_render_markdown_untracked_files_collapsed_by_default() {
                 notes: vec![],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
         ],
         branch: "main".to_string(),
@@ -476,10 +535,100 @@ fn test_render_markdown_untracked_files_collapsed_by_default() {
 }
 
 #[test]
+fn test_render_markdown_renamed_files_show_arrow_and_collapsed_by_default() {
+    let output = PipelineOutput {
+        files: vec![OutputFile {
+            path: "src/new.rs".to_string(),
+            old_path: Some("src/old.rs".to_string()),
+            old_mode: None,
+            new_mode: None,
+            status: "renamed".to_string(),
+            new_line_count: 5,
+            old_line_count: 5,
+            new_content: vec![],
+            old_content: vec![],
+            hunks: vec![],
+            raw_hunks: vec![],
+            counts: FileCounts::default(),
+            fences: vec![],
+            notes: vec![],
+            content_runs: vec![],
+            rows: vec![],
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
+        }],
+        branch: "main".to_string(),
+        untracked_skipped: vec![],
+    };
+
+    let opts = MarkdownOptions::default();
+    let md = render_markdown_output(&output, &opts);
+    // Table shows old -> new path
+    assert!(md.contains("| `src/old.rs -> new.rs` | `0B` | -0 | +0 |"));
+    // Renamed file with 0 changes has <details> (collapsed by default) and
+    // summary with old -> new path
+    assert!(md.contains("<details>\n<summary><b>src/old.rs -> new.rs</b>"));
+
+    // Renamed file WITH content changes is open by default
+    let output_with_changes = PipelineOutput {
+        files: vec![OutputFile {
+            path: "src/new.rs".to_string(),
+            old_path: Some("src/old.rs".to_string()),
+            old_mode: None,
+            new_mode: None,
+            status: "renamed".to_string(),
+            new_line_count: 5,
+            old_line_count: 5,
+            new_content: vec![],
+            old_content: vec![],
+            hunks: vec![OutputHunk {
+                old_start: 1,
+                old_count: 1,
+                new_start: 1,
+                new_count: 1,
+                rows: vec![OutputRow {
+                    kind: RowKind::Add,
+                    mov_side: None,
+                    new_line: Some(1),
+                    old_line: None,
+                    text: "added".to_string(),
+                    del_text: None,
+                    spans: Spans::default(),
+                    runs: vec![],
+                    wholesale: false,
+                }],
+            }],
+            raw_hunks: vec![],
+            counts: FileCounts {
+                adds: 1,
+                ..Default::default()
+            },
+            fences: vec![],
+            notes: vec![],
+            content_runs: vec![],
+            rows: vec![],
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
+        }],
+        branch: "main".to_string(),
+        untracked_skipped: vec![],
+    };
+    let md_changes = render_markdown_output(&output_with_changes, &opts);
+    assert!(md_changes.contains("<details open>\n<summary><b>src/old.rs -> new.rs</b>"));
+}
+
+#[test]
 fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
     let output = PipelineOutput {
         files: vec![OutputFile {
             path: "README.md".to_string(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
             status: "modified".to_string(),
             new_line_count: 4,
             old_line_count: 4,
@@ -543,6 +692,10 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
             notes: vec![],
             content_runs: vec![],
             rows: vec![],
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
         }],
         branch: "main".to_string(),
         untracked_skipped: vec![],
@@ -567,6 +720,9 @@ fn test_render_markdown_diff_prefix_resets_fg_color() {
     let output = PipelineOutput {
         files: vec![OutputFile {
             path: "plan.md".to_string(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
             status: "modified".to_string(),
             new_line_count: 1,
             old_line_count: 1,
@@ -595,6 +751,10 @@ fn test_render_markdown_diff_prefix_resets_fg_color() {
             notes: vec![],
             content_runs: vec![],
             rows: vec![],
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
         }],
         branch: "main".to_string(),
         untracked_skipped: vec![],
@@ -617,6 +777,9 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
     let output = PipelineOutput {
         files: vec![OutputFile {
             path: "src/lib.rs".to_string(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
             status: "modified".to_string(),
             new_line_count: 3,
             old_line_count: 2,
@@ -691,6 +854,10 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
             notes: vec![],
             content_runs: vec![],
             rows: vec![],
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
         }],
         branch: "main".to_string(),
         untracked_skipped: vec![],
@@ -707,6 +874,9 @@ fn test_render_markdown_paths_preserve_spaces_and_indicate_tabs() {
         files: vec![
             OutputFile {
                 path: "file with space ".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "modified".to_string(),
                 new_line_count: 1,
                 old_line_count: 1,
@@ -719,9 +889,16 @@ fn test_render_markdown_paths_preserve_spaces_and_indicate_tabs() {
                 notes: vec![],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
             OutputFile {
                 path: "file\twith\ttab".to_string(),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "added".to_string(),
                 new_line_count: 1,
                 old_line_count: 0,
@@ -734,6 +911,10 @@ fn test_render_markdown_paths_preserve_spaces_and_indicate_tabs() {
                 notes: vec![],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             },
         ],
         branch: "main".to_string(),

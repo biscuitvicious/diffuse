@@ -25,13 +25,13 @@ index 444..000
 @@ -1,3 +0,0 @@
 -gone
 -bye
-diff --git a/renamed.rs b/renamed.rs
+diff --git a/old_renamed.rs b/new_renamed.rs
 similarity index 90%
-rename from a/renamed.rs
-rename to b/renamed.rs
+rename from old_renamed.rs
+rename to new_renamed.rs
 index 555..666 100644
---- a/renamed.rs
-+++ b/renamed.rs
+--- a/old_renamed.rs
++++ b/new_renamed.rs
 @@ -1,1 +1,1 @@
 -same
 +changed
@@ -78,7 +78,27 @@ fn parse_diff_multi_file_new_deleted_rename() {
     assert_eq!(files[1].status, FileStatus::Added, "README added");
     assert_eq!(files[2].status, FileStatus::Deleted, "old.txt deleted");
     assert_eq!(files[3].status, FileStatus::Renamed);
-    assert_eq!(files[3].old_path.as_deref(), Some("renamed.rs"), "rename");
+    assert_eq!(
+        files[3].old_path.as_deref(),
+        Some("old_renamed.rs"),
+        "rename from"
+    );
+    assert_eq!(files[3].path, "new_renamed.rs", "rename to");
+}
+
+#[test]
+fn parse_diff_pure_rename_zero_hunks() {
+    let diff = "diff --git a/src/old.rs b/src/new.rs
+similarity index 100%
+rename from src/old.rs
+rename to src/new.rs
+";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].status, FileStatus::Renamed);
+    assert_eq!(files[0].old_path.as_deref(), Some("src/old.rs"));
+    assert_eq!(files[0].path, "src/new.rs");
+    assert!(files[0].hunks.is_empty());
 }
 
 #[test]
@@ -160,4 +180,63 @@ diff --git \"a/file\\twith\\ttab\" \"b/file\\twith\\ttab\"
     assert_eq!(files.len(), 2);
     assert_eq!(files[0].path, "file with space ");
     assert_eq!(files[1].path, "file\twith\ttab");
+}
+
+#[test]
+fn test_parse_diff_mode_change_only() {
+    let diff = "diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
+";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "script.sh");
+    assert_eq!(files[0].old_mode.as_deref(), Some("100644"));
+    assert_eq!(files[0].new_mode.as_deref(), Some("100755"));
+    assert_eq!(files[0].status, FileStatus::ModeChanged);
+    assert!(files[0].hunks.is_empty());
+}
+
+#[test]
+fn test_parse_diff_rename_and_mode_change() {
+    let diff = "diff --git a/old.sh b/new.sh
+old mode 100644
+new mode 100755
+similarity index 100%
+rename from old.sh
+rename to new.sh
+";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "new.sh");
+    assert_eq!(files[0].old_path.as_deref(), Some("old.sh"));
+    assert_eq!(files[0].old_mode.as_deref(), Some("100644"));
+    assert_eq!(files[0].new_mode.as_deref(), Some("100755"));
+    assert_eq!(files[0].status, FileStatus::Renamed);
+    assert!(files[0].hunks.is_empty());
+}
+
+#[test]
+fn test_parse_diff_binary_files() {
+    let diff = "diff --git a/logo.png b/logo.png
+index 1234567..89abcdef 100644
+Binary files a/logo.png and b/logo.png differ
+diff --git a/old.bin b/new.bin
+similarity index 80%
+rename from old.bin
+rename to new.bin
+Binary files a/old.bin and b/new.bin differ
+";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0].path, "logo.png");
+    assert!(files[0].is_binary);
+    assert_eq!(files[0].status, FileStatus::Modified);
+    assert!(files[0].hunks.is_empty());
+
+    assert_eq!(files[1].path, "new.bin");
+    assert_eq!(files[1].old_path.as_deref(), Some("old.bin"));
+    assert!(files[1].is_binary);
+    assert_eq!(files[1].status, FileStatus::Renamed);
+    assert!(files[1].hunks.is_empty());
 }

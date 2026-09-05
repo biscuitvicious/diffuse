@@ -4,6 +4,11 @@ use super::AppState;
 
 impl AppState {
     pub fn toggle_file_collapse(&mut self, fi: usize) {
+        if let Some(f) = self.output.files.get(fi)
+            && f.is_binary
+        {
+            return;
+        }
         if self.collapsed_files.contains(&fi) {
             self.collapsed_files.remove(&fi);
         } else {

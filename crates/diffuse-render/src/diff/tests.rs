@@ -63,3 +63,34 @@ fn test_render_raw_pipeline_output() {
     assert!(single_raw.contains("moved"));
     assert!(single_raw.contains("@@ -1,2 +1,2 @@"));
 }
+
+#[test]
+fn test_render_renamed_file_diff() {
+    let file = OutputFile {
+        path: "src/new.rs".to_string(),
+        old_path: Some("src/old.rs".to_string()),
+        old_mode: None,
+        new_mode: None,
+        status: "renamed".to_string(),
+        new_line_count: 0,
+        old_line_count: 0,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts::default(),
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
+    };
+    let visual = render_file_diff(&file, &DiffuseTheme::MAGIC, true);
+    assert!(visual.contains("src/old.rs -> new.rs (0B)"));
+
+    let raw = render_raw_file_diff(&file);
+    assert!(raw.contains("src/old.rs -> new.rs (0B)"));
+}

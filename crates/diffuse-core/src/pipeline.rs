@@ -256,6 +256,36 @@ pub fn process_single_diff_file(
     };
     f.old_content = old_lines.iter().map(|s| s.to_string()).collect();
 
+    let new_bytes: usize = if let Some(c) = new_content
+        && !c.is_empty()
+    {
+        c.len()
+    } else {
+        new_lines
+            .iter()
+            .map(|s| s.len() + 1)
+            .sum::<usize>()
+            .saturating_sub(1)
+    };
+    let old_bytes: usize = if let Some(oc) = old_content
+        && !oc.is_empty()
+    {
+        oc.len()
+    } else {
+        old_lines
+            .iter()
+            .map(|s| s.len() + 1)
+            .sum::<usize>()
+            .saturating_sub(1)
+    };
+    f.old_bytes = old_bytes;
+    f.new_bytes = new_bytes;
+    f.bytes = if f.status == crate::parse::FileStatus::Deleted {
+        old_bytes
+    } else {
+        new_bytes
+    };
+
     use rayon::prelude::*;
 
     // Collapse runs first on pre-move rows (source dels survive the collapse).
@@ -286,6 +316,37 @@ pub fn process_single_diff_file(
 
     // Final step: normalize the carried context to the requested visual width.
     crate::shift::normalize_context(&mut f, opts.visual_context);
+
+    // If pure rename or pure mode change (0 hunks), synthesize the entire
+    // file content as context rows
+    if !f.is_binary
+        && (f.status == crate::parse::FileStatus::Renamed
+            || f.status == crate::parse::FileStatus::ModeChanged)
+        && f.hunks.is_empty()
+        && !new_lines.is_empty()
+    {
+        let mut ctx_rows = Vec::with_capacity(new_lines.len());
+        for (i, line) in new_lines.iter().enumerate() {
+            if let Some(pos) = std::num::NonZero::new((i + 1) as u32) {
+                ctx_rows.push(crate::parse::Row::Ctx(crate::parse::CtxLine::new(
+                    pos, pos, *line,
+                )));
+            }
+        }
+        let count = ctx_rows.len() as u32;
+        let hunk = crate::parse::Hunk {
+            old_start: 1,
+            old_count: count,
+            new_start: 1,
+            new_count: count,
+            section: String::new(),
+            rows: ctx_rows,
+            above_ctx: 0,
+            below_ctx: 0,
+        };
+        f.hunks = vec![hunk.clone()];
+        f.raw_hunks = vec![hunk];
+    }
 
     let counts = file_counts(&f);
     let regions = fence_regions(&new_lines, profile);
@@ -391,6 +452,7 @@ pub fn process_single_diff_file(
         crate::parse::FileStatus::Modified => "modified".to_string(),
         crate::parse::FileStatus::Renamed => "renamed".to_string(),
         crate::parse::FileStatus::Untracked => "untracked".to_string(),
+        crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
     };
 
     let rows: Vec<OutputRow> = build_visible(&f.hunks, opts.expand_lines)
@@ -515,7 +577,14 @@ pub fn process_single_diff_file(
 
     let res = OutputFile {
         path: f.path.clone(),
+        old_path: f.old_path.clone(),
+        old_mode: f.old_mode.clone(),
+        new_mode: f.new_mode.clone(),
         status,
+        is_binary: f.is_binary,
+        bytes: f.bytes,
+        old_bytes: f.old_bytes,
+        new_bytes: f.new_bytes,
         new_line_count: f.new_line_count,
         old_line_count: f.old_line_count,
         new_content: std::mem::take(&mut f.new_content),
@@ -538,8 +607,12 @@ pub fn process_single_diff_file(
 
     crate::ensure!(!res.path.is_empty(), "OutputFile path must not be empty");
     crate::ensure!(
-        !res.raw_hunks.is_empty(),
-        "OutputFile must contain raw hunks"
+        !res.raw_hunks.is_empty()
+            || res.status == "renamed"
+            || res.status == "untracked"
+            || res.status == "mode changed"
+            || res.is_binary,
+        "OutputFile must contain raw hunks or be renamed/untracked/mode changed/binary"
     );
 
     res

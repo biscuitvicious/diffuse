@@ -354,6 +354,7 @@ pub enum FileStatus {
     Modified,
     Renamed,
     Untracked,
+    ModeChanged,
 }
 
 impl FileStatus {
@@ -364,6 +365,7 @@ impl FileStatus {
             FileStatus::Modified => FileStatus::Modified,
             FileStatus::Renamed => FileStatus::Renamed,
             FileStatus::Untracked => FileStatus::Untracked,
+            FileStatus::ModeChanged => FileStatus::ModeChanged,
         }
     }
 }
@@ -374,7 +376,13 @@ pub struct DiffFile {
     /// Repo-relative path of the NEW side (old path for deletions).
     pub path: String,
     pub old_path: Option<String>,
+    pub old_mode: Option<String>,
+    pub new_mode: Option<String>,
     pub status: FileStatus,
+    pub is_binary: bool,
+    pub bytes: usize,
+    pub old_bytes: usize,
+    pub new_bytes: usize,
     pub new_line_count: usize,
     pub old_line_count: usize,
     /// Content of the new side (worktree), for context synthesis.
@@ -396,7 +404,13 @@ impl DiffFile {
             } else {
                 None
             },
+            old_mode: self.new_mode.clone(),
+            new_mode: self.old_mode.clone(),
             status: self.status.reverse(),
+            is_binary: self.is_binary,
+            bytes: self.bytes,
+            old_bytes: self.new_bytes,
+            new_bytes: self.old_bytes,
             new_line_count: self.old_line_count,
             old_line_count: self.new_line_count,
             new_content: self.old_content.clone(),
@@ -495,6 +509,42 @@ fn parse_hunk_header(line: &str) -> Option<(u32, u32, u32, u32, &str)> {
     Some((old_start, old_count, new_start, new_count, section))
 }
 
+fn parse_diff_git_paths(rest: &str) -> (Option<String>, Option<String>) {
+    let mut rest = rest.trim();
+    if rest.is_empty() {
+        return (None, None);
+    }
+    let mut parts = Vec::new();
+    while !rest.is_empty() {
+        if rest.starts_with('"') {
+            if let Some(end_quote) = rest[1..].find('"') {
+                let quoted = &rest[..=end_quote + 1];
+                parts.push(quoted);
+                rest = rest[end_quote + 2..].trim_start();
+            } else {
+                parts.push(rest);
+                break;
+            }
+        } else {
+            let next_space = rest.find(' ').unwrap_or(rest.len());
+            parts.push(&rest[..next_space]);
+            rest = rest[next_space..].trim_start();
+        }
+    }
+
+    if parts.len() >= 2 {
+        let clean_a = parts[0]
+            .strip_prefix("a/")
+            .or_else(|| parts[0].strip_prefix("\"a/"));
+        let clean_b = parts[parts.len() - 1]
+            .strip_prefix("b/")
+            .or_else(|| parts[parts.len() - 1].strip_prefix("\"b/"));
+        (clean_a.map(unquote_git_path), clean_b.map(unquote_git_path))
+    } else {
+        (None, None)
+    }
+}
+
 /// Parse a `git diff` into files, hunks, and rows. The `git diff -U0`
 /// flavor: hunks carry only add/del rows; the context is synthesized later.
 #[tracing::instrument(level = "trace", ret, skip(raw), fields(diff_len = raw.len()))]
@@ -505,14 +555,21 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
     let mut ni: u32 = 1;
 
     for line in raw.split('\n') {
-        if line.starts_with("diff --git ") {
+        if let Some(rest) = line.strip_prefix("diff --git ") {
             if let Some(c) = cur.take() {
                 files.push(c);
             }
+            let (_p_a, p_b) = parse_diff_git_paths(rest);
             cur = Some(DiffFile {
-                path: String::new(),
+                path: p_b.unwrap_or_default(),
                 old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: FileStatus::Modified,
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
                 new_line_count: 0,
                 old_line_count: 0,
                 new_content: Vec::new(),
@@ -523,29 +580,65 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
             });
         } else if cur.is_none() {
             continue;
-        } else if line.starts_with("new file mode") {
+        } else if let Some(mode) = line.strip_prefix("old mode ") {
+            if let Some(c) = cur.as_mut() {
+                c.old_mode = Some(mode.trim().to_string());
+                if c.status == FileStatus::Modified {
+                    c.status = FileStatus::ModeChanged;
+                }
+            }
+        } else if let Some(mode) = line.strip_prefix("new mode ") {
+            if let Some(c) = cur.as_mut() {
+                c.new_mode = Some(mode.trim().to_string());
+                if c.status == FileStatus::Modified {
+                    c.status = FileStatus::ModeChanged;
+                }
+            }
+        } else if let Some(rest) = line.strip_prefix("mode change ") {
+            if let Some(c) = cur.as_mut() {
+                if let Some((old_m, new_m)) = rest.split_once("->") {
+                    c.old_mode = Some(old_m.trim().to_string());
+                    c.new_mode = Some(new_m.trim().to_string());
+                } else {
+                    c.new_mode = Some(rest.trim().to_string());
+                }
+                if c.status == FileStatus::Modified {
+                    c.status = FileStatus::ModeChanged;
+                }
+            }
+        } else if line.starts_with("new file mode ") {
             if let Some(c) = cur.as_mut() {
                 c.status = FileStatus::Added;
+            }
+        } else if line.starts_with("deleted file mode ") {
+            if let Some(c) = cur.as_mut() {
+                c.status = FileStatus::Deleted;
             }
         } else if line.starts_with("untracked file mode") {
             if let Some(c) = cur.as_mut() {
                 c.status = FileStatus::Untracked;
             }
-        } else if line.starts_with("deleted file mode") {
-            if let Some(c) = cur.as_mut() {
-                c.status = FileStatus::Deleted;
-            }
         } else if let Some(rest) = line.strip_prefix("rename from ") {
             if let Some(c) = cur.as_mut() {
-                c.old_path = Some(unquote_git_path(rest).replacen("a/", "", 1));
+                c.old_path = Some(unquote_git_path(rest));
                 c.status = FileStatus::Renamed;
             }
         } else if let Some(rest) = line.strip_prefix("rename to ") {
             if let Some(c) = cur.as_mut() {
                 c.path = unquote_git_path(rest);
+                c.status = FileStatus::Renamed;
             }
-        } else if line.starts_with("GIT binary patch") || line.starts_with("Binary files ") {
+        } else if line.starts_with("GIT binary patch")
+            || line.starts_with("Binary files ")
+            || line == "Binary files differ"
+        {
             if let Some(c) = cur.as_mut() {
+                c.is_binary = true;
+                if line.contains(" /dev/null and ") {
+                    c.status = FileStatus::Added;
+                } else if line.contains(" and /dev/null differ") {
+                    c.status = FileStatus::Deleted;
+                }
                 c.hunks.clear(); // binary: nothing to review
                 c.raw_hunks.clear();
             }
@@ -559,9 +652,6 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
             } else if let (Some(c), Some(p)) = (cur.as_mut(), p) {
                 // Deleted files have `+++ /dev/null` (no new path) — the old
                 // path is the only path; renames carry it via `rename to`.
-                if c.old_path.is_none() {
-                    c.old_path = Some(p.clone());
-                }
                 if c.path.is_empty() {
                     c.path = p;
                 }
@@ -635,13 +725,25 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
     if let Some(c) = cur.take() {
         files.push(c);
     }
-    files.retain(|f| !f.path.is_empty() && !f.hunks.is_empty());
+    files.retain(|f| {
+        !f.path.is_empty()
+            && (!f.hunks.is_empty()
+                || f.status == FileStatus::Renamed
+                || f.status == FileStatus::Untracked
+                || f.status == FileStatus::ModeChanged
+                || f.is_binary)
+    });
 
     crate::ensure!(
-        files
-            .iter()
-            .all(|f| !f.path.is_empty() && !f.hunks.is_empty()),
-        "All parsed DiffFiles must have a non-empty path and at least one hunk"
+        files.iter().all(|f| {
+            !f.path.is_empty()
+                && (!f.hunks.is_empty()
+                    || f.status == FileStatus::Renamed
+                    || f.status == FileStatus::Untracked
+                    || f.status == FileStatus::ModeChanged
+                    || f.is_binary)
+        }),
+        "All parsed DiffFiles must have non-empty paths and non-empty hunks or be renamed/untracked/mode changed/binary"
     );
 
     files

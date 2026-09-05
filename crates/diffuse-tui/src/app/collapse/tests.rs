@@ -88,3 +88,77 @@ index 1111111..2222222 100644
         "non-triangle header clicks must not collapse"
     );
 }
+
+#[test]
+fn test_default_collapse_pure_renames_and_mode_changes() {
+    let diff = r#"diff --git a/pure_renamed_old.rs b/pure_renamed_new.rs
+similarity index 100%
+rename from pure_renamed_old.rs
+rename to pure_renamed_new.rs
+diff --git a/renamed_with_changes_old.rs b/renamed_with_changes_new.rs
+similarity index 90%
+rename from renamed_with_changes_old.rs
+rename to renamed_with_changes_new.rs
+--- a/renamed_with_changes_old.rs
++++ b/renamed_with_changes_new.rs
+@@ -1,1 +1,1 @@
+-old
++new
+diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755
+"#;
+    let new_content = [
+        (
+            "pure_renamed_new.rs".to_string(),
+            "fn same() {}\n".to_string(),
+        ),
+        (
+            "renamed_with_changes_new.rs".to_string(),
+            "new\n".to_string(),
+        ),
+        ("script.sh".to_string(), "#!/bin/sh\n".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    let old_content = [
+        (
+            "pure_renamed_old.rs".to_string(),
+            "fn same() {}\n".to_string(),
+        ),
+        (
+            "renamed_with_changes_old.rs".to_string(),
+            "old\n".to_string(),
+        ),
+        ("script.sh".to_string(), "#!/bin/sh\n".to_string()),
+    ]
+    .into_iter()
+    .collect();
+
+    let output = run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+
+    let state = AppState::new(output, "test_repo".into(), temp_notes_path());
+
+    // File 0: Pure rename -> collapsed by default
+    assert!(
+        state.collapsed_files.contains(&0),
+        "pure rename must be collapsed by default"
+    );
+
+    // File 1: Rename with changes -> NOT collapsed by default
+    assert!(
+        !state.collapsed_files.contains(&1),
+        "rename with content changes must NOT be collapsed by default"
+    );
+
+    // File 2: Pure mode change -> collapsed by default
+    assert!(
+        state.collapsed_files.contains(&2),
+        "pure mode change must be collapsed by default"
+    );
+}

@@ -245,3 +245,28 @@ fn test_current_line_highlight_covers_gutter() {
         "addition row must start with green tint before gutter numbers"
     );
 }
+
+#[test]
+fn test_file_header_wrapping_seg_count() {
+    let mut out = sample_output();
+    out.files[0].path = "crates/diffuse-core/src/very/long/nested/path/to/my_file.rs".to_string();
+    let state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let header_idx = 0;
+    assert!(state.flat[header_idx].is_file_header);
+
+    // At 120 width, fits in 1 visual line
+    let seg120 = state.row_seg_count(header_idx, 120);
+    assert_eq!(seg120, 1);
+
+    // At 30 width, wraps into multiple visual lines
+    let seg30 = state.row_seg_count(header_idx, 30);
+    assert!(
+        seg30 >= 3,
+        "long file header at width 30 must wrap into multiple segments, got {seg30}"
+    );
+
+    let (_starts, counts, seg_counts, total_vis) = state.visual_geometry(30);
+    assert_eq!(seg_counts[0], seg30);
+    assert_eq!(counts[0], seg30);
+    assert!(total_vis >= seg30);
+}

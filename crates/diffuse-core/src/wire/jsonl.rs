@@ -32,7 +32,21 @@ pub enum WireRecord {
 #[serde(rename_all = "camelCase")]
 pub struct FileHeader {
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_mode: Option<String>,
     pub status: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_binary: bool,
+    #[serde(default, skip_serializing_if = "super::is_zero_usize")]
+    pub bytes: usize,
+    #[serde(default, skip_serializing_if = "super::is_zero_usize")]
+    pub old_bytes: usize,
+    #[serde(default, skip_serializing_if = "super::is_zero_usize")]
+    pub new_bytes: usize,
     pub new_line_count: usize,
     pub old_line_count: usize,
     pub hunk_count: usize,
@@ -68,7 +82,14 @@ pub struct FileFooter {
 pub fn emit_file_jsonl<W: Write>(file: &OutputFile, writer: &mut W) -> std::io::Result<()> {
     let header = WireRecord::FileHeader(FileHeader {
         path: file.path.clone(),
+        old_path: file.old_path.clone(),
+        old_mode: file.old_mode.clone(),
+        new_mode: file.new_mode.clone(),
         status: file.status.clone(),
+        is_binary: file.is_binary,
+        bytes: file.bytes,
+        old_bytes: file.old_bytes,
+        new_bytes: file.new_bytes,
         new_line_count: file.new_line_count,
         old_line_count: file.old_line_count,
         hunk_count: file.hunks.len(),
@@ -124,7 +145,14 @@ pub fn decode_jsonl_records<I: IntoIterator<Item = WireRecord>>(
                 }
                 current_file = Some(OutputFile {
                     path: h.path,
+                    old_path: h.old_path,
+                    old_mode: h.old_mode,
+                    new_mode: h.new_mode,
                     status: h.status,
+                    is_binary: h.is_binary,
+                    bytes: h.bytes,
+                    old_bytes: h.old_bytes,
+                    new_bytes: h.new_bytes,
                     new_line_count: h.new_line_count,
                     old_line_count: h.old_line_count,
                     new_content: vec![],

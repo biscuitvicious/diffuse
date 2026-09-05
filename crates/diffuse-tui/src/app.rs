@@ -74,7 +74,11 @@ impl AppState {
     pub fn new(output: PipelineOutput, repo: String, notes_path: PathBuf) -> Self {
         let mut collapsed_files = std::collections::HashSet::new();
         for (fi, f) in output.files.iter().enumerate() {
-            if f.status == "untracked" {
+            let has_content_changes = f.counts.adds > 0 || f.counts.dels > 0 || f.counts.mods > 0;
+            if f.is_binary
+                || f.status == "untracked"
+                || ((f.status == "renamed" || f.status == "mode changed") && !has_content_changes)
+            {
                 collapsed_files.insert(fi);
             }
         }

@@ -123,10 +123,22 @@ pub fn render_markdown_output(output: &PipelineOutput, options: &MarkdownOptions
         push_md_line(&mut out, "|---|---|---|---|", options.colorize, &theme);
         for file in &output.files {
             let (dels, adds) = file_raw_counts(file);
+            let path_display = if let Some(ref old_path) = file.old_path {
+                if old_path != &file.path {
+                    crate::core::wire::format_rename_path(
+                        &format_md_path(old_path),
+                        &format_md_path(&file.path),
+                    )
+                } else {
+                    format_md_path(&file.path).into_owned()
+                }
+            } else {
+                format_md_path(&file.path).into_owned()
+            };
             let row = format!(
                 "| `{}` | `{}` | -{} | +{} |",
-                format_md_path(&file.path),
-                file.status,
+                path_display,
+                file.display_status(),
                 dels,
                 adds
             );
@@ -151,11 +163,27 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
     let mut out = String::new();
     let theme = DiffuseTheme::MAGIC;
     let (dels, adds) = file_raw_counts(file);
-    let stats = format!("{}: -{} +{}", file.status, dels, adds);
-    let md_path = format_md_path(&file.path);
+    let stats = format!("{}: -{} +{}", file.display_status(), dels, adds);
+    let md_path = if let Some(ref old_path) = file.old_path {
+        if old_path != &file.path {
+            crate::core::wire::format_rename_path(
+                &format_md_path(old_path),
+                &format_md_path(&file.path),
+            )
+        } else {
+            format_md_path(&file.path).into_owned()
+        }
+    } else {
+        format_md_path(&file.path).into_owned()
+    };
 
     if options.collapsible {
-        let is_open = options.default_open && file.status != "untracked";
+        let has_content_changes = dels > 0 || adds > 0;
+        let is_open = options.default_open
+            && !file.is_binary
+            && file.status != "untracked"
+            && (file.status != "renamed" || has_content_changes)
+            && (file.status != "mode changed" || has_content_changes);
         let open_attr = if is_open { " open" } else { "" };
         let open_tag = format!("<details{}>", open_attr);
         let summary_tag = format!(
@@ -187,7 +215,11 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
         &file.hunks
     };
 
-    if hunks.is_empty() {
+    if file.is_binary {
+        push_md_line(&mut out, "```diff", options.colorize, &theme);
+        push_diff_line(&mut out, '#', " Binary files differ", options.colorize);
+        push_md_line(&mut out, "```", options.colorize, &theme);
+    } else if hunks.is_empty() {
         push_md_line(&mut out, "```diff", options.colorize, &theme);
         push_diff_line(&mut out, '#', " (No diff content)", options.colorize);
         push_md_line(&mut out, "```", options.colorize, &theme);

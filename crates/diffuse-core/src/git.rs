@@ -385,9 +385,12 @@ pub fn stream_git_repo_to_producer(
                     .iter()
                     .any(|r| matches!(r, crate::parse::Row::Del(_)))
             });
-            let needs_old =
-                f.status == crate::parse::FileStatus::Deleted || has_dels || new_c.is_none();
-            if needs_old && let Some(c) = get_blob(old_tree_ref, &f.path) {
+            let old_lookup_path = f.old_path.as_deref().unwrap_or(&f.path);
+            let needs_old = f.status == crate::parse::FileStatus::Deleted
+                || f.status == crate::parse::FileStatus::Renamed
+                || has_dels
+                || new_c.is_none();
+            if needs_old && let Some(c) = get_blob(old_tree_ref, old_lookup_path) {
                 if new_c.is_none() && f.status != crate::parse::FileStatus::Deleted {
                     new_c = Some(c.clone());
                 }

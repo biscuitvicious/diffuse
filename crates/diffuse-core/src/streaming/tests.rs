@@ -7,6 +7,9 @@ fn test_file_sequencer_in_order_reassembly() {
 
     let make_file = |name: &str| OutputFile {
         path: name.to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "modified".to_string(),
         new_line_count: 0,
         old_line_count: 0,
@@ -24,6 +27,10 @@ fn test_file_sequencer_in_order_reassembly() {
         notes: Vec::new(),
         content_runs: Vec::new(),
         rows: Vec::new(),
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     };
 
     // Receive out of order: 2, 0, 1, 4, 3
@@ -73,6 +80,8 @@ fn test_priority_job_queue_order() {
         file: DiffFile {
             path: format!("file_{idx}.rs"),
             old_path: None,
+            old_mode: None,
+            new_mode: None,
             status: crate::parse::FileStatus::Modified,
             hunks: Vec::new(),
             raw_hunks: Vec::new(),
@@ -81,6 +90,10 @@ fn test_priority_job_queue_order() {
             new_content: Vec::new(),
             old_content: Vec::new(),
             no_content: false,
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
         },
         new_content: None,
         old_content: None,

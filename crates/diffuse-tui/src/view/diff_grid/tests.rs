@@ -7,6 +7,9 @@ use crate::core::{
 fn dummy_file() -> OutputFile {
     OutputFile {
         path: "src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "modified".to_string(),
         new_line_count: 10,
         old_line_count: 10,
@@ -24,6 +27,10 @@ fn dummy_file() -> OutputFile {
         notes: vec![],
         content_runs: vec![],
         rows: vec![],
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     }
 }
 
@@ -158,6 +165,9 @@ fn test_hunk_divider_span_includes_context() {
 fn test_ratatui_diff_grid_lines() {
     let file = OutputFile {
         path: "src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "modified".to_string(),
         new_line_count: 10,
         old_line_count: 10,
@@ -170,6 +180,10 @@ fn test_ratatui_diff_grid_lines() {
         notes: vec![],
         content_runs: vec![],
         rows: vec![],
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     };
 
     let f_line = file_header_line(&file, false, false, false, false, 80);
@@ -189,4 +203,167 @@ fn test_ratatui_diff_grid_lines() {
 
     let b_line = bottom_gap_divider_line(5, false, 80);
     assert!(b_line.to_string().contains("5 lines hidden"));
+}
+
+#[test]
+fn test_render_file_header_segment_narrow_width() {
+    let file = OutputFile {
+        path: "crates/diffuse-tui/src/view/modals/mod.rs".to_string(),
+        old_path: Some("crates/diffuse-tui/src/view/modals.rs".to_string()),
+        old_mode: None,
+        new_mode: None,
+        status: "renamed".to_string(),
+        new_line_count: 10,
+        old_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: Default::default(),
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
+    };
+
+    let rendered_seg0 = render_file_header_segment(&file, false, false, false, false, 0, 50);
+    let vw0 = crate::view::header::visible_width(&rendered_seg0);
+    assert_eq!(
+        vw0, 50,
+        "file header segment 0 visual width must be exactly 50 on 50-col viewport"
+    );
+    assert!(
+        rendered_seg0.contains("crates/diffuse-tui/src/view/")
+            && rendered_seg0.contains("modals.rs"),
+        "rendered banner segment 0 must preserve the un-truncated directory prefix and from path"
+    );
+
+    let rendered_seg1 = render_file_header_segment(&file, false, false, false, false, 50, 50);
+    let vw1 = crate::view::header::visible_width(&rendered_seg1);
+    assert_eq!(
+        vw1, 50,
+        "file header segment 1 visual width must be exactly 50 on 50-col viewport"
+    );
+    assert!(
+        rendered_seg1.contains("mod.rs"),
+        "rendered banner segment 1 must contain the wrapped rename target"
+    );
+}
+
+#[test]
+fn test_shorten_path_for_width() {
+    assert_eq!(
+        shorten_path_for_width(
+            "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs",
+            75
+        ),
+        "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs"
+    );
+    assert_eq!(
+        shorten_path_for_width(
+            "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs",
+            50
+        ),
+        "…/src/algo/mod.rs -> …/src/algo.rs"
+    );
+    assert_eq!(
+        shorten_path_for_width(
+            "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs",
+            30
+        ),
+        "…/algo/mod.rs -> …/algo.rs"
+    );
+    assert_eq!(
+        shorten_path_for_width("crates/diffuse-tui/src/view/diff_grid.rs", 25),
+        "…/src/view/diff_grid.rs"
+    );
+}
+
+#[test]
+fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
+    use crate::render::DiffuseTheme;
+
+    let file = OutputFile {
+        path: "crates/diffuse-core/src/algo.rs".to_string(),
+        old_path: Some("crates/diffuse-core/src/algo/mod.rs".to_string()),
+        old_mode: None,
+        new_mode: None,
+        status: "renamed".to_string(),
+        counts: FileCounts::default(),
+        hunks: vec![],
+        raw_hunks: vec![],
+        old_line_count: 10,
+        new_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        bytes: 100,
+        old_bytes: 100,
+        new_bytes: 100,
+    };
+
+    let theme = DiffuseTheme::from_env();
+    let common_prefix = Some("crates/");
+
+    // Total plain text:
+    // "──── ▶ diffuse-core/src/algo/mod.rs -> algo.rs (100B) -0 +0 ~0
+    // [collapsed] "
+    let full_text = file_header_text_with_prefix(&file, true, common_prefix);
+    assert!(
+        full_text.contains("diffuse-core/src/algo/mod.rs -> algo.rs"),
+        "full text must keep the full un-mangled rename path without initial ellipsis: {full_text}"
+    );
+
+    // Render segment 0 at width 45
+    let seg0 = render_file_header_segment_themed(
+        &file,
+        true,
+        false,
+        false,
+        false,
+        0,
+        45,
+        &theme,
+        common_prefix,
+    );
+    assert_eq!(
+        crate::view::header::visible_width(&seg0),
+        45,
+        "segment 0 must be 45 visual columns"
+    );
+    // Underlined common prefix on segment 0 with desaturated purple 139m:
+    assert!(
+        seg0.contains("\x1b[4m\x1b[38;5;139mdiffuse-core/src/\x1b[24m"),
+        "segment 0 must preserve underlined common prefix without initial ellipsis or shortening: {seg0:?}"
+    );
+
+    // Render segment 1 at width 45
+    let seg1 = render_file_header_segment_themed(
+        &file,
+        true,
+        false,
+        false,
+        false,
+        45,
+        45,
+        &theme,
+        common_prefix,
+    );
+    assert_eq!(
+        crate::view::header::visible_width(&seg1),
+        45,
+        "segment 1 must be 45 visual columns"
+    );
+    assert!(
+        seg1.contains("(100B)"),
+        "segment 1 must contain the wrapped suffix: {seg1:?}"
+    );
 }

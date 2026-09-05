@@ -2,10 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::{
-    render::display_text,
-    view::{bottom_gap_divider_text, file_header_text, header::visible_width, hunk_divider_text},
-};
+use crate::render::display_text;
 
 use super::AppState;
 
@@ -15,7 +12,17 @@ impl AppState {
             return 1;
         };
         if item.is_file_header {
-            return 1;
+            let file_obj = &self.output.files[item.file_idx];
+            let is_collapsed = self.collapsed_files.contains(&item.file_idx);
+            let txt = crate::view::diff_grid::file_header_text_with_prefix(
+                file_obj,
+                is_collapsed,
+                self.output.common_directory_prefix().as_deref(),
+            );
+            use unicode_width::UnicodeWidthStr;
+            let len = txt.width();
+            let text_cols = content_width.max(1);
+            return if len == 0 { 1 } else { len.div_ceil(text_cols) };
         }
         if item.is_hunk_divider {
             use unicode_width::UnicodeWidthStr;
@@ -79,50 +86,19 @@ impl AppState {
 
         for (idx, item) in self.flat.iter().enumerate() {
             starts.push(total_vis_lines);
-            let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
-                if let Some(f) = self.output.files.get(div_fi)
-                    && let Some(h) = f.hunks.get(div_hi)
-                {
-                    let gap = self.hunk_leading_gap(div_fi, div_hi);
-                    let txt = hunk_divider_text(div_hi, h, gap);
-                    let w = visible_width(&txt);
-                    ((w + content_width - 1) / content_width.max(1)).max(1)
-                } else {
-                    1
-                }
-            } else {
-                0
-            };
-
-            let header_lines = if item.is_file_header {
-                let file = &self.output.files[item.file_idx];
-                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-                let txt = file_header_text(file, is_collapsed);
-                let w = visible_width(&txt);
-                ((w + content_width - 1) / content_width.max(1)).max(1)
-            } else {
-                0
-            };
-
-            let row_segs = if item.is_file_header {
-                0
-            } else {
-                self.row_seg_count(idx, content_width)
-            };
+            let div_lines = if div_at.contains_key(&idx) { 1 } else { 0 };
+            let row_segs = self.row_seg_count(idx, content_width);
             let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
             let trailing_gap_lines = if !self.raw_diff
                 && !item.is_file_header
                 && idx == self.last_row_of_file(item.file_idx)
                 && self.hunk_trailing_gap(item.file_idx) > 0
             {
-                let gap = self.hunk_trailing_gap(item.file_idx);
-                let txt = bottom_gap_divider_text(gap);
-                let w = visible_width(&txt);
-                ((w + content_width - 1) / content_width.max(1)).max(1)
+                1
             } else {
                 0
             };
-            let item_total = div_lines + header_lines + row_segs + note_lines + trailing_gap_lines;
+            let item_total = div_lines + row_segs + note_lines + trailing_gap_lines;
             counts.push(item_total);
             seg_counts.push(row_segs.max(1));
             total_vis_lines += item_total;
@@ -203,22 +179,15 @@ impl AppState {
         };
 
         let mut vis_i = 0;
-        for (i, item) in self.flat.iter().enumerate() {
+        for (i, _item) in self.flat.iter().enumerate() {
             if div_at.contains_key(&i) {
                 vis_i += 1;
             }
-            if item.is_file_header {
-                if i == self.row_idx {
-                    return vis_i;
-                }
-                vis_i += 1;
-            } else {
-                let seg_count = self.row_seg_count(i, content_width);
-                if i == self.row_idx {
-                    return vis_i + self.vis_line.min(seg_count.saturating_sub(1));
-                }
-                vis_i += seg_count;
+            let seg_count = self.row_seg_count(i, content_width);
+            if i == self.row_idx {
+                return vis_i + self.vis_line.min(seg_count.saturating_sub(1));
             }
+            vis_i += seg_count;
             vis_i += callouts.get(&i).map_or(0, Vec::len);
         }
         vis_i

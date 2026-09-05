@@ -32,7 +32,13 @@ fn file(hunks: Vec<Hunk>) -> DiffFile {
     DiffFile {
         path: "f.rs".into(),
         old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: FileStatus::Modified,
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
         new_line_count: 20,
         old_line_count: 20,
         new_content: Vec::new(),

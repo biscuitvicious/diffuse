@@ -71,10 +71,17 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
         String::new()
     };
     let add_str = format!("\x1b[38;5;120m+{}\x1b[39m", counts.adds);
+    let path_display = file.display_path();
 
     let bar = format!(
         "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{} · {} \x1b[0m\n",
-        file.path, file.status, add_str, del_str, mod_str, mov_str, note_str
+        path_display,
+        file.display_status(),
+        add_str,
+        del_str,
+        mod_str,
+        mov_str,
+        note_str
     );
     out.push_str(&bar);
 
@@ -168,9 +175,16 @@ pub fn render_raw_file_diff(file: &OutputFile) -> String {
         String::new()
     };
     let add_str = format!("\x1b[38;5;120m+{}\x1b[39m", counts.adds);
+    let path_display = file.display_path();
     let bar = format!(
         "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{} · {} \x1b[0m\n",
-        file.path, file.status, add_str, del_str, mod_str, mov_str, note_str
+        path_display,
+        file.display_status(),
+        add_str,
+        del_str,
+        mod_str,
+        mov_str,
+        note_str
     );
     out.push_str(&bar);
 

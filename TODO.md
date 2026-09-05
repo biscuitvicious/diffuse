@@ -12,8 +12,13 @@
 ## 2. Streaming Pipeline & Incremental Loading (Pi Extension & Engine)
 - [x] ~~**Incremental file streaming**~~: Append and render each file as it arrives from the backend rather than waiting for the entire multi-file diff to finish processing. (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
 - [x] ~~**Incremental diff line streaming (JSONL)**~~: Stream and render individual tokenized rows/lines progressively over a JSON Lines protocol. (See [Incremental Streaming Pipeline & Worker Pool](plan/done/Incremental%20Streaming%20Pipeline%20&%20Worker%20Pool.md))
+- [ ] **On-demand chunked hunk pagination (>1000 lines OOM failsafe)**: Any hunk > 1,000 lines collapses line 1,000+ into a hidden lines bar (similar to but visually distinct from the hidden context lines bar) that can be clicked to load another 1,000 lines on demand. Also applies to single-hunk files (untracked, renamed, mode changes, deleted, etc.). Only the first 1,000 lines are loaded into memory, fetching additional lines on demand as requested. Serves as our primary failsafe against OOM on massive diffs, effortlessly scaling to 1M+ line files with multiple inline-span changes per line.
 
 ## 3. UI, Navigation & Display Features
+- [ ] **Collapsible file picker pane**: Collapsible file picker/list pane to the left of the diff display for fast file browsing and jump navigation.
+- [ ] **Collapsible old-line number gutter**: Collapsible old-line number gutter to the left of the new-line number gutter that can be toggled to maximize horizontal code viewing space.
+- [ ] **Collapsible side-by-side diff**: Split side-by-side dual-pane diff layout that can be toggled on/off.
+- [ ] **Auto-width-adjusting number gutters**: Dynamic line number gutters starting at 3 columns and expanding adaptively (4+ cols) as line numbers >999 or >9999 are encountered during streaming.
 - [ ] **Selection round: Shift-Up/Down selection**: Add Shift-Up/Down to start a selection, ends when shift is released. Pressing `v` while selecting clears the selection.
 - [ ] **Hunk dividers as selectable rows**: Make hunk dividers "normal" rows that the cursor can select and receive key shortcuts (e.g. `Enter`, `m`, `s`) like file headers and diff lines, instead of click-only expansion targets.
 - [ ] **Subline selection with automatic clipboard copy**: Support character-level / subline selection start and end coordinates with automatic copying of selected text to the system clipboard upon selection confirmation / mouse release.

@@ -4,6 +4,9 @@ use crate::core::counts::FileCounts;
 fn sample_file(path: &str) -> OutputFile {
     OutputFile {
         path: path.to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "modified".to_string(),
         new_line_count: 10,
         old_line_count: 10,
@@ -21,6 +24,10 @@ fn sample_file(path: &str) -> OutputFile {
         notes: Vec::new(),
         content_runs: Vec::new(),
         rows: Vec::new(),
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     }
 }
 

@@ -129,6 +129,9 @@ fn sample_finder_output() -> PipelineOutput {
     use crate::core::{counts::FileCounts, wire::OutputFile};
     let file1 = OutputFile {
         path: "TODO.md".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "modified".to_string(),
         new_line_count: 2,
         old_line_count: 0,
@@ -149,9 +152,16 @@ fn sample_finder_output() -> PipelineOutput {
             dummy_row(RowKind::Add, 1, "+ First todo item"),
             dummy_row(RowKind::Add, 2, "+ Second todo item"),
         ],
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     };
     let file2 = OutputFile {
         path: "crates/diffuse-tui/src/app/render.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "modified".to_string(),
         new_line_count: 127,
         old_line_count: 295,
@@ -172,6 +182,10 @@ fn sample_finder_output() -> PipelineOutput {
             dummy_row(RowKind::Del, 10, "- old render line"),
             dummy_row(RowKind::Add, 10, "+ new render line"),
         ],
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     };
     PipelineOutput {
         files: vec![file1, file2],
@@ -322,6 +336,9 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
 
     let file = OutputFile {
         path: "crates/diffuse-tui/src/view/diff_grid.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "modified".to_string(),
         new_line_count: 10,
         old_line_count: 10,
@@ -350,6 +367,10 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
                 "- another long deletion line exceeding width",
             ),
         ],
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     };
     let output = PipelineOutput {
         files: vec![file],
@@ -409,6 +430,9 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
         .iter()
         .map(|(path, adds, dels, mods)| OutputFile {
             path: path.to_string(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
             status: "modified".to_string(),
             new_line_count: 10,
             old_line_count: 10,
@@ -426,6 +450,10 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
             notes: vec![],
             content_runs: vec![],
             rows: vec![dummy_row(RowKind::Add, 1, "+ line content")],
+            is_binary: false,
+            bytes: 0,
+            old_bytes: 0,
+            new_bytes: 0,
         })
         .collect();
 
@@ -514,6 +542,9 @@ fn test_finder_modal_proportional_height_scaling() {
         files: (0..30)
             .map(|i| crate::core::wire::OutputFile {
                 path: format!("file_{i}.rs"),
+                old_path: None,
+                old_mode: None,
+                new_mode: None,
                 status: "modified".to_string(),
                 new_line_count: 1,
                 old_line_count: 1,
@@ -526,6 +557,10 @@ fn test_finder_modal_proportional_height_scaling() {
                 notes: vec![],
                 content_runs: vec![],
                 rows: vec![],
+                is_binary: false,
+                bytes: 0,
+                old_bytes: 0,
+                new_bytes: 0,
             })
             .collect(),
         branch: "main".to_string(),

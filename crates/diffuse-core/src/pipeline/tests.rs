@@ -535,3 +535,34 @@ fn test_moved_line_source_in_source_hunk_and_target_in_target_hunk() {
         "Source and target rows must not be adjacent when separated by hunks: src at {src_idx}, tgt at {tgt_idx}"
     );
 }
+
+#[test]
+fn test_pipeline_pure_rename_renders_entire_file_as_context() {
+    let diff = "diff --git a/old.rs b/new.rs\nsimilarity index 100%\nrename from old.rs\nrename to new.rs\n";
+    let mut new_content = HashMap::new();
+    new_content.insert(
+        "new.rs".to_string(),
+        "fn alpha() {\n    println!(\"hello\");\n}\n".to_string(),
+    );
+    let output = run_pipeline(diff, Some(new_content));
+    assert_eq!(output.files.len(), 1);
+    let f = &output.files[0];
+    assert_eq!(f.path, "new.rs");
+    assert_eq!(f.old_path, Some("old.rs".to_string()));
+    assert_eq!(f.status, "renamed");
+    assert_eq!(f.counts.adds, 0);
+    assert_eq!(f.counts.dels, 0);
+    assert_eq!(f.counts.mods, 0);
+    assert_eq!(f.counts.movs, 0);
+    assert_eq!(f.hunks.len(), 1);
+    assert_eq!(f.hunks[0].rows.len(), 3);
+    assert_eq!(f.hunks[0].rows[0].kind, RowKind::Ctx);
+    assert_eq!(f.hunks[0].rows[0].text, "fn alpha() {");
+    assert_eq!(f.hunks[0].rows[0].new_line, Some(1));
+    assert_eq!(f.hunks[0].rows[0].old_line, Some(1));
+    assert_eq!(f.hunks[0].rows[1].kind, RowKind::Ctx);
+    assert_eq!(f.hunks[0].rows[1].text, "    println!(\"hello\");");
+    assert_eq!(f.hunks[0].rows[2].kind, RowKind::Ctx);
+    assert_eq!(f.hunks[0].rows[2].text, "}");
+    assert_eq!(f.rows.len(), 3);
+}

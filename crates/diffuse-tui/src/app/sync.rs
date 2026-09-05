@@ -10,7 +10,7 @@ use super::AppState;
 impl AppState {
     pub fn append_file(&mut self, file: OutputFile) {
         let fi = self.output.files.len();
-        if file.status == "untracked" {
+        if file.status == "untracked" || file.status == "renamed" {
             self.collapsed_files.insert(fi);
         }
 
@@ -91,13 +91,14 @@ impl AppState {
 
         self.output.files.push(file);
 
-        if self.row_idx == 0
-            && self.flat.len() > 1
+        if self.flat.len() == 1
             && self.flat[0].is_file_header
+            && self.row_idx == 0
+            && self.output.files.len() == 1
             && let Some(pos) = self
                 .flat
                 .iter()
-                .position(|r| self.flat_row_coord(r).is_some())
+                .position(|r| Self::flat_coord(&self.output, self.raw_diff, r).is_some())
         {
             self.row_idx = pos;
         }
@@ -148,7 +149,9 @@ impl AppState {
         };
 
         for (fi, f) in output.files.iter().enumerate() {
-            if f.status == "untracked" && !self.output.files.iter().any(|old| old.path == f.path) {
+            if (f.status == "untracked" || f.status == "renamed")
+                && !self.output.files.iter().any(|old| old.path == f.path)
+            {
                 self.collapsed_files.insert(fi);
             }
         }

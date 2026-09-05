@@ -67,7 +67,12 @@ pub fn truncate_pad(s: &str, target_width: usize) -> String {
 
 /// Render the top review header bar with file path, status, and line counts,
 /// wrapping across lines if wider than `width`.
-pub fn render_header_bar(repo: &str, file: &OutputFile, width: usize) -> Vec<String> {
+pub fn render_header_bar(
+    repo: &str,
+    file: &OutputFile,
+    width: usize,
+    common_prefix: Option<&str>,
+) -> Vec<String> {
     let counts = &file.counts;
     let note_count = file.notes.len();
     let note_s = format!(
@@ -95,16 +100,53 @@ pub fn render_header_bar(repo: &str, file: &OutputFile, width: usize) -> Vec<Str
         note_s
     );
 
+    let prefix_seg = if let Some(pfx) = common_prefix
+        && !pfx.is_empty()
+    {
+        format!(" \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;152m{pfx}\x1b[0m")
+    } else {
+        String::new()
+    };
+
+    let stripped_old = file.old_path.as_deref().map(|old| {
+        if let Some(pfx) = common_prefix {
+            old.strip_prefix(pfx).unwrap_or(old).to_string()
+        } else {
+            old.to_string()
+        }
+    });
+    let stripped_path = if let Some(pfx) = common_prefix {
+        file.path
+            .strip_prefix(pfx)
+            .unwrap_or(&file.path)
+            .to_string()
+    } else {
+        file.path.clone()
+    };
+
+    let styled_path = if let Some(ref old) = stripped_old
+        && old != &stripped_path
+    {
+        crate::core::wire::format_rename_path_styled(old, &stripped_path, "\x1b[38;5;231m")
+    } else {
+        stripped_path
+    };
+
+    let status_seg = if file.status == "renamed" {
+        String::new()
+    } else {
+        format!(" ({})", file.status)
+    };
     let head_raw = format!(
-        " Review: {} · {} ({}) · {}",
-        repo, file.path, file.status, counts_str
+        " Review: \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{prefix_seg} \x1b[38;5;240m·\x1b[0m {styled_path}{status_seg} \x1b[38;5;240m·\x1b[0m {counts_str}"
     );
     let wrapped = wrap_text_by_visual_width(&head_raw, width);
     wrapped
         .into_iter()
         .map(|piece| {
-            let head_str = truncate_pad(&piece, width);
-            format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{head_str}\x1b[0m")
+            let piece_vw = visible_width(&piece);
+            let pad = " ".repeat(width.saturating_sub(piece_vw));
+            format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{piece}{pad}\x1b[0m")
         })
         .collect()
 }
@@ -119,6 +161,7 @@ pub struct StatusBarContext<'a> {
     pub col_offset: usize,
     pub num_buffer: &'a str,
     pub branch: &'a str,
+    pub common_prefix: Option<&'a str>,
     pub width: usize,
     pub is_streaming: bool,
 }
@@ -184,12 +227,9 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
         wrapped
             .into_iter()
             .map(|piece| {
-                let pw = visible_width(&piece);
-                if pw < ctx.width {
-                    format!("{piece}{}\x1b[0m", " ".repeat(ctx.width - pw))
-                } else {
-                    format!("{piece}\x1b[0m")
-                }
+                let piece_vw = visible_width(&piece);
+                let pad = " ".repeat(ctx.width.saturating_sub(piece_vw));
+                format!("{piece}{pad}\x1b[0m")
             })
             .collect()
     }
@@ -220,6 +260,7 @@ pub fn header_bar_line_themed(
     repo: &str,
     file: &OutputFile,
     theme: &crate::render::DiffuseTheme,
+    common_prefix: Option<&str>,
 ) -> Line<'static> {
     let counts = &file.counts;
     let note_count = file.notes.len();
@@ -227,6 +268,7 @@ pub fn header_bar_line_themed(
         "{note_count} note{}",
         if note_count == 1 { "" } else { "s" }
     );
+
     let mut spans = vec![
         Span::styled(
             " Review: ",
@@ -240,22 +282,103 @@ pub fn header_bar_line_themed(
                 .fg(Color::Indexed(117))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" · ", Style::default().fg(Color::Indexed(240))),
-        Span::styled(
-            file.path.clone(),
+    ];
+
+    if let Some(pfx) = common_prefix
+        && !pfx.is_empty()
+    {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            pfx.to_string(),
+            Style::default()
+                .fg(Color::Indexed(152))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    spans.push(Span::styled(
+        " · ",
+        Style::default().fg(Color::Indexed(240)),
+    ));
+
+    let stripped_old = file.old_path.as_deref().map(|old| {
+        if let Some(pfx) = common_prefix {
+            old.strip_prefix(pfx).unwrap_or(old).to_string()
+        } else {
+            old.to_string()
+        }
+    });
+    let stripped_path = if let Some(pfx) = common_prefix {
+        file.path
+            .strip_prefix(pfx)
+            .unwrap_or(&file.path)
+            .to_string()
+    } else {
+        file.path.clone()
+    };
+
+    if let Some(ref old) = stripped_old
+        && old != &stripped_path
+    {
+        let old_parts: Vec<&str> = old.split('/').collect();
+        let new_parts: Vec<&str> = stripped_path.split('/').collect();
+        let mut common_len = 0;
+        while common_len + 1 < old_parts.len()
+            && common_len + 1 < new_parts.len()
+            && old_parts[common_len] == new_parts[common_len]
+        {
+            common_len += 1;
+        }
+        if common_len > 0 {
+            let pfx = format!("{}/", old_parts[..common_len].join("/"));
+            let old_rem = old_parts[common_len..].join("/");
+            let new_rem = new_parts[common_len..].join("/");
+            spans.push(Span::styled(
+                pfx,
+                Style::default()
+                    .fg(Color::Indexed(139))
+                    .add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
+            ));
+            spans.push(Span::styled(
+                format!("{old_rem} -> {new_rem}"),
+                Style::default()
+                    .fg(Color::Indexed(231))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(
+                format!("{old} -> {stripped_path}"),
+                Style::default()
+                    .fg(Color::Indexed(231))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    } else {
+        spans.push(Span::styled(
+            stripped_path,
             Style::default()
                 .fg(Color::Indexed(231))
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!(" ({}) · ", file.status),
+        ));
+    }
+
+    if file.status != "renamed" {
+        spans.push(Span::styled(
+            format!(" ({})", file.status),
             Style::default().fg(Color::Indexed(244)),
-        ),
-        Span::styled(
-            format!("+{}", counts.adds),
-            Style::default().fg(Color::Indexed(120)),
-        ),
-    ];
+        ));
+    }
+    spans.push(Span::styled(
+        " · ",
+        Style::default().fg(Color::Indexed(240)),
+    ));
+    spans.push(Span::styled(
+        format!("+{}", counts.adds),
+        Style::default().fg(Color::Indexed(120)),
+    ));
     if counts.dels > 0 {
         spans.push(Span::styled(
             format!(" −{}", counts.dels),
@@ -285,8 +408,17 @@ pub fn header_bar_line_themed(
 }
 
 /// Render the review header bar as a styled Ratatui [`Line`].
-pub fn header_bar_line(repo: &str, file: &OutputFile) -> Line<'static> {
-    header_bar_line_themed(repo, file, &crate::render::DiffuseTheme::from_env())
+pub fn header_bar_line(
+    repo: &str,
+    file: &OutputFile,
+    common_prefix: Option<&str>,
+) -> Line<'static> {
+    header_bar_line_themed(
+        repo,
+        file,
+        &crate::render::DiffuseTheme::from_env(),
+        common_prefix,
+    )
 }
 
 /// Render the secondary status bar as a styled Ratatui [`Line`].

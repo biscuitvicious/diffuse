@@ -250,7 +250,7 @@ fn test_c_flag_changes_directory() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("file_a.rs") || stdout.contains("modified"),
+        stdout.contains("a.txt") || stdout.contains("b.txt"),
         "stdout must contain diff from target repo, got: {stdout}"
     );
 }

@@ -118,6 +118,8 @@ fn test_inline_hunk_merging() {
     let mut f = DiffFile {
         path: "src/main.rs".to_string(),
         old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: crate::parse::FileStatus::Modified,
         no_content: false,
         new_line_count: 50,
@@ -125,6 +127,10 @@ fn test_inline_hunk_merging() {
         old_content: (1..=50).map(|i| format!("line {i}")).collect(),
         new_content: (1..=50).map(|i| format!("line {i}")).collect(),
         raw_hunks: Vec::new(),
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
         hunks: vec![
             Hunk {
                 old_start: 10,
@@ -195,6 +201,8 @@ fn test_context_budget_normalization() {
     let mut f = DiffFile {
         path: "src/main.rs".to_string(),
         old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: crate::parse::FileStatus::Modified,
         no_content: false,
         new_line_count: 30,
@@ -202,6 +210,10 @@ fn test_context_budget_normalization() {
         old_content: (1..=30).map(|i| format!("line {i}")).collect(),
         new_content: (1..=30).map(|i| format!("line {i}")).collect(),
         raw_hunks: Vec::new(),
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
         hunks: vec![Hunk {
             old_start: 10,
             old_count: 1,
@@ -279,6 +291,8 @@ fn test_normalize_and_merge_hunks() {
     let mut f = DiffFile {
         path: "src/main.rs".to_string(),
         old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: crate::parse::FileStatus::Modified,
         no_content: false,
         new_line_count: 50,
@@ -286,6 +300,10 @@ fn test_normalize_and_merge_hunks() {
         old_content: (1..=50).map(|i| format!("line {i}")).collect(),
         new_content: (1..=50).map(|i| format!("line {i}")).collect(),
         raw_hunks: Vec::new(),
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
         hunks: vec![
             Hunk {
                 old_start: 10,

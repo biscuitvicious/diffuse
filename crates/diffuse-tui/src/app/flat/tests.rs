@@ -109,6 +109,9 @@ index 1111111..2222222 100644
     // Add an untracked file to output
     out.files.push(OutputFile {
         path: "untracked.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
         status: "untracked".to_string(),
         new_line_count: 1,
         old_line_count: 0,
@@ -142,6 +145,10 @@ index 1111111..2222222 100644
         notes: Vec::new(),
         content_runs: Vec::new(),
         rows: Vec::new(),
+        is_binary: false,
+        bytes: 0,
+        old_bytes: 0,
+        new_bytes: 0,
     });
 
     let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
@@ -167,7 +174,7 @@ index 1111111..2222222 100644
 
     let frame = state.render_frame(100, 30);
     assert!(
-        frame.contains("▶ untracked.rs (untracked)"),
+        frame.contains("▶ untracked.rs (untracked, 21B)"),
         "frame shows collapsed indicator"
     );
 
@@ -185,8 +192,120 @@ index 1111111..2222222 100644
 
     let frame_expanded = state.render_frame(100, 30);
     assert!(
-        frame_expanded.contains("▼ untracked.rs (untracked)"),
+        frame_expanded.contains("▼ untracked.rs (untracked, 21B)"),
         "frame shows expanded indicator"
+    );
+}
+
+#[test]
+fn test_renamed_files_collapsed_by_default_and_show_old_to_new_path() {
+    let diff = r#"diff --git a/src/old.rs b/src/new.rs
+similarity index 100%
+rename from src/old.rs
+rename to src/new.rs
+"#;
+    let mut new_content = std::collections::HashMap::new();
+    new_content.insert(
+        "src/new.rs".to_string(),
+        "fn alpha() {\n    println!(\"hello\");\n}\n".to_string(),
+    );
+    let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
+    assert_eq!(out.files.len(), 1);
+    assert_eq!(out.files[0].status, "renamed");
+    assert_eq!(out.files[0].old_path.as_deref(), Some("src/old.rs"));
+    assert_eq!(out.files[0].path, "src/new.rs");
+    assert_eq!(out.files[0].rows.len(), 3);
+
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    assert!(
+        state.collapsed_files.contains(&0),
+        "renamed file (index 0) must be collapsed by default"
+    );
+    assert_eq!(
+        state.flat.len(),
+        1,
+        "collapsed file only has 1 flat row (header)"
+    );
+
+    let frame = state.render_frame(100, 30);
+    assert!(
+        frame.contains("▶ ") && frame.contains("old.rs") && frame.contains("new.rs"),
+        "frame shows collapsed indicator and old -> new path"
+    );
+
+    state.toggle_file_collapse(0);
+    assert!(
+        !state.collapsed_files.contains(&0),
+        "renamed file is now expanded"
+    );
+    assert_eq!(
+        state.flat.len(),
+        4,
+        "expanded file has header + 3 context rows"
+    );
+
+    let frame_expanded = state.render_frame(100, 30);
+    assert!(
+        frame_expanded.contains("▼ ")
+            && frame_expanded.contains("old.rs")
+            && frame_expanded.contains("new.rs"),
+        "frame shows expanded indicator and old -> new path"
+    );
+    let raw_frame_expanded = crate::render::strip_ansi(&frame_expanded);
+    assert!(
+        raw_frame_expanded.contains("println!(\"hello\");"),
+        "frame shows entire file content as context rows when expanded"
+    );
+}
+
+#[test]
+fn test_binary_files_collapsed_by_default_and_cannot_be_expanded() {
+    let diff = r#"diff --git a/logo.png b/logo.png
+index 1111111..2222222 100644
+Binary files a/logo.png and b/logo.png differ
+diff --git a/old.png b/new.png
+similarity index 80%
+rename from old.png
+rename to new.png
+Binary files a/old.png and b/new.png differ
+"#;
+    let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    assert_eq!(out.files.len(), 2);
+    assert!(out.files[0].is_binary);
+    assert!(out.files[1].is_binary);
+    assert_eq!(out.files[0].display_status(), "binary, 0B");
+    assert_eq!(out.files[1].display_status(), "binary, 0B");
+
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    assert!(
+        state.collapsed_files.contains(&0) && state.collapsed_files.contains(&1),
+        "binary files must be collapsed by default"
+    );
+    assert_eq!(state.flat.len(), 2, "binary files only have header rows");
+
+    let frame = state.render_frame(100, 30);
+    assert!(
+        frame.contains("▶ logo.png (binary, 0B)"),
+        "frame shows collapsed indicator and binary status"
+    );
+    assert!(
+        frame.contains("▶ ")
+            && frame.contains("old.png")
+            && frame.contains("new.png")
+            && frame.contains("(binary, 0B)"),
+        "frame shows rename with binary status"
+    );
+
+    // Attempting to expand binary file is a no-op
+    state.toggle_file_collapse(0);
+    assert!(
+        state.collapsed_files.contains(&0),
+        "binary file cannot be expanded"
+    );
+    assert_eq!(
+        state.flat.len(),
+        2,
+        "binary file remains collapsed with 1 row"
     );
 }
 

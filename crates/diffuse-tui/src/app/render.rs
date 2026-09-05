@@ -11,12 +11,11 @@ use crate::{
     core::parse::RowKind,
     render::{render_raw_row, render_row_segment, slice_by_visual_width},
     view::{
-        bottom_ribbon_lines, file_header_text,
+        bottom_ribbon_lines,
         header::{
             render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line,
             visible_width,
         },
-        hunk_divider_text,
         modals::{render_finder_modal, render_help_modal},
         render_bottom_gap_divider,
     },
@@ -39,8 +38,15 @@ impl AppState {
             }
         };
 
+        let common_prefix = self.output.common_directory_prefix();
+
         // Header bar
-        lines.extend(render_header_bar(&self.repo, f, width));
+        lines.extend(render_header_bar(
+            &self.repo,
+            f,
+            width,
+            common_prefix.as_deref(),
+        ));
 
         // Secondary status bar
         let total_files = self.output.files.len();
@@ -55,6 +61,7 @@ impl AppState {
             col_offset: self.col_offset,
             num_buffer: &self.num_buffer,
             branch: &self.output.branch,
+            common_prefix: common_prefix.as_deref(),
             width,
             is_streaming: self.is_streaming,
         }));
@@ -372,7 +379,13 @@ impl AppState {
         let file_path = file.path.clone();
 
         // 1. Header Bar
-        let header_line = crate::view::header_bar_line_themed(&self.repo, file, &self.theme);
+        let common_prefix = self.output.common_directory_prefix();
+        let header_line = crate::view::header_bar_line_themed(
+            &self.repo,
+            file,
+            &self.theme,
+            common_prefix.as_deref(),
+        );
         f.render_widget(Paragraph::new(header_line), chunks[chunk_idx]);
         chunk_idx += 1;
 
@@ -386,6 +399,7 @@ impl AppState {
             col_offset: self.col_offset,
             num_buffer: &self.num_buffer,
             branch: &self.output.branch,
+            common_prefix: common_prefix.as_deref(),
             width,
             is_streaming: self.is_streaming,
         };
@@ -591,44 +605,41 @@ impl AppState {
                 let h = &self.output.files[div_fi].hunks[div_hi];
                 let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
                 let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
-                let txt = hunk_divider_text(div_hi, h, hidden_gap);
-                let w = visible_width(&txt);
-                let segs = ((w + content_width - 1) / content_width.max(1)).max(1);
-                for s_idx in 0..segs {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                        lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
-                            div_hi,
-                            h,
-                            hidden_gap,
-                            is_cur,
-                            s_idx * content_width,
-                            content_width,
-                            &self.theme,
-                        ));
-                    }
-                    vis_i += 1;
+                if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
+                        div_hi,
+                        h,
+                        hidden_gap,
+                        is_cur,
+                        0,
+                        content_width,
+                        &self.theme,
+                    ));
                 }
+                vis_i += 1;
             }
 
             if item.is_file_header {
                 let file_obj = &self.output.files[item.file_idx];
                 let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-                let is_selected = idx == self.row_idx;
-                let is_current = item.file_idx == self.current_file_idx();
-                let txt = file_header_text(file_obj, is_collapsed);
-                let w = visible_width(&txt);
-                let segs = ((w + content_width - 1) / content_width.max(1)).max(1);
-                for s_idx in 0..segs {
+                let seg_count = seg_counts[idx];
+                let common_prefix = self.output.common_directory_prefix();
+                for s_idx in 0..seg_count {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                        let is_current = item.file_idx == self.current_file_idx();
+                        let text_cols = content_width.max(1);
+                        let seg_start = s_idx * text_cols;
                         lines.push(crate::view::diff_grid::render_file_header_segment_themed(
                             file_obj,
                             is_collapsed,
                             is_selected,
                             is_current,
                             in_band,
-                            s_idx * content_width,
-                            content_width,
+                            seg_start,
+                            text_cols,
                             &self.theme,
+                            common_prefix.as_deref(),
                         ));
                     }
                     vis_i += 1;
