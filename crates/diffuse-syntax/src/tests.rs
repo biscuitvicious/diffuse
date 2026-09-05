@@ -600,26 +600,43 @@ fn test_close_delimiter_and_profile_syntax_matching() {
         crate::profile::CloseDelimiter::None
     );
 
-    // Direct tail match across indentation shifts
+    // Direct tail match across indentation shifts parameterized with min_chars
     assert!(rs.is_direct_tail_match(
         crate::profile::CloseDelimiter::ParenSemi,
         crate::profile::CloseDelimiter::ParenSemi,
-        10
+        10,
+        8
     ));
     assert!(!rs.is_direct_tail_match(
         crate::profile::CloseDelimiter::ParenSemi,
         crate::profile::CloseDelimiter::BraceSemi,
-        10
+        10,
+        8
     ));
     assert!(!rs.is_direct_tail_match(
         crate::profile::CloseDelimiter::None,
         crate::profile::CloseDelimiter::None,
-        10
+        10,
+        8
     ));
     assert!(!rs.is_direct_tail_match(
         crate::profile::CloseDelimiter::ParenSemi,
         crate::profile::CloseDelimiter::ParenSemi,
-        5
+        5,
+        8
+    ));
+    // Test custom min_chars threshold
+    assert!(rs.is_direct_tail_match(
+        crate::profile::CloseDelimiter::ParenSemi,
+        crate::profile::CloseDelimiter::ParenSemi,
+        5,
+        4
+    ));
+    assert!(!rs.is_direct_tail_match(
+        crate::profile::CloseDelimiter::ParenSemi,
+        crate::profile::CloseDelimiter::ParenSemi,
+        5,
+        6
     ));
 
     // Python only allows expressions across indentation shifts, not block
@@ -627,62 +644,40 @@ fn test_close_delimiter_and_profile_syntax_matching() {
     assert!(py.is_direct_tail_match(
         crate::profile::CloseDelimiter::Paren,
         crate::profile::CloseDelimiter::Paren,
-        10
+        10,
+        8
     ));
     assert!(!py.is_direct_tail_match(
         crate::profile::CloseDelimiter::Brace,
         crate::profile::CloseDelimiter::Brace,
-        10
+        10,
+        8
     ));
 
-    // Method continuation matching
-    assert!(rs.is_method_continuation("    .extend(items);"));
-    assert!(!rs.is_method_continuation("    extend(items);"));
-    assert_eq!(
-        rs.method_continuation_name("    .extend(items);"),
-        Some("extend")
-    );
-    assert_eq!(rs.method_continuation_name("    extend(items);"), None);
-    assert!(rs.contains_method_call("    unmark_positions.extend(moved_in_run);", "extend"));
-    assert!(!rs.contains_method_call("    unmark_positions.extends(moved_in_run);", "extend"));
-    assert!(!rs.contains_method_call("    extend(items);", "extend"));
-
-    // C/C++ supports -> as well as .
-    assert!(c.is_method_continuation("    ->process(data);"));
-    assert_eq!(
-        c.method_continuation_name("    ->process(data);"),
-        Some("process")
-    );
-    assert!(c.contains_method_call("    obj->process(data);", "process"));
-
-    // Full is_method_continuation_match
-    let line_a = "    .extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));";
-    let line_b = "    unmark_positions.extend(moved_in_run);";
-    let tail_a = rs.classify_close_tail(line_a);
-    let tail_b = rs.classify_close_tail(line_b);
-    assert!(rs.is_method_continuation_match(line_a, line_b, tail_a, tail_b, 12));
-    assert!(!rs.is_method_continuation_match(
-        line_a,
-        "unmark_positions.filter(x);",
-        tail_a,
-        tail_b,
-        12
+    // Shell allows keywords, paren, bracket
+    assert!(sh.is_direct_tail_match(
+        crate::profile::CloseDelimiter::Keyword,
+        crate::profile::CloseDelimiter::Keyword,
+        10,
+        8
     ));
-    // Two continuation lines: matching method name succeeds, mismatching method
-    // name fails
-    assert!(rs.is_method_continuation_match(
-        "    .filter(a);",
-        "        .filter(b);",
-        crate::profile::CloseDelimiter::ParenSemi,
-        crate::profile::CloseDelimiter::ParenSemi,
-        10
+    assert!(sh.is_direct_tail_match(
+        crate::profile::CloseDelimiter::Paren,
+        crate::profile::CloseDelimiter::Paren,
+        10,
+        8
     ));
-    assert!(!rs.is_method_continuation_match(
-        "    .filter(a);",
-        "        .extend(b);",
-        crate::profile::CloseDelimiter::ParenSemi,
-        crate::profile::CloseDelimiter::ParenSemi,
-        10
+    assert!(sh.is_direct_tail_match(
+        crate::profile::CloseDelimiter::Bracket,
+        crate::profile::CloseDelimiter::Bracket,
+        10,
+        8
+    ));
+    assert!(!sh.is_direct_tail_match(
+        crate::profile::CloseDelimiter::Brace,
+        crate::profile::CloseDelimiter::Brace,
+        10,
+        8
     ));
 
     // Default methods on CloseDelimiter
@@ -690,32 +685,24 @@ fn test_close_delimiter_and_profile_syntax_matching() {
         crate::profile::CloseDelimiter::default_is_direct_tail_match(
             crate::profile::CloseDelimiter::ParenSemi,
             crate::profile::CloseDelimiter::ParenSemi,
-            10
+            10,
+            8
         )
     );
     assert!(
         !crate::profile::CloseDelimiter::default_is_direct_tail_match(
             crate::profile::CloseDelimiter::None,
             crate::profile::CloseDelimiter::None,
-            10
+            10,
+            8
         )
     );
     assert!(
-        crate::profile::CloseDelimiter::default_is_method_continuation_match(
-            "    .extend(items);",
-            "    list.extend(items);",
+        !crate::profile::CloseDelimiter::default_is_direct_tail_match(
             crate::profile::CloseDelimiter::ParenSemi,
             crate::profile::CloseDelimiter::ParenSemi,
-            10,
-        )
-    );
-    assert!(
-        !crate::profile::CloseDelimiter::default_is_method_continuation_match(
-            "    .extend(items);",
-            "    .filter(items);",
-            crate::profile::CloseDelimiter::ParenSemi,
-            crate::profile::CloseDelimiter::ParenSemi,
-            10,
+            5,
+            8
         )
     );
 
@@ -724,15 +711,25 @@ fn test_close_delimiter_and_profile_syntax_matching() {
         sh.classify_exact_close("fi"),
         crate::profile::CloseDelimiter::Keyword
     );
-    assert!(sh.is_direct_tail_match(
-        crate::profile::CloseDelimiter::Keyword,
-        crate::profile::CloseDelimiter::Keyword,
-        10
-    ));
     assert_eq!(
         py.classify_exact_close(")"),
         crate::profile::CloseDelimiter::Paren
     );
+
+    // Declarative Delimiter Tables
+    assert!(!rs.exact_delimiters.is_empty());
+    assert!(!rs.tail_delimiters.is_empty());
+    assert!(!rs.trailing_delimiters.is_empty());
+    assert!(rs.trailing_delimiters.contains(&';'));
+    assert!(c.trailing_delimiters.contains(&';'));
+    assert!(c.is_direct_tail_match(
+        crate::profile::CloseDelimiter::BraceSemi,
+        crate::profile::CloseDelimiter::BraceSemi,
+        10,
+        8
+    ));
+    assert!(py.trailing_delimiters.contains(&':'));
+    assert!(!py.trailing_delimiters.contains(&';'));
 
     // Trailing delimiter trimming
     assert_eq!(

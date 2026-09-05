@@ -45,5 +45,8 @@ pub fn profile() -> LangProfile {
         ],
         operators: OPERATORS,
         scope_stop_prefixes: &["class ", "struct ", "enum ", "namespace "],
+        exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
     }
 }

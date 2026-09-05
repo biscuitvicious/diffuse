@@ -33,5 +33,8 @@ pub fn profile() -> LangProfile {
         decl_prefixes: &["def ", "async def ", "class "],
         operators: OPERATORS,
         scope_stop_prefixes: &["class "],
+        exact_delimiters: BlockDelimStyle::IndentColon.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::IndentColon.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::IndentColon.default_trailing_delimiters(),
     }
 }

@@ -56,5 +56,8 @@ pub fn profile() -> LangProfile {
         decl_prefixes: &["func ", "type ", "var ", "const ", "package ", "import "],
         operators: OPERATORS,
         scope_stop_prefixes: &["type ", "package ", "import "],
+        exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
     }
 }

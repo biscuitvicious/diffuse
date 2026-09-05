@@ -30,101 +30,125 @@ pub enum CloseDelimiter {
     Keyword,
 }
 
+pub const BRACE_EXACT_DELIMITERS: &[(&str, CloseDelimiter)] = &[
+    ("};", CloseDelimiter::BraceSemi),
+    ("},", CloseDelimiter::BraceSemi),
+    ("}", CloseDelimiter::Brace),
+    (");", CloseDelimiter::ParenSemi),
+    ("),", CloseDelimiter::ParenSemi),
+    (")", CloseDelimiter::Paren),
+    ("];", CloseDelimiter::BracketSemi),
+    ("],", CloseDelimiter::BracketSemi),
+    ("]", CloseDelimiter::Bracket),
+];
+
+pub const BRACE_TAIL_DELIMITERS: &[(&str, CloseDelimiter)] = &[
+    ("};", CloseDelimiter::BraceSemi),
+    ("},", CloseDelimiter::BraceSemi),
+    ("}", CloseDelimiter::Brace),
+    (");", CloseDelimiter::ParenSemi),
+    ("),", CloseDelimiter::ParenSemi),
+    (")", CloseDelimiter::Paren),
+    ("];", CloseDelimiter::BracketSemi),
+    ("],", CloseDelimiter::BracketSemi),
+    ("]", CloseDelimiter::Bracket),
+];
+
+pub const BRACE_TRAILING_DELIMITERS: &[char] = &['{', '}', ';', ':', ',', ')', ']'];
+
+pub const INDENT_COLON_EXACT_DELIMITERS: &[(&str, CloseDelimiter)] = &[
+    (")", CloseDelimiter::Paren),
+    ("]", CloseDelimiter::Bracket),
+    ("}", CloseDelimiter::Brace),
+];
+
+pub const INDENT_COLON_TAIL_DELIMITERS: &[(&str, CloseDelimiter)] = &[
+    (")", CloseDelimiter::Paren),
+    ("]", CloseDelimiter::Bracket),
+    ("}", CloseDelimiter::Brace),
+];
+
+pub const INDENT_COLON_TRAILING_DELIMITERS: &[char] = &[':', ',', ')', ']'];
+
+pub const KEYWORDS_EXACT_DELIMITERS: &[(&str, CloseDelimiter)] = &[
+    ("fi", CloseDelimiter::Keyword),
+    ("done", CloseDelimiter::Keyword),
+    ("esac", CloseDelimiter::Keyword),
+    ("}", CloseDelimiter::Brace),
+    (")", CloseDelimiter::Paren),
+    ("]", CloseDelimiter::Bracket),
+];
+
+pub const KEYWORDS_TAIL_DELIMITERS: &[(&str, CloseDelimiter)] = &[
+    ("}", CloseDelimiter::Brace),
+    (")", CloseDelimiter::Paren),
+    ("]", CloseDelimiter::Bracket),
+];
+
+pub const KEYWORDS_TRAILING_DELIMITERS: &[char] = &[',', ')', ']', ';', '{', '}'];
+
+impl BlockDelimStyle {
+    /// Default exact closing delimiter table for this block delimiter style.
+    pub const fn default_exact_delimiters(&self) -> &'static [(&'static str, CloseDelimiter)] {
+        match self {
+            Self::Braces => BRACE_EXACT_DELIMITERS,
+            Self::IndentColon => INDENT_COLON_EXACT_DELIMITERS,
+            Self::Keywords => KEYWORDS_EXACT_DELIMITERS,
+        }
+    }
+
+    /// Default tail closing delimiter table for this block delimiter style.
+    pub const fn default_tail_delimiters(&self) -> &'static [(&'static str, CloseDelimiter)] {
+        match self {
+            Self::Braces => BRACE_TAIL_DELIMITERS,
+            Self::IndentColon => INDENT_COLON_TAIL_DELIMITERS,
+            Self::Keywords => KEYWORDS_TAIL_DELIMITERS,
+        }
+    }
+
+    /// Default trailing delimiter character table for this block delimiter
+    /// style.
+    pub const fn default_trailing_delimiters(&self) -> &'static [char] {
+        match self {
+            Self::Braces => BRACE_TRAILING_DELIMITERS,
+            Self::IndentColon => INDENT_COLON_TRAILING_DELIMITERS,
+            Self::Keywords => KEYWORDS_TRAILING_DELIMITERS,
+        }
+    }
+}
+
 impl CloseDelimiter {
     /// Default trailing close classification for unknown languages (defaults to
     /// standard brace syntax).
     pub fn default_classify_tail(line: &str) -> Self {
         let t = line.trim();
-        if t.ends_with("};") || t.ends_with("},") {
-            CloseDelimiter::BraceSemi
-        } else if t.ends_with('}') {
-            CloseDelimiter::Brace
-        } else if t.ends_with(");") || t.ends_with("),") {
-            CloseDelimiter::ParenSemi
-        } else if t.ends_with(')') {
-            CloseDelimiter::Paren
-        } else if t.ends_with("];") || t.ends_with("],") {
-            CloseDelimiter::BracketSemi
-        } else if t.ends_with(']') {
-            CloseDelimiter::Bracket
-        } else {
-            CloseDelimiter::None
+        for &(pattern, delim) in BRACE_TAIL_DELIMITERS {
+            if t.ends_with(pattern) {
+                return delim;
+            }
         }
+        CloseDelimiter::None
     }
 
     /// Default exact close classification for unknown languages.
     pub fn default_classify_exact(line: &str) -> Self {
         let t = line.trim();
-        if t == "};" || t == "}," {
-            CloseDelimiter::BraceSemi
-        } else if t == "}" {
-            CloseDelimiter::Brace
-        } else if t == ");" || t == ")," {
-            CloseDelimiter::ParenSemi
-        } else if t == ")" {
-            CloseDelimiter::Paren
-        } else if t == "];" || t == "]," {
-            CloseDelimiter::BracketSemi
-        } else if t == "]" {
-            CloseDelimiter::Bracket
-        } else {
-            CloseDelimiter::None
+        for &(pattern, delim) in BRACE_EXACT_DELIMITERS {
+            if t == pattern {
+                return delim;
+            }
         }
+        CloseDelimiter::None
     }
 
     /// Default direct tail matching when no profile is available.
-    pub fn default_is_direct_tail_match(tail_a: Self, tail_b: Self, matched_chars: usize) -> bool {
-        tail_a != CloseDelimiter::None && tail_a == tail_b && matched_chars >= 8
-    }
-
-    /// Default method continuation matching when no profile is available.
-    pub fn default_is_method_continuation_match(
-        line_a: &str,
-        line_b: &str,
+    pub fn default_is_direct_tail_match(
         tail_a: Self,
         tail_b: Self,
         matched_chars: usize,
+        min_chars: usize,
     ) -> bool {
-        if matched_chars < 8 || tail_a == CloseDelimiter::None || tail_a != tail_b {
-            return false;
-        }
-        fn extract(line: &str) -> Option<&str> {
-            let t = line.trim_start();
-            if t.starts_with('.') {
-                crate::registry::first_ascii_word(t.trim_start_matches('.'))
-                    .filter(|w| !w.is_empty())
-            } else {
-                None
-            }
-        }
-        let contains = |line: &str, m: &str| -> bool {
-            let mut search_from = 0;
-            while let Some(idx) = line[search_from..].find('.') {
-                let abs_idx = search_from + idx + 1;
-                if line[abs_idx..].starts_with(m) {
-                    let after = abs_idx + m.len();
-                    if after == line.len()
-                        || !line[after..]
-                            .chars()
-                            .next()
-                            .unwrap()
-                            .is_ascii_alphanumeric()
-                    {
-                        return true;
-                    }
-                }
-                search_from += idx + 1;
-            }
-            false
-        };
-        let m_a = extract(line_a);
-        let m_b = extract(line_b);
-        match (m_a, m_b) {
-            (Some(a), Some(b)) => a == b,
-            (Some(a), None) => contains(line_b, a),
-            (None, Some(b)) => contains(line_a, b),
-            (None, None) => false,
-        }
+        tail_a != CloseDelimiter::None && tail_a == tail_b && matched_chars >= min_chars
     }
 }
 
@@ -178,6 +202,12 @@ pub struct LangProfile {
     /// …). Distinct from `decl_prefixes` which may include variable
     /// declarations (`const`, `let`) that are valid inside function bodies.
     pub scope_stop_prefixes: &'static [&'static str],
+    /// Exact closing delimiters (e.g. `}` or `fi`).
+    pub exact_delimiters: &'static [(&'static str, CloseDelimiter)],
+    /// Trailing closing delimiters checked with `ends_with`.
+    pub tail_delimiters: &'static [(&'static str, CloseDelimiter)],
+    /// Characters that act as trailing statement/expression delimiters.
+    pub trailing_delimiters: &'static [char],
 }
 
 impl LangProfile {
@@ -288,98 +318,28 @@ impl LangProfile {
     /// language's syntax.
     pub fn classify_close_tail(&self, line: &str) -> CloseDelimiter {
         let t = line.trim();
-        match self.block_style {
-            BlockDelimStyle::Braces => {
-                if t.ends_with("};") || t.ends_with("},") {
-                    CloseDelimiter::BraceSemi
-                } else if t.ends_with('}') {
-                    CloseDelimiter::Brace
-                } else if t.ends_with(");") || t.ends_with("),") {
-                    CloseDelimiter::ParenSemi
-                } else if t.ends_with(')') {
-                    CloseDelimiter::Paren
-                } else if t.ends_with("];") || t.ends_with("],") {
-                    CloseDelimiter::BracketSemi
-                } else if t.ends_with(']') {
-                    CloseDelimiter::Bracket
-                } else {
-                    CloseDelimiter::None
-                }
-            }
-            BlockDelimStyle::IndentColon => {
-                if t.ends_with(')') {
-                    CloseDelimiter::Paren
-                } else if t.ends_with(']') {
-                    CloseDelimiter::Bracket
-                } else if t.ends_with('}') {
-                    CloseDelimiter::Brace
-                } else {
-                    CloseDelimiter::None
-                }
-            }
-            BlockDelimStyle::Keywords => {
-                if t == "fi" || t == "done" || t == "esac" {
-                    CloseDelimiter::Keyword
-                } else if t.ends_with('}') {
-                    CloseDelimiter::Brace
-                } else if t.ends_with(')') {
-                    CloseDelimiter::Paren
-                } else if t.ends_with(']') {
-                    CloseDelimiter::Bracket
-                } else {
-                    CloseDelimiter::None
-                }
+        let exact = self.classify_exact_close(line);
+        if exact == CloseDelimiter::Keyword {
+            return CloseDelimiter::Keyword;
+        }
+        for &(pattern, delim) in self.tail_delimiters {
+            if t.ends_with(pattern) {
+                return delim;
             }
         }
+        CloseDelimiter::None
     }
 
     /// Classifies whether a line consists solely of a closing delimiter in this
     /// language.
     pub fn classify_exact_close(&self, line: &str) -> CloseDelimiter {
         let t = line.trim();
-        match self.block_style {
-            BlockDelimStyle::Braces => {
-                if t == "};" || t == "}," {
-                    CloseDelimiter::BraceSemi
-                } else if t == "}" {
-                    CloseDelimiter::Brace
-                } else if t == ");" || t == ")," {
-                    CloseDelimiter::ParenSemi
-                } else if t == ")" {
-                    CloseDelimiter::Paren
-                } else if t == "];" || t == "]," {
-                    CloseDelimiter::BracketSemi
-                } else if t == "]" {
-                    CloseDelimiter::Bracket
-                } else {
-                    CloseDelimiter::None
-                }
-            }
-            BlockDelimStyle::IndentColon => {
-                if t == ")" {
-                    CloseDelimiter::Paren
-                } else if t == "]" {
-                    CloseDelimiter::Bracket
-                } else if t == "}" {
-                    CloseDelimiter::Brace
-                } else {
-                    CloseDelimiter::None
-                }
-            }
-            BlockDelimStyle::Keywords => {
-                if t == "fi" || t == "done" || t == "esac" {
-                    CloseDelimiter::Keyword
-                } else if t == "}" {
-                    CloseDelimiter::Brace
-                } else if t == ")" {
-                    CloseDelimiter::Paren
-                } else if t == "]" {
-                    CloseDelimiter::Bracket
-                } else {
-                    CloseDelimiter::None
-                }
+        for &(pattern, delim) in self.exact_delimiters {
+            if t == pattern {
+                return delim;
             }
         }
+        CloseDelimiter::None
     }
 
     /// Checks whether two closing tails qualify as a direct tail match in this
@@ -389,8 +349,9 @@ impl LangProfile {
         tail_a: CloseDelimiter,
         tail_b: CloseDelimiter,
         matched_chars: usize,
+        min_chars: usize,
     ) -> bool {
-        if matched_chars < 8 || tail_a == CloseDelimiter::None || tail_a != tail_b {
+        if matched_chars < min_chars || tail_a == CloseDelimiter::None || tail_a != tail_b {
             return false;
         }
         match self.block_style {
@@ -407,105 +368,6 @@ impl LangProfile {
         }
     }
 
-    /// Whether `line` begins with a method or member continuation in this
-    /// language.
-    pub fn is_method_continuation(&self, line: &str) -> bool {
-        let t = line.trim_start();
-        if t.starts_with('.') {
-            return true;
-        }
-        if (self.name == "c_family" || self.name == "c" || self.name == "cpp")
-            && t.starts_with("->")
-        {
-            return true;
-        }
-        false
-    }
-
-    /// Extracts the method name from a method continuation line in this
-    /// language.
-    pub fn method_continuation_name<'a>(&self, line: &'a str) -> Option<&'a str> {
-        let t = line.trim_start();
-        let rest = if t.starts_with('.') {
-            t.trim_start_matches('.')
-        } else if (self.name == "c_family" || self.name == "c" || self.name == "cpp")
-            && t.starts_with("->")
-        {
-            &t[2..]
-        } else {
-            return None;
-        };
-        crate::registry::first_ascii_word(rest).filter(|w| !w.is_empty())
-    }
-
-    /// Whether `line` contains a call or access to `method_name` using member
-    /// access syntax appropriate for this language.
-    pub fn contains_method_call(&self, line: &str, method_name: &str) -> bool {
-        if method_name.is_empty() {
-            return false;
-        }
-        let dot_call = |op: &str| -> bool {
-            let mut search_from = 0;
-            while let Some(idx) = line[search_from..].find(op) {
-                let abs_idx = search_from + idx + op.len();
-                if line[abs_idx..].starts_with(method_name) {
-                    let after = abs_idx + method_name.len();
-                    if after == line.len()
-                        || !line[after..]
-                            .chars()
-                            .next()
-                            .unwrap()
-                            .is_ascii_alphanumeric()
-                    {
-                        return true;
-                    }
-                }
-                search_from += idx + op.len();
-            }
-            false
-        };
-        if dot_call(".") {
-            return true;
-        }
-        if (self.name == "c_family" || self.name == "c" || self.name == "cpp") && dot_call("->") {
-            return true;
-        }
-        false
-    }
-
-    /// Checks whether two lines represent a matching method continuation in
-    /// this language, where at least one line is a continuation and the
-    /// other line accesses the same method with compatible closing
-    /// delimiter semantics.
-    pub fn is_method_continuation_match(
-        &self,
-        line_a: &str,
-        line_b: &str,
-        tail_a: CloseDelimiter,
-        tail_b: CloseDelimiter,
-        matched_chars: usize,
-    ) -> bool {
-        if matched_chars < 8 || tail_a == CloseDelimiter::None || tail_a != tail_b {
-            return false;
-        }
-        let m_a = if self.is_method_continuation(line_a) {
-            self.method_continuation_name(line_a)
-        } else {
-            None
-        };
-        let m_b = if self.is_method_continuation(line_b) {
-            self.method_continuation_name(line_b)
-        } else {
-            None
-        };
-        match (m_a, m_b) {
-            (Some(a), Some(b)) => a == b,
-            (Some(a), None) => self.contains_method_call(line_b, a),
-            (None, Some(b)) => self.contains_method_call(line_a, b),
-            (None, None) => false,
-        }
-    }
-
     /// Trims trailing syntax delimiters and whitespace from a statement or
     /// expression line (e.g. `;`, `,`, `{`, `}`, `)` in brace languages, or
     /// `:` in indent-colon languages).
@@ -516,11 +378,7 @@ impl LangProfile {
     /// Whether a character acts as a trailing syntax delimiter in this
     /// language.
     pub fn is_trailing_delimiter(&self, c: char) -> bool {
-        match self.block_style {
-            BlockDelimStyle::Braces => matches!(c, '{' | '}' | ';' | ':' | ',' | ')' | ']'),
-            BlockDelimStyle::IndentColon => matches!(c, ':' | ',' | ')' | ']'),
-            BlockDelimStyle::Keywords => matches!(c, ',' | ')' | ']' | ';' | '{' | '}'),
-        }
+        self.trailing_delimiters.contains(&c)
     }
 }
 

@@ -1292,12 +1292,18 @@ pub(crate) fn solve_cluster_with_arena(
                             true
                         } else if matched >= w.min_tail_matched_chars {
                             if let Some(p) = profile {
-                                p.is_direct_tail_match(om.close_tail, nm.close_tail, matched)
+                                p.is_direct_tail_match(
+                                    om.close_tail,
+                                    nm.close_tail,
+                                    matched,
+                                    w.min_tail_matched_chars,
+                                )
                             } else {
                                 CloseDelimiter::default_is_direct_tail_match(
                                     om.close_tail,
                                     nm.close_tail,
                                     matched,
+                                    w.min_tail_matched_chars,
                                 )
                             }
                         } else {

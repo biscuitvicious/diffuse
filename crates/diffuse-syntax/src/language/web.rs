@@ -108,5 +108,8 @@ pub fn profile() -> LangProfile {
             "export type ",
             "export enum ",
         ],
+        exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
     }
 }

@@ -25,6 +25,9 @@ pub fn toml_yaml_profile() -> LangProfile {
         decl_prefixes: &["["],
         operators: &[],
         scope_stop_prefixes: &["["],
+        exact_delimiters: BlockDelimStyle::IndentColon.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::IndentColon.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::IndentColon.default_trailing_delimiters(),
     }
 }
 
@@ -46,5 +49,8 @@ pub fn json_profile() -> LangProfile {
         decl_prefixes: &[],
         operators: &[],
         scope_stop_prefixes: &[],
+        exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
     }
 }

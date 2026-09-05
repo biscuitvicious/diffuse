@@ -31,5 +31,8 @@ pub fn profile() -> LangProfile {
         decl_prefixes: &["function "],
         operators: OPERATORS,
         scope_stop_prefixes: &[],
+        exact_delimiters: BlockDelimStyle::Keywords.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::Keywords.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::Keywords.default_trailing_delimiters(),
     }
 }
