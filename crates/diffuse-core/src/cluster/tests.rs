@@ -889,3 +889,192 @@ fn test_rewritten_comment_block_does_not_pair_across_offset_drift() {
         "completely rewritten comment block must NOT pair random lines as Mod"
     );
 }
+
+#[test]
+fn test_weights_phase1_defaults() {
+    let w = dp::Weights::default();
+    assert_eq!(w.max_indent_shift, 16);
+    assert_eq!(w.min_tail_matched_chars, 8);
+    assert!((w.min_block_line_coverage - 0.50).abs() < 1e-6);
+}
+
+#[test]
+fn test_symmetrical_block_reflow_involution() {
+    let rs = lang_profile("rs");
+    // Expand (1-to-2): statement head indentation matches (4 spaces)
+    let old_rows_expand = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "    let result = compute_transform(alpha, beta);",
+    ))];
+    let new_rows_expand = vec![
+        Row::Add(AddLine::new(
+            LineNum::new(20).unwrap(),
+            "    let result = compute_transform(",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(21).unwrap(),
+            "        alpha, beta);",
+        )),
+    ];
+    let cluster_expand = ChangeCluster {
+        preceding_ctx: vec!["fn transform() {"],
+        old_rows: old_rows_expand,
+        new_rows: new_rows_expand,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol_expand = dp::solve_cluster(&cluster_expand, rs);
+    assert!(
+        sol_expand
+            .transitions
+            .iter()
+            .any(|t| matches!(t, dp::DpOp::Expand { .. })),
+        "1-to-2 expand with matching head indentation must pair as DpOp::Expand"
+    );
+
+    // Collapse (2-to-1): exact inverse under diff reversal
+    let old_rows_collapse = vec![
+        Row::Del(DelLine::new(
+            LineNum::new(20).unwrap(),
+            "    let result = compute_transform(",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(21).unwrap(),
+            "        alpha, beta);",
+        )),
+    ];
+    let new_rows_collapse = vec![Row::Add(AddLine::new(
+        LineNum::new(10).unwrap(),
+        "    let result = compute_transform(alpha, beta);",
+    ))];
+    let cluster_collapse = ChangeCluster {
+        preceding_ctx: vec!["fn transform() {"],
+        old_rows: old_rows_collapse,
+        new_rows: new_rows_collapse,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol_collapse = dp::solve_cluster(&cluster_collapse, rs);
+    assert!(
+        sol_collapse
+            .transitions
+            .iter()
+            .any(|t| matches!(t, dp::DpOp::Collapse { .. })),
+        "2-to-1 collapse with matching head indentation must pair as DpOp::Collapse symmetrically"
+    );
+}
+
+#[test]
+fn test_block_reflow_disqualified_on_head_indent_mismatch() {
+    let rs = lang_profile("rs");
+    // 1-to-2 candidate with mismatched head indentation (0 vs 4 spaces)
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "let result = compute_transform(alpha, beta);",
+    ))];
+    let new_rows = vec![
+        Row::Add(AddLine::new(
+            LineNum::new(20).unwrap(),
+            "    let result = compute_transform(",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(21).unwrap(),
+            "        alpha, beta);",
+        )),
+    ];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn transform() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .all(|t| !matches!(t, dp::DpOp::Expand { .. } | dp::DpOp::Collapse { .. })),
+        "expand exceeding max_indent_shift must be disqualified from block pairing"
+    );
+}
+
+#[test]
+fn test_block_line_coverage_allows_unmatched_formatting_lines() {
+    let rs = lang_profile("rs");
+    // 1-to-3 expand where 2 lines match content tokens but 1 line has an
+    // unmatched parameter
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "let config = ClientConfigBuilder::new().with_timeout(30).build();",
+    ))];
+    let new_rows = vec![
+        Row::Add(AddLine::new(
+            LineNum::new(20).unwrap(),
+            "let config = ClientConfigBuilder::new()",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(21).unwrap(),
+            "    .with_debug_payload()",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(22).unwrap(),
+            "    .with_timeout(30).build();",
+        )),
+    ];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn setup() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    // 2 out of 3 lines match content (coverage 66.7% >= min_block_line_coverage
+    // 50%), so the block reflow should be accepted rather than aborted by
+    // count == 0.
+    assert!(
+        sol.transitions
+            .iter()
+            .any(|t| matches!(t, dp::DpOp::Expand { .. })),
+        "1-to-3 expand with 2/3 line coverage must pair as DpOp::Expand"
+    );
+}
+
+#[test]
+fn test_block_line_coverage_rejects_insufficient_matches() {
+    let rs = lang_profile("rs");
+    // 1-to-3 candidate where only 1 line matches content tokens (1/3 = 33% <
+    // 50% threshold)
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "let config = ClientConfigBuilder::new();",
+    ))];
+    let new_rows = vec![
+        Row::Add(AddLine::new(
+            LineNum::new(20).unwrap(),
+            "let config = ClientConfigBuilder::new();",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(21).unwrap(),
+            "    let completely_unrelated = other_call();",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(22).unwrap(),
+            "    another_statement();",
+        )),
+    ];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn setup() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .all(|t| !matches!(t, dp::DpOp::Expand { .. })),
+        "1-to-3 candidate with only 1/3 line coverage must NOT pair as DpOp::Expand"
+    );
+}

@@ -346,8 +346,8 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 );
                 // The DISK-EXACT invariant: removing the struck (del) content
                 // from the render must leave exactly the row's new-side line —
-                // A mod or add row's non-del runs concatenate to the new line (the
-                // old fragments), and this walk locks it.
+                // A mod or add row's non-del runs concatenate to the new line
+                // (the old fragments), and this walk locks it.
                 if (r.kind == RowKind::Mod || r.kind == RowKind::Add) && r.del_text.is_some() {
                     let kept: String = r
                         .runs
@@ -454,9 +454,10 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             let _ = &fence.lang;
         }
 
-        // 1. Verify reconstructed content completeness (only when present — lib_leg
-        //    populates these in-memory; bin_leg decodes from wire JSON which omits them
-        //    as of the slim format, so we skip these checks when the vecs are empty).
+        // 1. Verify reconstructed content completeness (only when present —
+        //    lib_leg populates these in-memory; bin_leg decodes from wire JSON
+        //    which omits them as of the slim format, so we skip these checks
+        //    when the vecs are empty).
         if !f.new_content.is_empty() && f.status != "deleted" && f.new_line_count > 0 {
             check!(
                 f.new_content.len() == f.new_line_count,

@@ -484,9 +484,10 @@ pub fn raw_lcs_pairs_with_lookahead(
                 continue;
             }
             // When skipping a[i] is free w.r.t. LCS length, prefer a later
-            // occurrence of b[j] in a if it belongs to a strictly longer contiguous
-            // run of matching non-ws tokens (taking into account both forward and backward
-            // contiguous context). This prevents a later occurrence with a short forward
+            // occurrence of b[j] in a if it belongs to a strictly longer
+            // contiguous run of matching non-ws tokens (taking into
+            // account both forward and backward contiguous
+            // context). This prevents a later occurrence with a short forward
             // run from breaking an established, longer ongoing contiguous
             // match.
             if !token_is_ws(a[i]) && i + 1 < n && dp[idx(i + 1, j)] == dp[idx(i, j)] {

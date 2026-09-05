@@ -1,6 +1,6 @@
 # Abstract Engine Generalization & Algorithmic Alignment
 
-- [ ] 1. [Phase 1 — Engine Parameterization & Symmetrical Block Reflow (`crates/diffuse-core/src/cluster/dp.rs`)](#1-phase-1--engine-parameterization--symmetrical-block-reflow-cratesdiffuse-coresrcclusterdprs)
+- [x] 1. [Phase 1 — Engine Parameterization & Symmetrical Block Reflow (`crates/diffuse-core/src/cluster/dp.rs`)](#1-phase-1--engine-parameterization--symmetrical-block-reflow-cratesdiffuse-coresrcclusterdprs)
 - [ ] 2. [Phase 2 — Declarative Delimiters & Language Profile Cleanliness (`crates/diffuse-syntax/`)](#2-phase-2--declarative-delimiters--language-profile-cleanliness-cratesdiffuse-syntax)
 - [ ] 3. [Phase 3 — Bounded Maximal Contiguous Token Affinity in LCS (`crates/diffuse-core/src/lcs/mod.rs`)](#3-phase-3--bounded-maximal-contiguous-token-affinity-in-lcs-cratesdiffuse-coresrclcsmodrs)
 - [ ] 4. [Phase 4 — Generalized Prefix Containment & Indentation Scoping (`crates/diffuse-core/src/cluster/dp.rs`)](#4-phase-4--generalized-prefix-containment--indentation-scoping-cratesdiffuse-coresrcclusterdprs)

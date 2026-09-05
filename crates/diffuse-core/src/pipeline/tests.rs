@@ -294,7 +294,8 @@ runner = "scripts/android-test-runner"
     let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
     let rows = &output.files[0].rows;
 
-    // 1. Assert that there is NO floating del under [env] (between lines 1 and 6)
+    // 1. Assert that there is NO floating del under [env] (between lines 1 and
+    //    6)
     for r in &rows[..6] {
         assert_ne!(
             r.kind,
@@ -303,8 +304,8 @@ runner = "scripts/android-test-runner"
         );
     }
 
-    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1 Mod
-    //    (old 10 -> new 14)
+    // 2. Assert that runner in x86_64-unknown-linux-musl is paired as 1-to-1
+    //    Mod (old 10 -> new 14)
     let musl_runner = rows.iter().find(|r| r.new_line == Some(14));
     assert!(musl_runner.is_some());
     assert_eq!(musl_runner.unwrap().kind, RowKind::Mod);
@@ -317,15 +318,15 @@ runner = "scripts/android-test-runner"
     assert_eq!(gnu_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(gnu_runner.unwrap().old_line, Some(15));
 
-    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1 Mod
-    //    (old 23 -> new 27)
+    // 4. Assert that runner in aarch64-unknown-linux-musl is paired as 1-to-1
+    //    Mod (old 23 -> new 27)
     let aarch64_musl_runner = rows.iter().find(|r| r.new_line == Some(27));
     assert!(aarch64_musl_runner.is_some());
     assert_eq!(aarch64_musl_runner.unwrap().kind, RowKind::Mod);
     assert_eq!(aarch64_musl_runner.unwrap().old_line, Some(23));
 
-    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod (old
-    //    29 -> new 33)
+    // 5. Assert that runner in aarch64-linux-android is paired as 1-to-1 Mod
+    //    (old 29 -> new 33)
     let android_runner = rows.iter().find(|r| r.new_line == Some(33));
     assert!(android_runner.is_some());
     assert_eq!(android_runner.unwrap().kind, RowKind::Mod);

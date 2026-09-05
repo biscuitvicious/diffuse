@@ -221,14 +221,15 @@ pub fn mark_moves(f: &mut DiffFile) {
             }
 
             // Block Move Cohesion Rule:
-            // In a multi-line deletion run (e.g. deleting a function), isolated matches
-            // (e.g. single-line attributes like `#[test]`, closing braces `}`, or
-            // interior method calls) are coincidental boilerplate, NOT code
-            // relocations.
+            // In a multi-line deletion run (e.g. deleting a function), isolated
+            // matches (e.g. single-line attributes like `#[test]`,
+            // closing braces `}`, or interior method calls) are
+            // coincidental boilerplate, NOT code relocations.
             //
             // A deletion run is only marked moved if:
             // - The ENTIRE deletion run moved, OR
-            // - A contiguous prefix block of >= 2 lines starting at run[0] moved.
+            // - A contiguous prefix block of >= 2 lines starting at run[0]
+            //   moved.
             // Otherwise, all lines in the deletion run remain normal deletions.
             if run.len() > 1 {
                 let moved_in_run: Vec<RowPos> = run

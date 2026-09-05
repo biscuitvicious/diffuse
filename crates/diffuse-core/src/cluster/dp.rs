@@ -86,6 +86,15 @@ pub struct Weights {
     pub indent_penalty_factor: f64,
     /// Minimum trimmed character length for 100% prefix containment bonus.
     pub min_containment_len: usize,
+    /// Maximum indentation shift (in characters) permitted for prefix
+    /// containment and block reflow before being disqualified.
+    pub max_indent_shift: usize,
+    /// Minimum character count required for direct closing delimiter tail
+    /// pairing.
+    pub min_tail_matched_chars: usize,
+    /// Minimum ratio of lines in a 1-to-K or K-to-1 block that must have
+    /// matching content.
+    pub min_block_line_coverage: f64,
 }
 
 impl Default for Weights {
@@ -101,6 +110,9 @@ impl Default for Weights {
             close_agree_bonus: 250.0,
             indent_penalty_factor: 5.0,
             min_containment_len: DEFAULT_MIN_CONTAINMENT_LEN,
+            max_indent_shift: 16,
+            min_tail_matched_chars: 8,
+            min_block_line_coverage: 0.50,
         }
     }
 }
@@ -375,6 +387,7 @@ fn block_lcs_fast_precomputed(
     block_token_chars: &[usize],
     start_row: usize,
     k: usize,
+    min_block_line_coverage: f64,
     id_ws: &[bool],
     id_alnum: &[bool],
     lcs_scratch: &mut Vec<u32>,
@@ -490,10 +503,12 @@ fn block_lcs_fast_precomputed(
     let mut most = 0usize;
     let mut most_n = 0usize;
     let mut moved_lines = 0usize;
+    let mut lines_with_matches = 0usize;
     for (li, &count) in line_matched_counts[..k].iter().enumerate() {
         if count == 0 {
             return (0, 0, 0);
         }
+        lines_with_matches += 1;
         if count > most_n {
             most_n = count;
             most = li;
@@ -501,6 +516,9 @@ fn block_lcs_fast_precomputed(
         if li > 0 && count > 0 {
             moved_lines += 1;
         }
+    }
+    if lines_with_matches < 2 || (lines_with_matches as f64 / k as f64) < min_block_line_coverage {
+        return (0, 0, 0);
     }
     (matched, moved_lines, head.unwrap_or(most))
 }
@@ -1272,14 +1290,18 @@ pub(crate) fn solve_cluster_with_arena(
                     let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
                         if indent_diff == 0.0 {
                             true
-                        } else if let Some(p) = profile {
-                            p.is_direct_tail_match(om.close_tail, nm.close_tail, matched)
+                        } else if matched >= w.min_tail_matched_chars {
+                            if let Some(p) = profile {
+                                p.is_direct_tail_match(om.close_tail, nm.close_tail, matched)
+                            } else {
+                                CloseDelimiter::default_is_direct_tail_match(
+                                    om.close_tail,
+                                    nm.close_tail,
+                                    matched,
+                                )
+                            }
                         } else {
-                            CloseDelimiter::default_is_direct_tail_match(
-                                om.close_tail,
-                                nm.close_tail,
-                                matched,
-                            )
+                            false
                         }
                     } else {
                         false
@@ -1376,6 +1398,7 @@ pub(crate) fn solve_cluster_with_arena(
                         &all_new_token_chars[pblock.token_start..pblock.token_end],
                         j,
                         k,
+                        w.min_block_line_coverage,
                         &interner.ws,
                         &interner.alnum,
                         lcs_scratch,
@@ -1415,11 +1438,13 @@ pub(crate) fn solve_cluster_with_arena(
                 }
             }
             // Collapse: old block i..i+k vs new j (k >= 2).
+            let collapse_indent_diff = (om.indent as isize - nm.indent as isize).unsigned_abs();
             if j < n
                 && has_old
                 && new_tokens[j].chars >= 8
                 && nm.is_reflow
                 && om.comment == nm.comment
+                && collapse_indent_diff <= w.max_indent_shift
             {
                 for pblock in old_valid_blocks_i.as_slice() {
                     let k = pblock.k;
@@ -1461,6 +1486,7 @@ pub(crate) fn solve_cluster_with_arena(
                         &all_old_token_chars[pblock.token_start..pblock.token_end],
                         i,
                         k,
+                        w.min_block_line_coverage,
                         &interner.ws,
                         &interner.alnum,
                         lcs_scratch,
