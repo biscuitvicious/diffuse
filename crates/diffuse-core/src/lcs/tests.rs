@@ -408,3 +408,119 @@ fn test_repeated_identifier_raw_lcs_subproblem() {
          variable binding (a[3..7]); got {a_matched:?}"
     );
 }
+
+#[test]
+fn test_lcs_preserves_intact_parentheses_over_subsequent_identical_delimiter() {
+    let old_line = "if !run.is_empty() && !moved_dels.contains(&run[0]) {";
+    let new_line = "if !run.is_empty() {";
+    let ot: Vec<&str> = tokenize_line(old_line).collect();
+    let nt: Vec<&str> = tokenize_line(new_line).collect();
+    let pairs = raw_lcs_pairs(&ot, &nt);
+    // In ot, token 7 is ')' from 'is_empty()' and token 21 is ')' from
+    // 'contains(&run[0])'. In nt, token 7 is ')' from 'is_empty()'.
+    // The LCS must pair nt[7] with ot[7], not ot[21].
+    assert_eq!(
+        pairs.get(&7),
+        Some(&7),
+        "closing paren of is_empty() must pair with intact paren, not distant delimiter"
+    );
+    let spans = word_spans(old_line, new_line);
+    assert_eq!(spans.add.len(), 0, "no added spans");
+    assert_eq!(spans.del.len(), 1, "one contiguous deletion span");
+    assert_eq!(
+        char_slice(old_line, spans.del[0].0, spans.del[0].1),
+        "&& !moved_dels.contains(&run[0]) "
+    );
+}
+
+#[test]
+fn test_lcs_preserves_contiguous_chained_method_calls() {
+    let old_line = "builder.set_timeout(10).set_retries(3).build();";
+    let new_line = "builder.set_retries(3).build();";
+    let ot: Vec<&str> = tokenize_line(old_line).collect();
+    let nt: Vec<&str> = tokenize_line(new_line).collect();
+    let pairs = raw_lcs_pairs(&ot, &nt);
+    // In ot: 0: builder, 1: ., 2: set, 3: _, 4: timeout, 5: (, 6: 10, 7: ), 8:
+    // ., 9: set, 10: _, 11: retries ... In nt: 0: builder, 1: ., 2: set, 3:
+    // _, 4: retries, 5: (, 6: 3, 7: ), 8: ., 9: build ... set_retries in
+    // old_line (tokens 9..=11) should pair with set_retries in new_line (tokens
+    // 2..=4).
+    assert_eq!(
+        pairs.get(&9),
+        Some(&2),
+        "set in set_retries pairs correctly"
+    );
+    assert_eq!(
+        pairs.get(&11),
+        Some(&4),
+        "retries in set_retries pairs correctly"
+    );
+    let spans = word_spans(old_line, new_line);
+    assert_eq!(spans.add.len(), 0, "no added spans");
+    assert_eq!(spans.del.len(), 1, "deletion must cover set_timeout(10).");
+    assert_eq!(
+        char_slice(old_line, spans.del[0].0, spans.del[0].1),
+        "set_timeout(10)."
+    );
+}
+
+#[test]
+fn test_lcs_max_tie_lookahead_bound() {
+    assert_eq!(MAX_TIE_LOOKAHEAD, 16);
+}
+
+#[test]
+fn test_contiguous_affinity_metrics() {
+    let a = ["foo", " ", "bar", "baz", "qux"];
+    let b = ["foo", " ", "bar", "baz", "qux"];
+    // Centered at index 2 ("bar"):
+    // backward: " " (ws, skipped), "foo" (1 token)
+    // forward: "bar", "baz", "qux" (3 tokens) -> total 4
+    assert_eq!(contiguous_affinity(&a, &b, 2, 2), 4);
+
+    // Test candidate_contiguous_affinity:
+    // With whitespace token in backward walk
+    let a2 = ["ctx", "committed", "target", " ", "cand", "suffix"];
+    let b2 = ["other", "target", " ", "cand", "suffix"];
+    // committed_i = 1 ("committed"), last_committed_j = 0 ("other")
+    // k = 4 ("cand"), j = 3 ("cand")
+    // backward walk:
+    // ki=4, bj=3: a2[3]=" ", b2[2]=" " -> matches, is_ws -> backward not
+    // incremented ki=3, bj=2: a2[2]="target", b2[1]="target" -> matches,
+    // !is_ws -> backward=1 ki=2, bj=1: ki-1=1 <= committed_i (1) -> stops!
+    // forward walk: "cand", "suffix" -> 2 tokens
+    // total: 1 + 2 = 3
+    assert_eq!(candidate_contiguous_affinity(&a2, &b2, 1, 0, 4, 3), 3);
+
+    // Stopped by last_committed_j:
+    assert_eq!(candidate_contiguous_affinity(&a2, &b2, 0, 2, 4, 3), 2);
+
+    // Stopped by token mismatch:
+    let a3 = ["x", "mismatch_a", "cand"];
+    let b3 = ["x", "mismatch_b", "cand"];
+    assert_eq!(candidate_contiguous_affinity(&a3, &b3, 0, 0, 2, 2), 1);
+}
+
+#[test]
+fn test_lcs_max_tie_lookahead_clamping() {
+    assert_eq!(MAX_TIE_LOOKAHEAD, 16);
+
+    // Construct lines where a matching token repeats beyond MAX_TIE_LOOKAHEAD
+    // a has 31 tokens, with "target" at index 0 and index 25 (> 16 away).
+    let mut a_tokens = vec!["target"];
+    a_tokens.extend(["filler"; 24]);
+    a_tokens.push("target");
+    a_tokens.extend(["tail"; 5]);
+
+    let b_tokens = vec!["target", "tail", "tail", "tail", "tail", "tail"];
+    // At i=0, j=0 ("target"), the alternative at k=25 has longer forward run
+    // (tail*5), BUT k=25 is beyond lookahead_limit (0 + 1 + 16 = 17).
+    // So the lookahead limit clamps the search to < 17, and "target" at 0 is
+    // matched!
+    let pairs = raw_lcs_pairs(&a_tokens, &b_tokens);
+    assert_eq!(
+        pairs.get(&0),
+        Some(&0),
+        "bounded lookahead does not skip past MAX_TIE_LOOKAHEAD"
+    );
+}

@@ -431,6 +431,42 @@ fn contiguous_non_ws_run_backward(a: &[&str], b: &[&str], mut i: usize, mut j: u
     len
 }
 
+pub(crate) const MAX_TIE_LOOKAHEAD: usize = 16;
+
+/// Measures the contiguous non-whitespace token cluster length centered at (i,
+/// j) along the current backtrace path.
+fn contiguous_affinity(a: &[&str], b: &[&str], i: usize, j: usize) -> usize {
+    let backward = contiguous_non_ws_run_backward(a, b, i, j);
+    let forward = contiguous_non_ws_run(a, b, i, j);
+    backward + forward
+}
+
+/// Measures the contiguous non-whitespace token cluster length for a candidate
+/// alternative match at `(k, j)` where `k > i`, ensuring backward context from
+/// `k` does not overlap with tokens already committed prior to `i` or prior to
+/// `last_committed_j`.
+fn candidate_contiguous_affinity(
+    a: &[&str],
+    b: &[&str],
+    committed_i: usize,
+    last_committed_j: usize,
+    k: usize,
+    j: usize,
+) -> usize {
+    let mut backward = 0;
+    let mut ki = k;
+    let mut bj = j;
+    while ki > committed_i && bj > last_committed_j && a[ki - 1] == b[bj - 1] {
+        if !token_is_ws(a[ki - 1]) {
+            backward += 1;
+        }
+        ki -= 1;
+        bj -= 1;
+    }
+    let forward = contiguous_non_ws_run(a, b, k, j);
+    backward + forward
+}
+
 /// Core LCS backtrace over string slices.
 pub fn raw_lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
     raw_lcs_pairs_with_lookahead(a, b, None, None)
@@ -462,6 +498,7 @@ pub fn raw_lcs_pairs_with_lookahead(
     let mut pairs = FxHashMap::default();
     let mut i = 0;
     let mut j = 0;
+    let mut last_committed_j = 0;
     let mut in_add_run = false;
     while i < n && j < m {
         if a[i] == b[j] {
@@ -486,19 +523,19 @@ pub fn raw_lcs_pairs_with_lookahead(
             // When skipping a[i] is free w.r.t. LCS length, prefer a later
             // occurrence of b[j] in a if it belongs to a strictly longer
             // contiguous run of matching non-ws tokens (taking into
-            // account both forward and backward contiguous
-            // context). This prevents a later occurrence with a short forward
-            // run from breaking an established, longer ongoing contiguous
-            // match.
+            // account bounded contiguous token affinity along the current
+            // path). This prevents a later occurrence with a short
+            // forward run from breaking an established, longer
+            // ongoing contiguous match, while bounding the
+            // candidate search window to MAX_TIE_LOOKAHEAD.
             if !token_is_ws(a[i]) && i + 1 < n && dp[idx(i + 1, j)] == dp[idx(i, j)] {
-                let cur_run =
-                    contiguous_non_ws_run_backward(a, b, i, j) + contiguous_non_ws_run(a, b, i, j);
-                let has_better = (i + 1..n).any(|k| {
+                let cur_affinity = contiguous_affinity(a, b, i, j);
+                let lookahead_limit = (i + 1 + MAX_TIE_LOOKAHEAD).min(n);
+                let has_better = (i + 1..lookahead_limit).any(|k| {
                     a[k] == b[j]
                         && dp[idx(k, j)] == dp[idx(i, j)]
-                        && (contiguous_non_ws_run_backward(a, b, k, j)
-                            + contiguous_non_ws_run(a, b, k, j))
-                            > cur_run
+                        && candidate_contiguous_affinity(a, b, i, last_committed_j, k, j)
+                            > cur_affinity
                 });
                 if has_better {
                     i += 1;
@@ -506,6 +543,7 @@ pub fn raw_lcs_pairs_with_lookahead(
                 }
             }
             pairs.insert(i, j);
+            last_committed_j = j + 1;
             i += 1;
             j += 1;
             in_add_run = false;
