@@ -419,24 +419,51 @@ fn contiguous_non_ws_run(a: &[&str], b: &[&str], mut i: usize, mut j: usize) -> 
     len
 }
 
-fn contiguous_non_ws_run_backward(a: &[&str], b: &[&str], mut i: usize, mut j: usize) -> usize {
+const MAX_AFFINITY_LOOKBACK: usize = 4;
+
+fn contiguous_non_ws_run_backward(
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
+    mut i: usize,
+    mut j: usize,
+) -> usize {
     let mut len = 0;
-    while i > 0 && j > 0 && a[i - 1] == b[j - 1] {
+    while i > 0 && j > 0 && a[i - 1] == b[j - 1] && len < MAX_AFFINITY_LOOKBACK {
         if !token_is_ws(a[i - 1]) {
             len += 1;
         }
         i -= 1;
         j -= 1;
     }
+    if i == 0 && j == 0 {
+        let mut pi = prev_a.len();
+        let mut pj = prev_b.len();
+        while pi > 0 && pj > 0 && prev_a[pi - 1] == prev_b[pj - 1] && len < MAX_AFFINITY_LOOKBACK {
+            if !token_is_ws(prev_a[pi - 1]) {
+                len += 1;
+            }
+            pi -= 1;
+            pj -= 1;
+        }
+    }
     len
 }
 
-pub(crate) const MAX_TIE_LOOKAHEAD: usize = 16;
+pub(crate) const MAX_TIE_LOOKAHEAD: usize = 32;
 
 /// Measures the contiguous non-whitespace token cluster length centered at (i,
 /// j) along the current backtrace path.
-fn contiguous_affinity(a: &[&str], b: &[&str], i: usize, j: usize) -> usize {
-    let backward = contiguous_non_ws_run_backward(a, b, i, j);
+fn contiguous_affinity(
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
+    i: usize,
+    j: usize,
+) -> usize {
+    let backward = contiguous_non_ws_run_backward(a, b, prev_a, prev_b, i, j);
     let forward = contiguous_non_ws_run(a, b, i, j);
     backward + forward
 }
@@ -469,13 +496,25 @@ fn candidate_contiguous_affinity(
 
 /// Core LCS backtrace over string slices.
 pub fn raw_lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
-    raw_lcs_pairs_with_lookahead(a, b, None, None)
+    raw_lcs_pairs_with_context(a, b, &[], &[], None, None)
 }
 
 /// Core LCS backtrace with optional boundary lookahead tokens from parent line.
 pub fn raw_lcs_pairs_with_lookahead(
     a: &[&str],
     b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
+) -> FxHashMap<usize, usize> {
+    raw_lcs_pairs_with_context(a, b, &[], &[], next_a, next_b)
+}
+
+/// Core LCS backtrace with preceding and trailing boundary context.
+pub fn raw_lcs_pairs_with_context(
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
     next_a: Option<&str>,
     next_b: Option<&str>,
 ) -> FxHashMap<usize, usize> {
@@ -498,6 +537,7 @@ pub fn raw_lcs_pairs_with_lookahead(
     let mut pairs = FxHashMap::default();
     let mut i = 0;
     let mut j = 0;
+    let mut last_committed_i = 0;
     let mut last_committed_j = 0;
     let mut in_add_run = false;
     while i < n && j < m {
@@ -529,7 +569,7 @@ pub fn raw_lcs_pairs_with_lookahead(
             // ongoing contiguous match, while bounding the
             // candidate search window to MAX_TIE_LOOKAHEAD.
             if !token_is_ws(a[i]) && i + 1 < n && dp[idx(i + 1, j)] == dp[idx(i, j)] {
-                let cur_affinity = contiguous_affinity(a, b, i, j);
+                let cur_affinity = contiguous_affinity(a, b, prev_a, prev_b, i, j);
                 let lookahead_limit = (i + 1 + MAX_TIE_LOOKAHEAD).min(n);
                 let has_better = (i + 1..lookahead_limit).any(|k| {
                     a[k] == b[j]
@@ -542,7 +582,26 @@ pub fn raw_lcs_pairs_with_lookahead(
                     continue;
                 }
             }
+            // Symmetrically: when skipping b[j] is free w.r.t. LCS length,
+            // prefer a later occurrence of a[i] in b if it belongs to a
+            // strictly longer contiguous run of matching non-ws tokens.
+            if !token_is_ws(b[j]) && j + 1 < m && dp[idx(i, j + 1)] == dp[idx(i, j)] {
+                let cur_affinity = contiguous_affinity(a, b, prev_a, prev_b, i, j);
+                let lookahead_limit = (j + 1 + MAX_TIE_LOOKAHEAD).min(m);
+                let has_better = (j + 1..lookahead_limit).any(|k| {
+                    b[k] == a[i]
+                        && dp[idx(i, k)] == dp[idx(i, j)]
+                        && candidate_contiguous_affinity(b, a, j, last_committed_i, k, i)
+                            > cur_affinity
+                });
+                if has_better {
+                    j += 1;
+                    in_add_run = true;
+                    continue;
+                }
+            }
             pairs.insert(i, j);
+            last_committed_i = i + 1;
             last_committed_j = j + 1;
             i += 1;
             j += 1;
@@ -578,7 +637,7 @@ pub fn raw_lcs_pairs_with_lookahead(
 /// Combines recursive Patience unique token anchoring with run-continuation
 /// LCS.
 pub fn lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
-    lcs_pairs_recursive(a, b, None, None, None)
+    lcs_pairs_recursive(a, b, &[], &[], None, None, None)
 }
 
 /// LCS backtrace with optional syntax profile for operator anchor awareness.
@@ -587,7 +646,7 @@ pub fn lcs_pairs_with_profile(
     b: &[&str],
     profile: Option<&LangProfile>,
 ) -> FxHashMap<usize, usize> {
-    lcs_pairs_recursive(a, b, None, None, profile)
+    lcs_pairs_recursive(a, b, &[], &[], None, None, profile)
 }
 
 #[inline]
@@ -599,6 +658,8 @@ fn is_subword_token(t: &str) -> bool {
 pub fn lcs_pairs_recursive(
     a: &[&str],
     b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
     next_a: Option<&str>,
     next_b: Option<&str>,
     profile: Option<&LangProfile>,
@@ -608,7 +669,7 @@ pub fn lcs_pairs_recursive(
     }
     let anchors = unique_token_anchors(a, b, profile);
     if anchors.is_empty() {
-        return raw_lcs_pairs_with_lookahead(a, b, next_a, next_b);
+        return raw_lcs_pairs_with_context(a, b, prev_a, prev_b, next_a, next_b);
     }
     let mut pairs = FxHashMap::default();
     let mut a_prev = 0;
@@ -627,9 +688,13 @@ pub fn lcs_pairs_recursive(
         }
 
         if back_a > a_prev && back_b > b_prev {
+            let sub_prev_a = if a_prev == 0 { prev_a } else { &a[..a_prev] };
+            let sub_prev_b = if b_prev == 0 { prev_b } else { &b[..b_prev] };
             let sub_pairs = lcs_pairs_recursive(
                 &a[a_prev..back_a],
                 &b[b_prev..back_b],
+                sub_prev_a,
+                sub_prev_b,
                 Some(a[back_a]),
                 Some(b[back_b]),
                 profile,
@@ -645,7 +710,17 @@ pub fn lcs_pairs_recursive(
         b_prev = bi + 1;
     }
     if a_prev < a.len() && b_prev < b.len() {
-        let sub_pairs = lcs_pairs_recursive(&a[a_prev..], &b[b_prev..], next_a, next_b, profile);
+        let sub_prev_a = if a_prev == 0 { prev_a } else { &a[..a_prev] };
+        let sub_prev_b = if b_prev == 0 { prev_b } else { &b[..b_prev] };
+        let sub_pairs = lcs_pairs_recursive(
+            &a[a_prev..],
+            &b[b_prev..],
+            sub_prev_a,
+            sub_prev_b,
+            next_a,
+            next_b,
+            profile,
+        );
         for (si, sj) in sub_pairs {
             pairs.insert(a_prev + si, b_prev + sj);
         }
@@ -675,9 +750,11 @@ pub fn lcs_pairs_anchored(
         }
 
         if back_a > a_prev && back_b > b_prev {
-            let sub_pairs = raw_lcs_pairs_with_lookahead(
+            let sub_pairs = raw_lcs_pairs_with_context(
                 &a[a_prev..back_a],
                 &b[b_prev..back_b],
+                &a[..a_prev],
+                &b[..b_prev],
                 Some(a[back_a]),
                 Some(b[back_b]),
             );
@@ -692,7 +769,14 @@ pub fn lcs_pairs_anchored(
         b_prev = bi + 1;
     }
     if a_prev < a.len() && b_prev < b.len() {
-        let sub_pairs = raw_lcs_pairs_with_lookahead(&a[a_prev..], &b[b_prev..], None, None);
+        let sub_pairs = raw_lcs_pairs_with_context(
+            &a[a_prev..],
+            &b[b_prev..],
+            &a[..a_prev],
+            &b[..b_prev],
+            None,
+            None,
+        );
         for (si, sj) in sub_pairs {
             pairs.insert(a_prev + si, b_prev + sj);
         }

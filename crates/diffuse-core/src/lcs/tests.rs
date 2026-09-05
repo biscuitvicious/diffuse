@@ -466,7 +466,7 @@ fn test_lcs_preserves_contiguous_chained_method_calls() {
 
 #[test]
 fn test_lcs_max_tie_lookahead_bound() {
-    assert_eq!(MAX_TIE_LOOKAHEAD, 16);
+    assert_eq!(MAX_TIE_LOOKAHEAD, 32);
 }
 
 #[test]
@@ -476,7 +476,17 @@ fn test_contiguous_affinity_metrics() {
     // Centered at index 2 ("bar"):
     // backward: " " (ws, skipped), "foo" (1 token)
     // forward: "bar", "baz", "qux" (3 tokens) -> total 4
-    assert_eq!(contiguous_affinity(&a, &b, 2, 2), 4);
+    assert_eq!(contiguous_affinity(&a, &b, &[], &[], 2, 2), 4);
+
+    // Centered at index 0 with prev_a and prev_b:
+    let prev_a = ["foo", " "];
+    let prev_b = ["foo", " "];
+    let a_post = ["bar", "baz"];
+    let b_post = ["bar", "baz"];
+    assert_eq!(
+        contiguous_affinity(&a_post, &b_post, &prev_a, &prev_b, 0, 0),
+        3
+    );
 
     // Test candidate_contiguous_affinity:
     // With whitespace token in backward walk
@@ -503,24 +513,85 @@ fn test_contiguous_affinity_metrics() {
 
 #[test]
 fn test_lcs_max_tie_lookahead_clamping() {
-    assert_eq!(MAX_TIE_LOOKAHEAD, 16);
+    assert_eq!(MAX_TIE_LOOKAHEAD, 32);
 
     // Construct lines where a matching token repeats beyond MAX_TIE_LOOKAHEAD
-    // a has 31 tokens, with "target" at index 0 and index 25 (> 16 away).
+    // a has 48 tokens, with "target" at index 0 and index 41 (> 32 away).
     let mut a_tokens = vec!["target"];
-    a_tokens.extend(["filler"; 24]);
+    a_tokens.extend(["filler"; 40]);
     a_tokens.push("target");
     a_tokens.extend(["tail"; 5]);
 
     let b_tokens = vec!["target", "tail", "tail", "tail", "tail", "tail"];
-    // At i=0, j=0 ("target"), the alternative at k=25 has longer forward run
-    // (tail*5), BUT k=25 is beyond lookahead_limit (0 + 1 + 16 = 17).
-    // So the lookahead limit clamps the search to < 17, and "target" at 0 is
+    // At i=0, j=0 ("target"), the alternative at k=41 has longer forward run
+    // (tail*5), BUT k=41 is beyond lookahead_limit (0 + 1 + 32 = 33).
+    // So the lookahead limit clamps the search to < 33, and "target" at 0 is
     // matched!
     let pairs = raw_lcs_pairs(&a_tokens, &b_tokens);
     assert_eq!(
         pairs.get(&0),
         Some(&0),
         "bounded lookahead does not skip past MAX_TIE_LOOKAHEAD"
+    );
+}
+
+#[test]
+fn test_lcs_max_tie_lookahead_clamping_on_b() {
+    let a_tokens = vec!["target", "tail", "tail", "tail", "tail", "tail"];
+    let mut b_tokens = vec!["target"];
+    b_tokens.extend(["filler"; 40]);
+    b_tokens.push("target");
+    b_tokens.extend(["tail"; 5]);
+
+    // Bounded lookahead for b clamps search to < 33, so "target" at 0 matches
+    // "target" at 0.
+    let pairs = raw_lcs_pairs(&a_tokens, &b_tokens);
+    assert_eq!(
+        pairs.get(&0),
+        Some(&0),
+        "bounded lookahead on b does not skip past MAX_TIE_LOOKAHEAD"
+    );
+}
+
+#[test]
+fn test_lcs_tie_breaker_skips_in_b_for_longer_affinity() {
+    let a_tokens = vec!["target", "tail", "tail", "tail", "tail", "tail"];
+    let mut b_tokens = vec!["target"];
+    b_tokens.extend(["filler"; 5]);
+    b_tokens.push("target");
+    b_tokens.extend(["tail"; 5]);
+
+    let pairs = raw_lcs_pairs(&a_tokens, &b_tokens);
+    assert_eq!(pairs.get(&0), Some(&6));
+}
+
+#[test]
+fn test_lcs_symmetric_tie_breaker_json_runs() {
+    let old_line = r#"{"t":"line","kind":"mod","newLine":111,"oldLine":86,"text":"  run with the extension).","delText":"  and expectations).","spans":{"del":[[0,20]],"add":[[0,26]]},"runs":[{"kind":"del","text":"  and expectations)."},{"kind":"add","color":"text","text":"  run with the extension)."}]}"#;
+    let new_line = r#"{"t":"line","kind":"mod","newLine":111,"oldLine":86,"text":"  run with the extension).","delText":"  and expectations).","spans":{"del":[[0,20]],"add":[[0,26]]},"runs":[{"kind":"common","color":"text","text":"  "},{"kind":"del","text":"and expectations)."},{"kind":"add","color":"text","text":"run with the extension)."}]}"#;
+    let profile = diffuse_syntax::registry::lang_profile("json");
+    let ws = word_spans_with_profile(old_line, new_line, profile);
+
+    let r = crate::parse::Row::Mod {
+        old_line: crate::parse::DelLine {
+            num: crate::parse::LineNum::new(90).unwrap(),
+            text: old_line.to_string(),
+        },
+        new_line: crate::parse::AddLine::with_spans(
+            crate::parse::LineNum::new(90).unwrap(),
+            new_line.to_string(),
+            ws,
+        ),
+    };
+    let runs = crate::merge::merged_runs(&r);
+    // Find the run that adds the new object: it must start cleanly with
+    // {"kind":"common" rather than splitting "kind" from its value.
+    let add_run = runs
+        .iter()
+        .find(|run| matches!(run.kind, crate::merge::RunKind::Add))
+        .expect("should have an add run");
+    assert_eq!(
+        add_run.text,
+        "{\"kind\":\"common\",\"color\":\"text\",\"text\":\"  \"},"
     );
 }
