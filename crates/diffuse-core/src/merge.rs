@@ -445,8 +445,87 @@ pub fn merged_runs_from_texts<'a>(
             let del_text_span = char_slice(del_text, dspan.0, dspan.1);
             if let Some(aspan) = ev.add {
                 let add_text_span = char_slice(add_text, aspan.0, aspan.1);
+                let is_leading = dspan.0 == 0 && aspan.0 == 0;
+                if is_leading {
+                    let d_ws_len = del_text_span.len() - del_text_span.trim_start().len();
+                    let a_ws_len = add_text_span.len() - add_text_span.trim_start().len();
+                    if d_ws_len > 0 && a_ws_len > 0 {
+                        let d_ws = &del_text_span[..d_ws_len];
+                        let a_ws = &add_text_span[..a_ws_len];
+                        if d_ws.len() < a_ws.len() {
+                            if let Some(add_prefix) = a_ws.strip_suffix(d_ws) {
+                                runs.push(Run {
+                                    kind: RunKind::Add,
+                                    text: add_prefix,
+                                });
+                                runs.push(Run {
+                                    kind: RunKind::Common,
+                                    text: &a_ws[add_prefix.len()..],
+                                });
+                                if d_ws_len < del_text_span.len() {
+                                    runs.push(Run {
+                                        kind: RunKind::Del,
+                                        text: &del_text_span[d_ws_len..],
+                                    });
+                                }
+                                if a_ws_len < add_text_span.len() {
+                                    runs.push(Run {
+                                        kind: RunKind::Add,
+                                        text: &add_text_span[a_ws_len..],
+                                    });
+                                }
+                                pos = aspan.1;
+                                continue;
+                            }
+                        } else if d_ws.len() > a_ws.len() {
+                            if let Some(del_prefix) = d_ws.strip_suffix(a_ws) {
+                                runs.push(Run {
+                                    kind: RunKind::Del,
+                                    text: del_prefix,
+                                });
+                                runs.push(Run {
+                                    kind: RunKind::Common,
+                                    text: a_ws,
+                                });
+                                if d_ws_len < del_text_span.len() {
+                                    runs.push(Run {
+                                        kind: RunKind::Del,
+                                        text: &del_text_span[d_ws_len..],
+                                    });
+                                }
+                                if a_ws_len < add_text_span.len() {
+                                    runs.push(Run {
+                                        kind: RunKind::Add,
+                                        text: &add_text_span[a_ws_len..],
+                                    });
+                                }
+                                pos = aspan.1;
+                                continue;
+                            }
+                        } else if d_ws == a_ws {
+                            runs.push(Run {
+                                kind: RunKind::Common,
+                                text: a_ws,
+                            });
+                            if d_ws_len < del_text_span.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Del,
+                                    text: &del_text_span[d_ws_len..],
+                                });
+                            }
+                            if a_ws_len < add_text_span.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Add,
+                                    text: &add_text_span[a_ws_len..],
+                                });
+                            }
+                            pos = aspan.1;
+                            continue;
+                        }
+                    }
+                }
+
                 if all_ws(del_text_span) && all_ws(add_text_span) {
-                    let is_leading = dspan.0 == 0 && aspan.0 == 0;
                     if is_leading {
                         // For leading indentation, align changes to the first
                         // possible location

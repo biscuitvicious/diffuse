@@ -399,6 +399,82 @@ fn leading_indent_shift_pair_projects_exactly() {
 }
 
 #[test]
+fn test_leading_indent_shift_with_prefix_removal() {
+    let del_text = "                        } else if let Some(p) = profile {";
+    let add_text = "                            if let Some(p) = profile {";
+    let spans = word_spans_with_profile(del_text, add_text, lang_profile("rs"));
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+
+    assert_eq!(
+        project_forward(&runs),
+        add_text,
+        "strike-removed runs must reconstruct the new line"
+    );
+    assert_eq!(
+        project_reverse(&runs),
+        del_text,
+        "add-removed runs must reconstruct the old line"
+    );
+
+    assert_eq!(runs[0].kind, RunKind::Add);
+    assert_eq!(runs[0].text, "    ");
+    assert_eq!(runs[1].kind, RunKind::Common);
+    assert_eq!(runs[1].text, "                        ");
+    assert_eq!(runs[2].kind, RunKind::Del);
+    assert_eq!(runs[2].text, "} else ");
+}
+
+#[test]
+fn test_leading_indent_unindent_with_prefix_removal() {
+    let del_text = "                            } else if let Some(p) = profile {";
+    let add_text = "                        if let Some(p) = profile {";
+    let spans = word_spans_with_profile(del_text, add_text, lang_profile("rs"));
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+
+    assert_eq!(
+        project_forward(&runs),
+        add_text,
+        "strike-removed runs must reconstruct the new line"
+    );
+    assert_eq!(
+        project_reverse(&runs),
+        del_text,
+        "add-removed runs must reconstruct the old line"
+    );
+
+    assert_eq!(runs[0].kind, RunKind::Del);
+    assert_eq!(runs[0].text, "    ");
+    assert_eq!(runs[1].kind, RunKind::Common);
+    assert_eq!(runs[1].text, "                        ");
+    assert_eq!(runs[2].kind, RunKind::Del);
+    assert_eq!(runs[2].text, "} else ");
+}
+
+#[test]
+fn test_leading_indent_same_with_prefix_removal() {
+    let del_text = "                        } else if let Some(p) = profile {";
+    let add_text = "                        if let Some(p) = profile {";
+    let spans = word_spans_with_profile(del_text, add_text, lang_profile("rs"));
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+
+    assert_eq!(
+        project_forward(&runs),
+        add_text,
+        "strike-removed runs must reconstruct the new line"
+    );
+    assert_eq!(
+        project_reverse(&runs),
+        del_text,
+        "add-removed runs must reconstruct the old line"
+    );
+
+    assert_eq!(runs[0].kind, RunKind::Common);
+    assert_eq!(runs[0].text, "                        ");
+    assert_eq!(runs[1].kind, RunKind::Del);
+    assert_eq!(runs[1].text, "} else ");
+}
+
+#[test]
 fn trailing_generic_pair_projects_exactly() {
     // The `coalesce_runs` generics row (merge/mod.rs:545 in the
     // diffuse-history-mid corpus): two `>` del fragments pair with the

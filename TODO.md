@@ -28,6 +28,7 @@
 - [x] **Scrollbar(s)**: Visual scrollbar indicators for both file navigation and viewport position.
 - [x] **Untracked files support**: Detect and display untracked files in the repository (collapsed by default).
 - [ ] **Switch to Markdown mode in TUI**: Add a TUI key shortcut for switching to Markdown mode.
+- [ ] **Context gutter display for whitespace-only mod rows**: For lines with whitespace-only changes, don't display as a mod `~` row in the gutter but instead display as just context (empty gutter prefix ` `), while keeping the subline-highlighting isolating the changed whitespace and treating the row as a mod row "under the hood" (only the icon changes to reduce the cognitive load of scanning for what the change is).
 
 ## 4. Notes & Review State
 - [ ] **Selectable notes, note editing, formatting viewer & targeted deletion**: Make note callouts selectable rows so the cursor can navigate directly onto individual notes (`j`/`k`). Enables 1) editing an existing note in the note modal by pressing `m`/`Enter` when focused on that note, 2) key binding to view a note in a popup modal with its original multiline formatting preserved, and 3) disambiguated note deletion (`d`) when multiple notes exist on the same line or range.
