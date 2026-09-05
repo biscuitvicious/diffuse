@@ -65,10 +65,15 @@ fn test_incremental_file_append_and_streaming_navigation() {
 fn test_streaming_append_file_multi_hunk_with_gap() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/diffuse-2026-08/wire.json"
+        "/../../tests/golden/diffuse-2026-08/wire.jsonl"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read diffuse-2026-08/wire.json");
-    let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+    let jsonl_str = fs::read_to_string(wire_path).expect("must read diffuse-2026-08/wire.jsonl");
+    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
+    let output = PipelineOutput {
+        files,
+        branch: String::new(),
+        untracked_skipped: vec![],
+    };
 
     // Simulate streaming: start with empty AppState and append files one by one
     let mut empty_output = output.clone();

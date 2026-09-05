@@ -879,10 +879,15 @@ index 6f6222d..4aa7a1d 100644
 fn test_separator_expand_by_enter_and_click_and_merge() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.json"
+        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.jsonl"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.json");
-    let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+    let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
+    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
+    let output = PipelineOutput {
+        files,
+        branch: String::new(),
+        untracked_skipped: vec![],
+    };
 
     let mut state = AppState::new(output, "opt_1".into(), temp_notes_path()).with_expand_lines(6);
 
@@ -971,10 +976,15 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
 fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.json"
+        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.jsonl"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.json");
-    let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+    let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
+    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
+    let output = PipelineOutput {
+        files,
+        branch: String::new(),
+        untracked_skipped: vec![],
+    };
 
     let mut state = AppState::new(output, "opt_1".into(), temp_notes_path()).with_expand_lines(6);
 
@@ -2164,10 +2174,15 @@ fn test_note_modal_margins_with_scrollbar() {
 fn test_mov_target_and_source_render_in_tui() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.json"
+        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.jsonl"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.json");
-    let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+    let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
+    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
+    let output = PipelineOutput {
+        files,
+        branch: String::new(),
+        untracked_skipped: vec![],
+    };
 
     let mut state = AppState::new(output, "opt_1".into(), temp_notes_path());
 

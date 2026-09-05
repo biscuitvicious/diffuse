@@ -400,10 +400,15 @@ index 1111111..2222222 100644
 fn test_diffuse_golden_plan_md_hunk_divider() {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/diffuse-2026-08/wire.json"
+        "/../../tests/golden/diffuse-2026-08/wire.jsonl"
     ));
-    let json_str = fs::read_to_string(wire_path).expect("must read diffuse-2026-08/wire.json");
-    let output: PipelineOutput = serde_json::from_str(&json_str).unwrap();
+    let jsonl_str = fs::read_to_string(wire_path).expect("must read diffuse-2026-08/wire.jsonl");
+    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
+    let output = PipelineOutput {
+        files,
+        branch: String::new(),
+        untracked_skipped: vec![],
+    };
     let mut state = AppState::new(output, "diffuse".into(), temp_notes_path());
 
     // Find PLAN.md file index

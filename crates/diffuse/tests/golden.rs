@@ -168,10 +168,6 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     arc
 }
 
-fn expected_wire_path(name: &str) -> PathBuf {
-    golden_dir().join(name).join("wire.json")
-}
-
 fn expected_render_path(name: &str) -> PathBuf {
     golden_dir().join(name).join("render.txt")
 }
@@ -698,30 +694,34 @@ fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
             return Arc::clone(out);
         }
     }
-    let wire_path = expected_wire_path(name);
-    let bytes = if wire_path.exists() {
-        fs::read(&wire_path).unwrap_or_else(|e| {
+    let wire_jsonl_path = expected_wire_jsonl_path(name);
+    let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
+    let files = if wire_jsonl_path.exists() {
+        let file = fs::File::open(&wire_jsonl_path).unwrap_or_else(|e| {
             panic!(
-                "Failed to read expected wire JSON for {name} from {}: {e}",
-                wire_path.display()
-            )
-        })
-    } else {
-        let gz_wire_path = golden_dir().join(format!("{name}.wire.json.gz"));
-        let gz_bytes = fs::read(&gz_wire_path).unwrap_or_else(|e| {
-            panic!(
-                "Failed to read expected wire JSON for {name} from {} or {}: {e}",
-                wire_path.display(),
-                gz_wire_path.display()
+                "Failed to read expected wire JSONL for {name} from {}: {e}",
+                wire_jsonl_path.display()
             )
         });
-        let mut decoder = flate2::read::GzDecoder::new(&gz_bytes[..]);
-        let mut decoded = Vec::new();
-        std::io::Read::read_to_end(&mut decoder, &mut decoded).unwrap();
-        decoded
+        diffuse::core::wire::jsonl::decode_jsonl_reader(std::io::BufReader::new(file))
+            .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSONL: {e}"))
+    } else {
+        let gz_bytes = fs::read(&gz_wire_jsonl_path).unwrap_or_else(|e| {
+            panic!(
+                "Failed to read expected wire JSONL for {name} from {} or {}: {e}",
+                wire_jsonl_path.display(),
+                gz_wire_jsonl_path.display()
+            )
+        });
+        let decoder = flate2::read::GzDecoder::new(&gz_bytes[..]);
+        diffuse::core::wire::jsonl::decode_jsonl_reader(std::io::BufReader::new(decoder))
+            .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSONL gz: {e}"))
     };
-    let parsed: PipelineOutput = serde_json::from_slice(&bytes)
-        .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSON: {e}"));
+    let parsed = PipelineOutput {
+        files,
+        branch: String::new(),
+        untracked_skipped: vec![],
+    };
     let arc = Arc::new(parsed);
     let mut cache = EXPECTED_WIRE_CACHE.lock().unwrap();
     cache.insert(name.to_string(), Arc::clone(&arc));
@@ -754,31 +754,21 @@ fn expected_wire_jsonl_path(name: &str) -> PathBuf {
 }
 
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
-    let wire_path = expected_wire_path(name);
     let wire_jsonl_path = expected_wire_jsonl_path(name);
-    let gz_wire_path = golden_dir().join(format!("{name}.wire.json.gz"));
     let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
 
     if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
-        let actual_pretty = format!(
-            "{}\n",
-            serde_json::to_string_pretty(output).expect("serialize pretty JSON")
-        );
         let mut jsonl_buf = Vec::new();
         for file in &output.files {
             diffuse::core::wire::jsonl::emit_file_jsonl(file, &mut jsonl_buf)
                 .expect("emit_file_jsonl");
         }
 
-        if gz_wire_path.exists() || name.contains("history") {
-            write_gz(&gz_wire_path, actual_pretty.as_bytes())
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_wire_path.display()));
+        if gz_wire_jsonl_path.exists() || name.contains("history") {
             write_gz(&gz_wire_jsonl_path, &jsonl_buf).unwrap_or_else(|e| {
                 panic!("failed to write {}: {e}", gz_wire_jsonl_path.display())
             });
         } else {
-            write_file_plain(&wire_path, actual_pretty.as_bytes())
-                .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_path.display()));
             write_file_plain(&wire_jsonl_path, &jsonl_buf)
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
         }
@@ -788,8 +778,8 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     if !wire_outputs_match(output, expected.as_ref()) {
         print_wire_diff(name, output, expected.as_ref());
         panic!(
-            "[{name}] wire JSON output deviates from expected static golden ({}). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update.",
-            wire_path.display()
+            "[{name}] wire JSONL output deviates from expected static golden ({}). See wire diff above. Use GEN_GOLDEN=1 or UPDATE_WIRE=1 to update.",
+            wire_jsonl_path.display()
         );
     }
 }

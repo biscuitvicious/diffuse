@@ -39,13 +39,13 @@ the single canonical copy.
 All fixture files live under dedicated subdirectories `tests/golden/<corpus>/`.
 Snapshot corpora store plain, uncompressed files for optimal git visual
 tracking and diffing; history corpora store the frozen outputs gzipped
-(`.wire.json.gz`, `.render.txt.gz`, `.markdown.md.gz`, `.wire.jsonl.gz`).
+(`.render.txt.gz`, `.markdown.md.gz`, `.wire.jsonl.gz`).
 Each corpus contains:
 
 1. **`diff.patch`** — the frozen unified diff patch.
 2. **`meta.json`** — records the harvested `revision` (pinned to absolute full commit ids) and the list of file path to snapshot mappings (`files/*.old` and `files/*.new`).
 3. **`files/<stem>.old.<ext>` / `files/<stem>.new.<ext>`** — individual uncompressed snapshots for old and new file contents (with path slashes `/` normalized to dashes `-` and the side marker preceding the original extension for automatic syntax highlighting and editor recognition).
-4. **`wire.json`** — the frozen *wire-contract output* (token-stream JSON) of the lib leg; both legs match it byte-for-byte. Changes whenever engine behavior **deliberately** changes.
+4. **`wire.jsonl`** — the frozen *wire-contract output* (token-stream JSON Lines) of the lib leg; both legs match it byte-for-byte. Changes whenever engine behavior **deliberately** changes.
 5. **`render.txt`** — the frozen *terminal rendered* output. It locks the hand-tuned visual preferences (strike/fill minimums, anchor pairings, move-block shape, reverse-stretch).
 6. **`markdown.md`** — the frozen *GitHub-Flavored Markdown* output locking table metrics and code representation.
 
@@ -122,7 +122,7 @@ signal.
 
 ## Review discipline for golden changes — the signoff gate
 
-**Every change in golden output (`*.wire.json`, `*.render.txt`,
+**Every change in golden output (`*.wire.jsonl`, `*.render.txt`,
 `*.markdown.md`) requires BOTH agent review and human review.**
 
 ### Agent review (every time, before presenting the change)
