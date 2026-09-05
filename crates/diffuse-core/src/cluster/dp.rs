@@ -1238,6 +1238,7 @@ pub(crate) fn solve_cluster_with_arena(
                     let ot_trim = cluster.old_rows[i].text().trim();
                     let nt_trim = cluster.new_rows[j].text().trim();
 
+                    let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
                     let is_prefix_containment = {
                         let ot_strip = trim_trailing_delims(ot_trim, profile);
                         let nt_strip = trim_trailing_delims(nt_trim, profile);
@@ -1253,6 +1254,7 @@ pub(crate) fn solve_cluster_with_arena(
                             }
                         };
                         min_len >= w.min_containment_len
+                            && indent_shift <= w.max_indent_shift
                             && (om.comment == nm.comment)
                             && (is_prefix_at_boundary(ot_strip, nt_strip)
                                 || is_prefix_at_boundary(nt_strip, ot_strip))
@@ -1281,8 +1283,7 @@ pub(crate) fn solve_cluster_with_arena(
                     let proximity_new_open = nm.prox_open;
                     let open_bonus = w.epsilon * proximity_old_open * proximity_new_open;
 
-                    let indent_diff =
-                        (om.indent as isize - nm.indent as isize).unsigned_abs() as f64;
+                    let indent_diff = indent_shift as f64;
                     let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
 
                     let offset_diff = (i as isize - j as isize).unsigned_abs();

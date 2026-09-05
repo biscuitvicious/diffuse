@@ -1078,3 +1078,149 @@ fn test_block_line_coverage_rejects_insufficient_matches() {
         "1-to-3 candidate with only 1/3 line coverage must NOT pair as DpOp::Expand"
     );
 }
+
+#[test]
+fn test_prefix_containment_within_max_indent_shift_pairs_as_mod() {
+    let rs = lang_profile("rs");
+    // Indentation shift of 8 spaces (within max_indent_shift = 16)
+    // similarity_ratio = 16 / 102 = 0.156 (< 0.25 threshold), so this ONLY
+    // pairs as Mod if prefix containment succeeds.
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "    unmark_positions",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(20).unwrap(),
+        "            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn process() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .any(|t| matches!(t, dp::DpOp::Mod { .. })),
+        "statement prefix containment within max_indent_shift must pair as Mod"
+    );
+}
+
+#[test]
+fn test_prefix_containment_exceeding_max_indent_shift_is_rejected() {
+    let rs = lang_profile("rs");
+    // Indentation shift of 24 spaces (exceeds max_indent_shift = 16)
+    // similarity_ratio = 16 / 102 = 0.156 (< 0.25 threshold), so with prefix
+    // containment rejected, it must NOT pair as Mod.
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "unmark_positions",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(20).unwrap(),
+        "                        unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn process() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .all(|t| !matches!(t, dp::DpOp::Mod { .. })),
+        "statement prefix containment exceeding max_indent_shift must NOT pair as Mod"
+    );
+}
+
+#[test]
+fn test_prefix_containment_reverse_direction_pairs_as_mod() {
+    let rs = lang_profile("rs");
+    // Reverse direction: old row is the longer line, new row is the prefix
+    // receiver
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(20).unwrap(),
+        "    unmark_positions",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn process() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .any(|t| matches!(t, dp::DpOp::Mod { .. })),
+        "reverse prefix containment (longer old line -> shorter new line) must pair as Mod"
+    );
+}
+
+#[test]
+fn test_prefix_containment_non_boundary_subword_rejected() {
+    let rs = lang_profile("rs");
+    // New line has unmark_positions as a prefix substring, but not at a token
+    // boundary ('_' continues the identifier).
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "    unmark_positions",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(20).unwrap(),
+        "            unmark_positions_different_call(run.iter().copied().filter(|p| moved_dels.contains(p)));",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn process() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .all(|t| !matches!(t, dp::DpOp::Mod { .. })),
+        "prefix match not at a token boundary must NOT pair as Mod"
+    );
+}
+
+#[test]
+fn test_prefix_containment_comment_mismatch_rejected() {
+    let rs = lang_profile("rs");
+    // Old row is a comment, new row is code
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "    // unmark_positions",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(20).unwrap(),
+        "            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn process() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .all(|t| !matches!(t, dp::DpOp::Mod { .. })),
+        "comment vs code mismatch must NOT pair as Mod via prefix containment"
+    );
+}
