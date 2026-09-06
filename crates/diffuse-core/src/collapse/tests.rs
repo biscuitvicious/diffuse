@@ -1557,3 +1557,31 @@ fn wrap_tail_reflow_keeps_source_strike() {
     );
     assert_eq!(c[1].kind(), RowKind::Add);
 }
+
+#[test]
+fn test_wholesale_replacement_mod_deconstructs_to_del_and_add() {
+    let old_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"del\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"      rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
+    let new_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"add\",\"color\":\"text\",\"text\":\"    \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
+
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(220)),
+        row(RowKind::Add, new_line, Some(220), None),
+    ]);
+
+    let c = collapse_hunk_rows(&h, None, None, None);
+    assert_eq!(
+        c.len(),
+        2,
+        "must deconstruct wholesale replacement into 2 rows (del + add)"
+    );
+    assert_eq!(c[0].kind(), RowKind::Del, "first row must be Del");
+    assert_eq!(c[0].old_line(), Some(220));
+    assert_eq!(c[0].text(), old_line);
+    assert_eq!(c[1].kind(), RowKind::Add, "second row must be Add");
+    assert_eq!(c[1].new_line(), Some(220));
+    assert_eq!(c[1].text(), new_line);
+    assert!(
+        c.iter().all(|r| !matches!(r, Row::Mod { .. })),
+        "no wholesale Mod row may exist"
+    );
+}

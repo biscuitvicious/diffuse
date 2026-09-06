@@ -574,3 +574,64 @@ fn test_render_txt_line_96_reconstruction() {
     let rev = project_reverse(&runs);
     assert_eq!(rev, old);
 }
+
+#[test]
+fn test_is_wholesale_replacement_branches() {
+    use crate::{
+        merge::{is_wholesale_replacement, is_wholesale_replacement_spans},
+        parse::{CtxLine, Spans},
+    };
+
+    // Non-mod row returns false
+    let ctx = Row::Ctx(CtxLine::new(
+        LineNum::new(1).unwrap(),
+        LineNum::new(1).unwrap(),
+        "hello",
+    ));
+    assert!(!is_wholesale_replacement(&ctx));
+
+    // Both empty returns false
+    assert!(!is_wholesale_replacement_spans("", "", &Spans::default()));
+
+    // Partial mod row returns false
+    let r_partial = Row::Mod {
+        old_line: DelLine::new(LineNum::new(1).unwrap(), "hello world"),
+        new_line: AddLine::with_spans(
+            LineNum::new(1).unwrap(),
+            "hello rust",
+            Spans {
+                del: vec![(6, 11)],
+                add: vec![(6, 10)],
+            },
+        ),
+    };
+    assert!(!is_wholesale_replacement(&r_partial));
+
+    // Common indent returns false
+    let r_indent = Row::Mod {
+        old_line: DelLine::new(LineNum::new(1).unwrap(), "  foo"),
+        new_line: AddLine::with_spans(
+            LineNum::new(1).unwrap(),
+            "  bar",
+            Spans {
+                del: vec![(0, 5)],
+                add: vec![(0, 5)],
+            },
+        ),
+    };
+    assert!(!is_wholesale_replacement(&r_indent));
+
+    // Completely struck out and added returns true
+    let r_wholesale = Row::Mod {
+        old_line: DelLine::new(LineNum::new(1).unwrap(), "alpha"),
+        new_line: AddLine::with_spans(
+            LineNum::new(1).unwrap(),
+            "beta",
+            Spans {
+                del: vec![(0, 5)],
+                add: vec![(0, 4)],
+            },
+        ),
+    };
+    assert!(is_wholesale_replacement(&r_wholesale));
+}

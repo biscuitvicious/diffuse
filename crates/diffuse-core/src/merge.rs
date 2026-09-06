@@ -296,13 +296,48 @@ pub fn del_pairing(
 }
 
 /// True when a mod row renders as the whole-old + whole-new pair (the
-/// split-word garble gate).
+/// split-word garble gate or zero-common wholesale replacement).
 pub fn is_wholesale_mod(r: &Row) -> bool {
     let Some(del_text) = r.del_text() else {
         return false;
     };
     let spans = r.spans().cloned().unwrap_or_default();
     wholesale_pair(del_text, r.text(), &spans)
+}
+
+/// Returns true when a mod row consists of entirely struck-out spans followed
+/// by entirely added spans with zero common anchor or context tokens (100% of
+/// old line deleted, 100% of new line added).
+pub fn is_wholesale_replacement_spans(del_text: &str, add_text: &str, spans: &Spans) -> bool {
+    let old_len = crate::lcs::char_len(del_text);
+    let new_len = crate::lcs::char_len(add_text);
+    let del_chars: usize = spans.del.iter().map(|(s, e)| e.saturating_sub(*s)).sum();
+    let add_chars: usize = spans.add.iter().map(|(s, e)| e.saturating_sub(*s)).sum();
+    if del_chars == old_len && add_chars == new_len && (old_len > 0 || new_len > 0) {
+        let runs = merged_runs_from_texts(del_text, add_text, spans);
+        !runs
+            .iter()
+            .any(|run| matches!(run.kind, RunKind::Common | RunKind::Mov))
+    } else {
+        false
+    }
+}
+
+/// True when a Row::Mod is a wholesale replacement (completely struck out and
+/// re-added).
+pub fn is_wholesale_replacement(r: &Row) -> bool {
+    let Some(del_text) = r.del_text() else {
+        return false;
+    };
+    let computed_spans;
+    let spans = match r.spans() {
+        Some(s) if !s.is_empty() || del_text == r.text() => s,
+        _ => {
+            computed_spans = crate::lcs::word_spans(del_text, r.text());
+            &computed_spans
+        }
+    };
+    is_wholesale_replacement_spans(del_text, r.text(), spans)
 }
 
 /// A mod whose change is purely a removal: every add span is whitespace —

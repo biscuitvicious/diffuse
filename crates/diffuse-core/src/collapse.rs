@@ -58,7 +58,20 @@ pub fn collapse_hunk_rows(
     let h = &h_norm;
 
     // Pass 1: DP cluster pairing engine
-    let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
+    let mut p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
+
+    // Wholesale invariant gate: any pairing that yields a wholesale replacement
+    // (zero common context, completely struck out and re-added) is an invalid
+    // pairing state and must be un-paired back into its original del + add.
+    p1.pair_of.retain(|&add_ri, &mut del_ri| {
+        let del = &h.rows[del_ri];
+        let add = &h.rows[add_ri];
+        let del_text = del.text();
+        let add_text = add.text();
+        let spans = word_spans_with_profile(del_text, add_text, profile);
+        !crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans)
+    });
+
     let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: FxHashMap<usize, usize> =
         p1.pair_of.iter().map(|(&add, &del)| (del, add)).collect();
@@ -105,6 +118,12 @@ pub fn collapse_hunk_rows(
             Row::Sep(_) => true,
         }),
         "All collapsed rows must have valid, non-zero line coordinates"
+    );
+
+    crate::invariant!(
+        res.iter()
+            .all(|r| !matches!(r, Row::Mod { .. }) || !crate::merge::is_wholesale_replacement(r)),
+        "Collapsed rows must never contain wholesale replacement Mod rows"
     );
 
     res
