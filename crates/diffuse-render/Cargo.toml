@@ -12,3 +12,4 @@ regex = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 tracing = { workspace = true }
+yansi = { workspace = true }

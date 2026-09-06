@@ -69,3 +69,27 @@ fn test_encode_sgr_markup() {
     let decoded = decode_sgr(&encoded);
     assert_eq!(decoded, input);
 }
+
+#[test]
+fn test_yansi_color_roundtrip() {
+    assert_eq!(yansi::Color::from(AnsiColor::Reset), yansi::Color::Primary);
+    assert_eq!(AnsiColor::from(yansi::Color::Primary), AnsiColor::Reset);
+
+    assert_eq!(
+        yansi::Color::from(AnsiColor::Index(120)),
+        yansi::Color::Fixed(120)
+    );
+    assert_eq!(
+        AnsiColor::from(yansi::Color::Fixed(120)),
+        AnsiColor::Index(120)
+    );
+
+    assert_eq!(
+        yansi::Color::from(AnsiColor::Rgb(10, 20, 30)),
+        yansi::Color::Rgb(10, 20, 30)
+    );
+    assert_eq!(
+        AnsiColor::from(yansi::Color::Rgb(10, 20, 30)),
+        AnsiColor::Rgb(10, 20, 30)
+    );
+}

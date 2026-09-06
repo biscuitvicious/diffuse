@@ -5,6 +5,8 @@
 
 use std::fmt::Write;
 
+pub use yansi::{Color, Condition, Paint, Style};
+
 pub const SGR_RESET: &str = "\x1b[0m";
 pub const FG_RESET: &str = "\x1b[39m";
 pub const BG_RESET: &str = "\x1b[49m";
@@ -16,6 +18,42 @@ pub enum AnsiColor {
     Reset,
     Index(u8),
     Rgb(u8, u8, u8),
+}
+
+impl From<AnsiColor> for yansi::Color {
+    fn from(color: AnsiColor) -> Self {
+        match color {
+            AnsiColor::Reset => yansi::Color::Primary,
+            AnsiColor::Index(idx) => yansi::Color::Fixed(idx),
+            AnsiColor::Rgb(r, g, b) => yansi::Color::Rgb(r, g, b),
+        }
+    }
+}
+
+impl From<yansi::Color> for AnsiColor {
+    fn from(color: yansi::Color) -> Self {
+        match color {
+            yansi::Color::Primary => AnsiColor::Reset,
+            yansi::Color::Fixed(idx) => AnsiColor::Index(idx),
+            yansi::Color::Rgb(r, g, b) => AnsiColor::Rgb(r, g, b),
+            yansi::Color::Black => AnsiColor::Index(0),
+            yansi::Color::Red => AnsiColor::Index(1),
+            yansi::Color::Green => AnsiColor::Index(2),
+            yansi::Color::Yellow => AnsiColor::Index(3),
+            yansi::Color::Blue => AnsiColor::Index(4),
+            yansi::Color::Magenta => AnsiColor::Index(5),
+            yansi::Color::Cyan => AnsiColor::Index(6),
+            yansi::Color::White => AnsiColor::Index(7),
+            yansi::Color::BrightBlack => AnsiColor::Index(8),
+            yansi::Color::BrightRed => AnsiColor::Index(9),
+            yansi::Color::BrightGreen => AnsiColor::Index(10),
+            yansi::Color::BrightYellow => AnsiColor::Index(11),
+            yansi::Color::BrightBlue => AnsiColor::Index(12),
+            yansi::Color::BrightMagenta => AnsiColor::Index(13),
+            yansi::Color::BrightCyan => AnsiColor::Index(14),
+            yansi::Color::BrightWhite => AnsiColor::Index(15),
+        }
+    }
 }
 
 impl AnsiColor {

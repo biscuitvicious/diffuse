@@ -32,6 +32,7 @@ pulldown-cmark = { version = "0.13", default-features = false }
 tempfile = "3"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+yansi = "1.0"
 
 [profile.dev.package.regex]
 opt-level = 3
