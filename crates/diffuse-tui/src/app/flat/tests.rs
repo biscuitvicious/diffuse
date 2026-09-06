@@ -146,9 +146,8 @@ index 1111111..2222222 100644
         content_runs: Vec::new(),
         rows: Vec::new(),
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: Some(21),
     });
 
     let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
@@ -174,7 +173,7 @@ index 1111111..2222222 100644
 
     let frame = state.render_frame(100, 30);
     assert!(
-        frame.contains("▶ untracked.rs (untracked, 21B)"),
+        frame.contains("▶ untracked.rs (untracked, × ➞ 21B)"),
         "frame shows collapsed indicator"
     );
 
@@ -192,7 +191,7 @@ index 1111111..2222222 100644
 
     let frame_expanded = state.render_frame(100, 30);
     assert!(
-        frame_expanded.contains("▼ untracked.rs (untracked, 21B)"),
+        frame_expanded.contains("▼ untracked.rs (untracked, × ➞ 21B)"),
         "frame shows expanded indicator"
     );
 }
@@ -273,8 +272,8 @@ Binary files a/old.png and b/new.png differ
     assert_eq!(out.files.len(), 2);
     assert!(out.files[0].is_binary);
     assert!(out.files[1].is_binary);
-    assert_eq!(out.files[0].display_status(), "binary, 0B");
-    assert_eq!(out.files[1].display_status(), "binary, 0B");
+    assert_eq!(out.files[0].display_status(), "binary");
+    assert_eq!(out.files[1].display_status(), "binary");
 
     let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
     assert!(
@@ -285,14 +284,15 @@ Binary files a/old.png and b/new.png differ
 
     let frame = state.render_frame(100, 30);
     assert!(
-        frame.contains("▶ logo.png (binary, 0B)"),
-        "frame shows collapsed indicator and binary status"
+        frame.contains("──── logo.png (binary)"),
+        "frame shows flat header rule without expand caret"
     );
     assert!(
-        frame.contains("▶ ")
-            && frame.contains("old.png")
-            && frame.contains("new.png")
-            && frame.contains("(binary, 0B)"),
+        !frame.contains('▶') && !frame.contains('▼'),
+        "frame must not show expand or collapse carets for binary files"
+    );
+    assert!(
+        frame.contains("old.png") && frame.contains("new.png") && frame.contains("(binary)"),
         "frame shows rename with binary status"
     );
 

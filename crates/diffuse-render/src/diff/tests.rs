@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::PipelineOptions;
+use diffuse_core::{notes::Side as NoteSide, wire::OutputNote};
 
 #[test]
 fn test_output_ends_with_terminal_reset() {
@@ -84,13 +85,85 @@ fn test_render_renamed_file_diff() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: Some(0),
+        new_bytes: Some(0),
     };
     let visual = render_file_diff(&file, &DiffuseTheme::MAGIC, true);
     assert!(visual.contains("src/old.rs -> new.rs (0B)"));
 
     let raw = render_raw_file_diff(&file);
     assert!(raw.contains("src/old.rs -> new.rs (0B)"));
+}
+
+#[test]
+fn test_zero_notes_not_rendered() {
+    let diff = "diff --git a/a.txt b/a.txt\nindex 1111111..2222222 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old line one\n+new line one\n";
+    let new_content = [("a.txt".to_string(), "new line one\n".to_string())]
+        .into_iter()
+        .collect();
+    let old_content = [("a.txt".to_string(), "old line one\n".to_string())]
+        .into_iter()
+        .collect();
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+    // Styled render: zero notes must be invisible.
+    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::MAGIC, true);
+    assert!(
+        !rendered.contains("0 note"),
+        "styled render must not show '0 notes' when there are no notes"
+    );
+    // Raw render: same requirement.
+    let raw = render_raw_file_diff(&out.files[0]);
+    assert!(
+        !raw.contains("0 note"),
+        "raw render must not show '0 notes' when there are no notes"
+    );
+}
+
+#[test]
+fn test_nonzero_notes_still_rendered() {
+    let file = OutputFile {
+        path: "src/lib.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 1,
+        old_line_count: 1,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts::default(),
+        fences: vec![],
+        notes: vec![OutputNote {
+            id: "n1".to_string(),
+            file: "src/lib.rs".to_string(),
+            side: NoteSide::New,
+            start: 1,
+            end: 1,
+            text: "a note".to_string(),
+            created_at: 0,
+            runs: vec![],
+        }],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+    };
+    let rendered = render_file_diff(&file, &DiffuseTheme::MAGIC, true);
+    assert!(
+        rendered.contains("1 note"),
+        "styled render must show '1 note' when there is 1 note"
+    );
+    let raw = render_raw_file_diff(&file);
+    assert!(
+        raw.contains("1 note"),
+        "raw render must show '1 note' when there is 1 note"
+    );
 }

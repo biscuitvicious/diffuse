@@ -96,8 +96,9 @@ fn rename_prefix_visual_span(
 
     if common_len > 0 {
         let prefix = old_parts[..common_len].join("/");
-        // Prefix starts after "──── ▶ " (7 cols) and includes the trailing '/'
-        let p_start = 7;
+        // Prefix starts after "──── ▶ " (7 cols) or "──── " (5 cols for binary)
+        // and includes trailing '/'
+        let p_start = if file.is_binary { 5 } else { 7 };
         let p_len = unicode_width::UnicodeWidthStr::width(prefix.as_str()) + 1;
         Some((p_start, p_start + p_len))
     } else {
@@ -116,19 +117,18 @@ pub fn file_header_text_with_prefix(
     common_prefix: Option<&str>,
 ) -> String {
     let f_counts = &file.counts;
-    let indicator = if is_collapsed { "▶" } else { "▼" };
-    let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
+    let (indicator_prefix, collapse_tag) = if file.is_binary {
+        ("──── ".to_string(), "")
+    } else {
+        let indicator = if is_collapsed { "▶" } else { "▼" };
+        let tag = if is_collapsed { " [collapsed]" } else { "" };
+        (format!("──── {indicator} "), tag)
+    };
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
     format!(
-        "──── {} {} ({}) -{} +{} ~{}{} ",
-        indicator,
-        path_display,
-        status_str,
-        f_counts.dels,
-        f_counts.adds,
-        f_counts.mods,
-        collapse_tag
+        "{indicator_prefix}{} ({}) -{} +{} ~{}{} ",
+        path_display, status_str, f_counts.dels, f_counts.adds, f_counts.mods, collapse_tag
     )
 }
 
@@ -152,16 +152,21 @@ pub fn render_file_header_segment_themed(
     common_prefix: Option<&str>,
 ) -> String {
     let f_counts = &file.counts;
-    let indicator = if is_collapsed { "▶" } else { "▼" };
-    let collapse_tag = if is_collapsed { " [collapsed]" } else { "" };
+    let (fixed_prefix, collapse_tag) = if file.is_binary {
+        ("──── ".to_string(), "")
+    } else {
+        let indicator = if is_collapsed { "▶" } else { "▼" };
+        let tag = if is_collapsed { " [collapsed]" } else { "" };
+        (format!("──── {indicator} "), tag)
+    };
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
 
-    let fixed_prefix = format!("──── {indicator} ");
     let fixed_suffix = format!(
         " ({status_str}) -{} +{} ~{}{} ",
         f_counts.dels, f_counts.adds, f_counts.mods, collapse_tag
     );
+
     let prefix_text = format!("{fixed_prefix}{path_display}{fixed_suffix}");
     let (bg, fg) = theme
         .palette
@@ -252,6 +257,7 @@ pub fn render_file_header(
 
 /// Build the raw text of a hunk header divider with format
 /// `{rows} lines (-dels +adds ~mods)` plus the hidden-gap tail.
+/// The caller is responsible for filling any remaining width with `─` chars.
 pub fn hunk_divider_text(hi: usize, hunk: &OutputHunk, hidden_gap: usize) -> String {
     let mut dels: usize = 0;
     let mut adds: usize = 0;
@@ -269,16 +275,13 @@ pub fn hunk_divider_text(hi: usize, hunk: &OutputHunk, hidden_gap: usize) -> Str
     let summary = format!("{total} {unit} (-{dels} +{adds} ~{mods})");
 
     let gap_part = if hidden_gap > 0 {
-        let arrows = if hi == 0 {
-            "▼▼"
-        } else {
-            "▲▼ ▲▲ ▼▼"
-        };
-        format!(" · {hidden_gap} hidden {arrows}")
+        let gap_unit = if hidden_gap == 1 { "line" } else { "lines" };
+        let arrows = if hi == 0 { "▼" } else { "⬍ · ▲ · ▼" };
+        format!(" · {hidden_gap} more {gap_unit}: {arrows}")
     } else {
         String::new()
     };
-    format!("───────── H{} · {summary}{gap_part} ─────────", hi + 1)
+    format!("──── H{} · {summary}{gap_part} ────", hi + 1)
 }
 
 /// Render a specific visual segment of a hunk header divider with theme
@@ -294,14 +297,14 @@ pub fn render_hunk_divider_segment_themed(
 ) -> String {
     let txt = hunk_divider_text(hi, hunk, hidden_gap);
     let piece = slice_by_visual_width(&txt, seg_start, content_width);
-    let txt_str = truncate_pad(&piece, content_width);
+    let bar_str = truncate_pad(&piece, content_width);
     let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
     let bg_code = match bg {
         crate::render::AnsiColor::Reset => String::new(),
         color => color.bg_code(),
     };
     let fg_code = fg.fg_code();
-    format!("{bg_code}\x1b[1m{fg_code}{txt_str}\x1b[0m")
+    format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
 /// Render a specific visual segment of a hunk header divider.
@@ -325,7 +328,7 @@ pub fn render_hunk_divider_segment(
 }
 
 /// Render a hunk header divider with format `x-y → a-b`, hidden lines gap,
-/// and context expansion buttons (`▲▼ ▲▲ ▼▼` for interior hunks, or `▼▼` for H1
+/// and context expansion buttons (`⬍ · ▲ · ▼` for interior hunks, or `▼` for H1
 /// at top of file).
 pub fn render_hunk_divider(
     hi: usize,
@@ -337,10 +340,11 @@ pub fn render_hunk_divider(
     render_hunk_divider_segment(hi, hunk, hidden_gap, is_current, 0, content_width)
 }
 
-/// Build the raw text of a bottom gap divider.
+/// Build the raw text of a bottom gap divider with format
+/// `──── {hidden_gap} more {unit}: ▲ ────`.
 pub fn bottom_gap_divider_text(hidden_gap: usize) -> String {
     let unit = if hidden_gap == 1 { "line" } else { "lines" };
-    format!("───────── {hidden_gap} {unit} hidden · ▲▲ ─────────")
+    format!("──── {hidden_gap} more {unit}: ▲ ────")
 }
 
 /// Render a specific visual segment of a bottom gap divider.
@@ -352,11 +356,11 @@ pub fn render_bottom_gap_divider_segment(
 ) -> String {
     let txt = bottom_gap_divider_text(hidden_gap);
     let piece = slice_by_visual_width(&txt, seg_start, content_width);
-    let txt_str = truncate_pad(&piece, content_width);
+    let bar_str = truncate_pad(&piece, content_width);
     if is_current {
-        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
+        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{bar_str}\x1b[0m")
     } else {
-        format!("\x1b[1m\x1b[38;5;220m{txt_str}\x1b[0m")
+        format!("\x1b[1m\x1b[38;5;220m{bar_str}\x1b[0m")
     }
 }
 
@@ -405,6 +409,7 @@ pub fn file_header_line(
 }
 
 /// Render a hunk header divider as a styled Ratatui [`Line`].
+/// Render a hunk header divider as a styled Ratatui [`Line`].
 pub fn hunk_divider_line(
     hi: usize,
     hunk: &OutputHunk,
@@ -413,7 +418,7 @@ pub fn hunk_divider_line(
     content_width: usize,
 ) -> Line<'static> {
     let txt = hunk_divider_text(hi, hunk, hidden_gap);
-    let txt_str = truncate_pad(&txt, content_width);
+    let bar_str = truncate_pad(&txt, content_width);
     let style = if is_current {
         Style::default()
             .bg(Color::Indexed(237))
@@ -424,7 +429,7 @@ pub fn hunk_divider_line(
             .fg(Color::Indexed(220))
             .add_modifier(Modifier::BOLD)
     };
-    Line::from(Span::styled(txt_str, style))
+    Line::from(Span::styled(bar_str, style))
 }
 
 /// Render a bottom gap divider as a styled Ratatui [`Line`].
@@ -434,7 +439,7 @@ pub fn bottom_gap_divider_line(
     content_width: usize,
 ) -> Line<'static> {
     let txt = bottom_gap_divider_text(hidden_gap);
-    let txt_str = truncate_pad(&txt, content_width);
+    let bar_str = truncate_pad(&txt, content_width);
     let style = if is_current {
         Style::default()
             .bg(Color::Indexed(237))
@@ -445,7 +450,7 @@ pub fn bottom_gap_divider_line(
             .fg(Color::Indexed(220))
             .add_modifier(Modifier::BOLD)
     };
-    Line::from(Span::styled(txt_str, style))
+    Line::from(Span::styled(bar_str, style))
 }
 
 #[cfg(test)]

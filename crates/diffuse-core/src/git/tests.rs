@@ -182,3 +182,56 @@ fn test_load_git_blobs_native() {
     );
     assert!(!blobs.contains_key("HEAD:missing.txt"));
 }
+
+#[test]
+fn test_git_diff_additions_only_still_fetches_old_size() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    let initial_content = "# Initial Title\nLine 1\nLine 2\n";
+    std::fs::write(dir.join("doc.md"), initial_content).unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "commit1"]);
+
+    // Append a line: only additions (+1), 0 deletions (-0)
+    let appended_content = "# Initial Title\nLine 1\nLine 2\nLine 3 added\n";
+    std::fs::write(dir.join("doc.md"), appended_content).unwrap();
+
+    // 1. Test load_git_repo
+    let res = load_git_repo(dir, &[], &[], false, 4).unwrap();
+    assert!(
+        res.old_content.contains_key("doc.md"),
+        "old_content must be fetched even when diff has 0 deletions"
+    );
+    assert_eq!(res.old_content.get("doc.md").unwrap(), initial_content);
+
+    // 2. Test stream_git_repo_to_producer
+    let (producer, consumer) = crate::streaming::spawn_streaming_pipeline(
+        Some(1),
+        crate::pipeline::PipelineOptions::default(),
+    );
+    let (meta_tx, _meta_rx) = std::sync::mpsc::channel();
+    stream_git_repo_to_producer(dir, &[], &[], false, 4, producer, &meta_tx);
+    let files: Vec<_> = consumer.collect();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].old_bytes, Some(initial_content.len()));
+    assert_eq!(
+        files[0].old_content,
+        initial_content
+            .lines()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+    );
+}

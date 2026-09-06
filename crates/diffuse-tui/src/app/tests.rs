@@ -943,12 +943,12 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
 
     let frame = state.render_frame(140, 80);
     assert!(
-        frame.contains("───── H2 ·"),
+        frame.contains("──── H2 ·"),
         "H2 divider must still exist before fully merged"
     );
     assert!(
-        frame.contains("hidden ▲▼ ▲▲ ▼▼"),
-        "H2 divider must reflect hidden gap with ▲▼ ▲▲ ▼▼ buttons"
+        frame.contains("more lines: ⬍ · ▲ · ▼"),
+        "H2 divider must reflect hidden gap with ⬍ · ▲ · ▼ buttons"
     );
 
     // Keep expanding until H1 and H2 merge
@@ -1067,7 +1067,7 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     let h = &state.output.files[fi].hunks[1];
     let hidden_gap = state.hunk_leading_gap(fi, 1);
     let txt = hunk_divider_text(1, h, hidden_gap);
-    let idx = txt.find("▲▲").unwrap();
+    let idx = txt.find("▲").unwrap();
     let col = txt[..idx].chars().count();
 
     // Click on the '▲' column
@@ -1170,9 +1170,9 @@ index 111..222 100644
 
     // Verify dividers are re-rendered
     let frame = state.render_frame(140, 200);
-    assert!(frame.contains("───── H1 ·"));
-    assert!(frame.contains("───── H2 ·"));
-    assert!(frame.contains("───── H3 ·"));
+    assert!(frame.contains("──── H1 ·"));
+    assert!(frame.contains("──── H2 ·"));
+    assert!(frame.contains("──── H3 ·"));
 }
 
 #[test]
@@ -1213,7 +1213,7 @@ index 1111111..2222222 100644
 
     // Render initial frame with small viewport (14 rows)
     let frame = state.render_frame(80, 14);
-    assert!(frame.contains("6 hidden ▼▼"));
+    assert!(frame.contains("6 more lines: ▼"));
     assert!(!frame.contains("▲"));
 
     // Click down arrow on H1 divider
@@ -1228,7 +1228,7 @@ index 1111111..2222222 100644
 
     let h = &state.output.files[fi].hunks[0];
     let txt = hunk_divider_text(0, h, 6);
-    let idx = txt.find("▼▼").unwrap();
+    let idx = txt.find("▼").unwrap();
     let col = txt[..idx].chars().count();
 
     state.execute(TuiCommand::MouseClick {
@@ -1245,7 +1245,7 @@ index 1111111..2222222 100644
         "file header must remain visible on screen"
     );
     assert!(
-        frame_after.contains("───── H1 ·"),
+        frame_after.contains("──── H1 ·"),
         "H1 divider must remain visible on screen"
     );
     assert!(
@@ -1371,7 +1371,7 @@ index 1111111..2222222 100644
 
     let h = &state.output.files[fi].hunks[1];
     let txt = hunk_divider_text(1, h, gap);
-    let both_idx = txt.find("▲▼").expect("divider text must contain ▲▼");
+    let both_idx = txt.find("⬍").expect("divider text must contain ⬍");
     let col = txt[..both_idx].chars().count();
 
     state.execute(TuiCommand::MouseClick {
@@ -1507,7 +1507,7 @@ index 1111111..2222222 100644
     // Find the visual segment holding the '▲▲' button and its column
     // within that segment.
     let cw = state.last_content_width;
-    let up_char_col = txt[..txt.find("▲▲").unwrap()].chars().count();
+    let up_char_col = txt[..txt.find("▲").unwrap()].chars().count();
     let seg_off = up_char_col / cw;
     let col_in_seg = up_char_col % cw;
 
@@ -1522,7 +1522,7 @@ index 1111111..2222222 100644
     assert_eq!(
         state.hunk_leading_gap(fi, 1),
         gap_before.saturating_sub(6),
-        "tap on wrapped ▲▲ must expand the gap"
+        "tap on wrapped ▲ must expand the gap"
     );
     // Clicking a divider button must never trigger a scrollbar seek: the
     // same file's divider must remain in the viewport.
@@ -1632,7 +1632,7 @@ index 1111111..2222222 100644
     let gap_before = state.hunk_leading_gap(fi, 1);
     let hk = &state.output.files[fi].hunks[1];
     let txt = hunk_divider_text(1, hk, gap_before);
-    let idx = txt.find("▲▲").unwrap();
+    let idx = txt.find("▲").unwrap();
     let col = txt[..idx].chars().count();
     state.execute(TuiCommand::MouseClick {
         row: state.last_viewport_start + div_screen_before,
@@ -1769,7 +1769,7 @@ index 1111111..2222222 100644
 
         let hk = state.output.files[fi].hunks[1].clone();
         let txt = hunk_divider_text(1, &hk, gap);
-        let idx = txt.find("\u{25b2}\u{25b2}").unwrap();
+        let idx = txt.find("▲").unwrap();
         let up_col = txt[..idx].chars().count();
         state.execute(TuiCommand::MouseClick {
             row: state.last_viewport_start + dsy + up_col / cw,
@@ -1852,7 +1852,7 @@ fn test_render_ratatui_frame_layout() {
     for x in 0..80 {
         line1.push_str(buffer[(x, 1)].symbol());
     }
-    assert!(line1.contains("1/1 files"));
+    assert!(line1.contains("file 1/1"));
     assert!(line1.contains("hunk 1/1"));
 
     // Third line must contain the status message "Saved note"
@@ -2231,5 +2231,131 @@ fn test_mov_target_and_source_render_in_tui() {
     assert!(
         raw_frame_src.contains("135 -") && !raw_frame_src.contains("135≈-"),
         "trailing blank line 135 must be regular deletion '-', not move '≈-'"
+    );
+}
+
+#[test]
+fn test_hunk_divider_arrow_hit_rectangles_and_dot_exclusion() {
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/sample.rs
+@@ -1,3 +1,3 @@
+ 1
+ 2
+ 3
+@@ -20,3 +20,3 @@
+ 20
+ 21
+ 22
+"#;
+    let old_lines: Vec<String> = (1..=30).map(|i| i.to_string()).collect();
+    let contents: std::collections::HashMap<String, String> =
+        [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+            .into_iter()
+            .collect();
+    let output = PipelineInput::new(diff)
+        .with_new_content(contents.clone())
+        .with_old_content(contents)
+        .run();
+    let mut state =
+        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
+    state.render_frame(120, 30);
+    let fi = 0;
+    let gap = state.hunk_leading_gap(fi, 1);
+    assert_eq!(gap, 14);
+
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let h2_div_vis = starts[state.hunk_starts[1].flat];
+    let click_row = state.last_viewport_start + h2_div_vis.saturating_sub(state.scroll);
+
+    let h = &state.output.files[fi].hunks[1];
+    let txt = hunk_divider_text(1, h, gap);
+
+    // Locate arrows and separating dots
+    let both_idx = txt.find('⬍').unwrap();
+    let both_col = txt[..both_idx].chars().count();
+    let up_idx = txt.find('▲').unwrap();
+    let up_col = txt[..up_idx].chars().count();
+
+    // The dot between both and up is exactly mid-way (both_col + 2 == up_col -
+    // 2)
+    let dot_col = both_col + 2;
+    assert_eq!(dot_col, up_col - 2);
+
+    // Clicking the separating dot must NOT trigger any expansion
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: dot_col,
+        shift: false,
+    });
+    assert_eq!(
+        state.hunk_leading_gap(fi, 1),
+        gap,
+        "clicking the separating dot must not trigger expansion"
+    );
+
+    // Clicking both_col - 1 (leading space of ⬍) MUST hit both
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: both_col - 1,
+        shift: false,
+    });
+    let gap_after_both = state.hunk_leading_gap(fi, 1);
+    assert!(
+        gap_after_both < gap,
+        "clicking leading space of ⬍ must trigger both-expansion"
+    );
+}
+
+#[test]
+fn test_file_header_indicator_hit_rectangle_three_chars_wide() {
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    state.render_frame(80, 20);
+    let click_row = state.last_viewport_start;
+    let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;
+
+    // Col c - 2 (outside the 3-char hit rect) must NOT toggle collapse
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: c - 2,
+        shift: false,
+    });
+    assert!(
+        !state.collapsed_files.contains(&0),
+        "col c-2 must not trigger file collapse"
+    );
+
+    // Col c + 2 (outside the 3-char hit rect) must NOT toggle collapse
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: c + 2,
+        shift: false,
+    });
+    assert!(
+        !state.collapsed_files.contains(&0),
+        "col c+2 must not trigger file collapse"
+    );
+
+    // Col c - 1 (leading space) MUST toggle collapse
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: c - 1,
+        shift: false,
+    });
+    assert!(
+        state.collapsed_files.contains(&0),
+        "col c-1 (leading space) must trigger file collapse"
+    );
+
+    // Col c + 1 (trailing space) MUST toggle collapse back
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: c + 1,
+        shift: false,
+    });
+    assert!(
+        !state.collapsed_files.contains(&0),
+        "col c+1 (trailing space) must toggle file collapse back"
     );
 }

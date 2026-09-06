@@ -17,7 +17,6 @@ use crate::{
             visible_width,
         },
         modals::{render_finder_modal, render_help_modal},
-        render_bottom_gap_divider,
     },
 };
 
@@ -566,8 +565,8 @@ impl AppState {
         }
 
         // Adjust scroll based on cursor visual position
-        let hunk_div_offset = if div_at.contains_key(&self.row_idx) {
-            1
+        let hunk_div_offset = if let Some(&(div_fi, div_hi)) = div_at.get(&self.row_idx) {
+            self.hunk_div_seg_count(div_fi, div_hi, content_width)
         } else {
             0
         };
@@ -617,18 +616,23 @@ impl AppState {
                 let h = &self.output.files[div_fi].hunks[div_hi];
                 let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
                 let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
-                if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                    lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
-                        div_hi,
-                        h,
-                        hidden_gap,
-                        is_cur,
-                        0,
-                        content_width,
-                        &self.theme,
-                    ));
+                let div_segs = self.hunk_div_seg_count(div_fi, div_hi, content_width);
+                let text_cols = content_width.max(1);
+                for s_idx in 0..div_segs {
+                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let seg_start = s_idx * text_cols;
+                        lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
+                            div_hi,
+                            h,
+                            hidden_gap,
+                            is_cur,
+                            seg_start,
+                            content_width,
+                            &self.theme,
+                        ));
+                    }
+                    vis_i += 1;
                 }
-                vis_i += 1;
             }
 
             if item.is_file_header {
@@ -748,14 +752,24 @@ impl AppState {
                     && idx == self.last_row_of_file(item.file_idx)
                     && self.hunk_trailing_gap(item.file_idx) > 0
                 {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                        let is_cur =
-                            item.file_idx == self.current_file_idx() && idx == self.row_idx;
-                        let gap = self.hunk_trailing_gap(item.file_idx);
-                        let bottom_div = render_bottom_gap_divider(gap, is_cur, content_width);
-                        lines.push(bottom_div);
+                    let gap = self.hunk_trailing_gap(item.file_idx);
+                    let bot_segs = self.bottom_gap_seg_count(item.file_idx, content_width);
+                    let is_cur = item.file_idx == self.current_file_idx() && idx == self.row_idx;
+                    let text_cols = content_width.max(1);
+                    for s_idx in 0..bot_segs {
+                        if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                            let seg_start = s_idx * text_cols;
+                            let bottom_div =
+                                crate::view::diff_grid::render_bottom_gap_divider_segment(
+                                    gap,
+                                    is_cur,
+                                    seg_start,
+                                    content_width,
+                                );
+                            lines.push(bottom_div);
+                        }
+                        vis_i += 1;
                     }
-                    vis_i += 1;
                 }
             }
 

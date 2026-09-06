@@ -721,3 +721,228 @@ fn test_pipeline_options_token_product_cap_controls_subword_granularity() {
     let out_high = run_pipeline_full(diff, None, None, opts_high);
     assert_eq!(out_high.files.len(), 1);
 }
+
+#[test]
+fn test_binary_file_preserves_new_bytes_and_calculates_size() {
+    let diff = r#"diff --git a/logo.png b/logo.png
+index 0000000..abcdef1 100644
+Binary files differ
+"#;
+    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    f.new_bytes = Some(4096);
+    f.old_bytes = Some(2048);
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, None, None, None, &opts);
+    assert!(out.is_binary);
+    assert_eq!(out.new_bytes, Some(4096));
+    assert_eq!(out.old_bytes, Some(2048));
+    assert_eq!(out.new_byte_size(), Some(4096));
+    assert_eq!(out.old_byte_size(), Some(2048));
+    assert_eq!(out.display_size(), "2kB ➞ 4kB");
+}
+
+#[test]
+fn test_binary_file_falls_back_to_fs_metadata_for_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let file_path = dir.path().join("image.bin");
+    std::fs::write(&file_path, vec![0u8; 8192]).unwrap();
+
+    let diff = "diff --git a/image.bin b/image.bin\nBinary files differ\n";
+    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let opts = PipelineOptions::default().with_repo(Some(dir.path().to_str().unwrap().to_string()));
+    let out = process_single_diff_file(f, None, None, None, &opts);
+    assert!(out.is_binary);
+    assert_eq!(out.new_bytes, Some(8192));
+    assert_eq!(out.new_byte_size(), Some(8192));
+    assert_eq!(out.display_size(), "? ➞ 8kB");
+}
+
+#[test]
+fn test_empty_file_size_determined_as_some_zero() {
+    let diff = r#"diff --git a/.gitkeep b/.gitkeep
+new file mode 100644
+--- /dev/null
++++ b/.gitkeep
+@@ -0,0 +0,0 @@
+"#;
+    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, Some(""), None, None, &opts);
+    assert_eq!(out.new_bytes, Some(0));
+    assert_eq!(out.old_bytes, None);
+    assert_eq!(out.new_byte_size(), Some(0));
+    assert_eq!(out.old_byte_size(), None);
+    assert_eq!(out.display_size(), "× ➞ 0B");
+}
+
+#[test]
+fn test_deleted_file_has_none_new_size_and_preserves_old_size() {
+    let diff = r#"diff --git a/deleted.txt b/deleted.txt
+deleted file mode 100644
+--- a/deleted.txt
++++ /dev/null
+@@ -1,1 +0,0 @@
+-hello
+"#;
+    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, None, Some("hello\n"), None, &opts);
+    assert_eq!(out.new_bytes, None);
+    assert_eq!(out.old_bytes, Some(6));
+    assert_eq!(out.new_byte_size(), None);
+    assert_eq!(out.old_byte_size(), Some(6));
+    assert_eq!(out.display_size(), "6B ➞ ×");
+    assert_eq!(out.display_status(), "6B ➞ ×");
+}
+
+#[test]
+fn test_empty_file_modified_to_content_shows_zero_to_new_size() {
+    let diff = r#"diff --git a/.gitkeep b/.gitkeep
+--- a/.gitkeep
++++ b/.gitkeep
+@@ -0,0 +1,1 @@
++keep
+"#;
+    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    f.old_bytes = Some(0);
+    f.new_bytes = Some(5);
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, Some("keep\n"), Some(""), None, &opts);
+    assert_eq!(out.old_bytes, Some(0));
+    assert_eq!(out.new_bytes, Some(5));
+    assert_eq!(out.display_size(), "0B ➞ 5B");
+}
+
+#[test]
+fn test_unknown_size_does_not_show_zero_prefix() {
+    let diff = r#"diff --git a/binary.dat b/binary.dat
+Binary files differ
+"#;
+    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    f.old_bytes = None; // could not be determined
+    f.new_bytes = Some(1024);
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, None, None, None, &opts);
+    assert_eq!(out.old_bytes, None);
+    assert_eq!(out.new_bytes, Some(1024));
+    assert_eq!(out.display_size(), "? ➞ 1kB");
+}
+
+#[test]
+fn test_modified_unknown_new_size_does_not_show_old_size() {
+    let diff = r#"diff --git a/binary.dat b/binary.dat
+Binary files differ
+"#;
+    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    f.old_bytes = Some(1024);
+    f.new_bytes = None; // could not be determined
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, None, None, None, &opts);
+    assert_eq!(out.old_bytes, Some(1024));
+    assert_eq!(out.new_bytes, None);
+    assert_eq!(out.display_size(), "1kB ➞ ?");
+}
+
+#[test]
+fn test_modified_both_sizes_unknown() {
+    let diff = r#"diff --git a/binary.dat b/binary.dat
+Binary files differ
+"#;
+    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    f.old_bytes = None;
+    f.new_bytes = None;
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, None, None, None, &opts);
+    assert_eq!(out.old_bytes, None);
+    assert_eq!(out.new_bytes, None);
+    assert_eq!(out.display_size(), "");
+    assert_eq!(out.display_status(), "binary");
+}
+
+#[test]
+fn test_file_size_not_guessed_by_summing_lines() {
+    let diff = r#"diff --git a/code.rs b/code.rs
+--- a/code.rs
++++ b/code.rs
+@@ -5,2 +5,2 @@
+-old line
++new line
+"#;
+    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    let opts = PipelineOptions::default();
+    // Neither old_content nor new_content provided, and no git repo blob size:
+    let out = process_single_diff_file(f, None, None, None, &opts);
+    assert_eq!(out.old_bytes, None);
+    assert_eq!(out.display_size(), "");
+}
+
+#[test]
+fn test_added_and_deleted_both_sizes_unknown_renders_no_size() {
+    let diff_add = r#"diff --git a/new.rs b/new.rs
+new file mode 100644
+--- /dev/null
++++ b/new.rs
+@@ -0,0 +1,1 @@
++hello
+"#;
+    let f_add = crate::parse::parse_diff(diff_add)
+        .into_iter()
+        .next()
+        .unwrap();
+    let opts = PipelineOptions::default();
+    let out_add = process_single_diff_file(f_add, None, None, None, &opts);
+    assert_eq!(out_add.old_bytes, None);
+    assert_eq!(out_add.new_bytes, None);
+    assert_eq!(out_add.display_size(), "");
+    assert_eq!(out_add.display_status(), "added");
+
+    let diff_del = r#"diff --git a/old.rs b/old.rs
+deleted file mode 100644
+--- a/old.rs
++++ /dev/null
+@@ -1,1 +0,0 @@
+-hello
+"#;
+    let f_del = crate::parse::parse_diff(diff_del)
+        .into_iter()
+        .next()
+        .unwrap();
+    let out_del = process_single_diff_file(f_del, None, None, None, &opts);
+    assert_eq!(out_del.old_bytes, None);
+    assert_eq!(out_del.new_bytes, None);
+    assert_eq!(out_del.display_size(), "");
+    assert_eq!(out_del.display_status(), "deleted");
+}
+
+#[test]
+fn test_formatted_size_identical_renders_single_size() {
+    let diff = r#"diff --git a/file.rs b/file.rs
+--- a/file.rs
++++ b/file.rs
+@@ -1,1 +1,1 @@
+-old content
++new content!
+"#;
+    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    // 15110 bytes (14.755 kB) and 15115 bytes (14.760 kB) both format to
+    // "14.8kB"
+    f.old_bytes = Some(15110);
+    f.new_bytes = Some(15115);
+    let opts = PipelineOptions::default();
+    let out = process_single_diff_file(f, None, None, None, &opts);
+    assert_eq!(crate::wire::format_byte_size(15110), "14.8kB");
+    assert_eq!(crate::wire::format_byte_size(15115), "14.8kB");
+    assert_eq!(out.old_bytes, Some(15110));
+    assert_eq!(out.new_bytes, Some(15115));
+    // Must render single formatted size "14.8kB", never "14.8kB -> 14.8kB"
+    assert_eq!(out.display_size(), "14.8kB");
+    assert_eq!(out.display_status(), "14.8kB");
+
+    // Exact equal byte sizes also render single formatted size
+    let mut f_exact = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    f_exact.old_bytes = Some(2048);
+    f_exact.new_bytes = Some(2048);
+    let out_exact = process_single_diff_file(f_exact, None, None, None, &opts);
+    assert_eq!(out_exact.display_size(), "2kB");
+    assert_eq!(out_exact.display_status(), "2kB");
+}

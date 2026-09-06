@@ -25,9 +25,8 @@ fn sample_file(path: &str) -> OutputFile {
         content_runs: Vec::new(),
         rows: Vec::new(),
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     }
 }
 

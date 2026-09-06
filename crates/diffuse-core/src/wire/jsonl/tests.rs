@@ -85,9 +85,8 @@ fn sample_output_file() -> OutputFile {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     }
 }
 
@@ -102,6 +101,8 @@ fn test_jsonl_roundtrip_single_file() {
 
     // 1 FileHeader + 1 HunkHeader + 3 Lines + 1 FileFooter = 6 lines
     assert_eq!(lines.len(), 6);
+    // Wire file_header must not contain deprecated "bytes" field
+    assert!(!lines[0].contains("\"bytes\""));
 
     let decoded = decode_jsonl_str(text).expect("decode jsonl");
     assert_eq!(decoded.len(), 1);
@@ -217,9 +218,8 @@ fn test_common_directory_prefix_and_display() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
     let file2 = OutputFile {
         path: "crates/diffuse-core/src/apply.rs".to_string(),
@@ -239,10 +239,10 @@ fn test_common_directory_prefix_and_display() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
+
     let output = PipelineOutput {
         files: vec![file1.clone(), file2.clone()],
         branch: String::new(),
@@ -281,9 +281,8 @@ fn test_common_directory_prefix_and_display() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
     let root_output = PipelineOutput {
         files: vec![file1.clone(), root_file.clone()],
@@ -333,16 +332,15 @@ fn test_display_status_mode_change_and_renames() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 1024,
-        old_bytes: 1024,
-        new_bytes: 1024,
+        old_bytes: Some(1024),
+        new_bytes: Some(1024),
     };
-    assert_eq!(file.display_status(), "mode 100644 -> 100755, 1kB");
+    assert_eq!(file.display_status(), "mode 100644 ➞ 100755, 1kB");
 
     // Renamed + mode change
     file.old_path = Some("old_script.sh".to_string());
     file.status = "renamed".to_string();
-    assert_eq!(file.display_status(), "mode 100644 -> 100755, 1kB");
+    assert_eq!(file.display_status(), "mode 100644 ➞ 100755, 1kB");
 
     // Renamed only
     file.old_mode = None;
@@ -355,21 +353,45 @@ fn test_display_status_mode_change_and_renames() {
     assert_eq!(file.display_status(), "1kB");
 
     // Size changes between old and new
-    file.old_bytes = 1024;
-    file.new_bytes = 2048;
-    assert_eq!(file.display_status(), "1kB -> 2kB");
+    file.old_bytes = Some(1024);
+    file.new_bytes = Some(2048);
+    assert_eq!(file.display_status(), "1kB ➞ 2kB");
 
     // Added file
     file.status = "added".to_string();
-    file.old_bytes = 0;
-    file.new_bytes = 1024;
-    assert_eq!(file.display_status(), "added, 1kB");
+    file.old_bytes = None;
+    file.new_bytes = Some(1024);
+    assert_eq!(file.display_status(), "× ➞ 1kB");
 
     // Deleted file
     file.status = "deleted".to_string();
-    file.old_bytes = 1024;
-    file.new_bytes = 0;
-    assert_eq!(file.display_status(), "deleted, 1kB");
+    file.old_bytes = Some(1024);
+    file.new_bytes = None;
+    assert_eq!(file.display_status(), "1kB ➞ ×");
+
+    // When both old_bytes and new_bytes are None, size is omitted completely
+    file.old_bytes = None;
+    file.new_bytes = None;
+
+    file.status = "added".to_string();
+    assert_eq!(file.display_size(), "");
+    assert_eq!(file.display_status(), "added");
+
+    file.status = "deleted".to_string();
+    assert_eq!(file.display_size(), "");
+    assert_eq!(file.display_status(), "deleted");
+
+    file.status = "untracked".to_string();
+    assert_eq!(file.display_size(), "");
+    assert_eq!(file.display_status(), "untracked");
+
+    file.status = "modified".to_string();
+    assert_eq!(file.display_size(), "");
+    assert_eq!(file.display_status(), "modified");
+
+    file.is_binary = true;
+    assert_eq!(file.display_size(), "");
+    assert_eq!(file.display_status(), "binary");
 }
 
 #[test]

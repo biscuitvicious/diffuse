@@ -28,9 +28,8 @@ fn dummy_file() -> OutputFile {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     }
 }
 
@@ -83,6 +82,26 @@ fn test_file_header_has_background_stripe() {
 }
 
 #[test]
+fn test_binary_file_header_has_no_expand_caret() {
+    let mut f = dummy_file();
+    f.is_binary = true;
+    f.path = "test.png".to_string();
+    let rendered = render_file_header(&f, false, false, false, false, 80);
+    assert!(
+        !rendered.contains('▼'),
+        "binary file must not show expanded caret ▼"
+    );
+    assert!(
+        !rendered.contains('▶'),
+        "binary file must not show collapsed caret ▶"
+    );
+    assert!(
+        rendered.contains("──── test.png"),
+        "binary file header must start with flat rule without caret"
+    );
+}
+
+#[test]
 fn test_hunk_divider_is_orange() {
     let h = dummy_hunk();
     let regular = render_hunk_divider(0, &h, 8, false, 80);
@@ -125,7 +144,7 @@ fn test_hunk_divider_span_includes_context() {
     };
     // Zero gap (e.g. contiguous diff)
     let contiguous = render_hunk_divider(1, &h, 0, false, 80);
-    assert!(contiguous.contains("H2 · 0 lines (-0 +0 ~0) ─────"));
+    assert!(contiguous.contains("H2 · 0 lines (-0 +0 ~0) ────"));
     assert!(!contiguous.contains("hidden"));
 
     // With content: 2 ctx, 1 del, 4 adds, 1 mod → 8 rows
@@ -140,25 +159,90 @@ fn test_hunk_divider_span_includes_context() {
         mk(RowKind::Mod),
     ];
     let with_rows = render_hunk_divider(1, &h, 0, false, 80);
-    assert!(with_rows.contains("H2 · 8 lines (-1 +4 ~1) ─────"));
+    assert!(with_rows.contains("H2 · 8 lines (-1 +4 ~1) ────"));
 
     // Normal 8 lines hidden gap
     let expanded = render_hunk_divider(1, &h, 8, false, 80);
-    assert!(expanded.contains("H2 · 8 lines (-1 +4 ~1) · 8 hidden ▲▼ ▲▲ ▼▼"));
+    assert!(expanded.contains("H2 · 8 lines (-1 +4 ~1) · 8 more lines: ⬍ · ▲ · ▼ ────"));
 
     // Single line hidden
     let single = render_hunk_divider(1, &h, 1, false, 80);
-    assert!(single.contains("· 1 hidden ▲▼ ▲▲ ▼▼"));
+    assert!(single.contains("· 1 more line: ⬍ · ▲ · ▼ ────"));
 
     // Top gap divider (50 lines hidden at top of file, only down arrow)
     let top_gap = render_hunk_divider(0, &h, 50, false, 80);
-    assert!(top_gap.contains("· 50 hidden ▼▼"));
+    assert!(top_gap.contains("· 50 more lines: ▼ ────"));
     assert!(!top_gap.contains("▲"));
 
-    // Bottom gap divider (only up arrow)
+    // Bottom gap divider (only up arrow) — 4-dash prefix and post
     let bottom = render_bottom_gap_divider(80, false, 80);
-    assert!(bottom.contains("───── 80 lines hidden · ▲▲ ─────"));
+    assert!(bottom.contains("──── 80 more lines: ▲ ────"));
     assert!(!bottom.contains("▼"));
+}
+
+#[test]
+fn test_hunk_divider_uses_four_dash_prefix_and_postfix() {
+    let h = dummy_hunk();
+
+    // Hunk divider text must start with exactly "──── " and end with " ────".
+    let txt = hunk_divider_text(0, &h, 0);
+    assert!(
+        txt.starts_with("──── "),
+        "hunk divider must start with '──── ' (4 dashes), got: {txt:?}"
+    );
+    assert!(
+        txt.ends_with(" ────"),
+        "hunk divider must end with ' ────' (4 dashes), got: {txt:?}"
+    );
+
+    // Bottom gap divider text must also start with "──── " and end with "
+    // ────".
+    let btxt = bottom_gap_divider_text(5);
+    assert!(
+        btxt.starts_with("──── "),
+        "bottom gap divider must start with '──── ' (4 dashes), got: {btxt:?}"
+    );
+    assert!(
+        btxt.ends_with(" ────"),
+        "bottom gap divider must end with ' ────' (4 dashes), got: {btxt:?}"
+    );
+}
+
+#[test]
+fn test_hunk_divider_wraps_across_segments_when_wide() {
+    use crate::core::{parse::RowKind, wire::OutputRow};
+    let mk = |kind: RowKind| OutputRow {
+        kind,
+        mov_side: None,
+        new_line: None,
+        old_line: None,
+        text: String::new(),
+        del_text: None,
+        spans: Default::default(),
+        runs: Vec::new(),
+        wholesale: false,
+    };
+    let h = OutputHunk {
+        old_start: 1,
+        old_count: 5,
+        new_start: 1,
+        new_count: 8,
+        rows: (0..50).map(|_| mk(RowKind::Add)).collect(),
+    };
+    let txt = hunk_divider_text(1, &h, 400);
+    let txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    assert!(
+        txt_w > 30,
+        "test setup: hunk divider text must be wider than 30, got {txt_w}"
+    );
+
+    // Segment 0 contains the first 30 visual columns
+    let seg0 = render_hunk_divider_segment(1, &h, 400, false, 0, 30);
+    assert!(seg0.contains("──── H2 ·"));
+
+    // Segment 1 contains the wrapped continuation
+    let seg1 = render_hunk_divider_segment(1, &h, 400, false, 30, 30);
+    assert!(!seg1.is_empty());
 }
 
 #[test]
@@ -181,9 +265,8 @@ fn test_ratatui_diff_grid_lines() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
 
     let f_line = file_header_line(&file, false, false, false, false, 80);
@@ -199,10 +282,10 @@ fn test_ratatui_diff_grid_lines() {
     };
     let h_line = hunk_divider_line(0, &hunk, 10, true, 80);
     assert!(h_line.to_string().contains("H1"));
-    assert!(h_line.to_string().contains("10 hidden"));
+    assert!(h_line.to_string().contains("10 more lines:"));
 
     let b_line = bottom_gap_divider_line(5, false, 80);
-    assert!(b_line.to_string().contains("5 lines hidden"));
+    assert!(b_line.to_string().contains("5 more lines:"));
 }
 
 #[test]
@@ -225,9 +308,8 @@ fn test_render_file_header_segment_narrow_width() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
 
     let rendered_seg0 = render_file_header_segment(&file, false, false, false, false, 0, 50);
@@ -305,9 +387,8 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
         content_runs: vec![],
         rows: vec![],
         is_binary: false,
-        bytes: 100,
-        old_bytes: 100,
-        new_bytes: 100,
+        old_bytes: Some(100),
+        new_bytes: Some(100),
     };
 
     let theme = DiffuseTheme::from_env();
@@ -365,5 +446,21 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     assert!(
         seg1.contains("(100B)"),
         "segment 1 must contain the wrapped suffix: {seg1:?}"
+    );
+}
+
+#[test]
+fn test_file_header_text_identical_formatted_size() {
+    let mut f = dummy_file();
+    f.old_bytes = Some(15110);
+    f.new_bytes = Some(15115);
+    let banner = file_header_text(&f, false);
+    assert!(
+        banner.contains("(14.8kB)"),
+        "banner must contain '(14.8kB)', got: {banner}"
+    );
+    assert!(
+        !banner.contains('➞') && !banner.contains("->"),
+        "banner must NOT contain an arrow when formatted sizes match, got: {banner}"
     );
 }

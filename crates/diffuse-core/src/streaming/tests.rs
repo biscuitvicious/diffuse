@@ -28,9 +28,8 @@ fn test_file_sequencer_in_order_reassembly() {
         content_runs: Vec::new(),
         rows: Vec::new(),
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
 
     // Receive out of order: 2, 0, 1, 4, 3
@@ -91,10 +90,10 @@ fn test_priority_job_queue_order() {
             old_content: Vec::new(),
             no_content: false,
             is_binary: false,
-            bytes: 0,
-            old_bytes: 0,
-            new_bytes: 0,
+            old_bytes: None,
+            new_bytes: None,
         },
+
         new_content: None,
         old_content: None,
         diff_fallback: None,

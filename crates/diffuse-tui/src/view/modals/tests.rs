@@ -153,9 +153,8 @@ fn sample_finder_output() -> PipelineOutput {
             dummy_row(RowKind::Add, 2, "+ Second todo item"),
         ],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
     let file2 = OutputFile {
         path: "crates/diffuse-tui/src/app/render.rs".to_string(),
@@ -183,10 +182,10 @@ fn sample_finder_output() -> PipelineOutput {
             dummy_row(RowKind::Add, 10, "+ new render line"),
         ],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
+
     PipelineOutput {
         files: vec![file1, file2],
         branch: "main".to_string(),
@@ -368,10 +367,10 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
             ),
         ],
         is_binary: false,
-        bytes: 0,
-        old_bytes: 0,
-        new_bytes: 0,
+        old_bytes: None,
+        new_bytes: None,
     };
+
     let output = PipelineOutput {
         files: vec![file],
         branch: "main".to_string(),
@@ -451,9 +450,8 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
             content_runs: vec![],
             rows: vec![dummy_row(RowKind::Add, 1, "+ line content")],
             is_binary: false,
-            bytes: 0,
-            old_bytes: 0,
-            new_bytes: 0,
+            old_bytes: None,
+            new_bytes: None,
         })
         .collect();
 
@@ -558,9 +556,8 @@ fn test_finder_modal_proportional_height_scaling() {
                 content_runs: vec![],
                 rows: vec![],
                 is_binary: false,
-                bytes: 0,
-                old_bytes: 0,
-                new_bytes: 0,
+                old_bytes: None,
+                new_bytes: None,
             })
             .collect(),
         branch: "main".to_string(),

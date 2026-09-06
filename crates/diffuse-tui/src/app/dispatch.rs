@@ -220,44 +220,53 @@ impl AppState {
 
                     for (i, &s) in starts.iter().enumerate() {
                         if target_vis >= s && target_vis < s + counts[i] {
-                            if let Some(&(div_fi, div_hi)) = div_at.get(&i)
-                                && let Some(f) = self.output.files.get(div_fi)
-                                && let Some(hunk) = f.hunks.get(div_hi)
-                            {
-                                let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
-                                if hidden_gap > 0 {
-                                    // The divider may wrap across several
-                                    // visual
-                                    // segments on narrow screens; translate the
-                                    // click into unwrapped text columns.
-                                    let seg_off = target_vis - s;
-                                    let eff_col = seg_off * cw + col;
-                                    let txt = hunk_divider_text(div_hi, hunk, hidden_gap);
+                            let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
+                                self.hunk_div_seg_count(div_fi, div_hi, cw)
+                            } else {
+                                0
+                            };
 
-                                    let hit = |pat: &str| {
-                                        txt.find(pat).is_some_and(|idx| {
-                                            let c = txt[..idx].chars().count();
-                                            let w = pat.chars().count();
-                                            eff_col >= c && eff_col < c + w
-                                        })
-                                    };
+                            if target_vis < s + div_lines {
+                                if let Some(&(div_fi, div_hi)) = div_at.get(&i)
+                                    && let Some(f) = self.output.files.get(div_fi)
+                                    && let Some(hunk) = f.hunks.get(div_hi)
+                                {
+                                    let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
+                                    if hidden_gap > 0 {
+                                        // The divider may wrap across several
+                                        // visual
+                                        // segments on narrow screens; translate
+                                        // the
+                                        // click into unwrapped text columns.
+                                        let seg_off = target_vis - s;
+                                        let eff_col = seg_off * cw + col;
+                                        let txt = hunk_divider_text(div_hi, hunk, hidden_gap);
 
-                                    let mut handled = true;
-                                    if div_hi == 0 && hit("▼▼") {
-                                        self.expand_hunk_above(div_fi, 0);
-                                    } else if div_hi > 0 && hit("▲▼") {
-                                        self.expand_hunk_both(div_fi, div_hi - 1);
-                                    } else if div_hi > 0 && hit("▲▲") {
-                                        self.expand_hunk_below(div_fi, div_hi - 1);
-                                    } else if div_hi > 0 && hit("▼▼") {
-                                        self.expand_hunk_above(div_fi, div_hi);
-                                    } else {
-                                        handled = false;
-                                    }
-                                    if handled {
-                                        break;
+                                        let hit = |pat: &str| {
+                                            txt.find(pat).is_some_and(|idx| {
+                                                let c = txt[..idx].chars().count();
+                                                eff_col >= c.saturating_sub(1) && eff_col <= c + 1
+                                            })
+                                        };
+
+                                        let mut handled = true;
+                                        if div_hi == 0 && hit("▼") {
+                                            self.expand_hunk_above(div_fi, 0);
+                                        } else if div_hi > 0 && hit("⬍") {
+                                            self.expand_hunk_both(div_fi, div_hi - 1);
+                                        } else if div_hi > 0 && hit("▲") {
+                                            self.expand_hunk_below(div_fi, div_hi - 1);
+                                        } else if div_hi > 0 && hit("▼") {
+                                            self.expand_hunk_above(div_fi, div_hi);
+                                        } else {
+                                            handled = false;
+                                        }
+                                        if handled {
+                                            break;
+                                        }
                                     }
                                 }
+                                break;
                             }
 
                             // Clicking the collapse/expand triangle on a file
@@ -266,21 +275,60 @@ impl AppState {
                             if let Some(item) = self.flat.get(i)
                                 && item.is_file_header
                             {
-                                let seg_off = target_vis - s;
-                                let eff_col = seg_off * cw + col;
-                                let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;
-                                let hit_indicator =
-                                    eff_col >= c.saturating_sub(1) && eff_col <= c + 2;
-                                if hit_indicator {
-                                    let fi = item.file_idx;
-                                    self.execute(TuiCommand::ToggleCollapseFile(Some(fi)));
+                                let is_binary = self
+                                    .output
+                                    .files
+                                    .get(item.file_idx)
+                                    .is_some_and(|f| f.is_binary);
+                                if !is_binary {
+                                    let seg_off = target_vis - s;
+                                    let eff_col = seg_off * cw + col;
+                                    let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;
+                                    let hit_indicator =
+                                        eff_col >= c.saturating_sub(1) && eff_col <= c + 1;
+                                    if hit_indicator {
+                                        let fi = item.file_idx;
+                                        self.execute(TuiCommand::ToggleCollapseFile(Some(fi)));
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if let Some(item) = self.flat.get(i)
+                                && !self.raw_diff
+                                && i == self.last_row_of_file(item.file_idx)
+                                && self.hunk_trailing_gap(item.file_idx) > 0
+                            {
+                                let row_segs = seg_counts[i];
+                                let note_lines = self.note_callouts().get(&i).map_or(0, Vec::len);
+                                let bottom_start = s + div_lines + row_segs + note_lines;
+                                if target_vis >= bottom_start {
+                                    let seg_off = target_vis - bottom_start;
+                                    let eff_col = seg_off * cw + col;
+                                    let gap = self.hunk_trailing_gap(item.file_idx);
+                                    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
+                                    let hit = |pat: &str| {
+                                        txt.find(pat).is_some_and(|idx| {
+                                            let c = txt[..idx].chars().count();
+                                            eff_col >= c.saturating_sub(1) && eff_col <= c + 1
+                                        })
+                                    };
+                                    if hit("▲") {
+                                        let last_hi = self.output.files[item.file_idx]
+                                            .hunks
+                                            .len()
+                                            .saturating_sub(1);
+                                        self.expand_hunk_below(item.file_idx, last_hi);
+                                        break;
+                                    }
                                     break;
                                 }
                             }
 
                             let prev_row = self.row_idx;
                             self.row_idx = i;
-                            self.vis_line = (target_vis - s).min(seg_counts[i].saturating_sub(1));
+                            self.vis_line =
+                                (target_vis - (s + div_lines)).min(seg_counts[i].saturating_sub(1));
 
                             if shift {
                                 let pivot = self.sel_pivot.unwrap_or(prev_row);

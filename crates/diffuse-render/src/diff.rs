@@ -50,11 +50,15 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
     let mut out = String::with_capacity(total_rows * 128 + 256);
 
     let counts = &file.counts;
-    let note_str = format!(
-        "{} note{}",
-        file.notes.len(),
-        if file.notes.len() == 1 { "" } else { "s" }
-    );
+    let note_str = if file.notes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · {} note{}",
+            file.notes.len(),
+            if file.notes.len() == 1 { "" } else { "s" }
+        )
+    };
     let mov_str = if counts.movs > 0 {
         format!(" \x1b[38;5;117m≈{}\x1b[39m moved", counts.movs)
     } else {
@@ -74,7 +78,7 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
     let path_display = file.display_path();
 
     let bar = format!(
-        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{} · {} \x1b[0m\n",
+        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{}{} \x1b[0m\n",
         path_display,
         file.display_status(),
         add_str,
@@ -154,11 +158,15 @@ pub fn render_raw_file_diff(file: &OutputFile) -> String {
 
     // Same file header as styled mode.
     let counts = &file.counts;
-    let note_str = format!(
-        "{} note{}",
-        file.notes.len(),
-        if file.notes.len() == 1 { "" } else { "s" }
-    );
+    let note_str = if file.notes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " · {} note{}",
+            file.notes.len(),
+            if file.notes.len() == 1 { "" } else { "s" }
+        )
+    };
     let mov_str = if counts.movs > 0 {
         format!(" \x1b[38;5;117m≈{}\x1b[39m moved", counts.movs)
     } else {
@@ -177,7 +185,7 @@ pub fn render_raw_file_diff(file: &OutputFile) -> String {
     let add_str = format!("\x1b[38;5;120m+{}\x1b[39m", counts.adds);
     let path_display = file.display_path();
     let bar = format!(
-        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{} · {} \x1b[0m\n",
+        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{}{} \x1b[0m\n",
         path_display,
         file.display_status(),
         add_str,

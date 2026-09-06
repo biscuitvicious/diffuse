@@ -97,10 +97,6 @@ impl PipelineOutput {
     }
 }
 
-fn is_zero_usize(val: &usize) -> bool {
-    *val == 0
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ByteSize(pub usize);
 
@@ -139,8 +135,13 @@ pub fn format_byte_size(size: usize) -> String {
     format!("{}{}", formatted, unit)
 }
 
-/// A single file in the wire contract output, carrying its reconstructed
-/// content, hunks, pre-classified syntax runs, and attached review notes.
+pub const NON_EXISTENT_SYMBOL: &str = "×";
+pub const INCEPTION_SYMBOL: &str = NON_EXISTENT_SYMBOL;
+pub const DESTRUCTION_SYMBOL: &str = NON_EXISTENT_SYMBOL;
+pub const UNKNOWN_SYMBOL: &str = "?";
+pub const ARROW_SYMBOL: &str = "➞";
+
+/// The engine's complete, rendered output for a single changed file.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputFile {
@@ -154,12 +155,10 @@ pub struct OutputFile {
     pub status: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_binary: bool,
-    #[serde(default, skip_serializing_if = "is_zero_usize")]
-    pub bytes: usize,
-    #[serde(default, skip_serializing_if = "is_zero_usize")]
-    pub old_bytes: usize,
-    #[serde(default, skip_serializing_if = "is_zero_usize")]
-    pub new_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_bytes: Option<usize>,
     pub new_line_count: usize,
     pub old_line_count: usize,
     #[serde(default, skip_serializing)]
@@ -191,6 +190,7 @@ impl OutputFile {
         let status = match self.status.as_str() {
             "added" => "deleted",
             "deleted" => "added",
+            "untracked" => "deleted",
             s => s,
         };
         OutputFile {
@@ -204,7 +204,6 @@ impl OutputFile {
             new_mode: self.old_mode.clone(),
             status: status.to_string(),
             is_binary: self.is_binary,
-            bytes: self.bytes,
             old_bytes: self.new_bytes,
             new_bytes: self.old_bytes,
             new_line_count: self.old_line_count,
@@ -241,7 +240,6 @@ impl OutputFile {
             new_mode: self.new_mode.clone(),
             status,
             is_binary: self.is_binary,
-            bytes: self.bytes,
             old_bytes: self.old_bytes,
             new_bytes: self.new_bytes,
             new_line_count: self.new_line_count,
@@ -254,101 +252,155 @@ impl OutputFile {
         }
     }
 
-    pub fn old_byte_size(&self) -> usize {
-        if self.old_bytes > 0 {
-            self.old_bytes
-        } else if !self.old_content.is_empty() {
-            self.old_content
-                .iter()
-                .map(|s| s.len() + 1)
-                .sum::<usize>()
-                .saturating_sub(1)
-        } else {
-            0
-        }
+    #[inline]
+    pub fn old_byte_size(&self) -> Option<usize> {
+        self.old_bytes
     }
 
-    pub fn new_byte_size(&self) -> usize {
-        if self.new_bytes > 0 {
-            self.new_bytes
-        } else if !self.new_content.is_empty() {
-            self.new_content
-                .iter()
-                .map(|s| s.len() + 1)
-                .sum::<usize>()
-                .saturating_sub(1)
-        } else {
-            0
-        }
+    #[inline]
+    pub fn new_byte_size(&self) -> Option<usize> {
+        self.new_bytes
     }
 
-    pub fn byte_size(&self) -> usize {
+    #[inline]
+    pub fn byte_size(&self) -> Option<usize> {
         if self.status == "deleted" {
-            self.old_byte_size()
+            self.old_bytes
         } else {
-            self.new_byte_size()
+            self.new_bytes
         }
     }
 
-    /// Formats the file size, displaying `from_size -> to_size` if the
+    /// Formats the file size, displaying `from_size ➞ to_size` if the
     /// formatted values differ, or a single size if unchanged (or if
     /// added/deleted/untracked).
     pub fn display_size(&self) -> String {
-        let new_fmt = format_byte_size(self.new_byte_size());
-        let old_fmt = format_byte_size(self.old_byte_size());
+        if self.old_bytes.is_none() && self.new_bytes.is_none() {
+            return String::new();
+        }
+        let new_fmt = self.new_bytes.map(format_byte_size);
+        let old_fmt = self.old_bytes.map(format_byte_size);
         if self.status == "added" || self.status == "untracked" {
-            new_fmt
+            let new_str = new_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string());
+            format!("{INCEPTION_SYMBOL} {ARROW_SYMBOL} {new_str}")
         } else if self.status == "deleted" {
-            old_fmt
-        } else if old_fmt != new_fmt {
-            format!("{old_fmt} -> {new_fmt}")
+            let old_str = old_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string());
+            format!("{old_str} {ARROW_SYMBOL} {DESTRUCTION_SYMBOL}")
         } else {
-            new_fmt
+            match (old_fmt, new_fmt) {
+                (Some(o), Some(n)) if o != n => format!("{o} {ARROW_SYMBOL} {n}"),
+                (Some(_), Some(n)) => n,
+                (Some(o), None) => format!("{o} {ARROW_SYMBOL} {UNKNOWN_SYMBOL}"),
+                (None, Some(n)) => format!("{UNKNOWN_SYMBOL} {ARROW_SYMBOL} {n}"),
+                (None, None) => String::new(),
+            }
         }
     }
 
     /// Format status description for banners, markdown summary, and pretty
     /// printing, incorporating mode changes and byte size (e.g. "mode
-    /// 100644 -> 100755, 1.2kB", "1kB -> 2kB", "1.2kB", etc.).
+    /// 100644 ➞ 100755, 1.2kB", "1kB ➞ 2kB", "1.2kB", etc.).
     pub fn display_status(&self) -> String {
         let size_str = self.display_size();
         let mode_suffix = match (&self.old_mode, &self.new_mode) {
             (Some(old_m), Some(new_m)) if old_m != new_m => {
-                Some(format!("mode {old_m} -> {new_m}"))
+                Some(format!("mode {old_m} {ARROW_SYMBOL} {new_m}"))
             }
             _ => None,
         };
 
         if self.is_binary {
-            return match (self.status.as_str(), mode_suffix) {
-                ("renamed", Some(mode_str)) => format!("binary, {mode_str}, {size_str}"),
-                ("renamed", None) => format!("binary, {size_str}"),
-                ("added", Some(mode_str)) => format!("added, binary, {mode_str}, {size_str}"),
-                ("added", None) => format!("added, binary, {size_str}"),
-                ("deleted", Some(mode_str)) => format!("deleted, binary, {mode_str}, {size_str}"),
-                ("deleted", None) => format!("deleted, binary, {size_str}"),
-                (_, Some(mode_str)) => format!("binary, {mode_str}, {size_str}"),
-                (_, None) => format!("binary, {size_str}"),
-            };
+            let mut parts = Vec::new();
+            if self.status == "untracked" {
+                parts.push("untracked");
+            }
+            parts.push("binary");
+            if let Some(ref mode_str) = mode_suffix {
+                parts.push(mode_str.as_str());
+            }
+            if !size_str.is_empty() {
+                parts.push(&size_str);
+            }
+            return parts.join(", ");
         }
 
         match (self.status.as_str(), mode_suffix) {
-            ("renamed", Some(mode_str)) => format!("{mode_str}, {size_str}"),
-            ("renamed", None) => size_str,
-            ("added", Some(mode_str)) => format!("added, {mode_str}, {size_str}"),
-            ("added", None) => format!("added, {size_str}"),
-            ("deleted", Some(mode_str)) => format!("deleted, {mode_str}, {size_str}"),
-            ("deleted", None) => format!("deleted, {size_str}"),
-            ("mode changed" | "modified", Some(mode_str)) => {
-                if self.counts.adds == 0 && self.counts.dels == 0 && self.counts.mods == 0 {
-                    format!("{mode_str}, {size_str}")
+            ("renamed", Some(mode_str)) => {
+                if size_str.is_empty() {
+                    mode_str
                 } else {
-                    format!("modified, {mode_str}, {size_str}")
+                    format!("{mode_str}, {size_str}")
                 }
             }
-            ("modified", None) => size_str,
-            (s, Some(mode_str)) => format!("{s}, {mode_str}, {size_str}"),
-            (s, None) => format!("{s}, {size_str}"),
+            ("renamed", None) => {
+                if size_str.is_empty() {
+                    "renamed".to_string()
+                } else {
+                    size_str
+                }
+            }
+            ("added", Some(mode_str)) => {
+                if size_str.is_empty() {
+                    format!("added, {mode_str}")
+                } else {
+                    format!("{mode_str}, {size_str}")
+                }
+            }
+            ("added", None) => {
+                if size_str.is_empty() {
+                    "added".to_string()
+                } else {
+                    size_str
+                }
+            }
+            ("deleted", Some(mode_str)) => {
+                if size_str.is_empty() {
+                    format!("deleted, {mode_str}")
+                } else {
+                    format!("{mode_str}, {size_str}")
+                }
+            }
+            ("deleted", None) => {
+                if size_str.is_empty() {
+                    "deleted".to_string()
+                } else {
+                    size_str
+                }
+            }
+            ("mode changed" | "modified", Some(mode_str)) => {
+                let prefix =
+                    if self.counts.adds == 0 && self.counts.dels == 0 && self.counts.mods == 0 {
+                        mode_str
+                    } else {
+                        format!("modified, {mode_str}")
+                    };
+                if size_str.is_empty() {
+                    prefix
+                } else {
+                    format!("{prefix}, {size_str}")
+                }
+            }
+            ("modified", None) => {
+                if size_str.is_empty() {
+                    "modified".to_string()
+                } else {
+                    size_str
+                }
+            }
+            (s, Some(mode_str)) => {
+                if size_str.is_empty() {
+                    format!("{s}, {mode_str}")
+                } else {
+                    format!("{s}, {mode_str}, {size_str}")
+                }
+            }
+            (s, None) => {
+                if size_str.is_empty() {
+                    s.to_string()
+                } else {
+                    format!("{s}, {size_str}")
+                }
+            }
         }
     }
 

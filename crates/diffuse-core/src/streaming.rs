@@ -288,7 +288,10 @@ pub fn stream_diff_pipeline_arc(
 
     for (idx, f) in parsed.into_iter().enumerate() {
         let new_c = new_content.as_mut().and_then(|nc| nc.remove(&f.path));
-        let old_c = old_content.as_mut().and_then(|oc| oc.remove(&f.path));
+        let old_lookup = f.old_path.as_deref().unwrap_or(&f.path);
+        let old_c = old_content
+            .as_mut()
+            .and_then(|oc| oc.remove(old_lookup).or_else(|| oc.remove(&f.path)));
         producer.push(FileJob {
             idx,
             file: f,

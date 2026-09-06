@@ -362,7 +362,7 @@ fn test_hunk_divider_click_expands_and_stays_pinned() {
     let h = &state.output.files[fi].hunks[1];
     let txt = hunk_divider_text(1, h, gap_before);
     let col = txt
-        .find("▲▲")
+        .find("▲")
         .map(|i| txt[..i].chars().count())
         .unwrap_or(10);
 
@@ -415,7 +415,7 @@ fn test_expand_all_merges_and_reset_restores() {
         "reset must split back"
     );
     let frame = state.render_frame(140, 80);
-    assert!(frame.contains("───── H1 ·") || frame.contains("───── H2 ·"));
+    assert!(frame.contains("──── H1 ·") || frame.contains("──── H2 ·"));
 }
 
 // 11. Streaming append — live file ingestion
@@ -502,7 +502,7 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(screen_lines[0].contains("~1"));
 
     // Row 1: Secondary Status Bar
-    assert!(screen_lines[1].starts_with(" 1/1 files · hunk 1/1"));
+    assert!(screen_lines[1].starts_with(" file 1/1 · hunk 1/1"));
 
     // Row 2: File Header Banner in Diff Viewport
     assert!(screen_lines[2].contains("▼ filesystem.rs"));
@@ -510,7 +510,7 @@ fn test_initial_screen_rendered_visual_frame() {
 
     // Row 3: Hunk divider with context
     assert!(screen_lines[3].contains("H1 · 7 lines"));
-    assert!(screen_lines[3].contains("hidden ▼▼"));
+    assert!(screen_lines[3].contains("more lines: ▼"));
 
     // Row 7..: Diff lines with line numbers and change markers
     assert!(screen_lines[7].contains("1025"));
@@ -589,7 +589,7 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     assert!(screen_lines[0].contains("mod.rs"));
 
     // Row 1: Secondary status bar with multi-file counter
-    assert!(screen_lines[1].starts_with(" 1/2 files · hunk 1/1"));
+    assert!(screen_lines[1].starts_with(" file 1/2 · hunk 1/1"));
 
     // Row 2: File header banner
     assert!(screen_lines[2].contains("▼ mod.rs"));

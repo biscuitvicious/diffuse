@@ -130,6 +130,7 @@ pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
 pub struct GitFileItem {
     pub path: String,
     pub status: String,
+    pub old_path: Option<String>,
     pub new_content: Option<String>,
     pub old_content: Option<String>,
     pub no_content: bool,
@@ -337,7 +338,7 @@ pub fn stream_git_repo_to_producer(
     let mut tree_cache: std::collections::HashMap<String, Option<gix::Tree<'_>>> =
         std::collections::HashMap::new();
 
-    let mut get_blob = |ref_str: &str, path: &str| -> Option<String> {
+    let mut get_blob_data = |ref_str: &str, path: &str| -> (Option<String>, Option<usize>) {
         if let Some(ref repo) = repo_gix {
             let tree_opt = tree_cache.entry(ref_str.to_string()).or_insert_with(|| {
                 let id = repo.rev_parse_single(ref_str).ok()?;
@@ -348,16 +349,22 @@ pub fn stream_git_repo_to_producer(
             if let Some(tree) = tree_opt.as_ref() {
                 if let Ok(Some(entry)) = tree.lookup_entry_by_path(path)
                     && let Ok(obj) = entry.object()
-                    && let Ok(text) = std::str::from_utf8(&obj.data)
                 {
-                    return Some(text.to_string());
+                    let size = obj.data.len();
+                    let text = std::str::from_utf8(&obj.data).ok().map(|s| s.to_string());
+                    return (text, Some(size));
                 }
-                return None;
+                return (None, None);
             }
         }
         let spec = format!("{ref_str}:{path}");
         let blobs = load_git_blobs_batch(repo_root, std::slice::from_ref(&spec));
-        blobs.get(&spec).cloned()
+        let text = blobs.get(&spec).cloned();
+        let size = text.as_ref().map(|t| t.len()).or_else(|| {
+            run_git(repo_root, &["cat-file", "-s", &spec])
+                .and_then(|s| s.trim().parse::<usize>().ok())
+        });
+        (text, size)
     };
 
     let mut emit_chunk = |chunk: &str, idx: &mut usize| {
@@ -365,7 +372,7 @@ pub fn stream_git_repo_to_producer(
             return;
         }
         let parsed_files = crate::parse::parse_diff(chunk);
-        for f in parsed_files {
+        for mut f in parsed_files {
             let mut new_c = None;
             let mut old_c = None;
 
@@ -373,28 +380,36 @@ pub fn stream_git_repo_to_producer(
                 if refs.worktree_new {
                     let new_abs = repo_root.join(&f.path);
                     if let Ok(c) = fs::read_to_string(&new_abs) {
+                        f.new_bytes = Some(c.len());
                         new_c = Some(c);
+                    } else if let Ok(meta) = fs::metadata(&new_abs) {
+                        f.new_bytes = Some(meta.len() as usize);
                     }
                 } else if let Some(new_ref) = &refs.new_ref {
-                    new_c = get_blob(new_ref, &f.path);
+                    let (c, size) = get_blob_data(new_ref, &f.path);
+                    new_c = c;
+                    if size.is_some() {
+                        f.new_bytes = size;
+                    }
                 }
+            } else {
+                f.new_bytes = None;
             }
 
-            let has_dels = f.hunks.iter().any(|h| {
-                h.rows
-                    .iter()
-                    .any(|r| matches!(r, crate::parse::Row::Del(_)))
-            });
             let old_lookup_path = f.old_path.as_deref().unwrap_or(&f.path);
-            let needs_old = f.status == crate::parse::FileStatus::Deleted
-                || f.status == crate::parse::FileStatus::Renamed
-                || has_dels
-                || new_c.is_none();
-            if needs_old && let Some(c) = get_blob(old_tree_ref, old_lookup_path) {
+            if f.status != crate::parse::FileStatus::Added
+                && f.status != crate::parse::FileStatus::Untracked
+            {
+                let (c, size) = get_blob_data(old_tree_ref, old_lookup_path);
                 if new_c.is_none() && f.status != crate::parse::FileStatus::Deleted {
-                    new_c = Some(c.clone());
+                    new_c = c.clone();
                 }
-                old_c = Some(c);
+                old_c = c;
+                if size.is_some() {
+                    f.old_bytes = size;
+                }
+            } else {
+                f.old_bytes = None;
             }
 
             let fallback = if old_c.is_none() && f.status != crate::parse::FileStatus::Added {
@@ -525,27 +540,6 @@ pub fn load_git_repo(
     let name_args: Vec<&str> = name_cmd.iter().map(std::string::String::as_str).collect();
     let name_status = run_git(repo_root, &name_args).unwrap_or_default();
 
-    let mut num_cmd = vec![
-        "diff".to_string(),
-        "-M".to_string(),
-        "--numstat".to_string(),
-    ];
-    num_cmd.extend(base_args.iter().cloned());
-    num_cmd.push("--".to_string());
-    num_cmd.extend(paths.iter().cloned());
-    let num_args: Vec<&str> = num_cmd.iter().map(std::string::String::as_str).collect();
-    let numstat = run_git(repo_root, &num_args).unwrap_or_default();
-
-    let mut del_of: HashMap<String, usize> = HashMap::new();
-    for l in numstat.lines() {
-        let parts: Vec<&str> = l.split('\t').collect();
-        if parts.len() == 3
-            && let Ok(dels) = parts[1].parse::<usize>()
-        {
-            del_of.insert(parts[2].to_string(), dels);
-        }
-    }
-
     let refs = resolve_refs(repo_root, base_args, cached);
     let mut files: Vec<GitFileItem> = Vec::new();
 
@@ -557,17 +551,20 @@ pub fn load_git_repo(
         let st = parts[0];
         let mut status = "modified";
         let mut path = parts.get(1).copied().unwrap_or("").to_string();
+        let mut old_path = None;
         if st.starts_with('A') {
             status = "added";
         } else if st.starts_with('D') {
             status = "deleted";
         } else if st.starts_with('R') {
             status = "renamed";
+            old_path = Some(path);
             path = parts.get(2).copied().unwrap_or("").to_string();
         }
         files.push(GitFileItem {
             path,
             status: status.to_string(),
+            old_path,
             new_content: None,
             old_content: None,
             no_content: false,
@@ -608,6 +605,7 @@ pub fn load_git_repo(
                 files.push(GitFileItem {
                     path: rel.to_string(),
                     status: "untracked".to_string(),
+                    old_path: None,
                     new_content: Some(content),
                     old_content: None,
                     no_content: false,
@@ -634,15 +632,11 @@ pub fn load_git_repo(
 
     let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
     for f in &files {
-        if f.status == "untracked" {
+        if f.status == "untracked" || f.status == "added" {
             continue;
         }
-        let new_empty = f.new_content.as_ref().is_none_or(String::is_empty);
-        let needs_old =
-            f.status == "deleted" || del_of.get(&f.path).copied().unwrap_or(0) > 0 || new_empty;
-        if needs_old {
-            specs_to_fetch.push(format!("{old_tree_ref}:{}", f.path));
-        }
+        let old_lookup_path = f.old_path.as_deref().unwrap_or(&f.path);
+        specs_to_fetch.push(format!("{old_tree_ref}:{old_lookup_path}"));
     }
 
     let mut batch_blobs = load_git_blobs_native(repo_root, &specs_to_fetch);
@@ -655,23 +649,19 @@ pub fn load_git_repo(
             f.new_content = batch_blobs.remove(&spec);
         }
 
-        if f.status == "untracked" {
+        if f.status == "untracked" || f.status == "added" {
+            f.no_content = f.new_content.is_none() && f.old_content.is_none();
             continue;
         }
-        let new_empty = f.new_content.as_ref().is_none_or(String::is_empty);
-        let needs_old =
-            f.status == "deleted" || del_of.get(&f.path).copied().unwrap_or(0) > 0 || new_empty;
-        if needs_old {
-            let spec = format!("{old_tree_ref}:{}", f.path);
-            if let Some(c) = batch_blobs.remove(&spec) {
-                if new_empty && f.status != "deleted" {
-                    f.new_content = Some(c.clone());
-                }
-                f.old_content = Some(c);
+        let old_lookup_path = f.old_path.as_deref().unwrap_or(&f.path);
+        let spec = format!("{old_tree_ref}:{old_lookup_path}");
+        if let Some(c) = batch_blobs.remove(&spec) {
+            if f.new_content.is_none() && f.status != "deleted" {
+                f.new_content = Some(c.clone());
             }
+            f.old_content = Some(c);
         }
-        f.no_content = f.new_content.as_ref().is_none_or(String::is_empty)
-            && f.old_content.as_ref().is_none_or(String::is_empty);
+        f.no_content = f.new_content.is_none() && f.old_content.is_none();
     }
 
     let mut new_content: HashMap<String, String> = HashMap::with_capacity(files.len());
@@ -681,6 +671,9 @@ pub fn load_git_repo(
             new_content.insert(f.path.clone(), nc);
         }
         if let Some(oc) = f.old_content {
+            if let Some(ref op) = f.old_path {
+                old_content.insert(op.clone(), oc.clone());
+            }
             old_content.insert(f.path, oc);
         }
     }

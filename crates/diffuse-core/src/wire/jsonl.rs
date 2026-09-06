@@ -41,12 +41,11 @@ pub struct FileHeader {
     pub status: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_binary: bool,
-    #[serde(default, skip_serializing_if = "super::is_zero_usize")]
-    pub bytes: usize,
-    #[serde(default, skip_serializing_if = "super::is_zero_usize")]
-    pub old_bytes: usize,
-    #[serde(default, skip_serializing_if = "super::is_zero_usize")]
-    pub new_bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_bytes: Option<usize>,
+
     pub new_line_count: usize,
     pub old_line_count: usize,
     pub hunk_count: usize,
@@ -87,7 +86,6 @@ pub fn emit_file_jsonl<W: Write>(file: &OutputFile, writer: &mut W) -> std::io::
         new_mode: file.new_mode.clone(),
         status: file.status.clone(),
         is_binary: file.is_binary,
-        bytes: file.bytes,
         old_bytes: file.old_bytes,
         new_bytes: file.new_bytes,
         new_line_count: file.new_line_count,
@@ -150,7 +148,6 @@ pub fn decode_jsonl_records<I: IntoIterator<Item = WireRecord>>(
                     new_mode: h.new_mode,
                     status: h.status,
                     is_binary: h.is_binary,
-                    bytes: h.bytes,
                     old_bytes: h.old_bytes,
                     new_bytes: h.new_bytes,
                     new_line_count: h.new_line_count,

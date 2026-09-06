@@ -71,6 +71,11 @@ impl PipelineOptions {
         self
     }
 
+    pub fn with_repo(mut self, repo: Option<String>) -> Self {
+        self.repo = repo;
+        self
+    }
+
     pub fn with_visual_context(mut self, visual_context: usize) -> Self {
         self.visual_context = visual_context;
         self
@@ -265,35 +270,37 @@ pub fn process_single_diff_file(
     };
     f.old_content = old_lines.iter().map(|s| s.to_string()).collect();
 
-    let new_bytes: usize = if let Some(c) = new_content
-        && !c.is_empty()
-    {
-        c.len()
+    let new_bytes: Option<usize> = if f.status == crate::parse::FileStatus::Deleted {
+        None
+    } else if let Some(b) = f.new_bytes {
+        Some(b)
+    } else if let Some(c) = new_content {
+        Some(c.len())
+    } else if f.is_binary {
+        if let Ok(meta) = std::fs::metadata(&f.path) {
+            Some(meta.len() as usize)
+        } else if let Some(ref r) = opts.repo
+            && let Ok(meta) = std::fs::metadata(std::path::Path::new(r).join(&f.path))
+        {
+            Some(meta.len() as usize)
+        } else {
+            None
+        }
     } else {
-        new_lines
-            .iter()
-            .map(|s| s.len() + 1)
-            .sum::<usize>()
-            .saturating_sub(1)
+        None
     };
-    let old_bytes: usize = if let Some(oc) = old_content
-        && !oc.is_empty()
+
+    let old_bytes: Option<usize> = if f.status == crate::parse::FileStatus::Added
+        || f.status == crate::parse::FileStatus::Untracked
     {
-        oc.len()
+        None
+    } else if let Some(b) = f.old_bytes {
+        Some(b)
     } else {
-        old_lines
-            .iter()
-            .map(|s| s.len() + 1)
-            .sum::<usize>()
-            .saturating_sub(1)
+        old_content.map(|oc| oc.len())
     };
     f.old_bytes = old_bytes;
     f.new_bytes = new_bytes;
-    f.bytes = if f.status == crate::parse::FileStatus::Deleted {
-        old_bytes
-    } else {
-        new_bytes
-    };
 
     use rayon::prelude::*;
 
@@ -626,7 +633,6 @@ pub fn process_single_diff_file(
         new_mode: f.new_mode.clone(),
         status,
         is_binary: f.is_binary,
-        bytes: f.bytes,
         old_bytes: f.old_bytes,
         new_bytes: f.new_bytes,
         new_line_count: f.new_line_count,

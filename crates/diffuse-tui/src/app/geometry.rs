@@ -63,6 +63,37 @@ impl AppState {
         }
     }
 
+    /// Returns the number of visual lines taken by a hunk divider at
+    /// `content_width`.
+    pub fn hunk_div_seg_count(&self, fi: usize, hi: usize, content_width: usize) -> usize {
+        let Some(f) = self.output.files.get(fi) else {
+            return 1;
+        };
+        let Some(hunk) = f.hunks.get(hi) else {
+            return 1;
+        };
+        let hidden_gap = self.hunk_leading_gap(fi, hi);
+        let txt = crate::view::diff_grid::hunk_divider_text(hi, hunk, hidden_gap);
+        use unicode_width::UnicodeWidthStr;
+        let len = txt.width();
+        let text_cols = content_width.max(1);
+        if len == 0 { 1 } else { len.div_ceil(text_cols) }
+    }
+
+    /// Returns the number of visual lines taken by a trailing gap divider at
+    /// `content_width`.
+    pub fn bottom_gap_seg_count(&self, fi: usize, content_width: usize) -> usize {
+        let gap = self.hunk_trailing_gap(fi);
+        if gap == 0 {
+            return 0;
+        }
+        let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
+        use unicode_width::UnicodeWidthStr;
+        let len = txt.width();
+        let text_cols = content_width.max(1);
+        if len == 0 { 1 } else { len.div_ceil(text_cols) }
+    }
+
     /// Computes full visual layout mapping: starts, counts, `seg_counts`, and
     /// total visual lines.
     pub fn visual_geometry(
@@ -86,15 +117,18 @@ impl AppState {
 
         for (idx, item) in self.flat.iter().enumerate() {
             starts.push(total_vis_lines);
-            let div_lines = if div_at.contains_key(&idx) { 1 } else { 0 };
+            let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
+                self.hunk_div_seg_count(div_fi, div_hi, content_width)
+            } else {
+                0
+            };
             let row_segs = self.row_seg_count(idx, content_width);
             let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
             let trailing_gap_lines = if !self.raw_diff
                 && !item.is_file_header
                 && idx == self.last_row_of_file(item.file_idx)
-                && self.hunk_trailing_gap(item.file_idx) > 0
             {
-                1
+                self.bottom_gap_seg_count(item.file_idx, content_width)
             } else {
                 0
             };
@@ -180,8 +214,8 @@ impl AppState {
 
         let mut vis_i = 0;
         for (i, _item) in self.flat.iter().enumerate() {
-            if div_at.contains_key(&i) {
-                vis_i += 1;
+            if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
+                vis_i += self.hunk_div_seg_count(div_fi, div_hi, content_width);
             }
             let seg_count = self.row_seg_count(i, content_width);
             if i == self.row_idx {

@@ -75,12 +75,16 @@ pub fn render_header_bar(
 ) -> Vec<String> {
     let counts = &file.counts;
     let note_count = file.notes.len();
-    let note_s = format!(
-        "{note_count} note{}",
-        if note_count == 1 { "" } else { "s" }
-    );
+    let note_s = if note_count == 0 {
+        String::new()
+    } else {
+        format!(
+            " · {note_count} note{}",
+            if note_count == 1 { "" } else { "s" }
+        )
+    };
     let counts_str = format!(
-        "+{}{}{}{} · {}",
+        "+{}{}{}{}{}",
         counts.adds,
         if counts.dels > 0 {
             format!(" −{}", counts.dels)
@@ -170,7 +174,7 @@ pub struct StatusBarContext<'a> {
 /// indicators, wrapping across lines if wider than `width`.
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     let files_badge = format!(
-        "\x1b[1m\x1b[38;5;183m{}/{} files\x1b[0m",
+        "\x1b[1m\x1b[38;5;183mfile {}/{}\x1b[0m",
         ctx.cur_fi + 1,
         ctx.total_files
     );
@@ -264,10 +268,6 @@ pub fn header_bar_line_themed(
 ) -> Line<'static> {
     let counts = &file.counts;
     let note_count = file.notes.len();
-    let note_s = format!(
-        "{note_count} note{}",
-        if note_count == 1 { "" } else { "s" }
-    );
 
     let mut spans = vec![
         Span::styled(
@@ -397,10 +397,15 @@ pub fn header_bar_line_themed(
             Style::default().fg(Color::Indexed(183)),
         ));
     }
-    spans.push(Span::styled(
-        format!(" · {note_s}"),
-        Style::default().fg(Color::Indexed(244)),
-    ));
+    if note_count > 0 {
+        spans.push(Span::styled(
+            format!(
+                " · {note_count} note{}",
+                if note_count == 1 { "" } else { "s" }
+            ),
+            Style::default().fg(Color::Indexed(244)),
+        ));
+    }
 
     let bg = crate::view::to_color(theme.palette.header_bar_bg);
 
@@ -426,7 +431,7 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
     let mut spans = vec![
         Span::raw(" "),
         Span::styled(
-            format!("{}/{} files", ctx.cur_fi + 1, ctx.total_files),
+            format!("file {}/{}", ctx.cur_fi + 1, ctx.total_files),
             Style::default()
                 .fg(Color::Indexed(183))
                 .add_modifier(Modifier::BOLD),
