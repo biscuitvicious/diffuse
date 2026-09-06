@@ -16,7 +16,7 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 use diffuse::{
-    DEFAULT_EXPAND_LINES,
+    DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP,
     core::{
         DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions,
         git::load_git_repo,
@@ -62,6 +62,10 @@ struct Args {
     /// (default: 6).
     #[arg(long, default_value_t = DEFAULT_EXPAND_LINES, global = true)]
     expand_lines: usize,
+    /// Maximum quadratic token-product cap for subline diffing (default:
+    /// 250000).
+    #[arg(long, default_value_t = DEFAULT_TOKEN_PRODUCT_CAP, global = true)]
+    token_product_cap: usize,
     /// Emit raw token-stream JSON (for machine/extension integration).
     #[arg(long, global = true)]
     json: bool,
@@ -162,6 +166,8 @@ struct Input {
     notes_file: Option<String>,
     #[serde(default)]
     repo: Option<String>,
+    #[serde(default)]
+    token_product_cap: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -204,10 +210,12 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
     let loaded_db = load_notes(&notes_path);
     let repo_str = args.repo.clone().or_else(|| input.repo.clone());
     let visual = input.context.unwrap_or(args.context);
+    let cap = input.token_product_cap.unwrap_or(args.token_product_cap);
     let opts = PipelineOptions::default()
         .with_notes(Some(loaded_db.clone()), repo_str.clone())
         .with_visual_context(visual)
-        .with_expand_lines(args.expand_lines);
+        .with_expand_lines(args.expand_lines)
+        .with_token_product_cap(cap);
 
     if let Some(ref repo_root) = input.repo_root
         && let Ok(git_res) = load_git_repo(
@@ -386,7 +394,8 @@ fn main() -> io::Result<()> {
         let pipeline_opts = PipelineOptions::default()
             .with_notes(Some(loaded_db.clone()), args.repo.clone())
             .with_visual_context(args.context)
-            .with_expand_lines(args.expand_lines);
+            .with_expand_lines(args.expand_lines)
+            .with_token_product_cap(args.token_product_cap);
 
         // Interactive TUI only when both ends are real terminals and not in
         // pager or markdown mode; any piped or redirected end falls
@@ -509,7 +518,8 @@ fn main() -> io::Result<()> {
         let pipeline_opts = PipelineOptions::default()
             .with_notes(Some(loaded_db), args.repo.clone())
             .with_visual_context(args.context)
-            .with_expand_lines(args.expand_lines);
+            .with_expand_lines(args.expand_lines)
+            .with_token_product_cap(args.token_product_cap);
 
         let (consumer, meta_rx) = spawn_git_stream_pipeline(
             repo_root,
@@ -592,6 +602,7 @@ fn main() -> io::Result<()> {
             notes: None,
             notes_file: None,
             repo: None,
+            token_product_cap: None,
         }))
     });
 
@@ -685,10 +696,12 @@ fn main() -> io::Result<()> {
                     .map(|p| p.to_path_buf())
                     .unwrap_or_else(default_notes_path);
                 let loaded_db = load_notes(&notes_path);
+                let cap = input.token_product_cap.unwrap_or(args.token_product_cap);
                 let opts = PipelineOptions::default()
                     .with_notes(Some(loaded_db), args.repo.clone().or(input.repo.clone()))
                     .with_visual_context(input.context.unwrap_or(args.context))
-                    .with_expand_lines(args.expand_lines);
+                    .with_expand_lines(args.expand_lines)
+                    .with_token_product_cap(cap);
                 let consumer = stream_diff_pipeline(
                     &input.diff,
                     input.new_content,

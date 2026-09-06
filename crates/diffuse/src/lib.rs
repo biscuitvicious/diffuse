@@ -42,7 +42,8 @@ pub use diffuse_tui as tui;
 
 // Top-level direct re-exports for high-frequency engine primitives
 pub use diffuse_core::{
-    DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, ENGINE_CONTEXT, PipelineInput, PipelineOptions,
+    DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT,
+    PipelineInput, PipelineOptions,
     pipeline::{run_pipeline, run_pipeline_full},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
 };
@@ -55,8 +56,8 @@ pub use diffuse_tui::run_streaming_interactive_tui;
 /// Common imports and prelude traits for diffuse consumers.
 pub mod prelude {
     pub use diffuse_core::{
-        DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, ENGINE_CONTEXT, PipelineInput,
-        PipelineOptions,
+        DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT,
+        PipelineInput, PipelineOptions,
         merge::RunKind,
         parse::{Row, RowKind},
         pipeline::{run_pipeline, run_pipeline_full},

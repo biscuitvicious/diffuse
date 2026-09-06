@@ -1560,8 +1560,8 @@ fn wrap_tail_reflow_keeps_source_strike() {
 
 #[test]
 fn test_wholesale_replacement_mod_deconstructs_to_del_and_add() {
-    let old_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"del\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"      rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
-    let new_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"add\",\"color\":\"text\",\"text\":\"    \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
+    let old_line = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+    let new_line = "lambda mu nu xi omicron pi rho sigma tau upsilon phi";
 
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(220)),
@@ -1584,4 +1584,28 @@ fn test_wholesale_replacement_mod_deconstructs_to_del_and_add() {
         c.iter().all(|r| !matches!(r, Row::Mod { .. })),
         "no wholesale Mod row may exist"
     );
+}
+
+#[test]
+fn test_long_json_lines_produce_granular_subline_spans_under_raised_cap() {
+    let old_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"del\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"      rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
+    let new_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"add\",\"color\":\"text\",\"text\":\"    \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
+
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(220)),
+        row(RowKind::Add, new_line, Some(220), None),
+    ]);
+
+    let c = collapse_hunk_rows(&h, None, None, None);
+    assert_eq!(
+        c.len(),
+        1,
+        "must pair into 1 mod row with raised token product cap"
+    );
+    assert_eq!(c[0].kind(), RowKind::Mod);
+    let spans = c[0].spans().expect("mod spans must be present");
+    assert!(!spans.del.is_empty(), "del spans must not be empty");
+    assert!(!spans.add.is_empty(), "add spans must not be empty");
+    assert_ne!(spans.del, vec![(0, old_line.len())]);
+    assert_ne!(spans.add, vec![(0, new_line.len())]);
 }

@@ -2,6 +2,7 @@
 
 pub use diffuse_syntax as syntax;
 pub use git::{DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, ENGINE_CONTEXT};
+pub use lcs::DEFAULT_TOKEN_PRODUCT_CAP;
 pub use pipeline::{PipelineInput, PipelineOptions};
 
 pub mod algo;

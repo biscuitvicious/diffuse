@@ -595,3 +595,65 @@ fn test_lcs_symmetric_tie_breaker_json_runs() {
         "{\"kind\":\"common\",\"color\":\"text\",\"text\":\"  \"},"
     );
 }
+
+#[test]
+fn test_token_product_cap_get_set() {
+    assert_eq!(token_product_cap(), DEFAULT_TOKEN_PRODUCT_CAP);
+    assert_eq!(DEFAULT_TOKEN_PRODUCT_CAP, 250_000);
+
+    set_token_product_cap(50_000);
+    assert_eq!(token_product_cap(), 50_000);
+
+    set_token_product_cap(DEFAULT_TOKEN_PRODUCT_CAP);
+    assert_eq!(token_product_cap(), DEFAULT_TOKEN_PRODUCT_CAP);
+}
+
+#[test]
+fn test_word_spans_empty_inputs() {
+    let ws_both_empty = word_spans("", "");
+    assert_eq!(ws_both_empty.del, vec![(0, 0)]);
+    assert_eq!(ws_both_empty.add, vec![(0, 0)]);
+
+    let ws_old_empty = word_spans("", "new content");
+    assert_eq!(ws_old_empty.del, vec![(0, 0)]);
+    assert_eq!(ws_old_empty.add, vec![(0, "new content".chars().count())]);
+
+    let ws_new_empty = word_spans("old content", "");
+    assert_eq!(ws_new_empty.del, vec![(0, "old content".chars().count())]);
+    assert_eq!(ws_new_empty.add, vec![(0, 0)]);
+}
+
+#[test]
+fn test_word_spans_with_cap_exceeded_on_untrimmed_middle() {
+    // 10 tokens on old, 10 tokens on new, product = 100
+    let old = "alpha beta gamma delta epsilon zeta eta theta iota kappa";
+    let new = "lambda mu nu xi omicron pi rho sigma tau upsilon";
+
+    // When cap is 50 (< 100), word diffing falls back:
+    let ws_capped = word_spans_with_profile_and_cap(old, new, None, 50);
+    assert_eq!(ws_capped.del, vec![(0, old.chars().count())]);
+    assert_eq!(ws_capped.add, vec![(0, new.chars().count())]);
+
+    // When cap is 200 (> 100), word diffing runs normally:
+    let ws_uncapped = word_spans_with_profile_and_cap(old, new, None, 200);
+    assert_eq!(ws_uncapped.del, vec![(0, old.chars().count())]);
+    assert_eq!(ws_uncapped.add, vec![(0, new.chars().count())]);
+}
+
+#[test]
+fn test_long_json_record_subline_highlighting_with_raised_cap() {
+    let old_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"del\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"      rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
+    let new_line = "{\"t\":\"line\",\"kind\":\"mod\",\"newLine\":170,\"oldLine\":164,\"text\":\"      rewrites). Break only for syntax (no `undefined`, no dynamic typing)\",\"delText\":\"  Break only for syntax (no `undefined`, no dynamic typing) and naming\",\"spans\":{\"del\":[[0,2],[59,70]],\"add\":[[0,17]]},\"runs\":[{\"kind\":\"add\",\"color\":\"text\",\"text\":\"    \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"  \"},{\"kind\":\"add\",\"color\":\"text\",\"text\":\"rewrites). \"},{\"kind\":\"common\",\"color\":\"text\",\"text\":\"Break only for syntax (no `undefined`, no dynamic typing)\"},{\"kind\":\"del\",\"text\":\" and naming\"}]}";
+
+    // With old cap of 40,000: falls back to whole-line strike/fill:
+    let ws_old_cap = word_spans_with_profile_and_cap(old_line, new_line, None, 40_000);
+    assert_eq!(ws_old_cap.del, vec![(0, old_line.chars().count())]);
+    assert_eq!(ws_old_cap.add, vec![(0, new_line.chars().count())]);
+
+    // With new cap of 250,000: produces granular subline spans:
+    let ws_new_cap = word_spans_with_profile_and_cap(old_line, new_line, None, 250_000);
+    assert_ne!(ws_new_cap.del, vec![(0, old_line.chars().count())]);
+    assert_ne!(ws_new_cap.add, vec![(0, new_line.chars().count())]);
+    assert!(!ws_new_cap.del.is_empty());
+    assert!(!ws_new_cap.add.is_empty());
+}

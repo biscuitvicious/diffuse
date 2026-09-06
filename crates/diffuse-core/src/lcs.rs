@@ -1021,6 +1021,25 @@ pub fn spans_from(text: &str, toks: &[&str], matched: &FxHashSet<usize>) -> Vec<
 /// row's span type (`parse::Spans`) — one type for the whole pipeline.
 pub type WordSpans = Spans;
 
+/// Default maximum token product cap (old tokens × new tokens) allowed for
+/// word-level diffing before falling back.
+pub const DEFAULT_TOKEN_PRODUCT_CAP: usize = 250_000;
+
+thread_local! {
+    static TOKEN_PRODUCT_CAP: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_TOKEN_PRODUCT_CAP) };
+}
+
+/// Set the maximum token product cap (old tokens × new tokens) allowed for
+/// word-level diffing before falling back.
+pub fn set_token_product_cap(cap: usize) {
+    TOKEN_PRODUCT_CAP.with(|c| c.set(cap));
+}
+
+/// Get the current token product cap.
+pub fn token_product_cap() -> usize {
+    TOKEN_PRODUCT_CAP.with(|c| c.get())
+}
+
 /**
  * Word-level change spans between an old and a new line. Both sides get the
  * runs of tokens that have no LCS counterpart; a line with no counterpart
@@ -1041,10 +1060,24 @@ pub fn word_spans_with_profile(
     new_text: &str,
     profile: Option<&LangProfile>,
 ) -> WordSpans {
+    word_spans_with_profile_and_cap(old_text, new_text, profile, token_product_cap())
+}
+
+/**
+ * Word-level change spans between an old and a new line with explicit token
+ * product cap.
+ */
+#[tracing::instrument(level = "trace", ret, skip_all, fields(old_len = old_text.len(), new_len = new_text.len(), cap = cap))]
+pub fn word_spans_with_profile_and_cap(
+    old_text: &str,
+    new_text: &str,
+    profile: Option<&LangProfile>,
+    cap: usize,
+) -> WordSpans {
     let ot: Vec<&str> = tokenize_line(old_text).collect();
     let nt: Vec<&str> = tokenize_line(new_text).collect();
     // Cap: long lines fall back to whole-line highlighting.
-    if ot.len() * nt.len() > 40_000 {
+    if ot.len() * nt.len() > cap {
         if old_text == new_text {
             return WordSpans::default();
         }

@@ -701,3 +701,23 @@ fn test_head_commit_hunk_render() {
         Some(".extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));")
     );
 }
+
+#[test]
+fn test_pipeline_options_token_product_cap_controls_subword_granularity() {
+    let diff = r#"diff --git a/test.txt b/test.txt
+--- a/test.txt
++++ b/test.txt
+@@ -1,1 +1,1 @@
+-alpha beta gamma delta epsilon zeta eta theta iota kappa
++lambda mu nu xi omicron pi rho sigma tau upsilon
+"#;
+
+    let opts_low = PipelineOptions::default().with_token_product_cap(10);
+    let out_low = run_pipeline_full(diff, None, None, opts_low);
+    let row_low = &out_low.files[0].rows[0];
+    assert_eq!(row_low.kind, crate::parse::RowKind::Del);
+
+    let opts_high = PipelineOptions::default().with_token_product_cap(250_000);
+    let out_high = run_pipeline_full(diff, None, None, opts_high);
+    assert_eq!(out_high.files.len(), 1);
+}
