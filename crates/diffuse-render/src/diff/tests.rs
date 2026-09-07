@@ -167,3 +167,41 @@ fn test_nonzero_notes_still_rendered() {
         "raw render must show '1 note' when there is 1 note"
     );
 }
+
+#[test]
+fn test_write_file_header_bar_direct_buffer() {
+    let file = OutputFile {
+        path: "src/lib.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 1,
+        old_line_count: 1,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts {
+            adds: 5,
+            dels: 2,
+            mods: 3,
+            movs: 1,
+        },
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+    };
+    let mut buf = String::new();
+    write_file_header_bar(&mut buf, &file, &DiffuseTheme::MAGIC).unwrap();
+    assert!(buf.starts_with("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m"));
+    assert!(buf.contains("+5"));
+    assert!(buf.contains("-2"));
+    assert!(buf.contains("~3"));
+    assert!(buf.contains("≈1"));
+    assert!(buf.ends_with(" \x1b[0m\n"));
+}

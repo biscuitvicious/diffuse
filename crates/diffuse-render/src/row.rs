@@ -1,6 +1,7 @@
 //! Row & Segment Renderer with subword styling, background tinting, and column
 //! slicing.
 
+use std::fmt::Write;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::theme::{DiffuseTheme, FG_RESET};
@@ -209,9 +210,11 @@ pub fn display_text(
     }
 }
 
-/// Render a single slice/segment of a row with full ANSI styling.
+/// Write a single slice/segment of a row with full ANSI styling directly to a
+/// buffer.
 #[allow(clippy::too_many_arguments)]
-pub fn render_row_segment(
+pub fn write_row_segment<W: Write>(
+    out: &mut W,
     text: &str,
     del_text: Option<&str>,
     _spans: &Spans,
@@ -226,7 +229,7 @@ pub fn render_row_segment(
     word_diff: bool,
     syntax_on: bool,
     theme: &DiffuseTheme,
-) -> String {
+) -> std::fmt::Result {
     let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
     let is_del_row = kind == RowKind::Del;
     let is_mod_row = kind == RowKind::Mod;
@@ -339,17 +342,16 @@ pub fn render_row_segment(
         let bg = if is_ctx { "" } else { line_bg };
         let del_fg = s_del.fg.fg_code();
         let reset = "\x1b[39m";
-        let piece = if is_full_row {
-            text
-        } else {
-            let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
-            let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
-            let total_len = slice_graphemes.len();
-            let s_idx = seg_start.min(total_len);
-            let e_idx = seg_end.min(total_len);
-            &slice_graphemes[s_idx..e_idx].concat()
-        };
-        return format!("{lead_bg}{prefix}{bg}{del_fg}{piece}{reset}{trail_bg}");
+        if is_full_row {
+            return write!(out, "{lead_bg}{prefix}{bg}{del_fg}{text}{reset}{trail_bg}");
+        }
+        let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
+        let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
+        let total_len = slice_graphemes.len();
+        let s_idx = seg_start.min(total_len);
+        let e_idx = seg_end.min(total_len);
+        let piece = slice_graphemes[s_idx..e_idx].concat();
+        return write!(out, "{lead_bg}{prefix}{bg}{del_fg}{piece}{reset}{trail_bg}");
     }
 
     if runs.is_empty() {
@@ -364,23 +366,20 @@ pub fn render_row_segment(
         } else {
             line_bg
         };
-        let piece = if is_full_row {
-            text
-        } else {
-            let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
-            let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
-            let total_len = slice_graphemes.len();
-            let s_idx = seg_start.min(total_len);
-            let e_idx = seg_end.min(total_len);
-            &slice_graphemes[s_idx..e_idx].concat()
-        };
-        return format!("{lead_bg}{prefix}{bg}{piece}{trail_bg}");
+        if is_full_row {
+            return write!(out, "{lead_bg}{prefix}{bg}{text}{trail_bg}");
+        }
+        let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
+        let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
+        let total_len = slice_graphemes.len();
+        let s_idx = seg_start.min(total_len);
+        let e_idx = seg_end.min(total_len);
+        let piece = slice_graphemes[s_idx..e_idx].concat();
+        return write!(out, "{lead_bg}{prefix}{bg}{piece}{trail_bg}");
     }
 
     if is_full_row {
-        let mut out = String::new();
-        out.push_str(lead_bg);
-        out.push_str(prefix);
+        write!(out, "{lead_bg}{prefix}")?;
         for tok in runs {
             if tok.text.is_empty() {
                 continue;
@@ -401,13 +400,7 @@ pub fn render_row_segment(
 
             if tok.kind == RunKind::Del {
                 let del_fg = s_del.fg.fg_code();
-                let reset = "\x1b[39m";
-                out.push_str(bg);
-                out.push_str("\x1b[9m");
-                out.push_str(&del_fg);
-                out.push_str(&tok.text);
-                out.push_str(reset);
-                out.push_str("\x1b[29m");
+                write!(out, "{bg}\x1b[9m{del_fg}{}\x1b[39m\x1b[29m", tok.text)?;
             } else {
                 let color = if syntax_on {
                     tok.color.as_deref().unwrap_or("text")
@@ -415,24 +408,17 @@ pub fn render_row_segment(
                     "text"
                 };
                 let sgr = if syntax_on { tok.sgr } else { None };
-                out.push_str(bg);
-                theme.write_token(
-                    color,
-                    &tok.text,
-                    row_kind_str,
-                    Some(tok_kind_str),
-                    sgr,
-                    &mut out,
-                );
-                out.push_str(bg);
+                write!(out, "{bg}")?;
+                theme.write_token(color, &tok.text, row_kind_str, Some(tok_kind_str), sgr, out);
+                write!(out, "{bg}")?;
             }
         }
-        out.push_str(trail_bg);
-        return out;
+        write!(out, "{trail_bg}")?;
+        return Ok(());
     }
 
     let _disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
-    let mut out = String::new();
+    write!(out, "{lead_bg}{prefix}")?;
     let mut pos = 0usize;
     for tok in runs {
         let tok_len = tok.text.graphemes(true).count();
@@ -475,13 +461,7 @@ pub fn render_row_segment(
 
         if tok.kind == RunKind::Del {
             let del_fg = s_del.fg.fg_code();
-            let reset = "\x1b[39m";
-            out.push_str(bg);
-            out.push_str("\x1b[9m");
-            out.push_str(&del_fg);
-            out.push_str(&sub_piece);
-            out.push_str(reset);
-            out.push_str("\x1b[29m");
+            write!(out, "{bg}\x1b[9m{del_fg}{sub_piece}\x1b[39m\x1b[29m")?;
         } else {
             // syntax off downgrades every run to plain text (no fg, no sgr)
             let color = if syntax_on {
@@ -490,20 +470,46 @@ pub fn render_row_segment(
                 "text"
             };
             let sgr = if syntax_on { tok.sgr } else { None };
-            out.push_str(bg);
+            write!(out, "{bg}")?;
             theme.write_token(
                 color,
                 &sub_piece,
                 row_kind_str,
                 Some(tok_kind_str),
                 sgr,
-                &mut out,
+                out,
             );
-            out.push_str(bg);
+            write!(out, "{bg}")?;
         }
     }
 
-    format!("{lead_bg}{prefix}{out}{trail_bg}")
+    write!(out, "{trail_bg}")
+}
+
+/// Render a single slice/segment of a row with full ANSI styling.
+#[allow(clippy::too_many_arguments)]
+pub fn render_row_segment(
+    text: &str,
+    del_text: Option<&str>,
+    spans: &Spans,
+    kind: RowKind,
+    runs: &[OutputRun],
+    seg_start: usize,
+    seg_end: usize,
+    prefix: &str,
+    selected: bool,
+    band: bool,
+    col_offset: usize,
+    word_diff: bool,
+    syntax_on: bool,
+    theme: &DiffuseTheme,
+) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    let _ = write_row_segment(
+        &mut out, text, del_text, spans, kind, runs, seg_start, seg_end, prefix, selected, band,
+        col_offset, word_diff, syntax_on, theme,
+    );
+    out
 }
 
 /// Slices text by visual terminal column width rather than raw bytes or
@@ -528,8 +534,11 @@ pub fn slice_by_visual_width(text: &str, start_col: usize, max_cols: usize) -> S
     out
 }
 
-/// Render a row in the raw unified-diff representation with theme support.
-pub fn render_raw_row_themed(
+/// Write a row in the raw unified-diff representation with theme support
+/// directly to a buffer.
+#[allow(clippy::too_many_arguments)]
+pub fn write_raw_row_themed<W: Write>(
+    out: &mut W,
     kind: RowKind,
     prefix: &str,
     text: &str,
@@ -537,7 +546,7 @@ pub fn render_raw_row_themed(
     band: bool,
     highlight_trailing: bool,
     theme: &DiffuseTheme,
-) -> String {
+) -> std::fmt::Result {
     let (fg_color, sub_bg_color, sub_fg_color) = match kind {
         RowKind::Add => (
             theme.palette.add_gutter_icon,
@@ -578,27 +587,51 @@ pub fn render_raw_row_themed(
         0
     };
 
-    let mut out = format!("{bg}{prefix}{fg}");
+    write!(out, "{bg}{prefix}{fg}")?;
     if trailing_len > 0 {
         let (body, trailing) = text.split_at(text.len() - trailing_len);
-        out.push_str(body);
+        out.write_str(body)?;
         if kind == RowKind::Del {
-            out.push_str(&format!(
+            write!(
+                out,
                 "{sub_bg}\x1b[9m{sub_fg}{trailing}\x1b[29m{reset_bg}{fg}"
-            ));
+            )?;
         } else {
-            out.push_str(&format!("{sub_bg}{sub_fg}{trailing}{reset_bg}{fg}"));
+            write!(out, "{sub_bg}{sub_fg}{trailing}{reset_bg}{fg}")?;
         }
     } else {
-        out.push_str(text);
+        out.write_str(text)?;
     }
 
     if selected || band {
-        out.push_str(&bg);
+        out.write_str(&bg)?;
     } else {
-        out.push_str("\x1b[49m");
+        out.write_str("\x1b[49m")?;
     }
-    out.push_str("\x1b[39m\x1b[22m");
+    out.write_str("\x1b[39m\x1b[22m")
+}
+
+/// Render a row in the raw unified-diff representation with theme support.
+pub fn render_raw_row_themed(
+    kind: RowKind,
+    prefix: &str,
+    text: &str,
+    selected: bool,
+    band: bool,
+    highlight_trailing: bool,
+    theme: &DiffuseTheme,
+) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    let _ = write_raw_row_themed(
+        &mut out,
+        kind,
+        prefix,
+        text,
+        selected,
+        band,
+        highlight_trailing,
+        theme,
+    );
     out
 }
 

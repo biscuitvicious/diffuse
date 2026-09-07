@@ -407,3 +407,52 @@ fn test_render_moved_source_del_row() {
         "deleted source of move must have deletion foreground color"
     );
 }
+
+#[test]
+fn test_write_row_segment_direct_buffer() {
+    let theme = DiffuseTheme::MAGIC;
+    let runs = vec![OutputRun {
+        kind: RunKind::Common,
+        color: Some("syntaxKeyword".into()),
+        sgr: None,
+        text: "let x = 1;".into(),
+    }];
+    let mut buf = String::new();
+    write_row_segment(
+        &mut buf,
+        "let x = 1;",
+        None,
+        &Spans::default(),
+        RowKind::Add,
+        &runs,
+        0,
+        usize::MAX,
+        "+ ",
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    )
+    .unwrap();
+    assert_eq!(
+        buf,
+        render_row_segment(
+            "let x = 1;",
+            None,
+            &Spans::default(),
+            RowKind::Add,
+            &runs,
+            0,
+            usize::MAX,
+            "+ ",
+            false,
+            false,
+            0,
+            true,
+            true,
+            &theme,
+        )
+    );
+}

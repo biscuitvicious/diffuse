@@ -3,15 +3,74 @@
 //! Formats full file diff summaries and colored hunks directly to terminal
 //! output.
 
-use crate::core::{
-    parse::RowKind,
-    wire::{OutputFile, OutputRow, PipelineOutput},
+use std::fmt::Write;
+
+use crate::{
+    ansi::{ColorExt, FG_RESET, SGR_RESET},
+    core::{
+        parse::RowKind,
+        wire::{OutputFile, OutputRow, PipelineOutput},
+    },
 };
 
 use super::{
-    row::{prefix_of, render_raw_row, render_row_segment, styled_prefix},
+    row::{prefix_of, styled_prefix, write_raw_row_themed, write_row_segment},
     theme::DiffuseTheme,
 };
+
+/// Format a file's header bar directly into an output buffer without
+/// intermediate string allocations.
+pub fn write_file_header_bar<W: Write>(
+    out: &mut W,
+    file: &OutputFile,
+    theme: &DiffuseTheme,
+) -> std::fmt::Result {
+    let counts = &file.counts;
+    let path_display = file.display_path();
+    let status_display = file.display_status();
+    let bg_code = theme.palette.header_bar_bg.bg_code();
+    let fg_code = theme.palette.header_bar_fg.fg_code();
+
+    write!(
+        out,
+        "{bg_code}\x1b[1m{fg_code} {path_display} ({status_display}) · {}+{}{FG_RESET}",
+        theme.palette.add_gutter_icon.fg_code(),
+        counts.adds
+    )?;
+    if counts.dels > 0 {
+        write!(
+            out,
+            " {}-{}{FG_RESET}",
+            theme.palette.del_fg.fg_code(),
+            counts.dels
+        )?;
+    }
+    if counts.mods > 0 {
+        write!(
+            out,
+            " {}~{}{FG_RESET}",
+            theme.palette.mod_gutter_icon.fg_code(),
+            counts.mods
+        )?;
+    }
+    if counts.movs > 0 {
+        write!(
+            out,
+            " {}≈{}{FG_RESET} moved",
+            theme.palette.mov_gutter_icon.fg_code(),
+            counts.movs
+        )?;
+    }
+    if !file.notes.is_empty() {
+        write!(
+            out,
+            " · {} note{}",
+            file.notes.len(),
+            if file.notes.len() == 1 { "" } else { "s" }
+        )?;
+    }
+    writeln!(out, " {SGR_RESET}")
+}
 
 /// Render complete pipeline output to terminal ANSI strings.
 pub fn render_pipeline_output(
@@ -49,45 +108,7 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
     let total_rows: usize = file.hunks.iter().map(|h| h.rows.len()).sum();
     let mut out = String::with_capacity(total_rows * 128 + 256);
 
-    let counts = &file.counts;
-    let note_str = if file.notes.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " · {} note{}",
-            file.notes.len(),
-            if file.notes.len() == 1 { "" } else { "s" }
-        )
-    };
-    let mov_str = if counts.movs > 0 {
-        format!(" \x1b[38;5;117m≈{}\x1b[39m moved", counts.movs)
-    } else {
-        String::new()
-    };
-    let mod_str = if counts.mods > 0 {
-        format!(" \x1b[38;5;214m~{}\x1b[39m", counts.mods)
-    } else {
-        String::new()
-    };
-    let del_str = if counts.dels > 0 {
-        format!(" \x1b[38;5;167m-{}\x1b[39m", counts.dels)
-    } else {
-        String::new()
-    };
-    let add_str = format!("\x1b[38;5;120m+{}\x1b[39m", counts.adds);
-    let path_display = file.display_path();
-
-    let bar = format!(
-        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{}{} \x1b[0m\n",
-        path_display,
-        file.display_status(),
-        add_str,
-        del_str,
-        mod_str,
-        mov_str,
-        note_str
-    );
-    out.push_str(&bar);
+    let _ = write_file_header_bar(&mut out, file, theme);
 
     let render_row = |r: &OutputRow, out: &mut String| {
         let pfx = if styled_prefixes {
@@ -97,7 +118,8 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
             format!("{plain} ")
         };
 
-        let seg = render_row_segment(
+        let _ = write_row_segment(
+            out,
             &r.text,
             r.del_text.as_deref(),
             &r.spans,
@@ -113,7 +135,6 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
             true,
             theme,
         );
-        out.push_str(&seg);
         out.push('\n');
     };
 
@@ -156,59 +177,30 @@ pub fn render_raw_file_diff(file: &OutputFile) -> String {
     let total_rows: usize = hunks.iter().map(|h| h.rows.len() + 1).sum();
     let mut out = String::with_capacity(total_rows * 128 + 256);
 
-    // Same file header as styled mode.
-    let counts = &file.counts;
-    let note_str = if file.notes.is_empty() {
-        String::new()
-    } else {
-        format!(
-            " · {} note{}",
-            file.notes.len(),
-            if file.notes.len() == 1 { "" } else { "s" }
-        )
-    };
-    let mov_str = if counts.movs > 0 {
-        format!(" \x1b[38;5;117m≈{}\x1b[39m moved", counts.movs)
-    } else {
-        String::new()
-    };
-    let mod_str = if counts.mods > 0 {
-        format!(" \x1b[38;5;214m~{}\x1b[39m", counts.mods)
-    } else {
-        String::new()
-    };
-    let del_str = if counts.dels > 0 {
-        format!(" \x1b[38;5;167m-{}\x1b[39m", counts.dels)
-    } else {
-        String::new()
-    };
-    let add_str = format!("\x1b[38;5;120m+{}\x1b[39m", counts.adds);
-    let path_display = file.display_path();
-    let bar = format!(
-        "\x1b[48;5;237m\x1b[1m\x1b[38;5;231m {} ({}) · {}{}{}{}{} \x1b[0m\n",
-        path_display,
-        file.display_status(),
-        add_str,
-        del_str,
-        mod_str,
-        mov_str,
-        note_str
-    );
-    out.push_str(&bar);
+    let theme = DiffuseTheme::from_env();
+    let _ = write_file_header_bar(&mut out, file, &theme);
 
     for h in hunks {
         let sep_text = format!(
             "@@ -{},{} +{},{} @@",
             h.old_start, h.old_count, h.new_start, h.new_count
         );
-        let hunk_header = render_raw_row(RowKind::Ctx, "", &sep_text, false, false, true);
-        out.push_str(&hunk_header);
+        let _ = write_raw_row_themed(
+            &mut out,
+            RowKind::Ctx,
+            "",
+            &sep_text,
+            false,
+            false,
+            true,
+            &theme,
+        );
         out.push('\n');
 
         for r in &h.rows {
             let pfx = styled_prefix(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true);
-            let row = render_raw_row(r.kind, &pfx, &r.text, false, false, true);
-            out.push_str(&row);
+            let _ =
+                write_raw_row_themed(&mut out, r.kind, &pfx, &r.text, false, false, true, &theme);
             out.push('\n');
         }
     }

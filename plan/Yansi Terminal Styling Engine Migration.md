@@ -7,11 +7,11 @@
   - [x] Replace custom `AnsiColor` with `yansi::Color` in `crates/diffuse-render/src/theme/palette.rs`
   - [x] Replace `RowStyle` background string generators with `yansi::Style`
   - [x] Update `DiffuseTheme` and syntax token styling to use `yansi::Style`
-- [·] **Phase 3: Zero-Allocation Painting in Render Pipeline**
-  - [ ] Refactor `crates/diffuse-render/src/row.rs` to style via `yansi::Paint`
-  - [ ] Refactor `crates/diffuse-render/src/diff.rs` to format with `yansi`
-  - [ ] Preserve golden markup converters `encode_sgr`, `decode_sgr`, and `strip_ansi`
-- [ ] **Phase 4: Ratatui & TUI Bridge Integration**
+- [x] **Phase 3: Zero-Allocation Painting in Render Pipeline**
+  - [x] Refactor `crates/diffuse-render/src/row.rs` to style via `yansi::Paint`
+  - [x] Refactor `crates/diffuse-render/src/diff.rs` to format with `yansi`
+  - [x] Preserve golden markup converters `encode_sgr`, `decode_sgr`, and `strip_ansi`
+- [·] **Phase 4: Ratatui & TUI Bridge Integration**
   - [ ] Update `crates/diffuse-tui/src/view.rs` to map from `yansi::Color` / `yansi::Style` to `ratatui::style::Color` / `Style`
   - [ ] Update header, footer, divider, and grid rendering to use native `yansi` types
 - [ ] **Phase 5: CLI, Color Conditions & Verification**

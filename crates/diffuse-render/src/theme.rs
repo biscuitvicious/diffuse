@@ -184,14 +184,14 @@ impl DiffuseTheme {
     }
 
     /// Render a syntax/markdown token directly into an output buffer.
-    pub fn write_token(
+    pub fn write_token<W: std::fmt::Write>(
         &self,
         color: &str,
         text: &str,
         row_kind: &str,
         tok_kind: Option<&str>,
         sgr: Option<u32>,
-        out: &mut String,
+        out: &mut W,
     ) {
         use diffuse_core::parse::RowKind;
         let rk = if row_kind == "add" || tok_kind == Some("add") {
@@ -209,20 +209,19 @@ impl DiffuseTheme {
             .syntax_token_color(color, rk, self.name == "legacy");
 
         if let Some(s) = sgr {
-            use std::fmt::Write;
             let _ = write!(out, "\x1b[{s}m");
         }
         if let Some(c) = ansi_color {
-            c.write_fg(out).ok();
-            out.push_str(text);
-            out.push_str(FG_RESET);
+            let _ = c.write_fg(out);
+            let _ = out.write_str(text);
+            let _ = out.write_str(FG_RESET);
         } else {
-            out.push_str(text);
+            let _ = out.write_str(text);
         }
         if let Some(s) = sgr
             && let Some(off) = sgr_off(s)
         {
-            out.push_str(off);
+            let _ = out.write_str(off);
         }
     }
 
