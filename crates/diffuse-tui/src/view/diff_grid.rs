@@ -374,9 +374,32 @@ pub fn render_bottom_gap_divider(
 }
 
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
 };
+
+/// Render a file header banner row as a styled Ratatui [`Line`] with theme
+/// support.
+pub fn file_header_line_themed(
+    file: &OutputFile,
+    is_collapsed: bool,
+    is_selected: bool,
+    is_current: bool,
+    in_band: bool,
+    content_width: usize,
+    theme: &crate::render::DiffuseTheme,
+) -> Line<'static> {
+    let bar = file_header_text(file, is_collapsed);
+    let bar_str = truncate_pad(&bar, content_width);
+    let (bg, fg) = theme
+        .palette
+        .file_header_colors(is_selected, is_current, in_band);
+    let style = Style::default()
+        .bg(crate::view::to_color(bg))
+        .fg(crate::view::to_color(fg))
+        .add_modifier(Modifier::BOLD);
+    Line::from(Span::styled(bar_str, style))
+}
 
 /// Render a file header banner row as a styled Ratatui [`Line`].
 pub fn file_header_line(
@@ -387,28 +410,39 @@ pub fn file_header_line(
     in_band: bool,
     content_width: usize,
 ) -> Line<'static> {
-    let bar = file_header_text(file, is_collapsed);
-    let bar_str = truncate_pad(&bar, content_width);
-    let style = if is_selected {
-        Style::default()
-            .bg(Color::Indexed(241))
-            .fg(Color::Indexed(219))
-            .add_modifier(Modifier::BOLD)
-    } else if in_band || is_current {
-        Style::default()
-            .bg(Color::Indexed(239))
-            .fg(Color::Indexed(219))
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .bg(Color::Indexed(237))
-            .fg(Color::Indexed(183))
-            .add_modifier(Modifier::BOLD)
-    };
+    file_header_line_themed(
+        file,
+        is_collapsed,
+        is_selected,
+        is_current,
+        in_band,
+        content_width,
+        &crate::render::DiffuseTheme::from_env(),
+    )
+}
+
+/// Render a hunk header divider as a styled Ratatui [`Line`] with theme
+/// support.
+pub fn hunk_divider_line_themed(
+    hi: usize,
+    hunk: &OutputHunk,
+    hidden_gap: usize,
+    is_current: bool,
+    content_width: usize,
+    theme: &crate::render::DiffuseTheme,
+) -> Line<'static> {
+    let txt = hunk_divider_text(hi, hunk, hidden_gap);
+    let bar_str = truncate_pad(&txt, content_width);
+    let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
+    let mut style = Style::default()
+        .fg(crate::view::to_color(fg))
+        .add_modifier(Modifier::BOLD);
+    if bg != crate::render::Color::Primary {
+        style = style.bg(crate::view::to_color(bg));
+    }
     Line::from(Span::styled(bar_str, style))
 }
 
-/// Render a hunk header divider as a styled Ratatui [`Line`].
 /// Render a hunk header divider as a styled Ratatui [`Line`].
 pub fn hunk_divider_line(
     hi: usize,
@@ -417,18 +451,32 @@ pub fn hunk_divider_line(
     is_current: bool,
     content_width: usize,
 ) -> Line<'static> {
-    let txt = hunk_divider_text(hi, hunk, hidden_gap);
+    hunk_divider_line_themed(
+        hi,
+        hunk,
+        hidden_gap,
+        is_current,
+        content_width,
+        &crate::render::DiffuseTheme::from_env(),
+    )
+}
+
+/// Render a bottom gap divider as a styled Ratatui [`Line`] with theme support.
+pub fn bottom_gap_divider_line_themed(
+    hidden_gap: usize,
+    is_current: bool,
+    content_width: usize,
+    theme: &crate::render::DiffuseTheme,
+) -> Line<'static> {
+    let txt = bottom_gap_divider_text(hidden_gap);
     let bar_str = truncate_pad(&txt, content_width);
-    let style = if is_current {
-        Style::default()
-            .bg(Color::Indexed(237))
-            .fg(Color::Indexed(220))
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(Color::Indexed(220))
-            .add_modifier(Modifier::BOLD)
-    };
+    let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
+    let mut style = Style::default()
+        .fg(crate::view::to_color(fg))
+        .add_modifier(Modifier::BOLD);
+    if bg != crate::render::Color::Primary {
+        style = style.bg(crate::view::to_color(bg));
+    }
     Line::from(Span::styled(bar_str, style))
 }
 
@@ -438,19 +486,12 @@ pub fn bottom_gap_divider_line(
     is_current: bool,
     content_width: usize,
 ) -> Line<'static> {
-    let txt = bottom_gap_divider_text(hidden_gap);
-    let bar_str = truncate_pad(&txt, content_width);
-    let style = if is_current {
-        Style::default()
-            .bg(Color::Indexed(237))
-            .fg(Color::Indexed(220))
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default()
-            .fg(Color::Indexed(220))
-            .add_modifier(Modifier::BOLD)
-    };
-    Line::from(Span::styled(bar_str, style))
+    bottom_gap_divider_line_themed(
+        hidden_gap,
+        is_current,
+        content_width,
+        &crate::render::DiffuseTheme::from_env(),
+    )
 }
 
 #[cfg(test)]

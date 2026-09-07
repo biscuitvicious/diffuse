@@ -50,3 +50,44 @@ pub fn to_color(c: impl Into<yansi::Color>) -> Color {
         yansi::Color::BrightWhite => Color::Indexed(15),
     }
 }
+
+/// Convert a [`yansi::Style`] to a Ratatui [`Style`].
+#[inline]
+#[must_use]
+pub fn to_style(s: yansi::Style) -> ratatui::style::Style {
+    let mut style = ratatui::style::Style::default();
+    if let Some(fg) = s.foreground {
+        style = style.fg(to_color(fg));
+    }
+    if let Some(bg) = s.background {
+        style = style.bg(to_color(bg));
+    }
+    style
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_color_mapping() {
+        assert_eq!(to_color(yansi::Color::Primary), Color::Reset);
+        assert_eq!(to_color(yansi::Color::Fixed(120)), Color::Indexed(120));
+        assert_eq!(
+            to_color(yansi::Color::Rgb(10, 20, 30)),
+            Color::Rgb(10, 20, 30)
+        );
+        assert_eq!(to_color(yansi::Color::Red), Color::Indexed(1));
+        assert_eq!(to_color(yansi::Color::BrightWhite), Color::Indexed(15));
+    }
+
+    #[test]
+    fn test_to_style_mapping() {
+        let ys = yansi::Style::new()
+            .fg(yansi::Color::Fixed(120))
+            .bg(yansi::Color::Rgb(1, 2, 3));
+        let rs = to_style(ys);
+        assert_eq!(rs.fg, Some(Color::Indexed(120)));
+        assert_eq!(rs.bg, Some(Color::Rgb(1, 2, 3)));
+    }
+}

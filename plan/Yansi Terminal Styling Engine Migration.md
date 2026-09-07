@@ -89,7 +89,7 @@ This plan executes a deep migration to `yansi = "1.0"`. `yansi` becomes the prim
 
 ---
 
-## 4. Phase 4: Ratatui & TUI Bridge Integration
+## 4. Phase 4: Ratatui & TUI Bridge Integration (Completed)
 
 - **Goal**: Bridge native `yansi` colors directly to `ratatui::style::Color` in `diffuse-tui`.
 - **Files**:
@@ -98,12 +98,10 @@ This plan executes a deep migration to `yansi = "1.0"`. `yansi` becomes the prim
   - `crates/diffuse-tui/src/view/diff_grid.rs`
   - `crates/diffuse-tui/src/app/render.rs`
 - **Actions**:
-  1. Update `to_color` in `crates/diffuse-tui/src/view.rs` to take `yansi::Color` and produce `ratatui::style::Color`:
-     - `yansi::Color::Default => Color::Reset`
-     - `yansi::Color::Fixed(i) => Color::Indexed(i)`
-     - `yansi::Color::Rgb(r, g, b) => Color::Rgb(r, g, b)`
-  2. Update any direct references to `AnsiColor` in TUI modules to `yansi::Color`.
-- **Verification**: `cargo test -p diffuse-tui` passes all unit and integration tests.
+  1. Implemented `to_style` and updated `to_color` in `crates/diffuse-tui/src/view.rs` mapping `yansi::Color` and `yansi::Style` to `ratatui::style::Color` and `ratatui::style::Style`.
+  2. Implemented `file_header_line_themed`, `hunk_divider_line_themed`, and `bottom_gap_divider_line_themed` in `diff_grid.rs` accepting `DiffuseTheme` and mapping via `to_color`.
+  3. Added unit tests for color and style mappings.
+- **Verification**: `cargo test -p diffuse-tui` and full `./scripts/check.sh` suite pass cleanly.
 
 ---
 
