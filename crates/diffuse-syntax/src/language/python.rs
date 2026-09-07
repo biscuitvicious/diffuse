@@ -36,5 +36,6 @@ pub fn profile() -> LangProfile {
         exact_delimiters: BlockDelimStyle::IndentColon.default_exact_delimiters(),
         tail_delimiters: BlockDelimStyle::IndentColon.default_tail_delimiters(),
         trailing_delimiters: BlockDelimStyle::IndentColon.default_trailing_delimiters(),
+        property_syntax: crate::profile::PropertySyntax::Colon,
     }
 }

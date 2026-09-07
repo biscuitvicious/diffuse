@@ -30,6 +30,20 @@ pub enum CloseDelimiter {
     Keyword,
 }
 
+/// Style of key-value property, struct field, or dict entry definitions.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PropertySyntax {
+    #[default]
+    None,
+    /// Colon-separated: `key:` or `"key":` (JSON, YAML, Rust structs, TS/JS
+    /// objects, Python dicts, Go)
+    Colon,
+    /// Equals-separated: `key =` (TOML, INI)
+    Equals,
+    /// Both colon- and equals-separated (`key:`, `key =`, `"key":`)
+    ColonOrEquals,
+}
+
 pub const BRACE_EXACT_DELIMITERS: &[(&str, CloseDelimiter)] = &[
     ("};", CloseDelimiter::BraceSemi),
     ("},", CloseDelimiter::BraceSemi),
@@ -208,9 +222,92 @@ pub struct LangProfile {
     pub tail_delimiters: &'static [(&'static str, CloseDelimiter)],
     /// Characters that act as trailing statement/expression delimiters.
     pub trailing_delimiters: &'static [char],
+    /// Syntax style used for key-value properties, struct fields, or dict
+    /// entries.
+    pub property_syntax: PropertySyntax,
 }
 
 impl LangProfile {
+    /// Extracts the property or field name from a line if it matches this
+    /// language's property syntax.
+    pub fn extract_property_key<'a>(&self, line: &'a str) -> Option<&'a str> {
+        if self.property_syntax == PropertySyntax::None {
+            return None;
+        }
+        let t = line.trim();
+        // 1. Quoted key: `"key":` or `'key':` or `"key" =`
+        if t.starts_with('"') || t.starts_with('\'') {
+            let quote = t.chars().next()?;
+            let rest = &t[1..];
+            if let Some(end_quote) = rest.find(quote) {
+                let key = &rest[..end_quote];
+                let after = rest[end_quote + 1..].trim_start();
+                if matches!(
+                    self.property_syntax,
+                    PropertySyntax::Colon | PropertySyntax::ColonOrEquals
+                ) && after.starts_with(':')
+                    && !after.starts_with("::")
+                {
+                    return Some(key);
+                }
+                if matches!(
+                    self.property_syntax,
+                    PropertySyntax::Equals | PropertySyntax::ColonOrEquals
+                ) && after.starts_with('=')
+                    && !after.starts_with("==")
+                    && !after.starts_with("=>")
+                {
+                    return Some(key);
+                }
+            }
+        }
+
+        // 2. Unquoted identifier: `key: value` or `key = value`
+        // In Rust, optionally strip `pub `, `pub(crate) `, `pub(super) `
+        let id_start = if self.name == "rust" && t.starts_with("pub") {
+            let rem = t.strip_prefix("pub")?.trim_start();
+            if rem.starts_with('(') {
+                let end_paren = rem.find(')')?;
+                rem[end_paren + 1..].trim_start()
+            } else {
+                rem
+            }
+        } else {
+            t
+        };
+
+        let id_len = id_start
+            .chars()
+            .take_while(|&c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            .map(char::len_utf8)
+            .sum::<usize>();
+        if id_len == 0 {
+            return None;
+        }
+        let key = &id_start[..id_len];
+        let after = id_start[id_len..].trim_start();
+
+        if matches!(
+            self.property_syntax,
+            PropertySyntax::Colon | PropertySyntax::ColonOrEquals
+        ) && after.starts_with(':')
+            && !after.starts_with("::")
+        {
+            return Some(key);
+        }
+
+        if matches!(
+            self.property_syntax,
+            PropertySyntax::Equals | PropertySyntax::ColonOrEquals
+        ) && after.starts_with('=')
+            && !after.starts_with("==")
+            && !after.starts_with("=>")
+        {
+            return Some(key);
+        }
+
+        None
+    }
     /// Whether the keyword slice contains `word` (binary search on sorted
     /// slice).
     pub fn is_keyword(&self, word: &str) -> bool {

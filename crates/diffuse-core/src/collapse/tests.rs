@@ -1608,3 +1608,58 @@ fn test_long_json_lines_produce_granular_subline_spans_under_raised_cap() {
     assert_ne!(spans.del, vec![(0, old_line.len())]);
     assert_ne!(spans.add, vec![(0, new_line.len())]);
 }
+
+#[test]
+fn test_json_property_modification_pairs_when_text_appears_elsewhere() {
+    let old_content = vec![
+        "                  \"color\": \"text\",",
+        "                  \"text\": \"        \"",
+        "                },",
+        "                  \"text\": \"        \"",
+    ];
+    let new_content = vec![
+        "                  \"color\": \"text\",",
+        "                  \"text\": \"    \"",
+        "                },",
+        "                  \"text\": \"        \"",
+    ];
+
+    let h = hunk(vec![
+        Row::Ctx(CtxLine::new(
+            LineNum::new(2027).unwrap(),
+            LineNum::new(2028).unwrap(),
+            "                  \"color\": \"text\",",
+        )),
+        Row::Del(DelLine::new(
+            LineNum::new(2028).unwrap(),
+            "                  \"text\": \"        \"",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(2029).unwrap(),
+            "                  \"text\": \"    \"",
+        )),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(2029).unwrap(),
+            LineNum::new(2030).unwrap(),
+            "                },",
+        )),
+    ]);
+
+    let profile = lang_profile("json");
+    let c = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), profile);
+
+    let mod_row = c.iter().find(|r| r.kind() == RowKind::Mod);
+    assert!(
+        mod_row.is_some(),
+        "del 2028 and add 2029 must pair into a Mod row, got: {:?}",
+        c
+    );
+    let m = mod_row.unwrap();
+    assert_eq!(m.old_line(), Some(2028));
+    assert_eq!(m.new_line(), Some(2029));
+    assert_eq!(
+        m.del_text(),
+        Some("                  \"text\": \"        \"")
+    );
+    assert_eq!(m.text(), "                  \"text\": \"    \"");
+}

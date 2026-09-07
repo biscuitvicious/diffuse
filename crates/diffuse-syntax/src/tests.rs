@@ -835,3 +835,47 @@ fn test_json_and_jsonl_syntax_profile() {
         "colon must be syntaxOperator"
     );
 }
+
+#[test]
+fn test_extract_property_key() {
+    let json = lang_profile("json").unwrap();
+    assert_eq!(
+        json.extract_property_key("\"text\": \"hello\""),
+        Some("text")
+    );
+    assert_eq!(
+        json.extract_property_key("  \"kind\": \"addcommon\","),
+        Some("kind")
+    );
+    assert_eq!(
+        json.extract_property_key("\"color\": \"text\""),
+        Some("color")
+    );
+    assert_eq!(json.extract_property_key("}"), None);
+
+    let toml = lang_profile("toml").unwrap();
+    assert_eq!(
+        toml.extract_property_key("version = \"0.1.0\""),
+        Some("version")
+    );
+    assert_eq!(
+        toml.extract_property_key("diffuse-core = { path = \"...\" }"),
+        Some("diffuse-core")
+    );
+    assert_eq!(toml.extract_property_key("[package]"), None);
+
+    let yaml = lang_profile("yaml").unwrap();
+    assert_eq!(yaml.extract_property_key("name: diffuse"), Some("name"));
+
+    let rust = lang_profile("rs").unwrap();
+    assert_eq!(rust.extract_property_key("pub text: String,"), Some("text"));
+    assert_eq!(
+        rust.extract_property_key("pub(crate) score: f64,"),
+        Some("score")
+    );
+    assert_eq!(rust.extract_property_key("field: 123,"), Some("field"));
+    assert_eq!(rust.extract_property_key("let x = 5;"), None);
+
+    let c = lang_profile("c").unwrap();
+    assert_eq!(c.extract_property_key("int x = 5;"), None);
+}

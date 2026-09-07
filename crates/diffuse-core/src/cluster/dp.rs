@@ -50,10 +50,7 @@ use crate::{
     lcs::{lcs_matched_chars_ids, lcs_pairs_ids},
     parse::Row,
     similarity::TokenInterner,
-    syntax::{
-        prelude::{CloseDelimiter, first_ascii_word},
-        registry::is_ascii_word_char,
-    },
+    syntax::prelude::{CloseDelimiter, first_ascii_word},
 };
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
@@ -267,21 +264,6 @@ pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -
     bm
 }
 
-fn is_config_key_char(c: char) -> bool {
-    is_ascii_word_char(c) || c == '-' || c == '.'
-}
-
-fn extract_config_key(text: &str) -> Option<&str> {
-    let t = text.trim();
-    if let Some(eq_pos) = t.find('=') {
-        let key = t[..eq_pos].trim();
-        if !key.is_empty() && key.chars().all(is_config_key_char) && !key.contains(' ') {
-            return Some(key);
-        }
-    }
-    None
-}
-
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PrecomputedBlock {
     k: usize,
@@ -321,7 +303,7 @@ fn precompute_valid_blocks(
         let mut mask = [0u64; 4];
         let mut chars = 0usize;
 
-        let head_key = meta[j].config_key;
+        let head_key = meta[j].property_key;
         let is_comment = meta[j].comment;
 
         // idx = 0: row j
@@ -351,7 +333,7 @@ fn precompute_valid_blocks(
                     break;
                 }
                 if let Some(hk) = head_key
-                    && let Some(ck) = meta[row_idx].config_key
+                    && let Some(ck) = meta[row_idx].property_key
                     && hk == ck
                 {
                     break;
@@ -538,17 +520,8 @@ fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangP
         {
             return true;
         }
-        // In config files (TOML/YAML/INI), every `key = ` is an independent
-        // property declaration
-        if p.hash_comment
-            && !p.line_comment
-            && !p.block_comment
-            && let Some(eq_pos) = t.find('=')
-        {
-            let lhs = t[..eq_pos].trim();
-            if !lhs.is_empty() && lhs.chars().all(is_config_key_char) {
-                return true;
-            }
+        if p.extract_property_key(t).is_some() {
+            return true;
         }
     }
     // Check for section headers: `[section]`
@@ -626,7 +599,7 @@ pub(crate) struct DpRowMeta {
     pub is_reflow: bool,
     pub ends_with_semi: bool,
     pub is_stmt_start: bool,
-    pub config_key: Option<u32>,
+    pub property_key: Option<u32>,
     pub close_tail: CloseDelimiter,
     pub exact_close: CloseDelimiter,
 }
@@ -909,7 +882,9 @@ pub(crate) fn solve_cluster_with_arena(
         let is_reflow = is_reflow_candidate(text);
         let ends_with_semi = trimmed.ends_with(';');
         let is_stmt_start = is_statement_start(text, profile);
-        let config_key = extract_config_key(text).map(|w| arena.interner.intern(w));
+        let property_key = profile
+            .and_then(|p| p.extract_property_key(text))
+            .map(|w| arena.interner.intern(w));
         let close_tail = classify_close(text);
         let exact_close = classify_exact(text);
         let trimmed_id = arena.interner.intern(trimmed);
@@ -927,7 +902,7 @@ pub(crate) fn solve_cluster_with_arena(
             is_reflow,
             ends_with_semi,
             is_stmt_start,
-            config_key,
+            property_key,
             close_tail,
             exact_close,
         });
@@ -963,7 +938,9 @@ pub(crate) fn solve_cluster_with_arena(
         let is_reflow = is_reflow_candidate(text);
         let ends_with_semi = trimmed.ends_with(';');
         let is_stmt_start = is_statement_start(text, profile);
-        let config_key = extract_config_key(text).map(|w| arena.interner.intern(w));
+        let property_key = profile
+            .and_then(|p| p.extract_property_key(text))
+            .map(|w| arena.interner.intern(w));
         let close_tail = classify_close(text);
         let exact_close = classify_exact(text);
         let trimmed_id = arena.interner.intern(trimmed);
@@ -981,7 +958,7 @@ pub(crate) fn solve_cluster_with_arena(
             is_reflow,
             ends_with_semi,
             is_stmt_start,
-            config_key,
+            property_key,
             close_tail,
             exact_close,
         });
@@ -1191,13 +1168,9 @@ pub(crate) fn solve_cluster_with_arena(
                         (Some(a), Some(b)) => a == b,
                         _ => false,
                     };
-                    let is_config_property_match = statement_head_match
-                        && profile.is_some_and(|p| {
-                            p.hash_comment && !p.line_comment && !p.block_comment && !p.markdown
-                        })
-                        && om.config_key.is_some()
-                        && om.config_key == nm.config_key;
-                    let max_syn = if is_config_property_match {
+                    let is_property_match =
+                        om.property_key.is_some() && om.property_key == nm.property_key;
+                    let max_syn = if is_property_match {
                         w.head_agree_bonus + 200.0
                     } else if statement_head_match {
                         w.head_agree_bonus
@@ -1260,7 +1233,7 @@ pub(crate) fn solve_cluster_with_arena(
                                 || is_prefix_at_boundary(nt_strip, ot_strip))
                     };
                     let unmatched = total.saturating_sub(matched);
-                    let (penalty, syntax) = if is_config_property_match || is_prefix_containment {
+                    let (penalty, syntax) = if is_property_match || is_prefix_containment {
                         let core_unmatched = min_chars.saturating_sub(matched);
                         let length_diff = (total - min_chars) as f64;
                         let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
@@ -1321,6 +1294,7 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         similarity_ratio >= 0.25
                             || is_direct_tail_pair
+                            || is_property_match
                             || statement_head_match
                             || is_prefix_containment
                     };
@@ -1336,6 +1310,7 @@ pub(crate) fn solve_cluster_with_arena(
                     };
                     let proximity_gate = if similarity_ratio >= 0.25
                         || is_direct_tail_pair
+                        || is_property_match
                         || statement_head_match
                         || is_prefix_containment
                     {

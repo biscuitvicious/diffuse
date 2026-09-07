@@ -115,7 +115,21 @@ fn guarded_dels(
             .rows
             .iter()
             .any(|a| matches!(a, Row::Add(_) | Row::MovTgt(_)) && a.text().trim() == r_trim);
-        if !r_trim.is_empty() && !tail_candidate && !has_same_hunk_add {
+        let has_same_hunk_property_add = profile.is_some_and(|p| {
+            if let Some(key) = p.extract_property_key(r.text()) {
+                h.rows.iter().any(|a| {
+                    matches!(a, Row::Add(_) | Row::MovTgt(_))
+                        && p.extract_property_key(a.text()) == Some(key)
+                })
+            } else {
+                false
+            }
+        });
+        if !r_trim.is_empty()
+            && !tail_candidate
+            && !has_same_hunk_add
+            && !has_same_hunk_property_add
+        {
             let in_new = if let Some(nc) = new_content {
                 let set =
                     new_trimmed_set.get_or_insert_with(|| nc.iter().map(|l| l.trim()).collect());
