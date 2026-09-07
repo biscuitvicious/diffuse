@@ -79,6 +79,9 @@ struct Args {
     /// Control ANSI colorization ('always', 'never', or 'auto').
     #[arg(long, value_name = "WHEN", default_value = "auto", global = true)]
     color: String,
+    /// Disable ANSI colorization (equivalent to --color=never).
+    #[arg(long, global = true)]
+    no_color: bool,
     /// Run in non-interactive pager mode (print colored diff to terminal).
     #[arg(short = 'p', long, global = true)]
     pager: bool,
@@ -271,6 +274,19 @@ fn route_mode(
         || (git_args.is_empty() && !stdin_tty && !piped_stdin.trim().is_empty())
 }
 
+/// Configure global ANSI styling condition via `yansi` from CLI flags and
+/// environment.
+pub fn init_color_mode(color: &str, no_color: bool) -> bool {
+    let no_color_env = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+    if no_color || color == "never" || (color == "auto" && no_color_env) {
+        yansi::disable();
+        false
+    } else {
+        yansi::enable();
+        true
+    }
+}
+
 fn main() -> io::Result<()> {
     let _ = diffuse::core::logging::init_tracing_subscriber();
     let args = Args::parse();
@@ -287,6 +303,7 @@ fn main() -> io::Result<()> {
 
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();
+    let colorize = init_color_mode(&args.color, args.no_color);
 
     let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
         match &args.command {
@@ -445,13 +462,17 @@ fn main() -> io::Result<()> {
                 branch: String::new(),
                 untracked_skipped: Vec::new(),
             };
-            let colorize = match args.color.as_str() {
-                "always" => true,
-                "never" => false,
-                _ => stdout_tty,
+            let md_colorize = if colorize {
+                if args.color == "always" {
+                    true
+                } else {
+                    stdout_tty
+                }
+            } else {
+                false
             };
             let md_opts = MarkdownOptions {
-                colorize,
+                colorize: md_colorize,
                 ..MarkdownOptions::default()
             };
             let md = render_markdown_output(&out, &md_opts);
@@ -480,7 +501,10 @@ fn main() -> io::Result<()> {
             let mut stdout = io::stdout().lock();
             if is_raw {
                 for file in consumer {
-                    let rendered = render_raw_file_diff(&file);
+                    let mut rendered = render_raw_file_diff(&file);
+                    if !colorize {
+                        rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                    }
                     if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                         if e.kind() == io::ErrorKind::BrokenPipe {
                             return Ok(());
@@ -491,7 +515,10 @@ fn main() -> io::Result<()> {
             } else {
                 let theme = default_theme();
                 for file in consumer {
-                    let rendered = render_file_diff(&file, &theme, true);
+                    let mut rendered = render_file_diff(&file, &theme, true);
+                    if !colorize {
+                        rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                    }
                     if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                         if e.kind() == io::ErrorKind::BrokenPipe {
                             return Ok(());
@@ -500,7 +527,9 @@ fn main() -> io::Result<()> {
                     }
                 }
             }
-            let _ = stdout.write_all(diffuse::render::ansi::SGR_RESET.as_bytes());
+            if colorize {
+                let _ = stdout.write_all(diffuse::render::ansi::SGR_RESET.as_bytes());
+            }
             let _ = stdout.flush();
         }
         return Ok(());
@@ -606,13 +635,17 @@ fn main() -> io::Result<()> {
         }))
     });
 
-    let colorize = match args.color.as_str() {
-        "always" => true,
-        "never" => false,
-        _ => stdout_tty,
+    let md_colorize = if colorize {
+        if args.color == "always" {
+            true
+        } else {
+            stdout_tty
+        }
+    } else {
+        false
     };
     let md_opts = MarkdownOptions {
-        colorize,
+        colorize: md_colorize,
         ..MarkdownOptions::default()
     };
 
@@ -637,7 +670,10 @@ fn main() -> io::Result<()> {
             } else if is_raw {
                 let mut stdout = io::stdout().lock();
                 for out in &outputs {
-                    let rendered = render_raw_pipeline_output(out);
+                    let mut rendered = render_raw_pipeline_output(out);
+                    if !colorize {
+                        rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                    }
                     if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                         if e.kind() == io::ErrorKind::BrokenPipe {
                             return Ok(());
@@ -679,7 +715,10 @@ fn main() -> io::Result<()> {
                 let _ = stdout.flush();
             } else if is_raw {
                 let output = process_input(*input, &args);
-                let rendered = render_raw_pipeline_output(&output);
+                let mut rendered = render_raw_pipeline_output(&output);
+                if !colorize {
+                    rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                }
                 let mut stdout = io::stdout().lock();
                 if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                     if e.kind() == io::ErrorKind::BrokenPipe {

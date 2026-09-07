@@ -11,12 +11,12 @@
   - [x] Refactor `crates/diffuse-render/src/row.rs` to style via `yansi::Paint`
   - [x] Refactor `crates/diffuse-render/src/diff.rs` to format with `yansi`
   - [x] Preserve golden markup converters `encode_sgr`, `decode_sgr`, and `strip_ansi`
-- [·] **Phase 4: Ratatui & TUI Bridge Integration**
-  - [ ] Update `crates/diffuse-tui/src/view.rs` to map from `yansi::Color` / `yansi::Style` to `ratatui::style::Color` / `Style`
-  - [ ] Update header, footer, divider, and grid rendering to use native `yansi` types
-- [ ] **Phase 5: CLI, Color Conditions & Verification**
-  - [ ] Add support for `yansi::Condition` (`CLICOLOR`, `NO_COLOR`, TTY detection) in the CLI
-  - [ ] Run `./scripts/check.sh` and verify all unit tests and golden corpora pass byte-for-byte
+- [x] **Phase 4: Ratatui & TUI Bridge Integration**
+  - [x] Update `crates/diffuse-tui/src/view.rs` to map from `yansi::Color` / `yansi::Style` to `ratatui::style::Color` / `Style`
+  - [x] Update header, footer, divider, and grid rendering to use native `yansi` types
+- [x] **Phase 5: CLI, Color Conditions & Verification**
+  - [x] Add support for `yansi::Condition` (`CLICOLOR`, `NO_COLOR`, TTY detection) in the CLI
+  - [x] Run `./scripts/check.sh` and verify all unit tests and golden corpora pass byte-for-byte
 
 ---
 
@@ -105,14 +105,20 @@ This plan executes a deep migration to `yansi = "1.0"`. `yansi` becomes the prim
 
 ---
 
-## 5. Phase 5: CLI, Color Conditions & Verification
+## 5. Phase 5: CLI, Color Conditions & Verification (Completed)
 
 - **Goal**: Hook global terminal styling controls to `yansi::whenever(Condition::...)` and enforce full test & style gates.
 - **Files**:
   - `crates/diffuse/src/main.rs`
+  - `crates/diffuse/src/main_tests.rs`
+  - `crates/diffuse/Cargo.toml`
   - `TODO.md`
+  - `GUIDELINES.md`
 - **Actions**:
-  1. Wire `--color` / `--no-color` CLI flags to `yansi::enable()` / `yansi::disable()`.
-  2. Mark completed item in `TODO.md`.
-  3. Run `./scripts/check.sh` (nightly fmt, clippy, unit tests, golden tests, install extension).
+  1. Added `no_color` flag to CLI `Args`.
+  2. Implemented `init_color_mode` wiring `--color` ('always', 'never', 'auto') and `--no-color` to `yansi::enable()`, `yansi::disable()`, and `yansi::whenever(Condition::DEFAULT)`.
+  3. Integrated color condition in pager and markdown outputs with fallback stripping when disabled.
+  4. Expanded unit tests in `main_tests.rs` exercising all color modes and flag parsing.
+  5. Updated `TODO.md` and `GUIDELINES.md` to reflect `yansi` as the canonical styling authority.
+  6. Verified complete workspace check suite (`./scripts/check.sh`) passing cleanly.
 - **Verification**: All workspace gates pass cleanly without warnings or test failures.

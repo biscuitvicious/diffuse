@@ -93,3 +93,27 @@ fn test_yansi_color_roundtrip() {
         AnsiColor::Rgb(10, 20, 30)
     );
 }
+
+#[test]
+fn test_yansi_conditions() {
+    yansi::whenever(Condition::ALWAYS);
+    assert!(yansi::is_enabled());
+    yansi::whenever(Condition::NEVER);
+    assert!(!yansi::is_enabled());
+    yansi::whenever(Condition::DEFAULT);
+
+    yansi::enable();
+    assert!(yansi::is_enabled());
+    yansi::disable();
+    assert!(!yansi::is_enabled());
+
+    let style = yansi::Style::new().fg(yansi::Color::Red).bold();
+    assert_eq!(format!("{}", "hello".paint(style)), "hello");
+
+    yansi::whenever(Condition::ALWAYS);
+    assert!(yansi::is_enabled());
+    assert_ne!(format!("{}", style.prefix()), "");
+    assert_ne!(format!("{}", "hello".paint(style)), "hello");
+
+    yansi::whenever(Condition::DEFAULT);
+}

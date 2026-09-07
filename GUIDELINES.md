@@ -25,7 +25,7 @@
 ## ANSI & Theming Encapsulation (No Direct ANSI Escapes)
 
 - **No Direct ANSI Escapes**: Direct ANSI escape sequences (e.g., `\x1b[...]`, raw terminal codes, hardcoded escape strings) must never be scattered across modules, views, renderers, or TUI logic.
-- **Theming Engine Authority**: Every single color, attribute, style, and terminal escape sequence is the sole responsibility of the centralized theming engine and dedicated ANSI module.
+- **Yansi & Theming Engine Authority**: Every single color, attribute, style, and terminal escape sequence is the sole responsibility of the centralized theming engine, utilizing the `yansi` crate as the unified styling currency.
 - **Algorithmic Generation & Overrides**: The theming system must default to auto-generating harmonious style colors using coloring logic, while allowing for targeted overrides through configuration (theme base + overrides, or completely new themes through config).
 
 ## Build & Installation Conventions

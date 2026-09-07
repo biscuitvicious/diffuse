@@ -454,6 +454,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "yansi",
 ]
 
 [[package]]
