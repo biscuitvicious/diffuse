@@ -879,3 +879,84 @@ fn test_extract_property_key() {
     let c = lang_profile("c").unwrap();
     assert_eq!(c.extract_property_key("int x = 5;"), None);
 }
+
+#[test]
+fn test_terminal_return_expression_rules() {
+    let rs = lang_profile("rs").unwrap();
+    // In Rust, expressions without trailing semicolons are terminal returns
+    assert!(rs.is_terminal_return_expr("None"));
+    assert!(rs.is_terminal_return_expr("Some(result)"));
+    assert!(rs.is_terminal_return_expr("return 42;"));
+    assert!(rs.is_terminal_return_expr("    return None;"));
+    // With trailing semicolon in Rust, it is a statement returning (), NOT a
+    // terminal return value
+    assert!(!rs.is_terminal_return_expr("None;"));
+    assert!(!rs.is_terminal_return_expr("let x = 1;"));
+    assert!(!rs.is_terminal_return_expr("alpha();"));
+    assert!(!rs.is_terminal_return_expr("}"));
+    assert!(!rs.is_terminal_return_expr(""));
+
+    let c = lang_profile("c").unwrap();
+    // In C, returns must be explicit
+    assert!(c.is_terminal_return_expr("return 42;"));
+    assert!(c.is_terminal_return_expr("return;"));
+    assert!(!c.is_terminal_return_expr("None"));
+    assert!(!c.is_terminal_return_expr("42;"));
+    assert!(!c.is_terminal_return_expr("int x = 1;"));
+}
+
+#[test]
+fn test_language_syntax_attributes_and_bypasses() {
+    let rs = lang_profile("rs").unwrap();
+    let py = lang_profile("py").unwrap();
+    let ts = lang_profile("ts").unwrap();
+    let c = lang_profile("c").unwrap();
+    let go = lang_profile("go").unwrap();
+    let sh = lang_profile("sh").unwrap();
+    let toml = lang_profile("toml").unwrap();
+
+    // Attribute lines
+    assert!(rs.is_attribute_line("#[derive(Clone)]"));
+    assert!(rs.is_attribute_line("#![no_std]"));
+    assert!(!rs.is_attribute_line("let x = 5;"));
+    assert!(py.is_attribute_line("@dataclass"));
+    assert!(py.is_attribute_line("    @property"));
+    assert!(!py.is_attribute_line("def foo():"));
+    assert!(ts.is_attribute_line("@Injectable()"));
+    assert!(c.is_attribute_line("[[nodiscard]]"));
+    assert!(go.is_attribute_line("//go:noinline"));
+
+    // Continuation lines
+    assert!(rs.is_continuation_line("&& is_valid"));
+    assert!(rs.is_continuation_line("|| is_other"));
+    assert!(rs.is_continuation_line(".filter(|x| x > 0)"));
+    assert!(py.is_continuation_line("and is_valid"));
+    assert!(py.is_continuation_line("or is_other"));
+    assert!(py.is_continuation_line("\\"));
+    assert!(sh.is_continuation_line("| grep foo"));
+
+    // Import statements
+    assert!(py.is_import_statement("import sys"));
+    assert!(py.is_import_statement("from os import path"));
+    assert!(go.is_import_statement("import \"fmt\""));
+    assert!(rs.is_import_statement("use std::sync::Arc;"));
+    assert!(rs.is_import_statement("pub use std::path::Path;"));
+    assert!(sh.is_import_statement("source ./env.sh"));
+
+    // Expression open
+    assert!(rs.is_expression_open("{"));
+    assert!(rs.is_expression_open("("));
+    assert!(rs.is_expression_open("["));
+    assert!(!rs.is_expression_open("let x = 1;"));
+
+    // Section headers
+    assert!(toml.section_headers);
+    assert!(!rs.section_headers);
+    assert!(!py.section_headers);
+
+    // Decl break with attributes and comments
+    assert!(rs.is_decl_break("/// Doc comment"));
+    assert!(rs.is_decl_break("#[derive(Debug)]"));
+    assert!(py.is_decl_break("@dataclass"));
+    assert!(py.is_decl_break("# A python comment"));
+}

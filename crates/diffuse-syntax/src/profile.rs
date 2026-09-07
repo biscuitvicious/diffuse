@@ -203,6 +203,13 @@ pub struct LangProfile {
     pub markdown: bool,
     /// The block delimiter style (braces, colon + indentation, or keywords).
     pub block_style: BlockDelimStyle,
+    /// Whether indentation is syntactically significant in this language
+    /// (e.g. Python, YAML). When false, indentation is strictly a soft
+    /// cost hint and cannot be used to make semantic assertions.
+    pub significant_indent: bool,
+    /// Whether the language supports implicit return expressions without a
+    /// `return` keyword (e.g. Rust, Ruby).
+    pub implicit_return: bool,
     /// Regex capturing the function name (group 1) from a function declaration
     /// line.
     pub fn_decl: Option<Regex>,
@@ -225,6 +232,17 @@ pub struct LangProfile {
     /// Syntax style used for key-value properties, struct fields, or dict
     /// entries.
     pub property_syntax: PropertySyntax,
+    /// Prefixes that introduce attributes, annotations, or decorators (e.g.
+    /// `#[` for Rust, `@` for Python/JS).
+    pub attribute_prefixes: &'static [&'static str],
+    /// Prefixes that introduce multi-line continuation expressions (e.g. `&&`,
+    /// `||`, `.`).
+    pub continuation_prefixes: &'static [&'static str],
+    /// Prefixes that introduce import or use statements (e.g. `use ` for Rust,
+    /// `import ` for Python/Go).
+    pub import_prefixes: &'static [&'static str],
+    /// Whether the language uses section headers like `[section]` (TOML, INI).
+    pub section_headers: bool,
 }
 
 impl LangProfile {
@@ -342,6 +360,13 @@ impl LangProfile {
         }
     }
 
+    /// Whether a line consists solely of an opening delimiter for blocks or
+    /// expressions (`{`, `(`, `[`).
+    pub fn is_expression_open(&self, line: &str) -> bool {
+        let t = line.trim();
+        t == "{" || t == "(" || t == "["
+    }
+
     /// Whether a line acts as a closing delimiter for expressions or statements
     /// (parentheses, brackets, braces).
     pub fn is_expression_close(&self, line: &str) -> bool {
@@ -357,11 +382,38 @@ impl LangProfile {
         }
     }
 
+    /// Whether a line is an attribute, decorator, or annotation line.
+    pub fn is_attribute_line(&self, line: &str) -> bool {
+        let t = line.trim();
+        self.attribute_prefixes.iter().any(|&pf| t.starts_with(pf))
+    }
+
+    /// Whether a line is a return statement or (for languages with implicit
+    /// returns like Rust) a terminal return expression.
+    pub fn is_terminal_return_expr(&self, line: &str) -> bool {
+        let t = line.trim();
+        if t.is_empty()
+            || self.is_comment_line(t)
+            || self.is_block_open(t)
+            || self.is_block_close(t)
+        {
+            return false;
+        }
+        if t.starts_with("return ") || t == "return;" || t == "return" || t.starts_with("return\t")
+        {
+            return true;
+        }
+        if self.implicit_return && !t.ends_with(';') {
+            return true;
+        }
+        false
+    }
+
     /// Whether a line is a declaration start or item boundary that breaks a
     /// multi-line continuation.
     pub fn is_decl_break(&self, line: &str) -> bool {
         let t = line.trim();
-        if t.starts_with("///") || t.starts_with("//!") || t.starts_with("#[") {
+        if self.is_comment_line(t) || self.is_attribute_line(t) {
             return true;
         }
         if t.starts_with("if ")
@@ -373,6 +425,7 @@ impl LangProfile {
             || t.starts_with("match ")
             || t.starts_with("return ")
             || t.starts_with("return;")
+            || t == "return"
         {
             return true;
         }
@@ -383,15 +436,21 @@ impl LangProfile {
     /// compound block start).
     pub fn is_continuation_line(&self, line: &str) -> bool {
         let t = line.trim();
-        t.starts_with("&&") || t.starts_with("||") || t.starts_with('.') || t == "{" || t == "}"
+        self.continuation_prefixes
+            .iter()
+            .any(|&pf| t.starts_with(pf))
+            || t == "{"
+            || t == "}"
     }
 
     /// Whether a line is an import/use statement that can reflow multi-line
-    /// braces.
+    /// braces or parens.
     pub fn is_import_statement(&self, line: &str) -> bool {
         let t = line.trim();
-        (t.starts_with("use ") || t.starts_with("import ") || t.contains('{'))
-            && t.trim_end().ends_with(';')
+        if self.import_prefixes.is_empty() {
+            return false;
+        }
+        self.import_prefixes.iter().any(|&pf| t.starts_with(pf))
     }
 
     /// Whether a line starts a comment in this language.
@@ -409,6 +468,12 @@ impl LangProfile {
             return true;
         }
         false
+    }
+
+    /// Whether a line is a doc comment line (`///` or `//!` in Rust).
+    pub fn is_doc_comment(&self, line: &str) -> bool {
+        let t = line.trim();
+        self.line_comment && (t.starts_with("///") || t.starts_with("//!"))
     }
 
     /// Classifies the trailing closing delimiter of a line according to this

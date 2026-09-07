@@ -56,6 +56,31 @@ fn tail_before_closing_brace() {
 }
 
 #[test]
+fn test_unindented_shell_and_two_space_tail() {
+    let sh_profile = lang_profile("sh");
+    // Unindented shell script:
+    // if -f foo.txt; then
+    // echo Foo!
+    // fi
+    let sh_content: &[&str] = &["if -f foo.txt; then", "echo Foo!", "fi"];
+    assert!(
+        is_tail_before_closing(Some(2), true, Some(sh_content), None, sh_profile),
+        "echo Foo! before fi in unindented shell script must be recognized as tail"
+    );
+
+    // 2-space indented TypeScript:
+    // function foo() {
+    //   return 42;
+    // }
+    let ts_profile = lang_profile("ts");
+    let ts_content: &[&str] = &["function foo() {", "  return 42;", "}"];
+    assert!(
+        is_tail_before_closing(Some(2), true, Some(ts_content), None, ts_profile),
+        "2-space indented return before closing brace must be recognized as tail"
+    );
+}
+
+#[test]
 fn fn_of_finds_the_nearest_preceding_fn() {
     let profile = lang_profile("rs");
     let content: &[&str] = &[
@@ -198,5 +223,28 @@ fn fn_of_shell() {
         fn_of(Some(content), Some(1), profile),
         Some("deploy".to_string()),
         "inside deploy function in shell"
+    );
+}
+
+#[test]
+fn test_fn_body_lines() {
+    let rs = lang_profile("rs");
+    let content: &[&str] = &[
+        "fn alpha() {",
+        "    let x = 1;",
+        "    let y = 2;",
+        "}",
+        "",
+        "fn beta() {",
+        "    let z = 3;",
+        "}",
+    ];
+    let alpha_lines = crate::scope::fn_body_lines(Some(content), "alpha", rs);
+    assert_eq!(alpha_lines, Some(&content[0..4]));
+    let beta_lines = crate::scope::fn_body_lines(Some(content), "beta", rs);
+    assert_eq!(beta_lines, Some(&content[5..8]));
+    assert_eq!(
+        crate::scope::fn_body_lines(Some(content), "nonexistent", rs),
+        None
     );
 }

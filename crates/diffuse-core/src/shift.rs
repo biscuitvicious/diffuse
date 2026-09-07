@@ -321,15 +321,10 @@ pub fn calculate_needed_shift_down(
     }
 
     let text = hunk.rows[split_idx].text().trim();
-    let is_closing_delim = text == "}"
-        || text == "};"
-        || text == "},"
-        || text == ")"
-        || text == ");"
-        || text == "),"
-        || text == "]"
-        || text == "],"
-        || text == "];";
+    let is_closing_delim = p.classify_exact_close(text)
+        != crate::syntax::profile::CloseDelimiter::None
+        || p.is_expression_close(text)
+        || p.is_block_close(text);
     if !is_closing_delim {
         return 0;
     }
@@ -340,10 +335,9 @@ pub fn calculate_needed_shift_down(
     let is_boundary = |s: &str| {
         let t = s.trim();
         p.is_comment_line(t)
-            || t.starts_with("#[")
-            || t.starts_with('@')
-            || (p.block_style == crate::syntax::profile::BlockDelimStyle::Braces
-                && (t == "{" || t.starts_with('{')))
+            || p.is_attribute_line(t)
+            || p.is_expression_open(t)
+            || p.is_block_open(t)
             || p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
             || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
     };

@@ -29,6 +29,8 @@ pub fn profile() -> LangProfile {
         fence_strip: None,
         markdown: false,
         block_style: BlockDelimStyle::Braces,
+        significant_indent: false,
+        implicit_return: false,
         // C/C++ function definitions are hard to distinguish from declarations;
         // capture the name from the last word-token before the opening paren.
         fn_decl: Some(
@@ -49,5 +51,9 @@ pub fn profile() -> LangProfile {
         tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
         trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
         property_syntax: crate::profile::PropertySyntax::None,
+        attribute_prefixes: &["[[", "__attribute__"],
+        continuation_prefixes: &["&&", "||", ".", "->"],
+        import_prefixes: &["#include ", "import "],
+        section_headers: false,
     }
 }

@@ -28,14 +28,28 @@ pub fn is_tail_before_closing(
         Some(c) => c,
         None => return false,
     };
-    if content.get(line).is_none() {
+    if line == 0 || line > content.len() {
         return false;
     }
-    let next = content[line];
+    let curr = content[line - 1];
+    if profile.is_block_open(curr) {
+        return false;
+    }
+    let next = match content.get(line) {
+        Some(n) => n,
+        None => return false,
+    };
     match profile.block_style {
-        BlockDelimStyle::Braces => next.starts_with("    }") && next[5..].trim().is_empty(),
-        BlockDelimStyle::Keywords => profile.is_block_close(next),
-        BlockDelimStyle::IndentColon => false,
+        BlockDelimStyle::Braces | BlockDelimStyle::Keywords => profile.is_block_close(next),
+        BlockDelimStyle::IndentColon => {
+            if profile.significant_indent {
+                let curr_indent = curr.len() - curr.trim_start().len();
+                let next_indent = next.len() - next.trim_start().len();
+                !next.trim().is_empty() && next_indent < curr_indent
+            } else {
+                false
+            }
+        }
     }
 }
 
@@ -71,9 +85,7 @@ pub fn fn_of(
             return Some(caps[1].to_string());
         }
         if Some(i) != line.checked_sub(1)
-            && (l == "}"
-                || raw.starts_with('}')
-                || stop_prefixes.iter().any(|&pf| l.starts_with(pf)))
+            && (profile.is_block_close(l) || stop_prefixes.iter().any(|&pf| l.starts_with(pf)))
         {
             return None;
         }
@@ -105,6 +117,49 @@ pub fn fn_of_exists(
                 .captures(trimmed)
                 .is_some_and(|c| c.get(1).is_some_and(|m| m.as_str() == fn_name))
     })
+}
+
+/// Returns the slice of lines corresponding to the body of function `fn_name`
+/// in `content`, bounded by the opening signature down to the enclosing block
+/// close.
+pub fn fn_body_lines<'a>(
+    content: Option<&'a [&'a str]>,
+    fn_name: &str,
+    profile: Option<&LangProfile>,
+) -> Option<&'a [&'a str]> {
+    let profile = profile?;
+    let fn_re = profile.fn_decl.as_ref()?;
+    let content = content?;
+    let stop_prefixes = profile.scope_stop_prefixes;
+
+    let start_idx = content.iter().position(|l| {
+        let trimmed = l.trim();
+        trimmed.contains(fn_name)
+            && trimmed.contains('(')
+            && fn_re
+                .captures(trimmed)
+                .is_some_and(|c| c.get(1).is_some_and(|m| m.as_str() == fn_name))
+    })?;
+
+    let mut depth = 0i32;
+    let mut end_idx = content.len();
+    for (i, &line) in content[start_idx..].iter().enumerate() {
+        let l = line.trim();
+        if profile.is_block_open(l) {
+            depth += 1;
+        }
+        if profile.is_block_close(l) {
+            depth -= 1;
+            if depth <= 0 && i > 0 {
+                end_idx = start_idx + i + 1;
+                break;
+            }
+        } else if depth <= 0 && i > 0 && stop_prefixes.iter().any(|&pf| l.starts_with(pf)) {
+            end_idx = start_idx + i;
+            break;
+        }
+    }
+    Some(&content[start_idx..end_idx])
 }
 
 #[cfg(test)]

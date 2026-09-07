@@ -223,10 +223,13 @@ pub fn pass_assemble_mods(
                     let nxt_trim = add_nxt.text().trim();
                     let is_closing_row = profile.is_some_and(|p| {
                         p.is_expression_close(nxt_trim) || p.is_block_close(nxt_trim)
-                    }) || nxt_trim == "};"
-                        || nxt_trim == "}"
-                        || nxt_trim == ");";
-                    let is_opening_row = nxt_trim == "{" || nxt_trim == "(";
+                    })
+                        || crate::syntax::profile::CloseDelimiter::default_classify_exact(nxt_trim)
+                            != crate::syntax::profile::CloseDelimiter::None;
+                    let is_opening_row = profile.is_some_and(|p| p.is_expression_open(nxt_trim))
+                        || nxt_trim == "{"
+                        || nxt_trim == "("
+                        || nxt_trim == "[";
 
                     if is_opening_row {
                         let text_len = add_nxt.text().chars().count();

@@ -401,3 +401,20 @@ fn test_semantic_slide_json_object_closing_delimiter() {
     assert_eq!(shifted.rows[6].text(), "                },");
     assert_eq!(shifted.rows[6].new_line(), Some(2034));
 }
+
+#[test]
+fn test_shift_down_recognizes_python_decorator_boundary() {
+    let py = lang_profile("py");
+    let h = hunk(vec![
+        Row::Del(DelLine::new(LineNum::new(10).unwrap(), "old line")),
+        Row::Add(AddLine::new(LineNum::new(20).unwrap(), "    pass")),
+        Row::Add(AddLine::new(LineNum::new(21).unwrap(), "    )")),
+        Row::Add(AddLine::new(LineNum::new(22).unwrap(), "@dataclass")),
+        Row::Add(AddLine::new(LineNum::new(23).unwrap(), "class Foo:")),
+    ]);
+    let shift_rows = calculate_needed_shift_down(&h, 1, 5, 2, py);
+    assert_eq!(
+        shift_rows, 1,
+        "Should shift down closing delimiter before decorator boundary"
+    );
+}

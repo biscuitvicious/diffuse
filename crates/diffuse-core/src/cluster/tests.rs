@@ -1224,3 +1224,117 @@ fn test_prefix_containment_comment_mismatch_rejected() {
         "comment vs code mismatch must NOT pair as Mod via prefix containment"
     );
 }
+
+#[test]
+fn test_unrelated_tail_statements_not_paired_on_zero_indent_diff() {
+    let rs = lang_profile("rs");
+    // Two completely unrelated lines before closing delimiter with same indent:
+    // Old: alpha();
+    // New: zzzzz = 42;
+    // Both followed by "}" (close_dist == 1). Indent diff == 0.0.
+    // They share 0 tokens and should NOT be paired as Mod!
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(10).unwrap(),
+        "    alpha();",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(20).unwrap(),
+        "    zzzzz = 42;",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn process() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["}"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert!(
+        sol.transitions
+            .iter()
+            .all(|t| !matches!(t, dp::DpOp::Mod { .. })),
+        "unrelated tail statements must NOT pair as Mod solely because indent_diff == 0.0"
+    );
+}
+
+#[test]
+fn test_section_headers_distinguish_toml_from_rust_and_python() {
+    let toml = lang_profile("toml");
+    let rs = lang_profile("rs");
+    let py = lang_profile("py");
+
+    // In TOML, [section] is a statement/section start anchor candidate
+    assert!(dp::is_statement_start("[dependencies]", toml));
+    assert!(dp::is_statement_start("[package]", toml));
+
+    // In Rust / Python, [item] is an expression, NOT a section header statement
+    // start
+    assert!(!dp::is_statement_start("[item]", rs));
+    assert!(!dp::is_statement_start("[item]", py));
+}
+
+#[test]
+fn test_scope_restricted_deletion_pairing() {
+    use crate::{
+        cluster::pairing::dp_pairing,
+        parse::{AddLine, CtxLine, DelLine, Hunk, LineNum},
+    };
+
+    let rs = lang_profile("rs");
+    let old_content: &[&str] = &[
+        "fn alpha() {",
+        "    let count = 0;",
+        "    process();",
+        "}",
+        "",
+        "fn beta() {",
+        "    let count = 0;",
+        "    other();",
+        "}",
+    ];
+    let new_content: &[&str] = &[
+        "fn alpha() {",
+        "    let total = 0;",
+        "    process();",
+        "}",
+        "",
+        "fn beta() {",
+        "    let count = 0;",
+        "    other();",
+        "}",
+    ];
+
+    let h = Hunk {
+        old_start: 1,
+        old_count: 4,
+        new_start: 1,
+        new_count: 4,
+        section: String::new(),
+        rows: vec![
+            Row::Ctx(CtxLine::new(
+                LineNum::new(1).unwrap(),
+                LineNum::new(1).unwrap(),
+                "fn alpha() {",
+            )),
+            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "    let count = 0;")),
+            Row::Add(AddLine::new(LineNum::new(2).unwrap(), "    let total = 0;")),
+            Row::Ctx(CtxLine::new(
+                LineNum::new(3).unwrap(),
+                LineNum::new(3).unwrap(),
+                "    process();",
+            )),
+            Row::Ctx(CtxLine::new(
+                LineNum::new(4).unwrap(),
+                LineNum::new(4).unwrap(),
+                "}",
+            )),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+
+    let results = dp_pairing(&h, Some(old_content), Some(new_content), rs);
+    // Row 2 (Add "let total = 0;") must pair with Row 1 (Del "let count = 0;")
+    // despite "let count = 0;" existing in unrelated fn beta() in new_content!
+    assert_eq!(results.pair_of.get(&2), Some(&1));
+}

@@ -19,7 +19,7 @@ use crate::{
     counts::file_counts,
     lcs::word_spans_with_profile,
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs},
-    moves::mark_moves,
+    moves::mark_moves_with_profile,
     notes::{NotesDB, note_runs, notes_for_file},
     parse::{AddLine, DiffFile, Row, RowKind, Spans},
     syntax::{
@@ -315,7 +315,7 @@ pub fn process_single_diff_file(
     });
 
     // Mark moves after collapse: creates Row::Mov pairs.
-    mark_moves(&mut f);
+    mark_moves_with_profile(&mut f, profile);
 
     // Span-fill for Mov rows that need subword diff spans.
     f.hunks.par_iter_mut().for_each(|h| {

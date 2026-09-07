@@ -82,7 +82,7 @@ pub const REGISTERED_EXTENSIONS: &[&str] = &[
 ];
 
 /// Returns all distinct language profiles registered in the syntax system.
-pub fn all_registered_profiles() -> [&'static LangProfile; 9] {
+pub fn all_registered_profiles() -> [&'static LangProfile; 10] {
     static RS: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(rust::profile);
     static WEB: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(web::profile);
     static PY: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(python::profile);
@@ -90,25 +90,17 @@ pub fn all_registered_profiles() -> [&'static LangProfile; 9] {
     static C_FAM: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(c_family::profile);
     static GO: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(go::profile);
     static MD: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(markdown::profile);
-    static TOML_YAML: std::sync::LazyLock<LangProfile> =
-        std::sync::LazyLock::new(config::toml_yaml_profile);
+    static TOML: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::toml_profile);
+    static YAML: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::yaml_profile);
     static JSON: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::json_profile);
 
     [
-        &*RS,
-        &*WEB,
-        &*PY,
-        &*SH,
-        &*C_FAM,
-        &*GO,
-        &*MD,
-        &*TOML_YAML,
-        &*JSON,
+        &*RS, &*WEB, &*PY, &*SH, &*C_FAM, &*GO, &*MD, &*TOML, &*YAML, &*JSON,
     ]
 }
 
 pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
-    let [rs, web, py, sh, c_fam, go, md, toml_yaml, json] = all_registered_profiles();
+    let [rs, web, py, sh, c_fam, go, md, toml, yaml, json] = all_registered_profiles();
 
     // Fence ids are LANGUAGE names (` ```rust `); the profiles are keyed by
     // the file EXTENSIONS (`rs`). Map the common aliases — and the rust
@@ -122,7 +114,8 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
         "c" | "h" | "cpp" | "hpp" | "java" => Some(c_fam),
         "go" => Some(go),
         "md" | "markdown" => Some(md),
-        "toml" | "yaml" | "yml" => Some(toml_yaml),
+        "toml" => Some(toml),
+        "yaml" | "yml" => Some(yaml),
         "json" | "jsonl" => Some(json),
         _ => None,
     }

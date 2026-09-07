@@ -18,6 +18,16 @@ type RowPos = (usize, usize);
 /// `Row::MovTgt(add_line)`.
 #[tracing::instrument(level = "trace", skip(f), fields(path = %f.path, hunk_count = f.hunks.len()))]
 pub fn mark_moves(f: &mut DiffFile) {
+    mark_moves_with_profile(f, None);
+}
+
+/// Mark exact-content del/add pairs as *moved*, using language profile syntax
+/// boundaries to filter coincidental delimiter moves.
+#[tracing::instrument(level = "trace", skip(f, profile), fields(path = %f.path, hunk_count = f.hunks.len()))]
+pub fn mark_moves_with_profile(
+    f: &mut DiffFile,
+    profile: Option<&crate::syntax::profile::LangProfile>,
+) {
     // Leading-indent-insensitive: a line reflowed to a different indentation
     // is still a move, not a change. Trailing whitespace is NOT stripped —
     // trimming the right side would cause trailing-space cleanup hunks (like
@@ -169,19 +179,23 @@ pub fn mark_moves(f: &mut DiffFile) {
         }
     }
 
-    fn is_trivial_line(t: &str) -> bool {
+    let is_trivial_line = |t: &str| {
         let s = t.trim();
-        s.is_empty()
-            || s == "}"
-            || s == "{"
-            || s == "};"
-            || s == ")"
-            || s == ");"
-            || s == "]"
-            || s == "];"
-            || s == "},"
-            || s == "),"
-    }
+        if s.is_empty() {
+            return true;
+        }
+        if let Some(p) = profile {
+            p.classify_exact_close(s) != crate::syntax::profile::CloseDelimiter::None
+                || p.is_expression_open(s)
+                || p.is_block_close(s)
+        } else {
+            crate::syntax::profile::CloseDelimiter::default_classify_exact(s)
+                != crate::syntax::profile::CloseDelimiter::None
+                || s == "{"
+                || s == "("
+                || s == "["
+        }
+    };
 
     // A del run whose FIRST line did not move is a deleted block, not a
     // relocation — the interior "moved" lines are coincidental same-text

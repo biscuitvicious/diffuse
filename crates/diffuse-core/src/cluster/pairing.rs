@@ -130,7 +130,17 @@ fn guarded_dels(
             && !has_same_hunk_add
             && !has_same_hunk_property_add
         {
-            let in_new = if let Some(nc) = new_content {
+            let del_fn = fn_of(old_content, r.old_line(), profile);
+            let in_new = if let Some(ref dfn) = del_fn {
+                // If function scope is known, check whether the line survives
+                // within the SAME function in the new file,
+                // rather than an unrelated scope.
+                if let Some(body) = crate::scope::fn_body_lines(new_content, dfn, profile) {
+                    body.iter().any(|l| l.trim() == r_trim)
+                } else {
+                    false
+                }
+            } else if let Some(nc) = new_content {
                 let set =
                     new_trimmed_set.get_or_insert_with(|| nc.iter().map(|l| l.trim()).collect());
                 set.contains(r_trim)

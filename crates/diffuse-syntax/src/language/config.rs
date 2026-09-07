@@ -7,10 +7,10 @@ use regex::Regex;
 
 use crate::profile::{BlockDelimStyle, LangProfile, PropertySyntax};
 
-/// TOML and YAML — hash comments, colon-indented blocks, no prose.
-pub fn toml_yaml_profile() -> LangProfile {
+/// TOML — hash comments, section headers, colon/equals properties.
+pub fn toml_profile() -> LangProfile {
     LangProfile {
-        name: "toml_yaml",
+        name: "toml",
         keywords: &[],
         hash_comment: true,
         line_comment: false,
@@ -21,6 +21,8 @@ pub fn toml_yaml_profile() -> LangProfile {
         fence_strip: None,
         markdown: false,
         block_style: BlockDelimStyle::IndentColon,
+        significant_indent: false,
+        implicit_return: false,
         fn_decl: Some(Regex::new(r"^\s*\[+([A-Za-z0-9_.-]+)\]+").expect("toml section header")),
         decl_prefixes: &["["],
         operators: &[],
@@ -29,7 +31,47 @@ pub fn toml_yaml_profile() -> LangProfile {
         tail_delimiters: BlockDelimStyle::IndentColon.default_tail_delimiters(),
         trailing_delimiters: BlockDelimStyle::IndentColon.default_trailing_delimiters(),
         property_syntax: PropertySyntax::ColonOrEquals,
+        attribute_prefixes: &[],
+        continuation_prefixes: &[],
+        import_prefixes: &[],
+        section_headers: true,
     }
+}
+
+/// YAML — hash comments, colon-indented blocks, significant indentation.
+pub fn yaml_profile() -> LangProfile {
+    LangProfile {
+        name: "yaml",
+        keywords: &[],
+        hash_comment: true,
+        line_comment: false,
+        types_by_case: false,
+        block_comment: false,
+        fence: None,
+        unlabeled_fence_lang: None,
+        fence_strip: None,
+        markdown: false,
+        block_style: BlockDelimStyle::IndentColon,
+        significant_indent: true,
+        implicit_return: false,
+        fn_decl: None,
+        decl_prefixes: &[],
+        operators: &[],
+        scope_stop_prefixes: &[],
+        exact_delimiters: BlockDelimStyle::IndentColon.default_exact_delimiters(),
+        tail_delimiters: BlockDelimStyle::IndentColon.default_tail_delimiters(),
+        trailing_delimiters: BlockDelimStyle::IndentColon.default_trailing_delimiters(),
+        property_syntax: PropertySyntax::Colon,
+        attribute_prefixes: &[],
+        continuation_prefixes: &[],
+        import_prefixes: &[],
+        section_headers: false,
+    }
+}
+
+/// Backward-compatible profile constructor for toml/yaml.
+pub fn toml_yaml_profile() -> LangProfile {
+    toml_profile()
 }
 
 pub const JSON_KEYWORDS: &[&str] = &["false", "null", "true"];
@@ -48,6 +90,8 @@ pub fn json_profile() -> LangProfile {
         fence_strip: None,
         markdown: false,
         block_style: BlockDelimStyle::Braces,
+        significant_indent: false,
+        implicit_return: false,
         fn_decl: None,
         decl_prefixes: &[],
         operators: &[":"],
@@ -56,5 +100,9 @@ pub fn json_profile() -> LangProfile {
         tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
         trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
         property_syntax: PropertySyntax::Colon,
+        attribute_prefixes: &[],
+        continuation_prefixes: &[],
+        import_prefixes: &[],
+        section_headers: false,
     }
 }

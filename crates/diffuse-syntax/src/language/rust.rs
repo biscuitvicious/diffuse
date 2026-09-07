@@ -72,6 +72,8 @@ pub fn profile() -> LangProfile {
         fence_strip: Some(Regex::new(r"^\s*(///|//!)?\s*").expect("the doc prefix")),
         markdown: false,
         block_style: BlockDelimStyle::Braces,
+        significant_indent: false,
+        implicit_return: true,
         fn_decl: Some(
             Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)")
                 .expect("rs fn_decl"),
@@ -111,5 +113,9 @@ pub fn profile() -> LangProfile {
         tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
         trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
         property_syntax: crate::profile::PropertySyntax::Colon,
+        attribute_prefixes: &["#[", "#!"],
+        continuation_prefixes: &["&&", "||", "."],
+        import_prefixes: &["use ", "pub use "],
+        section_headers: false,
     }
 }

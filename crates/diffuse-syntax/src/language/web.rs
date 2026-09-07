@@ -73,6 +73,8 @@ pub fn profile() -> LangProfile {
         fence_strip: None,
         markdown: false,
         block_style: BlockDelimStyle::Braces,
+        significant_indent: false,
+        implicit_return: false,
         fn_decl: Some(
             Regex::new(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)")
                 .expect("ts fn_decl"),
@@ -112,5 +114,9 @@ pub fn profile() -> LangProfile {
         tail_delimiters: BlockDelimStyle::Braces.default_tail_delimiters(),
         trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
         property_syntax: crate::profile::PropertySyntax::Colon,
+        attribute_prefixes: &["@"],
+        continuation_prefixes: &["&&", "||", ".", "?."],
+        import_prefixes: &["import ", "export {"],
+        section_headers: false,
     }
 }

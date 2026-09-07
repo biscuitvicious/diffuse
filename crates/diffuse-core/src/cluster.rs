@@ -60,7 +60,7 @@ pub fn classify_syntax_section(line: &str, profile: Option<&LangProfile>) -> Syn
     let Some(p) = profile else {
         return SyntaxSectionKind::Code;
     };
-    if p.line_comment && (t.starts_with("///") || t.starts_with("//!")) {
+    if p.is_doc_comment(t) {
         return SyntaxSectionKind::DocComment;
     }
     if (p.line_comment && t.starts_with("//")) || (p.hash_comment && t.starts_with('#')) {
@@ -69,7 +69,7 @@ pub fn classify_syntax_section(line: &str, profile: Option<&LangProfile>) -> Syn
     if p.block_comment && (t.starts_with("/*") || t.starts_with('*')) {
         return SyntaxSectionKind::BlockComment;
     }
-    if t.starts_with("#[") || t.starts_with('@') {
+    if p.is_attribute_line(t) {
         return SyntaxSectionKind::Attribute;
     }
     if p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))

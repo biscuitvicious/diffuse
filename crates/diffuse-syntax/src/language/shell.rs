@@ -25,6 +25,8 @@ pub fn profile() -> LangProfile {
         fence_strip: None,
         markdown: false,
         block_style: BlockDelimStyle::Keywords,
+        significant_indent: false,
+        implicit_return: false,
         fn_decl: Some(
             Regex::new(r"^\s*(?:function\s+)?([A-Za-z0-9_]+)\s*\(\)").expect("sh fn_decl"),
         ),
@@ -35,5 +37,9 @@ pub fn profile() -> LangProfile {
         tail_delimiters: BlockDelimStyle::Keywords.default_tail_delimiters(),
         trailing_delimiters: BlockDelimStyle::Keywords.default_trailing_delimiters(),
         property_syntax: crate::profile::PropertySyntax::None,
+        attribute_prefixes: &[],
+        continuation_prefixes: &["&&", "||", "|", "\\"],
+        import_prefixes: &["source ", ". "],
+        section_headers: false,
     }
 }

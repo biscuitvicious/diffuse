@@ -509,7 +509,10 @@ fn is_reflow_candidate(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
-fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangProfile>) -> bool {
+pub(crate) fn is_statement_start(
+    text: &str,
+    profile: Option<&crate::syntax::profile::LangProfile>,
+) -> bool {
     let t = text.trim();
     if t.is_empty() {
         return false;
@@ -523,8 +526,13 @@ fn is_statement_start(text: &str, profile: Option<&crate::syntax::profile::LangP
         if p.extract_property_key(t).is_some() {
             return true;
         }
+        if p.section_headers && t.starts_with('[') && t.ends_with(']') {
+            return true;
+        }
+        return false;
     }
-    // Check for section headers: `[section]`
+    // Fallback check for section headers when no profile is available:
+    // `[section]`
     if t.starts_with('[') && t.ends_with(']') {
         return true;
     }
@@ -602,6 +610,7 @@ pub(crate) struct DpRowMeta {
     pub property_key: Option<u32>,
     pub close_tail: CloseDelimiter,
     pub exact_close: CloseDelimiter,
+    pub is_terminal_return: bool,
 }
 
 /// Scratch arena for DP cluster solving to reuse memory across clusters.
@@ -726,7 +735,7 @@ pub(crate) fn solve_cluster_with_arena(
         if let Some(p) = profile {
             p.is_block_close(t) || p.is_expression_close(t)
         } else {
-            false
+            CloseDelimiter::default_classify_exact(t) != CloseDelimiter::None
         }
     };
     let indent_of = |t: &str| -> usize { t.len() - t.trim_start().len() };
@@ -887,6 +896,12 @@ pub(crate) fn solve_cluster_with_arena(
             .map(|w| arena.interner.intern(w));
         let close_tail = classify_close(text);
         let exact_close = classify_exact(text);
+        let is_terminal_return = if let Some(p) = profile {
+            p.is_terminal_return_expr(text)
+        } else {
+            let t = text.trim();
+            !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
+        };
         let trimmed_id = arena.interner.intern(trimmed);
 
         arena.old_tokens.push(dt);
@@ -905,6 +920,7 @@ pub(crate) fn solve_cluster_with_arena(
             property_key,
             close_tail,
             exact_close,
+            is_terminal_return,
         });
     }
 
@@ -943,6 +959,12 @@ pub(crate) fn solve_cluster_with_arena(
             .map(|w| arena.interner.intern(w));
         let close_tail = classify_close(text);
         let exact_close = classify_exact(text);
+        let is_terminal_return = if let Some(p) = profile {
+            p.is_terminal_return_expr(text)
+        } else {
+            let t = text.trim();
+            !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
+        };
         let trimmed_id = arena.interner.intern(trimmed);
 
         arena.new_tokens.push(dt);
@@ -961,6 +983,7 @@ pub(crate) fn solve_cluster_with_arena(
             property_key,
             close_tail,
             exact_close,
+            is_terminal_return,
         });
     }
 
@@ -1177,12 +1200,11 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         0.0
                     };
-                    let max_close =
-                        if om.close_dist == 1 && nm.close_dist == 1 && om.indent == nm.indent {
-                            w.delta
-                        } else {
-                            w.epsilon
-                        };
+                    let max_close = if om.close_dist == 1 && nm.close_dist == 1 {
+                        w.delta
+                    } else {
+                        w.epsilon
+                    };
 
                     let max_possible_mod_s = base + w.alpha * max_matched as f64
                         - w.gamma * (total - max_matched) as f64
@@ -1262,9 +1284,9 @@ pub(crate) fn solve_cluster_with_arena(
                     let offset_diff = (i as isize - j as isize).unsigned_abs();
                     let similarity_ratio = matched as f64 / total as f64;
                     let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-                        if indent_diff == 0.0 {
-                            true
-                        } else if matched >= w.min_tail_matched_chars {
+                        let delim_match = if om.close_tail != CloseDelimiter::None
+                            && nm.close_tail != CloseDelimiter::None
+                        {
                             if let Some(p) = profile {
                                 p.is_direct_tail_match(
                                     om.close_tail,
@@ -1279,6 +1301,17 @@ pub(crate) fn solve_cluster_with_arena(
                                     matched,
                                     w.min_tail_matched_chars,
                                 )
+                            }
+                        } else {
+                            false
+                        };
+                        if delim_match {
+                            true
+                        } else if om.is_terminal_return && nm.is_terminal_return {
+                            if indent_diff == 0.0 {
+                                true
+                            } else {
+                                matched >= w.min_tail_matched_chars
                             }
                         } else {
                             false
