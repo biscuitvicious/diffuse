@@ -205,3 +205,29 @@ fn test_write_file_header_bar_direct_buffer() {
     assert!(buf.contains("≈1"));
     assert!(buf.ends_with(" \x1b[0m\n"));
 }
+
+#[test]
+fn test_render_file_diff_resets_background_at_end_of_lines() {
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old line\n+new line\n";
+    let new_content = [("a.txt".to_string(), "new line\n".to_string())]
+        .into_iter()
+        .collect();
+    let old_content = [("a.txt".to_string(), "old line\n".to_string())]
+        .into_iter()
+        .collect();
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::MAGIC, true);
+    let rows: Vec<_> = rendered.lines().skip(1).collect();
+    assert!(!rows.is_empty(), "must have rendered diff rows");
+    for line in rows {
+        assert!(
+            line.ends_with("\x1b[0m") || line.ends_with("\x1b[49m"),
+            "each diff line must reset background/SGR at end of line to prevent margin color bleeding, but got: {line:?}"
+        );
+    }
+}

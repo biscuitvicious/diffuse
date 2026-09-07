@@ -135,6 +135,7 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
             true,
             theme,
         );
+        out.push_str(SGR_RESET);
         out.push('\n');
     };
 
