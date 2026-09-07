@@ -5,7 +5,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::theme::{DiffuseTheme, FG_RESET};
 use crate::{
-    ansi::AnsiColor,
+    ansi::{Color, ColorExt},
     core::{
         lcs::char_slice,
         merge::RunKind,
@@ -237,7 +237,7 @@ pub fn render_row_segment(
     let band_bg = theme.palette.band_bg.bg_code();
     let ctx_cursor_bg = theme.palette.ctx_cursor_bg.bg_code();
     let ctx_tint_bg = match theme.palette.ctx_tint_bg {
-        AnsiColor::Reset => String::new(),
+        Color::Primary => String::new(),
         color => color.bg_code(),
     };
 
@@ -567,7 +567,7 @@ pub fn render_raw_row_themed(
         theme.palette.ctx_tint_bg
     };
     let bg = match bg_color {
-        AnsiColor::Reset => String::new(),
+        Color::Primary => String::new(),
         color => color.bg_code(),
     };
     let reset_bg = if bg.is_empty() { "\x1b[49m" } else { &bg };

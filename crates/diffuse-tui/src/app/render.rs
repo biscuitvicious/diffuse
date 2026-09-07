@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::{
     core::parse::RowKind,
-    render::{render_raw_row, render_row_segment, slice_by_visual_width},
+    render::{ColorExt, render_raw_row, render_row_segment, slice_by_visual_width},
     view::{
         bottom_ribbon_lines,
         header::{

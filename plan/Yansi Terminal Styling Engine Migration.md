@@ -3,11 +3,11 @@
 - [x] **Phase 1: Workspace & Dependency Foundation**
   - [x] Add `yansi = "1.0"` to workspace `Cargo.toml` and crate manifests
   - [x] Re-export core `yansi` types in `crates/diffuse-render/src/ansi.rs`
-- [ ] **Phase 2: Theme Palette & Row Style Transformation**
-  - [ ] Replace custom `AnsiColor` with `yansi::Color` in `crates/diffuse-render/src/theme/palette.rs`
-  - [ ] Replace `RowStyle` background string generators with `yansi::Style`
-  - [ ] Update `DiffuseTheme` and syntax token styling to use `yansi::Style`
-- [ ] **Phase 3: Zero-Allocation Painting in Render Pipeline**
+- [x] **Phase 2: Theme Palette & Row Style Transformation**
+  - [x] Replace custom `AnsiColor` with `yansi::Color` in `crates/diffuse-render/src/theme/palette.rs`
+  - [x] Replace `RowStyle` background string generators with `yansi::Style`
+  - [x] Update `DiffuseTheme` and syntax token styling to use `yansi::Style`
+- [·] **Phase 3: Zero-Allocation Painting in Render Pipeline**
   - [ ] Refactor `crates/diffuse-render/src/row.rs` to style via `yansi::Paint`
   - [ ] Refactor `crates/diffuse-render/src/diff.rs` to format with `yansi`
   - [ ] Preserve golden markup converters `encode_sgr`, `decode_sgr`, and `strip_ansi`

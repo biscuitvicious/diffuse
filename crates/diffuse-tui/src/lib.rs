@@ -2,6 +2,7 @@
 
 pub use diffuse_core as core;
 pub use diffuse_render as render;
+pub use diffuse_render::ColorExt;
 pub use diffuse_syntax as syntax;
 
 pub mod actions;

@@ -109,6 +109,71 @@ impl AnsiColor {
     }
 }
 
+/// Extension trait providing styling code generation and helpers on
+/// [`yansi::Color`].
+pub trait ColorExt {
+    /// Format the ANSI foreground escape sequence for this color.
+    fn fg_code(&self) -> String;
+
+    /// Format the ANSI italic foreground escape sequence for this color (fused
+    /// SGR).
+    fn italic_fg_code(&self) -> String;
+
+    /// Format the ANSI background escape sequence for this color.
+    fn bg_code(&self) -> String;
+
+    /// Build a [`yansi::Style`] setting this color as the foreground.
+    fn fg_style(&self) -> Style;
+
+    /// Build a [`yansi::Style`] setting this color as the background.
+    fn bg_style(&self) -> Style;
+
+    /// Write foreground escape code directly into a string buffer without
+    /// intermediate allocations.
+    fn write_fg<W: Write>(&self, out: &mut W) -> std::fmt::Result;
+
+    /// Write background escape code directly into a string buffer without
+    /// intermediate allocations.
+    fn write_bg<W: Write>(&self, out: &mut W) -> std::fmt::Result;
+}
+
+impl ColorExt for Color {
+    #[inline]
+    fn fg_code(&self) -> String {
+        format!("{}", Style::new().fg(*self).prefix())
+    }
+
+    #[inline]
+    fn italic_fg_code(&self) -> String {
+        format!("{}", Style::new().italic().fg(*self).prefix())
+    }
+
+    #[inline]
+    fn bg_code(&self) -> String {
+        format!("{}", Style::new().bg(*self).prefix())
+    }
+
+    #[inline]
+    fn fg_style(&self) -> Style {
+        Style::new().fg(*self)
+    }
+
+    #[inline]
+    fn bg_style(&self) -> Style {
+        Style::new().bg(*self)
+    }
+
+    #[inline]
+    fn write_fg<W: Write>(&self, out: &mut W) -> std::fmt::Result {
+        write!(out, "{}", Style::new().fg(*self).prefix())
+    }
+
+    #[inline]
+    fn write_bg<W: Write>(&self, out: &mut W) -> std::fmt::Result {
+        write!(out, "{}", Style::new().bg(*self).prefix())
+    }
+}
+
 /// An ANSI style combining foreground, background, and SGR text attributes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AnsiStyle {
@@ -118,6 +183,31 @@ pub struct AnsiStyle {
     pub italic: bool,
     pub underline: bool,
     pub strikethrough: bool,
+}
+
+impl From<AnsiStyle> for yansi::Style {
+    fn from(s: AnsiStyle) -> Self {
+        let mut style = yansi::Style::new();
+        if let Some(fg) = s.fg {
+            style = style.fg(yansi::Color::from(fg));
+        }
+        if let Some(bg) = s.bg {
+            style = style.bg(yansi::Color::from(bg));
+        }
+        if s.bold {
+            style = style.bold();
+        }
+        if s.italic {
+            style = style.italic();
+        }
+        if s.underline {
+            style = style.underline();
+        }
+        if s.strikethrough {
+            style = style.strike();
+        }
+        style
+    }
 }
 
 impl AnsiStyle {

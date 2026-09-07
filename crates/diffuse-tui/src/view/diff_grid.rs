@@ -6,7 +6,7 @@ use crate::{
         parse::RowKind,
         wire::{OutputFile, OutputHunk},
     },
-    render::slice_by_visual_width,
+    render::{ColorExt, slice_by_visual_width},
 };
 
 /// Shorten a path string to fit within `target_width` columns, preserving the
@@ -300,7 +300,7 @@ pub fn render_hunk_divider_segment_themed(
     let bar_str = truncate_pad(&piece, content_width);
     let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
     let bg_code = match bg {
-        crate::render::AnsiColor::Reset => String::new(),
+        crate::render::Color::Primary => String::new(),
         color => color.bg_code(),
     };
     let fg_code = fg.fg_code();

@@ -7,79 +7,118 @@
 pub mod palette;
 pub use palette::*;
 
-pub use crate::ansi::{FG_RESET, decode_sgr, encode_sgr, sgr_off, strip_ansi};
+pub use crate::ansi::{
+    Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, strip_ansi,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RowStyle {
     pub icon: &'static str,
-    pub tint_bg: crate::ansi::AnsiColor,
-    pub cursor_bg: crate::ansi::AnsiColor,
-    pub fill_bg: Option<crate::ansi::AnsiColor>,
-    pub fill_cursor_bg: Option<crate::ansi::AnsiColor>,
-    pub fg: crate::ansi::AnsiColor,
+    pub tint_bg: Color,
+    pub cursor_bg: Color,
+    pub fill_bg: Option<Color>,
+    pub fill_cursor_bg: Option<Color>,
+    pub fg: Color,
 }
 
 impl RowStyle {
     #[inline]
     #[must_use]
+    pub const fn tint_style(&self) -> Style {
+        Style::new().bg(self.tint_bg)
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn cursor_style(&self) -> Style {
+        Style::new().bg(self.cursor_bg)
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn fill_style(&self) -> Option<Style> {
+        match self.fill_bg {
+            Some(bg) => Some(Style::new().bg(bg)),
+            None => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn fill_cursor_style(&self) -> Option<Style> {
+        match self.fill_cursor_bg {
+            Some(bg) => Some(Style::new().bg(bg)),
+            None => None,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn fg_style(&self) -> Style {
+        Style::new().fg(self.fg)
+    }
+
+    #[inline]
+    #[must_use]
     pub fn tint_bg(&self) -> String {
-        self.tint_bg.bg_code()
+        format!("{}", self.tint_style().prefix())
     }
 
     #[inline]
     #[must_use]
     pub fn cursor_bg(&self) -> String {
-        self.cursor_bg.bg_code()
+        format!("{}", self.cursor_style().prefix())
     }
 
     #[inline]
     #[must_use]
     pub fn fill_bg(&self) -> String {
-        self.fill_bg.map_or_else(String::new, |c| c.bg_code())
+        self.fill_style()
+            .map_or_else(String::new, |s| format!("{}", s.prefix()))
     }
 
     #[inline]
     #[must_use]
     pub fn fill_cursor_bg(&self) -> String {
-        self.fill_cursor_bg
-            .map_or_else(String::new, |c| c.bg_code())
+        self.fill_cursor_style()
+            .map_or_else(String::new, |s| format!("{}", s.prefix()))
     }
 }
 
 pub const S_ADD: RowStyle = RowStyle {
     icon: "+",
-    tint_bg: crate::ansi::AnsiColor::Index(22),
-    cursor_bg: crate::ansi::AnsiColor::Index(28),
-    fill_bg: Some(crate::ansi::AnsiColor::Index(28)),
-    fill_cursor_bg: Some(crate::ansi::AnsiColor::Index(34)),
-    fg: crate::ansi::AnsiColor::Index(150),
+    tint_bg: Color::Fixed(22),
+    cursor_bg: Color::Fixed(28),
+    fill_bg: Some(Color::Fixed(28)),
+    fill_cursor_bg: Some(Color::Fixed(34)),
+    fg: Color::Fixed(150),
 };
 
 pub const S_DEL: RowStyle = RowStyle {
     icon: "-",
-    tint_bg: crate::ansi::AnsiColor::Index(52),
-    cursor_bg: crate::ansi::AnsiColor::Index(88),
+    tint_bg: Color::Fixed(52),
+    cursor_bg: Color::Fixed(88),
     fill_bg: None,
     fill_cursor_bg: None,
-    fg: crate::ansi::AnsiColor::Index(167),
+    fg: Color::Fixed(167),
 };
 
 pub const S_MOD: RowStyle = RowStyle {
     icon: "~",
-    tint_bg: crate::ansi::AnsiColor::Index(236),
-    cursor_bg: crate::ansi::AnsiColor::Index(237),
-    fill_bg: Some(crate::ansi::AnsiColor::Index(28)),
-    fill_cursor_bg: Some(crate::ansi::AnsiColor::Index(34)),
-    fg: crate::ansi::AnsiColor::Index(244),
+    tint_bg: Color::Fixed(236),
+    cursor_bg: Color::Fixed(237),
+    fill_bg: Some(Color::Fixed(28)),
+    fill_cursor_bg: Some(Color::Fixed(34)),
+    fg: Color::Fixed(244),
 };
 
 pub const S_MOV: RowStyle = RowStyle {
     icon: "≈",
-    tint_bg: crate::ansi::AnsiColor::Index(236),
-    cursor_bg: crate::ansi::AnsiColor::Index(237),
+    tint_bg: Color::Fixed(236),
+    cursor_bg: Color::Fixed(237),
     fill_bg: None,
     fill_cursor_bg: None,
-    fg: crate::ansi::AnsiColor::Index(244),
+    fg: Color::Fixed(244),
 };
 
 /// A token color classifier and ANSI stylizer backed by a [`ThemePalette`].
@@ -203,7 +242,7 @@ impl DiffuseTheme {
     }
 
     #[must_use]
-    pub fn fallback_color(&self, name: &str) -> Option<crate::ansi::AnsiColor> {
+    pub fn fallback_color(&self, name: &str) -> Option<Color> {
         self.palette.named_color(name)
     }
 

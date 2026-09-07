@@ -1,5 +1,4 @@
 use super::*;
-use crate::AnsiColor;
 
 #[test]
 fn test_magic_theme_token_colors() {
@@ -38,14 +37,37 @@ fn test_encode_decode_sgr() {
 #[test]
 fn test_deep_black_theme_palette() {
     let palette = ThemePalette::deep_black();
-    assert_eq!(palette.bg_base, AnsiColor::Index(233));
-    assert_eq!(palette.add_fg, AnsiColor::Index(120));
-    assert_eq!(palette.del_fg, AnsiColor::Index(203));
-    assert_eq!(palette.add_tint_bg, AnsiColor::Rgb(29, 35, 31));
-    assert_eq!(palette.del_tint_bg, AnsiColor::Rgb(48, 18, 20));
+    assert_eq!(palette.bg_base, Color::Fixed(233));
+    assert_eq!(palette.add_fg, Color::Fixed(120));
+    assert_eq!(palette.del_fg, Color::Fixed(203));
+    assert_eq!(palette.add_tint_bg, Color::Rgb(29, 35, 31));
+    assert_eq!(palette.del_tint_bg, Color::Rgb(48, 18, 20));
 
     let theme = DiffuseTheme::DEEP_BLACK;
     assert_eq!(theme.name, "deep_black");
+}
+
+#[test]
+fn test_row_style_yansi_styles() {
+    let s_add = S_ADD;
+    assert_eq!(s_add.tint_bg, Color::Fixed(22));
+    assert_eq!(s_add.cursor_bg, Color::Fixed(28));
+    assert_eq!(s_add.fill_bg, Some(Color::Fixed(28)));
+    assert_eq!(s_add.fill_cursor_bg, Some(Color::Fixed(34)));
+    assert_eq!(s_add.fg, Color::Fixed(150));
+
+    assert_eq!(s_add.tint_style(), Style::new().bg(Color::Fixed(22)));
+    assert_eq!(s_add.cursor_style(), Style::new().bg(Color::Fixed(28)));
+    assert_eq!(s_add.fill_style(), Some(Style::new().bg(Color::Fixed(28))));
+    assert_eq!(
+        s_add.fill_cursor_style(),
+        Some(Style::new().bg(Color::Fixed(34)))
+    );
+    assert_eq!(s_add.fg_style(), Style::new().fg(Color::Fixed(150)));
+
+    let s_del = S_DEL;
+    assert_eq!(s_del.fill_style(), None);
+    assert_eq!(s_del.fill_cursor_style(), None);
 }
 
 #[test]
@@ -104,6 +126,6 @@ fn test_theme_palette_helpers() {
         (p.hunk_divider_bg_rest, p.hunk_divider_fg)
     );
 
-    assert_eq!(p.named_color("warning"), Some(AnsiColor::Index(220)));
+    assert_eq!(p.named_color("warning"), Some(Color::Fixed(220)));
     assert_eq!(p.named_color("nonexistent"), None);
 }

@@ -21,16 +21,32 @@ pub use modals::{
     render_help_modal_widget, render_note_modal_widget,
 };
 
-use crate::render::AnsiColor;
 use ratatui::style::Color;
 
-/// Convert an [`AnsiColor`] to a Ratatui [`Color`].
+/// Convert a [`yansi::Color`] (or [`crate::render::AnsiColor`]) to a Ratatui
+/// [`Color`].
 #[inline]
 #[must_use]
-pub fn to_color(c: AnsiColor) -> Color {
-    match c {
-        AnsiColor::Reset => Color::Reset,
-        AnsiColor::Index(i) => Color::Indexed(i),
-        AnsiColor::Rgb(r, g, b) => Color::Rgb(r, g, b),
+pub fn to_color(c: impl Into<yansi::Color>) -> Color {
+    match c.into() {
+        yansi::Color::Primary => Color::Reset,
+        yansi::Color::Fixed(i) => Color::Indexed(i),
+        yansi::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        yansi::Color::Black => Color::Indexed(0),
+        yansi::Color::Red => Color::Indexed(1),
+        yansi::Color::Green => Color::Indexed(2),
+        yansi::Color::Yellow => Color::Indexed(3),
+        yansi::Color::Blue => Color::Indexed(4),
+        yansi::Color::Magenta => Color::Indexed(5),
+        yansi::Color::Cyan => Color::Indexed(6),
+        yansi::Color::White => Color::Indexed(7),
+        yansi::Color::BrightBlack => Color::Indexed(8),
+        yansi::Color::BrightRed => Color::Indexed(9),
+        yansi::Color::BrightGreen => Color::Indexed(10),
+        yansi::Color::BrightYellow => Color::Indexed(11),
+        yansi::Color::BrightBlue => Color::Indexed(12),
+        yansi::Color::BrightMagenta => Color::Indexed(13),
+        yansi::Color::BrightCyan => Color::Indexed(14),
+        yansi::Color::BrightWhite => Color::Indexed(15),
     }
 }
