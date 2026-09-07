@@ -347,3 +347,57 @@ fn test_normalize_and_merge_hunks() {
     assert_eq!(f.hunks[0].above_ctx, 6);
     assert_eq!(f.hunks[0].below_ctx, 6);
 }
+
+#[test]
+fn test_semantic_slide_json_object_closing_delimiter() {
+    let h = hunk(vec![
+        Row::Del(DelLine::new(
+            LineNum::new(2028).unwrap(),
+            "                  \"text\": \"        \"",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(2029).unwrap(),
+            "                  \"text\": \"    \"",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(2030).unwrap(),
+            "                },",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(2031).unwrap(),
+            "                {",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(2032).unwrap(),
+            "                  \"kind\": \"del\",",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(2033).unwrap(),
+            "                  \"text\": \")\"",
+        )),
+        Row::Ctx(CtxLine::new(
+            LineNum::new(2029).unwrap(),
+            LineNum::new(2034).unwrap(),
+            "                },",
+        )),
+    ]);
+
+    let profile = lang_profile("json");
+    let shifted = pass_shift_hunk(&h, profile);
+
+    assert!(
+        matches!(shifted.rows[2], Row::Ctx(_)),
+        "line 2030 closing brace must be context, got {:?}",
+        shifted.rows[2]
+    );
+    assert_eq!(shifted.rows[2].text(), "                },");
+    assert_eq!(shifted.rows[2].new_line(), Some(2030));
+
+    assert!(
+        matches!(shifted.rows[6], Row::Add(_)),
+        "line 2034 closing brace must be add, got {:?}",
+        shifted.rows[6]
+    );
+    assert_eq!(shifted.rows[6].text(), "                },");
+    assert_eq!(shifted.rows[6].new_line(), Some(2034));
+}

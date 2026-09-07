@@ -321,7 +321,16 @@ pub fn calculate_needed_shift_down(
     }
 
     let text = hunk.rows[split_idx].text().trim();
-    if text != "}" && text != "};" && text != ")" {
+    let is_closing_delim = text == "}"
+        || text == "};"
+        || text == "},"
+        || text == ")"
+        || text == ");"
+        || text == "),"
+        || text == "]"
+        || text == "],"
+        || text == "];";
+    if !is_closing_delim {
         return 0;
     }
 
@@ -333,6 +342,8 @@ pub fn calculate_needed_shift_down(
         p.is_comment_line(t)
             || t.starts_with("#[")
             || t.starts_with('@')
+            || (p.block_style == crate::syntax::profile::BlockDelimStyle::Braces
+                && (t == "{" || t.starts_with('{')))
             || p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
             || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
     };
