@@ -35,6 +35,62 @@ fn test_resolve_refs_caret_exclamation() {
 }
 
 #[test]
+fn test_fixed_commit_range_excludes_untracked_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?} failed", args);
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "commit1"]);
+
+    std::fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "commit2"]);
+
+    // Untracked file — must NOT appear when diffing a fixed range
+    std::fs::write(dir.join("bogus_untracked.txt"), "I should not appear\n").unwrap();
+
+    let range = "HEAD~1..HEAD".to_string();
+    let res = load_git_repo(dir, std::slice::from_ref(&range), &[], false, 4).unwrap();
+    assert!(
+        !res.diff.contains("bogus_untracked.txt"),
+        "fixed commit range must not include untracked files in diff"
+    );
+    assert!(
+        !res.new_content.contains_key("bogus_untracked.txt"),
+        "fixed commit range must not include untracked files in new_content"
+    );
+
+    // Also verify via the streaming path
+    let (producer, consumer) = crate::streaming::spawn_streaming_pipeline(
+        Some(1),
+        crate::pipeline::PipelineOptions::default(),
+    );
+    let (meta_tx, _meta_rx) = std::sync::mpsc::channel();
+    stream_git_repo_to_producer(dir, &[range], &[], false, 4, producer, &meta_tx);
+    let files: Vec<_> = consumer.collect();
+    assert!(
+        files.iter().all(|f| f.path != "bogus_untracked.txt"),
+        "streaming: fixed commit range must not include untracked files"
+    );
+
+    // Clean up
+    std::fs::remove_file(dir.join("bogus_untracked.txt")).unwrap();
+}
+
+#[test]
 fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();

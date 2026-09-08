@@ -449,8 +449,10 @@ pub fn stream_git_repo_to_producer(
 
     let _ = child.wait();
 
-    // Untracked files
-    if !cached {
+    // Untracked files — only relevant when the new side is the working tree.
+    // A fixed commit range (worktree_new == false) diffs two historical refs;
+    // untracked working-tree files must never appear in those results.
+    if !cached && refs.worktree_new {
         let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
         if !paths.is_empty() {
             ls_args.push("--");
@@ -572,7 +574,10 @@ pub fn load_git_repo(
     }
 
     let mut untracked_skipped: Vec<String> = Vec::new();
-    if !cached {
+    // Untracked files — only relevant when the new side is the working tree.
+    // A fixed commit range (worktree_new == false) diffs two historical refs;
+    // untracked working-tree files must never appear in those results.
+    if !cached && refs.worktree_new {
         let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
         if !paths.is_empty() {
             ls_args.push("--");
