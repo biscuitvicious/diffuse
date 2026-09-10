@@ -9,6 +9,8 @@
 
 - **Domain Decoupling**: Algorithms in `crates/diffuse-core/src/algo/` operate on generic types and interfaces (`LcsEngine`, `DiffEngine`, `PrefixMatcher`), decoupled from diffuse domain objects.
 - **Latency Budgets**: All algorithms and pipeline operations must remain within sub-second budgets on large diffs, utilizing bit-parallel operations, diagonal corridor bounding, and zero-allocation scratch buffers where appropriate.
+- **No Hardcoded Diff Behaviour**: Changes in diffing behaviour must only be made through algorithmic engine changes and tunable pipeline options, and must never use hardcoded conditionals or wired-in flows. Every flow in the pipeline must be based on algorithmic/mathematical logic, or on logic directly supporting it — no hardcoded diff-behaviour flows may exist.
+- **No Design Regression**: After any code change, the design of the affected area must be equivalently good (but potentially different) or strictly better than it was before. Refactoring to maintain good design of the affected area of a code change is mandatory.
 
 ## Fail-Fast Error Handling & Invariant Enforcement
 

@@ -1,8 +1,7 @@
 //! Terminal Theme & ANSI Stylizer for the diffuse renderer.
 //!
-//! Provides the exact 256-color palette (`THEME_MAGIC`), row styles, background
-//! tints, cursor backgrounds, and SGR modifiers matching the canonical
-//! reviewer.
+//! Provides the 256-color / RGB palette, row styles, background
+//! tints, cursor backgrounds, and SGR modifiers.
 
 pub mod palette;
 pub use palette::*;
@@ -85,42 +84,6 @@ impl RowStyle {
     }
 }
 
-pub const S_ADD: RowStyle = RowStyle {
-    icon: "+",
-    tint_bg: Color::Fixed(22),
-    cursor_bg: Color::Fixed(28),
-    fill_bg: Some(Color::Fixed(28)),
-    fill_cursor_bg: Some(Color::Fixed(34)),
-    fg: Color::Fixed(150),
-};
-
-pub const S_DEL: RowStyle = RowStyle {
-    icon: "-",
-    tint_bg: Color::Fixed(52),
-    cursor_bg: Color::Fixed(88),
-    fill_bg: None,
-    fill_cursor_bg: None,
-    fg: Color::Fixed(167),
-};
-
-pub const S_MOD: RowStyle = RowStyle {
-    icon: "~",
-    tint_bg: Color::Fixed(236),
-    cursor_bg: Color::Fixed(237),
-    fill_bg: Some(Color::Fixed(28)),
-    fill_cursor_bg: Some(Color::Fixed(34)),
-    fg: Color::Fixed(244),
-};
-
-pub const S_MOV: RowStyle = RowStyle {
-    icon: "≈",
-    tint_bg: Color::Fixed(236),
-    cursor_bg: Color::Fixed(237),
-    fill_bg: None,
-    fill_cursor_bg: None,
-    fg: Color::Fixed(244),
-};
-
 /// A token color classifier and ANSI stylizer backed by a [`ThemePalette`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DiffuseTheme {
@@ -129,17 +92,9 @@ pub struct DiffuseTheme {
 }
 
 impl DiffuseTheme {
-    pub const MAGIC: Self = Self {
-        name: "magic",
-        palette: ThemePalette::default_magic(),
-    };
-    pub const DEEP_BLACK: Self = Self {
-        name: "deep_black",
-        palette: ThemePalette::deep_black(),
-    };
-    pub const LEGACY: Self = Self {
-        name: "legacy",
-        palette: ThemePalette::legacy(),
+    pub const DEFAULT: Self = Self {
+        name: "default",
+        palette: ThemePalette::default_palette(),
     };
 
     /// Get the row background and icon style for the specified diff row kind
@@ -204,9 +159,7 @@ impl DiffuseTheme {
             RowKind::Ctx
         };
 
-        let ansi_color = self
-            .palette
-            .syntax_token_color(color, rk, self.name == "legacy");
+        let ansi_color = self.palette.syntax_token_color(color, rk);
 
         if let Some(s) = sgr {
             let _ = write!(out, "\x1b[{s}m");
@@ -247,28 +200,26 @@ impl DiffuseTheme {
 
     pub fn fallback_named_color(name: &str) -> Option<&'static str> {
         match name {
-            "toolDiffAdded" => Some("\x1b[38;5;150m"),
-            "toolDiffRemoved" => Some("\x1b[38;5;167m"),
-            "toolDiffContext" | "muted" => Some("\x1b[38;5;244m"),
+            "toolDiffAdded" => Some("\x1b[38;5;120m"),
+            "toolDiffRemoved" => Some("\x1b[38;5;203m"),
+            "toolDiffContext" | "muted" => Some("\x1b[38;5;241m"),
             "warning" => Some("\x1b[38;5;220m"),
-            "border" => Some("\x1b[38;5;240m"),
+            "border" => Some("\x1b[38;5;238m"),
             _ => None,
         }
     }
 
-    /// Resolve a theme by name (`"magic"`, `"deep_black"`, `"legacy"`).
+    /// Resolve a theme by name (`"default"`, `"dark"`, `"black"`).
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name.trim().to_lowercase().as_str() {
-            "magic" => Some(Self::MAGIC),
-            "deep_black" | "deep-black" | "dark" | "black" => Some(Self::DEEP_BLACK),
-            "legacy" => Some(Self::LEGACY),
+            "default" | "dark" | "black" => Some(Self::DEFAULT),
             _ => None,
         }
     }
 
     /// Resolve the active theme from the `DIFFUSE_THEME` environment variable,
-    /// falling back to the default `magic` theme if unset or invalid.
+    /// falling back to `default` if unset or invalid.
     #[must_use]
     pub fn from_env() -> Self {
         if let Ok(val) = std::env::var("DIFFUSE_THEME")
@@ -276,13 +227,13 @@ impl DiffuseTheme {
         {
             theme
         } else {
-            Self::MAGIC
+            Self::DEFAULT
         }
     }
 }
 
 pub fn default_theme() -> DiffuseTheme {
-    DiffuseTheme::MAGIC
+    DiffuseTheme::DEFAULT
 }
 
 #[cfg(test)]

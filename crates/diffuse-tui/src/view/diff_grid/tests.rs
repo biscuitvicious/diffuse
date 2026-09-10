@@ -48,12 +48,12 @@ fn test_file_header_has_background_stripe() {
     let f = dummy_file();
     let unselected = render_file_header(&f, false, false, false, false, 80);
     assert!(
-        unselected.contains("\x1b[48;5;237m"),
-        "unselected file header must have shade 237 background stripe"
+        unselected.contains("\x1b[48;5;233m"),
+        "unselected file header must have default file_header_bg_rest (233) background stripe"
     );
     assert!(
-        unselected.contains("\x1b[38;5;183m"),
-        "unselected file header must have subtle purple tint 183"
+        unselected.contains("\x1b[38;5;214m"),
+        "unselected file header must have default file_header_fg_rest (214)"
     );
     assert!(
         unselected.ends_with("\x1b[0m"),
@@ -62,22 +62,22 @@ fn test_file_header_has_background_stripe() {
 
     let current_file = render_file_header(&f, false, false, true, false, 80);
     assert!(
-        current_file.contains("\x1b[48;5;239m"),
-        "current file header must have slightly brighter background stripe 239"
+        current_file.contains("\x1b[48;5;235m"),
+        "current file header must have default file_header_bg_current (235)"
     );
     assert!(
-        current_file.contains("\x1b[38;5;219m"),
-        "current file header must have bright purple tint 219"
+        current_file.contains("\x1b[38;5;220m"),
+        "current file header must have default file_header_fg_current (220)"
     );
 
     let selected = render_file_header(&f, false, true, true, false, 80);
     assert!(
-        selected.contains("\x1b[48;5;241m"),
-        "selected file header must have the brightest background stripe 241"
+        selected.contains("\x1b[48;5;237m"),
+        "selected file header must have default file_header_bg_selected (237)"
     );
     assert!(
-        selected.contains("\x1b[38;5;219m"),
-        "selected file header must have vivid purplish tint 219"
+        selected.contains("\x1b[38;5;221m"),
+        "selected file header must have default file_header_fg_selected (221)"
     );
 }
 
@@ -96,7 +96,7 @@ fn test_binary_file_header_has_no_expand_caret() {
         "binary file must not show collapsed caret ▶"
     );
     assert!(
-        rendered.contains("──── test.png"),
+        rendered.contains("════ test.png"),
         "binary file header must start with flat rule without caret"
     );
 }
@@ -106,18 +106,18 @@ fn test_hunk_divider_is_orange() {
     let h = dummy_hunk();
     let regular = render_hunk_divider(0, &h, 8, false, 80);
     assert!(
-        regular.contains("38;5;220m"),
-        "regular hunk divider must use golden-amber 220 foreground"
+        regular.contains("38;5;213m"),
+        "regular hunk divider must use yellow-orange 213 foreground"
     );
 
     let current = render_hunk_divider(0, &h, 8, true, 80);
     assert!(
-        current.contains("38;5;220m"),
-        "current hunk divider must have brighter amber/orange foreground 220"
+        current.contains("38;5;213m"),
+        "current hunk divider must have brighter yellow-orange foreground 213"
     );
     assert!(
-        current.contains("48;5;237m"),
-        "current hunk divider must have subtle background stripe"
+        current.contains("48;5;235m"),
+        "current hunk divider must have default hunk_divider_bg_current (235)"
     );
 }
 
@@ -463,4 +463,55 @@ fn test_file_header_text_identical_formatted_size() {
         !banner.contains('➞') && !banner.contains("->"),
         "banner must NOT contain an arrow when formatted sizes match, got: {banner}"
     );
+}
+
+#[test]
+fn test_wrapped_glyph_hit_covers_exactly_three_screen_cells() {
+    // Glyph at char index 4 with spaces on both sides.
+    let txt = "abc ▲ de";
+    let cw = 20;
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 3, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 4, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 5, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 0, 2, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 0, 6, cw));
+    assert!(!wrapped_glyph_hit(txt, "▼", 0, 4, cw));
+}
+
+#[test]
+fn test_wrapped_glyph_hit_wraps_across_segments() {
+    // Glyph at unwrapped index 10 with cw=10 renders at segment 1, col 0:
+    // the preceding space is the last cell of segment 0.
+    let txt = "012345678 ▲ x";
+    let cw = 10;
+    assert!(wrapped_glyph_hit(txt, "▲", 1, 0, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 1, 1, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 9, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 0, 8, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 1, 2, cw));
+
+    // Glyph at unwrapped index 9 with cw=10 renders at segment 0, col 9:
+    // the following space is the first cell of segment 1.
+    let txt = "01234567 ▲ y";
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 8, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 9, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 1, 0, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 0, 7, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 1, 1, cw));
+}
+
+#[test]
+fn test_wrapped_glyph_hit_never_touches_scrollbar_column() {
+    // Glyph at unwrapped index 5 with cw=6 renders at (0, 5); its +1
+    // neighbor wraps to (1, 0).
+    let txt = "abcd ▲e";
+    let cw = 6;
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 4, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 0, 5, cw));
+    assert!(wrapped_glyph_hit(txt, "▲", 1, 0, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 0, 3, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 1, 1, cw));
+    // The scrollbar column itself never hits, on any segment.
+    assert!(!wrapped_glyph_hit(txt, "▲", 0, cw, cw));
+    assert!(!wrapped_glyph_hit(txt, "▲", 1, cw, cw));
 }

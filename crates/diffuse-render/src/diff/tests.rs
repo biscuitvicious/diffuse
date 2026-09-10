@@ -17,7 +17,7 @@ fn test_output_ends_with_terminal_reset() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered = render_pipeline_output(&out, &DiffuseTheme::MAGIC, true);
+    let rendered = render_pipeline_output(&out, &DiffuseTheme::DEFAULT, true);
     assert!(
         rendered.ends_with("\x1b[0m"),
         "terminal must be left in a clean SGR state"
@@ -45,7 +45,7 @@ fn test_render_raw_pipeline_output() {
     // Must contain @@ hunk header
     assert!(rendered.contains("@@ -1,2 +1,2 @@"));
     // Must contain colorized number gutter
-    assert!(rendered.contains("\x1b[38;5;151m") || rendered.contains("\x1b[3;38;5;174m"));
+    assert!(rendered.contains("\x1b[38;5;120m") || rendered.contains("\x1b[38;5;203m"));
     // Must contain colorized change symbols + / -
     assert!(rendered.contains("\x1b[38;5;120m+") || rendered.contains("\x1b[38;5;203m-"));
     // No mod ~ symbols in diff rows
@@ -88,7 +88,7 @@ fn test_render_renamed_file_diff() {
         old_bytes: Some(0),
         new_bytes: Some(0),
     };
-    let visual = render_file_diff(&file, &DiffuseTheme::MAGIC, true);
+    let visual = render_file_diff(&file, &DiffuseTheme::DEFAULT, true);
     assert!(visual.contains("src/old.rs -> new.rs (0B)"));
 
     let raw = render_raw_file_diff(&file);
@@ -111,7 +111,7 @@ fn test_zero_notes_not_rendered() {
         PipelineOptions::default(),
     );
     // Styled render: zero notes must be invisible.
-    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::MAGIC, true);
+    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::DEFAULT, true);
     assert!(
         !rendered.contains("0 note"),
         "styled render must not show '0 notes' when there are no notes"
@@ -156,7 +156,7 @@ fn test_nonzero_notes_still_rendered() {
         old_bytes: None,
         new_bytes: None,
     };
-    let rendered = render_file_diff(&file, &DiffuseTheme::MAGIC, true);
+    let rendered = render_file_diff(&file, &DiffuseTheme::DEFAULT, true);
     assert!(
         rendered.contains("1 note"),
         "styled render must show '1 note' when there is 1 note"
@@ -197,8 +197,8 @@ fn test_write_file_header_bar_direct_buffer() {
         new_bytes: None,
     };
     let mut buf = String::new();
-    write_file_header_bar(&mut buf, &file, &DiffuseTheme::MAGIC).unwrap();
-    assert!(buf.starts_with("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m"));
+    write_file_header_bar(&mut buf, &file, &DiffuseTheme::DEFAULT).unwrap();
+    assert!(buf.starts_with("\x1b[48;5;234m\x1b[1m\x1b[38;5;231m"));
     assert!(buf.contains("+5"));
     assert!(buf.contains("-2"));
     assert!(buf.contains("~3"));
@@ -221,7 +221,7 @@ fn test_render_file_diff_resets_background_at_end_of_lines() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::MAGIC, true);
+    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::DEFAULT, true);
     let rows: Vec<_> = rendered.lines().skip(1).collect();
     assert!(!rows.is_empty(), "must have rendered diff rows");
     for line in rows {

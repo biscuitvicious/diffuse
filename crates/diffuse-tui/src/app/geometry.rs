@@ -94,6 +94,86 @@ impl AppState {
         if len == 0 { 1 } else { len.div_ceil(text_cols) }
     }
 
+    /// Scrollbar thumb height for a track of height `track_h` over
+    /// `total_vis_lines` visual lines with a `vh`-high viewport, or `None`
+    /// when no scrollbar applies. Minimum 2 rows.
+    pub(crate) fn scrollbar_thumb_size(
+        track_h: usize,
+        vh: usize,
+        total_vis_lines: usize,
+    ) -> Option<usize> {
+        if track_h <= 2 || total_vis_lines <= vh {
+            return None;
+        }
+        let max_thumb = track_h.saturating_sub(1).max(2);
+        Some(
+            ((vh as f64 / total_vis_lines as f64) * track_h as f64)
+                .round()
+                .clamp(2.0, max_thumb as f64) as usize,
+        )
+    }
+
+    /// Thumb `(offset, size)` for a scrollbar track of height `track_h`
+    /// over `total_vis_lines` visual lines with a `vh`-high viewport at
+    /// the given scroll position, or `None` when no scrollbar applies.
+    /// `header_vis` is the first file header's visual height: the thumb
+    /// leaves the top row once the header scrolls out. Single source of
+    /// truth shared by the renderer and mouse hit-testing so the drawn
+    /// thumb and the grab area can never disagree.
+    pub(crate) fn scrollbar_thumb_for(
+        track_h: usize,
+        vh: usize,
+        total_vis_lines: usize,
+        scroll: usize,
+        header_vis: usize,
+    ) -> Option<(usize, usize)> {
+        let thumb_size = Self::scrollbar_thumb_size(track_h, vh, total_vis_lines)?;
+        let max_scroll = total_vis_lines.saturating_sub(vh);
+        // The thumb touches the first track row only while the first
+        // file's header is in view, and the last track row only while the
+        // final line is in view; interior scroll positions stay strictly
+        // inside the span.
+        let span = track_h.saturating_sub(thumb_size);
+        let header_vis = header_vis.max(1);
+        let thumb_offset = if max_scroll == 0 || scroll >= max_scroll {
+            span
+        } else if scroll < header_vis {
+            0
+        } else if span >= 2 {
+            (1.0 + ((scroll - 1) as f64 / (max_scroll - 1) as f64) * (span - 2) as f64).floor()
+                as usize
+        } else {
+            ((scroll as f64 / max_scroll as f64) * span as f64).floor() as usize
+        }
+        .min(span);
+        Some((thumb_offset, thumb_size))
+    }
+
+    /// Scroll position for a scrollbar pointer at track row `row`: one
+    /// exact mapping used identically by click-seek and drag —
+    /// proportional throughout:
+    ///
+    /// ```text
+    /// scroll = round(clamp(row, 0, H−1) · max_scroll / (H−1))
+    /// ```
+    ///
+    /// Pointer row 0 always yields scroll 0 and the last track row always
+    /// yields `max_scroll`; everything between is proportional with no
+    /// flats, so the thumb moves on every pointer row and never sticks or
+    /// snaps. The thumb follows through [`Self::scrollbar_thumb_for`],
+    /// whose endpoint pins make pointer extremes, scroll extremes, and
+    /// thumb extremes coincide exactly.
+    pub(crate) fn scrollbar_scroll_for_row(track_h: usize, max_scroll: usize, row: usize) -> usize {
+        if max_scroll == 0 || track_h <= 1 {
+            return 0;
+        }
+        if max_scroll == 1 {
+            return 0;
+        }
+        let r = row.min(track_h - 1);
+        ((r as f64 / (track_h - 1) as f64) * max_scroll as f64).round() as usize
+    }
+
     /// Computes full visual layout mapping: starts, counts, `seg_counts`, and
     /// total visual lines.
     pub fn visual_geometry(

@@ -29,6 +29,8 @@ pub struct MarkdownOptions {
     pub include_notes: bool,
     /// Whether to colorize the Markdown output with ANSI escape sequences.
     pub colorize: bool,
+    /// Theme used for token colors when `colorize` is enabled.
+    pub theme: DiffuseTheme,
 }
 
 impl Default for MarkdownOptions {
@@ -39,6 +41,7 @@ impl Default for MarkdownOptions {
             default_open: true,
             include_notes: true,
             colorize: false,
+            theme: DiffuseTheme::DEFAULT,
         }
     }
 }
@@ -80,7 +83,7 @@ fn format_md_path(path: &str) -> Cow<'_, str> {
 /// Render an entire [`PipelineOutput`] as GitHub-Flavored Markdown.
 pub fn render_markdown_output(output: &PipelineOutput, options: &MarkdownOptions) -> String {
     let mut out = String::new();
-    let theme = DiffuseTheme::MAGIC;
+    let theme = options.theme;
 
     if output.files.is_empty() {
         push_md_line(&mut out, "*No changes detected.*", options.colorize, &theme);
@@ -161,7 +164,7 @@ pub fn render_markdown_output(output: &PipelineOutput, options: &MarkdownOptions
 /// Render a single [`OutputFile`] as GitHub-Flavored Markdown.
 pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> String {
     let mut out = String::new();
-    let theme = DiffuseTheme::MAGIC;
+    let theme = options.theme;
     let (dels, adds) = file_raw_counts(file);
     let stats = format!("{}: -{} +{}", file.display_status(), dels, adds);
     let md_path = if let Some(ref old_path) = file.old_path {

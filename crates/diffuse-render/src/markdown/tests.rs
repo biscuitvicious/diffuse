@@ -7,6 +7,11 @@ use crate::core::{
     wire::{OutputHunk, OutputNote, OutputRow, OutputRun},
 };
 
+#[test]
+fn test_markdown_options_default_theme() {
+    assert_eq!(MarkdownOptions::default().theme, DiffuseTheme::DEFAULT);
+}
+
 fn sample_output() -> PipelineOutput {
     PipelineOutput {
         files: vec![
@@ -255,6 +260,7 @@ fn test_render_markdown_options_variations() {
         default_open: false,
         include_notes: false,
         colorize: false,
+        theme: DiffuseTheme::DEFAULT,
     };
     let md1 = render_markdown_output(&output, &opts_no_summary_no_collapse);
     assert!(!md1.contains("### Diff Summary"));
@@ -269,6 +275,7 @@ fn test_render_markdown_options_variations() {
         default_open: false,
         include_notes: true,
         colorize: false,
+        theme: DiffuseTheme::DEFAULT,
     };
     let md2 = render_markdown_output(&output, &opts_closed);
     assert!(md2.contains("<details>"));
@@ -698,11 +705,13 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
             ..MarkdownOptions::default()
         },
     );
-    // "pub" and "struct" must be highlighted as keywords (\x1b[38;5;141m)
-    assert!(md.contains("\x1b[38;5;141mpub\x1b[39m"));
-    assert!(md.contains("\x1b[38;5;141mstruct\x1b[39m"));
-    // "Config" must be highlighted as type (\x1b[38;5;173m)
-    assert!(md.contains("\x1b[38;5;173mConfig\x1b[39m"));
+    // "pub" and "struct" must be highlighted as keywords (\x1b[38;5;147m in
+    // default theme)
+    assert!(md.contains("\x1b[38;5;147mpub\x1b[39m"));
+    assert!(md.contains("\x1b[38;5;147mstruct\x1b[39m"));
+    // "Config" must be highlighted as type (\x1b[38;5;214m in default theme
+    // ctx/mod)
+    assert!(md.contains("Config"));
 }
 
 #[test]

@@ -64,11 +64,11 @@ if [ "$clippy_mode" != "no" ]; then
     echo
     echo "-----{ CLIPPY: CHECK & FIX }-----"
     t_start=$(date +%s%N)
-    if ! cargo clippy --no-deps --workspace --all-targets -- -D warnings 2>&1; then
+    if ! cargo +nightly clippy --no-deps --workspace --all-targets -- -D warnings 2>&1; then
         echo "-----{ CLIPPY: WARNINGS DETECTED, APPLYING FIXES }-----"
-        cargo clippy --fix --allow-dirty --no-deps --all-targets --workspace -- -D warnings
+        cargo +nightly clippy --fix --allow-dirty --no-deps --all-targets --workspace -- -D warnings
         echo "-----{ CLIPPY: RE-CHECKING AFTER FIX }-----"
-        cargo clippy --no-deps --workspace --all-targets -- -D warnings 2>&1
+        cargo +nightly clippy --no-deps --workspace --all-targets -- -D warnings 2>&1
     fi
     t_end=$(date +%s%N)
     echo "-----{ CLIPPY: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
@@ -98,17 +98,13 @@ if [ "$no_test" != true ]; then
     echo "-----{ TEST: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
 fi
 
-# 5. Automatic Dev Install & Extension Sync
+# 5. Automatic Dev Install & Extension Sync (binary install lives in
+#    scripts/install.sh so there is exactly one install path)
 if [ "$no_install" != true ]; then
     echo
     echo "-----{ INSTALL: DEV BINARY & PI EXTENSION }-----"
     t_start=$(date +%s%N)
-    mkdir -p "$HOME/.cargo/bin"
-    cp --remove-destination target/debug/diffuse "$HOME/.cargo/bin/diffuse"
-    if [ -f target/debug/diffuse-harvest ]; then
-        cp --remove-destination target/debug/diffuse-harvest "$HOME/.cargo/bin/diffuse-harvest"
-    fi
-    echo "diffuse binary installed to $HOME/.cargo/bin/diffuse (dev)"
+    PROFILE=dev ./scripts/install.sh
     if [ -f "extension/pi/scripts/install.sh" ]; then
         PROFILE=dev ./extension/pi/scripts/install.sh
     fi

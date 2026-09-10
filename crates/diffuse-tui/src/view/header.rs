@@ -179,7 +179,7 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
         ctx.total_files
     );
     let hunk_badge = format!(
-        "\x1b[1m\x1b[38;5;220mhunk {}/{}\x1b[0m",
+        "\x1b[1m\x1b[38;5;208mhunk {}/{}\x1b[0m",
         ctx.cur_hunk + 1,
         ctx.total_hunks
     );

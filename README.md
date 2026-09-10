@@ -76,7 +76,6 @@ diffuse src/lib.rs tests/
 
 # Pretty-print formatted ANSI diff directly to terminal/stdout (-p / --print)
 diffuse --print
-diffuse -p --theme magic
 
 # Emit structured token-stream JSON to stdout (-j / --json)
 diffuse --json
@@ -91,7 +90,7 @@ diffuse -j > diff_stream.json
 | `-p`, `--print` | Print rendered ANSI diff directly to terminal and exit |
 | `-j`, `--json` | Output structured token-stream JSON to stdout and exit |
 | `-s`, `--staged`, `--cached` | View staged changes (`git diff --cached`) |
-| `--theme <NAME>` | Color theme (`magic` default, `default`, etc.) |
+| `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |
 | `--expand <LINES>` | Number of hidden context lines revealed per expand step (default: `10`) |
 | `--context <LINES>` | Surrounding context lines preserved on hunk reset (default: `3`) |
 | `-h`, `--help` | Print command-line help |
@@ -207,7 +206,7 @@ use diffuse::prelude::*;
 
 fn render_my_diff(diff_str: &str) -> String {
     let output = run_pipeline(diff_str, None);
-    let theme = DiffuseTheme::MAGIC;
+    let theme = default_theme();
     
     // Render full diff with styled prefix gutters and word-level highlights
     render_pipeline_output(&output, &theme, true)

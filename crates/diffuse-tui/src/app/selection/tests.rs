@@ -76,7 +76,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
 
     let frame = state.render_frame(100, 30);
     assert!(
-        frame.contains("\x1b[48;5;240m"),
+        frame.contains("\x1b[48;5;235m"),
         "an active anchor must band the rows between anchor and cursor"
     );
 
@@ -90,7 +90,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
 
     let frame2 = state.render_frame(100, 30);
     assert!(
-        frame2.contains("\x1b[48;5;240m"),
+        frame2.contains("\x1b[48;5;235m"),
         "a confirmed selection must keep banding its coordinate range"
     );
 }

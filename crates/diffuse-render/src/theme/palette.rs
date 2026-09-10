@@ -95,182 +95,10 @@ pub struct ThemePalette {
 }
 
 impl ThemePalette {
-    /// Canonical Magic Theme Palette matching reviewer styling.
-    #[must_use]
-    pub const fn default_magic() -> Self {
-        Self {
-            bg_base: Color::Fixed(236),
-            bg_modal: Color::Fixed(236),
-            border: Color::Fixed(240),
-            warning: Color::Fixed(220),
-            accent: Color::Fixed(51),
-            muted: Color::Fixed(243),
-
-            ctx_tint_bg: Color::Primary,
-            ctx_cursor_bg: Color::Fixed(237),
-            ctx_fg: Color::Fixed(244),
-            band_bg: Color::Fixed(240),
-
-            add_tint_bg: Color::Fixed(22),
-            add_cursor_bg: Color::Fixed(28),
-            add_fill_bg: Color::Fixed(28),
-            add_fill_cursor_bg: Color::Fixed(34),
-            add_fg: Color::Fixed(150),
-
-            del_tint_bg: Color::Fixed(52),
-            del_cursor_bg: Color::Fixed(88),
-            del_fill_bg: Color::Fixed(52),
-            del_fill_cursor_bg: Color::Fixed(88),
-            del_fg: Color::Fixed(167),
-
-            mod_tint_bg: Color::Fixed(236),
-            mod_cursor_bg: Color::Fixed(237),
-            mod_fill_bg: Color::Fixed(28),
-            mod_fill_cursor_bg: Color::Fixed(34),
-            mod_fg: Color::Fixed(244),
-
-            mov_tint_bg: Color::Fixed(236),
-            mov_cursor_bg: Color::Fixed(237),
-            mov_fg: Color::Fixed(244),
-
-            ctx_gutter_in_hunk: Color::Fixed(252),
-            ctx_gutter_out_hunk: Color::Fixed(242),
-            del_gutter_num: Color::Fixed(174),
-            del_gutter_icon: Color::Fixed(203),
-            add_gutter_num: Color::Fixed(151),
-            add_gutter_icon: Color::Fixed(120),
-            mod_gutter_num: Color::Fixed(253),
-            mod_gutter_icon: Color::Fixed(214),
-            mov_gutter_num: Color::Fixed(147),
-            mov_gutter_icon: Color::Fixed(117),
-
-            file_header_bg_selected: Color::Fixed(241),
-            file_header_bg_current: Color::Fixed(239),
-            file_header_bg_rest: Color::Fixed(237),
-            file_header_fg_selected: Color::Fixed(219),
-            file_header_fg_current: Color::Fixed(219),
-            file_header_fg_rest: Color::Fixed(183),
-
-            hunk_divider_bg_current: Color::Fixed(237),
-            hunk_divider_bg_rest: Color::Primary,
-            hunk_divider_fg: Color::Fixed(220),
-
-            header_bar_bg: Color::Fixed(237),
-            header_bar_fg: Color::Fixed(231),
-
-            scrollbar_thumb: Color::Fixed(248),
-            scrollbar_track: Color::Fixed(236),
-
-            syntax_keyword: Color::Fixed(141),
-            syntax_type: Color::Fixed(173),
-            syntax_function: Color::Fixed(117),
-            syntax_number: Color::Fixed(179),
-            syntax_string: Color::Fixed(114),
-            add_syntax_string: Color::Fixed(121),
-            del_syntax_string: Color::Fixed(122),
-            syntax_comment: Color::Fixed(243),
-            syntax_operator: Color::Fixed(110),
-
-            md_bold: Color::Fixed(172),
-            md_italic: Color::Fixed(187),
-            md_strike: Color::Fixed(243),
-            md_link: Color::Fixed(75),
-            md_url: Color::Fixed(243),
-            md_delim: Color::Fixed(51),
-            md_rule: Color::Fixed(220),
-        }
-    }
-
-    /// Legacy Theme Palette.
-    #[must_use]
-    pub const fn legacy() -> Self {
-        Self {
-            bg_base: Color::Fixed(236),
-            bg_modal: Color::Fixed(236),
-            border: Color::Fixed(240),
-            warning: Color::Fixed(220),
-            accent: Color::Fixed(214),
-            muted: Color::Fixed(244),
-
-            ctx_tint_bg: Color::Primary,
-            ctx_cursor_bg: Color::Fixed(237),
-            ctx_fg: Color::Fixed(244),
-            band_bg: Color::Fixed(240),
-
-            add_tint_bg: Color::Fixed(22),
-            add_cursor_bg: Color::Fixed(28),
-            add_fill_bg: Color::Fixed(28),
-            add_fill_cursor_bg: Color::Fixed(34),
-            add_fg: Color::Fixed(150),
-
-            del_tint_bg: Color::Fixed(52),
-            del_cursor_bg: Color::Fixed(88),
-            del_fill_bg: Color::Fixed(52),
-            del_fill_cursor_bg: Color::Fixed(88),
-            del_fg: Color::Fixed(167),
-
-            mod_tint_bg: Color::Fixed(236),
-            mod_cursor_bg: Color::Fixed(237),
-            mod_fill_bg: Color::Fixed(28),
-            mod_fill_cursor_bg: Color::Fixed(34),
-            mod_fg: Color::Fixed(244),
-
-            mov_tint_bg: Color::Fixed(236),
-            mov_cursor_bg: Color::Fixed(237),
-            mov_fg: Color::Fixed(244),
-
-            ctx_gutter_in_hunk: Color::Fixed(252),
-            ctx_gutter_out_hunk: Color::Fixed(242),
-            del_gutter_num: Color::Fixed(174),
-            del_gutter_icon: Color::Fixed(203),
-            add_gutter_num: Color::Fixed(151),
-            add_gutter_icon: Color::Fixed(120),
-            mod_gutter_num: Color::Fixed(253),
-            mod_gutter_icon: Color::Fixed(214),
-            mov_gutter_num: Color::Fixed(147),
-            mov_gutter_icon: Color::Fixed(117),
-
-            file_header_bg_selected: Color::Fixed(241),
-            file_header_bg_current: Color::Fixed(239),
-            file_header_bg_rest: Color::Fixed(237),
-            file_header_fg_selected: Color::Fixed(219),
-            file_header_fg_current: Color::Fixed(219),
-            file_header_fg_rest: Color::Fixed(183),
-
-            hunk_divider_bg_current: Color::Fixed(237),
-            hunk_divider_bg_rest: Color::Primary,
-            hunk_divider_fg: Color::Fixed(220),
-
-            header_bar_bg: Color::Fixed(237),
-            header_bar_fg: Color::Fixed(231),
-
-            scrollbar_thumb: Color::Fixed(248),
-            scrollbar_track: Color::Fixed(236),
-
-            syntax_keyword: Color::Fixed(141),
-            syntax_type: Color::Fixed(173),
-            syntax_function: Color::Fixed(117),
-            syntax_number: Color::Fixed(179),
-            syntax_string: Color::Fixed(114),
-            add_syntax_string: Color::Fixed(114),
-            del_syntax_string: Color::Fixed(114),
-            syntax_comment: Color::Fixed(244),
-            syntax_operator: Color::Fixed(110),
-
-            md_bold: Color::Fixed(173),
-            md_italic: Color::Fixed(244),
-            md_strike: Color::Fixed(244),
-            md_link: Color::Fixed(252),
-            md_url: Color::Fixed(244),
-            md_delim: Color::Fixed(214),
-            md_rule: Color::Fixed(220),
-        }
-    }
-
-    /// Deep Black Theme Palette with deeper background and muted red/green
+    /// Default Theme Palette with deeper background and muted red/green
     /// shades.
     #[must_use]
-    pub const fn deep_black() -> Self {
+    pub const fn default_palette() -> Self {
         Self {
             bg_base: Color::Fixed(233),
             bg_modal: Color::Fixed(234),
@@ -284,22 +112,22 @@ impl ThemePalette {
             ctx_fg: Color::Fixed(245),
             band_bg: Color::Fixed(235),
 
-            add_tint_bg: Color::Rgb(29, 35, 31),
-            add_cursor_bg: Color::Rgb(40, 47, 42),
-            add_fill_bg: Color::Rgb(40, 75, 48),
-            add_fill_cursor_bg: Color::Rgb(52, 98, 64),
+            add_tint_bg: Color::Rgb(22, 38, 23),
+            add_cursor_bg: Color::Rgb(36, 56, 37),
+            add_fill_bg: Color::Rgb(28, 99, 52),
+            add_fill_cursor_bg: Color::Rgb(36, 126, 68),
             add_fg: Color::Fixed(120),
 
-            del_tint_bg: Color::Rgb(48, 18, 20),
+            del_tint_bg: Color::Rgb(38, 12, 14),
             del_cursor_bg: Color::Rgb(68, 24, 26),
             del_fill_bg: Color::Rgb(82, 28, 32),
             del_fill_cursor_bg: Color::Rgb(100, 34, 38),
             del_fg: Color::Fixed(203),
 
-            mod_tint_bg: Color::Fixed(233),
-            mod_cursor_bg: Color::Fixed(235),
-            mod_fill_bg: Color::Rgb(40, 75, 48),
-            mod_fill_cursor_bg: Color::Rgb(52, 98, 64),
+            mod_tint_bg: Color::Rgb(30, 30, 30),
+            mod_cursor_bg: Color::Rgb(54, 54, 54),
+            mod_fill_bg: Color::Rgb(28, 99, 52),
+            mod_fill_cursor_bg: Color::Rgb(36, 126, 68),
             mod_fg: Color::Fixed(245),
 
             mov_tint_bg: Color::Fixed(233),
@@ -320,13 +148,13 @@ impl ThemePalette {
             file_header_bg_selected: Color::Fixed(237),
             file_header_bg_current: Color::Fixed(235),
             file_header_bg_rest: Color::Fixed(233),
-            file_header_fg_selected: Color::Fixed(177),
-            file_header_fg_current: Color::Fixed(176),
-            file_header_fg_rest: Color::Fixed(140),
+            file_header_fg_selected: Color::Fixed(221),
+            file_header_fg_current: Color::Fixed(220),
+            file_header_fg_rest: Color::Fixed(214),
 
             hunk_divider_bg_current: Color::Fixed(235),
             hunk_divider_bg_rest: Color::Primary,
-            hunk_divider_fg: Color::Fixed(220),
+            hunk_divider_fg: Color::Fixed(213),
 
             header_bar_bg: Color::Fixed(234),
             header_bar_fg: Color::Fixed(231),
@@ -335,7 +163,7 @@ impl ThemePalette {
             scrollbar_track: Color::Fixed(233),
 
             syntax_keyword: Color::Fixed(147),
-            syntax_type: Color::Fixed(221),
+            syntax_type: Color::Fixed(220),
             syntax_function: Color::Fixed(123),
             syntax_number: Color::Fixed(221),
             syntax_string: Color::Fixed(120),
@@ -344,7 +172,7 @@ impl ThemePalette {
             syntax_comment: Color::Fixed(150),
             syntax_operator: Color::Fixed(117),
 
-            md_bold: Color::Fixed(172),
+            md_bold: Color::Fixed(214),
             md_italic: Color::Fixed(229),
             md_strike: Color::Fixed(250),
             md_link: Color::Fixed(117),
@@ -398,73 +226,49 @@ impl ThemePalette {
     /// Resolve syntax / markdown token color in the context of a specific row
     /// kind.
     #[must_use]
-    pub fn syntax_token_color(
-        &self,
-        color: &str,
-        row_kind: RowKind,
-        is_legacy: bool,
-    ) -> Option<Color> {
-        if is_legacy {
-            let mut c = color;
-            if c == "mdBold" {
-                c = "syntaxType";
-            } else if c == "mdItalic" || c == "mdUrl" || c == "mdStrike" {
-                c = "muted";
-            } else if c == "mdLink" {
-                c = "text";
-            } else if c == "mdDelim" {
-                c = "accent";
-            }
-
-            if row_kind == RowKind::Add && (c == "syntaxComment" || c == "muted") {
-                Some(Color::Fixed(250))
-            } else if c == "syntaxType" {
-                Some(Color::Fixed(173))
-            } else {
-                self.named_color(c)
-            }
-        } else {
-            match row_kind {
-                RowKind::Add => match color {
-                    "mdBold" => Some(Color::Fixed(172)),
-                    "syntaxType" | "syntaxNumber" => Some(Color::Fixed(221)),
-                    "syntaxKeyword" => Some(Color::Fixed(147)),
-                    "syntaxFunction" => Some(Color::Fixed(123)),
-                    "syntaxOperator" | "mdLink" => Some(Color::Fixed(117)),
-                    "syntaxComment" => Some(Color::Fixed(150)),
-                    "mdItalic" | "muted" => Some(Color::Fixed(229)),
-                    "syntaxString" => Some(self.add_syntax_string),
-                    "mdUrl" | "mdStrike" => Some(Color::Fixed(250)),
-                    "accent" | "mdDelim" => Some(Color::Fixed(51)),
-                    _ => self.named_color(color),
-                },
-                RowKind::Del => match color {
-                    "mdBold" | "syntaxType" | "syntaxNumber" => Some(Color::Fixed(222)),
-                    "syntaxKeyword" => Some(Color::Fixed(183)),
-                    "syntaxFunction" => Some(Color::Fixed(159)),
-                    "syntaxOperator" | "mdLink" => Some(Color::Fixed(153)),
-                    "mdItalic" | "syntaxComment" | "muted" => Some(Color::Fixed(224)),
-                    "syntaxString" => Some(self.del_syntax_string),
-                    "mdUrl" | "mdStrike" => Some(Color::Fixed(248)),
-                    "accent" | "mdDelim" => Some(Color::Fixed(51)),
-                    _ => self.named_color(color),
-                },
-                _ => match color {
-                    "mdBold" => Some(self.md_bold),
-                    "syntaxType" => Some(self.syntax_type),
-                    "syntaxKeyword" => Some(self.syntax_keyword),
-                    "syntaxFunction" => Some(self.syntax_function),
-                    "syntaxNumber" => Some(self.syntax_number),
-                    "syntaxOperator" => Some(self.syntax_operator),
-                    "mdItalic" => Some(self.md_italic),
-                    "syntaxString" => Some(self.syntax_string),
-                    "mdLink" => Some(self.md_link),
-                    "mdUrl" | "mdStrike" | "syntaxComment" | "muted" => Some(self.syntax_comment),
-                    "mdRule" => Some(self.md_rule),
-                    "accent" | "mdDelim" => Some(self.accent),
-                    _ => self.named_color(color),
-                },
-            }
+    pub fn syntax_token_color(&self, color: &str, row_kind: RowKind) -> Option<Color> {
+        match row_kind {
+            RowKind::Add => match color {
+                "mdBold" => Some(self.md_bold),
+                "syntaxType" => Some(self.syntax_type),
+                "syntaxNumber" => Some(Color::Fixed(221)),
+                "syntaxKeyword" => Some(Color::Fixed(147)),
+                "syntaxFunction" => Some(Color::Fixed(123)),
+                "syntaxOperator" | "mdLink" => Some(Color::Fixed(117)),
+                "syntaxComment" => Some(Color::Fixed(150)),
+                "mdItalic" | "muted" => Some(Color::Fixed(229)),
+                "syntaxString" => Some(self.add_syntax_string),
+                "mdUrl" | "mdStrike" => Some(Color::Fixed(250)),
+                "accent" | "mdDelim" => Some(Color::Fixed(51)),
+                _ => self.named_color(color),
+            },
+            RowKind::Del => match color {
+                "mdBold" | "syntaxNumber" => Some(Color::Fixed(222)),
+                "syntaxType" => Some(Color::Fixed(215)),
+                "syntaxKeyword" => Some(Color::Fixed(183)),
+                "syntaxFunction" => Some(Color::Fixed(159)),
+                "syntaxOperator" | "mdLink" => Some(Color::Fixed(153)),
+                "mdItalic" | "syntaxComment" | "muted" => Some(Color::Fixed(224)),
+                "syntaxString" => Some(self.del_syntax_string),
+                "mdUrl" | "mdStrike" => Some(Color::Fixed(248)),
+                "accent" | "mdDelim" => Some(Color::Fixed(51)),
+                _ => self.named_color(color),
+            },
+            _ => match color {
+                "mdBold" => Some(self.md_bold),
+                "syntaxType" => Some(self.syntax_type),
+                "syntaxKeyword" => Some(self.syntax_keyword),
+                "syntaxFunction" => Some(self.syntax_function),
+                "syntaxNumber" => Some(self.syntax_number),
+                "syntaxOperator" => Some(self.syntax_operator),
+                "mdItalic" => Some(self.md_italic),
+                "syntaxString" => Some(self.syntax_string),
+                "mdLink" => Some(self.md_link),
+                "mdUrl" | "mdStrike" | "syntaxComment" | "muted" => Some(self.syntax_comment),
+                "mdRule" => Some(self.md_rule),
+                "accent" | "mdDelim" => Some(self.accent),
+                _ => self.named_color(color),
+            },
         }
     }
 }

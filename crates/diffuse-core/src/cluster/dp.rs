@@ -50,7 +50,10 @@ use crate::{
     lcs::{lcs_matched_chars_ids, lcs_pairs_ids},
     parse::Row,
     similarity::TokenInterner,
-    syntax::prelude::{CloseDelimiter, first_ascii_word},
+    syntax::{
+        prelude::{CloseDelimiter, first_ascii_word},
+        profile::LangProfile,
+    },
 };
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
@@ -509,10 +512,7 @@ fn is_reflow_candidate(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
-pub(crate) fn is_statement_start(
-    text: &str,
-    profile: Option<&crate::syntax::profile::LangProfile>,
-) -> bool {
+pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> bool {
     let t = text.trim();
     if t.is_empty() {
         return false;
@@ -533,10 +533,7 @@ pub(crate) fn is_statement_start(
     }
     // Fallback check for section headers when no profile is available:
     // `[section]`
-    if t.starts_with('[') && t.ends_with(']') {
-        return true;
-    }
-    false
+    t.starts_with('[') && t.ends_with(']')
 }
 
 /// The block line carrying the transition's anchor `Mod`: the line that
@@ -587,10 +584,7 @@ pub fn subline_moves(bm: &BlockMatch, anchor: usize) -> Vec<SublineMove> {
 }
 
 /// Solve one cluster with the default weights.
-pub fn solve_cluster(
-    cluster: &ChangeCluster,
-    profile: Option<&crate::syntax::profile::LangProfile>,
-) -> DpSolution {
+pub fn solve_cluster(cluster: &ChangeCluster, profile: Option<&LangProfile>) -> DpSolution {
     solve_cluster_with(cluster, profile, &Weights::default())
 }
 
@@ -693,7 +687,7 @@ thread_local! {
 /// in multithreaded runs.
 pub fn solve_cluster_with_tls(
     cluster: &ChangeCluster,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&LangProfile>,
     w: &Weights,
 ) -> DpSolution {
     ARENA.with(|arena_cell| {
@@ -706,7 +700,7 @@ pub fn solve_cluster_with_tls(
 /// preference experiments).
 pub fn solve_cluster_with(
     cluster: &ChangeCluster,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&LangProfile>,
     w: &Weights,
 ) -> DpSolution {
     solve_cluster_with_tls(cluster, profile, w)
@@ -716,7 +710,7 @@ pub fn solve_cluster_with(
 /// buffers.
 pub(crate) fn solve_cluster_with_arena(
     cluster: &ChangeCluster,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&LangProfile>,
     w: &Weights,
     arena: &mut DpScratchArena,
 ) -> DpSolution {
@@ -753,10 +747,7 @@ pub(crate) fn solve_cluster_with_arena(
             CloseDelimiter::default_classify_exact(t)
         }
     };
-    fn trim_trailing_delims<'a>(
-        t: &'a str,
-        profile: Option<&crate::syntax::profile::LangProfile>,
-    ) -> &'a str {
+    fn trim_trailing_delims<'a>(t: &'a str, profile: Option<&LangProfile>) -> &'a str {
         if let Some(p) = profile {
             p.trim_trailing_delimiters(t)
         } else {

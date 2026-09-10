@@ -9,7 +9,7 @@ pub use diff_grid::{
     bottom_gap_divider_line, bottom_gap_divider_text, file_header_line, file_header_text,
     hunk_divider_line, hunk_divider_text, render_bottom_gap_divider,
     render_bottom_gap_divider_segment, render_file_header, render_file_header_segment,
-    render_hunk_divider, render_hunk_divider_segment,
+    render_hunk_divider, render_hunk_divider_segment, wrapped_glyph_hit,
 };
 pub use header::{
     StatusBarContext, bottom_ribbon_lines, header_bar_line, header_bar_line_themed,

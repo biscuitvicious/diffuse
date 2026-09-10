@@ -1080,7 +1080,7 @@ fn run_bin_leg(name: &str, min: usize) {
         if exp_len == 0 {
             if recording {
                 failures.push(format!(
-                    "Line {line_idx}: unexpected extra output from binary: {:?}",
+                    "Line {line_idx}: unexpected extra output from binary: {}",
                     actual_line.trim()
                 ));
             }
@@ -1089,7 +1089,7 @@ fn run_bin_leg(name: &str, min: usize) {
         if act_len == 0 {
             if recording {
                 failures.push(format!(
-                    "Line {line_idx}: unexpected EOF from binary, expected: {:?}",
+                    "Line {line_idx}: unexpected EOF from binary, expected: {}",
                     expected_line.trim()
                 ));
             }

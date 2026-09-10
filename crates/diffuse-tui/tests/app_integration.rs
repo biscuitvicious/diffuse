@@ -243,7 +243,7 @@ fn test_selection_anchor_band_and_confirm() {
 
     let frame = state.render_frame(100, 30);
     assert!(
-        frame.contains("\x1b[48;5;240m"),
+        frame.contains("\x1b[48;5;235m"),
         "active anchor must band rows"
     );
 
@@ -253,7 +253,7 @@ fn test_selection_anchor_band_and_confirm() {
 
     let frame2 = state.render_frame(100, 30);
     assert!(
-        frame2.contains("\x1b[48;5;240m"),
+        frame2.contains("\x1b[48;5;235m"),
         "confirmed selection bands"
     );
 

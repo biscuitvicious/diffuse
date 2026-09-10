@@ -24,6 +24,7 @@ src/persistence.ts     # notes database reader for summary notification
 test/smoke.test.ts     # smoke test verifying binary execution & args
 scripts/build-bin.sh   # builds & bundles bin/diffuse
 scripts/install.sh     # installs the extension into ~/.pi/agent/extensions/
+scripts/uninstall.sh   # removes the extension from ~/.pi/agent/extensions/
 ```
 
 ## Architecture

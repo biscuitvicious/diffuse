@@ -49,6 +49,13 @@ index 1111111..2222222 100644
 }
 
 #[test]
+fn test_with_theme_builder_sets_theme() {
+    let state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path())
+        .with_theme(crate::render::DiffuseTheme::DEFAULT);
+    assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
+}
+
+#[test]
 fn test_clicking_file_header_triangle_toggles_collapse() {
     let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
 index 1111111..2222222 100644
@@ -241,7 +248,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
 
     let frame = state.render_frame(100, 30);
     assert!(
-        frame.contains("\x1b[48;5;240m"),
+        frame.contains("\x1b[48;5;235m"),
         "an active anchor must band the rows between anchor and cursor"
     );
 
@@ -255,7 +262,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
 
     let frame2 = state.render_frame(100, 30);
     assert!(
-        frame2.contains("\x1b[48;5;240m"),
+        frame2.contains("\x1b[48;5;235m"),
         "a confirmed selection must keep banding its coordinate range"
     );
 }
@@ -515,10 +522,10 @@ fn test_raw_diff_wrapped_line_no_false_trailing_highlight() {
     let lines: Vec<&str> = frame.lines().collect();
 
     // The first segment of the wrapped line must not contain green background
-    // highlight \x1b[48;5;28m
+    // highlight \x1b[48;2;28;99;52m (default add_fill_bg)
     for line in &lines[2..4] {
         assert!(
-            !line.contains("\x1b[48;5;28m"),
+            !line.contains("\x1b[48;2;28;99;52m"),
             "wrapped line segments without trailing spaces must not highlight intermediate spaces: {line}"
         );
     }
@@ -849,11 +856,17 @@ index 6f6222d..4aa7a1d 100644
     state.scroll = 30;
 
     let frame_raw_115 = state.render_frame(120, 30);
+    let is_cursor_line = |l: &&str| {
+        l.contains("\x1b[48;5;235m")
+            || l.contains("\x1b[48;2;54;54;54m")
+            || l.contains("\x1b[48;2;36;56;37m")
+            || l.contains("\x1b[48;2;68;24;26m")
+    };
     let raw_115_cursor_line = frame_raw_115
         .lines()
         .enumerate()
         .skip(2)
-        .find(|(_, l)| l.contains("\x1b[48;5;237m"))
+        .find(|(_, l)| is_cursor_line(l))
         .map(|(i, _)| i)
         .unwrap_or_else(|| panic!("raw 115 cursor line not found"));
 
@@ -865,7 +878,7 @@ index 6f6222d..4aa7a1d 100644
         .lines()
         .enumerate()
         .skip(2)
-        .find(|(_, l)| l.contains("\x1b[48;5;237m"))
+        .find(|(_, l)| is_cursor_line(l))
         .map(|(i, _)| i)
         .unwrap_or_else(|| panic!("visual 115 cursor line not found"));
 
@@ -1535,6 +1548,605 @@ index 1111111..2222222 100644
 }
 
 #[test]
+fn test_seek_then_render_never_yanks_scroll() {
+    // Seek stability across a render pass at a narrow width where the
+    // divider wraps: scroll_to_visual must place the cursor exactly where
+    // the render's cursor-follow expects it, or the render yanks scroll
+    // on the next frame. Targets landing inside a divider's own segments
+    // are excluded: showing a whole divider (scroll snapped to its start)
+    // is the render's standing behavior for divider rows.
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/sample.rs
+@@ -1,8 +1,9 @@
+ // line 1
+ // line 2
+ // line 3
+ // line 4
++// inserted one
+ // line 5
+ // line 6
+ // line 7
+ // line 8
+@@ -17,9 +18,9 @@
+ // line 17
+ // line 18
+ // line 19
+ // line 20
+-// line 21 old
++// line 21 new
+ // line 22
+ // line 23
+ // line 24
+ // line 25
+"#;
+    let mut old_lines = Vec::new();
+    for i in 1..=40 {
+        if i == 21 {
+            old_lines.push("// line 21 old".to_string());
+        } else {
+            old_lines.push(format!("// line {i}"));
+        }
+    }
+    let mut new_lines = Vec::new();
+    for i in 1..=40 {
+        if i == 5 {
+            new_lines.push("// inserted one".to_string());
+        }
+        if i == 22 {
+            new_lines.push("// line 21 new".to_string());
+        } else {
+            new_lines.push(format!("// line {i}"));
+        }
+    }
+    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let output = PipelineInput::new(diff)
+        .with_new_content(contents)
+        .with_old_content(old_contents)
+        .run();
+    // Narrow: the divider (~60 chars with the gap tail) wraps to 2 segs.
+    let (w, h) = (48, 16);
+    let mut state = AppState::new(output.clone(), "test_repo".into(), temp_notes_path());
+    state.render_frame(w, h);
+    let vh = state.viewport_height;
+    let (_, _, _, total) = state.visual_geometry(state.last_content_width);
+    let max_scroll = total.saturating_sub(vh);
+    assert!(max_scroll > 5, "need scroll room, got {max_scroll}");
+    let div_segs = state.hunk_div_seg_count(0, 1, state.last_content_width);
+    assert!(
+        div_segs >= 2,
+        "divider must wrap for this scenario, got {div_segs}"
+    );
+
+    for t in [0, 5, max_scroll / 2, max_scroll] {
+        // Fresh state per target: cursor placement must not leak across
+        // probes. Skip targets inside a divider's own segments (whole-
+        // divider display is standing behavior there).
+        let mut probe = AppState::new(state.output.clone(), "test_repo".into(), temp_notes_path());
+        probe.render_frame(w, h);
+        let (starts, _, _, _) = probe.visual_geometry(probe.last_content_width);
+        let on_div_seg = probe.hunk_starts.iter().any(|hs| {
+            let s = starts[hs.flat];
+            let n = probe.hunk_div_seg_count(hs.file, hs.hunk, probe.last_content_width);
+            t > s && t < s + n
+        });
+        if on_div_seg {
+            continue;
+        }
+        probe.scroll_to_visual(t);
+        probe.render_frame(w, h);
+        assert_eq!(
+            probe.scroll,
+            t.min(max_scroll),
+            "render must not yank scroll after seeking to {t}"
+        );
+    }
+    // At least the undisputed targets must have been exercised.
+    assert!(max_scroll >= 2);
+}
+
+#[test]
+fn test_scrollbar_column_click_on_divider_row_seeks() {
+    // The scrollbar owns its column: a click there seeks even when it
+    // lands on a divider row, and must not expand the gap.
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/a.rs
+@@ -1,8 +1,9 @@
+ // line 1
+ // line 2
+ // line 3
+ // line 4
++// inserted one
+ // line 5
+ // line 6
+ // line 7
+ // line 8
+@@ -17,9 +18,9 @@
+ // line 17
+ // line 18
+ // line 19
+ // line 20
+-// line 21 old
++// line 21 new
+ // line 22
+ // line 23
+ // line 24
+ // line 25
+"#;
+    let mut old_lines = Vec::new();
+    for i in 1..=40 {
+        if i == 21 {
+            old_lines.push("// line 21 old".to_string());
+        } else {
+            old_lines.push(format!("// line {i}"));
+        }
+    }
+    let mut new_lines = Vec::new();
+    for i in 1..=40 {
+        if i == 5 {
+            new_lines.push("// inserted one".to_string());
+        }
+        if i == 22 {
+            new_lines.push("// line 21 new".to_string());
+        } else {
+            new_lines.push(format!("// line {i}"));
+        }
+    }
+    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let output = PipelineInput::new(diff)
+        .with_new_content(contents)
+        .with_old_content(old_contents)
+        .run();
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+
+    state.render_frame(80, 16);
+    let cw = state.last_content_width;
+    let ho = state.last_viewport_start;
+    let vh = state.viewport_height;
+    let (starts, _, _, total) = state.visual_geometry(cw);
+    let max_scroll = total.saturating_sub(vh);
+    assert!(
+        max_scroll >= 2,
+        "need scroll room for a seek, got {max_scroll}"
+    );
+    let div_flat = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.file == 0 && hs.hunk == 1)
+        .unwrap()
+        .flat;
+    let div_screen = starts[div_flat].saturating_sub(state.scroll);
+    let track_h = 16;
+    let (_, _, thumb_off, thumb_size, _) = state.render_diff_viewport_lines(80, vh, track_h);
+    assert!(
+        div_screen < vh,
+        "divider must be in the viewport for this scenario"
+    );
+    assert!(
+        ho + div_screen >= thumb_off + thumb_size,
+        "divider must sit on a track row (below the top thumb), got screen {div_screen}"
+    );
+    let gap_before = state.hunk_leading_gap(0, 1);
+    assert!(gap_before > 0, "need a hidden gap to prove no-expand");
+
+    state.execute(TuiCommand::MouseClick {
+        row: ho + div_screen,
+        col: cw,
+        shift: false,
+    });
+
+    assert!(
+        state.is_dragging_scrollbar,
+        "scrollbar column must start a drag even on divider rows"
+    );
+    assert_ne!(
+        state.scroll, 0,
+        "scrollbar column click on a divider row must seek"
+    );
+    assert_eq!(
+        state.hunk_leading_gap(0, 1),
+        gap_before,
+        "scrollbar column click must not expand the gap"
+    );
+}
+
+#[test]
+fn test_divider_arrow_hit_area_wraps_with_segments() {
+    // Arrow hit areas live in the unwrapped divider text, so the ±1
+    // tolerance wraps across visual segments without ever touching the
+    // scrollbar column:
+    // 1) glyph at a segment end is hit from the next segment's first cell;
+    // 2&3) glyph at a segment start is hit from the previous segment's
+    //    last cell.
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/a.rs
+@@ -1,8 +1,9 @@
+ // line 1
+ // line 2
+ // line 3
+ // line 4
++// inserted one
+ // line 5
+ // line 6
+ // line 7
+ // line 8
+@@ -17,9 +18,9 @@
+ // line 17
+ // line 18
+ // line 19
+ // line 20
+-// line 21 old
++// line 21 new
+ // line 22
+ // line 23
+ // line 24
+ // line 25
+"#;
+    let mut old_lines = Vec::new();
+    for i in 1..=40 {
+        if i == 21 {
+            old_lines.push("// line 21 old".to_string());
+        } else {
+            old_lines.push(format!("// line {i}"));
+        }
+    }
+    let mut new_lines = Vec::new();
+    for i in 1..=40 {
+        if i == 5 {
+            new_lines.push("// inserted one".to_string());
+        }
+        if i == 22 {
+            new_lines.push("// line 21 new".to_string());
+        } else {
+            new_lines.push(format!("// line {i}"));
+        }
+    }
+    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let output = PipelineInput::new(diff)
+        .with_new_content(contents)
+        .with_old_content(old_contents)
+        .run();
+
+    // Character index of the ▲ glyph in hunk 2's divider text.
+    let hk = output.files[0].hunks[1].clone();
+    let gap_probe = {
+        let tmp = AppState::new(output.clone(), "test_repo".into(), temp_notes_path());
+        tmp.hunk_leading_gap(0, 1)
+    };
+    assert!(gap_probe > 0, "need a hidden gap for arrow hits");
+    let txt = hunk_divider_text(1, &hk, gap_probe);
+    let up_idx = txt.find('▲').expect("divider must carry ▲");
+    let c = txt[..up_idx].chars().count();
+
+    // Case 1: glyph at a segment end (width c+1) is hit from the next
+    // segment's first cell.
+    let mut state = AppState::new(output.clone(), "test_repo".into(), temp_notes_path());
+    let width_end = c + 1;
+    state.render_frame(width_end, 40);
+    assert!(
+        state.last_content_width == width_end,
+        "no scrollbar may appear or the column math shifts"
+    );
+    let cw = state.last_content_width;
+    let ho = state.last_viewport_start;
+    let (starts, _, _, _) = state.visual_geometry(cw);
+    let div_flat = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.hunk == 1)
+        .unwrap()
+        .flat;
+    let div_screen = starts[div_flat].saturating_sub(state.scroll);
+    assert!(
+        state.hunk_div_seg_count(0, 1, cw) >= 2,
+        "divider must wrap for this scenario"
+    );
+    state.execute(TuiCommand::MouseClick {
+        row: ho + div_screen + 1,
+        col: 0,
+        shift: false,
+    });
+    assert_eq!(
+        state.hunk_leading_gap(0, 1),
+        gap_probe.saturating_sub(state.expand_lines.max(1)),
+        "next-segment first cell must hit a line-end ▲"
+    );
+
+    // Cases 2&3: glyph at a segment start (width c) is hit from the
+    // previous segment's last cell.
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    state.render_frame(c, 40);
+    assert!(
+        state.last_content_width == c,
+        "no scrollbar may appear or the column math shifts"
+    );
+    let cw = state.last_content_width;
+    let ho = state.last_viewport_start;
+    let (starts, _, _, _) = state.visual_geometry(cw);
+    let div_flat = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.hunk == 1)
+        .unwrap()
+        .flat;
+    let div_screen = starts[div_flat].saturating_sub(state.scroll);
+    assert!(
+        state.hunk_div_seg_count(0, 1, cw) >= 2,
+        "divider must wrap for this scenario"
+    );
+    state.execute(TuiCommand::MouseClick {
+        row: ho + div_screen,
+        col: cw - 1,
+        shift: false,
+    });
+    assert_eq!(
+        state.hunk_leading_gap(0, 1),
+        gap_probe.saturating_sub(state.expand_lines.max(1)),
+        "previous-segment last cell must hit a wrapped ▲"
+    );
+}
+
+#[test]
+fn test_scrollbar_drawn_column_matches_hit_column() {
+    // The bar glyph must sit exactly in the column the click hit-test
+    // uses (`last_content_width`), across the whole viewport.
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,60 @@\n-old\n");
+    for i in 1..=60 {
+        diff.push_str(&format!("+line {i}\n"));
+    }
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let frame = state.render_frame(80, 30);
+    let cw = state.last_content_width;
+    let ho = state.last_viewport_start;
+    let vh = state.viewport_height;
+    let mut checked = 0;
+    for line in frame.lines().skip(ho).take(vh) {
+        let plain = crate::render::strip_ansi(line);
+        let chars: Vec<char> = plain.chars().collect();
+        assert!(
+            chars.len() > cw,
+            "viewport line must reach the scrollbar column"
+        );
+        assert!(
+            chars[cw] == '█' || chars[cw] == '│',
+            "scrollbar cell must hold the bar glyph, got {:?}",
+            chars[cw]
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, vh, "must check every viewport row");
+}
+
+#[test]
+fn test_scrollbar_click_seeks_from_pointer_row() {
+    // Click and drag share one exact mapping: every bar-column click
+    // seeks to the pointer row's scroll, thumb or track alike.
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,60 @@\n-old\n");
+    for i in 1..=60 {
+        diff.push_str(&format!("+line {i}\n"));
+    }
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.render_frame(80, 30);
+    let vh = state.viewport_height;
+    let track_h = state.screen_height;
+    state.scroll_to_visual(20);
+    state.render_frame(80, 30);
+    let scrolled = state.scroll;
+    assert!(
+        scrolled > 0,
+        "must be scrolled into the interior, got {scrolled}"
+    );
+    let cw = state.last_content_width;
+    let (_, _, _, total) = state.visual_geometry(cw);
+    let max_scroll = total.saturating_sub(vh);
+
+    // Clicking the thumb row seeks exactly like a track click.
+    let thumb_row = track_h / 2;
+    let want = AppState::scrollbar_scroll_for_row(track_h, max_scroll, thumb_row);
+    state.execute(TuiCommand::MouseClick {
+        row: thumb_row,
+        col: cw,
+        shift: false,
+    });
+    assert!(
+        state.is_dragging_scrollbar,
+        "bar-column click must start a drag"
+    );
+    assert_eq!(
+        state.scroll, want,
+        "bar-column click must seek to the pointer row"
+    );
+
+    state.execute(TuiCommand::MouseClick {
+        row: 0,
+        col: cw,
+        shift: false,
+    });
+    assert_eq!(state.scroll, 0, "top row click must seek to the top");
+
+    state.execute(TuiCommand::MouseClick {
+        row: track_h - 1,
+        col: cw,
+        shift: false,
+    });
+    assert_eq!(
+        state.scroll, max_scroll,
+        "last row click must seek to max scroll"
+    );
+}
+
+#[test]
+fn test_scrollbar_drag_follows_formula_monotonically() {
+    // Dragging maps pointer rows to scrolls exactly, monotonically, with
+    // exact extremes — no flats, no jumps.
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,60 @@\n-old\n");
+    for i in 1..=60 {
+        diff.push_str(&format!("+line {i}\n"));
+    }
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.render_frame(80, 24);
+    let vh = state.viewport_height;
+    let track_h = state.screen_height;
+    let header_offset = state.last_viewport_start;
+    state.scroll_to_visual(20);
+    state.render_frame(80, 24);
+    assert!(state.scroll > 0, "must be scrolled into the interior");
+    let cw = state.last_content_width;
+    let (_, _, _, total) = state.visual_geometry(cw);
+    let max_scroll = total.saturating_sub(vh);
+    assert!(max_scroll >= track_h, "need room for a strict sweep");
+
+    state.execute(TuiCommand::MouseClick {
+        row: track_h / 2,
+        col: cw,
+        shift: false,
+    });
+    assert!(state.is_dragging_scrollbar);
+
+    let mut prev = usize::MAX;
+    let mut first = true;
+    for r in 0..track_h {
+        state.execute(TuiCommand::MouseDrag {
+            row: r,
+            col: cw,
+            shift: false,
+        });
+        let row_relative = r.saturating_sub(header_offset);
+        let want = AppState::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
+        assert_eq!(
+            state.scroll, want,
+            "drag to row {r} must follow the formula"
+        );
+        if first {
+            assert_eq!(want, 0, "row 0 must yield scroll 0");
+            first = false;
+        } else {
+            assert!(
+                state.scroll >= prev,
+                "dragging down must never move up, row {r}"
+            );
+        }
+        prev = state.scroll;
+    }
+    assert_eq!(prev, max_scroll, "last row must yield max scroll");
+}
+
+#[test]
+fn test_scrollbar_drag_extremes_from_any_grab() {
+    // Pointer rows 0 and H-1 always mean scroll 0 and max scroll,
+    // regardless of where the thumb was grabbed.
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,60 @@\n-old\n");
+    for i in 1..=60 {
+        diff.push_str(&format!("+line {i}\n"));
+    }
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.render_frame(80, 24);
+    let vh = state.viewport_height;
+    let track_h = state.screen_height;
+    state.scroll_to_visual(20);
+    state.render_frame(80, 24);
+    let scrolled = state.scroll;
+    assert!(scrolled > 1, "must start mid-content, got {scrolled}");
+    let cw = state.last_content_width;
+    let (counts, _, _, total) = state.visual_geometry(cw);
+    let header_vis = counts.first().copied().unwrap_or(1);
+    let max_scroll = total.saturating_sub(vh);
+    let (off, size) = AppState::scrollbar_thumb_for(track_h, vh, total, scrolled, header_vis)
+        .expect("scrollbar must apply");
+    assert!(size >= 2, "need a small thumb for this scenario");
+
+    // Grab the thumb's top edge, then drag to both extremes: the
+    // formula answers from the pointer row alone.
+    state.execute(TuiCommand::MouseClick {
+        row: off,
+        col: cw,
+        shift: false,
+    });
+    state.execute(TuiCommand::MouseDrag {
+        row: 0,
+        col: cw,
+        shift: false,
+    });
+    assert_eq!(state.scroll, 0, "row 0 must yield scroll 0 from any grab");
+
+    state.execute(TuiCommand::MouseDrag {
+        row: track_h - 1,
+        col: cw,
+        shift: false,
+    });
+    assert_eq!(
+        state.scroll, max_scroll,
+        "last row must yield max scroll from any grab"
+    );
+}
+
+#[test]
+fn test_scrollbar_column_spans_full_height() {
+    // The bar column must run the whole terminal height, including the
+    // header and ribbon rows — not just the viewport.
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,60 @@\n-old\n");
+    for i in 1..=60 {
+        diff.push_str(&format!("+line {i}\n"));
+    }
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut thumb_rows = 0;
+    for y in 0..20 {
+        let sym = buffer[(79, y)].symbol();
+        assert!(
+            sym == "█" || sym == "│",
+            "every screen row must carry the bar column, row {y} has {sym:?}"
+        );
+        if sym == "█" {
+            thumb_rows += 1;
+        }
+    }
+    assert!(
+        thumb_rows >= 2,
+        "thumb must be at least 2 rows high, got {thumb_rows}"
+    );
+}
+
+#[test]
 fn test_hunk_divider_up_arrow_pinned_even_with_cursor_above() {
     // Regression: cursor sits on a row ABOVE the divider (typical after
     // scrolling/navigating); the render-time cursor clamp must not drag
@@ -2163,10 +2775,9 @@ fn test_note_modal_margins_with_scrollbar() {
         " ",
         "Col 48 must be right margin space before scrollbar"
     );
-    assert_eq!(
-        buffer[(49, y)].symbol(),
-        "█",
-        "Col 49 must be scrollbar thumb"
+    assert!(
+        buffer[(49, y)].symbol() == "█" || buffer[(49, y)].symbol() == "│",
+        "Col 49 must carry the scrollbar column behind the modal margin"
     );
 }
 

@@ -284,7 +284,7 @@ Binary files a/old.png and b/new.png differ
 
     let frame = state.render_frame(100, 30);
     assert!(
-        frame.contains("──── logo.png (binary)"),
+        frame.contains("════ logo.png (binary)"),
         "frame shows flat header rule without expand caret"
     );
     assert!(

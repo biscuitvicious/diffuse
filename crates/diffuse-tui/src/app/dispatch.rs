@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::{command::TuiCommand, view::hunk_divider_text};
+use crate::{
+    command::TuiCommand,
+    view::{hunk_divider_text, wrapped_glyph_hit},
+};
 
 use super::AppState;
 
@@ -170,40 +173,33 @@ impl AppState {
                 let header_offset = self.last_viewport_start;
                 let vh = self.viewport_height;
                 let cw = self.last_content_width;
-                let is_on_scrollbar = col >= cw;
+                // The scrollbar owns a full-height column: any click at or
+                // past the content width seeks (or grabs the thumb),
+                // including alongside the header and ribbon rows.
+                let track_h = self.screen_height;
+                let is_on_scrollbar = col >= cw && row < track_h;
                 let in_viewport = row >= header_offset && row < header_offset + vh;
-                // A click in the scrollbar column seeks — unless it lands on a
-                // hunk divider block whose expansion arrows take priority (on
-                // narrow screens the wrapped arrows sit flush against the
-                // border column).
-                let mut on_divider_block = false;
-                if in_viewport && is_on_scrollbar {
-                    let target_vis = self.scroll + (row - header_offset);
-                    let (starts, counts, _seg, _total) =
-                        self.visual_geometry(self.last_content_width);
-                    on_divider_block =
-                        starts
-                            .iter()
-                            .zip(counts.iter())
-                            .enumerate()
-                            .any(|(i, (&s, &c))| {
-                                target_vis >= s
-                                    && target_vis < s + c
-                                    && self.hunk_starts.iter().any(|hs| hs.flat == i)
-                            });
-                }
-                let scrollbar_seek = is_on_scrollbar && !on_divider_block;
-                if scrollbar_seek && in_viewport {
+                // Divider arrows stay clickable across the row's content
+                // columns via the divider hit-test below.
+                let scrollbar_seek = is_on_scrollbar;
+                if scrollbar_seek {
+                    // Click and drag share one exact mapping from pointer
+                    // row to scroll position.
+                    //
+                    // The scrollbar widget spans the full terminal height
+                    // (screen_height), but the viewport it represents is
+                    // only `vh` rows tall. The mapping must therefore use
+                    // the viewport-relative row and the viewport height so
+                    // the pointer position on the track corresponds to the
+                    // visible content area, not the full screen.
                     self.is_dragging_scrollbar = true;
-                    let row_in_vh = row - header_offset;
                     let (_starts, _counts, _seg, total_vis) =
                         self.visual_geometry(self.last_content_width);
                     let max_scroll = total_vis.saturating_sub(vh);
-                    if max_scroll > 0 && vh > 1 {
-                        let target_vis = ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64)
-                            .round() as usize;
-                        self.scroll_to_visual(target_vis);
-                    }
+                    let row_relative = row.saturating_sub(header_offset);
+                    let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
+                    tracing::debug!(row, col, target_vis, max_scroll, "scrollbar mousedown");
+                    self.scroll_to_visual(target_vis);
                 } else if in_viewport {
                     self.is_dragging_scrollbar = false;
                     let target_vis = self.scroll + (row - header_offset);
@@ -234,19 +230,15 @@ impl AppState {
                                     let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
                                     if hidden_gap > 0 {
                                         // The divider may wrap across several
-                                        // visual
-                                        // segments on narrow screens; translate
+                                        // visual segments on narrow screens;
                                         // the
-                                        // click into unwrapped text columns.
+                                        // hit area is the glyph's screen cells
+                                        // after wrapping.
                                         let seg_off = target_vis - s;
-                                        let eff_col = seg_off * cw + col;
                                         let txt = hunk_divider_text(div_hi, hunk, hidden_gap);
 
                                         let hit = |pat: &str| {
-                                            txt.find(pat).is_some_and(|idx| {
-                                                let c = txt[..idx].chars().count();
-                                                eff_col >= c.saturating_sub(1) && eff_col <= c + 1
-                                            })
+                                            wrapped_glyph_hit(&txt, pat, seg_off, col, cw)
                                         };
 
                                         let mut handled = true;
@@ -304,16 +296,9 @@ impl AppState {
                                 let bottom_start = s + div_lines + row_segs + note_lines;
                                 if target_vis >= bottom_start {
                                     let seg_off = target_vis - bottom_start;
-                                    let eff_col = seg_off * cw + col;
                                     let gap = self.hunk_trailing_gap(item.file_idx);
                                     let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
-                                    let hit = |pat: &str| {
-                                        txt.find(pat).is_some_and(|idx| {
-                                            let c = txt[..idx].chars().count();
-                                            eff_col >= c.saturating_sub(1) && eff_col <= c + 1
-                                        })
-                                    };
-                                    if hit("▲") {
+                                    if wrapped_glyph_hit(&txt, "▲", seg_off, col, cw) {
                                         let last_hi = self.output.files[item.file_idx]
                                             .hunks
                                             .len()
@@ -349,17 +334,27 @@ impl AppState {
                 let header_offset = self.last_viewport_start;
                 let vh = self.viewport_height;
                 if self.is_dragging_scrollbar {
-                    let clamped_row =
-                        row.clamp(header_offset, header_offset + vh.saturating_sub(1));
-                    let row_in_vh = clamped_row - header_offset;
-                    let (_starts, _counts, _seg, total_vis) =
-                        self.visual_geometry(self.last_content_width);
+                    // Same exact mapping as click-seek: pointer row to
+                    // scroll, no special cases.
+                    //
+                    // The scrollbar widget spans the full terminal height
+                    // (screen_height), but the viewport it represents is
+                    // only `vh` rows tall. The mapping must therefore use
+                    // the viewport-relative row and the viewport height so
+                    // the pointer position on the track corresponds to the
+                    // visible content area, not the full screen.
+                    let (_, _, _, total_vis) = self.visual_geometry(self.last_content_width);
                     let max_scroll = total_vis.saturating_sub(vh);
-                    if max_scroll > 0 && vh > 1 {
-                        let target_vis = ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64)
-                            .round() as usize;
-                        self.scroll_to_visual(target_vis);
-                    }
+                    let row_relative = row.saturating_sub(header_offset);
+                    let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
+                    tracing::debug!(
+                        row,
+                        target_vis,
+                        max_scroll,
+                        prev_scroll = self.scroll,
+                        "scrollbar drag"
+                    );
+                    self.scroll_to_visual(target_vis);
                 } else if row >= header_offset && row < header_offset + vh {
                     let prev_row = self.row_idx;
                     if self.anchor.is_none() {

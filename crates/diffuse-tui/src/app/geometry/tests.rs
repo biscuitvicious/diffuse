@@ -190,11 +190,11 @@ fn test_hunk_divider_renders_and_extent_lift() {
         frame
     );
     assert!(
-        frame.contains("\x1b[48;5;237m") || frame.contains("\x1b[48;5;236m"),
+        frame.contains("\x1b[48;5;235m") || frame.contains("\x1b[48;5;236m"),
         "the current hunk's divider is the bright bar"
     );
     assert!(
-        frame.contains("\x1b[38;5;252m"),
+        frame.contains("\x1b[38;5;245m"),
         "number gutter in the current hunk's envelope gets the highlighted color"
     );
     assert!(
@@ -234,14 +234,14 @@ fn test_current_line_highlight_covers_gutter() {
     state.row_idx = 1;
     let frame_ctx = state.render_frame(80, 24);
     assert!(
-        frame_ctx.contains("\x1b[48;5;237m\x1b[38;5;"),
+        frame_ctx.contains("\x1b[48;5;235m\x1b[38;5;"),
         "selected context row must start with cursor background before the gutter numbers"
     );
 
     // Unselected addition row starts with addition background before the gutter
     // numbers
     assert!(
-        frame_ctx.contains("\x1b[48;5;22m\x1b[38;5;151m"),
+        frame_ctx.contains("\x1b[48;2;22;38;23m\x1b[38;5;120m"),
         "addition row must start with green tint before gutter numbers"
     );
 }
@@ -269,4 +269,71 @@ fn test_file_header_wrapping_seg_count() {
     assert_eq!(seg_counts[0], seg30);
     assert_eq!(counts[0], seg30);
     assert!(total_vis >= seg30);
+}
+
+#[test]
+fn test_scrollbar_thumb_snaps_only_at_edges() {
+    // Pure thumb geometry over a full-height track (taller than the
+    // viewport: chrome rows included).
+    let (track_h, vh, total) = (14, 10, 60);
+    let max_scroll = total - vh;
+    let header_vis = 1;
+    let geom = |scroll: usize| {
+        AppState::scrollbar_thumb_for(track_h, vh, total, scroll, header_vis)
+            .expect("scrollbar must apply")
+    };
+
+    let (_, size) = geom(0);
+    assert!(size >= 2, "thumb must be at least 2 lines high, got {size}");
+
+    let (off_top, _) = geom(0);
+    assert_eq!(off_top, 0, "header in view must put thumb at top");
+
+    let (off_high, size_high) = geom(1);
+    assert!(
+        off_high >= 1,
+        "header out of view must keep thumb strictly below the top, got {off_high}"
+    );
+    assert!(
+        off_high + size_high < track_h,
+        "thumb near top must not touch the last row"
+    );
+
+    let (off_low, size_low) = geom(max_scroll - 1);
+    assert!(
+        off_low + size_low < track_h,
+        "one row still hidden must keep thumb off the last row, got {}",
+        off_low + size_low
+    );
+
+    let (off_bottom, size_bottom) = geom(max_scroll);
+    assert_eq!(
+        off_bottom + size_bottom,
+        track_h,
+        "final line in view must put thumb at the bottom"
+    );
+}
+
+#[test]
+fn test_scrollbar_scroll_for_row_formula() {
+    // Proportional core: row 0 yields 0, the last row yields max_scroll,
+    // everything between is exact. Live-log scale: 2672-line content on
+    // a 74-row track.
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 0), 0);
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 73), 2672);
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 1), 37);
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 72), 2672 - 37);
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 2), 73);
+    // Pointer past the end clamps to the last row.
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 1000), 2672);
+    // Degenerate inputs yield 0, never divide by zero.
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 0, 5), 0);
+    assert_eq!(AppState::scrollbar_scroll_for_row(1, 100, 0), 0);
+    // Monotone across the track.
+    let mut prev = 0;
+    for r in 1..74 {
+        let s = AppState::scrollbar_scroll_for_row(74, 2672, r);
+        assert!(s >= prev, "mapping must not go backwards at row {r}");
+        prev = s;
+    }
 }

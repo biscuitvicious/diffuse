@@ -6,7 +6,7 @@ use crate::{
         parse::RowKind,
         wire::{OutputFile, OutputHunk},
     },
-    render::{ColorExt, slice_by_visual_width},
+    render::{ColorExt, DiffuseTheme, slice_by_visual_width},
 };
 
 /// Shorten a path string to fit within `target_width` columns, preserving the
@@ -118,11 +118,11 @@ pub fn file_header_text_with_prefix(
 ) -> String {
     let f_counts = &file.counts;
     let (indicator_prefix, collapse_tag) = if file.is_binary {
-        ("──── ".to_string(), "")
+        ("════ ".to_string(), "")
     } else {
         let indicator = if is_collapsed { "▶" } else { "▼" };
         let tag = if is_collapsed { " [collapsed]" } else { "" };
-        (format!("──── {indicator} "), tag)
+        (format!("════ {indicator} "), tag)
     };
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
@@ -148,16 +148,16 @@ pub fn render_file_header_segment_themed(
     in_band: bool,
     seg_start: usize,
     content_width: usize,
-    theme: &crate::render::DiffuseTheme,
+    theme: &DiffuseTheme,
     common_prefix: Option<&str>,
 ) -> String {
     let f_counts = &file.counts;
     let (fixed_prefix, collapse_tag) = if file.is_binary {
-        ("──── ".to_string(), "")
+        ("════ ".to_string(), "")
     } else {
         let indicator = if is_collapsed { "▶" } else { "▼" };
         let tag = if is_collapsed { " [collapsed]" } else { "" };
-        (format!("──── {indicator} "), tag)
+        (format!("════ {indicator} "), tag)
     };
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
@@ -176,7 +176,7 @@ pub fn render_file_header_segment_themed(
 
     let total_prefix_w = unicode_width::UnicodeWidthStr::width(prefix_text.as_str());
     if seg_start >= total_prefix_w {
-        let bar_str = "─".repeat(content_width);
+        let bar_str = "═".repeat(content_width);
         return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
     }
 
@@ -204,7 +204,7 @@ pub fn render_file_header_segment_themed(
 
     let bar_str = if piece_w < content_width {
         let ruler_len = content_width - piece_w;
-        format!("{styled_piece}{}", "─".repeat(ruler_len))
+        format!("{styled_piece}{}", "═".repeat(ruler_len))
     } else {
         styled_piece
     };
@@ -230,7 +230,7 @@ pub fn render_file_header_segment(
         in_band,
         seg_start,
         content_width,
-        &crate::render::DiffuseTheme::from_env(),
+        &DiffuseTheme::from_env(),
         None,
     )
 }
@@ -293,7 +293,7 @@ pub fn render_hunk_divider_segment_themed(
     is_current: bool,
     seg_start: usize,
     content_width: usize,
-    theme: &crate::render::DiffuseTheme,
+    theme: &DiffuseTheme,
 ) -> String {
     let txt = hunk_divider_text(hi, hunk, hidden_gap);
     let piece = slice_by_visual_width(&txt, seg_start, content_width);
@@ -323,7 +323,7 @@ pub fn render_hunk_divider_segment(
         is_current,
         seg_start,
         content_width,
-        &crate::render::DiffuseTheme::from_env(),
+        &DiffuseTheme::from_env(),
     )
 }
 
@@ -338,6 +338,20 @@ pub fn render_hunk_divider(
     content_width: usize,
 ) -> String {
     render_hunk_divider_segment(hi, hunk, hidden_gap, is_current, 0, content_width)
+}
+
+/// Screen-space hit area for a divider arrow glyph: exactly the three
+/// cells holding `[' ', glyph, ' ']` after wrapping — the glyph's unwrapped
+/// strip neighbors mapped through the segment wrap. Content columns only;
+/// the scrollbar column can never match, so the bar keeps its column.
+#[must_use]
+pub fn wrapped_glyph_hit(txt: &str, pat: &str, seg_off: usize, col: usize, cw: usize) -> bool {
+    let Some(idx) = txt.find(pat) else {
+        return false;
+    };
+    let c = txt[..idx].chars().count();
+    let cw = cw.max(1);
+    (c.saturating_sub(1)..=c + 1).any(|e| e / cw == seg_off && e % cw == col)
 }
 
 /// Build the raw text of a bottom gap divider with format
@@ -357,10 +371,12 @@ pub fn render_bottom_gap_divider_segment(
     let txt = bottom_gap_divider_text(hidden_gap);
     let piece = slice_by_visual_width(&txt, seg_start, content_width);
     let bar_str = truncate_pad(&piece, content_width);
+    let theme = DiffuseTheme::from_env();
+    let fg_code = theme.palette.hunk_divider_fg.fg_code();
     if is_current {
-        format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;220m{bar_str}\x1b[0m")
+        format!("\x1b[48;5;237m\x1b[1m{fg_code}{bar_str}\x1b[0m")
     } else {
-        format!("\x1b[1m\x1b[38;5;220m{bar_str}\x1b[0m")
+        format!("\x1b[1m{fg_code}{bar_str}\x1b[0m")
     }
 }
 
@@ -387,7 +403,7 @@ pub fn file_header_line_themed(
     is_current: bool,
     in_band: bool,
     content_width: usize,
-    theme: &crate::render::DiffuseTheme,
+    theme: &DiffuseTheme,
 ) -> Line<'static> {
     let bar = file_header_text(file, is_collapsed);
     let bar_str = truncate_pad(&bar, content_width);
@@ -417,7 +433,7 @@ pub fn file_header_line(
         is_current,
         in_band,
         content_width,
-        &crate::render::DiffuseTheme::from_env(),
+        &DiffuseTheme::from_env(),
     )
 }
 
@@ -429,7 +445,7 @@ pub fn hunk_divider_line_themed(
     hidden_gap: usize,
     is_current: bool,
     content_width: usize,
-    theme: &crate::render::DiffuseTheme,
+    theme: &DiffuseTheme,
 ) -> Line<'static> {
     let txt = hunk_divider_text(hi, hunk, hidden_gap);
     let bar_str = truncate_pad(&txt, content_width);
@@ -457,7 +473,7 @@ pub fn hunk_divider_line(
         hidden_gap,
         is_current,
         content_width,
-        &crate::render::DiffuseTheme::from_env(),
+        &DiffuseTheme::from_env(),
     )
 }
 
@@ -466,7 +482,7 @@ pub fn bottom_gap_divider_line_themed(
     hidden_gap: usize,
     is_current: bool,
     content_width: usize,
-    theme: &crate::render::DiffuseTheme,
+    theme: &DiffuseTheme,
 ) -> Line<'static> {
     let txt = bottom_gap_divider_text(hidden_gap);
     let bar_str = truncate_pad(&txt, content_width);
@@ -490,7 +506,7 @@ pub fn bottom_gap_divider_line(
         hidden_gap,
         is_current,
         content_width,
-        &crate::render::DiffuseTheme::from_env(),
+        &DiffuseTheme::from_env(),
     )
 }
 

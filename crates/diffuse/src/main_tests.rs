@@ -1,4 +1,10 @@
-use super::route_mode;
+use std::env;
+
+use clap::Parser;
+
+use diffuse::DiffuseTheme;
+
+use super::{Args, route_mode};
 
 #[test]
 fn extension_json_payload_is_json_mode() {
@@ -89,7 +95,7 @@ fn test_init_color_mode_no_color_flag() {
 
 #[test]
 fn test_init_color_mode_auto_default() {
-    unsafe { std::env::remove_var("NO_COLOR") };
+    unsafe { env::remove_var("NO_COLOR") };
     let enabled = super::init_color_mode("auto", false);
     assert!(enabled);
     assert!(yansi::is_enabled());
@@ -97,17 +103,38 @@ fn test_init_color_mode_auto_default() {
 
 #[test]
 fn test_init_color_mode_auto_with_no_color_env() {
-    unsafe { std::env::set_var("NO_COLOR", "1") };
+    unsafe { env::set_var("NO_COLOR", "1") };
     let enabled = super::init_color_mode("auto", false);
     assert!(!enabled);
     assert!(!yansi::is_enabled());
-    unsafe { std::env::remove_var("NO_COLOR") };
+    unsafe { env::remove_var("NO_COLOR") };
 }
 
 #[test]
 fn test_cli_args_no_color() {
-    use clap::Parser;
-    let args = super::Args::try_parse_from(["diffuse", "--no-color", "--pager"]).unwrap();
+    let args = Args::try_parse_from(["diffuse", "--no-color", "--pager"]).unwrap();
     assert!(args.no_color);
     assert!(args.pager);
+}
+
+#[test]
+fn test_cli_args_theme_flag() {
+    let args = Args::try_parse_from(["diffuse", "--theme", "dark"]).unwrap();
+    assert_eq!(args.theme.as_deref(), Some("dark"));
+}
+
+#[test]
+fn test_resolve_theme_prefers_cli_flag() {
+    unsafe { env::remove_var("DIFFUSE_THEME") };
+    assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
+    assert_eq!(super::resolve_theme(None), DiffuseTheme::from_env());
+}
+
+#[test]
+fn test_resolve_theme_falls_back_on_unknown_name() {
+    unsafe { env::remove_var("DIFFUSE_THEME") };
+    assert_eq!(
+        super::resolve_theme(Some("bogus-theme")),
+        DiffuseTheme::DEFAULT
+    );
 }

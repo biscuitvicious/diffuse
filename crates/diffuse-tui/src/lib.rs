@@ -44,11 +44,13 @@ pub fn run_streaming_interactive_tui(
     repo_root: PathBuf,
     git_args: Vec<String>,
     expand_lines: usize,
+    theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
     let mut state = AppState::new(initial_output, repo, notes_path)
         .with_repo_context(repo_root, git_args)
-        .with_expand_lines(expand_lines);
+        .with_expand_lines(expand_lines)
+        .with_theme(theme);
     if streaming_rx.is_some() {
         state.is_streaming = true;
     }
@@ -138,6 +140,7 @@ pub fn run_interactive_tui(
     notes_path: PathBuf,
     repo_root: PathBuf,
     git_args: Vec<String>,
+    theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
     run_streaming_interactive_tui(
         output,
@@ -148,5 +151,6 @@ pub fn run_interactive_tui(
         repo_root,
         git_args,
         DEFAULT_EXPAND_LINES,
+        theme,
     )
 }

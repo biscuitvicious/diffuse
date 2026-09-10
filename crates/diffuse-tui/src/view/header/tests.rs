@@ -26,8 +26,8 @@ fn test_render_status_bar_styling() {
         "file stats in status bar must have purple tint"
     );
     assert!(
-        rendered.contains("38;5;220m"),
-        "hunk count in status bar must have golden-amber tint 220"
+        rendered.contains("38;5;208m"),
+        "hunk count in status bar must have orange tint 208"
     );
     assert!(
         !rendered.contains("prefix:"),

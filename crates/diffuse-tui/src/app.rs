@@ -47,6 +47,7 @@ pub struct AppState {
     pub should_quit: bool,
     pub status_message: Option<(String, bool)>, // (message, is_error)
     pub viewport_height: usize,
+    pub screen_height: usize,
     pub notes: NotesDB,
     pub notes_path: PathBuf,
     pub hunk_starts: Vec<HunkStart>,
@@ -115,6 +116,7 @@ impl AppState {
             should_quit: false,
             status_message: None,
             viewport_height: 20,
+            screen_height: 24,
             notes: load_notes(&notes_path),
             notes_path,
             hunk_starts,
@@ -137,6 +139,11 @@ impl AppState {
 
     pub fn with_expand_lines(mut self, expand_lines: usize) -> Self {
         self.expand_lines = expand_lines;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: DiffuseTheme) -> Self {
+        self.theme = theme;
         self
     }
 

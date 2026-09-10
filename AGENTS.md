@@ -15,12 +15,14 @@ over a frozen JSON contract (PLAN.md §2). The crate ships as a library
 (embed the pipeline) and a binary (a CLI that reads a diff and emits the
 token-stream JSON).
 
-The workspace also holds the engine's first consumer: **`extension/pi/`** —
-the pi review extension. The extension is a **thin client**: `/review`
-resolves the git repository, stops the pi TUI, and spawns the bundled
-`diffuse` binary (`bin/diffuse`) in interactive TUI mode with `stdio: "inherit"`.
-All diff parsing, rendering, TUI interaction, note persistence, and git actions
-are owned entirely by the native Rust implementation in `crates/`.
+The primary review flow is the `diffuse` CLI binary itself (interactive TUI
+reviewer, `--print` pager, `--json` token-stream output).
+
+The workspace also holds **`extension/pi/`** — the pi review extension
+(a thin client over the bundled binary). It remains a supported customer
+of the engine and a project deliverable; its dev install is handled
+automatically by `./scripts/check.sh`, so install it explicitly only if
+requested.
 
 ## Engine Development & Specification
 
@@ -84,6 +86,8 @@ Every bug fix, behavior adjustment, or new feature must expand the test corpus w
 4. **Verify passing run**: Ensure `cargo test` passes cleanly, permanently expanding the test suite to guard against regressions.
 5. **Verify 100% branch coverage**: All new code and code paths must achieve 100% **branch coverage** with comprehensive unit tests exercising every conditional, match arm, and edge case (see [`GUIDELINES.md § Test-First Methodology & 100% Branch Coverage`](file:///home/daniel/lab/diffuse/GUIDELINES.md#test-first-methodology--100-branch-coverage)).
 
+For bugfixes and new code, failing-test-first is critical — for changes to existing code where the test failures are expected, this can be relaxed to just updating the test with the changes and checking the tests after.
+
 ## Test Performance Invariants
 
 To keep development iterations instantaneous and prevent CI / pre-commit stalls, the test suite enforces strict latency budgets:
@@ -110,18 +114,19 @@ are the test-first discipline above):
    [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md):
    assert strictly-better-or-equivalent, flag and pause on anything
    suspicious.
-5. **Install the extension** — `extension/pi/scripts/install.sh`
-   (bundles the release binary + review.ts into
-   `~/.pi/agent/extensions/`; `/reload` in pi, then `/review`).
+5. **Install (dev by default)** — `./scripts/check.sh` already installs
+   the dev CLI binary (`~/.cargo/bin/diffuse`) and syncs the dev pi
+   extension automatically; use `./scripts/install.sh` (release build)
+   only if the profile demands it.
 6. **HUMAN REVIEW** — pause for the human's visual & code review of the
    rendered result. The human may instruct auto-commit — in that case
-   just install the extension (step 5, if not already done) and commit.
+   just install the CLI (step 5, if not already done) and commit.
 
 ## Conventions
 
 - Rust edition 2024; the toolchain is pinned in `rust-toolchain.toml`
   (same pin as the broader workspace it was born from).
-- `cargo clippy -- -D warnings` and `cargo +nightly fmt --all -- --check`
+- `cargo +nightly clippy -- -D warnings` and `cargo +nightly fmt --all -- --check`
   must be clean after every change. Code style, import conventions, and
   top-down file component layout (public/high-level abstraction at the top
   down to internal detail and tests at the bottom) are specified in
@@ -130,9 +135,11 @@ are the test-first discipline above):
   [`GUIDELINES.md`](file:///home/daniel/lab/diffuse/GUIDELINES.md).
 - `target/`, `extension/*/node_modules/`, and `extension/pi/bin/` are
   gitignored (build artifacts).
-- `extension/pi/scripts/build-bin.sh` builds the diffuse binary;
-  `extension/pi/scripts/install.sh` syncs review.ts + the binary into
-  `~/.pi/agent/extensions/` for pi (`/reload` to pick it up).
+- Install: `./scripts/check.sh` installs the dev CLI binary and syncs the
+  dev pi extension automatically (explicit
+  `extension/pi/scripts/install.sh` only if requested); `./scripts/install.sh`
+  builds the release CLI (pinned toolchain, `--locked`) for release-profile
+  demand.
 - Commit policy: do not commit without explicit instruction — present a
   summary and ask.
 - Engineering Plans: Follow [`plan/Plan Guidelines.md`](file:///home/daniel/lab/diffuse/plan/Plan%20Guidelines.md)

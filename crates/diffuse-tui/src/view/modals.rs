@@ -365,7 +365,7 @@ pub fn render_finder_modal(
                     0,
                     true,
                     true,
-                    &DiffuseTheme::MAGIC,
+                    &DiffuseTheme::DEFAULT,
                 );
                 let vis_w = visible_width(&rendered_row);
                 let pad_str = if vis_w < width {
@@ -568,7 +568,7 @@ pub fn render_finder_modal_widget(
                     0,
                     true,
                     true,
-                    &DiffuseTheme::MAGIC,
+                    &DiffuseTheme::DEFAULT,
                 );
                 preview_lines.push(ansi_to_ratatui_line(&rendered_row));
             }

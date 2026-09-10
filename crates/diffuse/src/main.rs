@@ -29,7 +29,7 @@ use diffuse::{
         wire::PipelineOutput,
     },
     render::{
-        MarkdownOptions, default_theme, render_file_diff, render_markdown_output,
+        DiffuseTheme, MarkdownOptions, render_file_diff, render_markdown_output,
         render_raw_file_diff, render_raw_pipeline_output,
     },
     tui::run_streaming_interactive_tui,
@@ -82,6 +82,9 @@ struct Args {
     /// Disable ANSI colorization (equivalent to --color=never).
     #[arg(long, global = true)]
     no_color: bool,
+    /// Color theme (`default`, `dark`, `black`). Overrides `DIFFUSE_THEME`.
+    #[arg(long, value_name = "NAME", global = true)]
+    theme: Option<String>,
     /// Run in non-interactive pager mode (print colored diff to terminal).
     #[arg(short = 'p', long, global = true)]
     pager: bool,
@@ -274,6 +277,19 @@ fn route_mode(
         || (git_args.is_empty() && !stdin_tty && !piped_stdin.trim().is_empty())
 }
 
+/// Resolve the active [`DiffuseTheme`] from the `--theme` CLI flag,
+/// falling back to the `DIFFUSE_THEME` environment variable and then the
+/// default theme. An unknown `--theme` name warns on stderr and falls back.
+pub fn resolve_theme(cli_theme: Option<&str>) -> DiffuseTheme {
+    if let Some(name) = cli_theme {
+        if let Some(theme) = DiffuseTheme::from_name(name) {
+            return theme;
+        }
+        eprintln!("diffuse: unknown theme '{name}', falling back to default theme");
+    }
+    DiffuseTheme::from_env()
+}
+
 /// Configure global ANSI styling condition via `yansi` from CLI flags and
 /// environment.
 pub fn init_color_mode(color: &str, no_color: bool) -> bool {
@@ -304,6 +320,7 @@ fn main() -> io::Result<()> {
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();
     let colorize = init_color_mode(&args.color, args.no_color);
+    let theme = resolve_theme(args.theme.as_deref());
 
     let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
         match &args.command {
@@ -441,6 +458,7 @@ fn main() -> io::Result<()> {
                 repo_root.clone(),
                 git_args.clone(),
                 args.expand_lines,
+                theme,
             )?;
         } else if is_markdown {
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
@@ -473,6 +491,7 @@ fn main() -> io::Result<()> {
             };
             let md_opts = MarkdownOptions {
                 colorize: md_colorize,
+                theme,
                 ..MarkdownOptions::default()
             };
             let md = render_markdown_output(&out, &md_opts);
@@ -513,7 +532,6 @@ fn main() -> io::Result<()> {
                     }
                 }
             } else {
-                let theme = default_theme();
                 for file in consumer {
                     let mut rendered = render_file_diff(&file, &theme, true);
                     if !colorize {
@@ -646,6 +664,7 @@ fn main() -> io::Result<()> {
     };
     let md_opts = MarkdownOptions {
         colorize: md_colorize,
+        theme,
         ..MarkdownOptions::default()
     };
 

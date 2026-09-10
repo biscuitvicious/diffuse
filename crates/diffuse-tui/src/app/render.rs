@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     style::{Color, Style},
     widgets::Paragraph,
 };
@@ -96,9 +96,10 @@ impl AppState {
         let vh = height.saturating_sub(viewport_start_line + 2);
         self.last_viewport_start = viewport_start_line;
         self.viewport_height = vh;
+        self.screen_height = height;
 
         let (mut grid_lines, has_scrollbar, thumb_offset, thumb_size, content_width) =
-            self.render_diff_viewport_lines(width, vh);
+            self.render_diff_viewport_lines(width, vh, height);
 
         if !self.raw_diff {
             for (row_i, gline) in grid_lines.iter_mut().enumerate() {
@@ -108,15 +109,20 @@ impl AppState {
                 }
                 gline.push_str("\x1b[0m");
                 if has_scrollbar {
-                    let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size {
-                        "\x1b[38;5;248m█\x1b[0m"
-                    } else {
-                        "\x1b[38;5;236m│\x1b[0m"
-                    };
+                    // Thumb geometry is full-track based: grid row i sits at
+                    // track row viewport_start_line + i.
+                    let track_row = viewport_start_line + row_i;
+                    let sb_char =
+                        if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {
+                            "\x1b[38;5;248m█\x1b[0m"
+                        } else {
+                            "\x1b[38;5;236m│\x1b[0m"
+                        };
                     gline.push_str(sb_char);
                 }
             }
         }
+
         lines.extend(grid_lines);
 
         let (divider, ribbon) = render_bottom_ribbon(width);
@@ -370,8 +376,42 @@ impl AppState {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(constraints)
+            .constraints(constraints.clone())
             .split(area);
+
+        // Scrollbar pre-pass: the horizontal split needs to know up front
+        // whether the bar column exists. Heights come from the vertical
+        // chunks above, so this estimates with the scrollbar-width content.
+        let diff_chunk_idx = if has_status_msg { 3 } else { 2 };
+        let diff_vh = chunks[diff_chunk_idx].height as usize;
+        let est_cw = if self.raw_diff {
+            width
+        } else {
+            width.saturating_sub(1)
+        };
+        let est_total = self.visual_geometry(est_cw).3;
+        let show_bar =
+            !self.raw_diff && width > 1 && est_total > diff_vh && diff_vh > 2 && area.height > 0;
+
+        // Root column layout: the app column (all rows) plus, when needed,
+        // a 1-wide full-height scrollbar column.
+        let (main_area, bar_area) = if show_bar {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(1), Constraint::Length(1)])
+                .split(area);
+            (cols[0], Some(cols[1]))
+        } else {
+            (area, None)
+        };
+        let main_width = main_area.width as usize;
+        let track_h = area.height as usize;
+
+        // Re-split the app column vertically: same row heights as `chunks`.
+        let main_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(main_area);
 
         let mut chunk_idx = 0;
 
@@ -388,7 +428,7 @@ impl AppState {
         let header_bg = crate::view::to_color(self.theme.palette.header_bar_bg);
         f.render_widget(
             Paragraph::new(header_line).style(Style::default().bg(header_bg)),
-            chunks[chunk_idx],
+            main_chunks[chunk_idx],
         );
         chunk_idx += 1;
 
@@ -403,11 +443,11 @@ impl AppState {
             num_buffer: &self.num_buffer,
             branch: &self.output.branch,
             common_prefix: common_prefix.as_deref(),
-            width,
+            width: main_width,
             is_streaming: self.is_streaming,
         };
         let status_line = status_bar_line(status_ctx);
-        f.render_widget(Paragraph::new(status_line), chunks[chunk_idx]);
+        f.render_widget(Paragraph::new(status_line), main_chunks[chunk_idx]);
         chunk_idx += 1;
 
         // 3. Status Message
@@ -418,47 +458,27 @@ impl AppState {
                 Color::Indexed(203)
             };
             let p = Paragraph::new(format!(" {msg}")).style(Style::default().fg(color));
-            f.render_widget(p, chunks[chunk_idx]);
+            f.render_widget(p, main_chunks[chunk_idx]);
             chunk_idx += 1;
         }
 
-        let diff_area = chunks[chunk_idx];
+        let diff_area = main_chunks[chunk_idx];
         chunk_idx += 1;
-        let ribbon_area = chunks[chunk_idx];
+        let ribbon_area = main_chunks[chunk_idx];
 
-        // 4. Diff Grid Viewport
+        // 4. Diff Grid Viewport (no scrollbar chars here anymore; the bar
+        // owns its own full-height column). Pass the full width: the
+        // viewport fn deducts the bar column itself, so passing main_width
+        // would subtract it twice and desync hit column from drawn column.
         let (mut grid_lines, has_scrollbar, thumb_offset, thumb_size, content_width) =
-            self.render_diff_viewport_lines(width, diff_area.height as usize);
+            self.render_diff_viewport_lines(width, diff_area.height as usize, track_h);
 
-        if !self.raw_diff {
-            let thumb_fg = self.theme.palette.scrollbar_thumb.fg_code();
-            let track_fg = self.theme.palette.scrollbar_track.fg_code();
-            let thumb_str = format!("{thumb_fg}█\x1b[0m");
-            let track_str = format!("{track_fg}│\x1b[0m");
-
-            for (row_i, gline) in grid_lines.iter_mut().enumerate() {
-                let vis_w = visible_width(gline);
-                if vis_w < content_width {
-                    gline.push_str(&" ".repeat(content_width - vis_w));
-                }
-                gline.push_str("\x1b[0m");
-                if has_scrollbar {
-                    let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size {
-                        &thumb_str
-                    } else {
-                        &track_str
-                    };
-                    gline.push_str(sb_char);
-                }
+        for gline in grid_lines.iter_mut() {
+            let vis_w = visible_width(gline);
+            if vis_w < content_width {
+                gline.push_str(&" ".repeat(content_width - vis_w));
             }
-        } else {
-            for gline in grid_lines.iter_mut() {
-                let vis_w = visible_width(gline);
-                if vis_w < content_width {
-                    gline.push_str(&" ".repeat(content_width - vis_w));
-                }
-                gline.push_str("\x1b[0m");
-            }
+            gline.push_str("\x1b[0m");
         }
 
         let paragraph_lines: Vec<ratatui::text::Line> = grid_lines
@@ -467,14 +487,39 @@ impl AppState {
             .collect();
         f.render_widget(Paragraph::new(paragraph_lines), diff_area);
 
-        // 5. Bottom Ribbon
-        let (div_line, rib_line) = bottom_ribbon_lines(width);
+        // 5. Full-height scrollbar column.
+        if let Some(bar) = bar_area
+            && has_scrollbar
+        {
+            let thumb_fg = self.theme.palette.scrollbar_thumb.fg_code();
+            let track_fg = self.theme.palette.scrollbar_track.fg_code();
+            let thumb_str = format!("{thumb_fg}█\x1b[0m");
+            let track_str = format!("{track_fg}│\x1b[0m");
+            let bar_strings: Vec<String> = (0..track_h)
+                .map(|r| {
+                    if r >= thumb_offset && r < thumb_offset + thumb_size {
+                        thumb_str.clone()
+                    } else {
+                        track_str.clone()
+                    }
+                })
+                .collect();
+            let bar_lines: Vec<ratatui::text::Line> = bar_strings
+                .iter()
+                .map(|l| crate::view::ansi_to_ratatui_line(l))
+                .collect();
+            f.render_widget(Paragraph::new(bar_lines), bar);
+        }
+
+        // 6. Bottom Ribbon
+        let (div_line, rib_line) = bottom_ribbon_lines(main_width);
         f.render_widget(Paragraph::new(vec![div_line, rib_line]), ribbon_area);
 
         // Update viewport metrics for diff area
         self.last_viewport_start = diff_area.y as usize;
         self.viewport_height = diff_area.height as usize;
         self.last_content_width = content_width;
+        self.screen_height = track_h;
 
         // 6. Help Modal Overlay
         if self.show_help {
@@ -502,12 +547,7 @@ impl AppState {
                 format!("{file_path}:{line}")
             };
             let note_area = if !self.raw_diff && has_scrollbar {
-                Rect {
-                    x: area.x,
-                    y: area.y,
-                    width: area.width.saturating_sub(1),
-                    height: area.height,
-                }
+                main_area
             } else {
                 area
             };
@@ -521,6 +561,7 @@ impl AppState {
         &mut self,
         width: usize,
         vh: usize,
+        track_h: usize,
     ) -> (Vec<String>, bool, usize, usize, usize) {
         let max_rows = vh.max(4);
         let mut lines = Vec::new();
@@ -787,18 +828,10 @@ impl AppState {
             lines.push(String::new());
         }
 
-        let (thumb_size, thumb_offset) = if has_scrollbar {
-            let thumb_size = ((vh as f64 / total_vis_lines as f64) * vh as f64)
-                .round()
-                .clamp(1.0, (vh.saturating_sub(1)) as f64) as usize;
-            let max_scroll = total_vis_lines.saturating_sub(vh);
-            let thumb_offset = if max_scroll == 0 {
-                0
-            } else {
-                ((self.scroll as f64 / max_scroll as f64) * (vh.saturating_sub(thumb_size)) as f64)
-                    .round() as usize
-            };
-            (thumb_size, thumb_offset)
+        let (thumb_offset, thumb_size) = if has_scrollbar {
+            let header_vis = counts.first().copied().unwrap_or(1);
+            Self::scrollbar_thumb_for(track_h, vh, total_vis_lines, self.scroll, header_vis)
+                .unwrap_or((0, 0))
         } else {
             (0, 0)
         };
