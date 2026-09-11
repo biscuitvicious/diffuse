@@ -983,7 +983,15 @@ fn run_bin_markdown_leg(name: &str) {
     }
 }
 
+fn init_test_logging() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let _ = diffuse::core::logging::init_tracing_subscriber();
+    });
+}
+
 fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
+    init_test_logging();
     let t0 = std::time::Instant::now();
     let fixture = load_fixture(name);
     let _t_load = t0.elapsed();

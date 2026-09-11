@@ -685,15 +685,30 @@ thread_local! {
 
 /// Solves a cluster using thread-local scratch arena to eliminate allocations
 /// in multithreaded runs.
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(
+        old_rows = cluster.m(),
+        new_rows = cluster.n(),
+        section = ?cluster.section
+    )
+)]
 pub fn solve_cluster_with_tls(
     cluster: &ChangeCluster,
     profile: Option<&LangProfile>,
     w: &Weights,
 ) -> DpSolution {
-    ARENA.with(|arena_cell| {
+    let sol = ARENA.with(|arena_cell| {
         let mut arena = arena_cell.borrow_mut();
         solve_cluster_with_arena(cluster, profile, w, &mut arena)
-    })
+    });
+    tracing::debug!(
+        score = sol.score,
+        transition_count = sol.transitions.len(),
+        "Cluster solved"
+    );
+    sol
 }
 
 /// Solve with explicit weights (the tuning surface for tests and Phase 5

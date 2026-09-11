@@ -231,7 +231,18 @@ fn split_content_lines(s: &str) -> Vec<&str> {
 
 /// Run pipeline diffing, alignment, move detection, and syntax classification
 /// on a single parsed diff file using the specified pipeline options.
-#[tracing::instrument(level = "trace", ret, skip(f, new_content, old_content, _diff_fallback, opts), fields(path = %f.path, status = ?f.status, hunks = f.hunks.len(), new_bytes = new_content.map(|s| s.len()), old_bytes = old_content.map(|s| s.len())))]
+#[tracing::instrument(
+    level = "debug",
+    ret,
+    skip(f, new_content, old_content, _diff_fallback, opts),
+    fields(
+        path = %f.path,
+        status = ?f.status,
+        hunks = f.hunks.len(),
+        new_bytes = new_content.map(|s| s.len()),
+        old_bytes = old_content.map(|s| s.len())
+    )
+)]
 pub fn process_single_diff_file(
     mut f: DiffFile,
     new_content: Option<&str>,

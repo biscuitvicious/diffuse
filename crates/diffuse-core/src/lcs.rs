@@ -339,6 +339,60 @@ pub fn token_is_alnum(t: &str) -> bool {
     t.chars().any(|c| c.is_ascii_alphanumeric())
 }
 
+#[inline]
+fn is_anchor_stop_word(t: &str) -> bool {
+    matches!(
+        t,
+        "the"
+            | "The"
+            | "THE"
+            | "a"
+            | "A"
+            | "an"
+            | "An"
+            | "AN"
+            | "and"
+            | "And"
+            | "AND"
+            | "or"
+            | "Or"
+            | "OR"
+            | "in"
+            | "In"
+            | "IN"
+            | "on"
+            | "On"
+            | "ON"
+            | "at"
+            | "At"
+            | "AT"
+            | "to"
+            | "To"
+            | "TO"
+            | "for"
+            | "For"
+            | "FOR"
+            | "of"
+            | "Of"
+            | "OF"
+            | "with"
+            | "With"
+            | "WITH"
+            | "by"
+            | "By"
+            | "BY"
+            | "is"
+            | "Is"
+            | "IS"
+            | "it"
+            | "It"
+            | "IT"
+            | "as"
+            | "As"
+            | "AS"
+    )
+}
+
 /// Computes unambiguous unique token anchors (Patience diff pre-pass).
 pub fn unique_token_anchors(
     a: &[&str],
@@ -355,7 +409,10 @@ pub fn unique_token_anchors(
         let entry = b_counts.entry(t).or_insert((0, j));
         entry.0 += 1;
     }
-    let is_anchor = |t: &str| token_is_alnum(t) || profile.is_some_and(|p| p.is_operator_anchor(t));
+    let is_anchor = |t: &str| {
+        (token_is_alnum(t) && !is_anchor_stop_word(t))
+            || profile.is_some_and(|p| p.is_operator_anchor(t))
+    };
     let mut common_unique = Vec::new();
     for (&t, &(count_a, idx_a)) in &a_counts {
         if count_a == 1
@@ -1063,11 +1120,31 @@ pub fn word_spans_with_profile(
     word_spans_with_profile_and_cap(old_text, new_text, profile, token_product_cap())
 }
 
+#[inline]
+fn truncate_for_trace(s: &str, max_len: usize) -> &str {
+    match s.char_indices().nth(max_len) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 /**
  * Word-level change spans between an old and a new line with explicit token
  * product cap.
  */
-#[tracing::instrument(level = "trace", ret, skip_all, fields(old_len = old_text.len(), new_len = new_text.len(), cap = cap))]
+#[tracing::instrument(
+    level = "debug",
+    ret,
+    skip_all,
+    fields(
+        old = %truncate_for_trace(old_text, 40),
+        new = %truncate_for_trace(new_text, 40),
+        strategy = tracing::field::Empty,
+        anchors = tracing::field::Empty,
+        matched_chars = tracing::field::Empty,
+        ratio = tracing::field::Empty
+    )
+)]
 pub fn word_spans_with_profile_and_cap(
     old_text: &str,
     new_text: &str,
@@ -1088,9 +1165,13 @@ pub fn word_spans_with_profile_and_cap(
     }
     let anchors = unique_token_anchors(&ot, &nt, profile);
     let has_anchors = !anchors.is_empty();
+    let span = tracing::Span::current();
     let pairs = if has_anchors {
+        span.record("anchors", tracing::field::debug(&anchors));
+        span.record("strategy", "anchored");
         lcs_pairs_anchored(&ot, &nt, &anchors)
     } else {
+        span.record("strategy", "raw");
         raw_lcs_pairs(&ot, &nt)
     };
     let mut matched_old = FxHashSet::default();
@@ -1113,7 +1194,14 @@ pub fn word_spans_with_profile_and_cap(
     } else {
         0.0
     };
+    span.record("matched_chars", matched_chars);
+    span.record("ratio", ratio);
+
     let res = if !has_anchors && ratio < 0.25 {
+        tracing::debug!(
+            ratio,
+            "Subword match ratio below threshold, falling back to whole-line diff"
+        );
         WordSpans {
             del: vec![(0, char_len(old_text))],
             add: vec![(0, char_len(new_text))],

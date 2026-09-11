@@ -23,7 +23,11 @@ pub fn mark_moves(f: &mut DiffFile) {
 
 /// Mark exact-content del/add pairs as *moved*, using language profile syntax
 /// boundaries to filter coincidental delimiter moves.
-#[tracing::instrument(level = "trace", skip(f, profile), fields(path = %f.path, hunk_count = f.hunks.len()))]
+#[tracing::instrument(
+    level = "debug",
+    skip(f, profile),
+    fields(path = %f.path, hunk_count = f.hunks.len())
+)]
 pub fn mark_moves_with_profile(
     f: &mut DiffFile,
     profile: Option<&crate::syntax::profile::LangProfile>,
@@ -308,6 +312,11 @@ pub fn mark_moves_with_profile(
             f.hunks[ah].rows[ar] = Row::Add(a.clone());
         }
     }
+
+    tracing::debug!(
+        moves_count = pair_of.len().saturating_sub(unmark_positions.len()),
+        "Moves marked"
+    );
 
     crate::ensure!(
         f.hunks.iter().flat_map(|h| &h.rows).all(|r| {

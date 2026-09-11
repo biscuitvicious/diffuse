@@ -657,3 +657,14 @@ fn test_long_json_record_subline_highlighting_with_raised_cap() {
     assert!(!ws_new_cap.del.is_empty());
     assert!(!ws_new_cap.add.is_empty());
 }
+
+#[test]
+fn test_agents_md_subword_alignment() {
+    let old_line = "The workspace also holds the engine's first consumer: **`extension/pi/`** —";
+    let new_line = "The workspace also holds **`extension/pi/`** — the pi review extension";
+    let ws = word_spans(old_line, new_line);
+    // "the engine's first consumer: " deleted from old line
+    assert_eq!(ws.del, vec![(25, 54)]);
+    // " the pi review extension" added to new line
+    assert_eq!(ws.add, vec![(46, 70)]);
+}

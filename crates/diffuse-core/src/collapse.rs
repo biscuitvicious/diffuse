@@ -47,7 +47,12 @@ pub struct PairingContext<'a> {
 /// with its word-diff spans baked in.
 ///
 /// Composed of 4 pure passes over the diff AST.
-#[tracing::instrument(level = "trace", ret, skip(h, old_content, new_content, profile), fields(old_start = h.old_start, new_start = h.new_start, row_count = h.rows.len()))]
+#[tracing::instrument(
+    level = "debug",
+    ret,
+    skip(h, old_content, new_content, profile),
+    fields(old_start = h.old_start, new_start = h.new_start, row_count = h.rows.len())
+)]
 pub fn collapse_hunk_rows(
     h: &Hunk,
     old_content: Option<&[&str]>,
@@ -69,7 +74,17 @@ pub fn collapse_hunk_rows(
         let del_text = del.text();
         let add_text = add.text();
         let spans = word_spans_with_profile(del_text, add_text, profile);
-        !crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans)
+        let is_wholesale = crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans);
+        if is_wholesale {
+            tracing::debug!(
+                del_ri,
+                add_ri,
+                del_text = %crate::lcs::char_slice(del_text, 0, 40),
+                add_text = %crate::lcs::char_slice(add_text, 0, 40),
+                "Unpaired candidate pair due to wholesale replacement"
+            );
+        }
+        !is_wholesale
     });
 
     let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
