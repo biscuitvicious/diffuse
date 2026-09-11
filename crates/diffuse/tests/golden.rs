@@ -1282,3 +1282,10 @@ corpus_tests!(opt_3, "opt-3-cache-lang-profile", 3, true, true);
 corpus_tests!(opt_4, "opt-4-manual-scanner-prefilter", 4, true, true);
 corpus_tests!(diffuse_history_mid, "diffuse-history-mid", 45, true, false);
 corpus_tests!(untracked_files, "untracked-files", 2, true, false);
+corpus_tests!(
+    theme_scrollbar_palette,
+    "theme-scrollbar-palette",
+    30,
+    true,
+    true
+);

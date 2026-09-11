@@ -29,6 +29,7 @@ discipline for any change in golden output.
 | `opt-4-manual-scanner-prefilter` | ✅ | ✅ | perf commit captured as fixture |
 | `diffuse-history-mid` | ✅ | ✅ (gz) | pinned 100-commit window, absolute ids |
 | `untracked-files` | ✅ | ✅ | untracked additions & status representation |
+| `theme-scrollbar-palette` | ✅ | ✅ | theme consolidation, scrollbar column, palette hunks |
 
 The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.txt` golden renders. `tests/golden/` is

@@ -34,7 +34,7 @@ In this active development phase:
 - **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust) and the golden corpus acceptance.
 - **Behavior Improvements & Visual Tuning**: Subword boundaries, reflow pairing, move detection, syntax highlighting, and rendering aesthetics are actively refined to deliver the best visual diff experience.
 - **Golden Corpus**: `tests/golden/` serves as the acceptance baseline
-  (7 frozen corpora). As rendering and subword improvements land, fixtures
+  (8 frozen corpora). As rendering and subword improvements land, fixtures
   change only after review — see [`tests/AGENTS.md`](tests/AGENTS.md).
 
 ## The golden — the ground truth
