@@ -431,3 +431,158 @@ fn test_diffuse_golden_plan_md_hunk_divider() {
     assert!(frame.contains("H1"), "must contain H1 divider");
     assert!(frame.contains("H2"), "must contain H2 divider");
 }
+
+#[test]
+fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
+    let mut h0_rows = Vec::new();
+    // Hunk 0: 5 context lines, then 5 deleted lines with old_line 107..=111
+    for i in 1..=5 {
+        h0_rows.push(OutputRow {
+            kind: RowKind::Ctx,
+            mov_side: None,
+            new_line: Some(i),
+            old_line: Some(i),
+            text: format!("ctx {i}"),
+            del_text: None,
+            spans: Default::default(),
+            runs: vec![],
+            wholesale: false,
+        });
+    }
+    for old in 107..=111 {
+        h0_rows.push(OutputRow {
+            kind: RowKind::Del,
+            mov_side: None,
+            new_line: None,
+            old_line: Some(old),
+            text: format!("del {old}"),
+            del_text: None,
+            spans: Default::default(),
+            runs: vec![],
+            wholesale: false,
+        });
+    }
+    let h0 = OutputHunk {
+        old_start: 1,
+        old_count: 10,
+        new_start: 1,
+        new_count: 5,
+        rows: h0_rows.clone(),
+    };
+
+    // Hunk 1: starts at new_line 111, old_line 283
+    let mut h1_rows = Vec::new();
+    for i in 0..5 {
+        h1_rows.push(OutputRow {
+            kind: RowKind::Add,
+            mov_side: None,
+            new_line: Some(111 + i),
+            old_line: None,
+            text: format!("add {}", 111 + i),
+            del_text: None,
+            spans: Default::default(),
+            runs: vec![],
+            wholesale: false,
+        });
+    }
+    let h1 = OutputHunk {
+        old_start: 283,
+        old_count: 0,
+        new_start: 111,
+        new_count: 5,
+        rows: h1_rows.clone(),
+    };
+
+    let all_rows = [h0_rows, h1_rows].concat();
+    let file = OutputFile {
+        path: "test.rs".into(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".into(),
+        counts: FileCounts {
+            adds: 5,
+            dels: 5,
+            mods: 0,
+            movs: 0,
+        },
+        hunks: vec![h0, h1],
+        raw_hunks: vec![],
+        rows: all_rows,
+        fences: vec![],
+        notes: vec![],
+        is_binary: false,
+        new_line_count: 116,
+        old_line_count: 300,
+        new_bytes: Some(1000),
+        old_bytes: Some(1000),
+        new_content: vec![],
+        old_content: vec![],
+        content_runs: vec![],
+    };
+
+    let output = PipelineOutput {
+        files: vec![file],
+        branch: "work".into(),
+        untracked_skipped: vec![],
+    };
+
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+
+    assert_eq!(state.hunk_starts.len(), 2);
+    assert_eq!(
+        state.hunk_starts[0].flat, 1,
+        "Hunk 0 starts at flat row 1 (right after file header)"
+    );
+    // Hunk 0 has 10 rows (rows 1..=10), so Hunk 1 MUST start at flat row 11!
+    assert_eq!(
+        state.hunk_starts[1].flat, 11,
+        "Hunk 1 must start after all 10 rows of Hunk 0, not inside deleted lines"
+    );
+
+    // Flat row 10 is the last row of Hunk 0 (deleted line 111).
+    // It must belong to Hunk 0, NOT Hunk 1!
+    state.row_idx = 10;
+    assert_eq!(
+        state.current_hunk(),
+        Some(0),
+        "Row 10 is the last deleted row of Hunk 0 and must belong to Hunk 0"
+    );
+}
+
+#[test]
+fn test_palette_rs_commit_hunk_starts_not_interleaved() {
+    let output = std::process::Command::new("git")
+        .args([
+            "diff",
+            "7e0caab~..7e0caab",
+            "--",
+            "crates/diffuse-render/src/theme/palette.rs",
+        ])
+        .output();
+    let Ok(output) = output else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let diff_str = String::from_utf8_lossy(&output.stdout);
+    if diff_str.trim().is_empty() {
+        return;
+    }
+    let pipeline_out = run_pipeline_full(&*diff_str, None, None, PipelineOptions::default());
+    if pipeline_out.files.is_empty() {
+        return;
+    }
+    let state = AppState::new(pipeline_out, "test_repo".into(), temp_notes_path());
+    let file = &state.output.files[0];
+    assert_eq!(state.hunk_starts.len(), file.hunks.len());
+    let mut expected_flat = 1;
+    for (hi, hunk) in file.hunks.iter().enumerate() {
+        assert_eq!(
+            state.hunk_starts[hi].flat, expected_flat,
+            "Hunk {hi} must start strictly after preceding hunks"
+        );
+        expected_flat += hunk.rows.len();
+    }
+}

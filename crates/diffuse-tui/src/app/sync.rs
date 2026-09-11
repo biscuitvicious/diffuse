@@ -57,14 +57,31 @@ impl AppState {
                     }
                 }
             } else if !file.rows.is_empty() {
-                for ri in 0..file.rows.len() {
+                let hunk_count = file.hunks.len();
+                let mut ri = 0;
+                for (hi, h) in file.hunks.iter().enumerate() {
+                    for _ in 0..h.rows.len() {
+                        if ri < file.rows.len() {
+                            self.flat.push(FlatRow {
+                                file_idx: fi,
+                                hunk_idx: hi,
+                                row_idx: ri,
+                                is_file_header: false,
+                                is_hunk_divider: false,
+                            });
+                            ri += 1;
+                        }
+                    }
+                }
+                while ri < file.rows.len() {
                     self.flat.push(FlatRow {
                         file_idx: fi,
-                        hunk_idx: 0,
+                        hunk_idx: hunk_count.saturating_sub(1),
                         row_idx: ri,
                         is_file_header: false,
                         is_hunk_divider: false,
                     });
+                    ri += 1;
                 }
                 self.hunk_starts
                     .extend(Self::build_file_hunk_starts_for_file(

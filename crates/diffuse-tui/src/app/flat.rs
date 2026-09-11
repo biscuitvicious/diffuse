@@ -79,14 +79,31 @@ impl AppState {
                 continue;
             }
             if !f.rows.is_empty() {
-                for ri in 0..f.rows.len() {
+                let hunk_count = f.hunks.len();
+                let mut ri = 0;
+                for (hi, h) in f.hunks.iter().enumerate() {
+                    for _ in 0..h.rows.len() {
+                        if ri < f.rows.len() {
+                            flat.push(FlatRow {
+                                file_idx: fi,
+                                hunk_idx: hi,
+                                row_idx: ri,
+                                is_file_header: false,
+                                is_hunk_divider: false,
+                            });
+                            ri += 1;
+                        }
+                    }
+                }
+                while ri < f.rows.len() {
                     flat.push(FlatRow {
                         file_idx: fi,
-                        hunk_idx: 0,
+                        hunk_idx: hunk_count.saturating_sub(1),
                         row_idx: ri,
                         is_file_header: false,
                         is_hunk_divider: false,
                     });
+                    ri += 1;
                 }
             } else {
                 for (hi, h) in f.hunks.iter().enumerate() {
@@ -116,7 +133,7 @@ impl AppState {
     }
 
     /// Locate each hunk's first content row in the flat sequence by file index
-    /// and coordinate envelope.
+    /// and hunk boundary offsets.
     pub(crate) fn build_file_hunk_starts_for_file(
         flat: &[FlatRow],
         fi: usize,
@@ -127,62 +144,21 @@ impl AppState {
         if f.hunks.is_empty() {
             return starts;
         }
-        let mut search_from = file_header_idx + 1;
+        let search_from = file_header_idx + 1;
+        if search_from >= flat.len() || flat[search_from].file_idx != fi {
+            return starts;
+        }
+        let mut offset = 0;
         for (hi, h) in f.hunks.iter().enumerate() {
-            if hi == 0 {
-                if search_from < flat.len() && flat[search_from].file_idx == fi {
-                    starts.push(HunkStart {
-                        flat: search_from,
-                        file: fi,
-                        hunk: hi,
-                    });
-                }
-            } else {
-                let target_start = h
-                    .rows
-                    .iter()
-                    .find_map(|r| r.new_line.or(r.old_line))
-                    .unwrap_or({
-                        if h.new_count > 0 {
-                            h.new_start
-                        } else {
-                            h.old_start
-                        }
-                    });
-                let mut found = None;
-                for (idx, fr) in flat.iter().enumerate().skip(search_from) {
-                    if fr.file_idx != fi {
-                        break;
-                    }
-                    if fr.is_file_header || fr.is_hunk_divider {
-                        continue;
-                    }
-                    let row = if !f.rows.is_empty() {
-                        f.rows.get(fr.row_idx)
-                    } else {
-                        f.hunks
-                            .get(fr.hunk_idx)
-                            .and_then(|h| h.rows.get(fr.row_idx))
-                    };
-                    if let Some(r) = row {
-                        let coord = Self::row_coord(r);
-                        if let Some(c) = coord
-                            && c >= target_start
-                        {
-                            found = Some(idx);
-                            break;
-                        }
-                    }
-                }
-                if let Some(idx) = found {
-                    starts.push(HunkStart {
-                        flat: idx,
-                        file: fi,
-                        hunk: hi,
-                    });
-                    search_from = idx + 1;
-                }
+            let hunk_flat_idx = search_from + offset;
+            if hunk_flat_idx < flat.len() && flat[hunk_flat_idx].file_idx == fi {
+                starts.push(HunkStart {
+                    flat: hunk_flat_idx,
+                    file: fi,
+                    hunk: hi,
+                });
             }
+            offset += h.rows.len();
         }
         starts
     }
