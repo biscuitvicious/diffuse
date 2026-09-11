@@ -296,14 +296,27 @@ pub fn render_hunk_divider_segment_themed(
     theme: &DiffuseTheme,
 ) -> String {
     let txt = hunk_divider_text(hi, hunk, hidden_gap);
-    let piece = slice_by_visual_width(&txt, seg_start, content_width);
-    let bar_str = truncate_pad(&piece, content_width);
     let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
     let bg_code = match bg {
         crate::render::Color::Primary => String::new(),
         color => color.bg_code(),
     };
     let fg_code = fg.fg_code();
+
+    let total_txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    if seg_start >= total_txt_w {
+        let bar_str = "─".repeat(content_width);
+        return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
+    }
+
+    let piece = slice_by_visual_width(&txt, seg_start, content_width);
+    let piece_w = unicode_width::UnicodeWidthStr::width(piece.as_str());
+    let bar_str = if piece_w < content_width {
+        let ruler_len = content_width - piece_w;
+        format!("{piece}{}", "─".repeat(ruler_len))
+    } else {
+        piece
+    };
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
@@ -369,15 +382,29 @@ pub fn render_bottom_gap_divider_segment(
     content_width: usize,
 ) -> String {
     let txt = bottom_gap_divider_text(hidden_gap);
-    let piece = slice_by_visual_width(&txt, seg_start, content_width);
-    let bar_str = truncate_pad(&piece, content_width);
     let theme = DiffuseTheme::from_env();
-    let fg_code = theme.palette.hunk_divider_fg.fg_code();
-    if is_current {
-        format!("\x1b[48;5;237m\x1b[1m{fg_code}{bar_str}\x1b[0m")
-    } else {
-        format!("\x1b[1m{fg_code}{bar_str}\x1b[0m")
+    let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
+    let bg_code = match bg {
+        crate::render::Color::Primary => String::new(),
+        color => color.bg_code(),
+    };
+    let fg_code = fg.fg_code();
+
+    let total_txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    if seg_start >= total_txt_w {
+        let bar_str = "─".repeat(content_width);
+        return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
     }
+
+    let piece = slice_by_visual_width(&txt, seg_start, content_width);
+    let piece_w = unicode_width::UnicodeWidthStr::width(piece.as_str());
+    let bar_str = if piece_w < content_width {
+        let ruler_len = content_width - piece_w;
+        format!("{piece}{}", "─".repeat(ruler_len))
+    } else {
+        piece
+    };
+    format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
 /// Render a clean bottom divider for trailing hidden lines after the last hunk.
@@ -448,7 +475,13 @@ pub fn hunk_divider_line_themed(
     theme: &DiffuseTheme,
 ) -> Line<'static> {
     let txt = hunk_divider_text(hi, hunk, hidden_gap);
-    let bar_str = truncate_pad(&txt, content_width);
+    let txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    let bar_str = if txt_w < content_width {
+        let ruler_len = content_width - txt_w;
+        format!("{txt}{}", "─".repeat(ruler_len))
+    } else {
+        slice_by_visual_width(&txt, 0, content_width)
+    };
     let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
     let mut style = Style::default()
         .fg(crate::view::to_color(fg))
@@ -485,7 +518,13 @@ pub fn bottom_gap_divider_line_themed(
     theme: &DiffuseTheme,
 ) -> Line<'static> {
     let txt = bottom_gap_divider_text(hidden_gap);
-    let bar_str = truncate_pad(&txt, content_width);
+    let txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    let bar_str = if txt_w < content_width {
+        let ruler_len = content_width - txt_w;
+        format!("{txt}{}", "─".repeat(ruler_len))
+    } else {
+        slice_by_visual_width(&txt, 0, content_width)
+    };
     let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
     let mut style = Style::default()
         .fg(crate::view::to_color(fg))

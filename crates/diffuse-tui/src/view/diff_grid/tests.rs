@@ -122,6 +122,66 @@ fn test_hunk_divider_is_orange() {
 }
 
 #[test]
+fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
+    let h = dummy_hunk();
+    let rendered = render_hunk_divider(0, &h, 0, false, 80);
+    let plain = crate::render::strip_ansi(&rendered);
+    assert_eq!(
+        plain.chars().count(),
+        80,
+        "rendered hunk divider must fill width"
+    );
+    assert!(
+        plain.ends_with("─────"),
+        "hunk divider horizontal rule must run to the end of the line, got: {plain:?}"
+    );
+    assert!(
+        !plain.ends_with(' '),
+        "hunk divider must not have trailing space padding"
+    );
+
+    // Segment beyond text width fills with horizontal rule dashes
+    let beyond = render_hunk_divider_segment(0, &h, 0, false, 200, 20);
+    let plain_beyond = crate::render::strip_ansi(&beyond);
+    assert_eq!(plain_beyond, "─".repeat(20));
+
+    // Ratatui Line renderer: text shorter than width fills with rule
+    let h_line = hunk_divider_line(0, &h, 0, false, 80);
+    assert_eq!(h_line.to_string().chars().count(), 80);
+    assert!(h_line.to_string().ends_with("─────"));
+
+    // Ratatui Line renderer: text wider than width slices without trailing fill
+    let h_line_narrow = hunk_divider_line(0, &h, 0, true, 10);
+    assert_eq!(h_line_narrow.to_string().chars().count(), 10);
+
+    // Also verify bottom gap divider rule runs to the end of line
+    let bottom = render_bottom_gap_divider(10, false, 80);
+    let plain_bottom = crate::render::strip_ansi(&bottom);
+    assert_eq!(
+        plain_bottom.chars().count(),
+        80,
+        "bottom gap divider must fill width"
+    );
+    assert!(
+        plain_bottom.ends_with("─────"),
+        "bottom gap divider horizontal rule must run to the end of the line, got: {plain_bottom:?}"
+    );
+
+    // Bottom gap segment beyond text width fills with horizontal rule dashes
+    let bottom_beyond = render_bottom_gap_divider_segment(10, true, 200, 20);
+    let plain_bottom_beyond = crate::render::strip_ansi(&bottom_beyond);
+    assert_eq!(plain_bottom_beyond, "─".repeat(20));
+
+    // Bottom gap Ratatui Line renderer
+    let b_line = bottom_gap_divider_line(10, false, 80);
+    assert_eq!(b_line.to_string().chars().count(), 80);
+    assert!(b_line.to_string().ends_with("─────"));
+
+    let b_line_narrow = bottom_gap_divider_line(10, true, 10);
+    assert_eq!(b_line_narrow.to_string().chars().count(), 10);
+}
+
+#[test]
 fn test_hunk_divider_span_includes_context() {
     use crate::core::{parse::RowKind, wire::OutputRow};
     let mk = |kind: RowKind| OutputRow {
