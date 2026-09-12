@@ -25,5 +25,6 @@ pub mod shift;
 pub mod similarity;
 pub mod streaming;
 pub mod tape;
+pub mod token;
 pub mod visible;
 pub mod wire;

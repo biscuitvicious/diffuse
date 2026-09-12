@@ -339,126 +339,13 @@ pub fn token_is_alnum(t: &str) -> bool {
     t.chars().any(|c| c.is_ascii_alphanumeric())
 }
 
-#[inline]
-fn is_anchor_stop_word(t: &str) -> bool {
-    matches!(
-        t,
-        "the"
-            | "The"
-            | "THE"
-            | "a"
-            | "A"
-            | "an"
-            | "An"
-            | "AN"
-            | "and"
-            | "And"
-            | "AND"
-            | "or"
-            | "Or"
-            | "OR"
-            | "in"
-            | "In"
-            | "IN"
-            | "on"
-            | "On"
-            | "ON"
-            | "at"
-            | "At"
-            | "AT"
-            | "to"
-            | "To"
-            | "TO"
-            | "for"
-            | "For"
-            | "FOR"
-            | "of"
-            | "Of"
-            | "OF"
-            | "with"
-            | "With"
-            | "WITH"
-            | "by"
-            | "By"
-            | "BY"
-            | "is"
-            | "Is"
-            | "IS"
-            | "it"
-            | "It"
-            | "IT"
-            | "as"
-            | "As"
-            | "AS"
-    )
-}
-
 /// Computes unambiguous unique token anchors (Patience diff pre-pass).
 pub fn unique_token_anchors(
     a: &[&str],
     b: &[&str],
     profile: Option<&LangProfile>,
 ) -> Vec<(usize, usize)> {
-    let mut a_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
-    for (i, &t) in a.iter().enumerate() {
-        let entry = a_counts.entry(t).or_insert((0, i));
-        entry.0 += 1;
-    }
-    let mut b_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
-    for (j, &t) in b.iter().enumerate() {
-        let entry = b_counts.entry(t).or_insert((0, j));
-        entry.0 += 1;
-    }
-    let is_anchor = |t: &str| {
-        (token_is_alnum(t) && !is_anchor_stop_word(t))
-            || profile.is_some_and(|p| p.is_operator_anchor(t))
-    };
-    let mut common_unique = Vec::new();
-    for (&t, &(count_a, idx_a)) in &a_counts {
-        if count_a == 1
-            && !token_is_ws(t)
-            && is_anchor(t)
-            && let Some(&(count_b, idx_b)) = b_counts.get(t)
-            && count_b == 1
-        {
-            common_unique.push((idx_a, idx_b));
-        }
-    }
-    if common_unique.is_empty() {
-        return Vec::new();
-    }
-    common_unique.sort_by_key(|&(ai, _)| ai);
-
-    // Compute Longest Increasing Subsequence of b indices
-    let mut piles: Vec<usize> = Vec::new();
-    let mut pile_indices: Vec<usize> = Vec::new();
-    let mut parent = vec![None; common_unique.len()];
-
-    for (idx, &(_, b_idx)) in common_unique.iter().enumerate() {
-        let p = piles.partition_point(|&x| x < b_idx);
-        if p == piles.len() {
-            piles.push(b_idx);
-            pile_indices.push(idx);
-        } else {
-            piles[p] = b_idx;
-            pile_indices[p] = idx;
-        }
-        if p > 0 {
-            parent[idx] = Some(pile_indices[p - 1]);
-        }
-    }
-
-    let mut lis = Vec::new();
-    let mut curr = *pile_indices.last().unwrap();
-    loop {
-        lis.push(common_unique[curr]);
-        match parent[curr] {
-            Some(prev) => curr = prev,
-            None => break,
-        }
-    }
-    lis.reverse();
-    lis
+    crate::token::entropy_anchors(a, b, profile)
 }
 
 /// Counts consecutive non-whitespace tokens that match between `a[i..]` and

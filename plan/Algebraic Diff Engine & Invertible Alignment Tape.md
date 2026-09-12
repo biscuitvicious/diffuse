@@ -1,8 +1,8 @@
 # Algebraic Diff Engine & Invertible Alignment Tape
 
 - [x] 1. [Phase 1 — Invertible Alignment Tape & Reversible Run Algebra (`crates/diffuse-core/src/tape/`)](#1-phase-1--invertible-alignment-tape--reversible-run-algebra-cratesdiffuse-coresrctape)
-- [ ] 2. [Phase 2 — Information Entropy Anchoring & Multi-Token Phrase Landmarks (`crates/diffuse-core/src/token/`)](#2-phase-2--information-entropy-anchoring--multi-token-phrase-landmarks-cratesdiffuse-coresrctoken)
-- [ ] 3. [Phase 3 — Additive Cost Semiring & Upstream Wholesale Elimination (`crates/diffuse-core/src/cluster/`)](#3-phase-3--additive-cost-semiring--upstream-wholesale-elimination-cratesdiffuse-coresrccluster)
+- [x] 2. [Phase 2 — Information Entropy Anchoring & Multi-Token Phrase Landmarks (`crates/diffuse-core/src/token/`)](#2-phase-2--information-entropy-anchoring--multi-token-phrase-landmarks-cratesdiffuse-coresrctoken)
+- [·] 3. [Phase 3 — Additive Cost Semiring & Upstream Wholesale Elimination (`crates/diffuse-core/src/cluster/`)](#3-phase-3--additive-cost-semiring--upstream-wholesale-elimination-cratesdiffuse-coresrccluster)
 - [ ] 4. [Phase 4 — Symmetric Multi-Scale Reflow & Reversible Block Algebra (`crates/diffuse-core/src/reflow/`)](#4-phase-4--symmetric-multi-scale-reflow--reversible-block-algebra-cratesdiffuse-coresrcreflow)
 - [ ] 5. [Phase 5 — Golden Acceptance, Performance Benchmarking & Legacy Retirement](#5-phase-5--golden-acceptance-performance-benchmarking--legacy-retirement)
 
