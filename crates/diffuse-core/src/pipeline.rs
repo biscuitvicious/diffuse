@@ -21,7 +21,7 @@ use crate::{
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs},
     moves::mark_moves_with_profile,
     notes::{NotesDB, note_runs, notes_for_file},
-    parse::{AddLine, DiffFile, Row, RowKind, Spans},
+    parse::{DiffFile, Row, RowKind, Spans},
     syntax::{
         classifier::{
             ClassifiedToken, for_each_classified_token, for_each_line_classified_token,
@@ -345,29 +345,8 @@ pub fn process_single_diff_file(
             }
         }
     });
-
-    // Invariant: deconstruct any wholesale replacement mod rows that reached or
-    // resulted from span-fill into separate Del and Add rows.
-    f.hunks.par_iter_mut().for_each(|h| {
-        if h.rows
-            .iter()
-            .any(|r| matches!(r, Row::Mod { .. }) && is_wholesale_replacement(r))
-        {
-            let mut decomposed = Vec::with_capacity(h.rows.len() + 2);
-            for r in h.rows.drain(..) {
-                if matches!(&r, Row::Mod { .. }) && is_wholesale_replacement(&r) {
-                    if let Row::Mod { old_line, new_line } = r {
-                        decomposed.push(Row::Del(old_line));
-                        decomposed.push(Row::Add(AddLine::new(new_line.num, new_line.text)));
-                    }
-                } else {
-                    decomposed.push(r);
-                }
-            }
-            h.rows = decomposed;
-        }
-    });
-
+    // Invariant: DiffFile hunks must never contain wholesale replacement Mod
+    // rows.
     crate::invariant!(
         f.hunks.iter().all(|h| h
             .rows

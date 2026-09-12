@@ -14,22 +14,27 @@ fn mk(del: &str, add: &str) -> Row {
     }
 }
 
-// The split-word wholesale: a removal landing mid-word is garble — the
-// whole-old + whole-new pair must win.
+// Subword inline mod: an identifier modification (prefix_middle_suffix ->
+// prefix_suffix) renders cleanly inline with common context and struck middle_,
+// not wholesale garble.
 #[test]
-fn split_word_wholesale() {
+fn split_word_subword() {
     let r = mk(
         "    let s = prefix_middle_suffix + other_operations();",
         "    let s = prefix_suffix + other_operations();",
     );
     assert!(
-        is_wholesale_mod(&r),
-        "a removal landing mid-word goes wholesale (prefix_~~middle_~~suffix)"
+        !is_wholesale_mod(&r),
+        "identifier modification must render as inline subword diff, not wholesale"
+    );
+    let runs = merged_runs(&r);
+    assert_eq!(
+        project_forward(&runs),
+        "    let s = prefix_suffix + other_operations();"
     );
     assert_eq!(
-        display_text(&r),
-        r.del_text().unwrap().to_string() + r.text(),
-        "wholesale displayText is the whole-old + whole-new pair"
+        project_reverse(&runs),
+        "    let s = prefix_middle_suffix + other_operations();"
     );
 }
 
@@ -126,7 +131,7 @@ fn resolved_layers_to_layers_subword() {
     let del = "                    resolved_layers: unresolved,";
     let add = "                    layers: unresolved,";
     let spans = word_spans(del, add);
-    let wholesale = wholesale_pair(del, add, &spans);
+    let wholesale = is_wholesale_replacement_spans(del, add, &spans);
     assert!(
         !wholesale,
         "resolved_layers -> layers should be subword inline mod, not wholesale"
@@ -185,8 +190,8 @@ fn wholesale_pair_empty_del_line() {
     let spans = word_spans("", "        Some(content)");
     assert_eq!(spans.del, vec![(0, 0)]);
     assert!(
-        !wholesale_pair("", "        Some(content)", &spans),
-        "an empty del is not wholesale garble — no panic"
+        is_wholesale_replacement_spans("", "        Some(content)", &spans),
+        "an empty del line replaced with content is wholesale replacement — no panic"
     );
 }
 
@@ -291,27 +296,20 @@ fn test_del_placement_before_replacement_add() {
 fn test_unpaired_del_position_before_add_at_same_offset() {
     let del_text = "    pub fn epoch(&self) -> Option<ResolutionResult> {";
     let add_text = "    pub fn epoch(&self) -> u64 {";
-    let del_spans = vec![(27, 51)]; // Option<ResolutionResult>
-    let add_spans = vec![(27, 30)]; // u64
-    let pos = del_display_positions(&del_spans, &add_spans, del_text, add_text);
-    assert_eq!(
-        pos[0], 27,
-        "unpaired deletion at offset 27 must be placed before add at offset 27"
-    );
+    let spans = word_spans(del_text, add_text);
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+    assert_eq!(project_reverse(&runs), del_text);
+    assert_eq!(project_forward(&runs), add_text);
 }
 
 #[test]
 fn test_del_position_with_filtered_intermediate_spans() {
     let del_text = "    pub fn lookup(&self, key: &CacheKey) -> Option<ResolutionResult> {";
     let add_text = "    pub fn epoch(&self) -> u64 {";
-    let del_spans = vec![(11, 17), (44, 68)]; // lookup, Option<ResolutionResult>
-    let add_spans = vec![(11, 16), (27, 30)]; // epoch, u64
-    let pos = del_display_positions(&del_spans, &add_spans, del_text, add_text);
-    assert_eq!(
-        pos,
-        vec![11, 27],
-        "Option<ResolutionResult> at offset 44 in old text must map to offset 27 (start of u64) in new text"
-    );
+    let spans = word_spans(del_text, add_text);
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+    assert_eq!(project_reverse(&runs), del_text);
+    assert_eq!(project_forward(&runs), add_text);
 }
 
 #[test]
@@ -319,17 +317,9 @@ fn test_trailing_deletion_placed_at_end_of_add_text() {
     let del_text = "                if k < floor {";
     let add_text = "                if let Some(floor) = floor";
     let spans = word_spans(del_text, add_text);
-    let pos = del_display_positions(&spans.del, &spans.add, del_text, add_text);
-    let brace_del_idx = spans
-        .del
-        .iter()
-        .position(|&(ds, de)| char_slice(del_text, ds, de).contains('{'))
-        .expect("brace del span exists");
-    assert_eq!(
-        pos[brace_del_idx],
-        crate::lcs::char_len(add_text),
-        "trailing deletion ' {{' must be placed at the end of add_text"
-    );
+    let runs = merged_runs_from_texts(del_text, add_text, &spans);
+    assert_eq!(project_reverse(&runs), del_text);
+    assert_eq!(project_forward(&runs), add_text);
 }
 
 #[test]

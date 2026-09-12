@@ -3,14 +3,11 @@
 //! `isWholesaleMod`, `isPureDeletionMod`. Comments ported verbatim; char
 //! offsets throughout (the lcs.rs convention).
 
-use rustc_hash::{FxHashMap, FxHashSet};
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
     lcs::char_slice,
     parse::{Row, Spans},
-    syntax::{prelude::is_ascii_word_char, registry::first_ascii_word},
 };
 
 /// The semantic classification of a token run in a diff row.
@@ -55,13 +52,6 @@ impl<'a> Run<'a> {
     }
 }
 
-/// The result of the del/add span pairing.
-pub struct DelPairing {
-    pub del_pos: Vec<usize>,
-    pub pair: FxHashMap<usize, usize>,
-    pub op_anchor: FxHashMap<usize, usize>,
-}
-
 /// Project the old side of a run sequence (Common + Del + Ctx).
 pub fn project_old_runs(runs: &[Run]) -> String {
     let mut s = String::new();
@@ -84,225 +74,9 @@ pub fn project_new_runs(runs: &[Run]) -> String {
     s
 }
 
-/// The Unicode `White_Space` property plus the zero-width space — the
-/// tokenizer's whitespace class.
-fn is_ws_class(c: char) -> bool {
-    c.is_whitespace() || c == '\u{200b}'
-}
-
-fn all_ws(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(is_ws_class)
-}
-
-pub(crate) fn char_at(s: &str, i: usize) -> Option<char> {
-    s.chars().nth(i)
-}
-
-/**
- * The wholesale decision from a raw pair: the artifact-filtered del spans,
- * the mismatched fragment counts, and the split-word insertions (a
- * standalone removal landing mid-ascii-word: `fro~~upper~~zen`). A
- * wholesale pair reads as garble inline — the collapse un-pairs it into the
- * `-`/`+` baseline rows (a `~` row must never carry an embedded "newline" —
- * the whole-old-struck + whole-new-filled blocks look like one, so they get
- * the plain two rows instead). Shared with the collapse so the two never
- * drift apart.
- * */
-/// Exact display position of each del span in the merged (new-text) view.
-///
-/// Position `display_pos[j]` is the new-text character index where del span `j`
-/// begins, determined by projecting the deletion offset against the LCS common
-/// token boundaries between `del_text` and `add_text`.
-pub fn del_display_positions(
-    del_spans: &[(usize, usize)],
-    _add_spans: &[(usize, usize)],
-    del_text: &str,
-    add_text: &str,
-) -> Vec<usize> {
-    if del_text.is_empty() || add_text.is_empty() {
-        return vec![0; del_spans.len()];
-    }
-    let dtoks: Vec<&str> = crate::lcs::tokenize_line(del_text).collect();
-    let atoks: Vec<&str> = crate::lcs::tokenize_line(add_text).collect();
-    let anchors = crate::lcs::unique_token_anchors(&dtoks, &atoks, None);
-    let pairs = if !anchors.is_empty() {
-        crate::lcs::lcs_pairs_anchored(&dtoks, &atoks, &anchors)
-    } else {
-        crate::lcs::raw_lcs_pairs(&dtoks, &atoks)
-    };
-
-    let mut d_spans = Vec::with_capacity(dtoks.len());
-    let mut d_pos = 0usize;
-    for t in &dtoks {
-        let len = crate::lcs::char_len(t);
-        d_spans.push((d_pos, d_pos + len));
-        d_pos += len;
-    }
-
-    let mut a_spans = Vec::with_capacity(atoks.len());
-    let mut a_pos = 0usize;
-    for t in &atoks {
-        let len = crate::lcs::char_len(t);
-        a_spans.push((a_pos, a_pos + len));
-        a_pos += len;
-    }
-
-    let mut positions = Vec::with_capacity(del_spans.len());
-    for (ds, _de) in del_spans {
-        let mut ins_pos = 0usize;
-        for (di, (d_start, d_end)) in d_spans.iter().enumerate() {
-            if *d_end <= *ds {
-                if let Some(&ai) = pairs.get(&di) {
-                    ins_pos = a_spans[ai].1;
-                }
-            } else if *d_start < *ds {
-                if let Some(&ai) = pairs.get(&di) {
-                    let offset = ds - d_start;
-                    ins_pos = a_spans[ai].0 + offset;
-                }
-                break;
-            } else {
-                break;
-            }
-        }
-        positions.push(ins_pos);
-    }
-    positions
-}
-
-pub fn wholesale_pair(del_text: &str, add_text: &str, spans: &Spans) -> bool {
-    let del_spans: Vec<(usize, usize)> = spans
-        .del
-        .iter()
-        .filter(|(ds, de)| {
-            let t = char_slice(del_text, *ds, *de).trim();
-            !t.is_empty() && !add_text.contains(t)
-        })
-        .copied()
-        .collect();
-    let add_spans = &spans.add;
-    // Meaningful identity = subword: any pair recognisably "the same line"
-    // renders as the inline mod — fragment-count mismatches included (`0` →
-    // `Option<`/`>`/`None`, `lowers`+`.rev()` → `below`, `k <`+` {` →
-    // `let Some(…)`). Only the split-word check below (a standalone del
-    // landing mid-ascii_word) is garble — that one stays wholesale.
-    let pairing = del_pairing(&del_spans, add_spans, add_text, del_text);
-    // An ASCII-word-led standalone del landing mid-ascii_word is garble (e.g.
-    // `m~~them~~ust`); a punctuation-led fragment (`.rev()`, ` {`) reads fine
-    // struck mid-ascii_word (`enumer~~.rev()~~ate()` still reconstructs
-    // `enumerate()`).
-    del_spans.iter().enumerate().any(|(j, (ds, de))| {
-        if pairing.pair.contains_key(&j) {
-            return false;
-        }
-        let del_span_text = char_slice(del_text, *ds, *de);
-        if del_span_text.trim().contains(' ') {
-            return false;
-        }
-        let add_len = char_len_of(add_text);
-        let ins = pairing.del_pos[j].min(add_len);
-        let left = ins.checked_sub(1).and_then(|i| char_at(add_text, i));
-        let right = char_at(add_text, ins);
-        if !(ins > 0
-            && ins < add_len
-            && left.is_some_and(is_ascii_word_char)
-            && right.is_some_and(is_ascii_word_char))
-        {
-            return false;
-        }
-        first_ascii_word(del_span_text).is_some()
-    })
-}
-
-/// The add-text position of each del span (the del offset minus the del
-/// text removed before it) and the pairing: a del span pairs with the add
-/// span nearest its own position (within a small window — the aligned
-/// replacement); a del span with no nearby add is a standalone removal.
-/// Shared by the wholesale decision and the merged walk — they stay in
-/// lockstep by construction.
-pub fn del_pairing(
-    del_spans: &[(usize, usize)],
-    add_spans: &[(usize, usize)],
-    add_text: &str,
-    del_text: &str,
-) -> DelPairing {
-    let del_pos = del_display_positions(del_spans, add_spans, del_text, add_text);
-    let mut pair: FxHashMap<usize, usize> = FxHashMap::default();
-    let mut used_adds: FxHashSet<usize> = FxHashSet::default();
-    let mut op_anchor: FxHashMap<usize, usize> = FxHashMap::default();
-    for (j, (ds, de)) in del_spans.iter().enumerate() {
-        let mut best: Option<usize> = None;
-        let mut best_gap: usize = 8;
-        for (i, (as0, ae)) in add_spans.iter().enumerate() {
-            if used_adds.contains(&i) {
-                continue;
-            }
-            let del_start = del_pos[j];
-            let add_start = *as0;
-            let same_start = del_start == add_start;
-            let ws_pair =
-                all_ws(char_slice(del_text, *ds, *de)) && all_ws(char_slice(add_text, *as0, *ae));
-            let del_op = char_slice(del_text, *ds, *de).trim();
-            let is_compare_op = matches!(del_op, "<" | ">" | "<=" | ">=");
-            if !same_start && !ws_pair && !is_compare_op {
-                continue;
-            }
-            if is_compare_op {
-                let first_op_char = del_op.chars().next().unwrap();
-                let mut op_best: Option<usize> = None;
-                let mut op_best_char: Option<usize> = None;
-                let mut op_best_gap = usize::MAX;
-                for c in *as0..*ae {
-                    if let Some(ch) = char_at(add_text, c)
-                        && (ch == '<' || ch == '>')
-                    {
-                        let g = del_pos[j].abs_diff(c) + if ch == first_op_char { 0 } else { 2 };
-                        if g < op_best_gap {
-                            op_best_gap = g;
-                            op_best = Some(i);
-                            op_best_char = Some(c);
-                        }
-                    }
-                }
-                // The op match must still compete across add spans — the
-                // winner is the smallest op gap, not the last span scanned
-                // (an unconditional win crossed the pairing when several
-                // spans contain `<`/`>` chars).
-                if let Some(ob) = op_best
-                    && op_best_gap < best_gap
-                {
-                    best = Some(ob);
-                    best_gap = op_best_gap;
-                    op_anchor.insert(j, op_best_char.expect("op char"));
-                }
-                continue;
-            }
-            let gap = del_start.abs_diff(add_start);
-            if gap < best_gap {
-                best_gap = gap;
-                best = Some(i);
-            }
-        }
-        if let Some(b) = best {
-            used_adds.insert(b);
-            pair.insert(j, b);
-        }
-    }
-    DelPairing {
-        del_pos,
-        pair,
-        op_anchor,
-    }
-}
-
-/// True when a mod row renders as the whole-old + whole-new pair (the
-/// split-word garble gate or zero-common wholesale replacement).
+/// True when a mod row renders as wholesale replacement.
 pub fn is_wholesale_mod(r: &Row) -> bool {
-    let Some(del_text) = r.del_text() else {
-        return false;
-    };
-    let spans = r.spans().cloned().unwrap_or_default();
-    wholesale_pair(del_text, r.text(), &spans)
+    is_wholesale_replacement(r)
 }
 
 /// Returns true when a mod row consists of entirely struck-out spans followed
@@ -393,288 +167,61 @@ pub fn merged_runs_from_texts<'a>(
     add_text: &'a str,
     spans: &Spans,
 ) -> Vec<Run<'a>> {
-    if wholesale_pair(del_text, add_text, spans) {
-        return vec![
-            Run {
-                kind: RunKind::Del,
-                text: del_text,
-            },
-            Run {
-                kind: RunKind::Add,
-                text: add_text,
-            },
-        ];
-    }
-    let add_spans = &spans.add;
-    let del_spans = &spans.del;
-    let DelPairing {
-        del_pos,
-        pair,
-        op_anchor,
-    } = del_pairing(del_spans, add_spans, add_text, del_text);
-    let mut runs: Vec<Run<'a>> = Vec::new();
-    let emit_range = |runs: &mut Vec<Run<'a>>, from: usize, to: usize| {
-        if to > from {
+    if spans.del.is_empty() {
+        let mut runs = Vec::new();
+        let mut pos = 0;
+        for &(start, end) in &spans.add {
+            if start > pos {
+                runs.push(Run {
+                    kind: RunKind::Common,
+                    text: char_slice(add_text, pos, start),
+                });
+            }
+            if end > start {
+                runs.push(Run {
+                    kind: RunKind::Add,
+                    text: char_slice(add_text, start, end),
+                });
+            }
+            pos = end;
+        }
+        if pos < char_len_of(add_text) {
             runs.push(Run {
                 kind: RunKind::Common,
-                text: char_slice(add_text, from, to),
+                text: char_slice(add_text, pos, char_len_of(add_text)),
             });
         }
-    };
-    // Events in add-text position order: each add span, each standalone
-    // del (no nearby add), and each del paired with its nearest add. A
-    // standalone removal must not trail the line — a `resolved_` deleted
-    // near the start inserts before the appended `.iter()` at the end.
-    struct Ev {
-        pos: usize,
-        del: Option<(usize, usize)>,
-        add: Option<(usize, usize)>,
+        return coalesce_runs(runs);
     }
-    let mut events: Vec<Ev> = Vec::with_capacity(del_spans.len() + add_spans.len());
-    let mut used_adds: FxHashSet<usize> =
-        FxHashSet::with_capacity_and_hasher(add_spans.len(), Default::default());
-    for (j, dspan) in del_spans.iter().enumerate() {
-        if let Some(ai) = pair.get(&j) {
-            used_adds.insert(*ai);
-            // An operator flip anchors at the operator's own offset
-            // (`k ~~<~~> floor` — the `<` strikes against the `>`).
-            let pos = op_anchor.get(&j).copied().unwrap_or(add_spans[*ai].0);
-            events.push(Ev {
-                pos,
-                del: Some(*dspan),
-                add: Some(add_spans[*ai]),
-            });
-        } else {
-            // del_pos[j] is already the exact display position
-            // (del_display_positions applied the add-correction);
-            // just clamp to the new-text length.
-            let add_len = char_len_of(add_text);
-            let ins = del_pos[j].min(add_len);
-            events.push(Ev {
-                pos: ins,
-                del: Some(*dspan),
-                add: None,
-            });
-        }
-    }
-    for (i, aspan) in add_spans.iter().enumerate() {
-        if !used_adds.contains(&i) {
-            events.push(Ev {
-                pos: aspan.0,
-                del: None,
-                add: Some(*aspan),
-            });
-        }
-    }
-    events.sort_by_key(|e| e.pos);
-    let mut pos = 0usize;
-    for ev in events {
-        if ev.pos > pos {
-            emit_range(&mut runs, pos, ev.pos);
-        }
-        if let Some(dspan) = ev.del {
-            // Whitespace pairs express the MINIMUM change: the shared
-            // prefix survives as common, only the difference is struck
-            // or filled (8 → 12 spaces = 8 common + 4 added, never the
-            // whole run on each side).
-            let del_text_span = char_slice(del_text, dspan.0, dspan.1);
-            if let Some(aspan) = ev.add {
-                let add_text_span = char_slice(add_text, aspan.0, aspan.1);
-                let is_leading = dspan.0 == 0 && aspan.0 == 0;
-                if is_leading {
-                    let d_ws_len = del_text_span.len() - del_text_span.trim_start().len();
-                    let a_ws_len = add_text_span.len() - add_text_span.trim_start().len();
-                    if d_ws_len > 0 && a_ws_len > 0 {
-                        let d_ws = &del_text_span[..d_ws_len];
-                        let a_ws = &add_text_span[..a_ws_len];
-                        if d_ws.len() < a_ws.len() {
-                            if let Some(add_prefix) = a_ws.strip_suffix(d_ws) {
-                                runs.push(Run {
-                                    kind: RunKind::Add,
-                                    text: add_prefix,
-                                });
-                                runs.push(Run {
-                                    kind: RunKind::Common,
-                                    text: &a_ws[add_prefix.len()..],
-                                });
-                                if d_ws_len < del_text_span.len() {
-                                    runs.push(Run {
-                                        kind: RunKind::Del,
-                                        text: &del_text_span[d_ws_len..],
-                                    });
-                                }
-                                if a_ws_len < add_text_span.len() {
-                                    runs.push(Run {
-                                        kind: RunKind::Add,
-                                        text: &add_text_span[a_ws_len..],
-                                    });
-                                }
-                                pos = aspan.1;
-                                continue;
-                            }
-                        } else if d_ws.len() > a_ws.len() {
-                            if let Some(del_prefix) = d_ws.strip_suffix(a_ws) {
-                                runs.push(Run {
-                                    kind: RunKind::Del,
-                                    text: del_prefix,
-                                });
-                                runs.push(Run {
-                                    kind: RunKind::Common,
-                                    text: a_ws,
-                                });
-                                if d_ws_len < del_text_span.len() {
-                                    runs.push(Run {
-                                        kind: RunKind::Del,
-                                        text: &del_text_span[d_ws_len..],
-                                    });
-                                }
-                                if a_ws_len < add_text_span.len() {
-                                    runs.push(Run {
-                                        kind: RunKind::Add,
-                                        text: &add_text_span[a_ws_len..],
-                                    });
-                                }
-                                pos = aspan.1;
-                                continue;
-                            }
-                        } else if d_ws == a_ws {
-                            runs.push(Run {
-                                kind: RunKind::Common,
-                                text: a_ws,
-                            });
-                            if d_ws_len < del_text_span.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Del,
-                                    text: &del_text_span[d_ws_len..],
-                                });
-                            }
-                            if a_ws_len < add_text_span.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Add,
-                                    text: &add_text_span[a_ws_len..],
-                                });
-                            }
-                            pos = aspan.1;
-                            continue;
-                        }
-                    }
-                }
-
-                if all_ws(del_text_span) && all_ws(add_text_span) {
-                    if is_leading {
-                        // For leading indentation, align changes to the first
-                        // possible location
-                        // (normally col 0) so whitespace changes line up
-                        // cleanly across rows
-                        // with different indentation levels without jagged
-                        // edges.
-                        let d_bytes = del_text_span.as_bytes();
-                        let a_bytes = add_text_span.as_bytes();
-                        if d_bytes.len() < a_bytes.len() {
-                            let diff = a_bytes.len() - d_bytes.len();
-                            let mut suffix_match = 0;
-                            while suffix_match < d_bytes.len()
-                                && d_bytes[d_bytes.len() - 1 - suffix_match]
-                                    == a_bytes[a_bytes.len() - 1 - suffix_match]
-                            {
-                                suffix_match += 1;
-                            }
-                            if suffix_match == d_bytes.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Add,
-                                    text: &add_text_span[..diff],
-                                });
-                                runs.push(Run {
-                                    kind: RunKind::Common,
-                                    text: &add_text_span[diff..],
-                                });
-                                pos = aspan.1;
-                                continue;
-                            }
-                        } else if d_bytes.len() > a_bytes.len() {
-                            let diff = d_bytes.len() - a_bytes.len();
-                            let mut suffix_match = 0;
-                            while suffix_match < a_bytes.len()
-                                && d_bytes[d_bytes.len() - 1 - suffix_match]
-                                    == a_bytes[a_bytes.len() - 1 - suffix_match]
-                            {
-                                suffix_match += 1;
-                            }
-                            if suffix_match == a_bytes.len() {
-                                runs.push(Run {
-                                    kind: RunKind::Del,
-                                    text: &del_text_span[..diff],
-                                });
-                                runs.push(Run {
-                                    kind: RunKind::Common,
-                                    text: add_text_span,
-                                });
-                                pos = aspan.1;
-                                continue;
-                            }
-                        }
-                    }
-
-                    // The shared prefix is the ACTUAL matching chars — a
-                    // type change (`\t` vs 4 spaces) shares nothing: the
-                    // tab strikes, the spaces fill, both subworded.
-                    let mut share = 0usize;
-                    let d_bytes = del_text_span.as_bytes();
-                    let a_bytes = add_text_span.as_bytes();
-                    while share < d_bytes.len()
-                        && share < a_bytes.len()
-                        && d_bytes[share] == a_bytes[share]
-                    {
-                        share += 1;
-                    }
-                    if share > 0 {
-                        runs.push(Run {
-                            kind: RunKind::Common,
-                            text: &del_text_span[..share],
-                        });
-                    }
-                    if share < del_text_span.len() {
-                        runs.push(Run {
-                            kind: RunKind::Del,
-                            text: &del_text_span[share..],
-                        });
-                    }
-                    if share < add_text_span.len() {
-                        runs.push(Run {
-                            kind: RunKind::Add,
-                            text: &add_text_span[share..],
-                        });
-                    }
-                    pos = aspan.1;
-                    continue;
-                }
+    if spans.add.is_empty() {
+        let mut runs = Vec::new();
+        let mut pos = 0;
+        for &(start, end) in &spans.del {
+            if start > pos {
+                runs.push(Run {
+                    kind: RunKind::Common,
+                    text: char_slice(del_text, pos, start),
+                });
             }
-            runs.push(Run {
-                kind: RunKind::Del,
-                text: del_text_span,
-            });
-            pos = pos.max(ev.pos);
+            if end > start {
+                runs.push(Run {
+                    kind: RunKind::Del,
+                    text: char_slice(del_text, start, end),
+                });
+            }
+            pos = end;
         }
-        if let Some(aspan) = ev.add {
+        if pos < char_len_of(del_text) {
             runs.push(Run {
-                kind: RunKind::Add,
-                text: char_slice(add_text, aspan.0, aspan.1),
+                kind: RunKind::Common,
+                text: char_slice(del_text, pos, char_len_of(del_text)),
             });
-            pos = aspan.1;
         }
+        return coalesce_runs(runs);
     }
-    if pos < char_len_of(add_text) {
-        emit_range(&mut runs, pos, char_len_of(add_text));
-    }
-    let res = coalesce_runs(runs);
-    let fwd = project_forward(&res);
-    crate::ensure!(
-        fwd == add_text,
-        "project_forward must perfectly reconstruct new add_text. Expected: {:?}, Got: {:?}",
-        add_text,
-        fwd
-    );
-    res
+
+    let tape = crate::tape::AlignmentTape::from_texts(del_text, add_text, None);
+    tape.to_merged_runs()
 }
 
 /// Compress adjacent runs of the same kind into a single run with joined text.

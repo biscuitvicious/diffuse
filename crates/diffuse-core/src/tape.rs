@@ -56,6 +56,21 @@ impl<'a> TapeChunk<'a> {
 }
 
 #[inline]
+fn is_ws_char(c: char) -> bool {
+    c.is_whitespace() || c == '\u{200b}'
+}
+
+#[inline]
+fn all_ws(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(is_ws_char)
+}
+
+#[inline]
+fn all_ws_or_empty(s: &str) -> bool {
+    s.chars().all(is_ws_char)
+}
+
+#[inline]
 fn truncate_for_trace(s: &str, max_len: usize) -> &str {
     match s.char_indices().nth(max_len) {
         Some((idx, _)) => &s[..idx],
@@ -159,108 +174,170 @@ impl<'a> AlignmentTape<'a> {
     /// Convert alignment chunks directly into renderer `Run` items without
     /// heuristic reconstruction.
     pub fn to_merged_runs(&self) -> Vec<Run<'a>> {
-        let mut runs: Vec<Run<'a>> = Vec::with_capacity(self.chunks.len() + 2);
-        let mut start_idx = 0usize;
+        let mut runs: Vec<Run<'a>> = Vec::with_capacity(self.chunks.len() + 4);
+        let mut is_leading = true;
+        let mut idx = 0;
 
-        // Check if leading chunks represent an indentation change
-        if self.chunks.len() >= 2
-            && let (TapeChunk::Strike(d), TapeChunk::Fill(a)) = (&self.chunks[0], &self.chunks[1])
-        {
-            let d_ws_len = d.len() - d.trim_start().len();
-            let a_ws_len = a.len() - a.trim_start().len();
-            if d_ws_len > 0 && a_ws_len > 0 {
-                let d_ws = &d[..d_ws_len];
-                let a_ws = &a[..a_ws_len];
-                if d_ws.len() < a_ws.len()
-                    && let Some(add_prefix) = a_ws.strip_suffix(d_ws)
-                {
-                    runs.push(Run {
-                        kind: RunKind::Add,
-                        text: add_prefix,
-                    });
-                    runs.push(Run {
-                        kind: RunKind::Common,
-                        text: &a_ws[add_prefix.len()..],
-                    });
-                    if d_ws_len < d.len() {
+        while idx < self.chunks.len() {
+            // Check for adjacent (Strike, Fill) pair
+            if idx + 1 < self.chunks.len()
+                && let (TapeChunk::Strike(d), TapeChunk::Fill(a)) =
+                    (&self.chunks[idx], &self.chunks[idx + 1])
+            {
+                if is_leading {
+                    let d_ws_len = d.len() - d.trim_start().len();
+                    let a_ws_len = a.len() - a.trim_start().len();
+                    if d_ws_len > 0 && a_ws_len > 0 {
+                        let d_ws = &d[..d_ws_len];
+                        let a_ws = &a[..a_ws_len];
+                        if d_ws.len() < a_ws.len()
+                            && let Some(add_prefix) = a_ws.strip_suffix(d_ws)
+                        {
+                            runs.push(Run {
+                                kind: RunKind::Add,
+                                text: add_prefix,
+                            });
+                            runs.push(Run {
+                                kind: RunKind::Common,
+                                text: &a_ws[add_prefix.len()..],
+                            });
+                            if d_ws_len < d.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Del,
+                                    text: &d[d_ws_len..],
+                                });
+                            }
+                            if a_ws_len < a.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Add,
+                                    text: &a[a_ws_len..],
+                                });
+                            }
+                            is_leading = false;
+                            idx += 2;
+                            continue;
+                        } else if d_ws.len() > a_ws.len()
+                            && let Some(del_prefix) = d_ws.strip_suffix(a_ws)
+                        {
+                            runs.push(Run {
+                                kind: RunKind::Del,
+                                text: del_prefix,
+                            });
+                            runs.push(Run {
+                                kind: RunKind::Common,
+                                text: a_ws,
+                            });
+                            if d_ws_len < d.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Del,
+                                    text: &d[d_ws_len..],
+                                });
+                            }
+                            if a_ws_len < a.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Add,
+                                    text: &a[a_ws_len..],
+                                });
+                            }
+                            is_leading = false;
+                            idx += 2;
+                            continue;
+                        } else if d_ws == a_ws {
+                            runs.push(Run {
+                                kind: RunKind::Common,
+                                text: a_ws,
+                            });
+                            if d_ws_len < d.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Del,
+                                    text: &d[d_ws_len..],
+                                });
+                            }
+                            if a_ws_len < a.len() {
+                                runs.push(Run {
+                                    kind: RunKind::Add,
+                                    text: &a[a_ws_len..],
+                                });
+                            }
+                            is_leading = false;
+                            idx += 2;
+                            continue;
+                        }
+                    }
+                } else if all_ws(d) && all_ws(a) {
+                    // Non-leading whitespace: shared prefix is common
+                    let mut share = 0usize;
+                    let d_bytes = d.as_bytes();
+                    let a_bytes = a.as_bytes();
+                    while share < d_bytes.len()
+                        && share < a_bytes.len()
+                        && d_bytes[share] == a_bytes[share]
+                    {
+                        share += 1;
+                    }
+                    if share > 0 {
+                        runs.push(Run {
+                            kind: RunKind::Common,
+                            text: &d[..share],
+                        });
+                    }
+                    if share < d.len() {
                         runs.push(Run {
                             kind: RunKind::Del,
-                            text: &d[d_ws_len..],
+                            text: &d[share..],
                         });
                     }
-                    if a_ws_len < a.len() {
+                    if share < a.len() {
                         runs.push(Run {
                             kind: RunKind::Add,
-                            text: &a[a_ws_len..],
+                            text: &a[share..],
                         });
                     }
-                    start_idx = 2;
-                } else if d_ws.len() > a_ws.len()
-                    && let Some(del_prefix) = d_ws.strip_suffix(a_ws)
-                {
-                    runs.push(Run {
-                        kind: RunKind::Del,
-                        text: del_prefix,
-                    });
-                    runs.push(Run {
-                        kind: RunKind::Common,
-                        text: a_ws,
-                    });
-                    if d_ws_len < d.len() {
-                        runs.push(Run {
-                            kind: RunKind::Del,
-                            text: &d[d_ws_len..],
-                        });
-                    }
-                    if a_ws_len < a.len() {
-                        runs.push(Run {
-                            kind: RunKind::Add,
-                            text: &a[a_ws_len..],
-                        });
-                    }
-                    start_idx = 2;
-                } else if d_ws == a_ws {
-                    runs.push(Run {
-                        kind: RunKind::Common,
-                        text: a_ws,
-                    });
-                    if d_ws_len < d.len() {
-                        runs.push(Run {
-                            kind: RunKind::Del,
-                            text: &d[d_ws_len..],
-                        });
-                    }
-                    if a_ws_len < a.len() {
-                        runs.push(Run {
-                            kind: RunKind::Add,
-                            text: &a[a_ws_len..],
-                        });
-                    }
-                    start_idx = 2;
+                    idx += 2;
+                    continue;
                 }
             }
-        }
 
-        for chunk in &self.chunks[start_idx..] {
-            let run = match chunk {
-                TapeChunk::Keep(text) => Run {
-                    kind: RunKind::Common,
-                    text,
-                },
-                TapeChunk::Strike(text) => Run {
-                    kind: RunKind::Del,
-                    text,
-                },
-                TapeChunk::Fill(text) => Run {
-                    kind: RunKind::Add,
-                    text,
-                },
-                TapeChunk::Relocate { text, .. } => Run {
-                    kind: RunKind::Mov,
-                    text,
-                },
-            };
-            runs.push(run);
+            let chunk = &self.chunks[idx];
+            match chunk {
+                TapeChunk::Keep(text) => {
+                    if !all_ws_or_empty(text) {
+                        is_leading = false;
+                    }
+                    runs.push(Run {
+                        kind: RunKind::Common,
+                        text,
+                    });
+                }
+                TapeChunk::Strike(text) => {
+                    if !all_ws_or_empty(text) {
+                        is_leading = false;
+                    }
+                    runs.push(Run {
+                        kind: RunKind::Del,
+                        text,
+                    });
+                }
+                TapeChunk::Fill(text) => {
+                    if !all_ws_or_empty(text) {
+                        is_leading = false;
+                    }
+                    runs.push(Run {
+                        kind: RunKind::Add,
+                        text,
+                    });
+                }
+                TapeChunk::Relocate { text, .. } => {
+                    if !all_ws_or_empty(text) {
+                        is_leading = false;
+                    }
+                    runs.push(Run {
+                        kind: RunKind::Mov,
+                        text,
+                    });
+                }
+            }
+            idx += 1;
         }
 
         // Coalesce adjacent contiguous runs of the same kind
