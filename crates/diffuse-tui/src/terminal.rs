@@ -27,9 +27,47 @@ pub struct TerminalGuard {
     enhanced_keyboard: bool,
 }
 
+static PANIC_HOOK_INSTALLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Install a process-wide panic hook that restores the terminal (leaving
+/// alternate screen, disabling raw mode, and showing cursor) before printing
+/// the panic information and aborting the process.
+pub fn install_panic_hook() {
+    if PANIC_HOOK_INSTALLED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Reset terminal immediately before printing panic info
+        let mut stdout = stdout();
+        let _ = execute!(
+            stdout,
+            PopKeyboardEnhancementFlags,
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            cursor::Show
+        );
+        let _ = disable_raw_mode();
+        let _ = stdout.flush();
+
+        eprintln!("\r\n========================================================");
+        eprintln!("diffuse encountered an unexpected fatal error / panic:");
+        eprintln!("========================================================");
+        default_hook(panic_info);
+        eprintln!("========================================================\r\n");
+
+        // Force immediate exit of the entire process so background worker/rayon
+        // panics abort the process cleanly instead of leaving the TUI running.
+        std::process::exit(101);
+    }));
+}
+
 impl TerminalGuard {
     /// Enter raw mode, alternate screen buffer, and enable mouse capture.
     pub fn enter() -> io::Result<Self> {
+        install_panic_hook();
         let mut stdout = stdout();
         enable_raw_mode()?;
         let enhanced_keyboard = supports_keyboard_enhancement().unwrap_or(false);

@@ -1338,3 +1338,31 @@ fn test_scope_restricted_deletion_pairing() {
     // despite "let count = 0;" existing in unrelated fn beta() in new_content!
     assert_eq!(results.pair_of.get(&2), Some(&1));
 }
+
+#[test]
+fn test_dp_pairing_disqualifies_zero_common_substitutions_upstream() {
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 1,
+        old_count: 2,
+        new_start: 1,
+        new_count: 2,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "alpha")),
+            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "omega")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+
+    let results = crate::cluster::pairing::dp_pairing(&h, None, None, rs);
+    // Row 1 (Add "omega") and Row 0 (Del "alpha") share 0 common tokens and 0
+    // common indentation. DP must mathematically disqualify them upstream
+    // and NEVER pair them as Mod!
+    assert!(
+        !results.pair_of.contains_key(&1),
+        "Disjoint lines sharing 0 common characters must not be paired as Mod (got pair: {:?})",
+        results.pair_of.get(&1)
+    );
+}

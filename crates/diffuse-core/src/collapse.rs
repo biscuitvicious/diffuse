@@ -63,29 +63,7 @@ pub fn collapse_hunk_rows(
     let h = &h_norm;
 
     // Pass 1: DP cluster pairing engine
-    let mut p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
-
-    // Wholesale invariant gate: any pairing that yields a wholesale replacement
-    // (zero common context, completely struck out and re-added) is an invalid
-    // pairing state and must be un-paired back into its original del + add.
-    p1.pair_of.retain(|&add_ri, &mut del_ri| {
-        let del = &h.rows[del_ri];
-        let add = &h.rows[add_ri];
-        let del_text = del.text();
-        let add_text = add.text();
-        let spans = word_spans_with_profile(del_text, add_text, profile);
-        let is_wholesale = crate::merge::is_wholesale_replacement_spans(del_text, add_text, &spans);
-        if is_wholesale {
-            tracing::debug!(
-                del_ri,
-                add_ri,
-                del_text = %crate::lcs::char_slice(del_text, 0, 40),
-                add_text = %crate::lcs::char_slice(add_text, 0, 40),
-                "Unpaired candidate pair due to wholesale replacement"
-            );
-        }
-        !is_wholesale
-    });
+    let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
 
     let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: FxHashMap<usize, usize> =
@@ -173,6 +151,12 @@ pub fn pass_assemble_mods(
             let add = &h.rows[add_ri];
             let del_text = r.text().to_string();
             let spans = word_spans_with_profile(&del_text, add.text(), profile);
+
+            if crate::merge::is_wholesale_replacement_spans(&del_text, add.text(), &spans) {
+                kept_dels.push(ri);
+                pure_adds.push(add_ri);
+                continue;
+            }
 
             let mut next_adds = Vec::new();
             let mut k = add_ri + 1;

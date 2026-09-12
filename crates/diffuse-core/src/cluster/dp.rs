@@ -1182,6 +1182,15 @@ pub(crate) fn solve_cluster_with_arena(
                         };
                     }
                 } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
+                    let old_text = cluster.old_rows[i].text();
+                    let new_text = cluster.new_rows[j].text();
+                    let common_indent = old_text
+                        .chars()
+                        .take_while(|c| c.is_whitespace())
+                        .zip(new_text.chars().take_while(|c| c.is_whitespace()))
+                        .take_while(|(c1, c2)| c1 == c2)
+                        .count();
+
                     let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
                     let min_chars = ot.chars.min(nt.chars);
                     let char_bound = if token_overlap {
@@ -1190,6 +1199,12 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         0
                     };
+                    // Disjoint lines with zero overlapping tokens and zero
+                    // common indentation cannot be in-place
+                    // substitutions (wholesale replacements).
+                    if char_bound + common_indent == 0 {
+                        continue;
+                    }
                     let total = ot.chars.max(nt.chars);
                     let max_matched = char_bound;
 
@@ -1236,6 +1251,9 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         0usize
                     };
+                    if matched + common_indent == 0 {
+                        continue;
+                    }
                     let ot_trim = cluster.old_rows[i].text().trim();
                     let nt_trim = cluster.new_rows[j].text().trim();
 
@@ -1314,7 +1332,7 @@ pub(crate) fn solve_cluster_with_arena(
                         if delim_match {
                             true
                         } else if om.is_terminal_return && nm.is_terminal_return {
-                            if indent_diff == 0.0 {
+                            if indent_diff == 0.0 && common_indent > 0 {
                                 true
                             } else {
                                 matched >= w.min_tail_matched_chars
