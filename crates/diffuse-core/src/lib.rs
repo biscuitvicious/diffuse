@@ -20,6 +20,7 @@ pub mod notes;
 pub mod old_content;
 pub mod parse;
 pub mod pipeline;
+pub mod reflow;
 pub mod scope;
 pub mod shift;
 pub mod similarity;

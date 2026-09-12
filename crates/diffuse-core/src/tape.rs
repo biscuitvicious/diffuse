@@ -129,6 +129,33 @@ impl<'a> AlignmentTape<'a> {
         s
     }
 
+    /// Compute the algebraic inverse alignment tape.
+    ///
+    /// Swaps `Strike` and `Fill`, inverts `Relocate` spans, and preserves
+    /// `Keep`. Satisfies the involution property: `tape.reverse().reverse()
+    /// == tape`.
+    pub fn reverse(&self) -> AlignmentTape<'a> {
+        let mut chunks = Vec::with_capacity(self.chunks.len());
+        for chunk in &self.chunks {
+            let rev_chunk = match chunk {
+                TapeChunk::Keep(s) => TapeChunk::Keep(s),
+                TapeChunk::Strike(s) => TapeChunk::Fill(s),
+                TapeChunk::Fill(s) => TapeChunk::Strike(s),
+                TapeChunk::Relocate {
+                    from_span,
+                    to_span,
+                    text,
+                } => TapeChunk::Relocate {
+                    from_span: *to_span,
+                    to_span: *from_span,
+                    text,
+                },
+            };
+            chunks.push(rev_chunk);
+        }
+        AlignmentTape { chunks }
+    }
+
     /// Convert alignment chunks directly into renderer `Run` items without
     /// heuristic reconstruction.
     pub fn to_merged_runs(&self) -> Vec<Run<'a>> {
