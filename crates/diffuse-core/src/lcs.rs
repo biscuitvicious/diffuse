@@ -438,6 +438,184 @@ fn candidate_contiguous_affinity(
     backward + forward
 }
 
+#[inline]
+fn is_subword_token(t: &str) -> bool {
+    t == "_" || token_is_alnum(t)
+}
+
+#[inline]
+fn is_file_extension(ext: &str) -> bool {
+    let mut buf = [0u8; 16];
+    if ext.is_empty() || ext.len() > 16 {
+        return false;
+    }
+    for (i, b) in ext.bytes().enumerate() {
+        buf[i] = b.to_ascii_lowercase();
+    }
+    let lower = std::str::from_utf8(&buf[..ext.len()]).unwrap_or(ext);
+    matches!(
+        lower,
+        "ts" | "js"
+            | "jsx"
+            | "tsx"
+            | "rs"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "md"
+            | "markdown"
+            | "json"
+            | "jsonl"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "txt"
+            | "html"
+            | "htm"
+            | "css"
+            | "scss"
+            | "c"
+            | "h"
+            | "cc"
+            | "cpp"
+            | "hpp"
+            | "py"
+            | "go"
+            | "rb"
+            | "java"
+            | "kt"
+            | "swift"
+            | "sql"
+            | "lock"
+            | "patch"
+            | "diff"
+            | "log"
+            | "gz"
+            | "tar"
+            | "zip"
+            | "xml"
+            | "svg"
+            | "wasm"
+            | "proto"
+    )
+}
+
+fn is_path_dot(slice: &[&str], prev: &[&str], next: Option<&str>, idx: usize) -> bool {
+    if slice[idx] != "." {
+        return false;
+    }
+    let p = if idx > 0 {
+        Some(slice[idx - 1])
+    } else {
+        prev.last().copied()
+    };
+    let n = if idx + 1 < slice.len() {
+        Some(slice[idx + 1])
+    } else {
+        next
+    };
+
+    let _p = match p {
+        Some(tok) if is_subword_token(tok) => tok,
+        _ => return false,
+    };
+    let n = match n {
+        Some(tok) if is_subword_token(tok) => tok,
+        _ => return false,
+    };
+
+    if is_file_extension(n) {
+        return true;
+    }
+
+    let mut k = idx;
+    while k > 0 {
+        k -= 1;
+        let tok = slice[k];
+        if token_is_ws(tok) {
+            break;
+        }
+        if tok.contains('/') || tok.contains('\\') {
+            return true;
+        }
+    }
+    if k == 0 && !slice.is_empty() && !token_is_ws(slice[0]) {
+        for &tok in prev.iter().rev() {
+            if token_is_ws(tok) {
+                break;
+            }
+            if tok.contains('/') || tok.contains('\\') {
+                return true;
+            }
+        }
+    }
+
+    let mut k = idx + 1;
+    while k < slice.len() {
+        let tok = slice[k];
+        if token_is_ws(tok) {
+            break;
+        }
+        if tok.contains('/') || tok.contains('\\') {
+            return true;
+        }
+        k += 1;
+    }
+
+    false
+}
+
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn tokens_can_match(
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
+    i: usize,
+    j: usize,
+) -> bool {
+    if a[i] != b[j] {
+        return false;
+    }
+    if a[i] == "." {
+        let a_is_path = is_path_dot(a, prev_a, next_a, i);
+        let b_is_path = is_path_dot(b, prev_b, next_b, j);
+
+        if a_is_path || b_is_path {
+            let a_prev = if i > 0 {
+                Some(a[i - 1])
+            } else {
+                prev_a.last().copied()
+            };
+            let a_next = if i + 1 < a.len() {
+                Some(a[i + 1])
+            } else {
+                next_a
+            };
+            let b_prev = if j > 0 {
+                Some(b[j - 1])
+            } else {
+                prev_b.last().copied()
+            };
+            let b_next = if j + 1 < b.len() {
+                Some(b[j + 1])
+            } else {
+                next_b
+            };
+
+            let left_matches = a_prev.is_some() && a_prev == b_prev;
+            let right_matches = a_next.is_some() && a_next == b_next;
+            if !left_matches && !right_matches {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Core LCS backtrace over string slices.
 pub fn raw_lcs_pairs(a: &[&str], b: &[&str]) -> FxHashMap<usize, usize> {
     raw_lcs_pairs_with_context(a, b, &[], &[], None, None)
@@ -471,7 +649,7 @@ pub fn raw_lcs_pairs_with_context(
     let idx = |i: usize, j: usize| i * (m + 1) + j;
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            dp[idx(i, j)] = if a[i] == b[j] {
+            dp[idx(i, j)] = if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
                 dp[idx(i + 1, j + 1)] + 1
             } else {
                 dp[idx(i + 1, j)].max(dp[idx(i, j + 1)])
@@ -485,7 +663,7 @@ pub fn raw_lcs_pairs_with_context(
     let mut last_committed_j = 0;
     let mut in_add_run = false;
     while i < n && j < m {
-        if a[i] == b[j] {
+        if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
             let next_matches = if i + 1 < n && j + 1 < m {
                 a[i + 1] == b[j + 1] && !token_is_ws(a[i + 1])
             } else if i + 1 == n && j + 1 == m && next_a.is_some() && next_b.is_some() {
@@ -499,7 +677,10 @@ pub fn raw_lcs_pairs_with_context(
             }
             if in_add_run
                 && dp[idx(i, j + 1)] == dp[idx(i, j)]
-                && (j + 1..m).any(|k| b[k] == a[i] && dp[idx(i + 1, k + 1)] + 1 == dp[idx(i, j)])
+                && (j + 1..m).any(|k| {
+                    tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, k)
+                        && dp[idx(i + 1, k + 1)] + 1 == dp[idx(i, j)]
+                })
             {
                 j += 1;
                 continue;
@@ -516,7 +697,7 @@ pub fn raw_lcs_pairs_with_context(
                 let cur_affinity = contiguous_affinity(a, b, prev_a, prev_b, i, j);
                 let lookahead_limit = (i + 1 + MAX_TIE_LOOKAHEAD).min(n);
                 let has_better = (i + 1..lookahead_limit).any(|k| {
-                    a[k] == b[j]
+                    tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, k, j)
                         && dp[idx(k, j)] == dp[idx(i, j)]
                         && candidate_contiguous_affinity(a, b, i, last_committed_j, k, j)
                             > cur_affinity
@@ -533,7 +714,7 @@ pub fn raw_lcs_pairs_with_context(
                 let cur_affinity = contiguous_affinity(a, b, prev_a, prev_b, i, j);
                 let lookahead_limit = (j + 1 + MAX_TIE_LOOKAHEAD).min(m);
                 let has_better = (j + 1..lookahead_limit).any(|k| {
-                    b[k] == a[i]
+                    tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, k)
                         && dp[idx(i, k)] == dp[idx(i, j)]
                         && candidate_contiguous_affinity(b, a, j, last_committed_i, k, i)
                             > cur_affinity
@@ -565,8 +746,9 @@ pub fn raw_lcs_pairs_with_context(
         } else if token_is_ws(b[j]) && !token_is_ws(a[i]) {
             j += 1;
             in_add_run = true;
-        } else if !b[j + 1..].iter().any(|t| *t == a[i])
-            || (!token_is_alnum(a[i]) && token_is_alnum(b[j]))
+        } else if !b[j + 1..].iter().enumerate().any(|(offset, _)| {
+            tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j + 1 + offset)
+        }) || (!token_is_alnum(a[i]) && token_is_alnum(b[j]))
         {
             i += 1;
         } else {
@@ -591,11 +773,6 @@ pub fn lcs_pairs_with_profile(
     profile: Option<&LangProfile>,
 ) -> FxHashMap<usize, usize> {
     lcs_pairs_recursive(a, b, &[], &[], None, None, profile)
-}
-
-#[inline]
-fn is_subword_token(t: &str) -> bool {
-    t == "_" || token_is_alnum(t)
 }
 
 /// Recursive Patience LCS backtrace with anchor lookahead context.

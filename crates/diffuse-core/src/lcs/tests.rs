@@ -668,3 +668,79 @@ fn test_agents_md_subword_alignment() {
     // " the pi review extension" added to new line
     assert_eq!(ws.add, vec![(46, 70)]);
 }
+
+#[test]
+fn test_do_not_split_path_on_isolated_dot() {
+    let old = "  `extension/pi/scripts/install.sh` syncs review.ts + the binary into";
+    let new = "  `extension/pi/scripts/install.sh` only if requested); `./scripts/install.sh`";
+    let ws = word_spans(old, new);
+    // Should NOT match the dot between review.ts and install.sh!
+    // The changed segment should be a single contiguous deletion and addition.
+    assert_eq!(ws.del, vec![(36, 69)]);
+    assert_eq!(ws.add, vec![(36, 78)]);
+}
+
+#[test]
+fn test_path_dot_matching_extension_preserves_common_ext() {
+    let old = "let f = open(\"input.rs\");";
+    let new = "let f = open(\"output.rs\");";
+    let ws = word_spans(old, new);
+    assert_eq!(ws.del, vec![(14, 19)]); // "input"
+    assert_eq!(ws.add, vec![(14, 20)]); // "output"
+}
+
+#[test]
+fn test_path_dot_matching_basename_preserves_common_prefix() {
+    let old = "let script = \"install.sh\";";
+    let new = "let script = \"install.bash\";";
+    let ws = word_spans(old, new);
+    assert_eq!(ws.del, vec![(22, 24)]); // "sh"
+    assert_eq!(ws.add, vec![(22, 26)]); // "bash"
+}
+
+#[test]
+fn test_path_dot_with_slashes_unmatched_extension() {
+    let old = "load(\"dir/foo.custom1\");";
+    let new = "load(\"other/bar.custom2\");";
+    let ws = word_spans(old, new);
+    // "/" matches, but neither "foo"=="bar" nor "custom1"=="custom2", so the
+    // dot does not match
+    assert_eq!(ws.del, vec![(6, 9), (10, 21)]); // "dir", "foo.custom1"
+    assert_eq!(ws.add, vec![(6, 11), (12, 23)]); // "other", "bar.custom2"
+}
+
+#[test]
+fn test_is_file_extension_branches() {
+    use super::is_file_extension;
+    assert!(!is_file_extension(""));
+    assert!(!is_file_extension(
+        "a_very_long_extension_name_that_exceeds_16_bytes"
+    ));
+    assert!(is_file_extension("RS"));
+    assert!(is_file_extension("md"));
+    assert!(is_file_extension("TSX"));
+    assert!(!is_file_extension("unknownxyz"));
+}
+
+#[test]
+fn test_is_path_dot_branches() {
+    use super::is_path_dot;
+    // Not a dot
+    assert!(!is_path_dot(&["foo"], &[], None, 0));
+    // Dot without subword neighbors (e.g. whitespace)
+    assert!(!is_path_dot(&[" ", ".", " "], &[], None, 1));
+    // Dot with left neighbor from prev slice with slash
+    assert!(is_path_dot(
+        &[".", "custom"],
+        &["dir", "/", "file"],
+        None,
+        0
+    ));
+    // Dot with backslash in forward lookahead
+    assert!(is_path_dot(
+        &["file", ".", "custom", "\\", "sub"],
+        &[],
+        None,
+        1
+    ));
+}
