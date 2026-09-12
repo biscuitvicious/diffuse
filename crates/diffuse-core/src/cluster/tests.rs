@@ -1366,3 +1366,64 @@ fn test_dp_pairing_disqualifies_zero_common_substitutions_upstream() {
         results.pair_of.get(&1)
     );
 }
+
+#[test]
+fn test_is_statement_start_head_pairing() {
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 512,
+        old_count: 4,
+        new_start: 515,
+        new_count: 1,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(
+                LineNum::new(512).unwrap(),
+                "pub(crate) fn is_statement_start(",
+            )),
+            Row::Del(DelLine::new(LineNum::new(513).unwrap(), "    text: &str,")),
+            Row::Del(DelLine::new(
+                LineNum::new(514).unwrap(),
+                "    profile: Option<&crate::syntax::profile::LangProfile>,",
+            )),
+            Row::Del(DelLine::new(LineNum::new(515).unwrap(), ") -> bool {")),
+            Row::Add(AddLine::new(
+                LineNum::new(515).unwrap(),
+                "pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> bool {",
+            )),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+
+    let c = crate::cluster::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: h.rows[..4].to_vec(),
+        new_rows: h.rows[4..].to_vec(),
+        following_ctx: vec![],
+        section: crate::cluster::SyntaxSectionKind::Code,
+    };
+    let mut arena = crate::cluster::dp::DpScratchArena::default();
+    let sol = crate::cluster::dp::solve_cluster_with_arena(
+        &c,
+        rs,
+        &crate::cluster::dp::Weights::default(),
+        &mut arena,
+    );
+    assert!(
+        matches!(
+            sol.transitions.first(),
+            Some(crate::cluster::dp::DpOp::Collapse { anchor: 0, .. })
+        ),
+        "Multi-line function signature collapse must anchor on line 0 (got: {:?})",
+        sol.transitions
+    );
+
+    let results = crate::cluster::pairing::dp_pairing(&h, None, None, rs);
+    assert_eq!(
+        results.pair_of.get(&4),
+        Some(&0),
+        "Function signature header should pair with new full function signature, got: {:?}",
+        results.pair_of.get(&4)
+    );
+}

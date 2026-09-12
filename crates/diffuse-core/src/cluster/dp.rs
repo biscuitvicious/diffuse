@@ -52,7 +52,7 @@ use crate::{
     similarity::TokenInterner,
     syntax::{
         prelude::{CloseDelimiter, first_ascii_word},
-        profile::LangProfile,
+        profile::{LangProfile, PropertySyntax},
     },
 };
 
@@ -523,7 +523,10 @@ pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> b
         {
             return true;
         }
-        if p.extract_property_key(t).is_some() {
+        if (p.property_syntax == PropertySyntax::Equals
+            || (p.hash_comment && !p.line_comment && !p.block_comment))
+            && p.extract_property_key(t).is_some()
+        {
             return true;
         }
         if p.section_headers && t.starts_with('[') && t.ends_with(']') {
@@ -1265,6 +1268,7 @@ pub(crate) fn solve_cluster_with_arena(
                         let is_prefix_at_boundary = |longer: &str, shorter: &str| -> bool {
                             if let Some(rest) = longer.strip_prefix(shorter) {
                                 rest.is_empty()
+                                    || shorter.ends_with(|c: char| !c.is_alphanumeric() && c != '_')
                                     || rest.starts_with(|c: char| {
                                         c.is_whitespace() || (!c.is_alphanumeric() && c != '_')
                                     })
