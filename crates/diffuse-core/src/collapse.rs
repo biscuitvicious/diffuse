@@ -25,6 +25,7 @@ pub struct PairingResults {
     pub del_runs: Vec<Vec<usize>>,
     pub run_of: FxHashMap<usize, Vec<usize>>,
     pub del_ids: Vec<usize>,
+    pub collapse_blocks: FxHashMap<usize, Vec<usize>>,
 }
 
 /// Products of the assembly pass.
@@ -41,6 +42,7 @@ pub struct PairingContext<'a> {
     pub add_of: &'a FxHashMap<usize, usize>,
     pub run_of: &'a FxHashMap<usize, Vec<usize>>,
     pub paired_dels: &'a FxHashSet<usize>,
+    pub collapse_blocks: &'a FxHashMap<usize, Vec<usize>>,
 }
 
 /// Collapse each FIFO del→add pair into a single "mod" row: the new line
@@ -75,6 +77,7 @@ pub fn collapse_hunk_rows(
         add_of: &add_of,
         run_of: &p1.run_of,
         paired_dels: &paired_dels,
+        collapse_blocks: &p1.collapse_blocks,
     };
     let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
 
@@ -122,6 +125,67 @@ pub fn collapse_hunk_rows(
     res
 }
 
+fn default_join_needs_space(last: Option<char>, first: Option<char>) -> bool {
+    let Some(l) = last else {
+        return false;
+    };
+    let Some(f) = first else {
+        return false;
+    };
+
+    // Never space after open delimiters
+    if l == '(' || l == '[' {
+        return false;
+    }
+    // Never space before close delimiters, commas, semicolons, or access dots
+    if f == ')' || f == ']' || f == ',' || f == ';' || f == '.' || f == ':' {
+        return false;
+    }
+    // Never space after access dot
+    if l == '.' {
+        return false;
+    }
+
+    true
+}
+
+fn join_collapse_lines(lines: &[&str], new_text: &str) -> String {
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut out = lines[0].trim_end().to_string();
+    for line in &lines[1..] {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let last_char = out.chars().last();
+        let first_char = trimmed.chars().next();
+        let prev_tok = out.split_whitespace().last().unwrap_or("");
+        let next_tok = trimmed.split_whitespace().next().unwrap_or("");
+
+        let needs_space = if !prev_tok.is_empty() && !next_tok.is_empty() {
+            let joined_no_space = format!("{}{}", prev_tok, next_tok);
+            let joined_with_space = format!("{} {}", prev_tok, next_tok);
+            if new_text.contains(&joined_no_space) {
+                false
+            } else if new_text.contains(&joined_with_space) {
+                true
+            } else {
+                default_join_needs_space(last_char, first_char)
+            }
+        } else {
+            default_join_needs_space(last_char, first_char)
+        };
+
+        if needs_space {
+            out.push(' ');
+        }
+        out.push_str(trimmed);
+    }
+    out
+}
+
 /// Pass 2: Assemble 1-to-1 Mod rows, multiline subword distribution, and reflow
 /// suppression.
 pub fn pass_assemble_mods(
@@ -133,6 +197,13 @@ pub fn pass_assemble_mods(
     let mut kept_dels: Vec<usize> = Vec::new();
     let mut pure_adds: Vec<usize> = Vec::new();
     let mut add_spans: FxHashMap<usize, (Spans, String)> = FxHashMap::default();
+
+    let mut collapse_absorbed_dels: FxHashSet<usize> = FxHashSet::default();
+    for dels in ctx.collapse_blocks.values() {
+        for &d in dels {
+            collapse_absorbed_dels.insert(d);
+        }
+    }
 
     for (ri, r) in h.rows.iter().enumerate() {
         if matches!(r, Row::MovTgt(_)) {
@@ -149,7 +220,20 @@ pub fn pass_assemble_mods(
         } else if ctx.paired_dels.contains(&ri) {
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
-            let del_text = r.text().to_string();
+
+            let (del_text, first_old_num) =
+                if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+                    let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
+                    let joined = join_collapse_lines(&lines, add.text());
+                    let first_num = block_dels
+                        .first()
+                        .and_then(|&di| h.rows[di].old_line_num())
+                        .unwrap_or_else(|| r.old_line_num().unwrap());
+                    (joined, first_num)
+                } else {
+                    (r.text().to_string(), r.old_line_num().unwrap())
+                };
+
             let spans = word_spans_with_profile(&del_text, add.text(), profile);
 
             if crate::merge::is_wholesale_replacement_spans(&del_text, add.text(), &spans) {
@@ -159,47 +243,49 @@ pub fn pass_assemble_mods(
             }
 
             let mut next_adds = Vec::new();
-            let mut k = add_ri + 1;
-            let has_deleted_content = spans.del.iter().any(|&(ds, de)| {
-                let seg = char_slice(&del_text, ds, de);
-                tokenize_line(seg)
-                    .into_iter()
-                    .any(|tok| !tok.trim().is_empty() && tok.chars().any(char::is_alphanumeric))
-            });
+            if !ctx.collapse_blocks.contains_key(&add_ri) {
+                let mut k = add_ri + 1;
+                let has_deleted_content = spans.del.iter().any(|&(ds, de)| {
+                    let seg = char_slice(&del_text, ds, de);
+                    tokenize_line(seg)
+                        .into_iter()
+                        .any(|tok| !tok.trim().is_empty() && tok.chars().any(char::is_alphanumeric))
+                });
 
-            if has_deleted_content && let Some(p) = profile {
-                let opens_delim = add.text().trim().ends_with('(')
-                    || add.text().trim().ends_with('{')
-                    || add.text().trim().ends_with('[')
-                    || p.is_import_statement(&del_text);
+                if has_deleted_content && let Some(p) = profile {
+                    let opens_delim = add.text().trim().ends_with('(')
+                        || add.text().trim().ends_with('{')
+                        || add.text().trim().ends_with('[')
+                        || p.is_import_statement(&del_text);
 
-                if opens_delim {
-                    while k < h.rows.len()
-                        && matches!(h.rows[k], Row::Add(_))
-                        && !ctx.pair_of.contains_key(&k)
-                    {
-                        let nxt_t = h.rows[k].text().trim();
-                        if p.is_decl_break(nxt_t) {
-                            break;
-                        }
-                        let is_closing = p.is_expression_close(nxt_t)
-                            || p.is_block_close(nxt_t)
-                            || del_text.trim_end().ends_with(nxt_t);
-                        let is_param_or_item = nxt_t.ends_with(',')
-                            || nxt_t.ends_with('(')
-                            || nxt_t.ends_with('{')
-                            || nxt_t.ends_with('[')
-                            || p.is_comment_line(nxt_t);
-                        let is_continuation = p.is_continuation_line(nxt_t);
+                    if opens_delim {
+                        while k < h.rows.len()
+                            && matches!(h.rows[k], Row::Add(_))
+                            && !ctx.pair_of.contains_key(&k)
+                        {
+                            let nxt_t = h.rows[k].text().trim();
+                            if p.is_decl_break(nxt_t) {
+                                break;
+                            }
+                            let is_closing = p.is_expression_close(nxt_t)
+                                || p.is_block_close(nxt_t)
+                                || del_text.trim_end().ends_with(nxt_t);
+                            let is_param_or_item = nxt_t.ends_with(',')
+                                || nxt_t.ends_with('(')
+                                || nxt_t.ends_with('{')
+                                || nxt_t.ends_with('[')
+                                || p.is_comment_line(nxt_t);
+                            let is_continuation = p.is_continuation_line(nxt_t);
 
-                        if is_closing {
-                            next_adds.push(k);
-                            break;
-                        } else if is_param_or_item || is_continuation {
-                            next_adds.push(k);
-                            k += 1;
-                        } else {
-                            break;
+                            if is_closing {
+                                next_adds.push(k);
+                                break;
+                            } else if is_param_or_item || is_continuation {
+                                next_adds.push(k);
+                                k += 1;
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
@@ -331,10 +417,12 @@ pub fn pass_assemble_mods(
             }
 
             let mod_row = Row::Mod {
-                old_line: DelLine::new(r.old_line_num().unwrap(), del_text),
+                old_line: DelLine::new(first_old_num, del_text),
                 new_line: AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans),
             };
             out.push(mod_row);
+        } else if collapse_absorbed_dels.contains(&ri) {
+            continue;
         } else {
             kept_dels.push(ri);
         }

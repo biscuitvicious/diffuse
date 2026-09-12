@@ -213,6 +213,7 @@ pub fn dp_pairing(
         .collect();
 
     let mut pair_of: FxHashMap<usize, usize> = FxHashMap::default();
+    let mut collapse_blocks: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
     let mut arena = super::dp::DpScratchArena::default();
 
     for seg in partition_hunk_segments(h, old_content, new_content, profile) {
@@ -288,6 +289,23 @@ pub fn dp_pairing(
                         && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
                     {
                         pair_of.insert(ga, gd);
+                        let mut block_dels = Vec::with_capacity(*k);
+                        let mut all_valid = true;
+                        for offset in 0..*k {
+                            if let Some(d) = global_del(oi + offset) {
+                                if guards.contains(&d) || h.rows[d].is_moved() {
+                                    all_valid = false;
+                                    break;
+                                }
+                                block_dels.push(d);
+                            } else {
+                                all_valid = false;
+                                break;
+                            }
+                        }
+                        if all_valid && block_dels.len() == *k {
+                            collapse_blocks.insert(ga, block_dels);
+                        }
                     }
                     oi += k;
                     ni += 1;
@@ -301,5 +319,6 @@ pub fn dp_pairing(
         del_runs,
         run_of,
         del_ids,
+        collapse_blocks,
     }
 }

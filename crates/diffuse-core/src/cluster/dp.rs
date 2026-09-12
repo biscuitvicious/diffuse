@@ -422,6 +422,14 @@ fn block_lcs_fast_precomputed(
     }
     let mut matched = 0usize;
     let mut line_matched_counts = [0usize; MAX_BLOCK_K + 1];
+    let mut line_matched_alnum = [0usize; MAX_BLOCK_K + 1];
+    let mut line_has_alnum = [false; MAX_BLOCK_K + 1];
+    for (&id, &(abs_row, _)) in block_ids.iter().zip(block_coords.iter()) {
+        let li = (abs_row as usize).saturating_sub(start_row);
+        if li < line_has_alnum.len() && id_alnum[id as usize] {
+            line_has_alnum[li] = true;
+        }
+    }
     let mut head = None;
     let mut i = 0;
     let mut j = 0;
@@ -454,6 +462,9 @@ fn block_lcs_fast_precomputed(
             matched += block_token_chars[j];
             if li < line_matched_counts.len() {
                 line_matched_counts[li] += 1;
+                if id_alnum[block_ids[j] as usize] {
+                    line_matched_alnum[li] += 1;
+                }
             }
             if i == 0 && head.is_none() {
                 head = Some(li);
@@ -490,7 +501,7 @@ fn block_lcs_fast_precomputed(
     let mut moved_lines = 0usize;
     let mut lines_with_matches = 0usize;
     for (li, &count) in line_matched_counts[..k].iter().enumerate() {
-        if count == 0 {
+        if count == 0 || (line_has_alnum[li] && line_matched_alnum[li] == 0) {
             return (0, 0, 0);
         }
         lines_with_matches += 1;

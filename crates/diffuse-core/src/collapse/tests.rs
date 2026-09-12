@@ -280,15 +280,15 @@ fn reflow_pairing_first_del() {
     assert_eq!(m.kind(), RowKind::Mod);
     assert_eq!(
         m.del_text(),
-        Some("        self.resolved_layers"),
-        "the first del pairs"
+        Some("        self.resolved_layers.iter().any(|l| l.path().join(sub_path).is_dir())"),
+        "the collapsed del lines pair into unified old text"
     );
     let spans = m.spans().expect("spans");
     assert_eq!(spans.del, vec![(13, 22)], "the resolved_ strike only");
     assert_eq!(
         spans.add,
-        vec![(19, 68)],
-        "the appended method chain is marked added"
+        Vec::<(usize, usize)>::new(),
+        "pure deletion mod: resolved_ strike only, method chain is shared context"
     );
     let runs = crate::merge::merged_runs(m);
     assert_eq!(crate::merge::project_reverse(&runs), m.del_text().unwrap());
@@ -324,8 +324,8 @@ fn reflow_pairing_first_del() {
     assert_eq!(spans2.del, vec![(22, 31)], "the resolved_ strike");
     assert_eq!(
         spans2.add,
-        vec![(44, 76)],
-        "the appended method chain is marked added"
+        Vec::<(usize, usize)>::new(),
+        "pure deletion mod: resolved_ strike only, method chain is shared context"
     );
     let runs2 = crate::merge::merged_runs(m2);
     assert_eq!(
@@ -1679,4 +1679,74 @@ fn test_palette_tweaks_render_txt_ansi_pair() {
     assert_eq!(c[0].kind(), RowKind::Del);
     assert_eq!(c[1].kind(), RowKind::Add);
     assert!(c.iter().all(|r| !matches!(r, Row::Mod { .. })));
+}
+
+#[test]
+fn test_multiline_to_single_line_collapse_reflow() {
+    let old_dels = vec![
+        row(
+            RowKind::Del,
+            "pub(crate) fn is_statement_start(",
+            None,
+            Some(512),
+        ),
+        row(RowKind::Del, "    text: &str,", None, Some(513)),
+        row(
+            RowKind::Del,
+            "    profile: Option<&crate::syntax::profile::LangProfile>,",
+            None,
+            Some(514),
+        ),
+        row(RowKind::Del, ") -> bool {", None, Some(515)),
+    ];
+    let new_adds = vec![row(
+        RowKind::Add,
+        "pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> bool {",
+        Some(515),
+        None,
+    )];
+
+    let mut rows = old_dels;
+    rows.extend(new_adds);
+    let h = hunk(rows);
+    let profile = lang_profile("rust");
+
+    let c = collapse_hunk_rows(&h, None, None, profile);
+
+    // Assert: exactly 1 Mod row, 0 leftover Del rows
+    assert_eq!(c.len(), 1, "Expected 1 collapsed Mod row, got: {:?}", c);
+    assert_eq!(c[0].kind(), RowKind::Mod);
+    assert_eq!(c[0].old_line(), Some(512));
+    assert_eq!(c[0].new_line(), Some(515));
+
+    // Verify subword runs: crate::syntax::profile:: must be struck out,
+    // profile: and -> bool common
+    let runs = crate::merge::merged_runs(&c[0]);
+    let struck: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == crate::merge::RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    assert!(
+        struck
+            .iter()
+            .any(|s| s.contains("crate::syntax::profile::")),
+        "Expected crate::syntax::profile:: to be struck out in the Mod row, got struck: {:?}",
+        struck
+    );
+    let common: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == crate::merge::RunKind::Common)
+        .map(|r| r.text)
+        .collect();
+    assert!(
+        common.iter().any(|s| s.contains("profile: Option<&")),
+        "Expected profile: Option<& to be shared context, got common: {:?}",
+        common
+    );
+    assert!(
+        common.iter().any(|s| s.contains("-> bool {")),
+        "Expected -> bool {{ to be shared context, got common: {:?}",
+        common
+    );
 }
