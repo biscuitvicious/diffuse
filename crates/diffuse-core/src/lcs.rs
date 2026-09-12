@@ -1151,67 +1151,8 @@ pub fn word_spans_with_profile_and_cap(
     profile: Option<&LangProfile>,
     cap: usize,
 ) -> WordSpans {
-    let ot: Vec<&str> = tokenize_line(old_text).collect();
-    let nt: Vec<&str> = tokenize_line(new_text).collect();
-    // Cap: long lines fall back to whole-line highlighting.
-    if ot.len() * nt.len() > cap {
-        if old_text == new_text {
-            return WordSpans::default();
-        }
-        return WordSpans {
-            del: vec![(0, char_len(old_text))],
-            add: vec![(0, char_len(new_text))],
-        };
-    }
-    let anchors = unique_token_anchors(&ot, &nt, profile);
-    let has_anchors = !anchors.is_empty();
-    let span = tracing::Span::current();
-    let pairs = if has_anchors {
-        span.record("anchors", tracing::field::debug(&anchors));
-        span.record("strategy", "anchored");
-        lcs_pairs_anchored(&ot, &nt, &anchors)
-    } else {
-        span.record("strategy", "raw");
-        raw_lcs_pairs(&ot, &nt)
-    };
-    let mut matched_old = FxHashSet::default();
-    let mut matched_new = FxHashSet::default();
-    for (o, n) in &pairs {
-        matched_old.insert(*o);
-        matched_new.insert(*n);
-    }
-    // Mostly-different pair (e.g. one line rewritten as another): the few
-    // coincidentally-shared words ("the", "a", "(") would leave gaps in a
-    // line that reads as fully changed — treat the whole line as one span.
-    // The threshold is low: a rename like `self.resolved_layers` →
-    // `self.layers.iter().any(…)` shares the meaningful `self.`+`layers`
-    // run (0.28) and must stay INLINE — `self.` + ~~resolved_~~ + `layers`
-    // + the addition — not the whole-line blow-up.
-    let matched_chars: usize = pairs.values().map(|j| char_len(nt[*j])).sum();
-
-    let ratio = if !new_text.is_empty() {
-        matched_chars as f64 / char_len(new_text) as f64
-    } else {
-        0.0
-    };
-    span.record("matched_chars", matched_chars);
-    span.record("ratio", ratio);
-
-    let res = if !has_anchors && ratio < 0.25 {
-        tracing::debug!(
-            ratio,
-            "Subword match ratio below threshold, falling back to whole-line diff"
-        );
-        WordSpans {
-            del: vec![(0, char_len(old_text))],
-            add: vec![(0, char_len(new_text))],
-        }
-    } else {
-        WordSpans {
-            del: spans_from(old_text, &ot, &matched_old),
-            add: spans_from(new_text, &nt, &matched_new),
-        }
-    };
+    let tape = crate::tape::AlignmentTape::from_texts_with_cap(old_text, new_text, profile, cap);
+    let res = tape.to_spans();
 
     crate::ensure!(
         res.del
