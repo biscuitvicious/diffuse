@@ -566,8 +566,87 @@ fn is_path_dot(slice: &[&str], prev: &[&str], next: Option<&str>, idx: usize) ->
 }
 
 #[inline]
+fn is_path_boundary_delim(tok: &str) -> bool {
+    matches!(
+        tok,
+        "`" | "\"" | "'" | "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">" | "," | ";"
+    )
+}
+
+fn path_or_file_root_and_stem<'a>(
+    slice: &[&'a str],
+    idx: usize,
+) -> Option<(Option<&'a str>, &'a str)> {
+    if idx >= slice.len() || token_is_ws(slice[idx]) || is_path_boundary_delim(slice[idx]) {
+        return None;
+    }
+    let mut start = idx;
+    while start > 0 {
+        let prev = slice[start - 1];
+        if token_is_ws(prev) || is_path_boundary_delim(prev) {
+            break;
+        }
+        start -= 1;
+    }
+    let mut end = idx + 1;
+    while end < slice.len() {
+        let next = slice[end];
+        if token_is_ws(next) || is_path_boundary_delim(next) {
+            break;
+        }
+        end += 1;
+    }
+
+    let word_slice = &slice[start..end];
+    let has_sep = word_slice
+        .iter()
+        .any(|&tok| tok.contains('/') || tok.contains('\\'));
+
+    if has_sep {
+        let root = word_slice[0];
+        let last_sep_idx = word_slice
+            .iter()
+            .rposition(|&tok| tok.contains('/') || tok.contains('\\'))
+            .unwrap();
+
+        let after_sep = &word_slice[last_sep_idx + 1..];
+        let stem = if after_sep.is_empty() {
+            if last_sep_idx > 0 {
+                word_slice[last_sep_idx - 1]
+            } else {
+                root
+            }
+        } else {
+            let dot_pos = after_sep.iter().position(|&tok| tok == ".");
+            if let Some(dp) = dot_pos {
+                if dp > 0 {
+                    after_sep[dp - 1]
+                } else {
+                    after_sep[0]
+                }
+            } else {
+                after_sep[0]
+            }
+        };
+        Some((Some(root), stem))
+    } else {
+        // No separator: check if it's a filename with extension (e.g.
+        // "install.sh")
+        let dot_pos = word_slice.iter().position(|&tok| tok == ".");
+        if let Some(dp) = dot_pos
+            && dp > 0
+            && dp + 1 < word_slice.len()
+            && is_file_extension(word_slice[dp + 1])
+        {
+            return Some((None, word_slice[dp - 1]));
+        }
+        None
+    }
+}
+
+#[inline]
 #[allow(clippy::too_many_arguments)]
-fn tokens_can_match(
+pub(crate) fn tokens_can_match(
     a: &[&str],
     b: &[&str],
     prev_a: &[&str],
@@ -578,6 +657,16 @@ fn tokens_can_match(
     j: usize,
 ) -> bool {
     if a[i] != b[j] {
+        return false;
+    }
+
+    let a_path = path_or_file_root_and_stem(a, i);
+    let b_path = path_or_file_root_and_stem(b, j);
+    if let (Some((ra, sa)), Some((rb, sb))) = (a_path, b_path)
+        && (ra.is_some() || rb.is_some())
+        && ra != rb
+        && sa != sb
+    {
         return false;
     }
     if a[i] == "." {

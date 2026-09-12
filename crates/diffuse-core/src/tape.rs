@@ -559,7 +559,99 @@ impl<'a> AlignmentTape<'a> {
             emit_gap(&mut tape, old_tok_idx, ot.len(), new_tok_idx, nt.len());
         }
 
+        tape.enforce_container_coherence(old_text, new_text);
         tape
+    }
+
+    /// Enforces structural container coherence: inside a pair of matching
+    /// delimiters (such as inline code backticks `` `...` ``), if the interior
+    /// contains multiple fragmented edit points (alternating edits separated by
+    /// common `Keep` chunks), coalesces the interior into an atomic `Strike`
+    /// and `Fill`, preserving the enclosing container delimiters.
+    pub fn enforce_container_coherence(&mut self, old_text: &'a str, new_text: &'a str) {
+        let mut i = 0;
+        while i < self.chunks.len() {
+            if self.chunks[i] == TapeChunk::Keep("`") {
+                let mut j = i + 1;
+                while j < self.chunks.len() && self.chunks[j] != TapeChunk::Keep("`") {
+                    j += 1;
+                }
+                if j < self.chunks.len() {
+                    let mut edit_groups = 0;
+                    let mut in_edit = false;
+                    for chunk in &self.chunks[i + 1..j] {
+                        match chunk {
+                            TapeChunk::Strike(_) | TapeChunk::Fill(_) => {
+                                if !in_edit {
+                                    edit_groups += 1;
+                                    in_edit = true;
+                                }
+                            }
+                            TapeChunk::Keep(_) => {
+                                in_edit = false;
+                            }
+                            TapeChunk::Relocate { .. } => {}
+                        }
+                    }
+
+                    if edit_groups >= 2 {
+                        let mut old_pos = 0usize;
+                        let mut new_pos = 0usize;
+                        for chunk in &self.chunks[..=i] {
+                            match chunk {
+                                TapeChunk::Keep(s) => {
+                                    old_pos += s.len();
+                                    new_pos += s.len();
+                                }
+                                TapeChunk::Strike(s) | TapeChunk::Relocate { text: s, .. } => {
+                                    old_pos += s.len();
+                                }
+                                TapeChunk::Fill(s) => {
+                                    new_pos += s.len();
+                                }
+                            }
+                        }
+                        let old_start = old_pos;
+                        let new_start = new_pos;
+
+                        for chunk in &self.chunks[i + 1..j] {
+                            match chunk {
+                                TapeChunk::Keep(s) => {
+                                    old_pos += s.len();
+                                    new_pos += s.len();
+                                }
+                                TapeChunk::Strike(s) | TapeChunk::Relocate { text: s, .. } => {
+                                    old_pos += s.len();
+                                }
+                                TapeChunk::Fill(s) => {
+                                    new_pos += s.len();
+                                }
+                            }
+                        }
+                        let old_end = old_pos;
+                        let new_end = new_pos;
+
+                        let old_inner = &old_text[old_start..old_end];
+                        let new_inner = &new_text[new_start..new_end];
+
+                        if !old_inner.contains('`') && !new_inner.contains('`') {
+                            let mut replacement = Vec::new();
+                            if !old_inner.is_empty() {
+                                replacement.push(TapeChunk::Strike(old_inner));
+                            }
+                            if !new_inner.is_empty() {
+                                replacement.push(TapeChunk::Fill(new_inner));
+                            }
+                            let rep_len = replacement.len();
+                            self.chunks.splice(i + 1..j, replacement);
+                            i = i + 1 + rep_len;
+                            continue;
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
     }
 }
 

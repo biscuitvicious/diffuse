@@ -332,6 +332,9 @@ pub fn multi_token_phrase_anchors(
 
             let a_start = i + start;
             let b_start = j + start;
+            if !crate::lcs::tokens_can_match(a, b, &[], &[], None, None, a_start, b_start) {
+                continue;
+            }
             let phrase_slice = &a[a_start..a_start + trimmed_len];
 
             // Verify unique occurrence in both token slices
@@ -460,7 +463,10 @@ pub fn entropy_anchors(
         {
             let is_op = profile.is_some_and(|p| p.is_operator_anchor(t));
             let is_alnum = crate::lcs::token_is_alnum(t);
-            if (is_alnum || is_op) && !is_function_word(t) {
+            if (is_alnum || is_op)
+                && !is_function_word(t)
+                && crate::lcs::tokens_can_match(a, b, &[], &[], None, None, idx_a, idx_b)
+            {
                 let info = token_self_information(t, profile);
                 if info >= MIN_SINGLE_TOKEN_ENTROPY || is_op {
                     candidates.push((idx_a, idx_b));

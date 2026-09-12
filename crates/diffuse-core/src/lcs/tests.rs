@@ -703,10 +703,10 @@ fn test_path_dot_with_slashes_unmatched_extension() {
     let old = "load(\"dir/foo.custom1\");";
     let new = "load(\"other/bar.custom2\");";
     let ws = word_spans(old, new);
-    // "/" matches, but neither "foo"=="bar" nor "custom1"=="custom2", so the
-    // dot does not match
-    assert_eq!(ws.del, vec![(6, 9), (10, 21)]); // "dir", "foo.custom1"
-    assert_eq!(ws.add, vec![(6, 11), (12, 23)]); // "other", "bar.custom2"
+    // Neither root nor stem matches, so the whole path is replaced without
+    // matching an isolated slash or dot:
+    assert_eq!(ws.del, vec![(6, 21)]); // "dir/foo.custom1"
+    assert_eq!(ws.add, vec![(6, 23)]); // "other/bar.custom2"
 }
 
 #[test]

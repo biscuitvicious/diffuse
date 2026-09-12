@@ -151,3 +151,103 @@ fn test_alignment_tape_reversibility_property() {
         );
     }
 }
+
+#[test]
+fn test_alignment_tape_backtick_path_not_fragmented() {
+    let old = "5. **Install the extension** — `extension/pi/scripts/install.sh`";
+    let new = "5. **Install (dev by default)** — `./scripts/check.sh` already installs";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+
+    // Check that inside the backtick delimiters, the path is NOT fragmented
+    // into multiple pieces like `extension/pi/` + `./` + `scripts/` + `install`
+    // + `check` + `.sh`. It must be: `Keep("`")`,
+    // `Strike("extension/pi/scripts/install.sh")`,
+    // `Fill("./scripts/check.sh")`, `Keep("`")`
+    let old_path_run = runs
+        .iter()
+        .find(|r| r.text == "extension/pi/scripts/install.sh");
+    assert!(
+        old_path_run.is_some(),
+        "Old path must be an intact Strike chunk, got: {:#?}",
+        runs
+    );
+    assert_eq!(old_path_run.unwrap().kind, RunKind::Del);
+
+    let new_path_run = runs.iter().find(|r| r.text == "./scripts/check.sh");
+    assert!(
+        new_path_run.is_some(),
+        "New path must be an intact Fill chunk, got: {:#?}",
+        runs
+    );
+    assert_eq!(new_path_run.unwrap().kind, RunKind::Add);
+}
+
+#[test]
+fn test_alignment_tape_backtick_clean_single_edits_preserved() {
+    // Flag insertion inside backticks:
+    let old1 = "- `cargo clippy -- -D warnings`";
+    let new1 = "- `cargo +nightly clippy -- -D warnings`";
+    let tape1 = AlignmentTape::from_texts(old1, new1, None);
+    let runs1 = tape1.to_merged_runs();
+    let add_run = runs1.iter().find(|r| r.kind == RunKind::Add);
+    assert!(add_run.is_some());
+    assert_eq!(add_run.unwrap().text, "+nightly ");
+
+    // Prefix deletion inside backticks:
+    let old2 = "/// `resolved_layers` is populated";
+    let new2 = "/// `layers` is populated";
+    let tape2 = AlignmentTape::from_texts(old2, new2, None);
+    let runs2 = tape2.to_merged_runs();
+    let del_run = runs2.iter().find(|r| r.kind == RunKind::Del);
+    assert!(del_run.is_some());
+    assert_eq!(del_run.unwrap().text, "resolved_");
+}
+
+#[test]
+fn test_paths_with_different_roots_and_basenames_not_fragmented() {
+    let old = "Run extension/pi/scripts/install.sh now";
+    let new = "Run ./scripts/check.sh now";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+
+    // Intermediate directory `scripts` or extension `.sh` should NOT match
+    // across two paths whose root directory and filename both differ.
+    let scripts_common = runs
+        .iter()
+        .any(|r| r.kind == RunKind::Common && r.text.contains("scripts"));
+    assert!(
+        !scripts_common,
+        "Intermediate scripts directory should not match across different paths: {:#?}",
+        runs
+    );
+}
+
+#[test]
+fn test_alignment_tape_backtick_fragmented_code_coalesced() {
+    let old = "Use `foo --option bar` command";
+    let new = "Use `qux --option baz` command";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+
+    // The interior changed both prefix and suffix (`foo` and `bar` -> `qux` and
+    // `baz`), with `--option` in the middle.
+    // Inside backticks, this fragmented edit must coalesce into an intact
+    // Strike and Fill: `Keep("`")`, `Strike("foo --option bar")`,
+    // `Fill("qux --option baz")`, `Keep("`")`.
+    let old_cmd = runs.iter().find(|r| r.text == "foo --option bar");
+    assert!(
+        old_cmd.is_some(),
+        "Old command must be intact Strike: {:#?}",
+        runs
+    );
+    assert_eq!(old_cmd.unwrap().kind, RunKind::Del);
+
+    let new_cmd = runs.iter().find(|r| r.text == "qux --option baz");
+    assert!(
+        new_cmd.is_some(),
+        "New command must be intact Fill: {:#?}",
+        runs
+    );
+    assert_eq!(new_cmd.unwrap().kind, RunKind::Add);
+}
