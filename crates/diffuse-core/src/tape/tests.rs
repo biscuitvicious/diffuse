@@ -251,3 +251,25 @@ fn test_alignment_tape_backtick_fragmented_code_coalesced() {
     );
     assert_eq!(new_cmd.unwrap().kind, RunKind::Add);
 }
+
+#[test]
+fn test_theme_table_code_span_alignment() {
+    let old = "| `--theme <NAME>` | Color theme (`magic` default, `default`, etc.) |";
+    let new = "| `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+
+    assert_eq!(runs.len(), 6);
+    assert_eq!(runs[0].kind, RunKind::Common);
+    assert_eq!(runs[0].text, "| `--theme <NAME>` | Color theme (");
+    assert_eq!(runs[1].kind, RunKind::Del);
+    assert_eq!(runs[1].text, "`magic` default, ");
+    assert_eq!(runs[2].kind, RunKind::Common);
+    assert_eq!(runs[2].text, "`default`, ");
+    assert_eq!(runs[3].kind, RunKind::Del);
+    assert_eq!(runs[3].text, "etc.");
+    assert_eq!(runs[4].kind, RunKind::Add);
+    assert_eq!(runs[4].text, "`dark`, `black`");
+    assert_eq!(runs[5].kind, RunKind::Common);
+    assert_eq!(runs[5].text, ") |");
+}

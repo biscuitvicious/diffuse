@@ -913,6 +913,7 @@ pub fn lcs_pairs_recursive(
                 pairs.insert(a_prev + si, b_prev + sj);
             }
         }
+
         for (k_a, k_b) in (back_a..=ai).zip(back_b..=bi) {
             pairs.insert(k_a, k_b);
         }
@@ -972,6 +973,7 @@ pub fn lcs_pairs_anchored(
                 pairs.insert(a_prev + si, b_prev + sj);
             }
         }
+
         for (k_a, k_b) in (back_a..=ai).zip(back_b..=bi) {
             pairs.insert(k_a, k_b);
         }

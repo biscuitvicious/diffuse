@@ -276,6 +276,82 @@ pub fn is_anchor_content_token(t: &str, profile: Option<&LangProfile>) -> bool {
     is_alnum || is_op
 }
 
+#[inline]
+fn trim_to_balanced_boundaries(tokens: &[&str]) -> (usize, usize) {
+    if tokens.is_empty() {
+        return (0, 0);
+    }
+    let mut start = 0;
+    while start < tokens.len() && token_is_ws(tokens[start]) {
+        start += 1;
+    }
+    let mut end = tokens.len();
+    while end > start && token_is_ws(tokens[end - 1]) {
+        end -= 1;
+    }
+
+    // Trim leading separators/closing delimiters (e.g. '.', ',', ';', ')', ']',
+    // '}')
+    while start < end {
+        let t = tokens[start];
+        if matches!(t, "." | "," | ";" | ":" | ")" | "]" | "}" | ">") {
+            start += 1;
+            while start < end && token_is_ws(tokens[start]) {
+                start += 1;
+            }
+        } else {
+            break;
+        }
+    }
+
+    let mut stack: Vec<&str> = Vec::new();
+    let mut best_end = start;
+
+    for (offset, &t) in tokens[start..end].iter().enumerate() {
+        let idx = start + offset;
+        match t {
+            "(" | "[" | "{" => {
+                stack.push(t);
+            }
+            ")" => {
+                if stack.last() == Some(&"(") {
+                    stack.pop();
+                } else {
+                    break;
+                }
+            }
+            "]" => {
+                if stack.last() == Some(&"[") {
+                    stack.pop();
+                } else {
+                    break;
+                }
+            }
+            "}" => {
+                if stack.last() == Some(&"{") {
+                    stack.pop();
+                } else {
+                    break;
+                }
+            }
+            "\"" | "'" | "`" => {
+                if stack.last() == Some(&t) {
+                    stack.pop();
+                } else {
+                    stack.push(t);
+                }
+            }
+            _ => {}
+        }
+
+        if stack.is_empty() && !token_is_ws(t) && !matches!(t, "." | "," | ";" | ":") {
+            best_end = idx + 1;
+        }
+    }
+
+    (start, best_end)
+}
+
 /// Identifies maximal multi-token phrase landmarks ($k \ge 2$) shared between
 /// token slices `a` and `b`. Returns pairs of matching token indices `(a_idx,
 /// b_idx)`.
@@ -313,20 +389,17 @@ pub fn multi_token_phrase_anchors(
                 len += 1;
             }
 
-            // Phrase boundaries must start and end on content tokens so they do
-            // not steal delimiters or whitespace from adjacent
-            // deletions or additions.
-            let mut start = 0;
-            while start < len && !is_anchor_content_token(a[i + start], profile) {
-                start += 1;
-            }
-            let mut end = len;
-            while end > start && !is_anchor_content_token(a[i + end - 1], profile) {
-                end -= 1;
-            }
+            let (rel_start, rel_end) = trim_to_balanced_boundaries(&a[i..i + len]);
+            let start = rel_start;
+            let end = rel_end;
 
             let trimmed_len = end - start;
             if trimmed_len < 2 {
+                continue;
+            }
+
+            let has_content = (start..end).any(|idx| is_anchor_content_token(a[i + idx], profile));
+            if !has_content {
                 continue;
             }
 
@@ -417,13 +490,12 @@ pub fn multi_token_phrase_anchors(
     }
     selected.reverse();
 
-    // Emit only content tokens within selected phrases as anchors. Punctuation
-    // and whitespace within phrases are matched by LCS between anchor points.
+    // Emit all non-whitespace tokens within selected phrases as anchors.
     let mut result = Vec::new();
     for phrase in selected {
         for offset in 0..phrase.len {
             let t = a[phrase.a_start + offset];
-            if is_anchor_content_token(t, profile) {
+            if !token_is_ws(t) {
                 result.push((phrase.a_start + offset, phrase.b_start + offset));
             }
         }
@@ -439,6 +511,8 @@ pub fn entropy_anchors(
     b: &[&str],
     profile: Option<&LangProfile>,
 ) -> Vec<(usize, usize)> {
+    let phrase_anchors = multi_token_phrase_anchors(a, b, profile);
+
     let mut a_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
     for (i, &t) in a.iter().enumerate() {
         if !token_is_ws(t) && !is_delim(t) {
@@ -455,7 +529,21 @@ pub fn entropy_anchors(
         }
     }
 
-    let mut candidates = Vec::new();
+    let is_compatible_with_phrases = |cand_a: usize, cand_b: usize| -> bool {
+        for &(pa, pb) in &phrase_anchors {
+            if cand_a == pa || cand_b == pb {
+                return false;
+            }
+            if (cand_a < pa && cand_b > pb) || (cand_a > pa && cand_b < pb) {
+                return false;
+            }
+        }
+        true
+    };
+
+    let mut candidates = Vec::with_capacity(phrase_anchors.len() + 16);
+    candidates.extend_from_slice(&phrase_anchors);
+
     for (&t, &(count_a, idx_a)) in &a_counts {
         if count_a == 1
             && let Some(&(count_b, idx_b)) = b_counts.get(t)
@@ -465,6 +553,7 @@ pub fn entropy_anchors(
             let is_alnum = crate::lcs::token_is_alnum(t);
             if (is_alnum || is_op)
                 && !is_function_word(t)
+                && is_compatible_with_phrases(idx_a, idx_b)
                 && crate::lcs::tokens_can_match(a, b, &[], &[], None, None, idx_a, idx_b)
             {
                 let info = token_self_information(t, profile);
