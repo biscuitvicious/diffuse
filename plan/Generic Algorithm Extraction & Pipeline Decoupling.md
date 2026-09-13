@@ -1,7 +1,7 @@
 # Generic Algorithm Extraction & Pipeline Decoupling
 
 - [x] Phase 1: Landmark Anchoring & Entropy Engines (`Mums` & `EntropyRanker`)
-- [ ] Phase 2: Formal Container Balancing (`DyckBalancer` & Sequence Geometry)
+- [x] Phase 2: Formal Container Balancing (`DyckBalancer` & Sequence Geometry)
 - [ ] Phase 3: Gotoh Affine Gap Aligner with Zero-Allocation Workspace
 - [ ] Phase 4: Generic 2D Multi-Objective Block Transformation Solver (`BlockAligner`)
 - [ ] Phase 5: Bipartite Matching & Spatial Coalescence Engine (`BipartiteMatcher`)
@@ -123,10 +123,10 @@ pub trait DiffuseSequenceExt: Iterator + Sized {
 
 ## 2. Phase 2 — Formal Container Balancing & Sequence Geometry
 
-- [ ] Extract Dyck Language pushdown automaton into `crates/diffuse-core/src/algo/dyck.rs`.
-- [ ] Create `DelimiterClassifier<T>` trait and lazy `DyckBalanced<I, C>` iterator adapter.
-- [ ] Decouple bracket/quote balancing from token strings using stack-allocated small-vector storage.
-- [ ] Verify 100% branch coverage for container boundary trimming.
+- [x] Extract Dyck Language pushdown automaton into `crates/diffuse-core/src/algo/dyck.rs`.
+- [x] Create `DelimiterClassifier<T>` trait and lazy `DyckBalanced<I, C>` iterator adapter.
+- [x] Decouple bracket/quote balancing from token strings using stack-allocated small-vector storage.
+- [x] Verify 100% branch coverage for container boundary trimming.
 
 ### Problem
 `trim_to_balanced_boundaries` in [`crates/diffuse-core/src/token.rs`](crates/diffuse-core/src/token.rs) embeds hardcoded string checks (`"("`, `"]"`, `"\""`, etc.) and allocates a dynamic `Vec<&str>` stack on every phrase candidate check.

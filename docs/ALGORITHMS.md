@@ -206,7 +206,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Noam Chomsky and Marcel-Paul Schützenberger (1963). *"The Algebraic Theory of Context-Free Languages"*. In: Computer Programming and Formal Systems, Studies in Logic and the Foundations of Mathematics, 35, 118–161.  
   [ScienceDirect DOI:10.1016/S0049-237X(08)72019-6](https://doi.org/10.1016/S0049-237X(08)72019-6)
 - **Location**:
-  [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`trim_to_balanced_boundaries`)
+  [`crates/diffuse-core/src/algo/dyck.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/dyck.rs) (`trim_balanced_boundaries`, `track_enclosing_containers`, `DyckBalanced`, `SmallStack`, `DelimiterClassifier`, `AsciiDelimiterClassifier`); consumed in [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`trim_to_balanced_boundaries`, `compute_token_containers`).
 - **Why It Is Used**:
   Greedy phrase matching across boundaries frequently captures opening delimiters (e.g. `(` or backtick `` ` ``) without their closing partners, or vice-versa. Slicing open an atomic container breaks the structural semantics of code expressions. The Dyck language formalizes well-nested brackets ($\mathcal{D}_n$). A deterministic pushdown automaton verifies container parity and trims dangling boundaries.
 - **For What It Is Used**:

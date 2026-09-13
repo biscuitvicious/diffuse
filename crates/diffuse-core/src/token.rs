@@ -278,78 +278,7 @@ pub fn is_anchor_content_token(t: &str, profile: Option<&LangProfile>) -> bool {
 
 #[inline]
 fn trim_to_balanced_boundaries(tokens: &[&str]) -> (usize, usize) {
-    if tokens.is_empty() {
-        return (0, 0);
-    }
-    let mut start = 0;
-    while start < tokens.len() && token_is_ws(tokens[start]) {
-        start += 1;
-    }
-    let mut end = tokens.len();
-    while end > start && token_is_ws(tokens[end - 1]) {
-        end -= 1;
-    }
-
-    // Trim leading separators/closing delimiters (e.g. '.', ',', ';', ')', ']',
-    // '}')
-    while start < end {
-        let t = tokens[start];
-        if matches!(t, "." | "," | ";" | ":" | ")" | "]" | "}" | ">") {
-            start += 1;
-            while start < end && token_is_ws(tokens[start]) {
-                start += 1;
-            }
-        } else {
-            break;
-        }
-    }
-
-    let mut stack: Vec<&str> = Vec::new();
-    let mut best_end = start;
-
-    for (offset, &t) in tokens[start..end].iter().enumerate() {
-        let idx = start + offset;
-        match t {
-            "(" | "[" | "{" => {
-                stack.push(t);
-            }
-            ")" => {
-                if stack.last() == Some(&"(") {
-                    stack.pop();
-                } else {
-                    break;
-                }
-            }
-            "]" => {
-                if stack.last() == Some(&"[") {
-                    stack.pop();
-                } else {
-                    break;
-                }
-            }
-            "}" => {
-                if stack.last() == Some(&"{") {
-                    stack.pop();
-                } else {
-                    break;
-                }
-            }
-            "\"" | "'" | "`" => {
-                if stack.last() == Some(&t) {
-                    stack.pop();
-                } else {
-                    stack.push(t);
-                }
-            }
-            _ => {}
-        }
-
-        if stack.is_empty() && !token_is_ws(t) && !matches!(t, "." | "," | ";" | ":") {
-            best_end = idx + 1;
-        }
-    }
-
-    (start, best_end)
+    crate::algo::trim_balanced_boundaries(tokens, &crate::algo::AsciiDelimiterClassifier)
 }
 
 /// Identifies maximal multi-token phrase landmarks ($k \ge 2$) shared between
@@ -465,8 +394,9 @@ pub fn multi_token_phrase_anchors(
 }
 
 /// Syntactic container enclosing a token (string literal or code span).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ContainerKind {
+    #[default]
     Backtick,
     DoubleQuote,
 }
@@ -475,7 +405,7 @@ pub enum ContainerKind {
 /// sequence.
 pub fn compute_token_containers(tokens: &[&str]) -> Vec<Option<ContainerKind>> {
     let mut result = Vec::with_capacity(tokens.len());
-    let mut stack: Vec<ContainerKind> = Vec::with_capacity(4);
+    let mut stack: crate::algo::SmallStack<ContainerKind, 8> = crate::algo::SmallStack::new();
 
     for &t in tokens {
         match t {

@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 pub mod bit_parallel;
 pub mod bounded_dp;
+pub mod dyck;
 pub mod entropy;
 pub mod hirschberg;
 pub mod hunt_szymanski;
@@ -22,6 +23,10 @@ pub mod prefix_dfa;
 
 pub use bit_parallel::BitParallelLcs;
 pub use bounded_dp::BoundedDpLcs;
+pub use dyck::{
+    AsciiDelimiterClassifier, DelimiterCategory, DelimiterClassifier, DiffuseDyckExt, DyckBalanced,
+    SmallStack, track_enclosing_containers, trim_balanced_boundaries,
+};
 pub use entropy::{DiffuseEntropyExt, EntropyFiltered, FrequencyRanker};
 pub use hirschberg::HirschbergLcs;
 pub use hunt_szymanski::HuntSzymanskiLcs;
