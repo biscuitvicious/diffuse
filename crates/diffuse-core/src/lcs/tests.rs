@@ -254,11 +254,29 @@ fn test_tokenize_line_parity_with_regex() {
         .unwrap();
         let mut out = Vec::new();
         let mut last = 0;
+        fn push_seg<'a>(out: &mut Vec<&'a str>, seg: &'a str) {
+            let bytes = seg.as_bytes();
+            let mut start = 0;
+            for i in 1..bytes.len() {
+                if (bytes[i - 1].is_ascii_lowercase() && bytes[i].is_ascii_uppercase())
+                    || (i + 1 < bytes.len()
+                        && bytes[i - 1].is_ascii_uppercase()
+                        && bytes[i].is_ascii_uppercase()
+                        && bytes[i + 1].is_ascii_lowercase())
+                {
+                    out.push(&seg[start..i]);
+                    start = i;
+                }
+            }
+            if start < seg.len() {
+                out.push(&seg[start..]);
+            }
+        }
         for m in re.find_iter(text) {
             if m.start() > last {
                 let seg = &text[last..m.start()];
                 if !seg.is_empty() {
-                    out.push(seg);
+                    push_seg(&mut out, seg);
                 }
             }
             let seg = m.as_str();
@@ -270,7 +288,7 @@ fn test_tokenize_line_parity_with_regex() {
         if last < text.len() {
             let seg = &text[last..];
             if !seg.is_empty() {
-                out.push(seg);
+                push_seg(&mut out, seg);
             }
         }
         out
@@ -303,6 +321,18 @@ fn test_tokenize_line_parity_with_regex() {
             case
         );
     }
+}
+
+#[test]
+fn test_tokenize_line_camel_case() {
+    let tokens: Vec<&str> = tokenize_line("mConfig XMLParser getUserName FxHashMap").collect();
+    assert_eq!(
+        tokens,
+        vec![
+            "m", "Config", " ", "XML", "Parser", " ", "get", "User", "Name", " ", "Fx", "Hash",
+            "Map"
+        ]
+    );
 }
 
 #[test]

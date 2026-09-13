@@ -188,6 +188,16 @@ pub fn for_each_token<'a>(text: &'a str, mut f: impl FnMut(&'a str)) {
                 _ => {
                     i += 1;
                     while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WORD {
+                        if bytes[i - 1].is_ascii_lowercase() && bytes[i].is_ascii_uppercase() {
+                            break;
+                        }
+                        if i + 1 < len
+                            && bytes[i - 1].is_ascii_uppercase()
+                            && bytes[i].is_ascii_uppercase()
+                            && bytes[i + 1].is_ascii_lowercase()
+                        {
+                            break;
+                        }
                         i += 1;
                     }
                     f(&text[start..i]);
@@ -237,15 +247,18 @@ pub fn for_each_token<'a>(text: &'a str, mut f: impl FnMut(&'a str)) {
             let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
             f(&text[start_byte..end_byte]);
         } else {
+            let mut prev_c = c;
             chars.next();
             while let Some(&(_, next_c)) = chars.peek() {
                 if is_ws_char(next_c)
                     || is_delim_char(next_c)
                     || is_op_char(next_c)
                     || next_c.is_ascii_digit()
+                    || (prev_c.is_lowercase() && next_c.is_uppercase())
                 {
                     break;
                 }
+                prev_c = next_c;
                 chars.next();
             }
             let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
@@ -295,6 +308,16 @@ impl<'a> Iterator for LineTokenizer<'a> {
                 }
                 _ => {
                     while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WORD {
+                        if bytes[i - 1].is_ascii_lowercase() && bytes[i].is_ascii_uppercase() {
+                            break;
+                        }
+                        if i + 1 < len
+                            && bytes[i - 1].is_ascii_uppercase()
+                            && bytes[i].is_ascii_uppercase()
+                            && bytes[i + 1].is_ascii_lowercase()
+                        {
+                            break;
+                        }
                         i += 1;
                     }
                 }
@@ -348,15 +371,18 @@ impl<'a> Iterator for LineTokenizer<'a> {
                 Some(&self.text[start..self.pos])
             } else {
                 let mut advance = c_len;
+                let mut prev_c = c;
                 for next_c in chars {
                     if is_ws_char(next_c)
                         || is_delim_char(next_c)
                         || is_op_char(next_c)
                         || next_c.is_ascii_digit()
+                        || (prev_c.is_lowercase() && next_c.is_uppercase())
                     {
                         break;
                     }
                     advance += next_c.len_utf8();
+                    prev_c = next_c;
                 }
                 let start = self.pos;
                 self.pos += advance;
@@ -402,6 +428,15 @@ pub fn unique_token_anchors(
 #[inline]
 pub(crate) fn is_subword_token(t: &str) -> bool {
     t == "_" || token_is_alnum(t)
+}
+
+#[inline]
+pub(crate) fn are_contiguous_subwords(t1: &str, t2: &str) -> bool {
+    t1.as_ptr() as usize + t1.len() == t2.as_ptr() as usize
+        && !token_is_ws(t1)
+        && !token_is_ws(t2)
+        && token_is_alnum(t1)
+        && token_is_alnum(t2)
 }
 
 #[inline]
@@ -616,10 +651,15 @@ pub fn raw_lcs_pairs_with_context(
             if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
                 let is_ws = token_is_ws(a[i]);
                 let next_rl = if is_ws { 0 } else { run_len[idx(i + 1, j + 1)] };
+                let is_subword_pair = i + 1 < n
+                    && j + 1 < m
+                    && are_contiguous_subwords(a[i], a[i + 1])
+                    && are_contiguous_subwords(b[j], b[j + 1]);
+                let subword_bonus = if is_subword_pair { 16 } else { 0 };
                 let run_bonus = if is_ws {
                     0
                 } else {
-                    CONTIG_BONUS + (next_rl.min(8) as i32) * 2
+                    CONTIG_BONUS + (next_rl.min(8) as i32) * 2 + subword_bonus
                 };
                 let next_m_val = m_matrix[idx(i + 1, j + 1)].saturating_add(run_bonus);
                 let next_x = x_matrix[idx(i + 1, j + 1)];
@@ -725,7 +765,7 @@ pub fn lcs_pairs_recursive(
     let mut pairs = FxHashMap::default();
     let mut a_prev = 0;
     let mut b_prev = 0;
-    for &(ai, bi) in &anchors {
+    for (anchor_idx, &(ai, bi)) in anchors.iter().enumerate() {
         let mut back_a = ai;
         let mut back_b = bi;
         while back_a > a_prev
@@ -736,6 +776,24 @@ pub fn lcs_pairs_recursive(
         {
             back_a -= 1;
             back_b -= 1;
+        }
+
+        let (next_limit_a, next_limit_b) = if let Some(&(nai, nbi)) = anchors.get(anchor_idx + 1) {
+            (nai, nbi)
+        } else {
+            (a.len(), b.len())
+        };
+
+        let mut fwd_a = ai;
+        let mut fwd_b = bi;
+        while fwd_a + 1 < next_limit_a
+            && fwd_b + 1 < next_limit_b
+            && are_contiguous_subwords(a[fwd_a], a[fwd_a + 1])
+            && are_contiguous_subwords(b[fwd_b], b[fwd_b + 1])
+            && a[fwd_a + 1] == b[fwd_b + 1]
+        {
+            fwd_a += 1;
+            fwd_b += 1;
         }
 
         if back_a > a_prev && back_b > b_prev {
@@ -755,11 +813,11 @@ pub fn lcs_pairs_recursive(
             }
         }
 
-        for (k_a, k_b) in (back_a..=ai).zip(back_b..=bi) {
+        for (k_a, k_b) in (back_a..=fwd_a).zip(back_b..=fwd_b) {
             pairs.insert(k_a, k_b);
         }
-        a_prev = ai + 1;
-        b_prev = bi + 1;
+        a_prev = fwd_a + 1;
+        b_prev = fwd_b + 1;
     }
     if a_prev < a.len() && b_prev < b.len() {
         let sub_prev_a = if a_prev == 0 { prev_a } else { &a[..a_prev] };
@@ -788,7 +846,7 @@ pub fn lcs_pairs_anchored(
     let mut pairs = FxHashMap::default();
     let mut a_prev = 0;
     let mut b_prev = 0;
-    for &(ai, bi) in anchors {
+    for (anchor_idx, &(ai, bi)) in anchors.iter().enumerate() {
         let mut back_a = ai;
         let mut back_b = bi;
         while back_a > a_prev
@@ -799,6 +857,24 @@ pub fn lcs_pairs_anchored(
         {
             back_a -= 1;
             back_b -= 1;
+        }
+
+        let (next_limit_a, next_limit_b) = if let Some(&(nai, nbi)) = anchors.get(anchor_idx + 1) {
+            (nai, nbi)
+        } else {
+            (a.len(), b.len())
+        };
+
+        let mut fwd_a = ai;
+        let mut fwd_b = bi;
+        while fwd_a + 1 < next_limit_a
+            && fwd_b + 1 < next_limit_b
+            && are_contiguous_subwords(a[fwd_a], a[fwd_a + 1])
+            && are_contiguous_subwords(b[fwd_b], b[fwd_b + 1])
+            && a[fwd_a + 1] == b[fwd_b + 1]
+        {
+            fwd_a += 1;
+            fwd_b += 1;
         }
 
         if back_a > a_prev && back_b > b_prev {
@@ -815,11 +891,11 @@ pub fn lcs_pairs_anchored(
             }
         }
 
-        for (k_a, k_b) in (back_a..=ai).zip(back_b..=bi) {
+        for (k_a, k_b) in (back_a..=fwd_a).zip(back_b..=fwd_b) {
             pairs.insert(k_a, k_b);
         }
-        a_prev = ai + 1;
-        b_prev = bi + 1;
+        a_prev = fwd_a + 1;
+        b_prev = fwd_b + 1;
     }
     if a_prev < a.len() && b_prev < b.len() {
         let sub_pairs = raw_lcs_pairs_with_context(

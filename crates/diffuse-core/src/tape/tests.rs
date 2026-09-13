@@ -315,4 +315,31 @@ fn test_ansi_and_digit_letter_boundary_subword_alignment() {
     assert_eq!(del_run2.text, "123");
     let add_run2 = runs2.iter().find(|r| r.kind == RunKind::Add).unwrap();
     assert_eq!(add_run2.text, "456");
+
+    // 173mConfig vs Config: Config must be Common
+    let old3 = "    assert!(md.contains(\"\\x1b[38;5;173mConfig\\x1b[39m\"));";
+    let new3 = "    assert!(md.contains(\"Config\"));";
+    let tape3 = AlignmentTape::from_texts(old3, new3, None);
+    let runs3 = tape3.to_merged_runs();
+    assert!(
+        runs3
+            .iter()
+            .any(|r| r.kind == RunKind::Common && r.text == "Config"),
+        "Config must be common context, got runs: {:#?}",
+        runs3
+    );
+}
+
+#[test]
+fn test_subword_cohesion_identifier_not_split_across_del() {
+    let old = "import { existsSync, readFileSync } from \"node:fs\";";
+    let new = "import { existsSync } from \"node:fs\";";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+    assert!(
+        runs.iter()
+            .any(|r| r.kind == RunKind::Common && r.text.contains("existsSync")),
+        "existsSync must remain intact as common context, got runs: {:#?}",
+        runs
+    );
 }
