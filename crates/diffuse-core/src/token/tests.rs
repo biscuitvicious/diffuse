@@ -142,3 +142,41 @@ fn test_entropy_anchors_agents_md_line_21() {
     assert_eq!(spans.del, vec![(25, 54)]);
     assert_eq!(spans.add, vec![(46, 70)]);
 }
+
+#[test]
+fn test_entropy_anchors_subword_not_anchored_to_standalone_token() {
+    let old = "    /// Resolve a theme by name (`\"magic\"`, `\"deep_black\"`, `\"legacy\"`).";
+    let new = "    /// Resolve a theme by name (`\"default\"`, `\"dark\"`, `\"black\"`).";
+    let ot: Vec<&str> = tokenize_line(old).collect();
+    let nt: Vec<&str> = tokenize_line(new).collect();
+    let anchors = entropy_anchors(&ot, &nt, None);
+
+    // "black" in old is a subword continuation of "deep_black" (preceded by
+    // "_"). In new, "black" is a standalone string literal.
+    // It must NOT be selected as a single-token anchor.
+    for &(oi, ni) in &anchors {
+        if ot[oi] == "black" {
+            panic!(
+                "Subword 'black' from 'deep_black' was falsely anchored to standalone 'black': ({oi}, {ni})"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_entropy_anchors_prose_word_not_anchored_to_code_span() {
+    let old = "    /// falling back to the default `magic` theme if unset or invalid.";
+    let new = "    /// falling back to `default` if unset or invalid.";
+    let ot: Vec<&str> = tokenize_line(old).collect();
+    let nt: Vec<&str> = tokenize_line(new).collect();
+    let anchors = entropy_anchors(&ot, &nt, None);
+
+    // "default" in old is a prose word outside backticks.
+    // In new, "default" is inside a code span `default`.
+    // It must NOT be anchored across container boundaries.
+    for &(oi, ni) in &anchors {
+        if ot[oi] == "default" {
+            panic!("Prose 'default' was falsely anchored to code-span 'default': ({oi}, {ni})");
+        }
+    }
+}

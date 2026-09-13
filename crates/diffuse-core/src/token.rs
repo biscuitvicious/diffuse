@@ -504,6 +504,47 @@ pub fn multi_token_phrase_anchors(
     result
 }
 
+/// Syntactic container enclosing a token (string literal or code span).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContainerKind {
+    Backtick,
+    DoubleQuote,
+}
+
+/// Computes the active enclosing container (if any) for each token in a
+/// sequence.
+pub fn compute_token_containers(tokens: &[&str]) -> Vec<Option<ContainerKind>> {
+    let mut result = Vec::with_capacity(tokens.len());
+    let mut stack: Vec<ContainerKind> = Vec::with_capacity(4);
+
+    for &t in tokens {
+        match t {
+            "`" => {
+                if stack.last() == Some(&ContainerKind::Backtick) {
+                    let top = stack.pop();
+                    result.push(top);
+                } else {
+                    stack.push(ContainerKind::Backtick);
+                    result.push(stack.last().copied());
+                }
+            }
+            "\"" => {
+                if stack.last() == Some(&ContainerKind::DoubleQuote) {
+                    let top = stack.pop();
+                    result.push(top);
+                } else {
+                    stack.push(ContainerKind::DoubleQuote);
+                    result.push(stack.last().copied());
+                }
+            }
+            _ => {
+                result.push(stack.last().copied());
+            }
+        }
+    }
+    result
+}
+
 /// Computes entropy-weighted anchors combining multi-token phrase landmarks
 /// and high-information single tokens.
 pub fn entropy_anchors(
@@ -512,6 +553,8 @@ pub fn entropy_anchors(
     profile: Option<&LangProfile>,
 ) -> Vec<(usize, usize)> {
     let phrase_anchors = multi_token_phrase_anchors(a, b, profile);
+    let a_containers = compute_token_containers(a);
+    let b_containers = compute_token_containers(b);
 
     let mut a_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
     for (i, &t) in a.iter().enumerate() {
@@ -554,11 +597,24 @@ pub fn entropy_anchors(
             if (is_alnum || is_op)
                 && !is_function_word(t)
                 && is_compatible_with_phrases(idx_a, idx_b)
-                && crate::lcs::tokens_can_match(a, b, &[], &[], None, None, idx_a, idx_b)
+                && a_containers[idx_a] == b_containers[idx_b]
             {
-                let info = token_self_information(t, profile);
-                if info >= MIN_SINGLE_TOKEN_ENTROPY || is_op {
-                    candidates.push((idx_a, idx_b));
+                if is_alnum {
+                    let left_sub_a = idx_a > 0 && crate::lcs::is_subword_token(a[idx_a - 1]);
+                    let left_sub_b = idx_b > 0 && crate::lcs::is_subword_token(b[idx_b - 1]);
+                    let right_sub_a =
+                        idx_a + 1 < a.len() && crate::lcs::is_subword_token(a[idx_a + 1]);
+                    let right_sub_b =
+                        idx_b + 1 < b.len() && crate::lcs::is_subword_token(b[idx_b + 1]);
+                    if left_sub_a != left_sub_b || right_sub_a != right_sub_b {
+                        continue;
+                    }
+                }
+                if crate::lcs::tokens_can_match(a, b, &[], &[], None, None, idx_a, idx_b) {
+                    let info = token_self_information(t, profile);
+                    if info >= MIN_SINGLE_TOKEN_ENTROPY || is_op {
+                        candidates.push((idx_a, idx_b));
+                    }
                 }
             }
         }

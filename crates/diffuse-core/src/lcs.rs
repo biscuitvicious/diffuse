@@ -349,7 +349,7 @@ pub fn unique_token_anchors(
 }
 
 #[inline]
-fn is_subword_token(t: &str) -> bool {
+pub(crate) fn is_subword_token(t: &str) -> bool {
     t == "_" || token_is_alnum(t)
 }
 

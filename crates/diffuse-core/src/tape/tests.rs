@@ -264,4 +264,18 @@ fn test_theme_line_259() {
     let tape = AlignmentTape::from_texts(old, new, None);
     assert_eq!(tape.project_old(), old);
     assert_eq!(tape.project_new(), new);
+
+    let runs = tape.to_merged_runs();
+    let del_texts: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    let add_texts: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Add)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(del_texts, vec!["magic", "deep_black", "legacy"]);
+    assert_eq!(add_texts, vec!["default", "dark", "black"]);
 }
