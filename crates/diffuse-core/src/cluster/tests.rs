@@ -1427,3 +1427,26 @@ fn test_is_statement_start_head_pairing() {
         results.pair_of.get(&4)
     );
 }
+
+#[test]
+fn test_block_anchor_prefers_overwhelming_content_over_trivial_prefix_head() {
+    let old = "    syntax::prelude::{CloseDelimiter, first_ascii_word},";
+    let new_lines = [
+        "    syntax::{",
+        "        prelude::{CloseDelimiter, first_ascii_word},",
+    ];
+
+    let mut interner = TokenInterner::new();
+    let old_tokens = dp_tokens(&mut interner, old);
+    let new_tokens: Vec<_> = new_lines
+        .iter()
+        .map(|s| dp_tokens(&mut interner, s))
+        .collect();
+
+    let bm = block_lcs(&old_tokens, &new_tokens, &interner);
+    let anchor = block_anchor(&bm);
+    assert_eq!(
+        anchor, 1,
+        "anchor should be line 1 (the content carrying prelude::{{...}}), not line 0 (trivial prefix), got {anchor}"
+    );
+}

@@ -516,7 +516,17 @@ fn block_lcs_fast_precomputed(
     if lines_with_matches < 2 || (lines_with_matches as f64 / k as f64) < min_block_line_coverage {
         return (0, 0, 0);
     }
-    (matched, moved_lines, head.unwrap_or(most))
+    let anchor = if let Some(h) = head {
+        let head_count = line_matched_counts[h];
+        if most_n >= head_count.saturating_mul(3) && most_n >= 6 {
+            most
+        } else {
+            h
+        }
+    } else {
+        most
+    };
+    (matched, moved_lines, anchor)
 }
 
 fn is_reflow_candidate(text: &str) -> bool {
@@ -571,7 +581,14 @@ pub fn block_anchor(bm: &BlockMatch) -> usize {
             }
         }
     }
-    head.unwrap_or(most)
+    if let Some(h) = head {
+        let head_n = bm.per_line[h].len();
+        if most_n >= head_n.saturating_mul(3) && most_n >= 6 {
+            return most;
+        }
+        return h;
+    }
+    most
 }
 
 /// Subline move spans for a block transition: matched tokens landing on
