@@ -290,14 +290,14 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   James Munkres (1957). *"Algorithms for the Assignment and Transportation Problems"*. Journal of the SIAM, 5(1), 32–38.  
   [SIAM DOI:10.1137/0105003](https://doi.org/10.1137/0105003)
 - **Location**:
-  [`crates/diffuse-core/src/moves.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/moves.rs) (`mark_moves`, `mark_moves_with_profile`)
+  [`crates/diffuse-core/src/algo/bipartite_matching.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/bipartite_matching.rs) (`BipartiteMatcher`, `greedy_multiset_match`, `expand_neighborhood_matches`, `filter_cohesion_runs`) & [`crates/diffuse-core/src/moves.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/moves.rs) (`mark_moves`, `mark_moves_with_profile`)
 - **Why It Is Used**:
   When blocks of code or renumbered sections are moved elsewhere in a file, displaying them as pure deletions and insertions inflates change statistics and forces reviewers to re-read identical code. Detecting moved lines across hunks requires bipartite matching with spatial clustering to avoid false-positive matches on common trivial lines (like closing braces).
 - **For What It Is Used**:
-  Performs multiset matching of deleted and added lines by content key (`t.trim_start()`), marks exact relocations as `Row::MovSrc` and `Row::MovTgt`, and suppresses moved lines from net addition/deletion counts.
+  Performs generic multiset bipartite matching of keyed items (`PositionedItem<K, P>`), expands spatial neighborhoods to adjacent unkeyed lines (`SpatialNeighborhood<P>`), enforces block cohesion rules (`filter_cohesion_runs`), and streams relocations (`RelocationMatches<P>`) cleanly into `Row::MovSrc` and `Row::MovTgt` without destructive mutations or state pollution.
 - **Complexity**:
-  - Time: $O(L \log L)$ or $O(L)$ with hash multiset indexing, where $L$ is the total row count in the file.
-  - Space: $O(L)$ hash map of row positions.
+  - Time: $O(L)$ with hash multiset indexing and linear neighbourhood checks, where $L$ is the total row count in the file.
+  - Space: $O(L)$ hash map of positions and match vectors.
 
 ---
 

@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 
 pub mod affine_gap;
+pub mod bipartite_matching;
 pub mod bit_parallel;
 pub mod block_dp;
 pub mod bounded_dp;
@@ -25,6 +26,10 @@ pub mod prefix_dfa;
 
 pub use affine_gap::{
     AffineAlignmentSteps, AffineGapPenalties, AffineGapWorkspace, DiffuseAffineExt, align_affine,
+};
+pub use bipartite_matching::{
+    BipartiteMatcher, HunkGridNeighborhood, PositionedItem, RelocationMatch, RelocationMatches,
+    SpatialNeighborhood, greedy_multiset_match,
 };
 pub use bit_parallel::BitParallelLcs;
 pub use block_dp::{

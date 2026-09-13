@@ -198,21 +198,21 @@ impl BlockDpWorkspace {
                         if j + k <= n
                             && let Some((exp_score, anchor)) =
                                 evaluator.score_expand(&a[i], &b[j..j + k])
-                            {
-                                let s = base + exp_score;
-                                let target = row_next + (j + k);
-                                if s > self.cells[target].score {
-                                    self.cells[target] = DpCell {
-                                        score: s,
-                                        prev_i: i as u32,
-                                        prev_j: j as u32,
-                                        transition: BlockTransition::Expand {
-                                            k,
-                                            anchor_offset: anchor,
-                                        },
-                                    };
-                                }
+                        {
+                            let s = base + exp_score;
+                            let target = row_next + (j + k);
+                            if s > self.cells[target].score {
+                                self.cells[target] = DpCell {
+                                    score: s,
+                                    prev_i: i as u32,
+                                    prev_j: j as u32,
+                                    transition: BlockTransition::Expand {
+                                        k,
+                                        anchor_offset: anchor,
+                                    },
+                                };
                             }
+                        }
                     }
                 }
 
@@ -222,21 +222,21 @@ impl BlockDpWorkspace {
                         if i + k <= m
                             && let Some((col_score, anchor)) =
                                 evaluator.score_collapse(&a[i..i + k], &b[j])
-                            {
-                                let s = base + col_score;
-                                let target = (i + k) * stride + (j + 1);
-                                if s > self.cells[target].score {
-                                    self.cells[target] = DpCell {
-                                        score: s,
-                                        prev_i: i as u32,
-                                        prev_j: j as u32,
-                                        transition: BlockTransition::Collapse {
-                                            k,
-                                            anchor_offset: anchor,
-                                        },
-                                    };
-                                }
+                        {
+                            let s = base + col_score;
+                            let target = (i + k) * stride + (j + 1);
+                            if s > self.cells[target].score {
+                                self.cells[target] = DpCell {
+                                    score: s,
+                                    prev_i: i as u32,
+                                    prev_j: j as u32,
+                                    transition: BlockTransition::Collapse {
+                                        k,
+                                        anchor_offset: anchor,
+                                    },
+                                };
                             }
+                        }
                     }
                 }
             }

@@ -279,10 +279,10 @@ impl Iterator for BlockTransitionsIter {
 
 ## 5. Phase 5 — Bipartite Matching & Spatial Coalescence Engine
 
-- [ ] Extract multiset matching and spatial block clustering from `moves.rs` into `crates/diffuse-core/src/algo/bipartite_matching.rs`.
-- [ ] Parameterize exact matching and spatial neighborhood coalescence over generic keyed items.
-- [ ] Expose `RelocationMatches<I>` streaming iterator.
-- [ ] Decouple `DiffFile`, `Hunk`, and `Row` mutations from the matching algorithm.
+- [x] Extract multiset matching and spatial block clustering from `moves.rs` into `crates/diffuse-core/src/algo/bipartite_matching.rs`.
+- [x] Parameterize exact matching and spatial neighborhood coalescence over generic keyed items.
+- [x] Expose `RelocationMatches<I>` streaming iterator.
+- [x] Decouple `DiffFile`, `Hunk`, and `Row` mutations from the matching algorithm.
 
 ### Problem
 [`crates/diffuse-core/src/moves.rs`](crates/diffuse-core/src/moves.rs) directly iterates over hunks and row vectors while maintaining nested position tuples `(usize, usize)`, mixing hunk mutation logic with the bipartite relocation algorithm.
