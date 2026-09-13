@@ -165,7 +165,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Richard M. Karp, Raymond E. Miller, Arnold L. Rosenberg (1972). *"Rapid Identification of Repeated Patterns in Strings, Trees and Arrays"*. STOC '72, 125–136.  
   [ACM Digital Library](https://doi.org/10.1145/800152.804905)
 - **Location**:
-  [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`multi_token_phrase_anchors`, `entropy_anchors`)
+  [`crates/diffuse-core/src/algo/landmarks.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/landmarks.rs) (`find_mums`, `find_monotonic_chain`, `find_monotonic_mums`, `Landmarks`, `DiffuseSequenceExt`); consumed in [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`multi_token_phrase_anchors`, `entropy_anchors`).
 - **Why It Is Used**:
   Micro-token LCS algorithms easily get trapped in local combinatorial optima (e.g. matching single quotes, dots, or common keywords in reversed or misaligned positions). In contrast, multi-token phrases that occur *exactly once* in both the old and new text (Maximal Unique Matches) provide unambiguous, mathematically provable macro-anchors.
 - **For What It Is Used**:
@@ -249,7 +249,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Karen Spärck Jones (1972). *"A Statistical Interpretation of Term Specificity and its Application in Retrieval"*. Journal of Documentation, 28(1), 11–21.  
   [Emerald DOI:10.1108/eb026526](https://doi.org/10.1108/eb026526)
 - **Location**:
-  [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`entropy_anchors`, `token_entropy_score`)
+  [`crates/diffuse-core/src/algo/entropy.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/entropy.rs) (`FrequencyRanker`, `EntropyFiltered`, `DiffuseEntropyExt`); consumed in [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`entropy_anchors`, `token_entropy_score`).
 - **Why It Is Used**:
   Not all matching tokens carry equal significance. Frequent tokens like punctuation (`(`, `)`, `;`, `,`) and generic keywords (`let`, `fn`, `return`) occur dozens of times and easily create false-positive alignments. Rare tokens (long identifier names, distinctive literals) carry high information content:
   $$I(x) = -\log_2 p(x)$$

@@ -13,15 +13,22 @@ use std::collections::HashMap;
 
 pub mod bit_parallel;
 pub mod bounded_dp;
+pub mod entropy;
 pub mod hirschberg;
 pub mod hunt_szymanski;
+pub mod landmarks;
 pub mod myers_ond;
 pub mod prefix_dfa;
 
 pub use bit_parallel::BitParallelLcs;
 pub use bounded_dp::BoundedDpLcs;
+pub use entropy::{DiffuseEntropyExt, EntropyFiltered, FrequencyRanker};
 pub use hirschberg::HirschbergLcs;
 pub use hunt_szymanski::HuntSzymanskiLcs;
+pub use landmarks::{
+    DiffuseSequenceExt, Landmarks, MatchInterval, find_monotonic_chain, find_monotonic_mums,
+    find_mums,
+};
 pub use myers_ond::MyersOnD;
 pub use prefix_dfa::PrefixDfa;
 

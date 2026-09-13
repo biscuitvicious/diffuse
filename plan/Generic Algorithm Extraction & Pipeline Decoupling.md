@@ -1,6 +1,6 @@
 # Generic Algorithm Extraction & Pipeline Decoupling
 
-- [ ] Phase 1: Landmark Anchoring & Entropy Engines (`Mums` & `EntropyRanker`)
+- [x] Phase 1: Landmark Anchoring & Entropy Engines (`Mums` & `EntropyRanker`)
 - [ ] Phase 2: Formal Container Balancing (`DyckBalancer` & Sequence Geometry)
 - [ ] Phase 3: Gotoh Affine Gap Aligner with Zero-Allocation Workspace
 - [ ] Phase 4: Generic 2D Multi-Objective Block Transformation Solver (`BlockAligner`)
@@ -48,11 +48,11 @@ This architectural coupling introduces several limitations:
 
 ## 1. Phase 1 — Landmark Anchoring & Entropy Engines
 
-- [ ] Extract Maximal Unique Matches (MUMs) / $N$-Gram Landmark Indexing into `crates/diffuse-core/src/algo/landmarks.rs`.
-- [ ] Extract Shannon Information Content & Empirical Frequency Filter into `crates/diffuse-core/src/algo/entropy.rs`.
-- [ ] Provide lazy iterator adapter structs (`Landmarks<I1, I2>`, `EntropyFiltered<I>`) and `DiffuseIterExt` trait.
-- [ ] Implement zero-allocation index scratch buffer recycling.
-- [ ] Add pure unit tests over integer slices (`&[u32]`) verifying $100\%$ branch coverage.
+- [x] Extract Maximal Unique Matches (MUMs) / $N$-Gram Landmark Indexing into `crates/diffuse-core/src/algo/landmarks.rs`.
+- [x] Extract Shannon Information Content & Empirical Frequency Filter into `crates/diffuse-core/src/algo/entropy.rs`.
+- [x] Provide lazy iterator adapter structs (`Landmarks<I1, I2>`, `EntropyFiltered<I>`) and `DiffuseIterExt` trait.
+- [x] Implement zero-allocation index scratch buffer recycling.
+- [x] Add pure unit tests over integer slices (`&[u32]`) verifying $100\%$ branch coverage.
 
 ### Problem
 `multi_token_phrase_anchors` and `entropy_anchors` currently live in [`crates/diffuse-core/src/token.rs`](crates/diffuse-core/src/token.rs), tightly coupled to string slices (`&str`), token classifications (`token_is_ws`), and specific punctuation literals, allocating intermediate `Vec` collections.

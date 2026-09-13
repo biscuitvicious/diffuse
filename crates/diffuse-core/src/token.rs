@@ -444,51 +444,11 @@ pub fn multi_token_phrase_anchors(
         }
     }
 
-    if candidates.is_empty() {
-        return Vec::new();
-    }
-
-    // Sort candidates by a_start
-    candidates.sort_by_key(|c| c.a_start);
-
-    // Dynamic programming to select the non-overlapping, strictly monotonic
-    // sequence of phrases that maximizes cumulative information entropy.
-    let n = candidates.len();
-    let mut dp: Vec<(f64, Option<usize>)> = Vec::with_capacity(n);
-
-    for k in 0..n {
-        let mut best_score = candidates[k].entropy;
-        let mut best_prev = None;
-        for prev in 0..k {
-            if candidates[prev].a_start + candidates[prev].len <= candidates[k].a_start
-                && candidates[prev].b_start + candidates[prev].len <= candidates[k].b_start
-            {
-                let score = dp[prev].0 + candidates[k].entropy;
-                if score > best_score {
-                    best_score = score;
-                    best_prev = Some(prev);
-                }
-            }
-        }
-        dp.push((best_score, best_prev));
-    }
-
-    let mut best_end = 0;
-    let mut max_total = 0.0;
-    for (k, &(score, _)) in dp.iter().enumerate() {
-        if score > max_total {
-            max_total = score;
-            best_end = k;
-        }
-    }
-
-    let mut selected = Vec::new();
-    let mut curr = Some(best_end);
-    while let Some(idx) = curr {
-        selected.push(candidates[idx]);
-        curr = dp[idx].1;
-    }
-    selected.reverse();
+    let selected = crate::algo::find_monotonic_chain(
+        &candidates,
+        |c| crate::algo::MatchInterval::new(c.a_start, c.b_start, c.len),
+        |c| c.entropy,
+    );
 
     // Emit all non-whitespace tokens within selected phrases as anchors.
     let mut result = Vec::new();
