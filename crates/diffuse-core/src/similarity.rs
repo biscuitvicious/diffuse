@@ -1,11 +1,12 @@
 //! One-for-one port of `review.ts`'s `lineSimilarity`/`lineSimilarityParts`
 //! (PLAN.md §3). The comments carry the *why* — ported verbatim.
 
-use rustc_hash::FxHashMap;
-
-use crate::lcs::{
-    char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
-    tokenize_line,
+use crate::{
+    algo::interner::SymbolTable,
+    lcs::{
+        char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
+        tokenize_line,
+    },
 };
 
 /// The similarity score plus the add-side fractions.
@@ -96,7 +97,7 @@ pub struct LineTokens<'a> {
 /// rows, so identical tokens in different lines compare by id.
 #[derive(Default)]
 pub struct TokenInterner {
-    map: FxHashMap<&'static str, u32>,
+    symbols: SymbolTable<&'static str>,
     pub ws: Vec<bool>,
     pub alnum: Vec<bool>,
 }
@@ -107,24 +108,20 @@ impl TokenInterner {
     }
 
     pub fn clear(&mut self) {
-        self.map.clear();
+        self.symbols.clear();
         self.ws.clear();
         self.alnum.clear();
     }
 
     pub(crate) fn intern(&mut self, token: &str) -> u32 {
-        if let Some(&id) = self.map.get(token) {
-            return id;
-        }
-        let id = self.map.len() as u32;
-        // The token string slices are valid for the scope of the cluster DP
-        // solve during which the interner is populated and used before
-        // being cleared.
         let static_token: &'static str = unsafe { std::mem::transmute(token) };
-        self.map.insert(static_token, id);
+        if let Some(id) = self.symbols.get_id(&static_token) {
+            return id.as_u32();
+        }
+        let id = self.symbols.intern(static_token);
         self.ws.push(token_is_ws(token));
         self.alnum.push(token_is_alnum(token));
-        id
+        id.as_u32()
     }
 
     /// Tokenize + filter + intern a line once.

@@ -325,10 +325,10 @@ impl<P: Copy> Iterator for RelocationMatches<P> {
 
 ## 6. Phase 6 — Monoidal Invertible Edit Tape & Generic Symbol Interning
 
-- [ ] Generalize `AlignmentTape` in `crates/diffuse-core/src/tape.rs` to an algebraic `Tape<T>` or zero-copy slice tape.
-- [ ] Expose streaming projection iterators: `tape.project_left_iter()` and `tape.project_right_iter()`.
-- [ ] Generalize `TokenInterner` in `similarity.rs` to a high-performance generic `SymbolTable<T>`.
-- [ ] Provide formal algebraic verification of monoidal properties (associativity, identity, left/right projections).
+- [x] Generalize `AlignmentTape` in `crates/diffuse-core/src/tape.rs` to an algebraic `Tape<T>` or zero-copy slice tape.
+- [x] Expose streaming projection iterators: `tape.project_left_iter()` and `tape.project_right_iter()`.
+- [x] Generalize `TokenInterner` in `similarity.rs` to a high-performance generic `SymbolTable<T>`.
+- [x] Provide formal algebraic verification of monoidal properties (associativity, identity, left/right projections).
 
 ### Problem
 `AlignmentTape` in [`crates/diffuse-core/src/tape.rs`](crates/diffuse-core/src/tape.rs) and `TokenInterner` in [`crates/diffuse-core/src/similarity.rs`](crates/diffuse-core/src/similarity.rs) are specialized for diff text strings, preventing their reuse in line-level symbol interning or generic AST node diffing.

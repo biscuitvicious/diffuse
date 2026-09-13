@@ -329,14 +329,14 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Rolf Landauer (1961). *"Irreversibility and Heat Generation in the Computing Process"*. IBM Journal of Research and Development, 5(3), 183–191.  
   [IBM JRD DOI:10.1147/rd.53.0183](https://doi.org/10.1147/rd.53.0183)
 - **Location**:
-  [`crates/diffuse-core/src/tape.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/tape.rs) (`AlignmentTape`, `TapeChunk`)
+  [`crates/diffuse-core/src/algo/tape.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/tape.rs) (`Tape<T>`, `TapeChunk<T>`, `TapeProjection`) & [`crates/diffuse-core/src/tape.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/tape.rs) (`AlignmentTape`, `TapeChunk`)
 - **Why It Is Used**:
   Diff outputs frequently suffer from coordinate desynchronization and non-invertibility (reversing the diff order does not yield symmetric results). The Alignment Tape models edits as an invertible monoid with typed chunks (`Keep`, `Strike`, `Fill`, `Relocate`) and provable projection functors:
-  $$\pi_{\text{old}}(\text{tape}) = \text{OldText}, \quad \pi_{\text{new}}(\text{tape}) = \text{NewText}$$
+  $$\pi_{\text{left}}(\text{tape}) = \text{OldText}, \quad \pi_{\text{right}}(\text{tape}) = \text{NewText}$$
 - **For What It Is Used**:
-  Serves as the canonical data currency for token and subword alignments, ensuring lossless round-trip transformations and symmetric involution under diff reversal.
+  Serves as the canonical algebraic data currency for token and subword alignments, ensuring lossless round-trip transformations, symmetric involution under diff reversal ($\text{invert}(\text{invert}(T)) = T$), and lazy streaming sub-sequence projections (`project_left_iter`, `project_right_iter`).
 - **Complexity**:
-  - Time: $O(N)$ tape construction and projection.
+  - Time: $O(N)$ tape construction, composition, and streaming projection.
   - Space: $O(N)$ contiguous chunk vector.
 
 ---
@@ -349,11 +349,11 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   John McCarthy (1960). *"Recursive Functions of Symbolic Expressions and Their Computation by Machine, Part I"*. Communications of the ACM, 3(4), 184–195.  
   [ACM Digital Library](https://doi.org/10.1145/367177.367199)
 - **Location**:
-  [`crates/diffuse-core/src/similarity.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/similarity.rs) (`TokenInterner`)
+  [`crates/diffuse-core/src/algo/interner.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/interner.rs) (`SymbolTable<T>`, `SymbolId`) & [`crates/diffuse-core/src/similarity.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/similarity.rs) (`TokenInterner`)
 - **Why It Is Used**:
   Comparing strings during token LCS and DP transitions repeatedly evaluates string equality and pointer chasing. Hash-consing maps every unique string token to a compact `u32` integer symbol upon first ingestion.
 - **For What It Is Used**:
-  Allows `lcs_pairs_ids` and Cluster DP to perform token comparisons as single-cycle integer equality checks (`a_id == b_id`), improving cache locality and vectorization.
+  Provides generic bidirectional symbol mapping (`intern`, `intern_borrowed`, `resolve`), enabling `lcs_pairs_ids` and Cluster DP to perform token comparisons as single-cycle integer equality checks (`a_id == b_id`), maximizing cache locality and eliminating repeated heap allocations.
 - **Complexity**:
   - Interning Time: $O(L)$ per token string length on first insertion; $O(1)$ amortized lookup.
   - Comparison Time: $O(1)$ integer compare.

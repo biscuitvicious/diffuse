@@ -20,9 +20,11 @@ pub mod dyck;
 pub mod entropy;
 pub mod hirschberg;
 pub mod hunt_szymanski;
+pub mod interner;
 pub mod landmarks;
 pub mod myers_ond;
 pub mod prefix_dfa;
+pub mod tape;
 
 pub use affine_gap::{
     AffineAlignmentSteps, AffineGapPenalties, AffineGapWorkspace, DiffuseAffineExt, align_affine,
@@ -43,12 +45,14 @@ pub use dyck::{
 pub use entropy::{DiffuseEntropyExt, EntropyFiltered, FrequencyRanker};
 pub use hirschberg::HirschbergLcs;
 pub use hunt_szymanski::HuntSzymanskiLcs;
+pub use interner::{SymbolId, SymbolTable};
 pub use landmarks::{
     DiffuseSequenceExt, Landmarks, MatchInterval, find_monotonic_chain, find_monotonic_mums,
     find_mums,
 };
 pub use myers_ond::MyersOnD;
 pub use prefix_dfa::PrefixDfa;
+pub use tape::{ChunkProjector, Tape, TapeChunk, TapeProjection};
 
 /// An elementary edit operation between two generic sequences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

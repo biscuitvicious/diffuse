@@ -130,18 +130,31 @@ impl<'a> AlignmentTape<'a> {
         &self.chunks
     }
 
+    /// Returns a streaming projection iterator over the old text sequence.
+    pub fn project_old_iter(&self) -> impl Iterator<Item = &'a str> + '_ {
+        self.chunks.iter().filter_map(|chunk| match chunk {
+            TapeChunk::Keep(text) | TapeChunk::Strike(text) | TapeChunk::Relocate { text, .. } => {
+                Some(*text)
+            }
+            TapeChunk::Fill(_) => None,
+        })
+    }
+
+    /// Returns a streaming projection iterator over the new text sequence.
+    pub fn project_new_iter(&self) -> impl Iterator<Item = &'a str> + '_ {
+        self.chunks.iter().filter_map(|chunk| match chunk {
+            TapeChunk::Keep(text) | TapeChunk::Fill(text) | TapeChunk::Relocate { text, .. } => {
+                Some(*text)
+            }
+            TapeChunk::Strike(_) => None,
+        })
+    }
+
     /// Projects the old text: concatenates `Keep` + `Strike` + `Relocate`.
     pub fn project_old(&self) -> String {
         let mut s = String::new();
-        for chunk in &self.chunks {
-            match chunk {
-                TapeChunk::Keep(text)
-                | TapeChunk::Strike(text)
-                | TapeChunk::Relocate { text, .. } => {
-                    s.push_str(text);
-                }
-                TapeChunk::Fill(_) => {}
-            }
+        for part in self.project_old_iter() {
+            s.push_str(part);
         }
         s
     }
@@ -149,15 +162,8 @@ impl<'a> AlignmentTape<'a> {
     /// Projects the new text: concatenates `Keep` + `Fill` + `Relocate`.
     pub fn project_new(&self) -> String {
         let mut s = String::new();
-        for chunk in &self.chunks {
-            match chunk {
-                TapeChunk::Keep(text)
-                | TapeChunk::Fill(text)
-                | TapeChunk::Relocate { text, .. } => {
-                    s.push_str(text);
-                }
-                TapeChunk::Strike(_) => {}
-            }
+        for part in self.project_new_iter() {
+            s.push_str(part);
         }
         s
     }
@@ -168,25 +174,51 @@ impl<'a> AlignmentTape<'a> {
     /// `Keep`. Satisfies the involution property: `tape.reverse().reverse()
     /// == tape`.
     pub fn reverse(&self) -> AlignmentTape<'a> {
-        let mut chunks = Vec::with_capacity(self.chunks.len());
-        for chunk in &self.chunks {
-            let rev_chunk = match chunk {
-                TapeChunk::Keep(s) => TapeChunk::Keep(s),
-                TapeChunk::Strike(s) => TapeChunk::Fill(s),
-                TapeChunk::Fill(s) => TapeChunk::Strike(s),
+        Self::from_algebraic_tape(self.to_algebraic_tape().invert())
+    }
+
+    /// Converts this alignment tape into an algebraic `Tape<&'a str>`.
+    pub fn to_algebraic_tape(&self) -> crate::algo::tape::Tape<&'a str> {
+        self.chunks
+            .iter()
+            .map(|c| match c {
+                TapeChunk::Keep(s) => crate::algo::tape::TapeChunk::Keep(*s),
+                TapeChunk::Strike(s) => crate::algo::tape::TapeChunk::Strike(*s),
+                TapeChunk::Fill(s) => crate::algo::tape::TapeChunk::Fill(*s),
                 TapeChunk::Relocate {
                     from_span,
                     to_span,
                     text,
-                } => TapeChunk::Relocate {
-                    from_span: *to_span,
-                    to_span: *from_span,
-                    text,
+                } => crate::algo::tape::TapeChunk::Relocate {
+                    from_span: *from_span,
+                    to_span: *to_span,
+                    item: *text,
                 },
-            };
-            chunks.push(rev_chunk);
-        }
-        AlignmentTape { chunks }
+            })
+            .collect()
+    }
+
+    /// Creates an `AlignmentTape` from an algebraic `Tape<&'a str>`.
+    pub fn from_algebraic_tape(tape: crate::algo::tape::Tape<&'a str>) -> Self {
+        let chunks = tape
+            .into_chunks()
+            .into_iter()
+            .map(|c| match c {
+                crate::algo::tape::TapeChunk::Keep(s) => TapeChunk::Keep(s),
+                crate::algo::tape::TapeChunk::Strike(s) => TapeChunk::Strike(s),
+                crate::algo::tape::TapeChunk::Fill(s) => TapeChunk::Fill(s),
+                crate::algo::tape::TapeChunk::Relocate {
+                    from_span,
+                    to_span,
+                    item,
+                } => TapeChunk::Relocate {
+                    from_span,
+                    to_span,
+                    text: item,
+                },
+            })
+            .collect();
+        Self { chunks }
     }
 
     /// Convert alignment chunks directly into renderer `Run` items without
