@@ -348,221 +348,9 @@ pub fn unique_token_anchors(
     crate::token::entropy_anchors(a, b, profile)
 }
 
-/// Counts consecutive non-whitespace tokens that match between `a[i..]` and
-/// `b[j..]`.  Used to prefer a later occurrence of a repeated token when it
-/// starts a longer contiguous shared run.
-fn contiguous_non_ws_run(a: &[&str], b: &[&str], mut i: usize, mut j: usize) -> usize {
-    let mut len = 0;
-    while i < a.len() && j < b.len() && a[i] == b[j] {
-        if !token_is_ws(a[i]) {
-            len += 1;
-        }
-        i += 1;
-        j += 1;
-    }
-    len
-}
-
-const MAX_AFFINITY_LOOKBACK: usize = 4;
-
-fn contiguous_non_ws_run_backward(
-    a: &[&str],
-    b: &[&str],
-    prev_a: &[&str],
-    prev_b: &[&str],
-    mut i: usize,
-    mut j: usize,
-) -> usize {
-    let mut len = 0;
-    while i > 0 && j > 0 && a[i - 1] == b[j - 1] && len < MAX_AFFINITY_LOOKBACK {
-        if !token_is_ws(a[i - 1]) {
-            len += 1;
-        }
-        i -= 1;
-        j -= 1;
-    }
-    if i == 0 && j == 0 {
-        let mut pi = prev_a.len();
-        let mut pj = prev_b.len();
-        while pi > 0 && pj > 0 && prev_a[pi - 1] == prev_b[pj - 1] && len < MAX_AFFINITY_LOOKBACK {
-            if !token_is_ws(prev_a[pi - 1]) {
-                len += 1;
-            }
-            pi -= 1;
-            pj -= 1;
-        }
-    }
-    len
-}
-
-pub(crate) const MAX_TIE_LOOKAHEAD: usize = 32;
-
-/// Measures the contiguous non-whitespace token cluster length centered at (i,
-/// j) along the current backtrace path.
-fn contiguous_affinity(
-    a: &[&str],
-    b: &[&str],
-    prev_a: &[&str],
-    prev_b: &[&str],
-    i: usize,
-    j: usize,
-) -> usize {
-    let backward = contiguous_non_ws_run_backward(a, b, prev_a, prev_b, i, j);
-    let forward = contiguous_non_ws_run(a, b, i, j);
-    backward + forward
-}
-
-/// Measures the contiguous non-whitespace token cluster length for a candidate
-/// alternative match at `(k, j)` where `k > i`, ensuring backward context from
-/// `k` does not overlap with tokens already committed prior to `i` or prior to
-/// `last_committed_j`.
-fn candidate_contiguous_affinity(
-    a: &[&str],
-    b: &[&str],
-    committed_i: usize,
-    last_committed_j: usize,
-    k: usize,
-    j: usize,
-) -> usize {
-    let mut backward = 0;
-    let mut ki = k;
-    let mut bj = j;
-    while ki > committed_i && bj > last_committed_j && a[ki - 1] == b[bj - 1] {
-        if !token_is_ws(a[ki - 1]) {
-            backward += 1;
-        }
-        ki -= 1;
-        bj -= 1;
-    }
-    let forward = contiguous_non_ws_run(a, b, k, j);
-    backward + forward
-}
-
 #[inline]
 fn is_subword_token(t: &str) -> bool {
     t == "_" || token_is_alnum(t)
-}
-
-#[inline]
-fn is_file_extension(ext: &str) -> bool {
-    let mut buf = [0u8; 16];
-    if ext.is_empty() || ext.len() > 16 {
-        return false;
-    }
-    for (i, b) in ext.bytes().enumerate() {
-        buf[i] = b.to_ascii_lowercase();
-    }
-    let lower = std::str::from_utf8(&buf[..ext.len()]).unwrap_or(ext);
-    matches!(
-        lower,
-        "ts" | "js"
-            | "jsx"
-            | "tsx"
-            | "rs"
-            | "sh"
-            | "bash"
-            | "zsh"
-            | "md"
-            | "markdown"
-            | "json"
-            | "jsonl"
-            | "toml"
-            | "yaml"
-            | "yml"
-            | "txt"
-            | "html"
-            | "htm"
-            | "css"
-            | "scss"
-            | "c"
-            | "h"
-            | "cc"
-            | "cpp"
-            | "hpp"
-            | "py"
-            | "go"
-            | "rb"
-            | "java"
-            | "kt"
-            | "swift"
-            | "sql"
-            | "lock"
-            | "patch"
-            | "diff"
-            | "log"
-            | "gz"
-            | "tar"
-            | "zip"
-            | "xml"
-            | "svg"
-            | "wasm"
-            | "proto"
-    )
-}
-
-fn is_path_dot(slice: &[&str], prev: &[&str], next: Option<&str>, idx: usize) -> bool {
-    if slice[idx] != "." {
-        return false;
-    }
-    let p = if idx > 0 {
-        Some(slice[idx - 1])
-    } else {
-        prev.last().copied()
-    };
-    let n = if idx + 1 < slice.len() {
-        Some(slice[idx + 1])
-    } else {
-        next
-    };
-
-    let _p = match p {
-        Some(tok) if is_subword_token(tok) => tok,
-        _ => return false,
-    };
-    let n = match n {
-        Some(tok) if is_subword_token(tok) => tok,
-        _ => return false,
-    };
-
-    if is_file_extension(n) {
-        return true;
-    }
-
-    let mut k = idx;
-    while k > 0 {
-        k -= 1;
-        let tok = slice[k];
-        if token_is_ws(tok) {
-            break;
-        }
-        if tok.contains('/') || tok.contains('\\') {
-            return true;
-        }
-    }
-    if k == 0 && !slice.is_empty() && !token_is_ws(slice[0]) {
-        for &tok in prev.iter().rev() {
-            if token_is_ws(tok) {
-                break;
-            }
-            if tok.contains('/') || tok.contains('\\') {
-                return true;
-            }
-        }
-    }
-
-    let mut k = idx + 1;
-    while k < slice.len() {
-        let tok = slice[k];
-        if token_is_ws(tok) {
-            break;
-        }
-        if tok.contains('/') || tok.contains('\\') {
-            return true;
-        }
-        k += 1;
-    }
-
-    false
 }
 
 #[inline]
@@ -573,10 +361,7 @@ fn is_path_boundary_delim(tok: &str) -> bool {
     )
 }
 
-fn path_or_file_root_and_stem<'a>(
-    slice: &[&'a str],
-    idx: usize,
-) -> Option<(Option<&'a str>, &'a str)> {
+fn path_root_and_stem<'a>(slice: &[&'a str], idx: usize) -> Option<(&'a str, &'a str)> {
     if idx >= slice.len() || token_is_ws(slice[idx]) || is_path_boundary_delim(slice[idx]) {
         return None;
     }
@@ -602,46 +387,36 @@ fn path_or_file_root_and_stem<'a>(
         .iter()
         .any(|&tok| tok.contains('/') || tok.contains('\\'));
 
-    if has_sep {
-        let root = word_slice[0];
-        let last_sep_idx = word_slice
-            .iter()
-            .rposition(|&tok| tok.contains('/') || tok.contains('\\'))
-            .unwrap();
+    if !has_sep {
+        return None;
+    }
 
-        let after_sep = &word_slice[last_sep_idx + 1..];
-        let stem = if after_sep.is_empty() {
-            if last_sep_idx > 0 {
-                word_slice[last_sep_idx - 1]
-            } else {
-                root
-            }
+    let root = word_slice[0];
+    let last_sep_idx = word_slice
+        .iter()
+        .rposition(|&tok| tok.contains('/') || tok.contains('\\'))
+        .unwrap();
+
+    let after_sep = &word_slice[last_sep_idx + 1..];
+    let stem = if after_sep.is_empty() {
+        if last_sep_idx > 0 {
+            word_slice[last_sep_idx - 1]
         } else {
-            let dot_pos = after_sep.iter().position(|&tok| tok == ".");
-            if let Some(dp) = dot_pos {
-                if dp > 0 {
-                    after_sep[dp - 1]
-                } else {
-                    after_sep[0]
-                }
+            root
+        }
+    } else {
+        let dot_pos = after_sep.iter().position(|&tok| tok == ".");
+        if let Some(dp) = dot_pos {
+            if dp > 0 {
+                after_sep[dp - 1]
             } else {
                 after_sep[0]
             }
-        };
-        Some((Some(root), stem))
-    } else {
-        // No separator: check if it's a filename with extension (e.g.
-        // "install.sh")
-        let dot_pos = word_slice.iter().position(|&tok| tok == ".");
-        if let Some(dp) = dot_pos
-            && dp > 0
-            && dp + 1 < word_slice.len()
-            && is_file_extension(word_slice[dp + 1])
-        {
-            return Some((None, word_slice[dp - 1]));
+        } else {
+            after_sep[0]
         }
-        None
-    }
+    };
+    Some((root, stem))
 }
 
 #[inline]
@@ -649,10 +424,10 @@ fn path_or_file_root_and_stem<'a>(
 pub(crate) fn tokens_can_match(
     a: &[&str],
     b: &[&str],
-    prev_a: &[&str],
-    prev_b: &[&str],
-    next_a: Option<&str>,
-    next_b: Option<&str>,
+    _prev_a: &[&str],
+    _prev_b: &[&str],
+    _next_a: Option<&str>,
+    _next_b: Option<&str>,
     i: usize,
     j: usize,
 ) -> bool {
@@ -660,47 +435,13 @@ pub(crate) fn tokens_can_match(
         return false;
     }
 
-    let a_path = path_or_file_root_and_stem(a, i);
-    let b_path = path_or_file_root_and_stem(b, j);
+    let a_path = path_root_and_stem(a, i);
+    let b_path = path_root_and_stem(b, j);
     if let (Some((ra, sa)), Some((rb, sb))) = (a_path, b_path)
-        && (ra.is_some() || rb.is_some())
         && ra != rb
         && sa != sb
     {
         return false;
-    }
-    if a[i] == "." {
-        let a_is_path = is_path_dot(a, prev_a, next_a, i);
-        let b_is_path = is_path_dot(b, prev_b, next_b, j);
-
-        if a_is_path || b_is_path {
-            let a_prev = if i > 0 {
-                Some(a[i - 1])
-            } else {
-                prev_a.last().copied()
-            };
-            let a_next = if i + 1 < a.len() {
-                Some(a[i + 1])
-            } else {
-                next_a
-            };
-            let b_prev = if j > 0 {
-                Some(b[j - 1])
-            } else {
-                prev_b.last().copied()
-            };
-            let b_next = if j + 1 < b.len() {
-                Some(b[j + 1])
-            } else {
-                next_b
-            };
-
-            let left_matches = a_prev.is_some() && a_prev == b_prev;
-            let right_matches = a_next.is_some() && a_next == b_next;
-            if !left_matches && !right_matches {
-                return false;
-            }
-        }
     }
     true
 }
@@ -720,7 +461,39 @@ pub fn raw_lcs_pairs_with_lookahead(
     raw_lcs_pairs_with_context(a, b, &[], &[], next_a, next_b)
 }
 
-/// Core LCS backtrace with preceding and trailing boundary context.
+/// Whether `t` is a paired syntactic container delimiter.
+#[inline]
+pub fn is_container_delim(t: &str) -> bool {
+    matches!(
+        t,
+        "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">" | "`" | "\"" | "'"
+    )
+}
+
+/// Token match reward for Gotoh affine gap sequence alignment.
+#[inline]
+fn token_match_reward(t: &str) -> i32 {
+    if token_is_ws(t) {
+        2
+    } else if is_container_delim(t) {
+        20
+    } else if matches!(t, "." | "," | ";" | ":" | "/" | "\\" | "-" | "_") {
+        4
+    } else if token_is_alnum(t) {
+        let len = char_len(t) as i32;
+        14 + len.min(10) * 2
+    } else {
+        10
+    }
+}
+
+const GAP_OPEN: i32 = 16;
+const GAP_EXTEND: i32 = 2;
+const CONTIG_BONUS: i32 = 6;
+const NEG_INF: i32 = -1_000_000;
+
+/// Core sequence alignment backtrace with Gotoh 3-state affine gap dynamic
+/// programming.
 pub fn raw_lcs_pairs_with_context(
     a: &[&str],
     b: &[&str],
@@ -734,117 +507,134 @@ pub fn raw_lcs_pairs_with_context(
     if n == 0 || m == 0 {
         return FxHashMap::default();
     }
-    let mut dp = vec![0u32; (n + 1) * (m + 1)];
-    let idx = |i: usize, j: usize| i * (m + 1) + j;
+
+    let stride = m + 1;
+    let idx = |i: usize, j: usize| i * stride + j;
+    let total_cells = (n + 1) * (m + 1);
+
+    let mut m_matrix = vec![NEG_INF; total_cells];
+    let mut x_matrix = vec![NEG_INF; total_cells];
+    let mut y_matrix = vec![NEG_INF; total_cells];
+    let mut run_len = vec![0u16; total_cells];
+    let mut tb_m = vec![0u8; total_cells];
+    let mut tb_x = vec![0u8; total_cells];
+    let mut tb_y = vec![0u8; total_cells];
+
+    // Backward Gotoh DP over suffixes: cell (i, j) aligns a[i..n] and b[j..m].
+    m_matrix[idx(n, m)] = 0;
+    for i in (0..n).rev() {
+        x_matrix[idx(i, m)] = -GAP_OPEN - ((n - i) as i32) * GAP_EXTEND;
+        tb_x[idx(i, m)] = 1;
+    }
+    for j in (0..m).rev() {
+        y_matrix[idx(n, j)] = -GAP_OPEN - ((m - j) as i32) * GAP_EXTEND;
+        tb_y[idx(n, j)] = 2;
+    }
+
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            dp[idx(i, j)] = if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
-                dp[idx(i + 1, j + 1)] + 1
+            // State X: deletion of a[i]
+            let cx = x_matrix[idx(i + 1, j)].saturating_sub(GAP_EXTEND);
+            let cm_x = m_matrix[idx(i + 1, j)].saturating_sub(GAP_OPEN + GAP_EXTEND);
+            let cy = y_matrix[idx(i + 1, j)].saturating_sub(GAP_EXTEND);
+            let (best_x, to_x) = if cx >= cm_x && cx >= cy {
+                (cx, 1)
+            } else if cy >= cm_x {
+                (cy, 2)
             } else {
-                dp[idx(i + 1, j)].max(dp[idx(i, j + 1)])
+                (cm_x, 0)
             };
+            x_matrix[idx(i, j)] = best_x;
+            tb_x[idx(i, j)] = to_x;
+
+            // State Y: insertion of b[j]
+            let cy = y_matrix[idx(i, j + 1)].saturating_sub(GAP_EXTEND);
+            let cm_y = m_matrix[idx(i, j + 1)].saturating_sub(GAP_OPEN + GAP_EXTEND);
+            let cx = x_matrix[idx(i, j + 1)].saturating_sub(GAP_EXTEND);
+            let (best_y, to_y) = if cy >= cm_y && cy >= cx {
+                (cy, 2)
+            } else if cx >= cm_y {
+                (cx, 1)
+            } else {
+                (cm_y, 0)
+            };
+            y_matrix[idx(i, j)] = best_y;
+            tb_y[idx(i, j)] = to_y;
+
+            // State M: match a[i] with b[j]
+            if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
+                let is_ws = token_is_ws(a[i]);
+                let next_rl = if is_ws { 0 } else { run_len[idx(i + 1, j + 1)] };
+                let run_bonus = if is_ws {
+                    0
+                } else {
+                    CONTIG_BONUS + (next_rl.min(8) as i32) * 2
+                };
+                let next_m_val = m_matrix[idx(i + 1, j + 1)].saturating_add(run_bonus);
+                let next_x = x_matrix[idx(i + 1, j + 1)];
+                let next_y = y_matrix[idx(i + 1, j + 1)];
+                let (best_next, to_m, rl) = if next_m_val >= next_x && next_m_val >= next_y {
+                    (next_m_val, 0, next_rl + 1)
+                } else if next_x >= next_y {
+                    (next_x, 1, 1)
+                } else {
+                    (next_y, 2, 1)
+                };
+                let r = token_match_reward(a[i]);
+                m_matrix[idx(i, j)] = r.saturating_add(best_next);
+                tb_m[idx(i, j)] = to_m;
+                run_len[idx(i, j)] = if is_ws { 0 } else { rl };
+            }
         }
     }
-    let mut pairs = FxHashMap::default();
+
+    let start_m = m_matrix[idx(0, 0)];
+    let start_x = x_matrix[idx(0, 0)];
+    let start_y = y_matrix[idx(0, 0)];
+    let mut cur_state = if start_m >= start_x && start_m >= start_y {
+        0
+    } else if start_x >= start_y {
+        1
+    } else {
+        2
+    };
+
     let mut i = 0;
     let mut j = 0;
-    let mut last_committed_i = 0;
-    let mut last_committed_j = 0;
-    let mut in_add_run = false;
-    while i < n && j < m {
-        if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
-            let next_matches = if i + 1 < n && j + 1 < m {
-                a[i + 1] == b[j + 1] && !token_is_ws(a[i + 1])
-            } else if i + 1 == n && j + 1 == m && next_a.is_some() && next_b.is_some() {
-                next_a == next_b && !token_is_ws(next_a.unwrap())
-            } else {
-                false
-            };
-            if token_is_ws(a[i]) && in_add_run && !next_matches {
-                j += 1;
-                continue;
-            }
-            if in_add_run
-                && dp[idx(i, j + 1)] == dp[idx(i, j)]
-                && (j + 1..m).any(|k| {
-                    tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, k)
-                        && dp[idx(i + 1, k + 1)] + 1 == dp[idx(i, j)]
-                })
-            {
-                j += 1;
-                continue;
-            }
-            // When skipping a[i] is free w.r.t. LCS length, prefer a later
-            // occurrence of b[j] in a if it belongs to a strictly longer
-            // contiguous run of matching non-ws tokens (taking into
-            // account bounded contiguous token affinity along the current
-            // path). This prevents a later occurrence with a short
-            // forward run from breaking an established, longer
-            // ongoing contiguous match, while bounding the
-            // candidate search window to MAX_TIE_LOOKAHEAD.
-            if !token_is_ws(a[i]) && i + 1 < n && dp[idx(i + 1, j)] == dp[idx(i, j)] {
-                let cur_affinity = contiguous_affinity(a, b, prev_a, prev_b, i, j);
-                let lookahead_limit = (i + 1 + MAX_TIE_LOOKAHEAD).min(n);
-                let has_better = (i + 1..lookahead_limit).any(|k| {
-                    tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, k, j)
-                        && dp[idx(k, j)] == dp[idx(i, j)]
-                        && candidate_contiguous_affinity(a, b, i, last_committed_j, k, j)
-                            > cur_affinity
-                });
-                if has_better {
+    let mut pairs = FxHashMap::default();
+
+    while i < n || j < m {
+        match cur_state {
+            0 => {
+                if i < n && j < m {
+                    pairs.insert(i, j);
+                    cur_state = tb_m[idx(i, j)];
                     i += 1;
-                    continue;
-                }
-            }
-            // Symmetrically: when skipping b[j] is free w.r.t. LCS length,
-            // prefer a later occurrence of a[i] in b if it belongs to a
-            // strictly longer contiguous run of matching non-ws tokens.
-            if !token_is_ws(b[j]) && j + 1 < m && dp[idx(i, j + 1)] == dp[idx(i, j)] {
-                let cur_affinity = contiguous_affinity(a, b, prev_a, prev_b, i, j);
-                let lookahead_limit = (j + 1 + MAX_TIE_LOOKAHEAD).min(m);
-                let has_better = (j + 1..lookahead_limit).any(|k| {
-                    tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, k)
-                        && dp[idx(i, k)] == dp[idx(i, j)]
-                        && candidate_contiguous_affinity(b, a, j, last_committed_i, k, i)
-                            > cur_affinity
-                });
-                if has_better {
                     j += 1;
-                    in_add_run = true;
-                    continue;
+                } else {
+                    break;
                 }
             }
-            pairs.insert(i, j);
-            last_committed_i = i + 1;
-            last_committed_j = j + 1;
-            i += 1;
-            j += 1;
-            in_add_run = false;
-        } else if dp[idx(i + 1, j)] > dp[idx(i, j + 1)] {
-            i += 1;
-        } else if dp[idx(i + 1, j)] < dp[idx(i, j + 1)] {
-            j += 1;
-            in_add_run = true;
-        } else if token_is_ws(a[i]) && !token_is_ws(b[j]) {
-            if i + 1 < n && a[i + 1] == b[j] {
-                i += 1;
-            } else {
-                j += 1;
-                in_add_run = true;
+            1 => {
+                if i < n {
+                    cur_state = tb_x[idx(i, j)];
+                    i += 1;
+                } else {
+                    break;
+                }
             }
-        } else if token_is_ws(b[j]) && !token_is_ws(a[i]) {
-            j += 1;
-            in_add_run = true;
-        } else if !b[j + 1..].iter().enumerate().any(|(offset, _)| {
-            tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j + 1 + offset)
-        }) || (!token_is_alnum(a[i]) && token_is_alnum(b[j]))
-        {
-            i += 1;
-        } else {
-            j += 1;
-            in_add_run = true;
+            2 => {
+                if j < m {
+                    cur_state = tb_y[idx(i, j)];
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            _ => break,
         }
     }
+
     pairs
 }
 

@@ -1,7 +1,7 @@
 # Principled Data-Plane Alignment & Generalized Anti-Fragmentation
 
 - [x] Phase 1 — Generalized Multi-Token $n$-Gram Phrase Anchoring (Topology Layer)
-- [·] Phase 2 — Affine Gap Sequence Alignment & Path Heuristic Elimination (Optimization Layer)
+- [x] Phase 2 — Affine Gap Sequence Alignment & Path Heuristic Elimination (Optimization Layer)
 - [ ] Phase 3 — Delimiter-Agnostic Container Coherence (Algebra Layer)
 - [ ] Phase 4 — Golden Acceptance, Verification & Full Suite Signoff
 

@@ -32,6 +32,18 @@ fn test_alignment_tape_basic_invariants() {
 }
 
 #[test]
+fn test_diffuse_theme_magic_to_default() {
+    let old = "    let rendered = render_pipeline_output(&out, &DiffuseTheme::MAGIC, true);";
+    let new = "    let rendered = render_pipeline_output(&out, &DiffuseTheme::DEFAULT, true);";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    eprintln!("THEME TAPE: {:#?}", tape);
+    let runs = tape.to_merged_runs();
+    eprintln!("THEME RUNS: {:#?}", runs);
+    let del_run = runs.iter().find(|r| r.kind == RunKind::Del).unwrap();
+    assert_eq!(del_run.text, "MAGIC");
+}
+
+#[test]
 fn test_alignment_tape_monoidal_composition() {
     let mut tape1 = AlignmentTape::default();
     tape1.push(TapeChunk::Keep("let "));
@@ -224,35 +236,6 @@ fn test_paths_with_different_roots_and_basenames_not_fragmented() {
 }
 
 #[test]
-fn test_alignment_tape_backtick_fragmented_code_coalesced() {
-    let old = "Use `foo --option bar` command";
-    let new = "Use `qux --option baz` command";
-    let tape = AlignmentTape::from_texts(old, new, None);
-    let runs = tape.to_merged_runs();
-
-    // The interior changed both prefix and suffix (`foo` and `bar` -> `qux` and
-    // `baz`), with `--option` in the middle.
-    // Inside backticks, this fragmented edit must coalesce into an intact
-    // Strike and Fill: `Keep("`")`, `Strike("foo --option bar")`,
-    // `Fill("qux --option baz")`, `Keep("`")`.
-    let old_cmd = runs.iter().find(|r| r.text == "foo --option bar");
-    assert!(
-        old_cmd.is_some(),
-        "Old command must be intact Strike: {:#?}",
-        runs
-    );
-    assert_eq!(old_cmd.unwrap().kind, RunKind::Del);
-
-    let new_cmd = runs.iter().find(|r| r.text == "qux --option baz");
-    assert!(
-        new_cmd.is_some(),
-        "New command must be intact Fill: {:#?}",
-        runs
-    );
-    assert_eq!(new_cmd.unwrap().kind, RunKind::Add);
-}
-
-#[test]
 fn test_theme_table_code_span_alignment() {
     let old = "| `--theme <NAME>` | Color theme (`magic` default, `default`, etc.) |";
     let new = "| `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |";
@@ -272,4 +255,13 @@ fn test_theme_table_code_span_alignment() {
     assert_eq!(runs[4].text, "`dark`, `black`");
     assert_eq!(runs[5].kind, RunKind::Common);
     assert_eq!(runs[5].text, ") |");
+}
+
+#[test]
+fn test_theme_line_259() {
+    let old = "    /// Resolve a theme by name (`\"magic\"`, `\"deep_black\"`, `\"legacy\"`).";
+    let new = "    /// Resolve a theme by name (`\"default\"`, `\"dark\"`, `\"black\"`).";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
 }

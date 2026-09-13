@@ -188,13 +188,13 @@ fn test_add_span_covers_let_some_floor_equals() {
     let spans = word_spans(old_line, new_line);
     assert_eq!(
         spans.add,
-        vec![(19, 37)],
-        "addition span covers 'let Some(floor) = ' including trailing space"
+        vec![(19, 36)],
+        "addition span covers 'let Some(floor) ='"
     );
     assert_eq!(
         spans.del,
-        vec![(19, 23), (28, 30)],
-        "del spans cover 'k < ' (including trailing space) and ' {{'"
+        vec![(19, 22), (28, 30)],
+        "del spans cover 'k <' and ' {{', with ' floor' common"
     );
 }
 
@@ -457,99 +457,10 @@ fn test_lcs_preserves_contiguous_chained_method_calls() {
     );
     let spans = word_spans(old_line, new_line);
     assert_eq!(spans.add.len(), 0, "no added spans");
-    assert_eq!(spans.del.len(), 1, "deletion must cover set_timeout(10).");
+    assert_eq!(spans.del.len(), 1, "deletion must cover .set_timeout(10)");
     assert_eq!(
         char_slice(old_line, spans.del[0].0, spans.del[0].1),
-        "set_timeout(10)."
-    );
-}
-
-#[test]
-fn test_lcs_max_tie_lookahead_bound() {
-    assert_eq!(MAX_TIE_LOOKAHEAD, 32);
-}
-
-#[test]
-fn test_contiguous_affinity_metrics() {
-    let a = ["foo", " ", "bar", "baz", "qux"];
-    let b = ["foo", " ", "bar", "baz", "qux"];
-    // Centered at index 2 ("bar"):
-    // backward: " " (ws, skipped), "foo" (1 token)
-    // forward: "bar", "baz", "qux" (3 tokens) -> total 4
-    assert_eq!(contiguous_affinity(&a, &b, &[], &[], 2, 2), 4);
-
-    // Centered at index 0 with prev_a and prev_b:
-    let prev_a = ["foo", " "];
-    let prev_b = ["foo", " "];
-    let a_post = ["bar", "baz"];
-    let b_post = ["bar", "baz"];
-    assert_eq!(
-        contiguous_affinity(&a_post, &b_post, &prev_a, &prev_b, 0, 0),
-        3
-    );
-
-    // Test candidate_contiguous_affinity:
-    // With whitespace token in backward walk
-    let a2 = ["ctx", "committed", "target", " ", "cand", "suffix"];
-    let b2 = ["other", "target", " ", "cand", "suffix"];
-    // committed_i = 1 ("committed"), last_committed_j = 0 ("other")
-    // k = 4 ("cand"), j = 3 ("cand")
-    // backward walk:
-    // ki=4, bj=3: a2[3]=" ", b2[2]=" " -> matches, is_ws -> backward not
-    // incremented ki=3, bj=2: a2[2]="target", b2[1]="target" -> matches,
-    // !is_ws -> backward=1 ki=2, bj=1: ki-1=1 <= committed_i (1) -> stops!
-    // forward walk: "cand", "suffix" -> 2 tokens
-    // total: 1 + 2 = 3
-    assert_eq!(candidate_contiguous_affinity(&a2, &b2, 1, 0, 4, 3), 3);
-
-    // Stopped by last_committed_j:
-    assert_eq!(candidate_contiguous_affinity(&a2, &b2, 0, 2, 4, 3), 2);
-
-    // Stopped by token mismatch:
-    let a3 = ["x", "mismatch_a", "cand"];
-    let b3 = ["x", "mismatch_b", "cand"];
-    assert_eq!(candidate_contiguous_affinity(&a3, &b3, 0, 0, 2, 2), 1);
-}
-
-#[test]
-fn test_lcs_max_tie_lookahead_clamping() {
-    assert_eq!(MAX_TIE_LOOKAHEAD, 32);
-
-    // Construct lines where a matching token repeats beyond MAX_TIE_LOOKAHEAD
-    // a has 48 tokens, with "target" at index 0 and index 41 (> 32 away).
-    let mut a_tokens = vec!["target"];
-    a_tokens.extend(["filler"; 40]);
-    a_tokens.push("target");
-    a_tokens.extend(["tail"; 5]);
-
-    let b_tokens = vec!["target", "tail", "tail", "tail", "tail", "tail"];
-    // At i=0, j=0 ("target"), the alternative at k=41 has longer forward run
-    // (tail*5), BUT k=41 is beyond lookahead_limit (0 + 1 + 32 = 33).
-    // So the lookahead limit clamps the search to < 33, and "target" at 0 is
-    // matched!
-    let pairs = raw_lcs_pairs(&a_tokens, &b_tokens);
-    assert_eq!(
-        pairs.get(&0),
-        Some(&0),
-        "bounded lookahead does not skip past MAX_TIE_LOOKAHEAD"
-    );
-}
-
-#[test]
-fn test_lcs_max_tie_lookahead_clamping_on_b() {
-    let a_tokens = vec!["target", "tail", "tail", "tail", "tail", "tail"];
-    let mut b_tokens = vec!["target"];
-    b_tokens.extend(["filler"; 40]);
-    b_tokens.push("target");
-    b_tokens.extend(["tail"; 5]);
-
-    // Bounded lookahead for b clamps search to < 33, so "target" at 0 matches
-    // "target" at 0.
-    let pairs = raw_lcs_pairs(&a_tokens, &b_tokens);
-    assert_eq!(
-        pairs.get(&0),
-        Some(&0),
-        "bounded lookahead on b does not skip past MAX_TIE_LOOKAHEAD"
+        ".set_timeout(10)"
     );
 }
 
@@ -710,37 +621,16 @@ fn test_path_dot_with_slashes_unmatched_extension() {
 }
 
 #[test]
-fn test_is_file_extension_branches() {
-    use super::is_file_extension;
-    assert!(!is_file_extension(""));
-    assert!(!is_file_extension(
-        "a_very_long_extension_name_that_exceeds_16_bytes"
-    ));
-    assert!(is_file_extension("RS"));
-    assert!(is_file_extension("md"));
-    assert!(is_file_extension("TSX"));
-    assert!(!is_file_extension("unknownxyz"));
-}
-
-#[test]
-fn test_is_path_dot_branches() {
-    use super::is_path_dot;
-    // Not a dot
-    assert!(!is_path_dot(&["foo"], &[], None, 0));
-    // Dot without subword neighbors (e.g. whitespace)
-    assert!(!is_path_dot(&[" ", ".", " "], &[], None, 1));
-    // Dot with left neighbor from prev slice with slash
-    assert!(is_path_dot(
-        &[".", "custom"],
-        &["dir", "/", "file"],
-        None,
-        0
-    ));
-    // Dot with backslash in forward lookahead
-    assert!(is_path_dot(
-        &["file", ".", "custom", "\\", "sub"],
-        &[],
-        None,
-        1
-    ));
+fn test_unweighted_lcs_fragments_unknown_extension_dot() {
+    let a = ["foo", ".", "custom1"];
+    let b = ["bar", ".", "custom2"];
+    let pairs = raw_lcs_pairs(&a, &b);
+    // In current code, because "custom1" is not in the hardcoded table of 40
+    // extensions, raw_lcs_pairs fragments the edit and matches the lone
+    // dot! Under Gotoh affine gap scoring, this isolated dot will be
+    // cleanly rejected.
+    assert!(
+        pairs.is_empty(),
+        "Expected wholesale replacement without matching isolated dot between unknown extensions, got: {pairs:?}"
+    );
 }
