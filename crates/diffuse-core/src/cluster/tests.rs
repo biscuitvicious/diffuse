@@ -1450,3 +1450,94 @@ fn test_block_anchor_prefers_overwhelming_content_over_trivial_prefix_head() {
         "anchor should be line 1 (the content carrying prelude::{{...}}), not line 0 (trivial prefix), got {anchor}"
     );
 }
+
+#[test]
+fn test_dp_pairing_populates_expand_blocks() {
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 53,
+        old_count: 1,
+        new_start: 53,
+        new_count: 4,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(
+                LineNum::new(53).unwrap(),
+                "    syntax::prelude::{CloseDelimiter, first_ascii_word},",
+            )),
+            Row::Add(AddLine::new(LineNum::new(53).unwrap(), "    syntax::{")),
+            Row::Add(AddLine::new(
+                LineNum::new(54).unwrap(),
+                "        prelude::{CloseDelimiter, first_ascii_word},",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(55).unwrap(),
+                "        profile::LangProfile,",
+            )),
+            Row::Add(AddLine::new(LineNum::new(56).unwrap(), "    },")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+
+    let results = crate::cluster::pairing::dp_pairing(&h, None, None, rs);
+    // Anchor is row 2 (new line 54) paired with row 0 (old line 53)
+    assert_eq!(results.pair_of.get(&2), Some(&0));
+    assert!(
+        results.expand_blocks.contains_key(&2),
+        "expand_blocks must track the multi-line expansion block anchored at row 2"
+    );
+    assert_eq!(
+        results.expand_blocks.get(&2).unwrap(),
+        &vec![1, 2],
+        "expand_blocks must contain all addition row indices in the expansion"
+    );
+}
+
+#[test]
+fn test_expansion_companion_adds_receive_donor_spans() {
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 53,
+        old_count: 1,
+        new_start: 53,
+        new_count: 4,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(
+                LineNum::new(53).unwrap(),
+                "    syntax::prelude::{CloseDelimiter, first_ascii_word},",
+            )),
+            Row::Add(AddLine::new(LineNum::new(53).unwrap(), "    syntax::{")),
+            Row::Add(AddLine::new(
+                LineNum::new(54).unwrap(),
+                "        prelude::{CloseDelimiter, first_ascii_word},",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(55).unwrap(),
+                "        profile::LangProfile,",
+            )),
+            Row::Add(AddLine::new(LineNum::new(56).unwrap(), "    },")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+
+    let collapsed = crate::collapse::collapse_hunk_rows(&h, None, None, rs);
+    assert_eq!(collapsed.len(), 4);
+    match &collapsed[0] {
+        Row::Add(add_line) => {
+            assert_eq!(add_line.text, "    syntax::{");
+            assert_eq!(
+                add_line.del_text.as_deref(),
+                Some("    syntax::prelude::{CloseDelimiter, first_ascii_word},"),
+                "Companion prefix addition must link to the donor line"
+            );
+            assert!(
+                !add_line.spans.add.contains(&(0, add_line.text.len())),
+                "Companion prefix addition must not be marked as a wholesale addition"
+            );
+        }
+        other => panic!("Expected Row::Add for prefix row, got {:?}", other),
+    }
+}

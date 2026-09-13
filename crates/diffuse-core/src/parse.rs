@@ -235,10 +235,14 @@ impl Row {
     #[inline]
     pub fn spans(&self) -> Option<&Spans> {
         match self {
-            Row::Add(add_line) | Row::MovTgt(add_line) if !add_line.spans.is_empty() => {
-                Some(&add_line.spans)
+            Row::Add(add_line) | Row::MovTgt(add_line) => {
+                if !add_line.spans.is_empty() || add_line.del_text.is_some() {
+                    Some(&add_line.spans)
+                } else {
+                    None
+                }
             }
-            Row::Mod { new_line, .. } if !new_line.spans.is_empty() => Some(&new_line.spans),
+            Row::Mod { new_line, .. } => Some(&new_line.spans),
             _ => None,
         }
     }

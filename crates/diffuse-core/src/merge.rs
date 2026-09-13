@@ -105,7 +105,13 @@ pub fn is_wholesale_replacement(r: &Row) -> bool {
     };
     let computed_spans;
     let spans = match r.spans() {
-        Some(s) if !s.is_empty() || del_text == r.text() => s,
+        Some(s)
+            if !s.is_empty()
+                || del_text == r.text()
+                || matches!(r, Row::Add(_) | Row::MovTgt(_)) =>
+        {
+            s
+        }
         _ => {
             computed_spans = crate::lcs::word_spans(del_text, r.text());
             &computed_spans
@@ -141,7 +147,13 @@ pub fn merged_runs<'a>(r: &'a Row) -> Vec<Run<'a>> {
     };
     let computed_spans;
     let spans = match r.spans() {
-        Some(s) if !s.is_empty() || del_text == r.text() => s,
+        Some(s)
+            if !s.is_empty()
+                || del_text == r.text()
+                || matches!(r, Row::Add(_) | Row::MovTgt(_)) =>
+        {
+            s
+        }
         _ => {
             computed_spans = crate::lcs::word_spans(del_text, r.text());
             &computed_spans

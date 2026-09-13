@@ -26,6 +26,7 @@ pub struct PairingResults {
     pub run_of: FxHashMap<usize, Vec<usize>>,
     pub del_ids: Vec<usize>,
     pub collapse_blocks: FxHashMap<usize, Vec<usize>>,
+    pub expand_blocks: FxHashMap<usize, Vec<usize>>,
 }
 
 /// Products of the assembly pass.
@@ -43,6 +44,7 @@ pub struct PairingContext<'a> {
     pub run_of: &'a FxHashMap<usize, Vec<usize>>,
     pub paired_dels: &'a FxHashSet<usize>,
     pub collapse_blocks: &'a FxHashMap<usize, Vec<usize>>,
+    pub expand_blocks: &'a FxHashMap<usize, Vec<usize>>,
 }
 
 /// Collapse each FIFO del→add pair into a single "mod" row: the new line
@@ -78,6 +80,7 @@ pub fn collapse_hunk_rows(
         run_of: &p1.run_of,
         paired_dels: &paired_dels,
         collapse_blocks: &p1.collapse_blocks,
+        expand_blocks: &p1.expand_blocks,
     };
     let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
 
@@ -243,8 +246,18 @@ pub fn pass_assemble_mods(
             }
 
             let mut next_adds = Vec::new();
+            let mut max_scanned = add_ri;
+            if let Some(block) = ctx.expand_blocks.get(&add_ri) {
+                for &ai in block {
+                    if ai != add_ri {
+                        next_adds.push(ai);
+                    }
+                    max_scanned = max_scanned.max(ai);
+                }
+            }
+
             if !ctx.collapse_blocks.contains_key(&add_ri) {
-                let mut k = add_ri + 1;
+                let mut k = max_scanned + 1;
                 let has_deleted_content = spans.del.iter().any(|&(ds, de)| {
                     let seg = char_slice(&del_text, ds, de);
                     tokenize_line(seg)
@@ -252,11 +265,15 @@ pub fn pass_assemble_mods(
                         .any(|tok| !tok.trim().is_empty() && tok.chars().any(char::is_alphanumeric))
                 });
 
-                if has_deleted_content && let Some(p) = profile {
+                if (has_deleted_content || ctx.expand_blocks.contains_key(&add_ri))
+                    && let Some(p) = profile
+                {
                     let opens_delim = add.text().trim().ends_with('(')
                         || add.text().trim().ends_with('{')
                         || add.text().trim().ends_with('[')
-                        || p.is_import_statement(&del_text);
+                        || p.is_import_statement(&del_text)
+                        || (ctx.expand_blocks.contains_key(&add_ri)
+                            && (del_text.contains('{') || del_text.contains('(')));
 
                     if opens_delim {
                         while k < h.rows.len()
@@ -290,6 +307,8 @@ pub fn pass_assemble_mods(
                     }
                 }
             }
+            next_adds.sort_unstable();
+            next_adds.dedup();
 
             // The mod row always presents its own word-level truth: strike
             // what left this line, fill what replaced it — even when the
@@ -316,6 +335,7 @@ pub fn pass_assemble_mods(
                         || nxt_trim == "("
                         || nxt_trim == "[";
 
+                    let has_common_tokens = tok_count > 0 && donor_spans.add.len() < tok_count;
                     if is_opening_row {
                         let text_len = add_nxt.text().chars().count();
                         let indent_len = add_nxt
@@ -340,48 +360,7 @@ pub fn pass_assemble_mods(
                             };
                             add_spans.insert(nxt_i, (spans, del_text.clone()));
                         }
-                    } else if (!donor_spans.add.is_empty() || is_closing_row)
-                        && donor_spans.add.len() < tok_count
-                    {
-                        let other_adds_text = format!(
-                            "{}\n{}",
-                            add.text(),
-                            next_adds
-                                .iter()
-                                .filter(|&&i| i != nxt_i)
-                                .map(|&idx| h.rows[idx].text())
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        );
-                        donor_spans.del = donor_spans
-                            .del
-                            .into_iter()
-                            .flat_map(|(ds, de)| {
-                                let seg = char_slice(&del_text, ds, de);
-                                let tokens: Vec<&str> = tokenize_line(seg)
-                                    .filter(|t| !t.trim().is_empty())
-                                    .collect();
-                                let in_other = tokens.iter().any(|t| other_adds_text.contains(t));
-                                if in_other {
-                                    let is_trailing_open_delim = de == del_text.len()
-                                        && (seg.ends_with('{') || seg.ends_with('('));
-                                    if is_trailing_open_delim {
-                                        let ws_len =
-                                            seg.chars().take_while(|c| c.is_whitespace()).count();
-                                        if ws_len > 0 {
-                                            vec![(ds, ds + ws_len)]
-                                        } else {
-                                            Vec::new()
-                                        }
-                                    } else {
-                                        Vec::new()
-                                    }
-                                } else {
-                                    vec![(ds, de)]
-                                }
-                            })
-                            .collect();
-
+                    } else if has_common_tokens || is_closing_row {
                         let indent_len = add_nxt
                             .text()
                             .chars()
@@ -401,6 +380,11 @@ pub fn pass_assemble_mods(
                             })
                             .filter(|(s, e)| s < e)
                             .collect();
+
+                        // Companion addition rows never carry deletions from
+                        // the donor line. The anchor
+                        // mod row already displays the struck content.
+                        donor_spans.del = Vec::new();
 
                         add_spans.insert(nxt_i, (donor_spans, del_text.clone()));
                     } else {
