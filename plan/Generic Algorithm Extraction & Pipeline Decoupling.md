@@ -3,7 +3,7 @@
 - [x] Phase 1: Landmark Anchoring & Entropy Engines (`Mums` & `EntropyRanker`)
 - [x] Phase 2: Formal Container Balancing (`DyckBalancer` & Sequence Geometry)
 - [x] Phase 3: Gotoh Affine Gap Aligner with Zero-Allocation Workspace
-- [ ] Phase 4: Generic 2D Multi-Objective Block Transformation Solver (`BlockAligner`)
+- [x] Phase 4: Generic 2D Multi-Objective Block Transformation Solver (`BlockAligner`)
 - [ ] Phase 5: Bipartite Matching & Spatial Coalescence Engine (`BipartiteMatcher`)
 - [ ] Phase 6: Monoidal Invertible Edit Tape & Generic Symbol Interning
 - [ ] Phase 7: Lean Pipeline Integration & Verification Gate
@@ -224,11 +224,11 @@ pub struct AffineGapWorkspace<S> {
 
 ## 4. Phase 4 — Generic 2D Multi-Objective Block Transformation Solver
 
-- [ ] Extract the 2D DP grid and traceback solver from `cluster/dp.rs` into `crates/diffuse-core/src/algo/block_dp.rs`.
-- [ ] Define the `BlockTransitionEvaluator` trait for 1-to-1, 1-to-K, K-to-1, Insert, and Delete transitions.
-- [ ] Decouple `ChangeCluster`, `Row`, `Hunk`, and AST syntax checks from the DP lattice.
-- [ ] Expose `BlockTransitionsIter` for streaming row construction.
-- [ ] Implement reusable matrix workspace (`BlockDpWorkspace`).
+- [x] Extract the 2D DP grid and traceback solver from `cluster/dp.rs` into `crates/diffuse-core/src/algo/block_dp.rs`.
+- [x] Define the `BlockTransitionEvaluator` trait for 1-to-1, 1-to-K, K-to-1, Insert, and Delete transitions.
+- [x] Decouple `ChangeCluster`, `Row`, `Hunk`, and AST syntax checks from the DP lattice.
+- [x] Expose `BlockTransitionsIter` for streaming row construction.
+- [x] Implement reusable matrix workspace (`BlockDpWorkspace`).
 
 ### Problem
 [`crates/diffuse-core/src/cluster/dp.rs`](crates/diffuse-core/src/cluster/dp.rs) is currently 1,748 lines of code where matrix indexing, traceback decoding, Pareto score calculation, and diff domain row models are intertwined in a single monolithic implementation.

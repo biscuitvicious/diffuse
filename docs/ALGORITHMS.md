@@ -227,7 +227,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Robert A. Wagner and Michael J. Fischer (1974). *"The String-to-String Correction Problem"*. Journal of the ACM, 21(1), 168–173.  
   [ACM Digital Library](https://doi.org/10.1145/321796.321811)
 - **Location**:
-  [`crates/diffuse-core/src/cluster/dp.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/cluster/dp.rs)
+  [`crates/diffuse-core/src/algo/block_dp.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/block_dp.rs) (`BlockDpWorkspace`, `BlockTransition`, `BlockTransitionEvaluator`, `BlockTransitionsIter`); consumed in [`crates/diffuse-core/src/cluster/dp.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/cluster/dp.rs).
 - **Why It Is Used**:
   Diff hunks often contain reflows where a single deleted line expands into multiple added lines ($1\text{-to-}K$), or multiple deleted lines collapse into one ($K\text{-to-}1$). Standard line-by-line diffing misaligns these into disconnected deletion/addition blocks. The Cluster DP formulates the problem as a 2D transformation grid where transitions include block expansions, block collapses, in-place modifications, moves, and standalone adds/deletes.
 - **For What It Is Used**:

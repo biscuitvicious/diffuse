@@ -13,6 +13,7 @@ use std::collections::HashMap;
 
 pub mod affine_gap;
 pub mod bit_parallel;
+pub mod block_dp;
 pub mod bounded_dp;
 pub mod dyck;
 pub mod entropy;
@@ -26,6 +27,9 @@ pub use affine_gap::{
     AffineAlignmentSteps, AffineGapPenalties, AffineGapWorkspace, DiffuseAffineExt, align_affine,
 };
 pub use bit_parallel::BitParallelLcs;
+pub use block_dp::{
+    BlockDpWorkspace, BlockTransition, BlockTransitionEvaluator, BlockTransitionsIter,
+};
 pub use bounded_dp::BoundedDpLcs;
 pub use dyck::{
     AsciiDelimiterClassifier, DelimiterCategory, DelimiterClassifier, DiffuseDyckExt, DyckBalanced,
