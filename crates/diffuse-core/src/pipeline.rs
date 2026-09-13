@@ -1,16 +1,24 @@
 //! The Diffuse Core Engine Pipeline Orchestrator.
 //!
 //! Transforms unified diffs and source buffers into structured,
-//! syntax-classified token runs and wire models:
+//! syntax-classified token runs and wire models through a lean orchestrator:
+//!
+//! $$\text{Parse} \longrightarrow \text{Intern} \longrightarrow
+//! \text{Algorithmic Optimization} \longrightarrow \text{Wire/Render}$$
 //!
 //! 1. Diff parsing & content reconstruction (`src/parse/`,
 //!    `src/old_content.rs`)
-//! 2. Greedy file relocation & move marking (`src/moves/`)
-//! 3. DP cluster transformation & collapse passes (`src/cluster/`,
-//!    `src/collapse/`)
-//! 4. Fence syntax region detection (`src/syntax/`)
-//! 5. Semantic token classification & subword coloring (`src/syntax/`,
-//!    `src/merge/`)
+//! 2. Symbol interning & token indexing (`src/algo/interner.rs`,
+//!    `src/similarity.rs`)
+//! 3. Algorithmic sequence optimization & cluster transformations:
+//!    - Bipartite move relocation (`src/algo/bipartite_matching.rs`,
+//!      `src/moves.rs`)
+//!    - Container Dyck balancing & phrase landmarks (`src/algo/dyck.rs`,
+//!      `src/algo/landmarks.rs`, `src/token.rs`)
+//!    - 2D multi-objective dynamic programming & collapse
+//!      (`src/algo/block_dp.rs`, `src/cluster/`, `src/collapse.rs`)
+//! 4. Fence syntax region detection & classification (`src/syntax/`)
+//! 5. Wire contract projection & streaming (`src/wire/`, `src/streaming.rs`)
 
 use std::collections::HashMap;
 

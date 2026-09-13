@@ -4,9 +4,9 @@
 - [x] Phase 2: Formal Container Balancing (`DyckBalancer` & Sequence Geometry)
 - [x] Phase 3: Gotoh Affine Gap Aligner with Zero-Allocation Workspace
 - [x] Phase 4: Generic 2D Multi-Objective Block Transformation Solver (`BlockAligner`)
-- [ ] Phase 5: Bipartite Matching & Spatial Coalescence Engine (`BipartiteMatcher`)
-- [ ] Phase 6: Monoidal Invertible Edit Tape & Generic Symbol Interning
-- [ ] Phase 7: Lean Pipeline Integration & Verification Gate
+- [x] Phase 5: Bipartite Matching & Spatial Coalescence Engine (`BipartiteMatcher`)
+- [x] Phase 6: Monoidal Invertible Edit Tape & Generic Symbol Interning
+- [x] Phase 7: Lean Pipeline Integration & Verification Gate
 
 ---
 
@@ -387,12 +387,12 @@ impl<T: Clone> Tape<T> {
 
 ## 7. Phase 7 — Lean Pipeline Integration & Verification Gate
 
-- [ ] Connect diffuse pipeline stages to the decoupled algorithmic engines in `crates/diffuse-core/src/algo/`.
-- [ ] Verify that diff pipeline modules become lean orchestrators:
+- [x] Connect diffuse pipeline stages to the decoupled algorithmic engines in `crates/diffuse-core/src/algo/`.
+- [x] Verify that diff pipeline modules become lean orchestrators:
   $$\text{Parse} \longrightarrow \text{Intern} \longrightarrow \text{Algorithmic Optimization} \longrightarrow \text{Wire/Render}$$
-- [ ] Run full golden acceptance corpus (`cargo test --test golden`).
-- [ ] Run full repository verification suite (`./scripts/check.sh`).
-- [ ] Measure and assert test latency budgets (< 0.5s per test, < 1.5s per test binary).
+- [x] Run full golden acceptance corpus (`cargo test --test golden`).
+- [x] Run full repository verification suite (`./scripts/check.sh`).
+- [x] Measure and assert test latency budgets (< 0.5s per test, < 1.5s per test binary).
 
 ### Verification Gates
 1. `cargo test --lib -p diffuse-core`: 100% passing.
