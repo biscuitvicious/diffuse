@@ -160,8 +160,8 @@ fn char_slice_roundtrip() {
     // the é is two UTF-8 bytes but one char).
     let add = "fn café(x: u64) -> u64 {";
     let ws = word_spans("fn café(x: u32) -> u32 {", add);
-    assert_eq!(char_slice(add, ws.add[0].0, ws.add[0].1), "u64");
-    assert_eq!(char_slice(add, ws.add[1].0, ws.add[1].1), "u64");
+    assert_eq!(char_slice(add, ws.add[0].0, ws.add[0].1), "64");
+    assert_eq!(char_slice(add, ws.add[1].0, ws.add[1].1), "64");
     // Multi-byte 1-char span: the é ends the slice at its full UTF-8
     // length, never a non-boundary byte.
     assert_eq!(char_slice("é", 0, 1), "é");

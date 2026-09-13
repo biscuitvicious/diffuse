@@ -279,3 +279,40 @@ fn test_theme_line_259() {
     assert_eq!(del_texts, vec!["magic", "deep_black", "legacy"]);
     assert_eq!(add_texts, vec!["default", "dark", "black"]);
 }
+
+#[test]
+fn test_ansi_and_digit_letter_boundary_subword_alignment() {
+    // 141mstruct vs 147mstruct: mstruct must be Common
+    let old = "    assert!(md.contains(\"\\x1b[38;5;141mstruct\\x1b[39m\"));";
+    let new = "    assert!(md.contains(\"\\x1b[38;5;147mstruct\\x1b[39m\"));";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+
+    assert!(
+        runs.iter()
+            .any(|r| r.kind == RunKind::Common && r.text.contains("mstruct")),
+        "mstruct must be common context, got runs: {:#?}",
+        runs
+    );
+    let del_run = runs.iter().find(|r| r.kind == RunKind::Del).unwrap();
+    assert_eq!(del_run.text, "141");
+    let add_run = runs.iter().find(|r| r.kind == RunKind::Add).unwrap();
+    assert_eq!(add_run.text, "147");
+
+    // 123m vs 456m: m must be Common
+    let old2 = "let val = 123m;";
+    let new2 = "let val = 456m;";
+    let tape2 = AlignmentTape::from_texts(old2, new2, None);
+    let runs2 = tape2.to_merged_runs();
+    assert!(
+        runs2
+            .iter()
+            .any(|r| r.kind == RunKind::Common && r.text.starts_with('m')),
+        "m must be common context, got runs: {:#?}",
+        runs2
+    );
+    let del_run2 = runs2.iter().find(|r| r.kind == RunKind::Del).unwrap();
+    assert_eq!(del_run2.text, "123");
+    let add_run2 = runs2.iter().find(|r| r.kind == RunKind::Add).unwrap();
+    assert_eq!(add_run2.text, "456");
+}

@@ -16,13 +16,10 @@ use crate::{
 };
 
 /// Check whether a row consists solely of common/context runs.
-pub fn is_common_only_row(kind: RowKind, runs: &[OutputRun]) -> bool {
-    kind == RowKind::Add
-        && !runs.is_empty()
-        && runs.iter().all(|x| {
-            let k = x.kind;
-            k == RunKind::Common || k == RunKind::Ctx
-        })
+/// Addition rows added in diffs are never treated as context rows.
+#[inline]
+pub fn is_common_only_row(_kind: RowKind, _runs: &[OutputRun]) -> bool {
+    false
 }
 
 /// Check if a mod row is a pure deletion (e.g. whitespace-only additions).

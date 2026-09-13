@@ -86,6 +86,7 @@ const KIND_WORD: u8 = 0;
 const KIND_WS: u8 = 1;
 const KIND_DELIM: u8 = 2;
 const KIND_OP: u8 = 3;
+const KIND_DIGIT: u8 = 4;
 
 const ASCII_KIND: [u8; 128] = {
     let mut table = [KIND_WORD; 128];
@@ -131,6 +132,13 @@ const ASCII_KIND: [u8; 128] = {
     table[b'.' as usize] = KIND_OP;
     table[b'_' as usize] = KIND_OP;
 
+    // Digits
+    let mut d = b'0' as usize;
+    while d <= b'9' as usize {
+        table[d] = KIND_DIGIT;
+        d += 1;
+    }
+
     table
 };
 
@@ -166,6 +174,13 @@ pub fn for_each_token<'a>(text: &'a str, mut f: impl FnMut(&'a str)) {
                 KIND_OP => {
                     i += 1;
                     while i < len && ASCII_KIND[bytes[i] as usize] == KIND_OP {
+                        i += 1;
+                    }
+                    f(&text[start..i]);
+                }
+                KIND_DIGIT => {
+                    i += 1;
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_DIGIT {
                         i += 1;
                     }
                     f(&text[start..i]);
@@ -210,10 +225,25 @@ pub fn for_each_token<'a>(text: &'a str, mut f: impl FnMut(&'a str)) {
             }
             let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
             f(&text[start_byte..end_byte]);
+        } else if c.is_ascii_digit() {
+            chars.next();
+            while let Some(&(_, next_c)) = chars.peek() {
+                if next_c.is_ascii_digit() {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let end_byte = chars.peek().map_or(text.len(), |&(i, _)| i);
+            f(&text[start_byte..end_byte]);
         } else {
             chars.next();
             while let Some(&(_, next_c)) = chars.peek() {
-                if is_ws_char(next_c) || is_delim_char(next_c) || is_op_char(next_c) {
+                if is_ws_char(next_c)
+                    || is_delim_char(next_c)
+                    || is_op_char(next_c)
+                    || next_c.is_ascii_digit()
+                {
                     break;
                 }
                 chars.next();
@@ -258,6 +288,11 @@ impl<'a> Iterator for LineTokenizer<'a> {
                         i += 1;
                     }
                 }
+                KIND_DIGIT => {
+                    while i < len && ASCII_KIND[bytes[i] as usize] == KIND_DIGIT {
+                        i += 1;
+                    }
+                }
                 _ => {
                     while i < len && ASCII_KIND[bytes[i] as usize] == KIND_WORD {
                         i += 1;
@@ -299,10 +334,26 @@ impl<'a> Iterator for LineTokenizer<'a> {
                 let start = self.pos;
                 self.pos += advance;
                 Some(&self.text[start..self.pos])
+            } else if c.is_ascii_digit() {
+                let mut advance = c_len;
+                for next_c in chars {
+                    if next_c.is_ascii_digit() {
+                        advance += next_c.len_utf8();
+                    } else {
+                        break;
+                    }
+                }
+                let start = self.pos;
+                self.pos += advance;
+                Some(&self.text[start..self.pos])
             } else {
                 let mut advance = c_len;
                 for next_c in chars {
-                    if is_ws_char(next_c) || is_delim_char(next_c) || is_op_char(next_c) {
+                    if is_ws_char(next_c)
+                        || is_delim_char(next_c)
+                        || is_op_char(next_c)
+                        || next_c.is_ascii_digit()
+                    {
                         break;
                     }
                     advance += next_c.len_utf8();

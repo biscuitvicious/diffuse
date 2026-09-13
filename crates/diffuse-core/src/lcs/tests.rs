@@ -19,12 +19,12 @@ fn word_diff_highlighting() {
     );
     assert_eq!(
         char_slice(add_text, ws.add[1].0, ws.add[1].1),
-        "u64",
+        "64",
         "add span 1"
     );
     assert_eq!(
         char_slice(add_text, ws.add[2].0, ws.add[2].1),
-        "u64",
+        "64",
         "add span 2"
     );
 }
@@ -249,7 +249,7 @@ fn test_semantic_delimiter_atomicity_and_literals() {
 fn test_tokenize_line_parity_with_regex() {
     fn tokenize_regex(text: &str) -> Vec<&str> {
         let re = regex::Regex::new(
-            r#"([\p{White_Space}\u200b]+|[<>!=+\-*\/\\|&^%~?:._]+|[()\[\]{};,@#`"])"#,
+            r#"([\p{White_Space}\u200b]+|[<>!=+\-*\/\\|&^%~?:._]+|[()\[\]{};,@#`"]|[0-9]+)"#,
         )
         .unwrap();
         let mut out = Vec::new();

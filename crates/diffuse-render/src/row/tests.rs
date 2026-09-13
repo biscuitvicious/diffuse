@@ -14,6 +14,21 @@ fn test_prefix_gutters() {
 }
 
 #[test]
+fn test_addition_row_with_all_common_runs_preserves_plus_gutter() {
+    let runs = vec![OutputRun {
+        kind: RunKind::Common,
+        color: None,
+        sgr: None,
+        text: "    syntax::{".into(),
+    }];
+    let r_add = prefix_of(RowKind::Add, None, Some(53), None, &runs);
+    assert_eq!(
+        r_add, "  53 +",
+        "Leading add row must keep '+' in gutter even if runs are common"
+    );
+}
+
+#[test]
 fn test_render_addition_row_with_subword_styling() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![
