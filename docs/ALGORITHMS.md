@@ -142,7 +142,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Osamu Gotoh (1982). *"An Improved Algorithm for Matching Biological Sequences"*. Journal of Molecular Biology, 162(3), 705–708.  
   [ScienceDirect DOI:10.1016/0022-2836(82)90398-9](https://doi.org/10.1016/0022-2836(82)90398-9) · [Paper PDF](https://www.cs.cmu.edu/~ckingsf/bio/resources/gotoh-gap-penalty.pdf)
 - **Location**:
-  Architecture plan: [`plan/Principled Data-Plane Alignment & Generalized Anti-Fragmentation.md`](file:///home/daniel/lab/diffuse/plan/Principled%20Data-Plane%20Alignment%20&%20Generalized%20Anti-Fragmentation.md) (Phase 2); replacing unweighted LCS in [`crates/diffuse-core/src/lcs.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/lcs.rs).
+  [`crates/diffuse-core/src/algo/affine_gap.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/affine_gap.rs) (`align_affine`, `AffineGapWorkspace`, `AffineGapPenalties`, `AffineAlignmentSteps`, `DiffuseAffineExt`).
 - **Why It Is Used**:
   Standard LCS assigns uniform cost to every gap character or token ($c(\text{gap}) = k \cdot g$). This causes anti-fragmentation artifacts where contiguous deletions/insertions are broken up to preserve isolated, coincidental punctuation or single characters (e.g. aligning underscores across unrelated identifiers). Gotoh's algorithm introduces affine gap penalties:
   $$\text{Cost}(\text{gap of length } k) = \alpha + \beta \cdot k \quad (\text{where } \alpha > \beta)$$

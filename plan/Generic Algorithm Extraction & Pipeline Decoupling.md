@@ -2,7 +2,7 @@
 
 - [x] Phase 1: Landmark Anchoring & Entropy Engines (`Mums` & `EntropyRanker`)
 - [x] Phase 2: Formal Container Balancing (`DyckBalancer` & Sequence Geometry)
-- [ ] Phase 3: Gotoh Affine Gap Aligner with Zero-Allocation Workspace
+- [x] Phase 3: Gotoh Affine Gap Aligner with Zero-Allocation Workspace
 - [ ] Phase 4: Generic 2D Multi-Objective Block Transformation Solver (`BlockAligner`)
 - [ ] Phase 5: Bipartite Matching & Spatial Coalescence Engine (`BipartiteMatcher`)
 - [ ] Phase 6: Monoidal Invertible Edit Tape & Generic Symbol Interning
@@ -173,11 +173,11 @@ where
 
 ## 3. Phase 3 — Gotoh Affine Gap Aligner with Zero-Allocation Workspace
 
-- [ ] Implement generic 3-matrix Gotoh sequence alignment in `crates/diffuse-core/src/algo/affine_gap.rs`.
-- [ ] Expose lazy alignment step iterator `AffineAlignmentSteps<T>`.
-- [ ] Implement linear-space / banded affine gap DP with row buffer recycling.
-- [ ] Parameterize alignment with generic gap opening $\alpha$, gap extension $\beta$, and match/mismatch scoring matrices.
-- [ ] Verify sub-millisecond execution over long token sequences.
+- [x] Implement generic 3-matrix Gotoh sequence alignment in `crates/diffuse-core/src/algo/affine_gap.rs`.
+- [x] Expose lazy alignment step iterator `AffineAlignmentSteps<T>`.
+- [x] Implement linear-space / banded affine gap DP with row buffer recycling.
+- [x] Parameterize alignment with generic gap opening $\alpha$, gap extension $\beta$, and match/mismatch scoring matrices.
+- [x] Verify sub-millisecond execution over long token sequences.
 
 ### Problem
 Current subword and token LCS in [`crates/diffuse-core/src/lcs.rs`](crates/diffuse-core/src/lcs.rs) assigns uniform penalty to all gaps, causing token fragmentation across punctuation and identifier boundaries.

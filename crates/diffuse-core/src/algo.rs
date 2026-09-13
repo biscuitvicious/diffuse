@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 
+pub mod affine_gap;
 pub mod bit_parallel;
 pub mod bounded_dp;
 pub mod dyck;
@@ -21,6 +22,9 @@ pub mod landmarks;
 pub mod myers_ond;
 pub mod prefix_dfa;
 
+pub use affine_gap::{
+    AffineAlignmentSteps, AffineGapPenalties, AffineGapWorkspace, DiffuseAffineExt, align_affine,
+};
 pub use bit_parallel::BitParallelLcs;
 pub use bounded_dp::BoundedDpLcs;
 pub use dyck::{
