@@ -148,6 +148,7 @@ index 1111111..2222222 100644
         is_binary: false,
         old_bytes: None,
         new_bytes: Some(21),
+        raw_source: None,
     });
 
     let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
@@ -518,6 +519,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
         old_bytes: Some(1000),
         new_content: vec![],
         old_content: vec![],
+        raw_source: None,
         content_runs: vec![],
     };
 

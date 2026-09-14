@@ -32,7 +32,7 @@ use diffuse::{
         DiffuseTheme, MarkdownOptions, render_file_diff, render_markdown_output,
         render_raw_file_diff, render_raw_pipeline_output,
     },
-    tui::run_streaming_interactive_tui,
+    tui::run_tui,
 };
 
 /// The diffuse diff-engine CLI.
@@ -457,7 +457,7 @@ fn main() -> io::Result<()> {
                 Vec::new(),
                 false,
                 ENGINE_CONTEXT,
-                pipeline_opts,
+                pipeline_opts.with_lazy_collapsed(true),
                 args.jobs,
             );
             let initial_out = PipelineOutput {
@@ -465,7 +465,7 @@ fn main() -> io::Result<()> {
                 branch: String::new(),
                 untracked_skipped: Vec::new(),
             };
-            run_streaming_interactive_tui(
+            run_tui(
                 initial_out,
                 Some(consumer.into_receiver()),
                 Some(meta_rx),

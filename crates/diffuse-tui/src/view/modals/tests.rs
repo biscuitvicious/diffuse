@@ -155,6 +155,7 @@ fn sample_finder_output() -> PipelineOutput {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
     let file2 = OutputFile {
         path: "crates/diffuse-tui/src/app/render.rs".to_string(),
@@ -184,6 +185,7 @@ fn sample_finder_output() -> PipelineOutput {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     PipelineOutput {
@@ -369,6 +371,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     let output = PipelineOutput {
@@ -452,6 +455,7 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
             is_binary: false,
             old_bytes: None,
             new_bytes: None,
+            raw_source: None,
         })
         .collect();
 
@@ -558,6 +562,7 @@ fn test_finder_modal_proportional_height_scaling() {
                 is_binary: false,
                 old_bytes: None,
                 new_bytes: None,
+                raw_source: None,
             })
             .collect(),
         branch: "main".to_string(),

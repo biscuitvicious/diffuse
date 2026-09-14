@@ -11,8 +11,14 @@ impl AppState {
         }
         if self.collapsed_files.contains(&fi) {
             self.collapsed_files.remove(&fi);
+            if !self.is_file_loaded(fi) {
+                self.request_file_load(fi);
+            }
         } else {
             self.collapsed_files.insert(fi);
+            if let Some(f) = self.output.files.get_mut(fi) {
+                f.release_rendered_memory();
+            }
         }
         self.rebuild_flat_preserving_cursor(fi);
     }

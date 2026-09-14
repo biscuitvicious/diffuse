@@ -247,13 +247,13 @@ Embed the full interactive reviewer inside your own terminal workflow:
 ```rust
 use std::path::PathBuf;
 use diffuse::prelude::*;
-use diffuse::tui::run_streaming_interactive_tui;
+use diffuse::tui::run_tui;
 
 fn launch_reviewer(diff_text: &str, repo_root: PathBuf) -> std::io::Result<()> {
     let output = run_pipeline(diff_text, None);
     let notes_path = repo_root.join(".diffuse/notes.json");
 
-    run_streaming_interactive_tui(
+    run_tui(
         output,
         None,
         None,

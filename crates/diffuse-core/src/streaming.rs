@@ -313,7 +313,7 @@ pub fn stream_diff_pipeline_arc(
             file: f,
             new_content: new_c,
             old_content: old_c,
-            diff_fallback: None,
+            diff_fallback: Some(Arc::clone(&diff)),
         });
     }
     producer.finish();

@@ -87,6 +87,7 @@ fn sample_output_file() -> OutputFile {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     }
 }
 
@@ -220,6 +221,7 @@ fn test_common_directory_prefix_and_display() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
     let file2 = OutputFile {
         path: "crates/diffuse-core/src/apply.rs".to_string(),
@@ -241,6 +243,7 @@ fn test_common_directory_prefix_and_display() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     let output = PipelineOutput {
@@ -283,6 +286,7 @@ fn test_common_directory_prefix_and_display() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
     let root_output = PipelineOutput {
         files: vec![file1.clone(), root_file.clone()],
@@ -334,6 +338,7 @@ fn test_display_status_mode_change_and_renames() {
         is_binary: false,
         old_bytes: Some(1024),
         new_bytes: Some(1024),
+        raw_source: None,
     };
     assert_eq!(file.display_status(), "mode 100644 ➞ 100755, 1kB");
 
@@ -417,4 +422,52 @@ fn test_format_byte_size() {
     assert_eq!(format_byte_size(1024 * 1024 * 1024), "1GB");
     assert_eq!(format_byte_size(1024usize.pow(4)), "1TB");
     assert_eq!(format_byte_size(1024usize.pow(5)), "1PB");
+}
+
+#[test]
+fn test_output_file_release_rendered_memory() {
+    let mut file = sample_output_file();
+    file.counts.adds = 5;
+    file.counts.dels = 2;
+    file.rows.push(crate::wire::OutputRow {
+        kind: crate::parse::RowKind::Add,
+        mov_side: None,
+        new_line: Some(1),
+        old_line: None,
+        text: "line".to_string(),
+        del_text: None,
+        spans: Default::default(),
+        runs: Vec::new(),
+        wholesale: false,
+    });
+    file.new_content = vec!["line".to_string()];
+    file.hunks = vec![crate::wire::OutputHunk {
+        old_start: 1,
+        old_count: 0,
+        new_start: 1,
+        new_count: 1,
+        rows: file.rows.clone(),
+    }];
+
+    assert!(file.is_loaded());
+    assert!(!file.rows.is_empty());
+    assert!(!file.hunks.is_empty());
+    assert!(!file.new_content.is_empty());
+
+    file.release_rendered_memory();
+
+    assert!(!file.is_loaded());
+    assert!(file.rows.is_empty());
+    assert!(file.hunks.is_empty());
+    assert!(file.raw_hunks.is_empty());
+    assert!(file.new_content.is_empty());
+    assert!(file.old_content.is_empty());
+    assert!(file.content_runs.is_empty());
+    assert!(file.fences.is_empty());
+
+    // Necessary metadata preserved
+    assert_eq!(file.counts.adds, 5);
+    assert_eq!(file.counts.dels, 2);
+    assert_eq!(file.path, "src/sample.rs");
+    assert_eq!(file.status, "modified");
 }

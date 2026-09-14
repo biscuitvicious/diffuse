@@ -51,7 +51,7 @@ pub use diffuse_render::{
     DiffuseTheme, MarkdownOptions, default_theme, render_file_diff, render_file_markdown,
     render_markdown_output, render_pipeline_output,
 };
-pub use diffuse_tui::run_streaming_interactive_tui;
+pub use diffuse_tui::{run_interactive_tui, run_tui};
 
 /// Common imports and prelude traits for diffuse consumers.
 pub mod prelude {
@@ -68,7 +68,7 @@ pub mod prelude {
         render_markdown_output, render_pipeline_output,
     };
     pub use diffuse_syntax::registry::lang_profile;
-    pub use diffuse_tui::run_streaming_interactive_tui;
+    pub use diffuse_tui::{run_interactive_tui, run_tui};
 }
 
 #[cfg(test)]

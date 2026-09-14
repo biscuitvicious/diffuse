@@ -55,6 +55,7 @@ pub struct PipelineOptions {
     pub expand_lines: usize,
     pub token_product_cap: usize,
     pub cluster_product_cap: usize,
+    pub lazy_collapsed: bool,
 }
 
 impl Default for PipelineOptions {
@@ -66,6 +67,7 @@ impl Default for PipelineOptions {
             expand_lines: crate::git::DEFAULT_EXPAND_LINES,
             token_product_cap: crate::lcs::DEFAULT_TOKEN_PRODUCT_CAP,
             cluster_product_cap: crate::cluster::dp::DEFAULT_CLUSTER_PRODUCT_CAP,
+            lazy_collapsed: false,
         }
     }
 }
@@ -103,6 +105,11 @@ impl PipelineOptions {
 
     pub fn with_cluster_product_cap(mut self, cluster_product_cap: usize) -> Self {
         self.cluster_product_cap = cluster_product_cap;
+        self
+    }
+
+    pub fn with_lazy_collapsed(mut self, lazy_collapsed: bool) -> Self {
+        self.lazy_collapsed = lazy_collapsed;
         self
     }
 }
@@ -245,6 +252,16 @@ fn split_content_lines(s: &str) -> Vec<&str> {
     stripped.split('\n').collect()
 }
 
+/// Whether a diff file is collapsed by default upon initial ingestion.
+pub fn is_initially_collapsed(f: &DiffFile) -> bool {
+    f.is_binary
+        || f.status == crate::parse::FileStatus::Untracked
+        || f.status == crate::parse::FileStatus::Deleted
+        || ((f.status == crate::parse::FileStatus::Renamed
+            || f.status == crate::parse::FileStatus::ModeChanged)
+            && f.raw_hunks.is_empty())
+}
+
 /// Run pipeline diffing, alignment, move detection, and syntax classification
 /// on a single parsed diff file using the specified pipeline options.
 #[tracing::instrument(
@@ -266,6 +283,66 @@ pub fn process_single_diff_file(
     _diff_fallback: Option<&str>,
     opts: &PipelineOptions,
 ) -> OutputFile {
+    let raw_source = if let Some(fb) = _diff_fallback {
+        Some(crate::wire::RawFileSource::Raw {
+            path: f.path.clone(),
+            diff: fb.to_string(),
+            new_content: new_content.map(String::from),
+            old_content: old_content.map(String::from),
+        })
+    } else {
+        let status_str = match f.status {
+            crate::parse::FileStatus::Added => "added".to_string(),
+            crate::parse::FileStatus::Deleted => "deleted".to_string(),
+            crate::parse::FileStatus::Modified => "modified".to_string(),
+            crate::parse::FileStatus::Renamed => "renamed".to_string(),
+            crate::parse::FileStatus::Untracked => "untracked".to_string(),
+            crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
+        };
+        Some(crate::wire::RawFileSource::Git {
+            path: f.path.clone(),
+            old_path: f.old_path.clone(),
+            status: status_str,
+        })
+    };
+
+    if opts.lazy_collapsed && is_initially_collapsed(&f) {
+        let counts = if f.status == crate::parse::FileStatus::Untracked {
+            let line_count = if f.new_line_count > 0 {
+                f.new_line_count
+            } else if let Some(c) = new_content {
+                c.lines().count()
+            } else {
+                0
+            };
+            crate::counts::FileCounts {
+                adds: line_count,
+                dels: 0,
+                mods: 0,
+                movs: 0,
+            }
+        } else if f.status == crate::parse::FileStatus::Deleted {
+            let line_count = if f.old_line_count > 0 {
+                f.old_line_count
+            } else if let Some(oc) = old_content {
+                oc.lines().count()
+            } else {
+                crate::counts::file_counts(&f).dels
+            };
+            crate::counts::FileCounts {
+                adds: 0,
+                dels: line_count,
+                mods: 0,
+                movs: 0,
+            }
+        } else if f.is_binary {
+            crate::counts::FileCounts::default()
+        } else {
+            crate::counts::file_counts(&f)
+        };
+        return OutputFile::collapsed_stub(&f, counts, raw_source);
+    }
+
     crate::lcs::set_token_product_cap(opts.token_product_cap);
     crate::cluster::dp::set_cluster_product_cap(opts.cluster_product_cap);
     let ext = f.path.rsplit('.').next().unwrap_or("");
@@ -399,6 +476,32 @@ pub fn process_single_diff_file(
             new_count: count,
             section: String::new(),
             rows: ctx_rows,
+            above_ctx: 0,
+            below_ctx: 0,
+        };
+        f.hunks = vec![hunk.clone()];
+        f.raw_hunks = vec![hunk];
+    } else if !f.is_binary
+        && f.status == crate::parse::FileStatus::Deleted
+        && f.hunks.is_empty()
+        && !old_lines.is_empty()
+    {
+        let mut del_rows = Vec::with_capacity(old_lines.len());
+        for (i, line) in old_lines.iter().enumerate() {
+            if let Some(pos) = std::num::NonZero::new((i + 1) as u32) {
+                del_rows.push(crate::parse::Row::Del(crate::parse::DelLine::new(
+                    pos, *line,
+                )));
+            }
+        }
+        let count = del_rows.len() as u32;
+        let hunk = crate::parse::Hunk {
+            old_start: 1,
+            old_count: count,
+            new_start: 0,
+            new_count: 0,
+            section: String::new(),
+            rows: del_rows,
             above_ctx: 0,
             below_ctx: 0,
         };
@@ -660,6 +763,7 @@ pub fn process_single_diff_file(
         notes: notes_out,
         content_runs: Vec::new(),
         rows,
+        raw_source,
     };
 
     crate::ensure!(!res.path.is_empty(), "OutputFile path must not be empty");
@@ -667,9 +771,10 @@ pub fn process_single_diff_file(
         !res.raw_hunks.is_empty()
             || res.status == "renamed"
             || res.status == "untracked"
+            || res.status == "deleted"
             || res.status == "mode changed"
             || res.is_binary,
-        "OutputFile must contain raw hunks or be renamed/untracked/mode changed/binary"
+        "OutputFile must contain raw hunks or be renamed/untracked/deleted/mode changed/binary"
     );
     crate::ensure!(
         f.hunks.iter().all(|h| h
@@ -680,6 +785,58 @@ pub fn process_single_diff_file(
     );
 
     res
+}
+
+/// Render a file diff on demand from a [`crate::wire::RawFileSource`].
+pub fn render_file_from_source(
+    source: &crate::wire::RawFileSource,
+    repo_root: Option<&std::path::Path>,
+    git_args: &[String],
+    context: usize,
+    opts: &PipelineOptions,
+) -> Option<OutputFile> {
+    let active_opts = opts.clone().with_lazy_collapsed(false);
+    match source {
+        crate::wire::RawFileSource::Git {
+            path,
+            old_path,
+            status,
+        } => {
+            if let Some(root) = repo_root {
+                crate::git::load_single_file_diff(
+                    root,
+                    git_args,
+                    path,
+                    old_path.as_deref(),
+                    status,
+                    context,
+                    &active_opts,
+                )
+            } else {
+                None
+            }
+        }
+        crate::wire::RawFileSource::Raw {
+            path,
+            diff,
+            new_content,
+            old_content,
+        } => {
+            let parsed = crate::parse::parse_diff(diff);
+            let f = parsed
+                .into_iter()
+                .find(|item| &item.path == path || item.old_path.as_ref() == Some(path))?;
+            let mut rendered = process_single_diff_file(
+                f,
+                new_content.as_deref(),
+                old_content.as_deref(),
+                Some(diff.as_str()),
+                &active_opts,
+            );
+            rendered.raw_source = Some(source.clone());
+            Some(rendered)
+        }
+    }
 }
 
 /// The merged runs with the semantic syntax colors on the common/add runs.

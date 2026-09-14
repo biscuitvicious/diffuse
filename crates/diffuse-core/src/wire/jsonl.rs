@@ -161,6 +161,7 @@ pub fn decode_jsonl_records<I: IntoIterator<Item = WireRecord>>(
                     notes: vec![],
                     content_runs: vec![],
                     rows: vec![],
+                    raw_source: None,
                 });
             }
             WireRecord::HunkHeader(hh) => {

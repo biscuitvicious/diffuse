@@ -183,9 +183,101 @@ pub struct OutputFile {
     /// Pre-assembled row sequence for default context.
     #[serde(default, skip_serializing)]
     pub rows: Vec<OutputRow>,
+    /// Source descriptor for on-demand lazy rendering (internal engine use
+    /// only).
+    #[serde(default, skip_serializing)]
+    pub raw_source: Option<RawFileSource>,
+}
+
+/// Source information to allow on-demand rendering of an `OutputFile`.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum RawFileSource {
+    /// Can be re-loaded directly from git repository on demand.
+    Git {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        old_path: Option<String>,
+        status: String,
+    },
+    /// In-memory diff fallback for non-git diffs (piped diffs, synthetic diffs,
+    /// unit tests).
+    Raw {
+        path: String,
+        diff: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new_content: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        old_content: Option<String>,
+    },
 }
 
 impl OutputFile {
+    /// Create a lightweight collapsed stub that skips pipeline execution.
+    pub fn collapsed_stub(
+        f: &DiffFile,
+        counts: FileCounts,
+        raw_source: Option<RawFileSource>,
+    ) -> Self {
+        let status = match f.status {
+            FileStatus::Added => "added".to_string(),
+            FileStatus::Deleted => "deleted".to_string(),
+            FileStatus::Modified => "modified".to_string(),
+            FileStatus::Renamed => "renamed".to_string(),
+            FileStatus::Untracked => "untracked".to_string(),
+            FileStatus::ModeChanged => "mode changed".to_string(),
+        };
+        Self {
+            path: f.path.clone(),
+            old_path: f.old_path.clone(),
+            old_mode: f.old_mode.clone(),
+            new_mode: f.new_mode.clone(),
+            status,
+            is_binary: f.is_binary,
+            old_bytes: f.old_bytes,
+            new_bytes: f.new_bytes,
+            new_line_count: f.new_line_count,
+            old_line_count: f.old_line_count,
+            new_content: Vec::new(),
+            old_content: Vec::new(),
+            hunks: Vec::new(),
+            raw_hunks: Vec::new(),
+            counts,
+            fences: Vec::new(),
+            notes: Vec::new(),
+            content_runs: Vec::new(),
+            rows: Vec::new(),
+            raw_source,
+        }
+    }
+
+    /// Whether this file's full diff rows and hunks are currently loaded in
+    /// memory.
+    pub fn is_loaded(&self) -> bool {
+        !self.hunks.is_empty()
+            || !self.rows.is_empty()
+            || self.is_binary
+            || (self.counts.adds == 0 && self.counts.dels == 0 && self.counts.mods == 0)
+    }
+
+    /// Release heavy row and syntax allocations when collapsed, keeping only
+    /// metadata.
+    pub fn release_rendered_memory(&mut self) {
+        self.rows.clear();
+        self.rows.shrink_to_fit();
+        self.hunks.clear();
+        self.hunks.shrink_to_fit();
+        self.raw_hunks.clear();
+        self.raw_hunks.shrink_to_fit();
+        self.new_content.clear();
+        self.new_content.shrink_to_fit();
+        self.old_content.clear();
+        self.old_content.shrink_to_fit();
+        self.content_runs.clear();
+        self.content_runs.shrink_to_fit();
+        self.fences.clear();
+        self.fences.shrink_to_fit();
+    }
+
     pub fn reverse(&self) -> Self {
         let status = match self.status.as_str() {
             "added" => "deleted",
@@ -221,6 +313,7 @@ impl OutputFile {
                 .map(|runs| runs.iter().map(OutputRun::reverse).collect())
                 .collect(),
             rows: self.rows.iter().map(OutputRow::reverse).collect(),
+            raw_source: self.raw_source.clone(),
         }
     }
 

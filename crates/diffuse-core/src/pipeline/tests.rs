@@ -980,3 +980,78 @@ fn test_formatted_size_identical_renders_single_size() {
     assert_eq!(out_exact.display_size(), "2kB");
     assert_eq!(out_exact.display_status(), "2kB");
 }
+
+#[test]
+fn test_lazy_collapsed_deleted_file_skips_pipeline_and_renders_all_deletes_on_expansion() {
+    let diff = r#"diff --git a/deleted.rs b/deleted.rs
+deleted file mode 100644
+index 1111111..0000000
+--- a/deleted.rs
++++ /dev/null
+@@ -1,3 +0,0 @@
+-line 1
+-line 2
+-line 3
+"#;
+    let old_content = "line 1\nline 2\nline 3\n";
+    let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    assert!(is_initially_collapsed(&f));
+
+    let lazy_opts = PipelineOptions::default().with_lazy_collapsed(true);
+    let stub = process_single_diff_file(f, None, Some(old_content), Some(diff), &lazy_opts);
+
+    assert!(!stub.is_loaded(), "lazy stub should not be loaded");
+    assert_eq!(stub.counts.dels, 3);
+    assert_eq!(stub.counts.adds, 0);
+    assert!(stub.hunks.is_empty(), "hunks should skip processing");
+    assert!(stub.raw_source.is_some());
+
+    // Render on demand from the stored raw_source
+    let source = stub.raw_source.as_ref().unwrap();
+    let rendered =
+        render_file_from_source(source, None, &[], 4, &lazy_opts).expect("should render on demand");
+
+    assert!(rendered.is_loaded(), "rendered file must be loaded");
+    assert_eq!(rendered.counts.dels, 3);
+    assert_eq!(rendered.hunks.len(), 1);
+    assert_eq!(rendered.hunks[0].rows.len(), 3);
+    for row in &rendered.hunks[0].rows {
+        assert_eq!(row.kind, RowKind::Del);
+    }
+}
+
+#[test]
+fn test_lazy_collapsed_untracked_file_skips_pipeline_and_renders_on_expansion() {
+    let diff = r#"diff --git a/untracked.txt b/untracked.txt
+untracked file mode 100644
+--- /dev/null
++++ b/untracked.txt
+@@ -0,0 +1,2 @@
++new line 1
++new line 2
+"#;
+    let new_content = "new line 1\nnew line 2\n";
+    let mut f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
+    f.status = crate::parse::FileStatus::Untracked;
+    assert!(is_initially_collapsed(&f));
+
+    let lazy_opts = PipelineOptions::default().with_lazy_collapsed(true);
+    let stub = process_single_diff_file(f, Some(new_content), None, Some(diff), &lazy_opts);
+
+    assert!(
+        !stub.is_loaded(),
+        "untracked lazy stub should not be loaded"
+    );
+    assert_eq!(stub.counts.adds, 2);
+    assert_eq!(stub.counts.dels, 0);
+    assert!(stub.hunks.is_empty());
+
+    let source = stub.raw_source.as_ref().unwrap();
+    let rendered =
+        render_file_from_source(source, None, &[], 4, &lazy_opts).expect("should render on demand");
+
+    assert!(rendered.is_loaded());
+    assert_eq!(rendered.counts.adds, 2);
+    assert_eq!(rendered.hunks.len(), 1);
+    assert_eq!(rendered.hunks[0].rows.len(), 2);
+}

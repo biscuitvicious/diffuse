@@ -87,6 +87,7 @@ fn test_render_renamed_file_diff() {
         is_binary: false,
         old_bytes: Some(0),
         new_bytes: Some(0),
+        raw_source: None,
     };
     let visual = render_file_diff(&file, &DiffuseTheme::DEFAULT, true);
     assert!(visual.contains("src/old.rs -> new.rs (0B)"));
@@ -155,6 +156,7 @@ fn test_nonzero_notes_still_rendered() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
     let rendered = render_file_diff(&file, &DiffuseTheme::DEFAULT, true);
     assert!(
@@ -195,6 +197,7 @@ fn test_write_file_header_bar_direct_buffer() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
     let mut buf = String::new();
     write_file_header_bar(&mut buf, &file, &DiffuseTheme::DEFAULT).unwrap();

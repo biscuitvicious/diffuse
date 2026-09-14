@@ -27,6 +27,7 @@ fn sample_file(path: &str) -> OutputFile {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     }
 }
 

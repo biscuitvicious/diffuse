@@ -752,5 +752,164 @@ pub fn load_git_repo(
     })
 }
 
+/// Load a git blob text and byte size.
+pub fn load_git_blob(
+    repo_root: &Path,
+    ref_str: &str,
+    path: &str,
+) -> (Option<String>, Option<usize>) {
+    let spec = format!("{ref_str}:{path}");
+    let blobs = load_git_blobs_batch(repo_root, std::slice::from_ref(&spec));
+    let text = blobs.get(&spec).cloned();
+    let size = text.as_ref().map(|t| t.len()).or_else(|| {
+        run_git(repo_root, &["cat-file", "-s", &spec]).and_then(|s| s.trim().parse::<usize>().ok())
+    });
+    (text, size)
+}
+
+/// Load and process the diff for a single file on demand from a git repository.
+#[tracing::instrument(
+    level = "debug",
+    skip(repo_root, base_args, opts),
+    fields(path, status)
+)]
+pub fn load_single_file_diff(
+    repo_root: &Path,
+    base_args: &[String],
+    path: &str,
+    old_path: Option<&str>,
+    status: &str,
+    context: usize,
+    opts: &crate::pipeline::PipelineOptions,
+) -> Option<crate::wire::OutputFile> {
+    if status == "untracked" {
+        let abs = repo_root.join(path);
+        let content = fs::read_to_string(&abs).ok()?;
+        let line_count = content.lines().count();
+        let mut synthetic_diff = format!(
+            "diff --git a/{path} b/{path}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{line_count} @@\n"
+        );
+        for line in content.lines() {
+            synthetic_diff.push('+');
+            synthetic_diff.push_str(line);
+            synthetic_diff.push('\n');
+        }
+        let mut parsed = crate::parse::parse_diff(&synthetic_diff);
+        let mut f = parsed.pop()?;
+        f.status = crate::parse::FileStatus::Untracked;
+        f.new_bytes = Some(content.len());
+        let mut rendered = crate::pipeline::process_single_diff_file(
+            f,
+            Some(&content),
+            None,
+            Some(&synthetic_diff),
+            opts,
+        );
+        rendered.raw_source = Some(crate::wire::RawFileSource::Git {
+            path: path.to_string(),
+            old_path: old_path.map(String::from),
+            status: status.to_string(),
+        });
+        return Some(rendered);
+    }
+
+    let refs = resolve_refs(repo_root, base_args, false);
+    let mut cmd = Command::new("git");
+    cmd.arg("diff")
+        .arg(format!("-U{context}"))
+        .arg("-M")
+        .arg("--no-color")
+        .args(base_args)
+        .arg("--")
+        .arg(path);
+    if let Some(old) = old_path
+        && old != path
+    {
+        cmd.arg(old);
+    }
+    cmd.current_dir(repo_root);
+    let output = cmd.output().ok()?;
+    let diff_str = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut parsed = crate::parse::parse_diff(&diff_str);
+    let mut f = if let Some(p) = parsed.pop() {
+        p
+    } else {
+        let st = match status {
+            "renamed" => crate::parse::FileStatus::Renamed,
+            "mode changed" => crate::parse::FileStatus::ModeChanged,
+            "deleted" => crate::parse::FileStatus::Deleted,
+            "added" => crate::parse::FileStatus::Added,
+            _ => crate::parse::FileStatus::Modified,
+        };
+        crate::parse::DiffFile {
+            path: path.to_string(),
+            old_path: old_path.map(String::from),
+            old_mode: None,
+            new_mode: None,
+            status: st,
+            is_binary: false,
+            old_bytes: None,
+            new_bytes: None,
+            new_line_count: 0,
+            old_line_count: 0,
+            new_content: Vec::new(),
+            old_content: Vec::new(),
+            hunks: Vec::new(),
+            raw_hunks: Vec::new(),
+            no_content: false,
+        }
+    };
+
+    let mut new_c = None;
+    if f.status != crate::parse::FileStatus::Deleted {
+        if refs.worktree_new {
+            let new_abs = repo_root.join(&f.path);
+            if let Ok(c) = fs::read_to_string(&new_abs) {
+                f.new_bytes = Some(c.len());
+                new_c = Some(c);
+            }
+        } else if let Some(ref new_ref) = refs.new_ref {
+            let (c, sz) = load_git_blob(repo_root, new_ref, &f.path);
+            new_c = c;
+            if sz.is_some() {
+                f.new_bytes = sz;
+            }
+        }
+    }
+
+    let mut old_c = None;
+    let old_lookup = f.old_path.as_deref().unwrap_or(&f.path);
+    let old_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
+    if f.status != crate::parse::FileStatus::Added
+        && f.status != crate::parse::FileStatus::Untracked
+    {
+        let (c, sz) = load_git_blob(repo_root, old_ref, old_lookup);
+        old_c = c;
+        if sz.is_some() {
+            f.old_bytes = sz;
+        }
+    }
+
+    let fallback = if old_c.is_none() && f.status != crate::parse::FileStatus::Added {
+        Some(diff_str.as_str())
+    } else {
+        None
+    };
+
+    let mut rendered = crate::pipeline::process_single_diff_file(
+        f,
+        new_c.as_deref(),
+        old_c.as_deref(),
+        fallback,
+        opts,
+    );
+    rendered.raw_source = Some(crate::wire::RawFileSource::Git {
+        path: path.to_string(),
+        old_path: old_path.map(String::from),
+        status: status.to_string(),
+    });
+    Some(rendered)
+}
+
 #[cfg(test)]
 mod tests;

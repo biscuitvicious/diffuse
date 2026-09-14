@@ -30,6 +30,7 @@ fn dummy_file() -> OutputFile {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     }
 }
 
@@ -333,6 +334,7 @@ fn test_ratatui_diff_grid_lines() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     let f_line = file_header_line(&file, false, false, false, false, 80);
@@ -376,6 +378,7 @@ fn test_render_file_header_segment_narrow_width() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     let rendered_seg0 = render_file_header_segment(&file, false, false, false, false, 0, 50);
@@ -455,6 +458,7 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
         is_binary: false,
         old_bytes: Some(100),
         new_bytes: Some(100),
+        raw_source: None,
     };
 
     let theme = DiffuseTheme::from_env();

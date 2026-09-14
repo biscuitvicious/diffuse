@@ -35,7 +35,7 @@ use crate::core::{
 /// Launch and run the interactive TUI application with live streaming file
 /// ingestion.
 #[allow(clippy::too_many_arguments)]
-pub fn run_streaming_interactive_tui(
+pub fn run_tui(
     initial_output: PipelineOutput,
     streaming_rx: Option<Receiver<OutputFile>>,
     meta_rx: Option<Receiver<Result<GitRepoMeta, String>>>,
@@ -51,6 +51,7 @@ pub fn run_streaming_interactive_tui(
         .with_repo_context(repo_root, git_args)
         .with_expand_lines(expand_lines)
         .with_theme(theme);
+    state.enable_async_on_demand();
     if streaming_rx.is_some() {
         state.is_streaming = true;
     }
@@ -60,6 +61,10 @@ pub fn run_streaming_interactive_tui(
     let mut last_dot = state.streaming_dot();
 
     while !state.should_quit {
+        if state.poll_on_demand() {
+            dirty = true;
+        }
+
         if let Some(ref mrx) = meta_rx {
             match mrx.try_recv() {
                 Ok(Ok(meta)) => {
@@ -89,8 +94,10 @@ pub fn run_streaming_interactive_tui(
                         break;
                     }
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        state.is_streaming = false;
                         streaming_active = false;
+                        if state.loading_files.is_empty() {
+                            state.is_streaming = false;
+                        }
                         dirty = true;
                         break;
                     }
@@ -98,7 +105,8 @@ pub fn run_streaming_interactive_tui(
             }
         }
 
-        if streaming_active {
+        let is_any_streaming = streaming_active || !state.loading_files.is_empty();
+        if is_any_streaming {
             let cur_dot = state.streaming_dot();
             if cur_dot != last_dot {
                 dirty = true;
@@ -117,7 +125,7 @@ pub fn run_streaming_interactive_tui(
             dirty = false;
         }
 
-        let poll_duration = if streaming_active {
+        let poll_duration = if is_any_streaming {
             Duration::from_millis(20)
         } else {
             Duration::from_millis(100)
@@ -154,7 +162,7 @@ pub fn run_interactive_tui(
     git_args: Vec<String>,
     theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
-    run_streaming_interactive_tui(
+    run_tui(
         output,
         None,
         None,

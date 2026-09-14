@@ -162,3 +162,161 @@ new mode 100755
         "pure mode change must be collapsed by default"
     );
 }
+
+#[test]
+fn test_deleted_files_collapsed_by_default_and_renders_deletes_on_expansion() {
+    let diff = r#"diff --git a/deleted.rs b/deleted.rs
+deleted file mode 100644
+--- a/deleted.rs
++++ /dev/null
+@@ -1,3 +0,0 @@
+-line 1
+-line 2
+-line 3
+"#;
+    let old_content = [(
+        "deleted.rs".to_string(),
+        "line 1\nline 2\nline 3\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+
+    let output = run_pipeline_full(diff, None, Some(old_content), PipelineOptions::default());
+
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+
+    // Deleted file starts collapsed by default
+    assert!(
+        state.collapsed_files.contains(&0),
+        "deleted file must be collapsed by default"
+    );
+    assert_eq!(state.flat.len(), 1, "only header row in flat view");
+
+    // Expand deleted file
+    state.toggle_file_collapse(0);
+    assert!(
+        !state.collapsed_files.contains(&0),
+        "deleted file must be expanded"
+    );
+    assert!(state.flat.len() > 1, "expanded deleted file must have rows");
+
+    let f = &state.output.files[0];
+    assert_eq!(f.counts.dels, 3);
+    assert_eq!(f.counts.adds, 0);
+    assert_eq!(f.hunks.len(), 1);
+    for row in &f.hunks[0].rows {
+        assert_eq!(row.kind, crate::core::parse::RowKind::Del);
+    }
+}
+
+#[test]
+fn test_collapsing_file_releases_memory_and_expanding_reloads() {
+    let diff = r#"diff --git a/file.rs b/file.rs
+--- a/file.rs
++++ b/file.rs
+@@ -1,2 +1,2 @@
+-old line
++new line
+"#;
+    let new_content = [("file.rs".to_string(), "new line\n".to_string())]
+        .into_iter()
+        .collect();
+    let old_content = [("file.rs".to_string(), "old line\n".to_string())]
+        .into_iter()
+        .collect();
+
+    let output = run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+
+    assert!(!state.collapsed_files.contains(&0));
+    assert!(state.output.files[0].is_loaded());
+    let initial_flat_len = state.flat.len();
+    assert!(initial_flat_len > 1);
+
+    // Collapse the file: must release heavy memory
+    state.toggle_file_collapse(0);
+    assert!(state.collapsed_files.contains(&0));
+    assert_eq!(
+        state.flat.len(),
+        1,
+        "collapsed file has only header row in flat"
+    );
+    assert!(
+        !state.output.files[0].is_loaded(),
+        "collapsed file must have its rendered memory released"
+    );
+    assert!(state.output.files[0].hunks.is_empty());
+    assert!(state.output.files[0].raw_hunks.is_empty());
+
+    // Expanding it again: renders on demand and reloads
+    state.toggle_file_collapse(0);
+    assert!(!state.collapsed_files.contains(&0));
+    assert!(
+        state.output.files[0].is_loaded(),
+        "expanding must reload the file"
+    );
+    assert_eq!(state.flat.len(), initial_flat_len);
+    assert!(!state.output.files[0].hunks.is_empty());
+}
+
+#[test]
+fn test_async_on_demand_expansion_sets_streaming_indicator() {
+    let diff = r#"diff --git a/lazy.rs b/lazy.rs
+--- a/lazy.rs
++++ b/lazy.rs
+@@ -1,1 +1,1 @@
+-old
++new
+"#;
+    let new_content = [("lazy.rs".to_string(), "new\n".to_string())]
+        .into_iter()
+        .collect();
+    let old_content = [("lazy.rs".to_string(), "old\n".to_string())]
+        .into_iter()
+        .collect();
+
+    let output = run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    state.enable_async_on_demand();
+
+    // Collapse to release memory
+    state.toggle_file_collapse(0);
+    assert!(!state.output.files[0].is_loaded());
+
+    // Expand with async on-demand enabled: starts loading in background
+    state.toggle_file_collapse(0);
+    assert!(state.loading_files.contains(&0));
+    assert!(
+        state.is_streaming,
+        "streaming indicator must be active while loading"
+    );
+
+    // Wait up to 500ms for the background worker to finish
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(500) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(!state.loading_files.contains(&0));
+    assert!(
+        !state.is_streaming,
+        "streaming indicator clears when loading finishes"
+    );
+    assert!(state.output.files[0].is_loaded());
+    assert!(!state.output.files[0].hunks.is_empty());
+}

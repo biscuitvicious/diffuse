@@ -30,6 +30,7 @@ fn test_file_sequencer_in_order_reassembly() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     // Receive out of order: 2, 0, 1, 4, 3

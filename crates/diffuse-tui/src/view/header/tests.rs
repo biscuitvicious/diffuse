@@ -86,6 +86,7 @@ fn test_ratatui_header_and_status_lines() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     let header_line = header_bar_line("diffuse", Some(&file), Some("src/"));
@@ -124,6 +125,7 @@ fn test_ratatui_header_and_status_lines() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     let rename_header = header_bar_line("diffuse", Some(&rename_file), Some("crates/"));
@@ -220,6 +222,7 @@ fn test_header_bar_zero_notes_suppressed() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
     // ANSI header: must not contain "0 note".
     let ansi = render_header_bar("repo", Some(&file), 80, None).join("\n");
@@ -283,6 +286,7 @@ fn test_header_bar_nonzero_notes_shown() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
     // ANSI header: must contain "2 notes".
     let ansi = render_header_bar("repo", Some(&file), 80, None).join("\n");
@@ -442,6 +446,7 @@ fn test_header_bar_omits_modified_status_and_shows_others() {
         is_binary: false,
         old_bytes: None,
         new_bytes: None,
+        raw_source: None,
     };
 
     // ANSI renderer with modified status
