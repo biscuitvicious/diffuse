@@ -1,8 +1,9 @@
 //! Row & Segment Renderer with subword styling, background tinting, and column
 //! slicing.
 
-use std::fmt::Write;
+use std::{borrow::Cow, fmt::Write};
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthChar;
 
 use super::theme::{DiffuseTheme, FG_RESET};
 use crate::{
@@ -207,6 +208,71 @@ pub fn display_text(
     }
 }
 
+/// Expands tabs to spaces using tab stops of `tab_width` columns.
+pub fn expand_tabs(s: &str, tab_width: usize) -> Cow<'_, str> {
+    if !s.contains('\t') {
+        return Cow::Borrowed(s);
+    }
+    let tab_w = tab_width.max(1);
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut col = 0usize;
+    for c in s.chars() {
+        if c == '\t' {
+            let spaces = tab_w - (col % tab_w);
+            for _ in 0..spaces {
+                out.push(' ');
+            }
+            col += spaces;
+        } else {
+            let w = c.width().unwrap_or(0);
+            col += w;
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// Expands tabs to spaces across a slice of [`OutputRun`]s, keeping visual
+/// column alignment consistent across token boundaries.
+pub fn expand_runs_tabs(runs: &[OutputRun], tab_width: usize) -> Vec<OutputRun> {
+    if !runs.iter().any(|r| r.text.contains('\t')) {
+        return runs.to_vec();
+    }
+    let tab_w = tab_width.max(1);
+    let mut out = Vec::with_capacity(runs.len());
+    let mut col = 0usize;
+    for r in runs {
+        if !r.text.contains('\t') {
+            for c in r.text.chars() {
+                col += c.width().unwrap_or(0);
+            }
+            out.push(r.clone());
+        } else {
+            let mut exp = String::with_capacity(r.text.len() + 8);
+            for c in r.text.chars() {
+                if c == '\t' {
+                    let spaces = tab_w - (col % tab_w);
+                    for _ in 0..spaces {
+                        exp.push(' ');
+                    }
+                    col += spaces;
+                } else {
+                    let w = c.width().unwrap_or(0);
+                    col += w;
+                    exp.push(c);
+                }
+            }
+            out.push(OutputRun {
+                kind: r.kind,
+                color: r.color.clone(),
+                sgr: r.sgr,
+                text: exp.into(),
+            });
+        }
+    }
+    out
+}
+
 /// Write a single slice/segment of a row with full ANSI styling directly to a
 /// buffer.
 #[allow(clippy::too_many_arguments)]
@@ -325,6 +391,29 @@ pub fn write_row_segment<W: Write>(
     };
 
     let is_full_row = seg_start == 0 && seg_end == usize::MAX && col_offset == 0;
+
+    let (runs_storage, runs): (Option<Vec<OutputRun>>, &[OutputRun]) =
+        if !is_full_row && runs.iter().any(|r| r.text.contains('\t')) {
+            let exp = expand_runs_tabs(runs, 4);
+            (Some(exp), &[])
+        } else {
+            (None, runs)
+        };
+    let runs = runs_storage.as_deref().unwrap_or(runs);
+
+    let exp_text = if !is_full_row && text.contains('\t') {
+        expand_tabs(text, 4)
+    } else {
+        Cow::Borrowed(text)
+    };
+    let text = exp_text.as_ref();
+
+    let exp_del_text = if !is_full_row {
+        del_text.map(|dt| expand_tabs(dt, 4))
+    } else {
+        None
+    };
+    let del_text = exp_del_text.as_deref().or(del_text);
 
     let has_styled_prefix =
         prefix.starts_with("\x1b[") || selected || band || !ctx_tint_bg.is_empty();
@@ -514,10 +603,11 @@ pub fn render_row_segment(
 pub fn slice_by_visual_width(text: &str, start_col: usize, max_cols: usize) -> String {
     use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
+    let exp_text = expand_tabs(text, 4);
     let mut current_col = 0;
     let mut out = String::new();
     let mut accumulated = 0;
-    for g in text.graphemes(true) {
+    for g in exp_text.graphemes(true) {
         let gw = g.width();
         if current_col >= start_col && accumulated + gw <= max_cols {
             out.push_str(g);

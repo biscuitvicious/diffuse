@@ -12,9 +12,9 @@ pub use diff_grid::{
     render_hunk_divider, render_hunk_divider_segment, wrapped_glyph_hit,
 };
 pub use header::{
-    StatusBarContext, bottom_ribbon_lines, header_bar_line, header_bar_line_themed,
-    render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line, truncate_pad,
-    visible_width, wrap_text_by_visual_width,
+    StatusBarContext, bottom_ribbon_lines, clamp_or_pad_ansi, header_bar_line,
+    header_bar_line_themed, render_bottom_ribbon, render_header_bar, render_status_bar,
+    status_bar_line, truncate_pad, visible_width, wrap_text_by_visual_width,
 };
 pub use modals::{
     ansi_to_ratatui_line, render_finder_modal, render_finder_modal_widget, render_help_modal,

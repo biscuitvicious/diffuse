@@ -17,6 +17,9 @@ pub fn visible_width(s: &str) -> usize {
             if c.is_ascii_alphabetic() {
                 in_escape = false;
             }
+        } else if c == '\t' {
+            let tab_spaces = 4 - (count % 4);
+            count += tab_spaces;
         } else {
             count += c.width().unwrap_or(0);
         }
@@ -44,6 +47,95 @@ pub fn wrap_text_by_visual_width(text: &str, max_cols: usize) -> Vec<String> {
         lines.push(piece);
     }
     lines
+}
+
+/// Truncate or right-pad an ANSI-escaped string with spaces to exactly
+/// `target_width` terminal columns, guaranteeing that the rendered line never
+/// exceeds or falls short of `target_width`.
+pub fn clamp_or_pad_ansi(s: &str, target_width: usize) -> String {
+    let mut out = String::with_capacity(s.len() + 16);
+    let mut vis_w = 0usize;
+
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.peek().copied() {
+        if c == '\x1b' {
+            chars.next();
+            out.push('\x1b');
+            if chars.peek() == Some(&'[') {
+                out.push(chars.next().unwrap());
+                while let Some(&ch) = chars.peek() {
+                    out.push(chars.next().unwrap());
+                    if ch.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        if c == '\t' {
+            chars.next();
+            let tab_spaces = 4 - (vis_w % 4);
+            if vis_w + tab_spaces <= target_width {
+                out.push_str(&" ".repeat(tab_spaces));
+                vis_w += tab_spaces;
+            } else {
+                let rem = target_width.saturating_sub(vis_w);
+                if rem > 0 {
+                    out.push_str(&" ".repeat(rem));
+                    vis_w += rem;
+                }
+                break;
+            }
+            continue;
+        }
+
+        let mut g = String::new();
+        g.push(chars.next().unwrap());
+        while let Some(&next_c) = chars.peek() {
+            if next_c == '\x1b' || next_c == '\t' {
+                break;
+            }
+            let mut test_s = g.clone();
+            test_s.push(next_c);
+            if test_s.graphemes(true).count() == 1 {
+                g.push(chars.next().unwrap());
+            } else {
+                break;
+            }
+        }
+
+        let gw = g.width();
+        if gw > 0 && vis_w + gw > target_width {
+            let rem = target_width.saturating_sub(vis_w);
+            if rem > 0 {
+                out.push_str(&" ".repeat(rem));
+                vis_w += rem;
+            }
+            break;
+        }
+        out.push_str(&g);
+        vis_w += gw;
+    }
+
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            out.push(c);
+            out.push(chars.next().unwrap());
+            while let Some(&ch) = chars.peek() {
+                out.push(chars.next().unwrap());
+                if ch.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        }
+    }
+
+    if vis_w < target_width {
+        out.push_str(&" ".repeat(target_width - vis_w));
+    }
+    out.push_str("\x1b[0m");
+    out
 }
 
 /// Truncate or right-pad a string with spaces to exactly `target_width`

@@ -11,12 +11,10 @@ use crate::{
     core::parse::RowKind,
     render::{ColorExt, render_raw_row, render_row_segment, slice_by_visual_width},
     view::{
-        bottom_ribbon_lines,
-        header::{
-            render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line,
-            visible_width,
-        },
+        bottom_ribbon_lines, clamp_or_pad_ansi,
+        header::{render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line},
         modals::{render_finder_modal, render_help_modal},
+        visible_width,
     },
 };
 
@@ -99,26 +97,25 @@ impl AppState {
             let (mut grid_lines, has_scrollbar, thumb_offset, thumb_size, content_width) =
                 self.render_diff_viewport_lines(width, vh, height);
 
-            if !self.raw_diff {
-                for (row_i, gline) in grid_lines.iter_mut().enumerate() {
-                    let vis_w = visible_width(gline);
-                    if vis_w < content_width {
-                        gline.push_str(&" ".repeat(content_width - vis_w));
-                    }
-                    gline.push_str("\x1b[0m");
-                    if has_scrollbar {
-                        // Thumb geometry is full-track based: grid row i sits
-                        // at
-                        // track row viewport_start_line + i.
-                        let track_row = viewport_start_line + row_i;
-                        let sb_char =
-                            if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {
-                                "\x1b[38;5;248m█\x1b[0m"
-                            } else {
-                                "\x1b[38;5;236m│\x1b[0m"
-                            };
-                        gline.push_str(sb_char);
-                    }
+            for (row_i, gline) in grid_lines.iter_mut().enumerate() {
+                debug_assert!(
+                    visible_width(gline) <= content_width,
+                    "grid line visual width ({}) exceeds content_width ({})",
+                    visible_width(gline),
+                    content_width
+                );
+                *gline = clamp_or_pad_ansi(gline, content_width);
+                if has_scrollbar && !self.raw_diff {
+                    // Thumb geometry is full-track based: grid row i sits
+                    // at track row viewport_start_line + i.
+                    let track_row = viewport_start_line + row_i;
+                    let sb_char =
+                        if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {
+                            "\x1b[38;5;248m█\x1b[0m"
+                        } else {
+                            "\x1b[38;5;236m│\x1b[0m"
+                        };
+                    gline.push_str(sb_char);
                 }
             }
 
@@ -505,11 +502,13 @@ impl AppState {
             self.render_diff_viewport_lines(width, diff_area.height as usize, track_h);
 
         for gline in grid_lines.iter_mut() {
-            let vis_w = visible_width(gline);
-            if vis_w < content_width {
-                gline.push_str(&" ".repeat(content_width - vis_w));
-            }
-            gline.push_str("\x1b[0m");
+            debug_assert!(
+                visible_width(gline) <= content_width,
+                "grid line visual width ({}) exceeds content_width ({})",
+                visible_width(gline),
+                content_width
+            );
+            *gline = clamp_or_pad_ansi(gline, content_width);
         }
 
         let paragraph_lines: Vec<ratatui::text::Line> = grid_lines
@@ -857,6 +856,16 @@ impl AppState {
 
         while lines.len() < vh {
             lines.push(String::new());
+        }
+
+        if cfg!(debug_assertions) {
+            for (idx, line) in lines.iter().enumerate() {
+                let vw = visible_width(line);
+                debug_assert!(
+                    vw <= content_width,
+                    "render_diff_viewport_lines produced grid line {idx} with visual width ({vw}) > content_width ({content_width}): {line:?}"
+                );
+            }
         }
 
         let (thumb_offset, thumb_size) = if has_scrollbar {

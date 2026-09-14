@@ -489,3 +489,36 @@ fn test_header_bar_omits_modified_status_and_shows_others() {
         "TUI header line must show '(deleted)', got: {line_del}"
     );
 }
+
+#[test]
+fn test_clamp_or_pad_ansi_exact_width_guarantee() {
+    // 1. Shorter plain string is padded to exact width
+    let s1 = clamp_or_pad_ansi("hello", 10);
+    assert_eq!(visible_width(&s1), 10);
+    assert!(s1.starts_with("hello     \x1b[0m"));
+
+    // 2. Longer plain string is truncated to exact width
+    let s2 = clamp_or_pad_ansi("hello world wide universe", 10);
+    assert_eq!(visible_width(&s2), 10);
+    assert!(s2.starts_with("hello worl\x1b[0m"));
+
+    // 3. String with ANSI escapes keeps escapes, truncates printable characters
+    let colored = "\x1b[38;5;120mhello \x1b[1mworld\x1b[0m from diffuse";
+    let s3 = clamp_or_pad_ansi(colored, 10);
+    assert_eq!(visible_width(&s3), 10);
+    assert!(s3.contains("\x1b[38;5;120m"));
+    assert!(s3.ends_with("\x1b[0m"));
+
+    // 4. String with tabs expands tabs and fits width exactly
+    let tabbed = "a\tb";
+    let s4 = clamp_or_pad_ansi(tabbed, 10);
+    assert_eq!(visible_width(&s4), 10);
+    assert!(!s4.contains('\t'));
+    assert!(s4.starts_with("a   b     \x1b[0m"));
+
+    // 5. Overflow with tabs clamps at target_width
+    let long_tabbed = "a\t\t\t\t\t\t\t\t\t\t\t\tb";
+    let s5 = clamp_or_pad_ansi(long_tabbed, 15);
+    assert_eq!(visible_width(&s5), 15);
+    assert!(!s5.contains('\t'));
+}

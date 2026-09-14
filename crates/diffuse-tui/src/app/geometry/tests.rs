@@ -337,3 +337,56 @@ fn test_scrollbar_scroll_for_row_formula() {
         prev = s;
     }
 }
+
+#[test]
+fn test_wrapped_line_never_overflows_scrollbar_gutter() {
+    let diff = r#"diff --git a/render.txt b/render.txt
+--- a/render.txt
++++ b/render.txt
+@@ -4316,1 +3320,1 @@
+-{48;5;22}{38;5;151}4316 {38;5;120}+{39}{23}{48;5;22}		{48;5;22}{48;5;22}{38;5;150}// the tokens stay in one coordinate space. Wholesale mods yield the{39}{48;5;22}{48;5;22}{0}
++{48;5;22}{38;5;151}3320 {38;5;120}+{39}{23}{48;5;22}		{48;5;22}{48;5;22}{38;5;150}// the tokens stay in one coordinate space. Wholesale mods yield the{39}{48;5;22}{48;5;22}{0}
+"#;
+    let old_line = "{48;5;22}{38;5;151}4316 {38;5;120}+{39}{23}{48;5;22}\t\t{48;5;22}{48;5;22}{38;5;150}// the tokens stay in one coordinate space. Wholesale mods yield the{39}{48;5;22}{48;5;22}{0}\n";
+    let new_line = "{48;5;22}{38;5;151}3320 {38;5;120}+{39}{23}{48;5;22}\t\t{48;5;22}{48;5;22}{38;5;150}// the tokens stay in one coordinate space. Wholesale mods yield the{39}{48;5;22}{48;5;22}{0}\n";
+
+    let old_content = [("render.txt".to_string(), old_line.to_string())]
+        .into_iter()
+        .collect();
+    let new_content = [("render.txt".to_string(), new_line.to_string())]
+        .into_iter()
+        .collect();
+
+    let output = run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+    let mut state = AppState::new(output, "repo".into(), temp_notes_path());
+
+    let (grid_lines, has_sb, _thumb_off, _thumb_size, cw) =
+        state.render_diff_viewport_lines(50, 10, 10);
+    assert!(has_sb);
+    assert_eq!(cw, 49);
+
+    for (i, line) in grid_lines.iter().enumerate() {
+        assert!(
+            !line.contains('\t'),
+            "grid line {i} must never contain raw tab characters"
+        );
+    }
+
+    let frame = state.render_frame(50, 15);
+    for (i, row) in frame.lines().enumerate() {
+        println!("row {i}: vw={}, content={:?}", visible_width(row), row);
+        assert!(
+            !row.contains('\t'),
+            "frame row {i} must never contain raw tab characters"
+        );
+        assert!(
+            visible_width(row) <= 50,
+            "frame row {i} must never exceed terminal width 50"
+        );
+    }
+}

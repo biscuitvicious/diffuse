@@ -661,6 +661,7 @@ pub fn ansi_to_ratatui_line(s: &str) -> Line<'static> {
     let mut spans = Vec::new();
     let mut cur_style = Style::default();
     let mut text_buf = String::new();
+    let mut col = 0usize;
 
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
@@ -681,7 +682,14 @@ pub fn ansi_to_ratatui_line(s: &str) -> Line<'static> {
                     code.push(chars.next().unwrap());
                 }
             }
+        } else if c == '\t' {
+            let spaces = 4 - (col % 4);
+            for _ in 0..spaces {
+                text_buf.push(' ');
+            }
+            col += spaces;
         } else {
+            col += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
             text_buf.push(c);
         }
     }

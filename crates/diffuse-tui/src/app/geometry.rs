@@ -46,7 +46,8 @@ impl AppState {
         use unicode_width::UnicodeWidthStr;
         if self.raw_diff {
             let text_cols = content_width.saturating_sub(6).max(1);
-            let len = r.text.width();
+            let exp = crate::render::expand_tabs(&r.text, 4);
+            let len = exp.width();
             if len == 0 { 1 } else { len.div_ceil(text_cols) }
         } else {
             let text_cols = content_width.saturating_sub(6).max(1);
@@ -58,7 +59,8 @@ impl AppState {
                 self.col_offset,
                 self.word_diff,
             );
-            let len = disp.width();
+            let exp = crate::render::expand_tabs(&disp, 4);
+            let len = exp.width();
             if len == 0 { 1 } else { len.div_ceil(text_cols) }
         }
     }

@@ -473,3 +473,79 @@ fn test_write_row_segment_direct_buffer() {
         )
     );
 }
+
+#[test]
+fn test_expand_tabs_and_runs() {
+    assert_eq!(expand_tabs("hello world", 4), "hello world");
+    assert_eq!(expand_tabs("\thello", 4), "    hello");
+    assert_eq!(expand_tabs("a\tb", 4), "a   b");
+    assert_eq!(expand_tabs("abcd\te", 4), "abcd    e");
+    assert_eq!(expand_tabs("\t\t", 4), "        ");
+
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Common,
+            color: None,
+            sgr: None,
+            text: "\t".into(),
+        },
+        OutputRun {
+            kind: RunKind::Add,
+            color: None,
+            sgr: None,
+            text: "x\ty".into(),
+        },
+    ];
+    let exp = expand_runs_tabs(&runs, 4);
+    assert_eq!(exp[0].text, "    ");
+    assert_eq!(exp[1].text, "x   y");
+}
+
+#[test]
+fn test_sliced_row_segment_expands_tabs_without_overflow() {
+    let theme = DiffuseTheme::DEFAULT;
+    let runs = vec![OutputRun {
+        kind: RunKind::Common,
+        color: None,
+        sgr: None,
+        text: "\t\tlet x = 1;".into(),
+    }];
+    // Segment [0, 8) covers the 8 expanded tab spaces
+    let seg1 = render_row_segment(
+        "\t\tlet x = 1;",
+        None,
+        &Spans::default(),
+        RowKind::Ctx,
+        &runs,
+        0,
+        8,
+        "      ",
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(!seg1.contains('\t'));
+    assert!(seg1.contains("        "));
+
+    // Full row preserves original tabs (golden contract invariant)
+    let full = render_row_segment(
+        "\t\tlet x = 1;",
+        None,
+        &Spans::default(),
+        RowKind::Ctx,
+        &runs,
+        0,
+        usize::MAX,
+        "      ",
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(full.contains('\t'));
+}
