@@ -402,9 +402,8 @@ fn test_line_77_style_methods_no_fragmentation() {
         run_tuples,
         vec![
             (RunKind::Common, "    assert_eq!("),
-            (RunKind::Del, "s_"),
-            (RunKind::Common, "add"),
-            (RunKind::Add, "_style"),
+            (RunKind::Del, "s_add"),
+            (RunKind::Add, "add_style"),
             (RunKind::Common, ".tint_"),
             (RunKind::Del, "style()"),
             (RunKind::Add, "bg"),
@@ -413,5 +412,99 @@ fn test_line_77_style_methods_no_fragmentation() {
             (RunKind::Add, "theme.palette.add_tint_bg"),
             (RunKind::Common, ");"),
         ]
+    );
+}
+
+#[test]
+fn test_line_200_target_vis_no_chimera() {
+    let old = "                        let target_vis = ((row_in_vh as f64 / (vh - 1) as f64) * max_scroll as f64)";
+    let new = "                    let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+    let run_tuples: Vec<(RunKind, &str)> = runs.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        run_tuples,
+        vec![
+            (RunKind::Del, "    "),
+            (RunKind::Common, "                    let target_vis = "),
+            (RunKind::Del, "((row_in_vh as f64 / "),
+            (RunKind::Add, "Self::scrollbar_scroll_for_row"),
+            (RunKind::Common, "(vh"),
+            (RunKind::Del, " - 1) as f64) *"),
+            (RunKind::Add, ","),
+            (RunKind::Common, " max_scroll"),
+            (RunKind::Del, " as f64"),
+            (RunKind::Add, ", row_relative"),
+            (RunKind::Common, ")"),
+            (RunKind::Add, ";"),
+        ]
+    );
+}
+
+#[test]
+fn test_opposite_boundary_subword_inversion_not_matched() {
+    // Suffix vs Prefix: "s_add" vs "add_style" -> "add" is not matched across
+    // inverted boundaries
+    let tape1 = AlignmentTape::from_texts("s_add", "add_style", None);
+    let runs1 = tape1.to_merged_runs();
+    let tuples1: Vec<(RunKind, &str)> = runs1.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        tuples1,
+        vec![(RunKind::Del, "s_add"), (RunKind::Add, "add_style")]
+    );
+
+    // Prefix vs Suffix: "add_style" vs "s_add"
+    let tape2 = AlignmentTape::from_texts("add_style", "s_add", None);
+    let runs2 = tape2.to_merged_runs();
+    let tuples2: Vec<(RunKind, &str)> = runs2.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        tuples2,
+        vec![(RunKind::Del, "add_style"), (RunKind::Add, "s_add")]
+    );
+
+    // Prefix vs Prefix: "row_in_vh" vs "row_relative" -> common prefix "row_"
+    // preserved
+    let tape3 = AlignmentTape::from_texts("row_in_vh", "row_relative", None);
+    let runs3 = tape3.to_merged_runs();
+    let tuples3: Vec<(RunKind, &str)> = runs3.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        tuples3,
+        vec![
+            (RunKind::Common, "row_"),
+            (RunKind::Del, "in_vh"),
+            (RunKind::Add, "relative"),
+        ]
+    );
+
+    // Suffix vs Suffix: "old_row" vs "new_row" -> common suffix "_row"
+    // preserved
+    let tape4 = AlignmentTape::from_texts("old_row", "new_row", None);
+    let runs4 = tape4.to_merged_runs();
+    let tuples4: Vec<(RunKind, &str)> = runs4.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        tuples4,
+        vec![
+            (RunKind::Del, "old"),
+            (RunKind::Add, "new"),
+            (RunKind::Common, "_row"),
+        ]
+    );
+
+    // Standalone vs Prefix: "row" vs "row_relative" -> common "row" preserved
+    let tape5 = AlignmentTape::from_texts("row", "row_relative", None);
+    let runs5 = tape5.to_merged_runs();
+    let tuples5: Vec<(RunKind, &str)> = runs5.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        tuples5,
+        vec![(RunKind::Common, "row"), (RunKind::Add, "_relative")]
+    );
+
+    // Standalone vs Suffix: "row" vs "old_row" -> common "row" preserved
+    let tape6 = AlignmentTape::from_texts("row", "old_row", None);
+    let runs6 = tape6.to_merged_runs();
+    let tuples6: Vec<(RunKind, &str)> = runs6.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        tuples6,
+        vec![(RunKind::Add, "old_"), (RunKind::Common, "row")]
     );
 }

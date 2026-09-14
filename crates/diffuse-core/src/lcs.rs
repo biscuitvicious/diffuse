@@ -505,6 +505,18 @@ fn path_root_and_stem<'a>(slice: &[&'a str], idx: usize) -> Option<(&'a str, &'a
     Some((root, stem))
 }
 
+/// Checks whether token `a[i]` and `b[j]` are eligible to match.
+///
+/// Enforces:
+/// 1. Literal token string equality (`a[i] == b[j]`).
+/// 2. **Opposite-boundary subword invariant**: A subword token that is strictly
+///    a prefix of a compound token (no left subword neighbor, has right subword
+///    neighbor) cannot match a subword token that is strictly a suffix of a
+///    compound token (has left subword neighbor, no right subword neighbor).
+///    Matching inverted boundaries would splice a new prefix onto an old suffix
+///    and produce chimeric mutant tokens (e.g. `s_add` vs `add_style` or
+///    `row_in_vh` vs `scrollbar_scroll_for_row`).
+/// 3. Path root and stem compatibility.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tokens_can_match(
@@ -519,6 +531,16 @@ pub(crate) fn tokens_can_match(
 ) -> bool {
     if a[i] != b[j] {
         return false;
+    }
+
+    if is_subword_token(a[i]) {
+        let la = i > 0 && is_subword_token(a[i - 1]);
+        let ra = i + 1 < a.len() && is_subword_token(a[i + 1]);
+        let lb = j > 0 && is_subword_token(b[j - 1]);
+        let rb = j + 1 < b.len() && is_subword_token(b[j + 1]);
+        if (la && !ra && !lb && rb) || (!la && ra && lb && !rb) {
+            return false;
+        }
     }
 
     let a_path = path_root_and_stem(a, i);
