@@ -508,3 +508,14 @@ fn test_opposite_boundary_subword_inversion_not_matched() {
         vec![(RunKind::Add, "old_"), (RunKind::Common, "row")]
     );
 }
+
+#[test]
+fn test_common_whitespace_does_not_overpower_dissimilar_lines() {
+    let old = "                                            })";
+    let new = "                                            wrapped_glyph_hit(&txt, pat, seg_off, col, cw)";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    assert_eq!(
+        tape.chunks(),
+        &[TapeChunk::Strike(old), TapeChunk::Fill(new)]
+    );
+}

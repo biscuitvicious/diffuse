@@ -10,7 +10,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{parse::Spans, syntax::profile::LangProfile};
+use crate::{parse::Spans, syntax::profile::LangProfile, token::WhitespaceKind};
 
 /// Slice `s` by char offsets (the port's span convention). The JS
 /// `String.slice(start, end)` clamps out-of-range indices and returns an
@@ -518,19 +518,48 @@ fn path_root_and_stem<'a>(slice: &[&'a str], idx: usize) -> Option<(&'a str, &'a
 ///    `row_in_vh` vs `scrollbar_scroll_for_row`).
 /// 3. Path root and stem compatibility.
 #[inline]
+pub(crate) fn token_ws_kind(
+    tokens: &[&str],
+    prev: &[&str],
+    next: Option<&str>,
+    idx: usize,
+) -> WhitespaceKind {
+    let is_leading =
+        prev.iter().all(|t| token_is_ws(t)) && tokens[..idx].iter().all(|t| token_is_ws(t));
+    let has_non_ws_after =
+        tokens[idx + 1..].iter().any(|t| !token_is_ws(t)) || next.is_some_and(|t| !token_is_ws(t));
+
+    if is_leading {
+        WhitespaceKind::Leading
+    } else if !has_non_ws_after {
+        WhitespaceKind::Trailing
+    } else {
+        WhitespaceKind::Internal
+    }
+}
+
+#[inline]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn tokens_can_match(
     a: &[&str],
     b: &[&str],
-    _prev_a: &[&str],
-    _prev_b: &[&str],
-    _next_a: Option<&str>,
-    _next_b: Option<&str>,
+    prev_a: &[&str],
+    prev_b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
     i: usize,
     j: usize,
 ) -> bool {
     if a[i] != b[j] {
         return false;
+    }
+
+    if token_is_ws(a[i]) {
+        let kind_a = token_ws_kind(a, prev_a, next_a, i);
+        let kind_b = token_ws_kind(b, prev_b, next_b, j);
+        if kind_a != kind_b {
+            return false;
+        }
     }
 
     if is_subword_token(a[i]) {
@@ -693,7 +722,11 @@ pub fn raw_lcs_pairs_with_context(
                 } else {
                     (next_y, 2, 1)
                 };
-                let r = token_match_reward(a[i]);
+                let r = if is_ws {
+                    token_ws_kind(a, prev_a, next_a, i).match_reward()
+                } else {
+                    token_match_reward(a[i])
+                };
                 m_matrix[idx(i, j)] = r.saturating_add(best_next);
                 tb_m[idx(i, j)] = to_m;
                 run_len[idx(i, j)] = if is_ws { 0 } else { rl };

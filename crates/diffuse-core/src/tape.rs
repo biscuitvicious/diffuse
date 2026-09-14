@@ -12,12 +12,13 @@
 
 use crate::{
     lcs::{
-        char_len, char_slice, lcs_pairs_anchored, raw_lcs_pairs, token_product_cap, tokenize_line,
-        unique_token_anchors,
+        char_len, char_slice, lcs_pairs_anchored, raw_lcs_pairs, token_is_ws, token_product_cap,
+        tokenize_line, unique_token_anchors,
     },
     merge::{Run, RunKind},
     parse::Spans,
     syntax::profile::LangProfile,
+    token::classify_whitespace,
 };
 
 /// An atomic operation along the alignment tape.
@@ -549,9 +550,25 @@ impl<'a> AlignmentTape<'a> {
             raw_lcs_pairs(&ot, &nt)
         };
 
-        let matched_chars: usize = pairs.values().map(|j| char_len(nt[*j])).sum();
-        let ratio = if !new_text.is_empty() {
-            matched_chars as f64 / char_len(new_text) as f64
+        let token_weight = |tokens: &[&str], idx: usize| -> f64 {
+            let t = tokens[idx];
+            if !token_is_ws(t) {
+                char_len(t) as f64
+            } else {
+                classify_whitespace(tokens, idx).token_weight(char_len(t))
+            }
+        };
+        let matched_chars: f64 = pairs
+            .iter()
+            .map(|(&i, &j)| {
+                let w_old = token_weight(&ot, i);
+                let w_new = token_weight(&nt, j);
+                w_old.min(w_new)
+            })
+            .sum();
+        let new_weight: f64 = (0..nt.len()).map(|j| token_weight(&nt, j)).sum();
+        let ratio = if new_weight > 0.0 {
+            matched_chars / new_weight
         } else {
             0.0
         };

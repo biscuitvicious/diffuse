@@ -894,6 +894,13 @@ fn test_terminal_return_expression_rules() {
     assert!(!rs.is_terminal_return_expr("let x = 1;"));
     assert!(!rs.is_terminal_return_expr("alpha();"));
     assert!(!rs.is_terminal_return_expr("}"));
+    assert!(!rs.is_terminal_return_expr("})"));
+    assert!(!rs.is_terminal_return_expr("});"));
+    assert!(!rs.is_terminal_return_expr("}),"));
+    assert!(!rs.is_terminal_return_expr(")"));
+    assert!(!rs.is_terminal_return_expr(");"));
+    assert!(!rs.is_terminal_return_expr("]"));
+    assert!(!rs.is_terminal_return_expr("]);"));
     assert!(!rs.is_terminal_return_expr(""));
 
     let c = lang_profile("c").unwrap();

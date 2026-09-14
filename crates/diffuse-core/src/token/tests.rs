@@ -2,7 +2,8 @@ use crate::{
     lcs::tokenize_line,
     syntax::registry::lang_profile,
     token::{
-        MIN_SINGLE_TOKEN_ENTROPY, TokenClass, classify_token, entropy_anchors,
+        MIN_SINGLE_TOKEN_ENTROPY, TokenClass, WhitespaceKind, classify_token,
+        classify_token_whitespace, classify_whitespace, entropy_anchors,
         multi_token_phrase_anchors, token_self_information,
     },
 };
@@ -179,4 +180,114 @@ fn test_entropy_anchors_prose_word_not_anchored_to_code_span() {
             panic!("Prose 'default' was falsely anchored to code-span 'default': ({oi}, {ni})");
         }
     }
+}
+
+#[test]
+fn test_classify_whitespace_roles() {
+    // Leading, internal, and trailing in a single line:
+    // "    let   x   =   1;   "
+    let tokens: Vec<&str> = tokenize_line("    let   x   =   1;   ").collect();
+    // tokens: ["    ", "let", "   ", "x", "   ", "=", "   ", "1", ";", "   "]
+    assert_eq!(classify_whitespace(&tokens, 0), WhitespaceKind::Leading);
+    assert_eq!(classify_whitespace(&tokens, 2), WhitespaceKind::Internal);
+    assert_eq!(classify_whitespace(&tokens, 4), WhitespaceKind::Internal);
+    assert_eq!(classify_whitespace(&tokens, 6), WhitespaceKind::Internal);
+    assert_eq!(
+        classify_whitespace(&tokens, tokens.len() - 1),
+        WhitespaceKind::Trailing
+    );
+
+    // Multi-token leading whitespace (e.g. tabs and spaces):
+    let multi_lead: Vec<&str> = vec!["\t", "    ", "foo"];
+    assert_eq!(classify_whitespace(&multi_lead, 0), WhitespaceKind::Leading);
+    assert_eq!(classify_whitespace(&multi_lead, 1), WhitespaceKind::Leading);
+
+    // Multi-token trailing whitespace:
+    let multi_trail: Vec<&str> = vec!["foo", "  ", "\t"];
+    assert_eq!(
+        classify_whitespace(&multi_trail, 1),
+        WhitespaceKind::Trailing
+    );
+    assert_eq!(
+        classify_whitespace(&multi_trail, 2),
+        WhitespaceKind::Trailing
+    );
+
+    // Line with solely whitespace:
+    let all_ws_single: Vec<&str> = vec!["    "];
+    assert_eq!(
+        classify_whitespace(&all_ws_single, 0),
+        WhitespaceKind::Leading
+    );
+    let all_ws_multi: Vec<&str> = vec!["  ", "\t", " "];
+    assert_eq!(
+        classify_whitespace(&all_ws_multi, 0),
+        WhitespaceKind::Leading
+    );
+    assert_eq!(
+        classify_whitespace(&all_ws_multi, 1),
+        WhitespaceKind::Leading
+    );
+    assert_eq!(
+        classify_whitespace(&all_ws_multi, 2),
+        WhitespaceKind::Leading
+    );
+}
+
+#[test]
+fn test_classify_token_whitespace() {
+    let tokens: Vec<&str> = tokenize_line("  let x; ").collect();
+    assert_eq!(
+        classify_token_whitespace(&tokens, 0),
+        Some(WhitespaceKind::Leading)
+    );
+    assert_eq!(classify_token_whitespace(&tokens, 1), None); // "let"
+    assert_eq!(
+        classify_token_whitespace(&tokens, 2),
+        Some(WhitespaceKind::Internal)
+    );
+    assert_eq!(classify_token_whitespace(&tokens, 3), None); // "x"
+    assert_eq!(classify_token_whitespace(&tokens, 4), None); // ";"
+    assert_eq!(
+        classify_token_whitespace(&tokens, 5),
+        Some(WhitespaceKind::Trailing)
+    );
+    assert_eq!(classify_token_whitespace(&tokens, 99), None); // out of bounds
+}
+
+#[test]
+fn test_whitespace_kind_weights_and_rewards() {
+    // Leading: 1 unit per ~4 spaces, minimum 1.0
+    assert_eq!(WhitespaceKind::Leading.token_weight(1), 1.0);
+    assert_eq!(WhitespaceKind::Leading.token_weight(4), 1.0);
+    assert_eq!(WhitespaceKind::Leading.token_weight(8), 2.0);
+    assert_eq!(WhitespaceKind::Leading.token_weight(44), 11.0);
+
+    // Internal: full character count
+    assert_eq!(WhitespaceKind::Internal.token_weight(1), 1.0);
+    assert_eq!(WhitespaceKind::Internal.token_weight(4), 4.0);
+    assert_eq!(WhitespaceKind::Internal.token_weight(10), 10.0);
+
+    // Trailing: zero weight
+    assert_eq!(WhitespaceKind::Trailing.token_weight(1), 0.0);
+    assert_eq!(WhitespaceKind::Trailing.token_weight(20), 0.0);
+
+    // Match rewards
+    assert_eq!(WhitespaceKind::Leading.match_reward(), 2);
+    assert_eq!(WhitespaceKind::Internal.match_reward(), 2);
+    assert_eq!(WhitespaceKind::Trailing.match_reward(), 0);
+}
+
+#[test]
+#[should_panic(expected = "token index out of bounds")]
+fn test_classify_whitespace_out_of_bounds() {
+    let tokens: Vec<&str> = vec![" "];
+    classify_whitespace(&tokens, 5);
+}
+
+#[test]
+#[should_panic(expected = "expected whitespace token")]
+fn test_classify_whitespace_non_ws() {
+    let tokens: Vec<&str> = vec!["let"];
+    classify_whitespace(&tokens, 0);
 }

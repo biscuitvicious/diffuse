@@ -664,3 +664,27 @@ fn test_unweighted_lcs_fragments_unknown_extension_dot() {
         "Expected wholesale replacement without matching isolated dot between unknown extensions, got: {pairs:?}"
     );
 }
+
+#[test]
+fn test_leading_whitespace_does_not_match_internal_whitespace() {
+    let a = ["    ", "foo"];
+    let b = ["bar", "    ", "foo"];
+    let pairs = raw_lcs_pairs(&a, &b);
+    assert_eq!(
+        pairs.get(&0),
+        None,
+        "Leading indentation must not match internal formatting whitespace: {pairs:?}"
+    );
+}
+
+#[test]
+fn test_trailing_whitespace_does_not_match_leading_whitespace() {
+    let a = ["foo", "   "];
+    let b = ["   ", "foo"];
+    let pairs = raw_lcs_pairs(&a, &b);
+    assert_eq!(
+        pairs.get(&1),
+        None,
+        "Trailing whitespace must not match leading indentation: {pairs:?}"
+    );
+}

@@ -396,6 +396,7 @@ impl LangProfile {
             || self.is_comment_line(t)
             || self.is_block_open(t)
             || self.is_block_close(t)
+            || t.chars().all(|c| matches!(c, '}' | ')' | ']' | ';' | ','))
         {
             return false;
         }
