@@ -343,3 +343,50 @@ fn test_subword_cohesion_identifier_not_split_across_del() {
         runs
     );
 }
+
+#[test]
+fn test_unindented_closing_delimiter_recognized_as_common() {
+    let old = "                },";
+    let new = "            },";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+    assert!(
+        runs.iter()
+            .any(|r| r.kind == RunKind::Common && r.text.ends_with("},")),
+        "bracket '}},' must be common context, got runs: {:#?}",
+        runs
+    );
+    assert!(
+        !runs
+            .iter()
+            .any(|r| (r.kind == RunKind::Del || r.kind == RunKind::Add) && r.text.contains('}')),
+        "bracket '}}' must not be struck or filled, got runs: {:#?}",
+        runs
+    );
+
+    // Also verify closing brace alone
+    let old_brace = "                }";
+    let new_brace = "            }";
+    let tape_brace = AlignmentTape::from_texts(old_brace, new_brace, None);
+    let runs_brace = tape_brace.to_merged_runs();
+    assert!(
+        runs_brace
+            .iter()
+            .any(|r| r.kind == RunKind::Common && r.text.ends_with('}')),
+        "brace '}}' must be common context, got runs: {:#?}",
+        runs_brace
+    );
+
+    // Also verify closing paren with indentation increase
+    let old_paren = "    )";
+    let new_paren = "        )";
+    let tape_paren = AlignmentTape::from_texts(old_paren, new_paren, None);
+    let runs_paren = tape_paren.to_merged_runs();
+    assert!(
+        runs_paren
+            .iter()
+            .any(|r| r.kind == RunKind::Common && r.text.ends_with(')')),
+        "paren ')' must be common context, got runs: {:#?}",
+        runs_paren
+    );
+}

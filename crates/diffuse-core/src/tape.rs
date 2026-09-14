@@ -558,7 +558,7 @@ impl<'a> AlignmentTape<'a> {
         span.record("matched_chars", matched_chars);
         span.record("ratio", ratio);
 
-        if !has_anchors && ratio < 0.25 {
+        if !has_anchors && ratio < 0.25 && old_text.trim() != new_text.trim() {
             tracing::debug!(
                 ratio,
                 "Subword match ratio below threshold, falling back to whole-line diff"
