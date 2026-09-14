@@ -39,10 +39,11 @@ In this active development phase:
 
 ## The golden — the ground truth
 
-> **Provisional goldens**: the current goldens have not been fully hand
-> reviewed and may be incorrect. This supersedes the blocking regeneration
-> rule below — a golden may be regenerated when the engine's new output is
-> judged better — but **always check**: walk every golden diff and assert
+> **Validated vs. provisional goldens**: `theme-scrollbar-palette` has
+> been hand-reviewed and validated as a clean rendering baseline (strict hard
+> gate). The remaining 7 corpora have not yet been fully hand-reviewed and
+> remain provisional (less of a hard gate when an engine refinement produces
+> demonstrably better diffs). Always walk every golden diff and assert
 > strictly-better-or-equivalent per
 > [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md)
 > before accepting it, and flag and pause on anything suspicious.

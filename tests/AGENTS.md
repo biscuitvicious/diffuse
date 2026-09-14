@@ -18,18 +18,23 @@ discipline for any change in golden output.
   schema change breaks it even if engine semantics are unchanged.
 - `golden/` — the frozen corpora (below).
 
-## The golden corpora
+## The golden corpora & validation status
 
-| corpus | rust walk | render golden | notes |
-|---|---|---|---|
-| `diffuse-2026-08` | ✅ | ✅ | the engine diffing its own repo |
-| `opt-1-cache-regex-window-slice` | ✅ | ✅ | perf commit captured as fixture |
-| `opt-2-cache-markdown-regex` | ✅ | ✅ | perf commit captured as fixture |
-| `opt-3-cache-lang-profile` | ✅ | ✅ | perf commit captured as fixture |
-| `opt-4-manual-scanner-prefilter` | ✅ | ✅ | perf commit captured as fixture |
-| `diffuse-history-mid` | ✅ | ✅ (gz) | pinned 100-commit window, absolute ids |
-| `untracked-files` | ✅ | ✅ | untracked additions & status representation |
-| `theme-scrollbar-palette` | ✅ | ✅ | theme consolidation, scrollbar column, palette hunks |
+> [!IMPORTANT]
+> **Validated vs. Provisional Goldens**:
+> - **Validated Goldens (`theme-scrollbar-palette`)**: Fully hand-reviewed and verified as a clean rendering baseline. Serves as a strict hard gate against regression.
+> - **Unvalidated / Provisional Goldens (all others)**: Captured from earlier engine runs and not yet fully audited for ideal rendering quality. They guard against unintended regressions, but should be taken as **less of a hard gate** when algorithmic improvements produce demonstrably cleaner, strictly better diffs.
+
+| corpus | rust walk | render golden | status | notes |
+|---|---|---|---|---|
+| `theme-scrollbar-palette` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline; strict hard gate |
+| `diffuse-2026-08` | ✅ | ✅ | Provisional | The engine diffing its own repo (pending full review) |
+| `opt-1-cache-regex-window-slice` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
+| `opt-2-cache-markdown-regex` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
+| `opt-3-cache-lang-profile` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
+| `opt-4-manual-scanner-prefilter` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
+| `diffuse-history-mid` | ✅ | ✅ (gz) | Provisional | Pinned 100-commit window, absolute ids (pending full review) |
+| `untracked-files` | ✅ | ✅ | Provisional | Untracked additions & status representation (pending full review) |
 
 The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.txt` golden renders. `tests/golden/` is
