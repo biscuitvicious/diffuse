@@ -334,6 +334,26 @@ pub fn multi_token_phrase_anchors(
 
             let a_start = i + start;
             let b_start = j + start;
+            let a_end = a_start + trimmed_len;
+            let b_end = b_start + trimmed_len;
+
+            let starts_inside_word = (a_start > 0
+                && crate::lcs::is_subword_token(a[a_start - 1])
+                && crate::lcs::is_subword_token(a[a_start]))
+                || (b_start > 0
+                    && crate::lcs::is_subword_token(b[b_start - 1])
+                    && crate::lcs::is_subword_token(b[b_start]));
+            let ends_inside_word = (a_end < a.len()
+                && crate::lcs::is_subword_token(a[a_end - 1])
+                && crate::lcs::is_subword_token(a[a_end]))
+                || (b_end < b.len()
+                    && crate::lcs::is_subword_token(b[b_end - 1])
+                    && crate::lcs::is_subword_token(b[b_end]));
+
+            if starts_inside_word || ends_inside_word {
+                continue;
+            }
+
             if !crate::lcs::tokens_can_match(a, b, &[], &[], None, None, a_start, b_start) {
                 continue;
             }
@@ -496,7 +516,7 @@ pub fn entropy_anchors(
                         idx_a + 1 < a.len() && crate::lcs::is_subword_token(a[idx_a + 1]);
                     let right_sub_b =
                         idx_b + 1 < b.len() && crate::lcs::is_subword_token(b[idx_b + 1]);
-                    if left_sub_a != left_sub_b || right_sub_a != right_sub_b {
+                    if left_sub_a || left_sub_b || right_sub_a || right_sub_b {
                         continue;
                     }
                 }

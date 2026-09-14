@@ -390,3 +390,28 @@ fn test_unindented_closing_delimiter_recognized_as_common() {
         runs_paren
     );
 }
+
+#[test]
+fn test_line_77_style_methods_no_fragmentation() {
+    let old = "    assert_eq!(s_add.tint_style(), Style::new().bg(Color::Fixed(22)));";
+    let new = "    assert_eq!(add_style.tint_bg, theme.palette.add_tint_bg);";
+    let tape = AlignmentTape::from_texts(old, new, None);
+    let runs = tape.to_merged_runs();
+    let run_tuples: Vec<(RunKind, &str)> = runs.iter().map(|r| (r.kind, r.text)).collect();
+    assert_eq!(
+        run_tuples,
+        vec![
+            (RunKind::Common, "    assert_eq!("),
+            (RunKind::Del, "s_"),
+            (RunKind::Common, "add"),
+            (RunKind::Add, "_style"),
+            (RunKind::Common, ".tint_"),
+            (RunKind::Del, "style()"),
+            (RunKind::Add, "bg"),
+            (RunKind::Common, ", "),
+            (RunKind::Del, "Style::new().bg(Color::Fixed(22))"),
+            (RunKind::Add, "theme.palette.add_tint_bg"),
+            (RunKind::Common, ");"),
+        ]
+    );
+}

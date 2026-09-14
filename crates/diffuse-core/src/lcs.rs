@@ -567,13 +567,13 @@ fn token_match_reward(t: &str) -> i32 {
         4
     } else if token_is_alnum(t) {
         let len = char_len(t) as i32;
-        14 + len.min(10) * 2
+        if len <= 2 { 10 } else { 14 + len.min(10) * 2 }
     } else {
         10
     }
 }
 
-const GAP_OPEN: i32 = 16;
+const GAP_OPEN: i32 = 18;
 const GAP_EXTEND: i32 = 2;
 const CONTIG_BONUS: i32 = 6;
 const NEG_INF: i32 = -1_000_000;
