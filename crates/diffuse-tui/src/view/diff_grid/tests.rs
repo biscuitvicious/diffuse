@@ -182,7 +182,7 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
 }
 
 #[test]
-fn test_hunk_divider_span_includes_context() {
+fn test_hunk_divider_modified_lines_excludes_context() {
     use crate::core::{parse::RowKind, wire::OutputRow};
     let mk = |kind: RowKind| OutputRow {
         kind,
@@ -207,7 +207,8 @@ fn test_hunk_divider_span_includes_context() {
     assert!(contiguous.contains("H2 · 0 lines (-0 +0 ~0) ────"));
     assert!(!contiguous.contains("hidden"));
 
-    // With content: 2 ctx, 1 del, 4 adds, 1 mod → 8 rows
+    // With content: 2 ctx, 1 del, 4 adds, 1 mod → 6 modified lines (2 context
+    // lines excluded)
     h.rows = vec![
         mk(RowKind::Ctx),
         mk(RowKind::Ctx),
@@ -219,11 +220,16 @@ fn test_hunk_divider_span_includes_context() {
         mk(RowKind::Mod),
     ];
     let with_rows = render_hunk_divider(1, &h, 0, false, 80);
-    assert!(with_rows.contains("H2 · 8 lines (-1 +4 ~1) ────"));
+    assert!(with_rows.contains("H2 · 6 lines (-1 +4 ~1) ────"));
 
     // Normal 8 lines hidden gap
     let expanded = render_hunk_divider(1, &h, 8, false, 80);
-    assert!(expanded.contains("H2 · 8 lines (-1 +4 ~1) · 8 more lines: ⬍ · ▲ · ▼ ────"));
+    assert!(expanded.contains("H2 · 6 lines (-1 +4 ~1) · 8 more lines: ⬍ · ▲ · ▼ ────"));
+
+    // With movs (both source and target count towards modified lines)
+    h.rows.push(mk(RowKind::Mov));
+    let with_movs = render_hunk_divider(1, &h, 0, false, 80);
+    assert!(with_movs.contains("H2 · 7 lines (-1 +4 ~1 ≈1) ────"));
 
     // Single line hidden
     let single = render_hunk_divider(1, &h, 1, false, 80);
@@ -574,4 +580,41 @@ fn test_wrapped_glyph_hit_never_touches_scrollbar_column() {
     // The scrollbar column itself never hits, on any segment.
     assert!(!wrapped_glyph_hit(txt, "▲", 0, cw, cw));
     assert!(!wrapped_glyph_hit(txt, "▲", 1, cw, cw));
+}
+
+#[test]
+fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
+    let mut f = dummy_file();
+    f.status = "modified".to_string();
+    let banner = file_header_text(&f, false);
+    assert!(
+        !banner.contains("(modified)"),
+        "file header banner must omit '(modified)', got: {banner}"
+    );
+    assert!(
+        banner.contains("════ ▼ src/main.rs -2 +5 ~1 "),
+        "file header banner should directly show path and counts without '(modified)', got: {banner}"
+    );
+
+    f.status = "added".to_string();
+    let banner_added = file_header_text(&f, false);
+    assert!(
+        banner_added.contains("(added)"),
+        "file header banner must display '(added)', got: {banner_added}"
+    );
+
+    f.status = "deleted".to_string();
+    let banner_del = file_header_text(&f, false);
+    assert!(
+        banner_del.contains("(deleted)"),
+        "file header banner must display '(deleted)', got: {banner_del}"
+    );
+
+    f.status = "modified".to_string();
+    f.is_binary = true;
+    let banner_bin = file_header_text(&f, false);
+    assert!(
+        banner_bin.contains("(binary)"),
+        "file header banner must display '(binary)', got: {banner_bin}"
+    );
 }

@@ -59,8 +59,26 @@ use crate::{
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
 pub const MAX_BLOCK_K: usize = 10;
 
-/// Default minimum character length for 100% prefix containment bonus.
 pub const DEFAULT_MIN_CONTAINMENT_LEN: usize = 8;
+
+/// Default maximum cluster product (old lines × new lines) allowed for DP
+/// pairing before falling back to wholesale deletion/addition.
+pub const DEFAULT_CLUSTER_PRODUCT_CAP: usize = 100_000;
+
+thread_local! {
+    static CLUSTER_PRODUCT_CAP: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_CLUSTER_PRODUCT_CAP) };
+}
+
+/// Set the maximum cluster product (old lines × new lines) allowed for DP
+/// pairing before falling back.
+pub fn set_cluster_product_cap(cap: usize) {
+    CLUSTER_PRODUCT_CAP.with(|c| c.set(cap));
+}
+
+/// Get the current cluster product cap.
+pub fn cluster_product_cap() -> usize {
+    CLUSTER_PRODUCT_CAP.with(|c| c.get())
+}
 
 /// The multi-objective weights (plan §3.3). Initial tuning; golden review
 /// gates any change.
@@ -760,9 +778,38 @@ pub(crate) fn solve_cluster_with_arena(
     w: &Weights,
     arena: &mut DpScratchArena,
 ) -> DpSolution {
-    arena.clear();
     let m = cluster.old_rows.len();
     let n = cluster.new_rows.len();
+
+    if m == 0 || n == 0 || m.saturating_mul(n) > cluster_product_cap() {
+        let mut rows = Vec::with_capacity(m + n);
+        let mut transitions = Vec::with_capacity(m + n);
+        for r in &cluster.old_rows {
+            match r {
+                Row::Del(d) | Row::MovSrc(d) => {
+                    rows.push(Row::Del(d.clone()));
+                    transitions.push(DpOp::Del);
+                }
+                _ => {}
+            }
+        }
+        for r in &cluster.new_rows {
+            match r {
+                Row::Add(a) | Row::MovTgt(a) => {
+                    rows.push(Row::Add(a.clone()));
+                    transitions.push(DpOp::Add);
+                }
+                _ => {}
+            }
+        }
+        return DpSolution {
+            score: 0.0,
+            rows,
+            transitions,
+        };
+    }
+
+    arena.clear();
 
     let is_open_line = |t: &str| -> bool {
         if let Some(p) = profile {

@@ -207,3 +207,12 @@ fn test_stream_diff_pipeline_helper() {
     assert_eq!(files[0].path, "x.rs");
     assert_eq!(files[0].counts.mods, 1);
 }
+
+#[test]
+fn test_default_worker_count() {
+    let cpus = std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(4);
+    let expected = (cpus / 2).max(1);
+    assert_eq!(default_worker_count(), expected);
+}

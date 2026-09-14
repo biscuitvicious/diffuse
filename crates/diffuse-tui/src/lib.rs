@@ -57,6 +57,7 @@ pub fn run_streaming_interactive_tui(
     let mut streaming_active = streaming_rx.is_some();
     let mut dirty = true;
     let mut last_size = guard.size();
+    let mut last_dot = state.streaming_dot();
 
     while !state.should_quit {
         if let Some(ref mrx) = meta_rx {
@@ -64,6 +65,9 @@ pub fn run_streaming_interactive_tui(
                 Ok(Ok(meta)) => {
                     state.output.branch = meta.branch;
                     state.output.untracked_skipped = meta.untracked_skipped;
+                    if meta.commit_range.is_some() {
+                        state.commit_range = meta.commit_range;
+                    }
                     dirty = true;
                 }
                 Ok(Err(err)) => {
@@ -91,6 +95,14 @@ pub fn run_streaming_interactive_tui(
                         break;
                     }
                 }
+            }
+        }
+
+        if streaming_active {
+            let cur_dot = state.streaming_dot();
+            if cur_dot != last_dot {
+                dirty = true;
+                last_dot = cur_dot;
             }
         }
 

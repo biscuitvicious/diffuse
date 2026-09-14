@@ -291,3 +291,67 @@ fn test_git_diff_additions_only_still_fetches_old_size() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_resolve_commit_range_in_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?} failed", args);
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "c1"]);
+    let c1 = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let c1_hash = String::from_utf8_lossy(&c1.stdout).trim().to_string();
+
+    std::fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "c2"]);
+    let c2 = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let c2_hash = String::from_utf8_lossy(&c2.stdout).trim().to_string();
+
+    // Two-dot range
+    let r1 = resolve_commit_range(dir, &["HEAD~1..HEAD".into()]);
+    assert_eq!(r1, Some(format!("{c1_hash}..{c2_hash}")));
+
+    // Three-dot range
+    let r2 = resolve_commit_range(dir, &["HEAD~1...HEAD".into()]);
+    assert_eq!(r2, Some(format!("{c1_hash}...{c2_hash}")));
+
+    // Caret-exclamation
+    let r3 = resolve_commit_range(dir, &["HEAD^!".into()]);
+    assert_eq!(r3, Some(format!("{c1_hash}..{c2_hash}")));
+
+    // Two positional commit args
+    let r4 = resolve_commit_range(dir, &["HEAD~1".into(), "HEAD".into()]);
+    assert_eq!(r4, Some(format!("{c1_hash}..{c2_hash}")));
+
+    // Non-commit ranges:
+    assert_eq!(resolve_commit_range(dir, &[]), None);
+    assert_eq!(resolve_commit_range(dir, &["--cached".into()]), None);
+    assert_eq!(resolve_commit_range(dir, &["HEAD".into()]), None);
+    assert_eq!(resolve_commit_range(dir, &["a.rs".into()]), None);
+
+    // Also test that load_git_repo populates commit_range
+    let res = load_git_repo(dir, &["HEAD~1..HEAD".into()], &[], false, 4).unwrap();
+    assert_eq!(res.commit_range, Some(format!("{c1_hash}..{c2_hash}")));
+}

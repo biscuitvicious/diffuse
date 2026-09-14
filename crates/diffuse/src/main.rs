@@ -66,6 +66,16 @@ struct Args {
     /// 250000).
     #[arg(long, default_value_t = DEFAULT_TOKEN_PRODUCT_CAP, global = true)]
     token_product_cap: usize,
+    /// Number of worker threads (default: max(1, #CPUs / 2)).
+    #[arg(
+        short = 'j',
+        long = "jobs",
+        alias = "threads",
+        alias = "workers",
+        value_name = "N",
+        global = true
+    )]
+    jobs: Option<usize>,
     /// Emit raw token-stream JSON (for machine/extension integration).
     #[arg(long, global = true)]
     json: bool,
@@ -322,6 +332,12 @@ fn main() -> io::Result<()> {
     let colorize = init_color_mode(&args.color, args.no_color);
     let theme = resolve_theme(args.theme.as_deref());
 
+    let workers = args
+        .jobs
+        .unwrap_or_else(diffuse::core::streaming::default_worker_count)
+        .max(1);
+    diffuse::core::streaming::init_thread_pool(workers);
+
     let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
         match &args.command {
             Some(SubCommand::Review {
@@ -442,7 +458,7 @@ fn main() -> io::Result<()> {
                 false,
                 ENGINE_CONTEXT,
                 pipeline_opts,
-                None,
+                args.jobs,
             );
             let initial_out = PipelineOutput {
                 files: Vec::new(),
@@ -468,7 +484,7 @@ fn main() -> io::Result<()> {
                 false,
                 ENGINE_CONTEXT,
                 pipeline_opts,
-                None,
+                args.jobs,
             );
             if let Ok(Err(e)) = meta_rx.recv() {
                 eprintln!("diffuse: {e}");
@@ -511,7 +527,7 @@ fn main() -> io::Result<()> {
                 false,
                 ENGINE_CONTEXT,
                 pipeline_opts,
-                None,
+                args.jobs,
             );
             if let Ok(Err(e)) = meta_rx.recv() {
                 eprintln!("diffuse: {e}");
@@ -575,7 +591,7 @@ fn main() -> io::Result<()> {
             false,
             ENGINE_CONTEXT,
             pipeline_opts,
-            None,
+            args.jobs,
         );
         if let Ok(Err(e)) = meta_rx.recv() {
             eprintln!("diffuse: {e}");
@@ -765,7 +781,7 @@ fn main() -> io::Result<()> {
                     input.new_content,
                     input.old_content,
                     opts,
-                    None,
+                    args.jobs,
                 );
                 let mut stdout = io::stdout().lock();
                 for file in consumer {

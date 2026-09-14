@@ -723,6 +723,40 @@ fn test_pipeline_options_token_product_cap_controls_subword_granularity() {
 }
 
 #[test]
+fn test_pipeline_options_cluster_product_cap_controls_wholesale_fallback() {
+    let mut diff = String::from(
+        "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,15 +1,15 @@\n",
+    );
+    for i in 1..=15 {
+        diff.push_str(&format!("-fn func_{i}() {{ let val = {i}; }}\n"));
+    }
+    for i in 1..=15 {
+        diff.push_str(&format!("+fn func_{i}() {{ let val = {i} + 1; }}\n"));
+    }
+
+    let opts_low = PipelineOptions::default().with_cluster_product_cap(50);
+    let out_low = run_pipeline_full(&diff, None, None, opts_low);
+    // Under low cap (15 * 15 = 225 > 50), cluster falls back to wholesale pure
+    // Del then pure Add
+    assert!(
+        out_low.files[0]
+            .rows
+            .iter()
+            .all(|r| r.kind == crate::parse::RowKind::Del || r.kind == crate::parse::RowKind::Add)
+    );
+
+    let opts_high = PipelineOptions::default().with_cluster_product_cap(100_000);
+    let out_high = run_pipeline_full(&diff, None, None, opts_high);
+    // Under high cap, lines pair into Mod rows
+    assert!(
+        out_high.files[0]
+            .rows
+            .iter()
+            .any(|r| r.kind == crate::parse::RowKind::Mod)
+    );
+}
+
+#[test]
 fn test_binary_file_preserves_new_bytes_and_calculates_size() {
     let diff = r#"diff --git a/logo.png b/logo.png
 index 0000000..abcdef1 100644

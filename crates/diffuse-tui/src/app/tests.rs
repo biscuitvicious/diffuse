@@ -2449,14 +2449,13 @@ fn test_render_ratatui_frame_layout() {
             state.render_ratatui_frame(f);
         })
         .unwrap();
-
     let buffer = terminal.backend().buffer();
-    // First line must contain "Review: diffuse"
+    // First line must contain repo name and file path
     let mut line0 = String::new();
     for x in 0..80 {
         line0.push_str(buffer[(x, 0)].symbol());
     }
-    assert!(line0.contains("Review: diffuse"));
+    assert!(line0.contains("diffuse"));
     assert!(line0.contains("src/lib.rs"));
 
     // Second line must contain files and hunks badge
@@ -2969,4 +2968,200 @@ fn test_file_header_indicator_hit_rectangle_three_chars_wide() {
         !state.collapsed_files.contains(&0),
         "col c+1 (trailing space) must toggle file collapse back"
     );
+}
+
+#[test]
+fn test_no_diffs_renders_header_footer_and_main_message_frame() {
+    let empty_output = PipelineOutput {
+        files: Vec::new(),
+        branch: "main".into(),
+        untracked_skipped: Vec::new(),
+    };
+    let mut state = AppState::new(empty_output, "my_repo".into(), temp_notes_path());
+    let frame = state.render_frame(120, 20);
+
+    // Header bar with repo name
+    assert!(frame.contains("my_repo"), "frame must include repo name");
+
+    // Status bar with file 0/0 and hunk 0/0
+    assert!(frame.contains("file 0/0"), "status bar must show file 0/0");
+    assert!(frame.contains("hunk 0/0"), "status bar must show hunk 0/0");
+    assert!(
+        frame.contains('\u{2387}'),
+        "status bar must show branch glyph"
+    );
+    assert!(frame.contains("main"), "status bar must show branch name");
+
+    // Main area message
+    assert!(
+        frame.contains("No diff to display."),
+        "main area must contain no diff message"
+    );
+
+    // Bottom ribbon footer
+    assert!(frame.contains("───"), "footer must include divider");
+    assert!(frame.contains("[j/k]move"), "footer must include [j/k]move");
+    assert!(frame.contains("[q]uit"), "footer must include [q]uit");
+    assert!(frame.contains("[?]help"), "footer must include [?]help");
+}
+
+#[test]
+fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
+    let empty_output = PipelineOutput {
+        files: Vec::new(),
+        branch: "feature-branch".into(),
+        untracked_skipped: Vec::new(),
+    };
+    let mut state = AppState::new(empty_output, "demo_repo".into(), temp_notes_path());
+    let backend = TestBackend::new(120, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let row_strings: Vec<String> = (0..20)
+        .map(|y| {
+            let mut line = String::new();
+            for x in 0..120 {
+                line.push_str(buffer[(x, y)].symbol());
+            }
+            line
+        })
+        .collect();
+
+    // Row 0: Header bar
+    assert!(
+        row_strings[0].contains("demo_repo"),
+        "Row 0 must be header bar: {}",
+        row_strings[0]
+    );
+
+    // Row 1: Secondary status bar
+    assert!(
+        row_strings[1].contains("file 0/0")
+            && row_strings[1].contains("hunk 0/0")
+            && row_strings[1].contains("\u{2387} feature-branch"),
+        "Row 1 must be status bar: {}",
+        row_strings[1]
+    );
+
+    // Row 2: Main area with message
+    assert!(
+        row_strings[2].contains("No diff to display."),
+        "Row 2 must be main area with message: {}",
+        row_strings[2]
+    );
+
+    // Row 18: Divider
+    assert!(
+        row_strings[18].contains("───"),
+        "Row 18 must be divider: {}",
+        row_strings[18]
+    );
+
+    // Row 19 (bottom): Ribbon with shortcuts
+    assert!(
+        row_strings[19].contains("[j/k]move")
+            && row_strings[19].contains("[q]uit")
+            && row_strings[19].contains("[?]help"),
+        "Row 19 must be bottom ribbon: {}",
+        row_strings[19]
+    );
+}
+
+#[test]
+fn test_app_commit_range_in_render_ratatui() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    let output = PipelineOutput {
+        files: vec![],
+        branch: "work".into(),
+        untracked_skipped: vec![],
+    };
+
+    let mut state = AppState::new(output, "demo_repo".into(), temp_notes_path())
+        .with_commit_range(Some("3f05a71..7e0caab".into()));
+
+    let frame = terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+
+    let buffer = frame.buffer;
+    let mut row_1 = String::new();
+    for x in 0..80 {
+        row_1.push_str(buffer[(x, 1)].symbol());
+    }
+
+    assert!(
+        row_1.contains("3f05a71..7e0caab"),
+        "Status bar must show commit range: {}",
+        row_1
+    );
+    assert!(
+        !row_1.contains("\u{2387}"),
+        "Status bar must NOT show branch glyph when commit range is set: {}",
+        row_1
+    );
+    assert!(
+        !row_1.contains("work"),
+        "Status bar must NOT show branch name when commit range is set: {}",
+        row_1
+    );
+}
+
+#[test]
+fn test_app_streaming_dot_blinking_and_pause() {
+    let output = PipelineOutput {
+        files: vec![],
+        branch: "work".into(),
+        untracked_skipped: vec![],
+    };
+    let mut state = AppState::new(output, "repo".into(), temp_notes_path());
+
+    // When not streaming, dot is always "●"
+    state.is_streaming = false;
+    assert_eq!(state.streaming_dot(), "●");
+
+    // When streaming, but no data received yet: steady dot "●"
+    state.is_streaming = true;
+    state.last_stream_activity = None;
+    assert_eq!(state.streaming_dot(), "●");
+
+    // When data is actively arriving (< 500ms):
+    let t0 = std::time::Instant::now();
+    state.start_time = t0;
+    state.record_stream_activity_at(t0);
+
+    // Active, phase 0 (0..200ms): dot is "●"
+    let t_100ms = t0 + std::time::Duration::from_millis(100);
+    assert_eq!(state.streaming_dot_at(t_100ms), "●");
+
+    // Active, phase 1 (200..400ms): dot is " " (blinking off)
+    let t_250ms = t0 + std::time::Duration::from_millis(250);
+    assert_eq!(state.streaming_dot_at(t_250ms), " ");
+
+    // Active, phase 2 (400..500ms): dot is "●" (blinking on)
+    let t_450ms = t0 + std::time::Duration::from_millis(450);
+    assert_eq!(state.streaming_dot_at(t_450ms), "●");
+
+    // Delay reached (>= 500ms without new data): pauses blinking (steady dot
+    // "●")
+    let t_600ms = t0 + std::time::Duration::from_millis(600);
+    assert_eq!(state.streaming_dot_at(t_600ms), "●");
+
+    // New data arrives at 600ms!
+    state.record_stream_activity_at(t_600ms);
+    // Active again at 600ms..800ms: phase at 700ms is (700/200)%2 = 1 -> " "
+    // (resumes blinking!)
+    let t_700ms = t0 + std::time::Duration::from_millis(700);
+    assert_eq!(state.streaming_dot_at(t_700ms), " ");
 }

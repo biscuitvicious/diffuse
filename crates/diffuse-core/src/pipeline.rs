@@ -54,6 +54,7 @@ pub struct PipelineOptions {
     pub visual_context: usize,
     pub expand_lines: usize,
     pub token_product_cap: usize,
+    pub cluster_product_cap: usize,
 }
 
 impl Default for PipelineOptions {
@@ -64,6 +65,7 @@ impl Default for PipelineOptions {
             visual_context: crate::git::DEFAULT_CONTEXT_LINES,
             expand_lines: crate::git::DEFAULT_EXPAND_LINES,
             token_product_cap: crate::lcs::DEFAULT_TOKEN_PRODUCT_CAP,
+            cluster_product_cap: crate::cluster::dp::DEFAULT_CLUSTER_PRODUCT_CAP,
         }
     }
 }
@@ -96,6 +98,11 @@ impl PipelineOptions {
 
     pub fn with_token_product_cap(mut self, token_product_cap: usize) -> Self {
         self.token_product_cap = token_product_cap;
+        self
+    }
+
+    pub fn with_cluster_product_cap(mut self, cluster_product_cap: usize) -> Self {
+        self.cluster_product_cap = cluster_product_cap;
         self
     }
 }
@@ -217,6 +224,7 @@ pub fn run_pipeline_full(
     opts: PipelineOptions,
 ) -> PipelineOutput {
     crate::lcs::set_token_product_cap(opts.token_product_cap);
+    crate::cluster::dp::set_cluster_product_cap(opts.cluster_product_cap);
     let out_files: Vec<OutputFile> =
         crate::streaming::stream_diff_pipeline(diff, new_content, old_content, opts, None)
             .collect();
@@ -259,6 +267,7 @@ pub fn process_single_diff_file(
     opts: &PipelineOptions,
 ) -> OutputFile {
     crate::lcs::set_token_product_cap(opts.token_product_cap);
+    crate::cluster::dp::set_cluster_product_cap(opts.cluster_product_cap);
     let ext = f.path.rsplit('.').next().unwrap_or("");
     let profile = lang_profile(ext);
     let new_lines_fallback: Vec<String>;

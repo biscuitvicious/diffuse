@@ -138,3 +138,21 @@ fn test_resolve_theme_falls_back_on_unknown_name() {
         DiffuseTheme::DEFAULT
     );
 }
+
+#[test]
+fn test_cli_args_jobs_flags() {
+    let args1 = Args::try_parse_from(["diffuse", "-j", "4"]).unwrap();
+    assert_eq!(args1.jobs, Some(4));
+
+    let args2 = Args::try_parse_from(["diffuse", "--jobs", "8"]).unwrap();
+    assert_eq!(args2.jobs, Some(8));
+
+    let args3 = Args::try_parse_from(["diffuse", "--threads", "2"]).unwrap();
+    assert_eq!(args3.jobs, Some(2));
+
+    let args4 = Args::try_parse_from(["diffuse", "--workers", "6"]).unwrap();
+    assert_eq!(args4.jobs, Some(6));
+
+    let args_default = Args::try_parse_from(["diffuse"]).unwrap();
+    assert_eq!(args_default.jobs, None);
+}

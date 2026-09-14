@@ -295,6 +295,7 @@ pub fn reload_diff(
     );
     new_out.branch = git_res.branch;
     new_out.untracked_skipped = git_res.untracked_skipped;
+    state.commit_range = git_res.commit_range;
 
     state.reload(new_out);
     Ok(())

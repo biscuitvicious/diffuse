@@ -30,12 +30,7 @@ impl AppState {
         let mut lines = Vec::new();
 
         let cur_fi = self.current_file_idx();
-        let f = match self.output.files.get(cur_fi) {
-            Some(file) => file,
-            None => {
-                return "\x1b[2J\x1b[H No diff to display.".to_string();
-            }
-        };
+        let f = self.output.files.get(cur_fi);
 
         let common_prefix = self.output.common_directory_prefix();
 
@@ -50,7 +45,7 @@ impl AppState {
         // Secondary status bar
         let total_files = self.output.files.len();
         let cur_hunk = self.current_hunk().unwrap_or(0);
-        let total_hunks = f.hunks.len().max(1);
+        let total_hunks = f.map_or(0, |file| file.hunks.len().max(1));
         lines.extend(render_status_bar(crate::view::StatusBarContext {
             cur_fi,
             total_files,
@@ -60,9 +55,11 @@ impl AppState {
             col_offset: self.col_offset,
             num_buffer: &self.num_buffer,
             branch: &self.output.branch,
+            commit_range: self.commit_range.as_deref(),
             common_prefix: common_prefix.as_deref(),
             width,
             is_streaming: self.is_streaming,
+            streaming_dot: self.streaming_dot(),
         }));
 
         // Ephemeral action feedback (note saved/deleted, git ops, ...)
@@ -73,57 +70,71 @@ impl AppState {
             ));
         }
 
-        // Inline note draft if active
-        if let Some(ref draft) = self.note_draft {
-            let loc = if let Some(sel) = self.compute_selection() {
-                if sel.start == sel.end {
-                    format!("{}:{}", f.path, sel.start)
+        if let Some(f) = f {
+            // Inline note draft if active
+            if let Some(ref draft) = self.note_draft {
+                let loc = if let Some(sel) = self.compute_selection() {
+                    if sel.start == sel.end {
+                        format!("{}:{}", f.path, sel.start)
+                    } else {
+                        format!("{}:{}-{}", f.path, sel.start, sel.end)
+                    }
                 } else {
-                    format!("{}:{}-{}", f.path, sel.start, sel.end)
-                }
-            } else {
-                let line = self
-                    .current_flat_row()
-                    .and_then(|fr| self.flat_row_coord(fr))
-                    .unwrap_or(0);
-                format!("{}:{}", f.path, line)
-            };
-            lines.push(format!(
-                "\x1b[38;5;220m Note on {loc}: {draft}_  [ctrl+s save · enter newline · esc cancel]\x1b[39m"
-            ));
-        }
-        let viewport_start_line = lines.len();
-        let vh = height.saturating_sub(viewport_start_line + 2);
-        self.last_viewport_start = viewport_start_line;
-        self.viewport_height = vh;
-        self.screen_height = height;
+                    let line = self
+                        .current_flat_row()
+                        .and_then(|fr| self.flat_row_coord(fr))
+                        .unwrap_or(0);
+                    format!("{}:{}", f.path, line)
+                };
+                lines.push(format!(
+                    "\x1b[38;5;220m Note on {loc}: {draft}_  [ctrl+s save · enter newline · esc cancel]\x1b[39m"
+                ));
+            }
+            let viewport_start_line = lines.len();
+            let vh = height.saturating_sub(viewport_start_line + 2);
+            self.last_viewport_start = viewport_start_line;
+            self.viewport_height = vh;
+            self.screen_height = height;
 
-        let (mut grid_lines, has_scrollbar, thumb_offset, thumb_size, content_width) =
-            self.render_diff_viewport_lines(width, vh, height);
+            let (mut grid_lines, has_scrollbar, thumb_offset, thumb_size, content_width) =
+                self.render_diff_viewport_lines(width, vh, height);
 
-        if !self.raw_diff {
-            for (row_i, gline) in grid_lines.iter_mut().enumerate() {
-                let vis_w = visible_width(gline);
-                if vis_w < content_width {
-                    gline.push_str(&" ".repeat(content_width - vis_w));
-                }
-                gline.push_str("\x1b[0m");
-                if has_scrollbar {
-                    // Thumb geometry is full-track based: grid row i sits at
-                    // track row viewport_start_line + i.
-                    let track_row = viewport_start_line + row_i;
-                    let sb_char =
-                        if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {
-                            "\x1b[38;5;248m█\x1b[0m"
-                        } else {
-                            "\x1b[38;5;236m│\x1b[0m"
-                        };
-                    gline.push_str(sb_char);
+            if !self.raw_diff {
+                for (row_i, gline) in grid_lines.iter_mut().enumerate() {
+                    let vis_w = visible_width(gline);
+                    if vis_w < content_width {
+                        gline.push_str(&" ".repeat(content_width - vis_w));
+                    }
+                    gline.push_str("\x1b[0m");
+                    if has_scrollbar {
+                        // Thumb geometry is full-track based: grid row i sits
+                        // at
+                        // track row viewport_start_line + i.
+                        let track_row = viewport_start_line + row_i;
+                        let sb_char =
+                            if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {
+                                "\x1b[38;5;248m█\x1b[0m"
+                            } else {
+                                "\x1b[38;5;236m│\x1b[0m"
+                            };
+                        gline.push_str(sb_char);
+                    }
                 }
             }
-        }
 
-        lines.extend(grid_lines);
+            lines.extend(grid_lines);
+        } else {
+            let viewport_start_line = lines.len();
+            let vh = height.saturating_sub(viewport_start_line + 2);
+            self.last_viewport_start = viewport_start_line;
+            self.viewport_height = vh;
+            self.screen_height = height;
+
+            lines.push("\x1b[38;5;244m No diff to display.\x1b[0m".to_string());
+            for _ in 1..vh {
+                lines.push(String::new());
+            }
+        }
 
         let (divider, ribbon) = render_bottom_ribbon(width);
         lines.push(divider);
@@ -352,15 +363,7 @@ impl AppState {
         let area = f.area();
         let width = area.width as usize;
         let cur_fi = self.current_file_idx();
-        let file = match self.output.files.get(cur_fi) {
-            Some(file) => file,
-            None => {
-                let p = Paragraph::new(" No diff to display.")
-                    .style(Style::default().fg(Color::Indexed(244)));
-                f.render_widget(p, area);
-                return;
-            }
-        };
+        let file = self.output.files.get(cur_fi);
 
         let has_status_msg = self.status_message.is_some();
 
@@ -390,8 +393,12 @@ impl AppState {
             width.saturating_sub(1)
         };
         let est_total = self.visual_geometry(est_cw).3;
-        let show_bar =
-            !self.raw_diff && width > 1 && est_total > diff_vh && diff_vh > 2 && area.height > 0;
+        let show_bar = file.is_some()
+            && !self.raw_diff
+            && width > 1
+            && est_total > diff_vh
+            && diff_vh > 2
+            && area.height > 0;
 
         // Root column layout: the app column (all rows) plus, when needed,
         // a 1-wide full-height scrollbar column.
@@ -415,8 +422,6 @@ impl AppState {
 
         let mut chunk_idx = 0;
 
-        let file_path = file.path.clone();
-
         // 1. Header Bar
         let common_prefix = self.output.common_directory_prefix();
         let header_line = crate::view::header_bar_line_themed(
@@ -437,14 +442,16 @@ impl AppState {
             cur_fi,
             total_files: self.output.files.len(),
             cur_hunk: self.current_hunk().unwrap_or(0),
-            total_hunks: file.hunks.len().max(1),
+            total_hunks: file.map_or(0, |fl| fl.hunks.len().max(1)),
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
             num_buffer: &self.num_buffer,
             branch: &self.output.branch,
+            commit_range: self.commit_range.as_deref(),
             common_prefix: common_prefix.as_deref(),
             width: main_width,
             is_streaming: self.is_streaming,
+            streaming_dot: self.streaming_dot(),
         };
         let status_line = status_bar_line(status_ctx);
         f.render_widget(Paragraph::new(status_line), main_chunks[chunk_idx]);
@@ -465,6 +472,30 @@ impl AppState {
         let diff_area = main_chunks[chunk_idx];
         chunk_idx += 1;
         let ribbon_area = main_chunks[chunk_idx];
+
+        let Some(file) = file else {
+            let p = Paragraph::new(" No diff to display.")
+                .style(Style::default().fg(Color::Indexed(244)));
+            f.render_widget(p, diff_area);
+
+            let (div_line, rib_line) = bottom_ribbon_lines(main_width);
+            f.render_widget(Paragraph::new(vec![div_line, rib_line]), ribbon_area);
+
+            self.last_viewport_start = diff_area.y as usize;
+            self.viewport_height = diff_area.height as usize;
+            self.last_content_width = main_width;
+            self.screen_height = track_h;
+
+            if self.show_help {
+                crate::view::render_help_modal_widget(f, area);
+            }
+            if let Some(ref finder) = self.file_finder {
+                crate::view::render_finder_modal_widget(f, &self.output, finder, area);
+            }
+            return;
+        };
+
+        let file_path = file.path.clone();
 
         // 4. Diff Grid Viewport (no scrollbar chars here anymore; the bar
         // owns its own full-height column). Pass the full width: the

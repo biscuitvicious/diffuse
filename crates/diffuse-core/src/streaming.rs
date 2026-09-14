@@ -202,6 +202,21 @@ impl Iterator for StreamingConsumer {
     }
 }
 
+/// Returns the default worker count for the streaming pipeline: `(num_cpus /
+/// 2).max(1)`.
+pub fn default_worker_count() -> usize {
+    let cpus = available_parallelism().map(|p| p.get()).unwrap_or(4);
+    (cpus / 2).max(1)
+}
+
+/// Initializes the global rayon thread pool to `workers` threads (if not
+/// already initialized).
+pub fn init_thread_pool(workers: usize) {
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build_global();
+}
+
 /// Spawns an asynchronous streaming pipeline with `N = (num_cpus / 2).max(1)`
 /// workers.
 #[tracing::instrument(level = "trace", skip(opts), fields(workers = worker_count, visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
@@ -209,8 +224,9 @@ pub fn spawn_streaming_pipeline(
     worker_count: Option<usize>,
     opts: PipelineOptions,
 ) -> (StreamingProducer, StreamingConsumer) {
-    let num_workers =
-        worker_count.unwrap_or_else(|| available_parallelism().map(|p| p.get()).unwrap_or(4));
+    let num_workers = worker_count
+        .map(|c| c.max(1))
+        .unwrap_or_else(default_worker_count);
 
     let queue = Arc::new(PriorityJobQueue::new());
     let (processed_tx, processed_rx) = channel::<ProcessedFile>();
@@ -325,6 +341,7 @@ pub fn stream_diff_pipeline(
 pub struct GitRepoMeta {
     pub branch: String,
     pub untracked_skipped: Vec<String>,
+    pub commit_range: Option<String>,
 }
 
 /// Spawns an asynchronous git streaming pipeline:

@@ -170,7 +170,7 @@ fn test_nonzero_notes_still_rendered() {
 
 #[test]
 fn test_write_file_header_bar_direct_buffer() {
-    let file = OutputFile {
+    let mut file = OutputFile {
         path: "src/lib.rs".to_string(),
         old_path: None,
         old_mode: None,
@@ -204,6 +204,13 @@ fn test_write_file_header_bar_direct_buffer() {
     assert!(buf.contains("~3"));
     assert!(buf.contains("≈1"));
     assert!(buf.ends_with(" \x1b[0m\n"));
+    assert!(!buf.contains("(modified)"));
+
+    // And with added status:
+    file.status = "added".to_string();
+    let mut buf_added = String::new();
+    write_file_header_bar(&mut buf_added, &file, &DiffuseTheme::DEFAULT).unwrap();
+    assert!(buf_added.contains("(added)"));
 }
 
 #[test]

@@ -31,9 +31,15 @@ pub fn write_file_header_bar<W: Write>(
     let bg_code = theme.palette.header_bar_bg.bg_code();
     let fg_code = theme.palette.header_bar_fg.fg_code();
 
+    let status_suffix = if status_display.is_empty() || status_display == "modified" {
+        String::new()
+    } else {
+        format!(" ({status_display})")
+    };
+
     write!(
         out,
-        "{bg_code}\x1b[1m{fg_code} {path_display} ({status_display}) · {}+{}{FG_RESET}",
+        "{bg_code}\x1b[1m{fg_code} {path_display}{status_suffix} · {}+{}{FG_RESET}",
         theme.palette.add_gutter_icon.fg_code(),
         counts.adds
     )?;

@@ -126,6 +126,60 @@ pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
     }
 }
 
+fn rev_to_short_hash(cwd: &Path, rev: &str) -> Option<String> {
+    if rev.is_empty() {
+        return None;
+    }
+    run_git(cwd, &["rev-parse", "--short", &format!("{rev}^{{commit}}")])
+        .map(|s| s.trim().to_string())
+}
+
+/// Resolves commit range short hashes from base args (e.g. `main..feature` ->
+/// `1a2b3c4..5d6e7f8`). Returns `None` if the diff is not a commit-to-commit
+/// range (e.g. diff against working tree).
+pub fn resolve_commit_range(cwd: &Path, base_args: &[String]) -> Option<String> {
+    let refs: Vec<&str> = base_args
+        .iter()
+        .map(std::string::String::as_str)
+        .filter(|t| *t != "--cached" && !t.starts_with('-'))
+        .collect();
+
+    if refs.len() == 1 {
+        let r = refs[0];
+        if let Some(c) = r.strip_suffix("^!") {
+            let h_old = rev_to_short_hash(cwd, &format!("{c}^"))?;
+            let h_new = rev_to_short_hash(cwd, c)?;
+            return Some(format!("{h_old}..{h_new}"));
+        }
+        if let Some((old_r, new_r)) = r.split_once("...") {
+            let left = if old_r.is_empty() { "HEAD" } else { old_r };
+            let right = if new_r.is_empty() { "HEAD" } else { new_r };
+            let h_left = rev_to_short_hash(cwd, left)?;
+            let h_right = rev_to_short_hash(cwd, right)?;
+            return Some(format!("{h_left}...{h_right}"));
+        }
+        if let Some((old_r, new_r)) = r.split_once("..")
+            && !old_r.ends_with('.')
+            && !new_r.starts_with('.')
+        {
+            let left = if old_r.is_empty() { "HEAD" } else { old_r };
+            let right = if new_r.is_empty() { "HEAD" } else { new_r };
+            let h_left = rev_to_short_hash(cwd, left)?;
+            let h_right = rev_to_short_hash(cwd, right)?;
+            return Some(format!("{h_left}..{h_right}"));
+        }
+        return None;
+    }
+
+    if refs.len() == 2 {
+        let h1 = rev_to_short_hash(cwd, refs[0])?;
+        let h2 = rev_to_short_hash(cwd, refs[1])?;
+        return Some(format!("{h1}..{h2}"));
+    }
+
+    None
+}
+
 #[derive(Debug, Clone)]
 pub struct GitFileItem {
     pub path: String,
@@ -143,6 +197,7 @@ pub struct LoadGitResult {
     pub old_content: HashMap<String, String>,
     pub branch: String,
     pub untracked_skipped: Vec<String>,
+    pub commit_range: Option<String>,
 }
 
 use std::{
@@ -494,9 +549,11 @@ pub fn stream_git_repo_to_producer(
         }
     }
 
+    let commit_range = resolve_commit_range(repo_root, base_args);
     let _ = meta_tx.send(Ok(crate::streaming::GitRepoMeta {
         branch,
         untracked_skipped,
+        commit_range,
     }));
     producer.finish();
 }
@@ -683,12 +740,15 @@ pub fn load_git_repo(
         }
     }
 
+    let commit_range = resolve_commit_range(repo_root, base_args);
+
     Ok(LoadGitResult {
         diff,
         new_content,
         old_content,
         branch,
         untracked_skipped,
+        commit_range,
     })
 }
 

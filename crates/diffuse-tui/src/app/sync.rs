@@ -9,6 +9,7 @@ use super::AppState;
 
 impl AppState {
     pub fn append_file(&mut self, file: OutputFile) {
+        self.record_stream_activity();
         let fi = self.output.files.len();
         let has_content_changes =
             file.counts.adds > 0 || file.counts.dels > 0 || file.counts.mods > 0;

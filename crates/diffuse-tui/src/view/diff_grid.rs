@@ -126,9 +126,14 @@ pub fn file_header_text_with_prefix(
     };
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
+    let status_tag = if status_str.is_empty() || status_str == "modified" {
+        String::new()
+    } else {
+        format!(" ({status_str})")
+    };
     format!(
-        "{indicator_prefix}{} ({}) -{} +{} ~{}{} ",
-        path_display, status_str, f_counts.dels, f_counts.adds, f_counts.mods, collapse_tag
+        "{indicator_prefix}{path_display}{status_tag} -{} +{} ~{}{} ",
+        f_counts.dels, f_counts.adds, f_counts.mods, collapse_tag
     )
 }
 
@@ -161,9 +166,14 @@ pub fn render_file_header_segment_themed(
     };
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
+    let status_tag = if status_str.is_empty() || status_str == "modified" {
+        String::new()
+    } else {
+        format!(" ({status_str})")
+    };
 
     let fixed_suffix = format!(
-        " ({status_str}) -{} +{} ~{}{} ",
+        "{status_tag} -{} +{} ~{}{} ",
         f_counts.dels, f_counts.adds, f_counts.mods, collapse_tag
     );
 
@@ -262,17 +272,24 @@ pub fn hunk_divider_text(hi: usize, hunk: &OutputHunk, hidden_gap: usize) -> Str
     let mut dels: usize = 0;
     let mut adds: usize = 0;
     let mut mods: usize = 0;
+    let mut movs: usize = 0;
     for r in &hunk.rows {
         match r.kind {
             RowKind::Del => dels += 1,
             RowKind::Add => adds += 1,
             RowKind::Mod => mods += 1,
+            RowKind::Mov => movs += 1,
             _ => {}
         }
     }
-    let total = hunk.rows.len();
+    let total = dels + adds + mods + movs;
     let unit = if total == 1 { "line" } else { "lines" };
-    let summary = format!("{total} {unit} (-{dels} +{adds} ~{mods})");
+    let mov_str = if movs > 0 {
+        format!(" ≈{movs}")
+    } else {
+        String::new()
+    };
+    let summary = format!("{total} {unit} (-{dels} +{adds} ~{mods}{mov_str})");
 
     let gap_part = if hidden_gap > 0 {
         let gap_unit = if hidden_gap == 1 { "line" } else { "lines" };

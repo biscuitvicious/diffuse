@@ -69,41 +69,10 @@ pub fn truncate_pad(s: &str, target_width: usize) -> String {
 /// wrapping across lines if wider than `width`.
 pub fn render_header_bar(
     repo: &str,
-    file: &OutputFile,
+    file: Option<&OutputFile>,
     width: usize,
     common_prefix: Option<&str>,
 ) -> Vec<String> {
-    let counts = &file.counts;
-    let note_count = file.notes.len();
-    let note_s = if note_count == 0 {
-        String::new()
-    } else {
-        format!(
-            " · {note_count} note{}",
-            if note_count == 1 { "" } else { "s" }
-        )
-    };
-    let counts_str = format!(
-        "+{}{}{}{}{}",
-        counts.adds,
-        if counts.dels > 0 {
-            format!(" −{}", counts.dels)
-        } else {
-            String::new()
-        },
-        if counts.mods > 0 {
-            format!(" ~{}", counts.mods)
-        } else {
-            String::new()
-        },
-        if counts.movs > 0 {
-            format!(" ≈{} moved", counts.movs)
-        } else {
-            String::new()
-        },
-        note_s
-    );
-
     let prefix_seg = if let Some(pfx) = common_prefix
         && !pfx.is_empty()
     {
@@ -112,38 +81,73 @@ pub fn render_header_bar(
         String::new()
     };
 
-    let stripped_old = file.old_path.as_deref().map(|old| {
-        if let Some(pfx) = common_prefix {
-            old.strip_prefix(pfx).unwrap_or(old).to_string()
+    let head_raw = if let Some(file) = file {
+        let counts = &file.counts;
+        let note_count = file.notes.len();
+        let note_s = if note_count == 0 {
+            String::new()
         } else {
-            old.to_string()
-        }
-    });
-    let stripped_path = if let Some(pfx) = common_prefix {
-        file.path
-            .strip_prefix(pfx)
-            .unwrap_or(&file.path)
-            .to_string()
-    } else {
-        file.path.clone()
-    };
+            format!(
+                " · {note_count} note{}",
+                if note_count == 1 { "" } else { "s" }
+            )
+        };
+        let counts_str = format!(
+            "−{}{}{}{}{}",
+            counts.dels,
+            if counts.adds > 0 {
+                format!(" +{}", counts.adds)
+            } else {
+                String::new()
+            },
+            if counts.mods > 0 {
+                format!(" ~{}", counts.mods)
+            } else {
+                String::new()
+            },
+            if counts.movs > 0 {
+                format!(" ≈{} moved", counts.movs)
+            } else {
+                String::new()
+            },
+            note_s
+        );
 
-    let styled_path = if let Some(ref old) = stripped_old
-        && old != &stripped_path
-    {
-        crate::core::wire::format_rename_path_styled(old, &stripped_path, "\x1b[38;5;231m")
-    } else {
-        stripped_path
-    };
+        let stripped_old = file.old_path.as_deref().map(|old| {
+            if let Some(pfx) = common_prefix {
+                old.strip_prefix(pfx).unwrap_or(old).to_string()
+            } else {
+                old.to_string()
+            }
+        });
+        let stripped_path = if let Some(pfx) = common_prefix {
+            file.path
+                .strip_prefix(pfx)
+                .unwrap_or(&file.path)
+                .to_string()
+        } else {
+            file.path.clone()
+        };
 
-    let status_seg = if file.status == "renamed" {
-        String::new()
+        let styled_path = if let Some(ref old) = stripped_old
+            && old != &stripped_path
+        {
+            crate::core::wire::format_rename_path_styled(old, &stripped_path, "\x1b[38;5;231m")
+        } else {
+            stripped_path
+        };
+
+        let status_seg = if file.status == "renamed" || file.status == "modified" {
+            String::new()
+        } else {
+            format!(" ({})", file.status)
+        };
+        format!(
+            " \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{prefix_seg} \x1b[38;5;240m·\x1b[0m {styled_path}{status_seg} \x1b[38;5;240m·\x1b[0m {counts_str}"
+        )
     } else {
-        format!(" ({})", file.status)
+        format!(" \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{prefix_seg}")
     };
-    let head_raw = format!(
-        " Review: \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{prefix_seg} \x1b[38;5;240m·\x1b[0m {styled_path}{status_seg} \x1b[38;5;240m·\x1b[0m {counts_str}"
-    );
     let wrapped = wrap_text_by_visual_width(&head_raw, width);
     wrapped
         .into_iter()
@@ -156,6 +160,7 @@ pub fn render_header_bar(
 }
 
 /// Parameters for rendering the secondary status bar.
+#[derive(Debug, Clone, Copy)]
 pub struct StatusBarContext<'a> {
     pub cur_fi: usize,
     pub total_files: usize,
@@ -165,28 +170,43 @@ pub struct StatusBarContext<'a> {
     pub col_offset: usize,
     pub num_buffer: &'a str,
     pub branch: &'a str,
+    pub commit_range: Option<&'a str>,
     pub common_prefix: Option<&'a str>,
     pub width: usize,
     pub is_streaming: bool,
+    pub streaming_dot: &'a str,
 }
 
 /// Render the secondary status bar with file index, hunk index, and mode
 /// indicators, wrapping across lines if wider than `width`.
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
-    let files_badge = format!(
-        "\x1b[1m\x1b[38;5;183mfile {}/{}\x1b[0m",
-        ctx.cur_fi + 1,
-        ctx.total_files
-    );
-    let hunk_badge = format!(
-        "\x1b[1m\x1b[38;5;208mhunk {}/{}\x1b[0m",
-        ctx.cur_hunk + 1,
-        ctx.total_hunks
-    );
-    let stream_txt = if ctx.is_streaming {
-        " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;117m● streaming...\x1b[0m"
+    let files_badge = if ctx.total_files == 0 {
+        "\x1b[1m\x1b[38;5;220mfile 0/0\x1b[0m".to_string()
     } else {
-        ""
+        format!(
+            "\x1b[1m\x1b[38;5;220mfile {}/{}\x1b[0m",
+            ctx.cur_fi + 1,
+            ctx.total_files
+        )
+    };
+    let hunk_badge = if ctx.total_files == 0 || ctx.total_hunks == 0 {
+        "\x1b[1m\x1b[38;5;213mhunk 0/0\x1b[0m".to_string()
+    } else {
+        format!(
+            "\x1b[1m\x1b[38;5;213mhunk {}/{}\x1b[0m",
+            ctx.cur_hunk + 1,
+            ctx.total_hunks
+        )
+    };
+    let stream_txt = if ctx.is_streaming {
+        let dot = if ctx.streaming_dot.is_empty() {
+            "●"
+        } else {
+            ctx.streaming_dot
+        };
+        format!(" \x1b[38;5;240m\u{00b7}\x1b[0m \x1b[1m\x1b[38;5;117m{dot} streaming...\x1b[0m")
+    } else {
+        String::new()
     };
     let mode_txt = if ctx.raw_diff {
         " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;220mraw diff\x1b[0m"
@@ -209,16 +229,25 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     } else {
         String::new()
     };
-    let branch_txt = if !ctx.branch.is_empty() {
+    let branch_or_range_txt = if let Some(range) = ctx.commit_range {
+        if !range.is_empty() {
+            format!(
+                " \x1b[38;5;240m\u{00b7}\x1b[0m \x1b[1m\x1b[38;5;252m{}\x1b[0m",
+                range
+            )
+        } else {
+            String::new()
+        }
+    } else if !ctx.branch.is_empty() {
         format!(
-            " \x1b[38;5;240m·\x1b[0m \x1b[38;5;244mbranch:\x1b[0m \x1b[1m\x1b[38;5;252m{}\x1b[0m",
+            " \x1b[38;5;240m\u{00b7}\x1b[0m \x1b[38;5;244m\u{2387}\x1b[0m \x1b[1m\x1b[38;5;252m{}\x1b[0m",
             ctx.branch
         )
     } else {
         String::new()
     };
     let line = format!(
-        " {files_badge}{stream_txt} \x1b[38;5;240m·\x1b[0m {hunk_badge}{mode_txt}{col_txt}{go_txt}{branch_txt}"
+        " {files_badge}{stream_txt} \x1b[38;5;240m·\x1b[0m {hunk_badge}{mode_txt}{col_txt}{go_txt}{branch_or_range_txt}"
     );
     let vw = visible_width(&line);
     if vw <= ctx.width {
@@ -246,7 +275,7 @@ pub fn render_bottom_ribbon(width: usize) -> (String, String) {
         "─".repeat(width.saturating_sub(2).min(60))
     );
     let ribbon_text = truncate_pad(
-        " [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help",
+        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [x]discard",
         width.saturating_sub(1),
     );
     let ribbon = format!("\x1b[38;5;244m{ribbon_text}\x1b[39m");
@@ -262,20 +291,12 @@ use ratatui::{
 /// support.
 pub fn header_bar_line_themed(
     repo: &str,
-    file: &OutputFile,
+    file: Option<&OutputFile>,
     theme: &crate::render::DiffuseTheme,
     common_prefix: Option<&str>,
 ) -> Line<'static> {
-    let counts = &file.counts;
-    let note_count = file.notes.len();
-
     let mut spans = vec![
-        Span::styled(
-            " Review: ",
-            Style::default()
-                .fg(Color::Indexed(231))
-                .add_modifier(Modifier::BOLD),
-        ),
+        Span::raw(" "),
         Span::styled(
             repo.to_string(),
             Style::default()
@@ -299,6 +320,13 @@ pub fn header_bar_line_themed(
         ));
     }
 
+    let bg = crate::view::to_color(theme.palette.header_bar_bg);
+    let Some(file) = file else {
+        return Line::from(spans).style(Style::default().bg(bg));
+    };
+
+    let counts = &file.counts;
+    let note_count = file.notes.len();
     spans.push(Span::styled(
         " · ",
         Style::default().fg(Color::Indexed(240)),
@@ -365,49 +393,64 @@ pub fn header_bar_line_themed(
         ));
     }
 
-    if file.status != "renamed" {
+    if file.status != "renamed" && file.status != "modified" {
         spans.push(Span::styled(
             format!(" ({})", file.status),
             Style::default().fg(Color::Indexed(244)),
         ));
     }
+
     spans.push(Span::styled(
         " · ",
         Style::default().fg(Color::Indexed(240)),
     ));
+
     spans.push(Span::styled(
-        format!("+{}", counts.adds),
-        Style::default().fg(Color::Indexed(120)),
+        format!("−{}", counts.dels),
+        Style::default()
+            .fg(Color::Indexed(203))
+            .add_modifier(Modifier::BOLD),
     ));
-    if counts.dels > 0 {
+    if counts.adds > 0 {
         spans.push(Span::styled(
-            format!(" −{}", counts.dels),
-            Style::default().fg(Color::Indexed(203)),
+            format!(" +{}", counts.adds),
+            Style::default()
+                .fg(Color::Indexed(120))
+                .add_modifier(Modifier::BOLD),
         ));
     }
     if counts.mods > 0 {
         spans.push(Span::styled(
             format!(" ~{}", counts.mods),
-            Style::default().fg(Color::Indexed(220)),
+            Style::default()
+                .fg(Color::Indexed(214))
+                .add_modifier(Modifier::BOLD),
         ));
     }
     if counts.movs > 0 {
         spans.push(Span::styled(
             format!(" ≈{} moved", counts.movs),
-            Style::default().fg(Color::Indexed(183)),
-        ));
-    }
-    if note_count > 0 {
-        spans.push(Span::styled(
-            format!(
-                " · {note_count} note{}",
-                if note_count == 1 { "" } else { "s" }
-            ),
-            Style::default().fg(Color::Indexed(244)),
+            Style::default()
+                .fg(Color::Indexed(147))
+                .add_modifier(Modifier::BOLD),
         ));
     }
 
-    let bg = crate::view::to_color(theme.palette.header_bar_bg);
+    if note_count > 0 {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            format!(
+                "{note_count} note{}",
+                if note_count == 1 { "" } else { "s" }
+            ),
+            Style::default()
+                .fg(Color::Indexed(220))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
 
     Line::from(spans).style(Style::default().bg(bg))
 }
@@ -415,7 +458,7 @@ pub fn header_bar_line_themed(
 /// Render the review header bar as a styled Ratatui [`Line`].
 pub fn header_bar_line(
     repo: &str,
-    file: &OutputFile,
+    file: Option<&OutputFile>,
     common_prefix: Option<&str>,
 ) -> Line<'static> {
     header_bar_line_themed(
@@ -428,22 +471,37 @@ pub fn header_bar_line(
 
 /// Render the secondary status bar as a styled Ratatui [`Line`].
 pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
+    let file_text = if ctx.total_files == 0 {
+        "file 0/0".to_string()
+    } else {
+        format!("file {}/{}", ctx.cur_fi + 1, ctx.total_files)
+    };
+    let hunk_text = if ctx.total_files == 0 || ctx.total_hunks == 0 {
+        "hunk 0/0".to_string()
+    } else {
+        format!("hunk {}/{}", ctx.cur_hunk + 1, ctx.total_hunks)
+    };
     let mut spans = vec![
         Span::raw(" "),
         Span::styled(
-            format!("file {}/{}", ctx.cur_fi + 1, ctx.total_files),
+            file_text,
             Style::default()
-                .fg(Color::Indexed(183))
+                .fg(Color::Indexed(220))
                 .add_modifier(Modifier::BOLD),
         ),
     ];
     if ctx.is_streaming {
+        let dot = if ctx.streaming_dot.is_empty() {
+            "●"
+        } else {
+            ctx.streaming_dot
+        };
         spans.push(Span::styled(
             " · ",
             Style::default().fg(Color::Indexed(240)),
         ));
         spans.push(Span::styled(
-            "● streaming...",
+            format!("{dot} streaming..."),
             Style::default()
                 .fg(Color::Indexed(117))
                 .add_modifier(Modifier::BOLD),
@@ -454,9 +512,9 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
         Style::default().fg(Color::Indexed(240)),
     ));
     spans.push(Span::styled(
-        format!("hunk {}/{}", ctx.cur_hunk + 1, ctx.total_hunks),
+        hunk_text,
         Style::default()
-            .fg(Color::Indexed(220))
+            .fg(Color::Indexed(213))
             .add_modifier(Modifier::BOLD),
     ));
     if ctx.raw_diff {
@@ -493,16 +551,28 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    if !ctx.branch.is_empty() {
+    if let Some(range) = ctx.commit_range {
+        if !range.is_empty() {
+            spans.push(Span::styled(
+                " · ",
+                Style::default().fg(Color::Indexed(240)),
+            ));
+            spans.push(Span::styled(
+                range.to_string(),
+                Style::default()
+                    .fg(Color::Indexed(252))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+    } else if !ctx.branch.is_empty() {
         spans.push(Span::styled(
             " · ",
             Style::default().fg(Color::Indexed(240)),
         ));
         spans.push(Span::styled(
-            "branch:",
+            "\u{2387} ",
             Style::default().fg(Color::Indexed(244)),
         ));
-        spans.push(Span::raw(" "));
         spans.push(Span::styled(
             ctx.branch.to_string(),
             Style::default()
@@ -532,7 +602,7 @@ pub fn bottom_ribbon_lines(width: usize) -> (Line<'static>, Line<'static>) {
         Style::default().fg(Color::Indexed(244)),
     ));
     let ribbon_text = truncate_pad(
-        " [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]stage [x]discard [q]quit [?]help",
+        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [x]discard",
         width,
     );
     let ribbon = Line::from(Span::styled(

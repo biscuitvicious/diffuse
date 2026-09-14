@@ -496,8 +496,8 @@ fn test_initial_screen_rendered_visual_frame() {
     }
     println!("└{}┘\n", "─".repeat(width));
 
-    // Row 0: Top Review Header Bar
-    assert!(screen_lines[0].starts_with(" Review: diffuse · filesystem.rs"));
+    // Row 0: Top Header Bar
+    assert!(screen_lines[0].starts_with(" diffuse · filesystem.rs"));
     assert!(screen_lines[0].contains("+1"));
     assert!(screen_lines[0].contains("~1"));
 
@@ -509,7 +509,7 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(screen_lines[2].contains("-0 +1 ~1"));
 
     // Row 3: Hunk divider with context
-    assert!(screen_lines[3].contains("H1 · 7 lines"));
+    assert!(screen_lines[3].contains("H1 · 2 lines"));
     assert!(screen_lines[3].contains("more lines: ▼"));
 
     // Row 7..: Diff lines with line numbers and change markers
@@ -584,7 +584,7 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     println!("└{}┘\n", "─".repeat(width));
 
     // Row 0: Header bar
-    assert!(screen_lines[0].contains("Review: diffuse"));
+    assert!(screen_lines[0].contains("diffuse"));
     assert!(screen_lines[0].contains("crates/diffuse-core/src/moves/"));
     assert!(screen_lines[0].contains("mod.rs"));
 

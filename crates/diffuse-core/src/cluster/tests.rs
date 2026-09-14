@@ -1541,3 +1541,62 @@ fn test_expansion_companion_adds_receive_donor_spans() {
         other => panic!("Expected Row::Add for prefix row, got {:?}", other),
     }
 }
+
+#[test]
+fn test_cluster_product_cap_falls_back_to_wholesale() {
+    let old_rows: Vec<Row> = (1..=20)
+        .map(|i| {
+            Row::Del(DelLine::new(
+                LineNum::new(i).unwrap(),
+                format!("let a{i} = {i};"),
+            ))
+        })
+        .collect();
+    let new_rows: Vec<Row> = (1..=20)
+        .map(|i| {
+            Row::Add(AddLine::new(
+                LineNum::new(i).unwrap(),
+                format!("let a{i} = {i} + 1;"),
+            ))
+        })
+        .collect();
+    let cluster = ChangeCluster {
+        old_rows,
+        new_rows,
+        preceding_ctx: vec![],
+        following_ctx: vec![],
+        section: SyntaxSectionKind::Code,
+    };
+
+    // Cap at 100: 20 * 20 = 400 > 100, falls back to wholesale (20 dels + 20
+    // adds)
+    dp::set_cluster_product_cap(100);
+    let sol_capped = dp::solve_cluster_with(&cluster, None, &dp::Weights::default());
+    assert_eq!(sol_capped.rows.len(), 40);
+    assert_eq!(sol_capped.transitions.len(), 40);
+    assert!(
+        sol_capped
+            .transitions
+            .iter()
+            .take(20)
+            .all(|t| matches!(t, dp::DpOp::Del))
+    );
+    assert!(
+        sol_capped
+            .transitions
+            .iter()
+            .skip(20)
+            .all(|t| matches!(t, dp::DpOp::Add))
+    );
+
+    // Reset to default
+    dp::set_cluster_product_cap(dp::DEFAULT_CLUSTER_PRODUCT_CAP);
+    let sol_uncapped = dp::solve_cluster_with(&cluster, None, &dp::Weights::default());
+    // Under uncapped DP, the 20 similar lines are paired into Mod rows
+    assert!(
+        sol_uncapped
+            .transitions
+            .iter()
+            .any(|t| matches!(t, dp::DpOp::Mod { .. }))
+    );
+}

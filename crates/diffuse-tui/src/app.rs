@@ -63,6 +63,9 @@ pub struct AppState {
     pub is_dragging_scrollbar: bool,
     pub last_viewport_start: usize,
     pub is_streaming: bool,
+    pub commit_range: Option<String>,
+    pub last_stream_activity: Option<std::time::Instant>,
+    pub start_time: std::time::Instant,
     pub expand_lines: usize,
     /// Viewport pin set by programmatic view pivots (context expansion):
     /// `(scroll, row_idx_at_pin_time)`. Every `render_frame` applies it
@@ -132,6 +135,9 @@ impl AppState {
             is_dragging_scrollbar: false,
             last_viewport_start: 2,
             is_streaming: false,
+            commit_range: None,
+            last_stream_activity: None,
+            start_time: std::time::Instant::now(),
             expand_lines: DEFAULT_EXPAND_LINES,
             scroll_pin: None,
         }
@@ -147,10 +153,46 @@ impl AppState {
         self
     }
 
+    pub fn with_commit_range(mut self, commit_range: Option<String>) -> Self {
+        self.commit_range = commit_range;
+        self
+    }
+
     pub fn with_repo_context(mut self, repo_root: PathBuf, git_args: Vec<String>) -> Self {
+        self.commit_range = diffuse_core::git::resolve_commit_range(&repo_root, &git_args);
         self.repo_root = repo_root;
         self.git_args = git_args;
         self
+    }
+
+    pub fn record_stream_activity(&mut self) {
+        self.last_stream_activity = Some(std::time::Instant::now());
+    }
+
+    pub fn record_stream_activity_at(&mut self, now: std::time::Instant) {
+        self.last_stream_activity = Some(now);
+    }
+
+    pub fn streaming_dot(&self) -> &'static str {
+        self.streaming_dot_at(std::time::Instant::now())
+    }
+
+    pub fn streaming_dot_at(&self, now: std::time::Instant) -> &'static str {
+        if !self.is_streaming {
+            return "●";
+        }
+        let Some(last_activity) = self.last_stream_activity else {
+            return "●";
+        };
+        const DELAY_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(500);
+        const BLINK_INTERVAL_MS: u128 = 200;
+
+        if now.duration_since(last_activity) < DELAY_THRESHOLD {
+            let phase = (now.duration_since(self.start_time).as_millis() / BLINK_INTERVAL_MS) % 2;
+            if phase == 0 { "●" } else { " " }
+        } else {
+            "●"
+        }
     }
 
     pub fn current_file_idx(&self) -> usize {
