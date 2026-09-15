@@ -87,6 +87,7 @@ fn sample_output() -> PipelineOutput {
                     dels: 1,
                     mods: 1,
                     movs: 0,
+                    notes: 0,
                 },
                 fences: vec![],
                 notes: vec![OutputNote {
@@ -162,6 +163,7 @@ fn sample_output() -> PipelineOutput {
                     dels: 0,
                     mods: 0,
                     movs: 0,
+                    notes: 0,
                 },
                 fences: vec![],
                 notes: vec![],
@@ -345,6 +347,7 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                     dels: 1,
                     mods: 0,
                     movs: 0,
+                    notes: 0,
                 },
                 fences: vec![],
                 notes: vec![OutputNote {
@@ -452,6 +455,7 @@ fn test_render_markdown_language_profile_syntax_highlighting() {
                 dels: 1,
                 mods: 1,
                 movs: 0,
+                notes: 0,
             },
             fences: vec![],
             notes: vec![],

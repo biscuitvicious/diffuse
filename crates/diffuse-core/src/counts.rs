@@ -4,30 +4,45 @@ use serde::{Deserialize, Serialize};
 
 use crate::parse::{DiffFile, Row};
 
-/// Aggregated line-level change counts for a diff file.
+/// Aggregated line-level change counts for a diff file, including attached
+/// review notes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileCounts {
     pub adds: usize,
     pub dels: usize,
     pub mods: usize,
     pub movs: usize,
+    /// Number of review notes attached to this file.
+    #[serde(default, skip_serializing_if = "usize_is_zero")]
+    pub notes: usize,
+}
+
+fn usize_is_zero(v: &usize) -> bool {
+    *v == 0
 }
 
 impl FileCounts {
+    /// Returns `true` when all counts are zero (no changes and no notes).
+    pub fn is_empty(&self) -> bool {
+        self.adds == 0 && self.dels == 0 && self.mods == 0 && self.movs == 0 && self.notes == 0
+    }
+
     pub fn reverse(&self) -> Self {
         let rev = FileCounts {
             adds: self.dels,
             dels: self.adds,
             mods: self.mods,
             movs: self.movs,
+            notes: self.notes,
         };
 
         crate::ensure!(
             rev.adds == self.dels
                 && rev.dels == self.adds
                 && rev.mods == self.mods
-                && rev.movs == self.movs,
-            "FileCounts::reverse must swap adds and dels while preserving mods and movs"
+                && rev.movs == self.movs
+                && rev.notes == self.notes,
+            "FileCounts::reverse must swap adds and dels while preserving mods, movs, and notes"
         );
 
         rev
@@ -38,6 +53,13 @@ impl FileCounts {
 /// A mod is one logical change (+1 mod). A moved pair is one logical
 /// relocation — only the target side counts (+1 mov); the source side
 /// is absorbed like a mod's old line.
+///
+/// Note: this function cannot know the note count (notes live in the
+/// per-repo [`crate::notes::NotesDB`], outside the parsed diff), so it
+/// returns `notes: 0`. The pipeline (`process_single_diff_file`) stamps the
+/// real count onto `OutputFile::counts.notes` after attaching the file's
+/// notes, which feeds the per-file header counts and the
+/// [`crate::wire::PipelineOutput::total_counts`] aggregate.
 #[tracing::instrument(level = "trace", ret, skip(f), fields(path = %f.path))]
 pub fn file_counts(f: &DiffFile) -> FileCounts {
     let mut adds = 0usize;
@@ -60,6 +82,7 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
         dels,
         mods,
         movs,
+        notes: 0,
     };
 
     crate::ensure!(

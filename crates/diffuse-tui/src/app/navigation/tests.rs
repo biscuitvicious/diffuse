@@ -294,7 +294,7 @@ fn test_viewport_margin_rounding_half_up() {
 }
 
 #[test]
-fn test_next_and_prev_file_navigation_centers_banner_with_margin() {
+fn test_next_and_prev_file_navigation_centers_banner_at_row_zero() {
     let mut lines_a = String::new();
     let mut lines_b = String::new();
     let mut lines_c = String::new();
@@ -336,23 +336,49 @@ fn test_next_and_prev_file_navigation_centers_banner_with_margin() {
     assert_eq!(state.row_idx, b_banner, "lands on b.rs banner");
     assert!(state.flat[state.row_idx].is_file_header);
 
-    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(state.last_content_width);
     let b_vis = starts[b_banner];
-    let margin = state.viewport_margin();
+    let max_rows = state.viewport_height.max(4);
+    let max_scroll = total_vis_lines.saturating_sub(max_rows);
     assert_eq!(
         state.scroll,
-        b_vis.saturating_sub(margin),
-        "next_file must position scroll so banner has 1/10 margin from top"
+        b_vis.min(max_scroll),
+        "next_file must position scroll so banner is at row #0 of the main view"
+    );
+    assert_eq!(
+        b_vis - state.scroll,
+        0,
+        "banner must sit exactly at screen row #0"
     );
 
-    // Press 'p' -> prev_file()
+    // Press 'n' again to go to file 2 (c.rs) which is near/at bottom
+    state.next_file();
+    assert_eq!(state.current_file_idx(), 2, "navigates to file 2 (c.rs)");
+    let c_banner = state.first_row_of_file(2);
+    assert_eq!(state.row_idx, c_banner);
+    let c_vis = starts[c_banner];
+    assert_eq!(
+        state.scroll,
+        c_vis.min(max_scroll),
+        "at the very bottom of the scrollable view, scroll is clamped to max_scroll"
+    );
+
+    // Press 'p' -> prev_file() back to file 1 (b.rs)
+    state.prev_file();
+    assert_eq!(
+        state.current_file_idx(),
+        1,
+        "navigates back to file 1 (b.rs)"
+    );
+    assert_eq!(state.scroll, b_vis.min(max_scroll));
+    assert_eq!(b_vis - state.scroll, 0, "b.rs banner sits at row #0");
+
+    // Press 'p' -> prev_file() back to file 0 (a.rs)
     state.prev_file();
     assert_eq!(
         state.current_file_idx(),
         0,
         "navigates back to file 0 (a.rs)"
     );
-    let a_banner = state.first_row_of_file(0);
-    assert_eq!(state.row_idx, a_banner, "lands on a.rs banner");
-    assert_eq!(state.scroll, 0, "a.rs sits at top of screen");
+    assert_eq!(state.scroll, 0, "a.rs sits at row #0");
 }

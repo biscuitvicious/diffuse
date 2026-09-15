@@ -106,9 +106,9 @@ impl AppState {
     }
 
     /// Map of flat-row index → pre-rendered note callout lines for the
-    /// current file (`💬 [start-end] <markdown>`). A note anchors to the
-    /// LAST row whose coordinate falls in its range, else the file's first
-    /// row — mirroring the reference `noteByRow`.
+    /// current file (`💬 <markdown>`). A note anchors to the LAST row whose
+    /// coordinate falls in its range, else the file's first row — mirroring
+    /// the reference `noteByRow`.
     pub(crate) fn note_callouts(&self) -> HashMap<usize, Vec<String>> {
         let Some(f) = self.current_file() else {
             return HashMap::new();
@@ -134,17 +134,12 @@ impl AppState {
                     .position(|it| it.file_idx == file_idx)
                     .unwrap_or(0)
             });
-            let where_str = if n.end == n.start {
-                format!("{}", n.start)
-            } else {
-                format!("{}-{}", n.start, n.end)
-            };
             let mut body = String::new();
             for r in note_runs(&n.text) {
                 let color = r.color.as_deref().unwrap_or("warning");
                 body.push_str(&self.theme.render_token(color, &r.text, "ctx", None, r.sgr));
             }
-            let line = format!("\x1b[38;5;220m   💬 [{}] \x1b[39m{}", where_str, body);
+            let line = format!("\x1b[38;5;220m   💬 \x1b[39m{}", body);
             out.entry(at).or_default().push(line);
         }
         out

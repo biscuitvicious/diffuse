@@ -79,6 +79,7 @@ fn sample_output_file() -> OutputFile {
             dels: 0,
             mods: 1,
             movs: 0,
+            notes: 0,
         },
         fences: vec![],
         notes: vec![],
@@ -470,4 +471,37 @@ fn test_output_file_release_rendered_memory() {
     assert_eq!(file.counts.dels, 2);
     assert_eq!(file.path, "src/sample.rs");
     assert_eq!(file.status, "modified");
+}
+
+#[test]
+fn test_pipeline_output_total_counts() {
+    let mut file1 = sample_output_file();
+    file1.counts = crate::counts::FileCounts {
+        adds: 10,
+        dels: 3,
+        mods: 2,
+        movs: 1,
+        notes: 0,
+    };
+
+    let mut file2 = sample_output_file();
+    file2.counts = crate::counts::FileCounts {
+        adds: 5,
+        dels: 4,
+        mods: 4,
+        movs: 1,
+        notes: 0,
+    };
+
+    let output = PipelineOutput {
+        files: vec![file1, file2],
+        branch: "main".to_string(),
+        untracked_skipped: vec![],
+    };
+
+    let totals = output.total_counts();
+    assert_eq!(totals.adds, 15);
+    assert_eq!(totals.dels, 7);
+    assert_eq!(totals.mods, 6);
+    assert_eq!(totals.movs, 2);
 }

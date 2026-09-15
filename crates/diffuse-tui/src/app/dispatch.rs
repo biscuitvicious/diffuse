@@ -10,11 +10,13 @@ use super::AppState;
 impl AppState {
     /// Execute a high-level user command to mutate application state.
     pub fn execute(&mut self, cmd: TuiCommand) {
-        // New user input invalidates a viewport pin — except the trailing
-        // mouse-up of the very click that created it (crossterm delivers Down
-        // and Up, and both trigger a render).
+        // New user input invalidates a viewport pin and any pending auto-scroll
+        // on streaming load — except the trailing mouse-up of the very
+        // click that created it (crossterm delivers Down and Up, and
+        // both trigger a render).
         if !matches!(cmd, TuiCommand::EndMouseDrag) {
             self.scroll_pin = None;
+            self.auto_scroll_on_load = None;
         }
         match cmd {
             TuiCommand::Quit => self.should_quit = true,

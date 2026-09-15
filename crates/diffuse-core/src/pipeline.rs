@@ -320,6 +320,7 @@ pub fn process_single_diff_file(
                 dels: 0,
                 mods: 0,
                 movs: 0,
+                notes: 0,
             }
         } else if f.status == crate::parse::FileStatus::Deleted {
             let line_count = if f.old_line_count > 0 {
@@ -334,6 +335,7 @@ pub fn process_single_diff_file(
                 dels: line_count,
                 mods: 0,
                 movs: 0,
+                notes: 0,
             }
         } else if f.is_binary {
             crate::counts::FileCounts::default()
@@ -509,7 +511,7 @@ pub fn process_single_diff_file(
         f.raw_hunks = vec![hunk];
     }
 
-    let counts = file_counts(&f);
+    let mut counts = file_counts(&f);
     let regions = fence_regions(&new_lines, profile);
 
     let hunks_out: Vec<OutputHunk> = f
@@ -735,6 +737,8 @@ pub fn process_single_diff_file(
         row_count = rows.len(),
         "Finished processing diff file"
     );
+
+    counts.notes = notes_out.len();
 
     let res = OutputFile {
         path: f.path.clone(),

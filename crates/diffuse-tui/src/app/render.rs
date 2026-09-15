@@ -38,6 +38,9 @@ impl AppState {
             f,
             width,
             common_prefix.as_deref(),
+            Some(self.output.total_counts()),
+            Some(&self.output.branch),
+            self.commit_range.as_deref(),
         ));
 
         // Secondary status bar
@@ -52,8 +55,6 @@ impl AppState {
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
             num_buffer: &self.num_buffer,
-            branch: &self.output.branch,
-            commit_range: self.commit_range.as_deref(),
             common_prefix: common_prefix.as_deref(),
             width,
             is_streaming: self.is_streaming,
@@ -426,6 +427,9 @@ impl AppState {
             file,
             &self.theme,
             common_prefix.as_deref(),
+            Some(self.output.total_counts()),
+            Some(&self.output.branch),
+            self.commit_range.as_deref(),
         );
         let header_bg = crate::view::to_color(self.theme.palette.header_bar_bg);
         f.render_widget(
@@ -443,10 +447,8 @@ impl AppState {
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
             num_buffer: &self.num_buffer,
-            branch: &self.output.branch,
-            commit_range: self.commit_range.as_deref(),
             common_prefix: common_prefix.as_deref(),
-            width: main_width,
+            width,
             is_streaming: self.is_streaming,
             streaming_dot: self.streaming_dot(),
         };

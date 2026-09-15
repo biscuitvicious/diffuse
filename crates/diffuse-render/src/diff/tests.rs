@@ -189,6 +189,7 @@ fn test_write_file_header_bar_direct_buffer() {
             dels: 2,
             mods: 3,
             movs: 1,
+            notes: 0,
         },
         fences: vec![],
         notes: vec![],

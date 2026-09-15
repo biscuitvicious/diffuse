@@ -442,7 +442,7 @@ fn main() -> io::Result<()> {
         });
 
         let pipeline_opts = PipelineOptions::default()
-            .with_notes(Some(loaded_db.clone()), args.repo.clone())
+            .with_notes(Some(loaded_db.clone()), Some(repo_name.clone()))
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
             .with_token_product_cap(args.token_product_cap);
@@ -578,8 +578,14 @@ fn main() -> io::Result<()> {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(default_notes_path);
         let loaded_db = load_notes(&notes_path);
+        let repo_name = args.repo.clone().unwrap_or_else(|| {
+            repo_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "diffuse".to_string())
+        });
         let pipeline_opts = PipelineOptions::default()
-            .with_notes(Some(loaded_db), args.repo.clone())
+            .with_notes(Some(loaded_db), Some(repo_name))
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
             .with_token_product_cap(args.token_product_cap);

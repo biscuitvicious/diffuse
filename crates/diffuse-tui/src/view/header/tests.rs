@@ -11,8 +11,6 @@ fn test_render_status_bar_styling() {
         raw_diff: false,
         col_offset: 0,
         num_buffer: "",
-        branch: "main",
-        commit_range: None,
         common_prefix: Some("crates/diffuse-core/src/"),
         width: 100,
         is_streaming: false,
@@ -45,8 +43,6 @@ fn test_render_status_bar_styling() {
         raw_diff: false,
         col_offset: 0,
         num_buffer: "",
-        branch: "main",
-        commit_range: None,
         common_prefix: None,
         width: 80,
         is_streaming: false,
@@ -78,6 +74,7 @@ fn test_ratatui_header_and_status_lines() {
             dels: 2,
             mods: 1,
             movs: 0,
+            notes: 0,
         },
         fences: vec![],
         notes: vec![],
@@ -89,7 +86,7 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let header_line = header_bar_line("diffuse", Some(&file), Some("src/"));
+    let header_line = header_bar_line("diffuse", Some(&file), Some("src/"), None, None, None);
     assert!(header_line.to_string().contains("diffuse"));
     assert!(header_line.to_string().contains("src/"));
     assert!(header_line.to_string().contains("main.rs"));
@@ -128,7 +125,14 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let rename_header = header_bar_line("diffuse", Some(&rename_file), Some("crates/"));
+    let rename_header = header_bar_line(
+        "diffuse",
+        Some(&rename_file),
+        Some("crates/"),
+        None,
+        None,
+        None,
+    );
     assert!(rename_header.to_string().contains("crates/"));
     assert!(rename_header.to_string().contains("algo/mod.rs -> algo.rs"));
 
@@ -153,8 +157,6 @@ fn test_ratatui_header_and_status_lines() {
         raw_diff: false,
         col_offset: 4,
         num_buffer: "12",
-        branch: "main",
-        commit_range: None,
         common_prefix: Some("src/"),
         width: 80,
         is_streaming: true,
@@ -166,7 +168,6 @@ fn test_ratatui_header_and_status_lines() {
     assert!(status_line.to_string().contains("col 4+"));
     assert!(status_line.to_string().contains("go 12"));
     assert!(!status_line.to_string().contains("prefix:"));
-    assert!(status_line.to_string().contains("\u{2387} main"));
 
     let file_span = status_line
         .spans
@@ -224,22 +225,25 @@ fn test_header_bar_zero_notes_suppressed() {
         new_bytes: None,
         raw_source: None,
     };
-    // ANSI header: must not contain "0 note".
-    let ansi = render_header_bar("repo", Some(&file), 80, None).join("\n");
+    // ANSI header: must not contain "💬" when there are no notes.
+    let ansi = render_header_bar("repo", Some(&file), 80, None, None, None, None).join("\n");
     assert!(
-        !ansi.contains("0 note"),
-        "ANSI header must not show '0 notes' when there are no notes"
+        !ansi.contains("💬"),
+        "ANSI header must not show note icon when there are no notes"
     );
-    // Ratatui header: must not contain "0 note".
+    // Ratatui header: must not contain "💬" when there are no notes.
     let line = header_bar_line_themed(
         "repo",
         Some(&file),
         &crate::render::DiffuseTheme::from_env(),
         None,
+        None,
+        None,
+        None,
     );
     assert!(
-        !line.to_string().contains("0 note"),
-        "TUI header line must not show '0 notes' when there are no notes"
+        !line.to_string().contains("💬"),
+        "TUI header line must not show note icon when there are no notes"
     );
 }
 
@@ -257,7 +261,13 @@ fn test_header_bar_nonzero_notes_shown() {
         old_content: vec![],
         hunks: vec![],
         raw_hunks: vec![],
-        counts: FileCounts::default(),
+        counts: FileCounts {
+            adds: 0,
+            dels: 0,
+            mods: 0,
+            movs: 0,
+            notes: 2,
+        },
         fences: vec![],
         notes: vec![
             OutputNote {
@@ -288,28 +298,31 @@ fn test_header_bar_nonzero_notes_shown() {
         new_bytes: None,
         raw_source: None,
     };
-    // ANSI header: must contain "2 notes".
-    let ansi = render_header_bar("repo", Some(&file), 80, None).join("\n");
+    // ANSI header: must contain "💬 2".
+    let ansi = render_header_bar("repo", Some(&file), 80, None, None, None, None).join("\n");
     assert!(
-        ansi.contains("2 notes"),
-        "ANSI header must show '2 notes' when there are 2 notes"
+        ansi.contains("💬 2"),
+        "ANSI header must show '💬 2' when there are 2 notes"
     );
-    // Ratatui header: must contain "2 notes".
+    // Ratatui header: must contain "💬 2".
     let line = header_bar_line_themed(
         "repo",
         Some(&file),
         &crate::render::DiffuseTheme::from_env(),
         None,
+        None,
+        None,
+        None,
     );
     assert!(
-        line.to_string().contains("2 notes"),
-        "TUI header line must show '2 notes' when there are 2 notes"
+        line.to_string().contains("💬 2"),
+        "TUI header line must show '💬 2' when there are 2 notes"
     );
 }
 
 #[test]
 fn test_header_bar_none_file_no_diffs() {
-    let ansi = render_header_bar("my_repo", None, 80, Some("crates/")).join("\n");
+    let ansi = render_header_bar("my_repo", None, 80, Some("crates/"), None, None, None).join("\n");
     assert!(ansi.contains("my_repo"), "must contain repo name");
     assert!(ansi.contains("crates/"), "must contain prefix");
 
@@ -318,16 +331,19 @@ fn test_header_bar_none_file_no_diffs() {
         None,
         &crate::render::DiffuseTheme::from_env(),
         Some("crates/"),
+        None,
+        None,
+        None,
     );
     assert!(line.to_string().contains("my_repo"));
     assert!(line.to_string().contains("crates/"));
 
-    let plain_line = header_bar_line("my_repo", None, None);
+    let plain_line = header_bar_line("my_repo", None, None, None, None, None);
     assert!(plain_line.to_string().contains("my_repo"));
 }
 
 #[test]
-fn test_status_bar_commit_range_removes_branch_indicator() {
+fn test_status_bar_no_branch_indicator() {
     let ctx = StatusBarContext {
         cur_fi: 0,
         total_files: 3,
@@ -336,43 +352,21 @@ fn test_status_bar_commit_range_removes_branch_indicator() {
         raw_diff: false,
         col_offset: 0,
         num_buffer: "",
-        branch: "work",
-        commit_range: Some("3f05a71..7e0caab"),
         common_prefix: None,
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
     };
 
-    // ANSI rendered status bar
+    // Branch indicator (glyph and name) should not appear in the status bar
     let ansi = render_status_bar(ctx).join("\n");
     assert!(
-        ansi.contains("3f05a71..7e0caab"),
-        "must show short hashes of commit range"
-    );
-    assert!(
         !ansi.contains("\u{2387}"),
-        "must NOT show branch glyph when viewing commit range"
+        "status bar must NOT show branch glyph"
     );
     assert!(
         !ansi.contains("work"),
-        "must NOT show branch name when viewing commit range"
-    );
-
-    // Ratatui rendered status line
-    let line = status_bar_line(ctx);
-    let line_str = line.to_string();
-    assert!(
-        line_str.contains("3f05a71..7e0caab"),
-        "Ratatui status line must show commit range"
-    );
-    assert!(
-        !line_str.contains("\u{2387}"),
-        "Ratatui status line must NOT show branch glyph"
-    );
-    assert!(
-        !line_str.contains("work"),
-        "Ratatui status line must NOT show branch name"
+        "status bar must NOT show branch name"
     );
 }
 
@@ -386,8 +380,6 @@ fn test_status_bar_streaming_dot_blinking() {
         raw_diff: false,
         col_offset: 0,
         num_buffer: "",
-        branch: "main",
-        commit_range: None,
         common_prefix: None,
         width: 80,
         is_streaming: true,
@@ -406,8 +398,6 @@ fn test_status_bar_streaming_dot_blinking() {
         raw_diff: false,
         col_offset: 0,
         num_buffer: "",
-        branch: "main",
-        commit_range: None,
         common_prefix: None,
         width: 80,
         is_streaming: true,
@@ -438,6 +428,7 @@ fn test_header_bar_omits_modified_status_and_shows_others() {
             dels: 2,
             mods: 1,
             movs: 0,
+            notes: 0,
         },
         fences: vec![],
         notes: vec![],
@@ -450,14 +441,14 @@ fn test_header_bar_omits_modified_status_and_shows_others() {
     };
 
     // ANSI renderer with modified status
-    let ansi_mod = render_header_bar("diffuse", Some(&file), 80, None).join("\n");
+    let ansi_mod = render_header_bar("diffuse", Some(&file), 80, None, None, None, None).join("\n");
     assert!(
         !ansi_mod.contains("(modified)"),
         "ANSI header bar must omit '(modified)', got: {ansi_mod}"
     );
 
     // Ratatui line renderer with modified status
-    let line_mod = header_bar_line("diffuse", Some(&file), None).to_string();
+    let line_mod = header_bar_line("diffuse", Some(&file), None, None, None, None).to_string();
     assert!(
         !line_mod.contains("(modified)"),
         "TUI header line must omit '(modified)', got: {line_mod}"
@@ -465,12 +456,12 @@ fn test_header_bar_omits_modified_status_and_shows_others() {
 
     // Now test with added status
     file.status = "added".to_string();
-    let ansi_add = render_header_bar("diffuse", Some(&file), 80, None).join("\n");
+    let ansi_add = render_header_bar("diffuse", Some(&file), 80, None, None, None, None).join("\n");
     assert!(
         ansi_add.contains("(added)"),
         "ANSI header bar must show '(added)', got: {ansi_add}"
     );
-    let line_add = header_bar_line("diffuse", Some(&file), None).to_string();
+    let line_add = header_bar_line("diffuse", Some(&file), None, None, None, None).to_string();
     assert!(
         line_add.contains("(added)"),
         "TUI header line must show '(added)', got: {line_add}"
@@ -478,12 +469,12 @@ fn test_header_bar_omits_modified_status_and_shows_others() {
 
     // Test with deleted status
     file.status = "deleted".to_string();
-    let ansi_del = render_header_bar("diffuse", Some(&file), 80, None).join("\n");
+    let ansi_del = render_header_bar("diffuse", Some(&file), 80, None, None, None, None).join("\n");
     assert!(
         ansi_del.contains("(deleted)"),
         "ANSI header bar must show '(deleted)', got: {ansi_del}"
     );
-    let line_del = header_bar_line("diffuse", Some(&file), None).to_string();
+    let line_del = header_bar_line("diffuse", Some(&file), None, None, None, None).to_string();
     assert!(
         line_del.contains("(deleted)"),
         "TUI header line must show '(deleted)', got: {line_del}"
@@ -521,4 +512,388 @@ fn test_clamp_or_pad_ansi_exact_width_guarantee() {
     let s5 = clamp_or_pad_ansi(long_tabbed, 15);
     assert_eq!(visible_width(&s5), 15);
     assert!(!s5.contains('\t'));
+}
+
+#[test]
+fn test_header_bar_global_mod_counts_ratatui() {
+    let file = OutputFile {
+        path: "AGENTS.md".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 10,
+        old_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: FileCounts {
+            adds: 15,
+            dels: 7,
+            mods: 6,
+            movs: 0,
+            notes: 0,
+        },
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+
+    let global_counts = FileCounts {
+        adds: 15,
+        dels: 7,
+        mods: 6,
+        movs: 0,
+        notes: 0,
+    };
+
+    let header_line = header_bar_line(
+        "diffuse",
+        Some(&file),
+        None,
+        Some(global_counts),
+        None,
+        None,
+    );
+    let text = header_line.to_string();
+    assert_eq!(
+        text, " diffuse · −7 +15 ~6 · AGENTS.md · −7 +15 ~6",
+        "header text must format: diffuse · <global mod counts> · AGENTS.md · −7 +15 ~6"
+    );
+
+    // Verify highlighting colors of global mod counts
+    let del_span = header_line
+        .spans
+        .iter()
+        .find(|s| s.content == "−7")
+        .expect("must have −7 span");
+    assert_eq!(del_span.style.fg, Some(Color::Indexed(203)));
+    assert!(del_span.style.add_modifier.contains(Modifier::BOLD));
+
+    let add_span = header_line
+        .spans
+        .iter()
+        .find(|s| s.content == " +15")
+        .expect("must have +15 span");
+    assert_eq!(add_span.style.fg, Some(Color::Indexed(120)));
+    assert!(add_span.style.add_modifier.contains(Modifier::BOLD));
+
+    let mod_span = header_line
+        .spans
+        .iter()
+        .find(|s| s.content == " ~6")
+        .expect("must have ~6 span");
+    assert_eq!(mod_span.style.fg, Some(Color::Indexed(214)));
+    assert!(mod_span.style.add_modifier.contains(Modifier::BOLD));
+
+    // With moved lines
+    let global_with_movs = FileCounts {
+        adds: 15,
+        dels: 7,
+        mods: 6,
+        movs: 2,
+        notes: 0,
+    };
+    let mov_header_line = header_bar_line(
+        "diffuse",
+        Some(&file),
+        None,
+        Some(global_with_movs),
+        None,
+        None,
+    );
+    let mov_text = mov_header_line.to_string();
+    assert_eq!(
+        mov_text, " diffuse · −7 +15 ~6 ≈2 · AGENTS.md · −7 +15 ~6",
+        "header text must format: diffuse · −7 +15 ~6 ≈2 · AGENTS.md · −7 +15 ~6"
+    );
+
+    let mov_span = mov_header_line
+        .spans
+        .iter()
+        .find(|s| s.content == " ≈2")
+        .expect("must have ≈2 span");
+    assert_eq!(mov_span.style.fg, Some(Color::Indexed(147)));
+    assert!(mov_span.style.add_modifier.contains(Modifier::BOLD));
+
+    // Test local file counts with moved lines as well
+    let mut file_with_movs = file.clone();
+    file_with_movs.counts.movs = 3;
+    let local_mov_line = header_bar_line("diffuse", Some(&file_with_movs), None, None, None, None);
+    assert_eq!(
+        local_mov_line.to_string(),
+        " diffuse · AGENTS.md · −7 +15 ~6 ≈3",
+        "local file counts must format with ≈3 (without 'moved')"
+    );
+    let local_mov_span = local_mov_line
+        .spans
+        .iter()
+        .find(|s| s.content == " ≈3")
+        .expect("must have local ≈3 span");
+    assert_eq!(local_mov_span.style.fg, Some(Color::Indexed(147)));
+}
+
+#[test]
+fn test_header_bar_global_mod_counts_ansi() {
+    let file = OutputFile {
+        path: "AGENTS.md".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 10,
+        old_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: FileCounts {
+            adds: 15,
+            dels: 7,
+            mods: 6,
+            movs: 0,
+            notes: 0,
+        },
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+
+    let global_counts = FileCounts {
+        adds: 15,
+        dels: 7,
+        mods: 6,
+        movs: 2,
+        notes: 0,
+    };
+
+    let ansi_lines = render_header_bar(
+        "diffuse",
+        Some(&file),
+        120,
+        None,
+        Some(global_counts),
+        None,
+        None,
+    );
+    let joined = ansi_lines.join("\n");
+
+    // Check highlighted global mod counts in ANSI escapes
+    assert!(joined.contains("\x1b[1m\x1b[38;5;203m−7\x1b[0m"));
+    assert!(joined.contains("\x1b[1m\x1b[38;5;120m+15\x1b[0m"));
+    assert!(joined.contains("\x1b[1m\x1b[38;5;214m~6\x1b[0m"));
+    assert!(joined.contains("\x1b[1m\x1b[38;5;147m≈2\x1b[0m"));
+}
+
+#[test]
+fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
+    let global_counts = FileCounts {
+        adds: 20,
+        dels: 5,
+        mods: 3,
+        movs: 0,
+        notes: 0,
+    };
+
+    // None file
+    let none_line = header_bar_line("diffuse", None, None, Some(global_counts), None, None);
+    assert_eq!(none_line.to_string(), " diffuse · −5 +20 ~3");
+
+    // Common prefix + file
+    let file = OutputFile {
+        path: "crates/diffuse-tui/src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 10,
+        old_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: FileCounts {
+            adds: 5,
+            dels: 2,
+            mods: 1,
+            movs: 0,
+            notes: 0,
+        },
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+
+    let pfx_line = header_bar_line(
+        "diffuse",
+        Some(&file),
+        Some("crates/diffuse-tui/src/"),
+        Some(global_counts),
+        None,
+        None,
+    );
+    assert_eq!(
+        pfx_line.to_string(),
+        " diffuse · −5 +20 ~3 · crates/diffuse-tui/src/ · main.rs · −2 +5 ~1"
+    );
+}
+
+#[test]
+fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
+    use crate::view::header::{format_counts_ansi, format_counts_plain, format_counts_spans};
+
+    // Test with all change types populated
+    let counts = FileCounts {
+        adds: 15,
+        dels: 7,
+        mods: 6,
+        movs: 2,
+        notes: 0,
+    };
+
+    assert_eq!(format_counts_plain(&counts), "−7 +15 ~6 ≈2");
+    assert_eq!(
+        format_counts_ansi(&counts),
+        "\x1b[1m\x1b[38;5;203m−7\x1b[0m \x1b[1m\x1b[38;5;120m+15\x1b[0m \x1b[1m\x1b[38;5;214m~6\x1b[0m \x1b[1m\x1b[38;5;147m≈2\x1b[0m"
+    );
+
+    let spans = format_counts_spans(&counts);
+    assert_eq!(spans.len(), 4);
+    assert_eq!(spans[0].content, "−7");
+    assert_eq!(spans[0].style.fg, Some(Color::Indexed(203)));
+    assert_eq!(spans[1].content, " +15");
+    assert_eq!(spans[1].style.fg, Some(Color::Indexed(120)));
+    assert_eq!(spans[2].content, " ~6");
+    assert_eq!(spans[2].style.fg, Some(Color::Indexed(214)));
+    assert_eq!(spans[3].content, " ≈2");
+    assert_eq!(spans[3].style.fg, Some(Color::Indexed(147)));
+
+    // Test with only dels (zeros for adds, mods, movs)
+    let del_only = FileCounts {
+        adds: 0,
+        dels: 4,
+        mods: 0,
+        movs: 0,
+        notes: 0,
+    };
+    assert_eq!(format_counts_plain(&del_only), "−4");
+    assert_eq!(
+        format_counts_ansi(&del_only),
+        "\x1b[1m\x1b[38;5;203m−4\x1b[0m"
+    );
+    let del_spans = format_counts_spans(&del_only);
+    assert_eq!(del_spans.len(), 1);
+    assert_eq!(del_spans[0].content, "−4");
+}
+
+#[test]
+fn test_header_bar_shows_branch_indicator() {
+    let file = OutputFile {
+        path: "src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 10,
+        old_line_count: 10,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: FileCounts::default(),
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+
+    // ANSI header with branch
+    let ansi =
+        render_header_bar("diffuse", Some(&file), 80, None, None, Some("main"), None).join("\n");
+    assert!(
+        ansi.contains("\u{2387}"),
+        "ANSI header must show branch glyph"
+    );
+    assert!(ansi.contains("main"), "ANSI header must show branch name");
+    assert!(ansi.contains("diffuse"), "ANSI header must show repo");
+    // The branch glyph itself is the separator — no `·` dot between the repo
+    // name and the branch glyph.
+    let repo_glyph_gap = ansi
+        .find("diffuse")
+        .and_then(|ri| ansi[ri..].find("\u{2387}").map(|gi| &ansi[ri..ri + gi]))
+        .unwrap_or("");
+    assert!(
+        !repo_glyph_gap.contains('\u{00b7}'),
+        "ANSI header must not place a dot between repo name and branch glyph"
+    );
+
+    // ANSI header without branch
+    let ansi_no_branch =
+        render_header_bar("diffuse", Some(&file), 80, None, None, None, None).join("\n");
+    assert!(
+        !ansi_no_branch.contains("\u{2387}"),
+        "ANSI header must not show branch glyph when branch is None"
+    );
+
+    // Ratatui header with branch — verify spans contain branch
+    let line = header_bar_line("diffuse", Some(&file), None, None, Some("main"), None);
+    let text = line.to_string();
+    assert!(
+        text.contains("\u{2387}"),
+        "header line must show branch glyph"
+    );
+    assert!(text.contains("main"), "header line must show branch name");
+
+    // Verify the branch spans are styled correctly
+    let branch_span = line
+        .spans
+        .iter()
+        .find(|s| s.content == "main")
+        .expect("must have branch span");
+    assert_eq!(branch_span.style.fg, Some(Color::Indexed(252)));
+    assert!(branch_span.style.add_modifier.contains(Modifier::BOLD));
+
+    // The branch glyph span must directly precede the branch name with no
+    // dot separator span in between.
+    let glyph_idx = line
+        .spans
+        .iter()
+        .position(|s| s.content == " \u{2387} ")
+        .expect("must have branch glyph span");
+    assert!(
+        line.spans[..glyph_idx]
+            .iter()
+            .all(|s| !s.content.contains('\u{00b7}')),
+        "TUI header must not place a dot between repo name and branch glyph"
+    );
+    assert_eq!(
+        line.spans[glyph_idx + 1].content,
+        "main",
+        "branch glyph span must directly precede the branch name span"
+    );
+
+    // Commit range shows the same branch glyph in header
+    let line_range = header_bar_line("diffuse", None, None, None, None, Some("v1.0..v2.0"));
+    assert!(line_range.to_string().contains("v1.0..v2.0"));
+    assert!(line_range.to_string().contains("\u{2387}"));
 }

@@ -75,6 +75,10 @@ pub struct AppState {
     /// verbatim instead of re-clamping around the cursor — until the cursor
     /// moves or new user input arrives (see `execute`).
     scroll_pin: Option<(usize, usize)>,
+    /// Pending auto-scroll on expansion load: `(file_idx, row_idx, scroll)`.
+    /// Preserved while streaming, invalidated if the user moves cursor or makes
+    /// any UI state change.
+    pub(crate) auto_scroll_on_load: Option<(usize, usize, usize)>,
 }
 
 impl AppState {
@@ -102,6 +106,7 @@ impl AppState {
 
         let hunk_meta = Self::build_hunk_meta(&output);
 
+        let loaded_notes = load_notes(&notes_path);
         Self {
             output,
             flat,
@@ -124,7 +129,7 @@ impl AppState {
             status_message: None,
             viewport_height: 20,
             screen_height: 24,
-            notes: load_notes(&notes_path),
+            notes: loaded_notes,
             notes_path,
             hunk_starts,
             hunk_meta,
@@ -147,6 +152,7 @@ impl AppState {
             start_time: std::time::Instant::now(),
             expand_lines: DEFAULT_EXPAND_LINES,
             scroll_pin: None,
+            auto_scroll_on_load: None,
         }
     }
 
@@ -250,7 +256,15 @@ impl AppState {
             }
             if !self.collapsed_files.contains(&fi) {
                 self.rebuild_flat_preserving_cursor(fi);
+                if let Some((target_fi, expected_row, expected_scroll)) = self.auto_scroll_on_load
+                    && target_fi == fi
+                    && self.row_idx == expected_row
+                    && self.scroll == expected_scroll
+                {
+                    self.adjust_scroll_for_expanded_file(fi);
+                }
             }
+            self.auto_scroll_on_load = None;
         }
     }
 
@@ -306,8 +320,16 @@ impl AppState {
             }
             if !self.collapsed_files.contains(&fi) {
                 self.rebuild_flat_preserving_cursor(fi);
+                if let Some((target_fi, expected_row, expected_scroll)) = self.auto_scroll_on_load
+                    && target_fi == fi
+                    && self.row_idx == expected_row
+                    && self.scroll == expected_scroll
+                {
+                    self.adjust_scroll_for_expanded_file(fi);
+                }
             }
         }
+        self.auto_scroll_on_load = None;
         if self.loading_files.is_empty() {
             self.is_streaming = false;
         }

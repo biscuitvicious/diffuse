@@ -61,7 +61,19 @@ impl AppState {
 
     pub fn goto_file_idx(&mut self, fi: usize) {
         let first = self.first_row_of_file(fi);
-        self.jump_to_row(first, false);
+        self.row_idx = first.min(self.flat.len().saturating_sub(1));
+        self.vis_line = 0;
+
+        let max_rows = self.viewport_height.max(4);
+        let cw = if self.last_content_width > 0 {
+            self.last_content_width
+        } else {
+            80
+        };
+        let (starts, _, _, total_vis_lines) = self.visual_geometry(cw);
+        let target_vis = starts.get(self.row_idx).copied().unwrap_or(0);
+        let max_scroll = total_vis_lines.saturating_sub(max_rows);
+        self.scroll = target_vis.min(max_scroll);
     }
 
     pub fn move_down(&mut self) {

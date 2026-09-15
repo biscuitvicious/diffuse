@@ -496,8 +496,9 @@ fn test_initial_screen_rendered_visual_frame() {
     }
     println!("└{}┘\n", "─".repeat(width));
 
-    // Row 0: Top Header Bar
-    assert!(screen_lines[0].starts_with(" diffuse · filesystem.rs"));
+    // Row 0: Top Header Bar (diffuse · <global mod counts> · filesystem.rs · −0
+    // +1 ~1)
+    assert!(screen_lines[0].starts_with(" diffuse · −0 +1 ~1 · filesystem.rs"));
     assert!(screen_lines[0].contains("+1"));
     assert!(screen_lines[0].contains("~1"));
 

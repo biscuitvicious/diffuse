@@ -3042,9 +3042,7 @@ fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
 
     // Row 1: Secondary status bar
     assert!(
-        row_strings[1].contains("file 0/0")
-            && row_strings[1].contains("hunk 0/0")
-            && row_strings[1].contains("\u{2387} feature-branch"),
+        row_strings[1].contains("file 0/0") && row_strings[1].contains("hunk 0/0"),
         "Row 1 must be status bar: {}",
         row_strings[1]
     );
@@ -3096,25 +3094,26 @@ fn test_app_commit_range_in_render_ratatui() {
         .unwrap();
 
     let buffer = frame.buffer;
-    let mut row_1 = String::new();
-    for x in 0..80 {
-        row_1.push_str(buffer[(x, 1)].symbol());
-    }
 
+    // Commit range should appear in the header bar (row 0), not the status bar
+    let mut row_0 = String::new();
+    for x in 0..80 {
+        row_0.push_str(buffer[(x, 0)].symbol());
+    }
     assert!(
-        row_1.contains("3f05a71..7e0caab"),
-        "Status bar must show commit range: {}",
-        row_1
+        row_0.contains("3f05a71..7e0caab"),
+        "Header bar must show commit range: {}",
+        row_0
     );
     assert!(
-        !row_1.contains("\u{2387}"),
-        "Status bar must NOT show branch glyph when commit range is set: {}",
-        row_1
+        row_0.contains("\u{2387}"),
+        "Header bar must show branch glyph with commit range: {}",
+        row_0
     );
     assert!(
-        !row_1.contains("work"),
-        "Status bar must NOT show branch name when commit range is set: {}",
-        row_1
+        !row_0.contains("work"),
+        "Header bar must NOT show branch name when commit range is set: {}",
+        row_0
     );
 }
 

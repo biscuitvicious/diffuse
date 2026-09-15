@@ -320,3 +320,346 @@ fn test_async_on_demand_expansion_sets_streaming_indicator() {
     assert!(state.output.files[0].is_loaded());
     assert!(!state.output.files[0].hunks.is_empty());
 }
+
+fn create_multi_file_state(
+    file_count: usize,
+    rows_per_file: usize,
+) -> (
+    AppState,
+    std::sync::mpsc::Sender<(usize, crate::core::wire::OutputFile)>,
+) {
+    let mut diff = String::new();
+    let mut new_map = std::collections::HashMap::new();
+    let mut old_map = std::collections::HashMap::new();
+
+    for i in 0..file_count {
+        let name = format!("file_{i:02}.rs");
+        diff.push_str(&format!(
+            "diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1,{rows_per_file} +1,{rows_per_file} @@\n"
+        ));
+        let mut old_text = String::new();
+        let mut new_text = String::new();
+        for r in 0..rows_per_file {
+            diff.push_str(&format!(
+                "-old line {r} in {name}\n+new line {r} in {name}\n"
+            ));
+            old_text.push_str(&format!("old line {r} in {name}\n"));
+            new_text.push_str(&format!("new line {r} in {name}\n"));
+        }
+        old_map.insert(name.clone(), old_text);
+        new_map.insert(name, new_text);
+    }
+
+    let output = run_pipeline_full(
+        &diff,
+        Some(new_map),
+        Some(old_map),
+        PipelineOptions::default(),
+    );
+
+    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    for i in 0..file_count {
+        state.collapsed_files.insert(i);
+        state.output.files[i].release_rendered_memory();
+    }
+    state.rebuild_flat_preserving_cursor(0);
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    state.on_demand_tx = Some(tx.clone());
+    state.on_demand_rx = Some(rx);
+
+    (state, tx)
+}
+
+#[test]
+fn test_expand_last_file_at_bottom_scrolls_down_after_load() {
+    // 25 files, each with 10 diff lines.
+    // All 25 files start collapsed and unloaded.
+    let (mut state, _) = create_multi_file_state(25, 10);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Viewport height = 20.
+    // Flat has 25 rows (one header per collapsed file).
+    // Scroll to 5 so that the last file (file 24) is at the very bottom row of
+    // the viewport (row 19).
+    state.scroll = 5;
+    state.row_idx = 24;
+
+    let header_vis = 24;
+    let screen_row_before = header_vis - state.scroll;
+    assert_eq!(screen_row_before, 19, "file 24 is at the very bottom line");
+    assert!(!state.is_file_loaded(24));
+
+    // Expand the last file. In async mode, it begins loading in the background.
+    state.toggle_file_collapse(24);
+    assert!(!state.collapsed_files.contains(&24));
+    assert!(state.loading_files.contains(&24));
+
+    // BEFORE load completes:
+    // Total visual lines is still 25, max_scroll is 5, scroll cannot move.
+    assert_eq!(
+        state.scroll, 5,
+        "scroll must NOT have moved before the file loaded"
+    );
+
+    // Wait for the background worker to finish loading.
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(1000) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    // AFTER load completes:
+    // The file is loaded with 10 diff lines.
+    // 20% of viewport height (20) is 4 lines.
+    // Previously screen_row was 19 (1 line from bottom).
+    // Now we must scroll down by 3 lines so file 24 occupies rows 16..=19 (4
+    // lines = 20% from below).
+    assert!(state.is_file_loaded(24));
+    assert_eq!(
+        state.scroll, 8,
+        "must scroll down by 3 lines after loading completes to fill 20% from below"
+    );
+    let screen_row_after = header_vis - state.scroll;
+    assert_eq!(screen_row_after, 16);
+}
+
+#[test]
+fn test_expand_middle_file_at_bottom_scrolls_down_after_load() {
+    let (mut state, _) = create_multi_file_state(25, 10);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Place middle file (file 12) at row 18 (bottom 2 lines of the 20-row
+    // viewport) header_vis = 12, so scroll = 0 would put it at 12.
+    // Let's set scroll = 0 and use file 18 at row 18:
+    // header_vis of file 18 is 18.
+    // screen_row = 18 - 0 = 18.
+    state.scroll = 0;
+    state.row_idx = 18;
+
+    let header_vis = 18;
+    let screen_row_before = header_vis - state.scroll;
+    assert_eq!(
+        screen_row_before, 18,
+        "file 18 is at row 18 (2 lines from bottom)"
+    );
+
+    state.toggle_file_collapse(18);
+
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(1000) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(state.is_file_loaded(18));
+    // 20% of 20 = 4 lines. Lines below was 2 (rows 18 and 19).
+    // It must scroll down by 2 lines to make file 18 header sit at row 16.
+    assert_eq!(
+        state.scroll, 2,
+        "must scroll down by 2 lines to fill 20% from below"
+    );
+    let screen_row_after = header_vis - state.scroll;
+    assert_eq!(screen_row_after, 16);
+}
+
+#[test]
+fn test_expand_first_file_not_at_bottom_does_not_scroll() {
+    let (mut state, _) = create_multi_file_state(5, 10);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+    state.scroll = 0;
+    state.row_idx = 0;
+
+    // File 0 is at row 0 (top of viewport).
+    state.toggle_file_collapse(0);
+
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(1000) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(state.is_file_loaded(0));
+    assert_eq!(
+        state.scroll, 0,
+        "first file at top of viewport must not scroll down"
+    );
+}
+
+#[test]
+fn test_expand_file_with_fewer_lines_fills_up_to_file_content() {
+    // File with only 1 diff line (+1 header + 1 hunk divider = 3 visual lines
+    // total)
+    let (mut state, _) = create_multi_file_state(25, 1);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Put file 24 at row 19 (the last row)
+    state.scroll = 5;
+    state.row_idx = 24;
+
+    state.toggle_file_collapse(24);
+
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(1000) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(state.is_file_loaded(24));
+    // Target fill is 4 (20% of 20), but file 24 only has 3 visual lines total!
+    // So it fills UP TO 3 lines (desired_visible = 3).
+    // lines_below was 1, so it scrolls down by 2 (scroll 5 -> 7).
+    assert_eq!(
+        state.scroll, 7,
+        "must scroll down by 2 lines since file only has 3 visual lines total"
+    );
+    let screen_row_after = 24 - state.scroll;
+    assert_eq!(screen_row_after, 17);
+}
+
+#[test]
+fn test_expand_file_cursor_clamped_if_scrolled_off_top() {
+    let (mut state, _) = create_multi_file_state(25, 10);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Cursor is on file 5 (row 5). Scroll is 5.
+    // File 24 is at row 24 (screen row 19).
+    state.scroll = 5;
+    state.row_idx = 5; // Header of file 5 is at visual line 5, currently at the top of the viewport (screen row 0).
+
+    state.toggle_file_collapse(24);
+
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(1000) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(state.is_file_loaded(24));
+    // Scroll moved from 5 to 8.
+    // File 5 (visual line 5) would now be off-screen above the viewport (5 <
+    // 8). The cursor must have been updated to file 24's header so it
+    // remains visible!
+    assert_eq!(state.scroll, 8);
+    assert_eq!(state.row_idx, 24);
+}
+
+#[test]
+fn test_adjust_scroll_for_expanded_file_noop_cases() {
+    let (mut state, _) = create_multi_file_state(5, 10);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // 1. vh == 0
+    state.viewport_height = 0;
+    state.adjust_scroll_for_expanded_file(0);
+    assert_eq!(state.scroll, 0);
+
+    // Reset vh
+    state.viewport_height = 20;
+
+    // 2. collapsed file
+    state.adjust_scroll_for_expanded_file(0);
+    assert_eq!(state.scroll, 0);
+
+    // 3. Header above viewport
+    state.collapsed_files.remove(&0);
+    state.ensure_file_loaded_sync(0);
+    state.scroll = 10;
+    state.adjust_scroll_for_expanded_file(0);
+    assert_eq!(state.scroll, 10);
+
+    // 4. Header below viewport
+    state.scroll = 0;
+    // File 4 is at visual line 20+ if file 0 is expanded.
+    state.collapsed_files.remove(&4);
+    state.ensure_file_loaded_sync(4);
+    let (starts, _, _, _) = state.visual_geometry(80);
+    let header_vis_4 = starts[state.first_row_of_file(4)];
+    if header_vis_4 >= 20 {
+        state.adjust_scroll_for_expanded_file(4);
+        assert_eq!(state.scroll, 0);
+    }
+}
+
+#[test]
+fn test_expand_file_cursor_move_while_streaming_cancels_auto_scroll() {
+    let (mut state, _) = create_multi_file_state(25, 10);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Put file 24 at row 19 (the very bottom line of the 20-row viewport)
+    state.scroll = 5;
+    state.row_idx = 24;
+
+    state.toggle_file_collapse(24);
+    assert!(state.loading_files.contains(&24));
+
+    // While still streaming, user moves cursor up
+    state.execute(TuiCommand::MoveUp(1));
+    assert_eq!(state.row_idx, 23);
+
+    // Wait for the background worker to finish loading
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(1000) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(state.is_file_loaded(24));
+    // Since the user moved cursor while streaming, we do NOT jump downwards!
+    assert_eq!(
+        state.scroll, 5,
+        "moving cursor while streaming must cancel auto-scroll"
+    );
+}
+
+#[test]
+fn test_expand_file_ui_change_while_streaming_cancels_auto_scroll() {
+    let (mut state, _) = create_multi_file_state(25, 10);
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Put file 24 at row 19
+    state.scroll = 5;
+    state.row_idx = 24;
+
+    state.toggle_file_collapse(24);
+    assert!(state.loading_files.contains(&24));
+
+    // While still streaming, user performs a UI change (e.g. toggles raw diff)
+    state.execute(TuiCommand::ToggleRawDiff);
+
+    // Wait for background worker to finish
+    let start = std::time::Instant::now();
+    while !state.poll_on_demand() {
+        if start.elapsed() > std::time::Duration::from_millis(1000) {
+            panic!("timed out waiting for async on-demand load");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    assert!(state.is_file_loaded(24));
+    // Must not jump downwards to scroll file 24 into view
+    assert_eq!(
+        state.scroll, 5,
+        "UI state change while streaming must cancel auto-scroll"
+    );
+}

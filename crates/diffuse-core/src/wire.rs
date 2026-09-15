@@ -48,6 +48,21 @@ impl PipelineOutput {
         self.files.iter().map(OutputFile::reconstruct).collect()
     }
 
+    /// Computes the aggregated line-level modification counts summed across
+    /// all files in this output payload, including the total number of review
+    /// notes.
+    pub fn total_counts(&self) -> FileCounts {
+        let mut total = FileCounts::default();
+        for f in &self.files {
+            total.adds += f.counts.adds;
+            total.dels += f.counts.dels;
+            total.mods += f.counts.mods;
+            total.movs += f.counts.movs;
+            total.notes += f.counts.notes;
+        }
+        total
+    }
+
     /// Computes the longest common directory prefix shared across all files in
     /// the diff (both `path` and `old_path`), if there are 2 or more files.
     /// Returns `Some(prefix)` with a trailing slash (e.g.

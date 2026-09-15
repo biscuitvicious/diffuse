@@ -72,6 +72,7 @@ fn counts_after_modified_pair_collapse() {
             dels: 0,
             mods: 1,
             movs: 1,
+            notes: 0,
         },
         "counts +3 ~1 ~1 — the mod pair, the moved pair, and the tail lines count as adds"
     );
@@ -109,6 +110,7 @@ fn counts_moved_pair_is_neither_add_nor_del() {
             dels: 0,
             mods: 0,
             movs: 1,
+            notes: 0,
         },
         "a moved pair counts as one mov"
     );

@@ -22,6 +22,7 @@ fn dummy_file() -> OutputFile {
             dels: 2,
             mods: 1,
             movs: 0,
+            notes: 0,
         },
         fences: vec![],
         notes: vec![],

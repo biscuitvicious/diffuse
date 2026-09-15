@@ -1055,3 +1055,62 @@ untracked file mode 100644
     assert_eq!(rendered.hunks.len(), 1);
     assert_eq!(rendered.hunks[0].rows.len(), 2);
 }
+
+#[test]
+fn test_pipeline_notes_counts_with_resolved_repo() {
+    use crate::notes::{ReviewNote, Side, add_note};
+
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
+    let mut db = crate::notes::NotesDB::new();
+    for (i, text) in ["note one", "note two"].iter().enumerate() {
+        add_note(
+            &mut db,
+            "myrepo",
+            ReviewNote {
+                id: format!("n{i}"),
+                file: "a.txt".to_string(),
+                side: Side::New,
+                start: 1,
+                end: 1,
+                text: text.to_string(),
+                created_at: 0,
+            },
+        );
+    }
+    // A note on a file absent from the diff must not leak into counts.
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "other".to_string(),
+            file: "unrelated.rs".to_string(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            text: "other".to_string(),
+            created_at: 0,
+        },
+    );
+
+    // The streaming TUI passes the *resolved* repo name (dir basename or
+    // --repo) — with it, per-file counts.notes and the global sum populate.
+    let opts = PipelineOptions::default().with_notes(Some(db), Some("myrepo".to_string()));
+    let out = run_pipeline_full(diff, None, None, opts);
+    assert_eq!(out.files.len(), 1);
+    assert_eq!(
+        out.files[0].counts.notes, 2,
+        "file counts.notes must reflect attached notes"
+    );
+    assert_eq!(out.files[0].notes.len(), 2);
+    let total = out.total_counts();
+    assert_eq!(
+        total.notes, 2,
+        "PipelineOutput total_counts must sum per-file notes"
+    );
+
+    // Without a repo key the pipeline cannot match notes — the header falls
+    // back to zero (this is why the TUI must pass the resolved repo).
+    let out_no_repo = run_pipeline_full(diff, None, None, PipelineOptions::default());
+    assert_eq!(out_no_repo.files[0].counts.notes, 0);
+    assert_eq!(out_no_repo.total_counts().notes, 0);
+}
