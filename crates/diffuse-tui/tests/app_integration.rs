@@ -496,14 +496,14 @@ fn test_initial_screen_rendered_visual_frame() {
     }
     println!("└{}┘\n", "─".repeat(width));
 
-    // Row 0: Top Header Bar (diffuse · <global mod counts> · filesystem.rs · −0
-    // +1 ~1)
-    assert!(screen_lines[0].starts_with(" diffuse · −0 +1 ~1 · filesystem.rs"));
+    // Row 0: Top Header Bar (repo + global mod counts, no file section)
+    assert!(screen_lines[0].starts_with(" diffuse +1 ~1"));
     assert!(screen_lines[0].contains("+1"));
     assert!(screen_lines[0].contains("~1"));
+    assert!(!screen_lines[0].contains("filesystem.rs"));
 
-    // Row 1: Secondary Status Bar
-    assert!(screen_lines[1].starts_with(" file 1/1 · hunk 1/1"));
+    // Row 1: Secondary Status Bar (file badge, sub-path, counts, hunk)
+    assert!(screen_lines[1].starts_with(" file 1/1 · filesystem.rs (+1 ~1) · hunk 1/1"));
 
     // Row 2: File Header Banner in Diff Viewport
     assert!(screen_lines[2].contains("▼ filesystem.rs"));
@@ -584,13 +584,13 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     }
     println!("└{}┘\n", "─".repeat(width));
 
-    // Row 0: Header bar
+    // Row 0: Header bar (repo + global counts + common prefix, no file)
     assert!(screen_lines[0].contains("diffuse"));
     assert!(screen_lines[0].contains("crates/diffuse-core/src/moves/"));
-    assert!(screen_lines[0].contains("mod.rs"));
+    assert!(!screen_lines[0].contains("mod.rs"));
 
-    // Row 1: Secondary status bar with multi-file counter
-    assert!(screen_lines[1].starts_with(" file 1/2 · hunk 1/1"));
+    // Row 1: Secondary status bar with file badge, sub-path, multi-file counter
+    assert!(screen_lines[1].starts_with(" file 1/2 · mod.rs"));
 
     // Row 2: File header banner
     assert!(screen_lines[2].contains("▼ mod.rs"));

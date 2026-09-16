@@ -2450,19 +2450,20 @@ fn test_render_ratatui_frame_layout() {
         })
         .unwrap();
     let buffer = terminal.backend().buffer();
-    // First line must contain repo name and file path
+    // First line holds repo name and global counts; the file moved down.
     let mut line0 = String::new();
     for x in 0..80 {
         line0.push_str(buffer[(x, 0)].symbol());
     }
     assert!(line0.contains("diffuse"));
-    assert!(line0.contains("src/lib.rs"));
+    assert!(!line0.contains("src/lib.rs"));
 
-    // Second line must contain files and hunks badge
+    // Second line must contain file path plus files and hunks badges.
     let mut line1 = String::new();
     for x in 0..80 {
         line1.push_str(buffer[(x, 1)].symbol());
     }
+    assert!(line1.contains("src/lib.rs"));
     assert!(line1.contains("file 1/1"));
     assert!(line1.contains("hunk 1/1"));
 

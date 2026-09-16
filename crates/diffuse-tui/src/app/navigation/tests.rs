@@ -294,7 +294,7 @@ fn test_viewport_margin_rounding_half_up() {
 }
 
 #[test]
-fn test_next_and_prev_file_navigation_centers_banner_at_row_zero() {
+fn test_next_and_prev_file_land_banner_at_row_zero() {
     let mut lines_a = String::new();
     let mut lines_b = String::new();
     let mut lines_c = String::new();
@@ -329,56 +329,611 @@ fn test_next_and_prev_file_navigation_centers_banner_at_row_zero() {
 
     assert_eq!(state.current_file_idx(), 0, "starts on file 0 (a.rs)");
 
-    // Press 'n' -> next_file()
+    // Press 'n' -> next_file(): cursor lands on the file banner at row #0.
+    // J/K treat the banner as inside the first hunk, so J still advances.
     state.next_file();
     assert_eq!(state.current_file_idx(), 1, "navigates to file 1 (b.rs)");
     let b_banner = state.first_row_of_file(1);
     assert_eq!(state.row_idx, b_banner, "lands on b.rs banner");
     assert!(state.flat[state.row_idx].is_file_header);
-
     let (starts, _, _, total_vis_lines) = state.visual_geometry(state.last_content_width);
-    let b_vis = starts[b_banner];
     let max_rows = state.viewport_height.max(4);
     let max_scroll = total_vis_lines.saturating_sub(max_rows);
     assert_eq!(
         state.scroll,
-        b_vis.min(max_scroll),
-        "next_file must position scroll so banner is at row #0 of the main view"
+        starts[b_banner].min(max_scroll),
+        "next_file must position scroll so the file banner is at row #0"
     );
     assert_eq!(
-        b_vis - state.scroll,
+        starts[b_banner] - state.scroll,
         0,
-        "banner must sit exactly at screen row #0"
+        "file banner must sit exactly at screen row #0"
     );
+
+    // J from the banner counts as inside H1, so it advances past it.
+    let before = state.row_idx;
+    state.next_hunk();
+    assert!(
+        state.row_idx != before,
+        "J after n must advance past the banner's hunk"
+    );
+
+    // That J crossed into file 2 (c.rs); 'p' returns to file 1 (b.rs).
+    state.prev_file();
+    assert_eq!(state.current_file_idx(), 1, "returns to file 1 (b.rs)");
+    assert_eq!(state.row_idx, b_banner, "lands on b.rs banner");
 
     // Press 'n' again to go to file 2 (c.rs) which is near/at bottom
     state.next_file();
     assert_eq!(state.current_file_idx(), 2, "navigates to file 2 (c.rs)");
     let c_banner = state.first_row_of_file(2);
     assert_eq!(state.row_idx, c_banner);
-    let c_vis = starts[c_banner];
     assert_eq!(
         state.scroll,
-        c_vis.min(max_scroll),
+        starts[c_banner].min(max_scroll),
         "at the very bottom of the scrollable view, scroll is clamped to max_scroll"
     );
 
-    // Press 'p' -> prev_file() back to file 1 (b.rs)
+    // Press 'p' -> prev_file() back to file 1 (b.rs) banner
     state.prev_file();
     assert_eq!(
         state.current_file_idx(),
         1,
         "navigates back to file 1 (b.rs)"
     );
-    assert_eq!(state.scroll, b_vis.min(max_scroll));
-    assert_eq!(b_vis - state.scroll, 0, "b.rs banner sits at row #0");
+    assert_eq!(state.row_idx, b_banner, "lands on b.rs banner");
+    assert_eq!(state.scroll, starts[b_banner].min(max_scroll));
+    assert_eq!(
+        starts[b_banner] - state.scroll,
+        0,
+        "b.rs banner sits at row #0"
+    );
 
-    // Press 'p' -> prev_file() back to file 0 (a.rs)
+    // Press 'p' -> prev_file() back to file 0 (a.rs) banner
     state.prev_file();
     assert_eq!(
         state.current_file_idx(),
         0,
         "navigates back to file 0 (a.rs)"
     );
-    assert_eq!(state.scroll, 0, "a.rs sits at row #0");
+    let a_banner = state.first_row_of_file(0);
+    assert_eq!(state.row_idx, a_banner);
+    assert_eq!(state.scroll, starts[a_banner].min(max_scroll));
+    assert_eq!(
+        starts[a_banner] - state.scroll,
+        0,
+        "a.rs banner sits at row #0"
+    );
+}
+
+#[test]
+fn test_prev_file_in_first_file_reveals_banner() {
+    let mut lines_a = String::new();
+    let mut lines_b = String::new();
+    let mut diff_a = String::new();
+    let mut diff_b = String::new();
+    for i in 1..=30 {
+        lines_a.push_str(&format!("a line {i}\n"));
+        lines_b.push_str(&format!("b line {i}\n"));
+        diff_a.push_str(&format!("+a line {i}\n"));
+        diff_b.push_str(&format!("+b line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,30 @@\n{diff_a}diff --git a/b.rs b/b.rs\nindex 222..333 100644\n--- a/b.rs\n+++ b/b.rs\n@@ -0,0 +1,30 @@\n{diff_b}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a), ("b.rs".to_string(), lines_b)]
+        .into_iter()
+        .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Move deep into the first file with its banner scrolled out of view.
+    let a_banner = state.first_row_of_file(0);
+    let last_a = state.first_row_of_file(1) - 1;
+    state.row_idx = last_a;
+    state.vis_line = 0;
+    let (starts, _, _, _) = state.visual_geometry(80);
+    state.scroll = starts[a_banner] + 5;
+    assert!(
+        starts[a_banner] < state.scroll,
+        "precondition: a.rs banner is scrolled out of view"
+    );
+
+    // 'p' in the first file scrolls the banner back as the top row, landing
+    // the cursor on it like a regular file jump.
+    state.prev_file();
+    assert_eq!(state.current_file_idx(), 0, "stays in file 0 (a.rs)");
+    assert_eq!(state.row_idx, a_banner, "cursor lands on the banner");
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(80);
+    let max_scroll = total_vis_lines.saturating_sub(state.viewport_height.max(4));
+    assert_eq!(
+        state.scroll,
+        starts[a_banner].min(max_scroll),
+        "banner must be the top row"
+    );
+    assert_eq!(starts[a_banner] - state.scroll, 0);
+
+    // A further 'p' wraps around to the last file.
+    state.prev_file();
+    assert_eq!(state.current_file_idx(), 1, "wraps to file 1 (b.rs)");
+    let b_banner = state.first_row_of_file(1);
+    assert_eq!(state.row_idx, b_banner, "cursor lands on b.rs banner");
+    let b_banner = state.first_row_of_file(1);
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(80);
+    let max_scroll = total_vis_lines.saturating_sub(state.viewport_height.max(4));
+    assert_eq!(state.scroll, starts[b_banner].min(max_scroll));
+    assert_eq!(starts[b_banner] - state.scroll, 0);
+}
+
+#[test]
+fn test_next_file_wraps_around_at_end() {
+    let mut lines_a = String::new();
+    let mut lines_b = String::new();
+    let mut diff_a = String::new();
+    let mut diff_b = String::new();
+    for i in 1..=30 {
+        lines_a.push_str(&format!("a line {i}\n"));
+        lines_b.push_str(&format!("b line {i}\n"));
+        diff_a.push_str(&format!("+a line {i}\n"));
+        diff_b.push_str(&format!("+b line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,30 @@\n{diff_a}diff --git a/b.rs b/b.rs\nindex 222..333 100644\n--- a/b.rs\n+++ b/b.rs\n@@ -0,0 +1,30 @@\n{diff_b}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a), ("b.rs".to_string(), lines_b)]
+        .into_iter()
+        .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // 'n' to the last file, then 'n' wraps to the first file.
+    state.next_file();
+    assert_eq!(state.current_file_idx(), 1, "navigates to file 1 (b.rs)");
+    state.next_file();
+    assert_eq!(state.current_file_idx(), 0, "wraps to file 0 (a.rs)");
+    let a_banner = state.first_row_of_file(0);
+    assert_eq!(state.row_idx, a_banner, "cursor lands on a.rs banner");
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(80);
+    let max_scroll = total_vis_lines.saturating_sub(state.viewport_height.max(4));
+    assert_eq!(state.scroll, starts[a_banner].min(max_scroll));
+    assert_eq!(starts[a_banner] - state.scroll, 0);
+}
+
+#[test]
+fn test_hunk_jump_wraps_around_at_edges() {
+    let diff = "diff --git a/foo.rs b/foo.rs\n--- a/foo.rs\n+++ b/foo.rs\n@@ -1,3 +1,4 @@\n fn a() {\n+    let x = 1;\n     return 1;\n }\n@@ -30,3 +31,4 @@ fn b() {\n fn b() {\n+    let y = 2;\n     return 2;\n }\n";
+    let mut old_lines = vec![
+        "fn a() {".to_string(),
+        "    return 1;".to_string(),
+        "}".to_string(),
+    ];
+    for i in 4..=29 {
+        old_lines.push(format!("    // filler {i}"));
+    }
+    old_lines.push("fn b() {".to_string());
+    old_lines.push("    return 2;".to_string());
+    old_lines.push("}".to_string());
+    let mut new_lines = vec![
+        "fn a() {".to_string(),
+        "    let x = 1;".to_string(),
+        "    return 1;".to_string(),
+        "}".to_string(),
+    ];
+    for i in 5..=30 {
+        new_lines.push(format!("    // filler {i}"));
+    }
+    new_lines.push("fn b() {".to_string());
+    new_lines.push("    let y = 2;".to_string());
+    new_lines.push("    return 2;".to_string());
+    new_lines.push("}".to_string());
+    let new_content = [("foo.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_content = [("foo.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(
+            diff,
+            Some(new_content),
+            Some(old_content),
+            PipelineOptions::default(),
+        ),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    state.viewport_height = 6;
+    state.last_content_width = 80;
+    let first = state.hunk_starts[0].flat;
+    let last = state.hunk_starts[state.hunk_starts.len() - 1].flat;
+
+    // 'J' on the last hunk wraps to the first hunk.
+    state.row_idx = last;
+    state.next_hunk();
+    assert_eq!(state.row_idx, first, "J wraps to the first hunk");
+
+    // 'K' on the first hunk wraps to the last hunk.
+    state.row_idx = first;
+    state.prev_hunk();
+    assert_eq!(state.row_idx, last, "K wraps to the last hunk");
+}
+
+#[test]
+fn test_hunk_jump_places_head_line_at_top() {
+    let diff = "diff --git a/foo.rs b/foo.rs\n--- a/foo.rs\n+++ b/foo.rs\n@@ -1,3 +1,4 @@\n fn a() {\n+    let x = 1;\n     return 1;\n }\n@@ -30,3 +31,4 @@ fn b() {\n fn b() {\n+    let y = 2;\n     return 2;\n }\n";
+    let mut old_lines = vec![
+        "fn a() {".to_string(),
+        "    return 1;".to_string(),
+        "}".to_string(),
+    ];
+    for i in 4..=29 {
+        old_lines.push(format!("    // filler {i}"));
+    }
+    old_lines.push("fn b() {".to_string());
+    old_lines.push("    return 2;".to_string());
+    old_lines.push("}".to_string());
+    let mut new_lines = vec![
+        "fn a() {".to_string(),
+        "    let x = 1;".to_string(),
+        "    return 1;".to_string(),
+        "}".to_string(),
+    ];
+    for i in 5..=30 {
+        new_lines.push(format!("    // filler {i}"));
+    }
+    new_lines.push("fn b() {".to_string());
+    new_lines.push("    let y = 2;".to_string());
+    new_lines.push("    return 2;".to_string());
+    new_lines.push("}".to_string());
+    let new_content = [("foo.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_content = [("foo.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(
+            diff,
+            Some(new_content),
+            Some(old_content),
+            PipelineOptions::default(),
+        ),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    state.viewport_height = 6;
+    state.last_content_width = 80;
+    state.row_idx = 0;
+    state.scroll = 0;
+    assert_eq!(state.hunk_starts.len(), 2, "both hunks must be located");
+
+    // J from the banner counts as inside hunk 1, so a single press lands
+    // hunk 2 with its head line at screen row #0, not 10% below top.
+    state.next_hunk();
+    assert_eq!(state.current_hunk(), Some(1), "lands in hunk 2");
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(80);
+    let h1_vis = starts[state.hunk_starts[1].flat];
+    let max_scroll = total_vis_lines.saturating_sub(state.viewport_height.max(4));
+    assert_eq!(
+        state.scroll,
+        h1_vis.min(max_scroll),
+        "J must position scroll so the hunk head line is at row #0"
+    );
+    assert_eq!(
+        h1_vis - state.scroll,
+        0,
+        "hunk head line must sit exactly at screen row #0"
+    );
+
+    // K -> back to hunk 1, which is the file's first hunk: banner stays at
+    // row #0 with the head below it.
+    state.prev_hunk();
+    assert_eq!(state.current_hunk(), Some(0), "returns to hunk 1");
+    let (starts, _, _, _) = state.visual_geometry(80);
+    let h0_banner = state.first_row_of_file(0);
+    let h0_vis = starts[state.hunk_starts[0].flat];
+    assert_eq!(state.scroll, starts[h0_banner].min(max_scroll));
+    assert_eq!(starts[h0_banner] - state.scroll, 0);
+    assert!(h0_vis - state.scroll >= 1);
+}
+
+#[test]
+fn test_move_down_up_wrap_around_edges() {
+    let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
+index 1111111..2222222 100644
+--- a/filesystem.rs
++++ b/filesystem.rs
+@@ -1025,6 +1025,8 @@ fn test() {
+     let x = 1;
+-    // old comment
++    // new comment
++    let y = 2;
+ }
+ "#;
+    let new_content = [(
+        "filesystem.rs".to_string(),
+        "fn test() {\n    let x = 1;\n    // new comment\n    let y = 2;\n}\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let old_content = [(
+        "filesystem.rs".to_string(),
+        "fn test() {\n    let x = 1;\n    // old comment\n}\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(
+            diff,
+            Some(new_content),
+            Some(old_content),
+            PipelineOptions::default(),
+        ),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    state.last_content_width = 80;
+    let last = state.flat.len() - 1;
+    assert!(last > 0, "fixture must have multiple rows");
+    let last_segs = state.row_seg_count(last, 80);
+
+    // 'j' on the last segment of the last row wraps to the top.
+    state.row_idx = last;
+    state.vis_line = last_segs.saturating_sub(1);
+    state.move_down_wrap();
+    assert_eq!(state.row_idx, 0, "j at bottom wraps to first row");
+    assert_eq!(state.vis_line, 0);
+
+    // 'k' on the first row wraps to the bottom.
+    state.move_up_wrap();
+    assert_eq!(state.row_idx, last, "k at top wraps to last row");
+    assert_eq!(
+        state.vis_line,
+        last_segs.saturating_sub(1),
+        "k wrap lands on the last visual segment"
+    );
+
+    // Plain moves (mouse wheel path) clamp instead of wrapping.
+    state.row_idx = last;
+    state.vis_line = last_segs.saturating_sub(1);
+    state.move_down();
+    assert_eq!(state.row_idx, last, "wheel down clamps at bottom");
+    state.row_idx = 0;
+    state.vis_line = 0;
+    state.move_up();
+    assert_eq!(state.row_idx, 0, "wheel up clamps at top");
+}
+
+#[test]
+fn test_hunk_jump_onto_first_hunk_keeps_banner() {
+    let mut lines_a = String::new();
+    let mut lines_b = String::new();
+    let mut diff_a = String::new();
+    let mut diff_b = String::new();
+    for i in 1..=30 {
+        lines_a.push_str(&format!("a line {i}\n"));
+        lines_b.push_str(&format!("b line {i}\n"));
+        diff_a.push_str(&format!("+a line {i}\n"));
+        diff_b.push_str(&format!("+b line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,30 @@\n{diff_a}diff --git a/b.rs b/b.rs\nindex 222..333 100644\n--- a/b.rs\n+++ b/b.rs\n@@ -0,0 +1,30 @@\n{diff_b}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a), ("b.rs".to_string(), lines_b)]
+        .into_iter()
+        .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+    state.row_idx = 0;
+    state.scroll = 0;
+    let a_hunk = state
+        .hunk_starts
+        .iter()
+        .find(|h| h.file == 0)
+        .map(|h| h.flat)
+        .expect("a.rs hunk");
+    let b_hunk = state
+        .hunk_starts
+        .iter()
+        .find(|h| h.file == 1)
+        .map(|h| h.flat)
+        .expect("b.rs hunk");
+    let a_banner = state.first_row_of_file(0);
+    let b_banner = state.first_row_of_file(1);
+
+    // J from the banner counts as inside H1, so it lands the next file's
+    // first hunk and keeps that file's banner at the top row.
+    state.next_hunk();
+    assert_eq!(state.row_idx, b_hunk, "cursor on b.rs hunk head");
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(80);
+    let max_scroll = total_vis_lines.saturating_sub(state.viewport_height.max(4));
+    assert_eq!(state.scroll, starts[b_banner].min(max_scroll));
+    assert_eq!(starts[b_banner] - state.scroll, 0, "b.rs banner at row #0");
+
+    // K back onto a first hunk likewise reveals its banner.
+    state.prev_hunk();
+    assert_eq!(state.row_idx, a_hunk, "cursor on a.rs hunk head");
+    let (starts, _, _, total_vis_lines) = state.visual_geometry(80);
+    let max_scroll = total_vis_lines.saturating_sub(state.viewport_height.max(4));
+    assert_eq!(state.scroll, starts[a_banner].min(max_scroll));
+    assert_eq!(starts[a_banner] - state.scroll, 0, "a.rs banner at row #0");
+}
+
+#[test]
+fn test_hunk_jump_from_banner_counts_as_inside_first_hunk() {
+    let diff = "diff --git a/foo.rs b/foo.rs\n--- a/foo.rs\n+++ b/foo.rs\n@@ -1,3 +1,4 @@\n fn a() {\n+    let x = 1;\n     return 1;\n }\n@@ -30,3 +31,4 @@ fn b() {\n fn b() {\n+    let y = 2;\n     return 2;\n }\n";
+    let mut old_lines = vec![
+        "fn a() {".to_string(),
+        "    return 1;".to_string(),
+        "}".to_string(),
+    ];
+    for i in 4..=29 {
+        old_lines.push(format!("    // filler {i}"));
+    }
+    old_lines.push("fn b() {".to_string());
+    old_lines.push("    return 2;".to_string());
+    old_lines.push("}".to_string());
+    let mut new_lines = vec![
+        "fn a() {".to_string(),
+        "    let x = 1;".to_string(),
+        "    return 1;".to_string(),
+        "}".to_string(),
+    ];
+    for i in 5..=30 {
+        new_lines.push(format!("    // filler {i}"));
+    }
+    new_lines.push("fn b() {".to_string());
+    new_lines.push("    let y = 2;".to_string());
+    new_lines.push("    return 2;".to_string());
+    new_lines.push("}".to_string());
+    let new_content = [("foo.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_content = [("foo.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(
+            diff,
+            Some(new_content),
+            Some(old_content),
+            PipelineOptions::default(),
+        ),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    state.viewport_height = 6;
+    state.last_content_width = 80;
+
+    // Cursor on the file banner counts as inside hunk #1: J skips to H2.
+    state.row_idx = 0;
+    assert!(state.flat[state.row_idx].is_file_header);
+    state.next_hunk();
+    assert_eq!(
+        state.row_idx, state.hunk_starts[1].flat,
+        "J from banner must skip H1 and land in H2"
+    );
+    assert_eq!(state.current_hunk(), Some(1));
+
+    // K from the banner goes to the hunk before H1 (wrapping here).
+    state.row_idx = 0;
+    state.prev_hunk();
+    assert_eq!(
+        state.row_idx,
+        state.hunk_starts[state.hunk_starts.len() - 1].flat,
+        "K from banner must leave H1 backwards"
+    );
+}
+
+#[test]
+fn test_hunk_jump_from_hunkless_banner_falls_back_to_row() {
+    use crate::core::{
+        counts::FileCounts,
+        parse::RowKind,
+        wire::{OutputFile, OutputHunk, OutputRow},
+    };
+
+    let diff = r#"diff --git a/tracked.rs b/tracked.rs
+index 1111111..2222222 100644
+--- a/tracked.rs
++++ b/tracked.rs
+@@ -1 +1,2 @@
+ fn main() {}
++fn extra() {}
+"#;
+    let new_content = [(
+        "tracked.rs".to_string(),
+        "fn main() {}\nfn extra() {}\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let mut out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
+    out.files.insert(
+        0,
+        OutputFile {
+            path: "untracked.rs".to_string(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
+            status: "untracked".to_string(),
+            new_line_count: 1,
+            old_line_count: 0,
+            new_content: vec!["fn new_untracked() {}".to_string()],
+            old_content: Vec::new(),
+            hunks: vec![OutputHunk {
+                old_start: 0,
+                old_count: 0,
+                new_start: 1,
+                new_count: 1,
+                rows: vec![OutputRow {
+                    kind: RowKind::Add,
+                    mov_side: None,
+                    new_line: Some(1),
+                    old_line: None,
+                    text: "fn new_untracked() {}".to_string(),
+                    del_text: None,
+                    spans: Default::default(),
+                    runs: Vec::new(),
+                    wholesale: false,
+                }],
+            }],
+            raw_hunks: Vec::new(),
+            counts: FileCounts {
+                adds: 1,
+                dels: 0,
+                mods: 0,
+                movs: 0,
+                notes: 0,
+            },
+            fences: Vec::new(),
+            notes: Vec::new(),
+            content_runs: Vec::new(),
+            rows: Vec::new(),
+            is_binary: false,
+            old_bytes: None,
+            new_bytes: None,
+            raw_source: None,
+        },
+    );
+
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+    // Untracked files collapse by default: banner only, no hunk starts.
+    assert!(state.collapsed_files.contains(&0));
+    assert!(state.hunk_starts.iter().all(|h| h.file != 0));
+
+    // J from the hunkless banner falls back to plain row order.
+    state.row_idx = 0;
+    assert!(state.flat[state.row_idx].is_file_header);
+    state.next_hunk();
+    let tracked_hunk = state
+        .hunk_starts
+        .iter()
+        .find(|h| h.file == 1)
+        .map(|h| h.flat)
+        .expect("tracked.rs must have a hunk");
+    assert_eq!(state.row_idx, tracked_hunk);
 }

@@ -1,6 +1,7 @@
 //! File and row count calculation for review summaries.
 
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use crate::parse::{DiffFile, Row};
 
@@ -21,10 +22,75 @@ fn usize_is_zero(v: &usize) -> bool {
     *v == 0
 }
 
+/// Which mod-count bucket a display segment belongs to. Renderers map this
+/// to their own highlight palette; the marker glyphs live on
+/// [`CountSegment`] so every counts format shares one source of truth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CountKind {
+    Dels,
+    Adds,
+    Mods,
+    Movs,
+    Notes,
+}
+
+/// One non-zero mod-count segment for display: its bucket, marker glyph, and
+/// value. Markers carry their own spacing (`"💬 "` trails a space) so
+/// renderers simply join `marker + value` segments with a single space.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CountSegment {
+    pub kind: CountKind,
+    pub marker: &'static str,
+    pub value: usize,
+}
+
 impl FileCounts {
     /// Returns `true` when all counts are zero (no changes and no notes).
     pub fn is_empty(&self) -> bool {
         self.adds == 0 && self.dels == 0 && self.mods == 0 && self.movs == 0 && self.notes == 0
+    }
+
+    /// Non-zero count segments in stable display order (dels, adds, mods,
+    /// movs, notes). At most five segments exist, stored inline. Empty when
+    /// [`FileCounts::is_empty`].
+    pub fn segments(&self) -> SmallVec<[CountSegment; 5]> {
+        let mut out = SmallVec::new();
+        if self.dels > 0 {
+            out.push(CountSegment {
+                kind: CountKind::Dels,
+                marker: "−",
+                value: self.dels,
+            });
+        }
+        if self.adds > 0 {
+            out.push(CountSegment {
+                kind: CountKind::Adds,
+                marker: "+",
+                value: self.adds,
+            });
+        }
+        if self.mods > 0 {
+            out.push(CountSegment {
+                kind: CountKind::Mods,
+                marker: "~",
+                value: self.mods,
+            });
+        }
+        if self.movs > 0 {
+            out.push(CountSegment {
+                kind: CountKind::Movs,
+                marker: "≈",
+                value: self.movs,
+            });
+        }
+        if self.notes > 0 {
+            out.push(CountSegment {
+                kind: CountKind::Notes,
+                marker: "💬 ",
+                value: self.notes,
+            });
+        }
+        out
     }
 
     pub fn reverse(&self) -> Self {

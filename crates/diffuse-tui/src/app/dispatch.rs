@@ -33,12 +33,22 @@ impl AppState {
                     self.sel_pivot = None;
                 }
             }
-            TuiCommand::MoveUp(n) | TuiCommand::MouseScrollUp(n) => {
+            TuiCommand::MoveUp(n) => {
+                for _ in 0..n {
+                    self.move_up_wrap();
+                }
+            }
+            TuiCommand::MouseScrollUp(n) => {
                 for _ in 0..n {
                     self.move_up();
                 }
             }
-            TuiCommand::MoveDown(n) | TuiCommand::MouseScrollDown(n) => {
+            TuiCommand::MoveDown(n) => {
+                for _ in 0..n {
+                    self.move_down_wrap();
+                }
+            }
+            TuiCommand::MouseScrollDown(n) => {
                 for _ in 0..n {
                     self.move_down();
                 }

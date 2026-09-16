@@ -2,7 +2,7 @@
 
 use crate::{
     collapse::collapse_hunk_rows,
-    counts::{FileCounts, file_counts},
+    counts::{CountKind, FileCounts, file_counts},
     moves::mark_moves,
     parse::{AddLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row},
 };
@@ -114,4 +114,44 @@ fn counts_moved_pair_is_neither_add_nor_del() {
         },
         "a moved pair counts as one mov"
     );
+}
+
+#[test]
+fn segments_collect_nonzero_counts_in_display_order() {
+    let counts = FileCounts {
+        adds: 15,
+        dels: 0,
+        mods: 6,
+        movs: 2,
+        notes: 1,
+    };
+    let segments = counts.segments();
+    let kinds: Vec<CountKind> = segments.iter().map(|s| s.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            CountKind::Adds,
+            CountKind::Mods,
+            CountKind::Movs,
+            CountKind::Notes
+        ],
+        "zero dels must be skipped, order must be stable"
+    );
+    let texts: Vec<String> = segments
+        .iter()
+        .map(|s| format!("{}{}", s.marker, s.value))
+        .collect();
+    assert_eq!(texts, vec!["+15", "~6", "≈2", "💬 1"]);
+
+    let empty = FileCounts::default().segments();
+    assert!(empty.is_empty(), "all-zero counts yield no segments");
+
+    let dels_only = FileCounts {
+        dels: 4,
+        ..Default::default()
+    }
+    .segments();
+    assert_eq!(dels_only.len(), 1);
+    assert_eq!(dels_only[0].kind, CountKind::Dels);
+    assert_eq!(dels_only[0].marker, "−");
 }

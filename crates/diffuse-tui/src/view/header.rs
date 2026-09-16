@@ -4,11 +4,15 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
+use smallvec::SmallVec;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::{
-    core::{counts::FileCounts, wire::OutputFile},
+    core::{
+        counts::{CountKind, FileCounts},
+        wire::OutputFile,
+    },
     render::slice_by_visual_width,
 };
 
@@ -164,107 +168,72 @@ pub fn truncate_pad(s: &str, target_width: usize) -> String {
     out
 }
 
+/// Highlight palette for mod-count segments by bucket.
+fn count_color(kind: CountKind) -> u8 {
+    match kind {
+        CountKind::Dels => 203,
+        CountKind::Adds => 120,
+        CountKind::Mods => 214,
+        CountKind::Movs => 147,
+        CountKind::Notes => 220,
+    }
+}
+
 /// Format mod counts as a plain text string (`−dels`, `+adds`, `~mods`,
-/// `≈movs`, `💬 notes`). Returns an empty string when all counts are zero.
+/// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
+/// all counts are zero.
 pub fn format_counts_plain(counts: &FileCounts) -> String {
-    if counts.dels == 0
-        && counts.adds == 0
-        && counts.mods == 0
-        && counts.movs == 0
-        && counts.notes == 0
-    {
-        return String::new();
-    }
-    let mut s = format!("−{}", counts.dels);
-    if counts.adds > 0 {
-        s.push_str(&format!(" +{}", counts.adds));
-    }
-    if counts.mods > 0 {
-        s.push_str(&format!(" ~{}", counts.mods));
-    }
-    if counts.movs > 0 {
-        s.push_str(&format!(" ≈{}", counts.movs));
-    }
-    if counts.notes > 0 {
-        s.push_str(&format!(" 💬 {}", counts.notes));
-    }
-    s
+    counts
+        .segments()
+        .iter()
+        .map(|seg| format!("{}{}", seg.marker, seg.value))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Format mod counts as an ANSI-highlighted string (`−dels`, `+adds`, `~mods`,
-/// `≈movs`, `💬 notes`). Returns an empty string when all counts are zero.
+/// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
+/// all counts are zero.
 pub fn format_counts_ansi(counts: &FileCounts) -> String {
-    if counts.is_empty() {
-        return String::new();
-    }
-    let mut s = format!("\x1b[1m\x1b[38;5;203m−{}\x1b[0m", counts.dels);
-    if counts.adds > 0 {
-        s.push_str(&format!(" \x1b[1m\x1b[38;5;120m+{}\x1b[0m", counts.adds));
-    }
-    if counts.mods > 0 {
-        s.push_str(&format!(" \x1b[1m\x1b[38;5;214m~{}\x1b[0m", counts.mods));
-    }
-    if counts.movs > 0 {
-        s.push_str(&format!(" \x1b[1m\x1b[38;5;147m≈{}\x1b[0m", counts.movs));
-    }
-    if counts.notes > 0 {
-        s.push_str(&format!(" \x1b[1m\x1b[38;5;220m💬 {}\x1b[0m", counts.notes));
-    }
-    s
+    counts
+        .segments()
+        .iter()
+        .enumerate()
+        .map(|(i, seg)| {
+            let sep = if i == 0 { "" } else { " " };
+            format!(
+                "{sep}\x1b[1m\x1b[38;5;{}m{}{}\x1b[0m",
+                count_color(seg.kind),
+                seg.marker,
+                seg.value
+            )
+        })
+        .collect::<String>()
 }
 
 /// Format mod counts as styled Ratatui [`Span`]s (`−dels`, `+adds`, `~mods`,
-/// `≈movs`, `💬 notes`). Returns an empty vec when all counts are zero.
-pub fn format_counts_spans(counts: &FileCounts) -> Vec<Span<'static>> {
-    if counts.is_empty() {
-        return Vec::new();
-    }
-    let mut spans = vec![Span::styled(
-        format!("−{}", counts.dels),
-        Style::default()
-            .fg(Color::Indexed(203))
-            .add_modifier(Modifier::BOLD),
-    )];
-    if counts.adds > 0 {
+/// `≈movs`, `💬 notes`), omitting zero counts. At most five spans are ever
+/// produced, stored inline without heap allocation. Returns an empty vec
+/// when all counts are zero.
+pub fn format_counts_spans(counts: &FileCounts) -> SmallVec<[Span<'static>; 5]> {
+    let mut spans: SmallVec<[Span<'static>; 5]> = SmallVec::new();
+    for (i, seg) in counts.segments().iter().enumerate() {
+        let prefix = if i == 0 { "" } else { " " };
         spans.push(Span::styled(
-            format!(" +{}", counts.adds),
+            format!("{prefix}{}{}", seg.marker, seg.value),
             Style::default()
-                .fg(Color::Indexed(120))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    if counts.mods > 0 {
-        spans.push(Span::styled(
-            format!(" ~{}", counts.mods),
-            Style::default()
-                .fg(Color::Indexed(214))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    if counts.movs > 0 {
-        spans.push(Span::styled(
-            format!(" ≈{}", counts.movs),
-            Style::default()
-                .fg(Color::Indexed(147))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    if counts.notes > 0 {
-        spans.push(Span::styled(
-            format!(" 💬 {}", counts.notes),
-            Style::default()
-                .fg(Color::Indexed(220))
+                .fg(Color::Indexed(count_color(seg.kind)))
                 .add_modifier(Modifier::BOLD),
         ));
     }
     spans
 }
 
-/// Render the top review header bar with file path, status, and line counts,
-/// wrapping across lines if wider than `width`.
+/// Render the top review header bar: repo name, branch/commit-range glyph,
+/// global counts, and common directory prefix. Per-file path and counts live
+/// in the secondary status bar.
 pub fn render_header_bar(
     repo: &str,
-    file: Option<&OutputFile>,
     width: usize,
     common_prefix: Option<&str>,
     global_counts: Option<FileCounts>,
@@ -280,9 +249,11 @@ pub fn render_header_bar(
     } else {
         String::new()
     };
+    // No dot before the global counts: the branch glyph (or repo name)
+    // already separates them.
     let global_counts_seg = match global_counts {
         Some(ref gc) if !gc.is_empty() => {
-            format!(" \x1b[38;5;240m·\x1b[0m {}", format_counts_ansi(gc))
+            format!(" {}", format_counts_ansi(gc))
         }
         _ => String::new(),
     };
@@ -295,49 +266,8 @@ pub fn render_header_bar(
         String::new()
     };
 
-    let head_raw = if let Some(file) = file {
-        let counts_ansi = format_counts_ansi(&file.counts);
-        let counts_seg = if counts_ansi.is_empty() {
-            String::new()
-        } else {
-            format!(" \x1b[38;5;240m·\x1b[0m {counts_ansi}")
-        };
-
-        let stripped_old = file.old_path.as_deref().map(|old| {
-            if let Some(pfx) = common_prefix {
-                old.strip_prefix(pfx).unwrap_or(old).to_string()
-            } else {
-                old.to_string()
-            }
-        });
-        let stripped_path = if let Some(pfx) = common_prefix {
-            file.path
-                .strip_prefix(pfx)
-                .unwrap_or(&file.path)
-                .to_string()
-        } else {
-            file.path.clone()
-        };
-
-        let styled_path = if let Some(ref old) = stripped_old
-            && old != &stripped_path
-        {
-            crate::core::wire::format_rename_path_styled(old, &stripped_path, "\x1b[38;5;231m")
-        } else {
-            stripped_path
-        };
-
-        let status_seg = if file.status == "renamed" || file.status == "modified" {
-            String::new()
-        } else {
-            format!(" ({})", file.status)
-        };
-        format!(
-            " \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{branch_seg}{global_counts_seg}{prefix_seg} \x1b[38;5;240m·\x1b[0m {styled_path}{status_seg}{counts_seg}"
-        )
-    } else {
-        format!(" \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{branch_seg}{global_counts_seg}{prefix_seg}")
-    };
+    let head_raw =
+        format!(" \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{branch_seg}{global_counts_seg}{prefix_seg}");
     let wrapped = wrap_text_by_visual_width(&head_raw, width);
     wrapped
         .into_iter()
@@ -363,10 +293,50 @@ pub struct StatusBarContext<'a> {
     pub width: usize,
     pub is_streaming: bool,
     pub streaming_dot: &'a str,
+    /// Current file whose sub-path and counts lead the status bar.
+    pub file: Option<&'a OutputFile>,
+    /// Change counts of the current hunk, shown after the hunk badge.
+    pub hunk_counts: Option<FileCounts>,
 }
 
-/// Render the secondary status bar with file index, hunk index, and mode
-/// indicators, wrapping across lines if wider than `width`.
+/// Current file path stripped of the shared directory prefix, rendering
+/// renames as `old -> new`.
+fn stripped_file_path(file: &OutputFile, common_prefix: Option<&str>) -> String {
+    let stripped_old = file.old_path.as_deref().map(|old| {
+        if let Some(pfx) = common_prefix {
+            old.strip_prefix(pfx).unwrap_or(old).to_string()
+        } else {
+            old.to_string()
+        }
+    });
+    let stripped_path = if let Some(pfx) = common_prefix {
+        file.path
+            .strip_prefix(pfx)
+            .unwrap_or(&file.path)
+            .to_string()
+    } else {
+        file.path.clone()
+    };
+    if let Some(old) = stripped_old
+        && old != stripped_path
+    {
+        format!("{old} -> {stripped_path}")
+    } else {
+        stripped_path
+    }
+}
+
+/// File status tag; routine `modified`/`renamed` states stay unadorned.
+fn file_status_tag(file: &OutputFile) -> String {
+    if file.status == "renamed" || file.status == "modified" {
+        String::new()
+    } else {
+        format!(" ({})", file.status)
+    }
+}
+
+/// Render the secondary status bar: file badge, current file sub-path and
+/// counts, hunk badge and hunk counts, plus mode indicators.
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     let files_badge = if ctx.total_files == 0 {
         "\x1b[1m\x1b[38;5;220mfile 0/0\x1b[0m".to_string()
@@ -377,6 +347,20 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
             ctx.total_files
         )
     };
+    let file_seg = if let Some(f) = ctx.file {
+        let path = stripped_file_path(f, ctx.common_prefix);
+        let status = file_status_tag(f);
+        let counts_txt = if f.counts.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", format_counts_ansi(&f.counts))
+        };
+        format!(
+            " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;231m{path}\x1b[0m\x1b[38;5;244m{status}\x1b[0m{counts_txt}"
+        )
+    } else {
+        String::new()
+    };
     let hunk_badge = if ctx.total_files == 0 || ctx.total_hunks == 0 {
         "\x1b[1m\x1b[38;5;213mhunk 0/0\x1b[0m".to_string()
     } else {
@@ -385,6 +369,10 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
             ctx.cur_hunk + 1,
             ctx.total_hunks
         )
+    };
+    let hunk_counts_txt = match ctx.hunk_counts {
+        Some(c) if !c.is_empty() => format!(" ({})", format_counts_ansi(&c)),
+        _ => String::new(),
     };
     let stream_txt = if ctx.is_streaming {
         let dot = if ctx.streaming_dot.is_empty() {
@@ -418,7 +406,7 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
         String::new()
     };
     let line = format!(
-        " {files_badge}{stream_txt} \x1b[38;5;240m·\x1b[0m {hunk_badge}{mode_txt}{col_txt}{go_txt}"
+        " {files_badge}{file_seg}{stream_txt} \x1b[38;5;240m·\x1b[0m {hunk_badge}{hunk_counts_txt}{mode_txt}{col_txt}{go_txt}"
     );
     let vw = visible_width(&line);
     if vw <= ctx.width {
@@ -454,10 +442,10 @@ pub fn render_bottom_ribbon(width: usize) -> (String, String) {
 }
 
 /// Render the review header bar as a styled Ratatui [`Line`] with theme
-/// support.
+/// support: repo name, branch/commit-range glyph, global counts, and common
+/// directory prefix.
 pub fn header_bar_line_themed(
     repo: &str,
-    file: Option<&OutputFile>,
     theme: &crate::render::DiffuseTheme,
     common_prefix: Option<&str>,
     global_counts: Option<FileCounts>,
@@ -503,10 +491,9 @@ pub fn header_bar_line_themed(
     if let Some(ref gc) = global_counts
         && !gc.is_empty()
     {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
+        // No dot separator: the branch glyph (or repo name) already
+        // separates the global counts.
+        spans.push(Span::raw(" "));
         spans.extend(format_counts_spans(gc));
     }
 
@@ -526,99 +513,12 @@ pub fn header_bar_line_themed(
     }
 
     let bg = crate::view::to_color(theme.palette.header_bar_bg);
-    let Some(file) = file else {
-        return Line::from(spans).style(Style::default().bg(bg));
-    };
-
-    spans.push(Span::styled(
-        " · ",
-        Style::default().fg(Color::Indexed(240)),
-    ));
-
-    let stripped_old = file.old_path.as_deref().map(|old| {
-        if let Some(pfx) = common_prefix {
-            old.strip_prefix(pfx).unwrap_or(old).to_string()
-        } else {
-            old.to_string()
-        }
-    });
-    let stripped_path = if let Some(pfx) = common_prefix {
-        file.path
-            .strip_prefix(pfx)
-            .unwrap_or(&file.path)
-            .to_string()
-    } else {
-        file.path.clone()
-    };
-
-    if let Some(ref old) = stripped_old
-        && old != &stripped_path
-    {
-        let old_parts: Vec<&str> = old.split('/').collect();
-        let new_parts: Vec<&str> = stripped_path.split('/').collect();
-        let mut common_len = 0;
-        while common_len + 1 < old_parts.len()
-            && common_len + 1 < new_parts.len()
-            && old_parts[common_len] == new_parts[common_len]
-        {
-            common_len += 1;
-        }
-        if common_len > 0 {
-            let pfx = format!("{}/", old_parts[..common_len].join("/"));
-            let old_rem = old_parts[common_len..].join("/");
-            let new_rem = new_parts[common_len..].join("/");
-            spans.push(Span::styled(
-                pfx,
-                Style::default()
-                    .fg(Color::Indexed(139))
-                    .add_modifier(Modifier::UNDERLINED | Modifier::BOLD),
-            ));
-            spans.push(Span::styled(
-                format!("{old_rem} -> {new_rem}"),
-                Style::default()
-                    .fg(Color::Indexed(231))
-                    .add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            spans.push(Span::styled(
-                format!("{old} -> {stripped_path}"),
-                Style::default()
-                    .fg(Color::Indexed(231))
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
-    } else {
-        spans.push(Span::styled(
-            stripped_path,
-            Style::default()
-                .fg(Color::Indexed(231))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-
-    if file.status != "renamed" && file.status != "modified" {
-        spans.push(Span::styled(
-            format!(" ({})", file.status),
-            Style::default().fg(Color::Indexed(244)),
-        ));
-    }
-
-    let count_spans = format_counts_spans(&file.counts);
-    if !count_spans.is_empty() {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
-        spans.extend(count_spans);
-    }
-
     Line::from(spans).style(Style::default().bg(bg))
 }
 
 /// Render the review header bar as a styled Ratatui [`Line`].
 pub fn header_bar_line(
     repo: &str,
-    file: Option<&OutputFile>,
     common_prefix: Option<&str>,
     global_counts: Option<FileCounts>,
     branch: Option<&str>,
@@ -626,7 +526,6 @@ pub fn header_bar_line(
 ) -> Line<'static> {
     header_bar_line_themed(
         repo,
-        file,
         &crate::render::DiffuseTheme::from_env(),
         common_prefix,
         global_counts,
@@ -647,15 +546,37 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
     } else {
         format!("hunk {}/{}", ctx.cur_hunk + 1, ctx.total_hunks)
     };
-    let mut spans = vec![
-        Span::raw(" "),
-        Span::styled(
-            file_text,
+    let mut spans = vec![Span::raw(" ")];
+    spans.push(Span::styled(
+        file_text,
+        Style::default()
+            .fg(Color::Indexed(220))
+            .add_modifier(Modifier::BOLD),
+    ));
+    if let Some(f) = ctx.file {
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            stripped_file_path(f, ctx.common_prefix),
             Style::default()
-                .fg(Color::Indexed(220))
+                .fg(Color::Indexed(231))
                 .add_modifier(Modifier::BOLD),
-        ),
-    ];
+        ));
+        let status = file_status_tag(f);
+        if !status.is_empty() {
+            spans.push(Span::styled(
+                status,
+                Style::default().fg(Color::Indexed(244)),
+            ));
+        }
+        if !f.counts.is_empty() {
+            spans.push(Span::raw(" ("));
+            spans.extend(format_counts_spans(&f.counts));
+            spans.push(Span::raw(")"));
+        }
+    }
     if ctx.is_streaming {
         let dot = if ctx.streaming_dot.is_empty() {
             "●"
@@ -683,6 +604,13 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
             .fg(Color::Indexed(213))
             .add_modifier(Modifier::BOLD),
     ));
+    if let Some(c) = ctx.hunk_counts
+        && !c.is_empty()
+    {
+        spans.push(Span::raw(" ("));
+        spans.extend(format_counts_spans(&c));
+        spans.push(Span::raw(")"));
+    }
     if ctx.raw_diff {
         spans.push(Span::styled(
             " · ",

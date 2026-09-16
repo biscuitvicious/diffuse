@@ -2,10 +2,7 @@
 
 use super::header::truncate_pad;
 use crate::{
-    core::{
-        parse::RowKind,
-        wire::{OutputFile, OutputHunk},
-    },
+    core::wire::{OutputFile, OutputHunk},
     render::{ColorExt, DiffuseTheme, slice_by_visual_width},
 };
 
@@ -269,19 +266,8 @@ pub fn render_file_header(
 /// `{rows} lines (-dels +adds ~mods)` plus the hidden-gap tail.
 /// The caller is responsible for filling any remaining width with `─` chars.
 pub fn hunk_divider_text(hi: usize, hunk: &OutputHunk, hidden_gap: usize) -> String {
-    let mut dels: usize = 0;
-    let mut adds: usize = 0;
-    let mut mods: usize = 0;
-    let mut movs: usize = 0;
-    for r in &hunk.rows {
-        match r.kind {
-            RowKind::Del => dels += 1,
-            RowKind::Add => adds += 1,
-            RowKind::Mod => mods += 1,
-            RowKind::Mov => movs += 1,
-            _ => {}
-        }
-    }
+    let counts = hunk.counts();
+    let (dels, adds, mods, movs) = (counts.dels, counts.adds, counts.mods, counts.movs);
     let total = dels + adds + mods + movs;
     let unit = if total == 1 { "line" } else { "lines" };
     let mov_str = if movs > 0 {

@@ -9,6 +9,7 @@ description = "Core diff engine, AST parsing, sequence alignment, DP clustering,
 diffuse-syntax = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+smallvec = { workspace = true }
 difflib = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }

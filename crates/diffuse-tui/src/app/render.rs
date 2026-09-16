@@ -35,7 +35,6 @@ impl AppState {
         // Header bar
         lines.extend(render_header_bar(
             &self.repo,
-            f,
             width,
             common_prefix.as_deref(),
             Some(self.output.total_counts()),
@@ -47,6 +46,11 @@ impl AppState {
         let total_files = self.output.files.len();
         let cur_hunk = self.current_hunk().unwrap_or(0);
         let total_hunks = f.map_or(0, |file| file.hunks.len().max(1));
+        let hunk_counts = f.and_then(|file| {
+            file.hunks
+                .get(cur_hunk)
+                .map(|h| h.counts_with_notes(&file.notes))
+        });
         lines.extend(render_status_bar(crate::view::StatusBarContext {
             cur_fi,
             total_files,
@@ -59,6 +63,8 @@ impl AppState {
             width,
             is_streaming: self.is_streaming,
             streaming_dot: self.streaming_dot(),
+            file: f,
+            hunk_counts,
         }));
 
         // Ephemeral action feedback (note saved/deleted, git ops, ...)
@@ -424,7 +430,6 @@ impl AppState {
         let common_prefix = self.output.common_directory_prefix();
         let header_line = crate::view::header_bar_line_themed(
             &self.repo,
-            file,
             &self.theme,
             common_prefix.as_deref(),
             Some(self.output.total_counts()),
@@ -439,10 +444,16 @@ impl AppState {
         chunk_idx += 1;
 
         // 2. Status Bar
+        let cur_hunk = self.current_hunk().unwrap_or(0);
+        let hunk_counts = file.and_then(|fl| {
+            fl.hunks
+                .get(cur_hunk)
+                .map(|h| h.counts_with_notes(&fl.notes))
+        });
         let status_ctx = crate::view::StatusBarContext {
             cur_fi,
             total_files: self.output.files.len(),
-            cur_hunk: self.current_hunk().unwrap_or(0),
+            cur_hunk,
             total_hunks: file.map_or(0, |fl| fl.hunks.len().max(1)),
             raw_diff: self.raw_diff,
             col_offset: self.col_offset,
@@ -451,6 +462,8 @@ impl AppState {
             width,
             is_streaming: self.is_streaming,
             streaming_dot: self.streaming_dot(),
+            file,
+            hunk_counts,
         };
         let status_line = status_bar_line(status_ctx);
         f.render_widget(Paragraph::new(status_line), main_chunks[chunk_idx]);

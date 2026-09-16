@@ -505,3 +505,83 @@ fn test_pipeline_output_total_counts() {
     assert_eq!(totals.mods, 6);
     assert_eq!(totals.movs, 2);
 }
+
+#[test]
+fn test_output_hunk_counts() {
+    use crate::wire::MovSide;
+    let mk = |kind: RowKind, mov_side: Option<MovSide>| OutputRow {
+        kind,
+        mov_side,
+        new_line: None,
+        old_line: None,
+        text: String::new(),
+        del_text: None,
+        spans: Spans::default(),
+        runs: vec![],
+        wholesale: false,
+    };
+    let hunk = OutputHunk {
+        old_start: 1,
+        old_count: 4,
+        new_start: 1,
+        new_count: 4,
+        rows: vec![
+            mk(RowKind::Del, None),
+            mk(RowKind::Add, None),
+            mk(RowKind::Mod, None),
+            mk(RowKind::Mov, Some(MovSide::Tgt)),
+            mk(RowKind::Mov, Some(MovSide::Src)),
+            mk(RowKind::Ctx, None),
+            mk(RowKind::Sep, None),
+        ],
+    };
+    let counts = hunk.counts();
+    assert_eq!(counts.dels, 1);
+    assert_eq!(counts.adds, 1);
+    assert_eq!(counts.mods, 1);
+    assert_eq!(counts.movs, 2);
+    assert_eq!(counts.notes, 0);
+}
+
+#[test]
+fn test_output_hunk_note_count() {
+    use crate::{notes::Side as NoteSide, wire::OutputNote};
+    let note = |side: NoteSide, start: u32, end: u32| OutputNote {
+        id: "n".to_string(),
+        file: "src/sample.rs".to_string(),
+        side,
+        start,
+        end,
+        text: String::new(),
+        created_at: 0,
+        runs: vec![],
+    };
+    // Old lines [10, 15), new lines [20, 24).
+    let hunk = OutputHunk {
+        old_start: 10,
+        old_count: 5,
+        new_start: 20,
+        new_count: 4,
+        rows: vec![],
+    };
+    let notes = vec![
+        note(NoteSide::New, 21, 22), // ends inside the new range
+        note(NoteSide::Old, 10, 10), // ends at the old range start
+        note(NoteSide::New, 24, 30), // starts where the new range ends
+        note(NoteSide::Old, 20, 21), // overlaps new range, wrong side
+        note(NoteSide::New, 18, 29), // spans through the hunk, ends outside
+        note(NoteSide::New, 15, 18), // ends before the new range starts
+    ];
+    assert_eq!(hunk.note_count(&notes), 2);
+
+    // Empty hunk ranges never match, even for spanning notes.
+    let empty = OutputHunk {
+        old_start: 5,
+        old_count: 0,
+        new_start: 5,
+        new_count: 0,
+        rows: vec![],
+    };
+    assert_eq!(empty.note_count(&[note(NoteSide::New, 4, 6)]), 0);
+    assert_eq!(hunk.note_count(&[]), 0);
+}

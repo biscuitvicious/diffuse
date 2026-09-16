@@ -61,25 +61,21 @@ fn test_hunk_starts_and_navigation() {
         temp_notes_path(),
     );
     assert_eq!(state.hunk_starts.len(), 2, "both hunks must be located");
-    // Start from file header (row 0), next jumps to hunk 1's start
+    // Start from file header (row 0): the banner counts as inside hunk 1,
+    // so next jumps to hunk 2's start
     state.row_idx = 0;
     state.next_hunk();
-    assert_eq!(state.current_hunk(), Some(0));
+    assert_eq!(state.current_hunk(), Some(1));
 
     state.next_hunk();
-    let at = state.row_idx;
     assert_eq!(
         state.current_hunk(),
-        Some(1),
-        "next_hunk must land in hunk 2"
-    );
-    assert!(
-        at > state.hunk_starts[0].flat,
-        "next_hunk must jump past hunk 1"
+        Some(0),
+        "next_hunk must wrap past hunk 2"
     );
 
     state.prev_hunk();
-    assert_eq!(state.current_hunk(), Some(0), "prev_hunk returns to hunk 1");
+    assert_eq!(state.current_hunk(), Some(1), "prev_hunk returns to hunk 2");
 }
 
 #[test]

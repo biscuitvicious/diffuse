@@ -711,6 +711,51 @@ impl OutputHunk {
         }
     }
 
+    /// Aggregated line-level change counts for this hunk's rows, mirroring
+    /// [`crate::counts::file_counts`] row semantics (moved sources and
+    /// targets both count as relocations; context and separators excluded).
+    /// Notes attach at file level, so `notes` is always 0 — use
+    /// [`OutputHunk::note_count`] to attribute a file's notes to this hunk.
+    pub fn counts(&self) -> FileCounts {
+        let mut counts = FileCounts::default();
+        for r in &self.rows {
+            match r.kind {
+                RowKind::Del => counts.dels += 1,
+                RowKind::Add => counts.adds += 1,
+                RowKind::Mod => counts.mods += 1,
+                RowKind::Mov => counts.movs += 1,
+                _ => {}
+            }
+        }
+        counts
+    }
+
+    /// Number of `notes` attached to lines in this hunk. A note counts
+    /// toward the single hunk where its selection range ends (the hunk's
+    /// coordinate range on the note's own side contains `end`), mirroring
+    /// where note callouts anchor. Selection ranges spanning several hunks
+    /// are therefore never double-counted.
+    pub fn note_count(&self, notes: &[OutputNote]) -> usize {
+        notes
+            .iter()
+            .filter(|n| {
+                let (start, count) = match n.side {
+                    NoteSide::New => (self.new_start, self.new_count),
+                    NoteSide::Old => (self.old_start, self.old_count),
+                };
+                count > 0 && n.end >= start && n.end < start + count
+            })
+            .count()
+    }
+
+    /// Row counts for this hunk with `notes` attributed via
+    /// [`OutputHunk::note_count`].
+    pub fn counts_with_notes(&self, notes: &[OutputNote]) -> FileCounts {
+        let mut counts = self.counts();
+        counts.notes = self.note_count(notes);
+        counts
+    }
+
     pub fn reconstruct(&self) -> Hunk {
         Hunk {
             old_start: self.old_start,
