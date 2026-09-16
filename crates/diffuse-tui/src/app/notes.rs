@@ -60,6 +60,7 @@ impl AppState {
         };
         add_note(&mut self.notes, &self.repo, note);
         let _ = save_notes(&self.notes_path, &self.notes);
+        self.bump_notes();
         self.confirmed_sel = None;
         self.anchor = None;
     }
@@ -90,6 +91,7 @@ impl AppState {
         let old_removed = remove_notes(&mut self.notes, &self.repo, &file, Side::Old, start, end);
         let removed = new_removed + old_removed;
         let _ = save_notes(&self.notes_path, &self.notes);
+        self.bump_notes();
         self.confirmed_sel = None;
         self.anchor = None;
         self.status_message = Some((

@@ -53,7 +53,6 @@ pub struct PairingContext<'a> {
 /// Composed of 4 pure passes over the diff AST.
 #[tracing::instrument(
     level = "debug",
-    ret,
     skip(h, old_content, new_content, profile),
     fields(old_start = h.old_start, new_start = h.new_start, row_count = h.rows.len())
 )]

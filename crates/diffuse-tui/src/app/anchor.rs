@@ -80,6 +80,7 @@ impl AppState {
             Self::build_visual_flat(&self.output, &self.collapsed_files)
         };
         self.flat = flat;
+        self.bump_content();
         self.hunk_starts = hunk_starts;
 
         let found_pos = match anchor {
@@ -120,7 +121,7 @@ impl AppState {
 
         let new_vis = self.cursor_visual_line();
         let (_starts, _counts, _seg, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
+            self.cached_geometry_tuple(self.last_content_width);
         let max_rows = self.viewport_height.max(1);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
@@ -203,6 +204,7 @@ impl AppState {
             Self::build_visual_flat(&self.output, &self.collapsed_files)
         };
         self.flat = flat;
+        self.bump_content();
         self.hunk_starts = hunk_starts;
 
         let found_pos = match cursor_anchor {
@@ -254,7 +256,7 @@ impl AppState {
         // Pivot screen view around the divider line — or, when the merge
         // removed it, around the locked neighbour row.
         let (starts, counts, seg_counts, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
+            self.cached_geometry_tuple(self.last_content_width);
         let div_flats: HashSet<usize> = self.hunk_starts.iter().map(|hs| hs.flat).collect();
         let text_vis = |pos: usize| -> usize {
             let off = if div_flats.contains(&pos) {

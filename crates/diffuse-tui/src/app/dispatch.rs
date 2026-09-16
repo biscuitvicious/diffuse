@@ -206,7 +206,7 @@ impl AppState {
                     // visible content area, not the full screen.
                     self.is_dragging_scrollbar = true;
                     let (_starts, _counts, _seg, total_vis) =
-                        self.visual_geometry(self.last_content_width);
+                        self.cached_geometry_tuple(self.last_content_width);
                     let max_scroll = total_vis.saturating_sub(vh);
                     let row_relative = row.saturating_sub(header_offset);
                     let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
@@ -216,7 +216,7 @@ impl AppState {
                     self.is_dragging_scrollbar = false;
                     let target_vis = self.scroll + (row - header_offset);
                     let (starts, counts, seg_counts, _total_vis) =
-                        self.visual_geometry(self.last_content_width);
+                        self.cached_geometry_tuple(self.last_content_width);
                     let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
                         HashMap::new()
                     } else {
@@ -355,7 +355,7 @@ impl AppState {
                     // the viewport-relative row and the viewport height so
                     // the pointer position on the track corresponds to the
                     // visible content area, not the full screen.
-                    let (_, _, _, total_vis) = self.visual_geometry(self.last_content_width);
+                    let (_, _, _, total_vis) = self.cached_geometry_tuple(self.last_content_width);
                     let max_scroll = total_vis.saturating_sub(vh);
                     let row_relative = row.saturating_sub(header_offset);
                     let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
@@ -381,7 +381,7 @@ impl AppState {
                     }
                     let target_vis = self.scroll + (row - header_offset);
                     let (starts, counts, _seg_counts, _total_vis) =
-                        self.visual_geometry(self.last_content_width);
+                        self.cached_geometry_tuple(self.last_content_width);
                     for (i, &s) in starts.iter().enumerate() {
                         if target_vis >= s && target_vis < s + counts[i] {
                             self.row_idx = i;

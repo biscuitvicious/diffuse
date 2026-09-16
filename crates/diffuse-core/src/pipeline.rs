@@ -266,7 +266,6 @@ pub fn is_initially_collapsed(f: &DiffFile) -> bool {
 /// on a single parsed diff file using the specified pipeline options.
 #[tracing::instrument(
     level = "debug",
-    ret,
     skip(f, new_content, old_content, _diff_fallback, opts),
     fields(
         path = %f.path,

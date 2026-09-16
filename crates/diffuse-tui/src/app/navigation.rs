@@ -17,7 +17,7 @@ impl AppState {
 
         let margin = self.viewport_margin();
         let max_rows = self.viewport_height.max(4);
-        let (starts, _, _, total_vis_lines) = self.visual_geometry(self.last_content_width);
+        let (starts, _, _, total_vis_lines) = self.cached_geometry_tuple(self.last_content_width);
 
         let target_vis = starts.get(self.row_idx).copied().unwrap_or(0);
 
@@ -76,7 +76,7 @@ impl AppState {
         } else {
             80
         };
-        let (starts, _, _, total_vis_lines) = self.visual_geometry(cw);
+        let (starts, _, _, total_vis_lines) = self.cached_geometry_tuple(cw);
         let target_vis = starts.get(self.row_idx).copied().unwrap_or(0);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = target_vis.min(max_scroll);
@@ -152,7 +152,7 @@ impl AppState {
     /// paging).
     pub fn scroll_to_visual(&mut self, target_vis: usize) {
         let (starts, counts, seg_counts, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
+            self.cached_geometry_tuple(self.last_content_width);
         let max_rows = self.viewport_height.max(4);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = target_vis.min(max_scroll);
@@ -269,8 +269,10 @@ impl AppState {
         if self.flat.is_empty() {
             return;
         }
+        let started = std::time::Instant::now();
+        let scroll_before = self.scroll;
         let (starts, _counts, seg_counts, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
+            self.cached_geometry_tuple(self.last_content_width);
         let max_rows = self.viewport_height.max(4);
         let bottom_vis = (self.scroll + max_rows)
             .saturating_sub(1)
@@ -322,14 +324,23 @@ impl AppState {
             self.row_idx = target_row;
             self.vis_line = target_vis_line;
         }
+        tracing::debug!(
+            from_scroll = scroll_before,
+            to_scroll = self.scroll,
+            row_idx = self.row_idx,
+            elapsed_ms = started.elapsed().as_millis(),
+            "page_down"
+        );
     }
 
     pub fn page_up(&mut self) {
         if self.flat.is_empty() {
             return;
         }
+        let started = std::time::Instant::now();
+        let scroll_before = self.scroll;
         let (starts, counts, seg_counts, _total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
+            self.cached_geometry_tuple(self.last_content_width);
         let top_vis = self.scroll;
 
         let mut target_row = self.row_idx;
@@ -377,6 +388,13 @@ impl AppState {
             self.row_idx = target_row;
             self.vis_line = target_vis_line;
         }
+        tracing::debug!(
+            from_scroll = scroll_before,
+            to_scroll = self.scroll,
+            row_idx = self.row_idx,
+            elapsed_ms = started.elapsed().as_millis(),
+            "page_up"
+        );
     }
 
     pub fn move_top(&mut self) {
@@ -425,7 +443,7 @@ impl AppState {
         } else {
             80
         };
-        let (starts, _, _, _) = self.visual_geometry(cw);
+        let (starts, _, _, _) = self.cached_geometry_tuple(cw);
         if starts.get(banner).copied().unwrap_or(0) < self.scroll {
             self.goto_file_idx(cur_fi);
             return;
@@ -457,7 +475,7 @@ impl AppState {
         } else {
             80
         };
-        let (starts, _, _, total_vis_lines) = self.visual_geometry(cw);
+        let (starts, _, _, total_vis_lines) = self.cached_geometry_tuple(cw);
         let banner_vis = starts.get(banner).copied().unwrap_or(0);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = banner_vis.min(max_scroll);

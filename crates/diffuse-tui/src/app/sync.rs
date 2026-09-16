@@ -127,6 +127,7 @@ impl AppState {
             self.row_idx = pos;
         }
         self.vis_line = 0;
+        self.bump_content();
     }
 
     pub(crate) fn rebuild_flat_preserving_cursor(&mut self, target_fi: usize) {
@@ -145,6 +146,7 @@ impl AppState {
             self.row_idx = self.flat.len().saturating_sub(1);
         }
         self.adjust_scroll();
+        self.bump_content();
     }
 
     pub(crate) fn adjust_scroll(&mut self) {
@@ -157,7 +159,7 @@ impl AppState {
         } else {
             80
         };
-        let (starts, counts, _, total_vis_lines) = self.visual_geometry(cw);
+        let (starts, counts, _, total_vis_lines) = self.cached_geometry_tuple(cw);
         let max_rows = self.viewport_height.max(1);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
 
@@ -189,7 +191,7 @@ impl AppState {
         } else {
             80
         };
-        let (starts, counts, _, total_vis_lines) = self.visual_geometry(cw);
+        let (starts, counts, _, total_vis_lines) = self.cached_geometry_tuple(cw);
         let Some(&header_vis) = starts.get(header_flat) else {
             return;
         };
@@ -274,6 +276,7 @@ impl AppState {
         self.hunk_starts = hunk_starts;
         self.anchor = None;
         self.confirmed_sel = None;
+        self.bump_content();
 
         let target_fi = self
             .output

@@ -79,6 +79,9 @@ pub struct AppState {
     /// Preserved while streaming, invalidated if the user moves cursor or makes
     /// any UI state change.
     pub(crate) auto_scroll_on_load: Option<(usize, usize, usize)>,
+    /// Cached visual geometry (see geometry.rs); cleared by bump_content /
+    /// bump_notes on any content or notes mutation.
+    pub(crate) geo_cache: [Option<geometry::CachedGeometry>; 2],
 }
 
 impl AppState {
@@ -153,6 +156,7 @@ impl AppState {
             expand_lines: DEFAULT_EXPAND_LINES,
             scroll_pin: None,
             auto_scroll_on_load: None,
+            geo_cache: Default::default(),
         }
     }
 

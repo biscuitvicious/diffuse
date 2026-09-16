@@ -30,6 +30,7 @@ impl AppState {
         }
         let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
         self.flat = flat;
+        self.bump_content();
         self.hunk_starts = hunk_starts;
         self.restore_cursor_anchor(anchor, screen_y, 0);
     }
@@ -78,6 +79,7 @@ impl AppState {
 
         let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
         self.flat = flat;
+        self.bump_content();
         self.hunk_starts = hunk_starts;
         self.restore_cursor_anchor(anchor, screen_y, 0);
         count > 0
@@ -94,6 +96,7 @@ impl AppState {
         }
         let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
         self.flat = flat;
+        self.bump_content();
         self.hunk_starts = hunk_starts;
         self.restore_cursor_anchor(anchor, screen_y, 0);
     }
@@ -275,6 +278,7 @@ impl AppState {
 
             let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
             self.flat = flat;
+            self.bump_content();
             self.hunk_starts = hunk_starts;
 
             if let Some(hs) = self
@@ -706,9 +710,10 @@ impl AppState {
         // bottom half below it.
         let (flat, hunk_starts) = Self::build_visual_flat(&self.output, &self.collapsed_files);
         self.flat = flat;
+        self.bump_content();
         self.hunk_starts = hunk_starts;
         let (starts, _counts, _seg, total_vis_lines) =
-            self.visual_geometry(self.last_content_width);
+            self.cached_geometry_tuple(self.last_content_width);
         // The boundary is the first downward-side row; when the divider
         // survived it is that divider's own leading segments.
         let boundary_vis = if merged {

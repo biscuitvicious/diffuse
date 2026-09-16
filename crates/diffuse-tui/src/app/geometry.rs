@@ -6,7 +6,47 @@ use crate::render::{display_text, width::display_width};
 
 use super::AppState;
 
+/// Cached visual layout: prefix sums of per-row visual heights plus the
+/// note callouts folded into them. Any mutation of diff content, flat
+/// layout, or notes must clear it via [`AppState::bump_content`] or
+/// [`AppState::bump_notes`]; frame rendering then seeks the viewport by
+/// binary search instead of remeasuring the whole content.
+#[derive(Clone, Default)]
+pub(crate) struct CachedGeometry {
+    pub(crate) content_width: usize,
+    pub(crate) raw_diff: bool,
+    pub(crate) col_offset: usize,
+    pub(crate) word_diff: bool,
+    pub(crate) starts: Vec<usize>,
+    pub(crate) counts: Vec<usize>,
+    pub(crate) seg_counts: Vec<usize>,
+    pub(crate) total_vis_lines: usize,
+    pub(crate) callouts: HashMap<usize, Vec<String>>,
+}
+
 impl AppState {
+    /// Bump after any mutation of diff content (files, hunks, rows, flat
+    /// layout): invalidates cached visual geometry.
+    #[track_caller]
+    pub(crate) fn bump_content(&mut self) {
+        self.geo_cache.iter_mut().for_each(|slot| *slot = None);
+        tracing::debug!(
+            caller = %std::panic::Location::caller(),
+            "geometry cache invalidated (content)"
+        );
+    }
+
+    /// Bump after any mutation of the review-notes database: note callouts
+    /// feed row heights, invalidating cached visual geometry.
+    #[track_caller]
+    pub(crate) fn bump_notes(&mut self) {
+        self.geo_cache.iter_mut().for_each(|slot| *slot = None);
+        tracing::debug!(
+            caller = %std::panic::Location::caller(),
+            "geometry cache invalidated (notes)"
+        );
+    }
+
     pub fn row_seg_count(&self, idx: usize, content_width: usize) -> usize {
         let Some(item) = self.flat.get(idx) else {
             return 1;
@@ -172,12 +212,77 @@ impl AppState {
     }
 
     /// Computes full visual layout mapping: starts, counts, `seg_counts`, and
-    /// total visual lines.
+    /// total visual lines. Always freshly computed; frame rendering should
+    /// prefer [`AppState::cached_geometry`].
     pub fn visual_geometry(
         &self,
         content_width: usize,
     ) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
         let callouts = self.note_callouts();
+        self.compute_geometry(content_width, &callouts)
+    }
+
+    /// Cached visual layout for frame rendering: recomputed only when the
+    /// viewport width, diff-affecting view flags, content, or notes changed
+    /// since the last call; otherwise a clone of the stored layout.
+    pub(crate) fn cached_geometry(&mut self, content_width: usize) -> CachedGeometry {
+        if let Some(hit) = self.geo_cache.iter().find_map(|slot| {
+            slot.as_ref().filter(|g| {
+                g.content_width == content_width
+                    && g.raw_diff == self.raw_diff
+                    && g.col_offset == self.col_offset
+                    && g.word_diff == self.word_diff
+            })
+        }) {
+            tracing::trace!(content_width, rows = self.flat.len(), "geometry cache hit");
+            return hit.clone();
+        }
+        let started = std::time::Instant::now();
+        let callouts = self.note_callouts();
+        let (starts, counts, seg_counts, total_vis_lines) =
+            self.compute_geometry(content_width, &callouts);
+        tracing::debug!(
+            content_width,
+            rows = self.flat.len(),
+            note_rows = callouts.len(),
+            total_vis_lines,
+            elapsed_ms = started.elapsed().as_millis(),
+            "geometry cache miss: recomputed layout"
+        );
+        let geo = CachedGeometry {
+            content_width,
+            raw_diff: self.raw_diff,
+            col_offset: self.col_offset,
+            word_diff: self.word_diff,
+            starts,
+            counts,
+            seg_counts,
+            total_vis_lines,
+            callouts,
+        };
+        // Two slots: keep the scrollbar pre-pass and viewport widths
+        // resident so they never evict each other.
+        self.geo_cache = [Some(geo.clone()), self.geo_cache[0].clone()];
+        geo
+    }
+
+    /// Cached (starts, counts, seg_counts, total) tuple for callers that
+    /// only need the layout numbers. Same cache as
+    /// [`AppState::cached_geometry`].
+    pub(crate) fn cached_geometry_tuple(
+        &mut self,
+        content_width: usize,
+    ) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
+        let geo = self.cached_geometry(content_width);
+        (geo.starts, geo.counts, geo.seg_counts, geo.total_vis_lines)
+    }
+
+    /// Shared layout computation over pre-resolved note callouts.
+    fn compute_geometry(
+        &self,
+        content_width: usize,
+        callouts: &HashMap<usize, Vec<String>>,
+    ) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
         let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
             HashMap::new()
         } else {

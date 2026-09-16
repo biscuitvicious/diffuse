@@ -482,7 +482,6 @@ impl<'a> AlignmentTape<'a> {
     /// token cap.
     #[tracing::instrument(
         level = "debug",
-        ret,
         skip_all,
         fields(
             old = %truncate_for_trace(old_text, 40),

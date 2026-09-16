@@ -230,6 +230,7 @@ impl AppState {
             Self::build_raw_flat(&self.output, &self.collapsed_files)
         };
         self.flat = flat;
+        self.bump_content();
         self.hunk_starts = hunk_starts;
         let was_raw = self.raw_diff;
         self.raw_diff = !self.raw_diff;
@@ -354,7 +355,7 @@ impl AppState {
         } else {
             width.saturating_sub(1)
         };
-        let (_, _, _, total_vis_lines) = self.visual_geometry(content_width);
+        let (_, _, _, total_vis_lines) = self.cached_geometry_tuple(content_width);
         let max_rows = self.viewport_height.max(1);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = new_vis.saturating_sub(screen_y).min(max_scroll);
@@ -373,6 +374,15 @@ impl AppState {
         let area = f.area();
         let width = area.width as usize;
         let cur_fi = self.current_file_idx();
+
+        // Scrollbar pre-pass inputs that need no borrows held.
+        let est_cw = if self.raw_diff {
+            width
+        } else {
+            width.saturating_sub(1)
+        };
+        let est_total = self.cached_geometry_tuple(est_cw).3;
+
         let file = self.output.files.get(cur_fi);
 
         let has_status_msg = self.status_message.is_some();
@@ -397,12 +407,6 @@ impl AppState {
         // chunks above, so this estimates with the scrollbar-width content.
         let diff_chunk_idx = if has_status_msg { 3 } else { 2 };
         let diff_vh = chunks[diff_chunk_idx].height as usize;
-        let est_cw = if self.raw_diff {
-            width
-        } else {
-            width.saturating_sub(1)
-        };
-        let est_total = self.visual_geometry(est_cw).3;
         let show_bar = file.is_some()
             && !self.raw_diff
             && width > 1
@@ -630,13 +634,13 @@ impl AppState {
         vh: usize,
         track_h: usize,
     ) -> (Vec<String>, bool, usize, usize, usize) {
+        let frame_start = std::time::Instant::now();
         let max_rows = vh.max(4);
         let mut lines = Vec::new();
         // Flat-row origin of each pushed grid line for width-invariant
         // diagnostics (None for viewport padding).
         let mut line_src: Vec<Option<usize>> = Vec::new();
 
-        let callouts = self.note_callouts();
         let band = self.band_rows();
         let hunk_extent = self.hunk_ctx_extent_rows();
         let cur_hunk = self.current_hunk();
@@ -649,16 +653,17 @@ impl AppState {
                 .collect()
         };
 
-        // Compute visual geometry with content_width
+        // Compute visual geometry with content_width, reusing the cached
+        // layout when inputs are unchanged instead of remeasuring the
+        // whole content every frame.
         let est_content_width = if self.raw_diff {
             width
         } else {
             width.saturating_sub(1)
         };
-        let (mut starts, mut counts, mut seg_counts, mut total_vis_lines) =
-            self.visual_geometry(est_content_width);
+        let mut geo = self.cached_geometry(est_content_width);
 
-        let has_scrollbar = !self.raw_diff && total_vis_lines > vh && vh > 2;
+        let has_scrollbar = !self.raw_diff && geo.total_vis_lines > vh && vh > 2;
         let content_width = if has_scrollbar {
             width.saturating_sub(1)
         } else {
@@ -668,12 +673,16 @@ impl AppState {
         self.last_content_width = content_width;
 
         if !has_scrollbar && content_width != est_content_width {
-            let res = self.visual_geometry(content_width);
-            starts = res.0;
-            counts = res.1;
-            seg_counts = res.2;
-            total_vis_lines = res.3;
+            geo = self.cached_geometry(content_width);
         }
+        let super::geometry::CachedGeometry {
+            starts,
+            counts,
+            seg_counts,
+            total_vis_lines,
+            callouts,
+            ..
+        } = geo;
 
         // Adjust scroll based on cursor visual position
         let hunk_div_offset = if let Some(&(div_fi, div_hi)) = div_at.get(&self.row_idx) {
@@ -708,9 +717,20 @@ impl AppState {
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = self.scroll.min(max_scroll);
 
-        // Viewport iteration
-        let mut vis_i = 0;
-        for (idx, item) in self.flat.iter().enumerate() {
+        // Viewport iteration, seeking the first visible row by binary
+        // search over visual prefix sums instead of scanning from the top
+        // every frame. Rows tile visual space exactly
+        // (`starts[i+1] == starts[i] + counts[i]`), so the row containing
+        // `scroll` is the last one starting at or before it.
+        let first_idx = if self.flat.is_empty() {
+            0
+        } else {
+            starts
+                .partition_point(|&s| s <= self.scroll)
+                .saturating_sub(1)
+        };
+        let mut vis_i = starts.get(first_idx).copied().unwrap_or(0);
+        for (idx, item) in self.flat.iter().enumerate().skip(first_idx) {
             let count = counts[idx];
             if vis_i + count <= self.scroll {
                 vis_i += count;
@@ -924,6 +944,13 @@ impl AppState {
         } else {
             (0, 0)
         };
+
+        tracing::trace!(
+            scroll = self.scroll,
+            rows = lines.len(),
+            elapsed_ms = frame_start.elapsed().as_millis(),
+            "viewport frame rendered"
+        );
 
         (
             lines,

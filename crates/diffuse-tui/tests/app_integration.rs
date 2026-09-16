@@ -619,3 +619,77 @@ fn test_long_note_with_emoji_stays_within_viewport_width() {
         assert!(vw <= 100, "frame line {i} width {vw} exceeds 100");
     }
 }
+
+// Deep scroll must seek the viewport by binary search and render the
+// correct window: rows far past the top appear with intact content.
+#[test]
+fn test_deep_scroll_renders_correct_window() {
+    use diffuse_tui::view::visible_width;
+    let mut body = String::new();
+    for i in 1..=400 {
+        body.push_str(&format!("+line {i:04}\n"));
+    }
+    let diff = format!(
+        "diff --git a/big.rs b/big.rs\n--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,400 @@\n{body}"
+    );
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+
+    // Scroll deep and render: the window must show deep content, every
+    // line within the frame width. The cursor travels with the scroll, as
+    // in real scrolling, so scroll-follow keeps the window in place.
+    state.row_idx = 300;
+    state.scroll = 300;
+    let frame = state.render_frame(100, 30);
+    let plain = diffuse_tui::render::ansi::strip_ansi(&frame);
+    assert!(
+        plain.contains("line 0300"),
+        "deep window must show deep content"
+    );
+    assert!(
+        !plain.contains("line 0001"),
+        "deep window must not show top content"
+    );
+    for (i, line) in frame.lines().enumerate() {
+        let vw = visible_width(line);
+        assert!(vw <= 100, "frame line {i} width {vw} exceeds 100");
+    }
+
+    // Scroll back to top: top content returns.
+    state.row_idx = 0;
+    state.scroll = 0;
+    let frame = state.render_frame(100, 30);
+    let plain = diffuse_tui::render::ansi::strip_ansi(&frame);
+    assert!(plain.contains("line 0001"));
+}
+
+// Manual perf gate for very large hunks: repeated scrolled frames must
+// stay interactive. Ignored by default (timing-sensitive, slow fixture).
+#[test]
+#[ignore = "manual perf gate: large-hunk frame budget"]
+fn test_perf_big_hunk_scrolled_frames() {
+    let mut body = String::new();
+    for i in 1..=7000 {
+        body.push_str(&format!(
+            "+content line {i:05} with some trailing text to widen rows\n"
+        ));
+    }
+    body.push_str("+✅ passed — emoji line\n");
+    let diff = format!(
+        "diff --git a/big.rs b/big.rs\n--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,7001 @@\n{body}"
+    );
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+
+    for scroll in [0, 1000, 3000, 6000] {
+        state.scroll = scroll;
+        let start = std::time::Instant::now();
+        let frame = state.render_frame(200, 50);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "scrolled frame at {scroll} took {elapsed:?}"
+        );
+        assert!(!frame.is_empty());
+    }
+}
