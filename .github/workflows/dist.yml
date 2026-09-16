@@ -177,7 +177,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          TAG="releases/v${VERSION}"
+          TAG="v${VERSION}"
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists in GitHub Releases."
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
@@ -217,7 +217,7 @@ jobs:
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          TAG="releases/v${VERSION}"
+          TAG="v${VERSION}"
 
           echo "Publishing release $TAG for commit $GITHUB_SHA..."
           gh release create "$TAG" \
