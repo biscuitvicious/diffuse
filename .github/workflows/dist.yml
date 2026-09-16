@@ -1,0 +1,227 @@
+name: Dist
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            use_cross: false
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            use_cross: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract package version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)"
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from Cargo.toml" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building diffuse v$VERSION for ${{ matrix.target }}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.0
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux' && !matrix.use_cross
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y musl-tools
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} --bin diffuse
+          else
+            cargo build --release --target ${{ matrix.target }} --bin diffuse
+          fi
+
+      - name: Stage & package artifacts (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          BIN_SRC="target/${TARGET}/release/diffuse"
+          STAGE_DIR="stage-${TARGET}"
+          mkdir -p "$STAGE_DIR"
+
+          # 1. Standalone version-stamped binary
+          STANDALONE_BIN="diffuse-v${VERSION}-${TARGET}"
+          cp "$BIN_SRC" "$STAGE_DIR/$STANDALONE_BIN"
+          chmod +x "$STAGE_DIR/$STANDALONE_BIN"
+
+          # 2. Archive bundle (binary + README + LICENSE)
+          BUNDLE_DIR="diffuse-v${VERSION}-${TARGET}"
+          mkdir -p "$BUNDLE_DIR"
+          cp "$BIN_SRC" "$BUNDLE_DIR/diffuse"
+          chmod +x "$BUNDLE_DIR/diffuse"
+          cp README.md "$BUNDLE_DIR/"
+          cp LICENSE.md "$BUNDLE_DIR/"
+
+          ARCHIVE_NAME="diffuse-v${VERSION}-${TARGET}.tar.gz"
+          tar -czf "$STAGE_DIR/$ARCHIVE_NAME" "$BUNDLE_DIR"
+          rm -rf "$BUNDLE_DIR"
+
+          # 3. Checksums for this target
+          cd "$STAGE_DIR"
+          sha256sum "$STANDALONE_BIN" "$ARCHIVE_NAME" > "${TARGET}.sha256"
+          cd ..
+
+      - name: Stage & package artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          BIN_SRC="target/${TARGET}/release/diffuse.exe"
+          STAGE_DIR="stage-${TARGET}"
+          mkdir -p "$STAGE_DIR"
+
+          # 1. Standalone version-stamped binary
+          STANDALONE_BIN="diffuse-v${VERSION}-${TARGET}.exe"
+          cp "$BIN_SRC" "$STAGE_DIR/$STANDALONE_BIN"
+
+          # 2. Archive bundle (binary + README + LICENSE)
+          BUNDLE_DIR="diffuse-v${VERSION}-${TARGET}"
+          mkdir -p "$BUNDLE_DIR"
+          cp "$BIN_SRC" "$BUNDLE_DIR/diffuse.exe"
+          cp README.md "$BUNDLE_DIR/"
+          cp LICENSE.md "$BUNDLE_DIR/"
+
+          ARCHIVE_NAME="diffuse-v${VERSION}-${TARGET}.zip"
+          powershell -Command "Compress-Archive -Path '$BUNDLE_DIR\*' -DestinationPath '$STAGE_DIR/$ARCHIVE_NAME'"
+          rm -rf "$BUNDLE_DIR"
+
+          # 3. Checksums for this target
+          cd "$STAGE_DIR"
+          sha256sum "$STANDALONE_BIN" "$ARCHIVE_NAME" > "${TARGET}.sha256"
+          cd ..
+
+      - name: Upload target artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: stage-${{ matrix.target }}/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish Release (main branch only)
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract package version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)"
+          if [ -z "$VERSION" ]; then
+            echo "Error: Could not extract version from Cargo.toml" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release candidate version: v$VERSION"
+
+      - name: Check if release already exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="releases/v${VERSION}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists in GitHub Releases."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release $TAG does not exist yet. Proceeding with publication."
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download all build artifacts
+        if: steps.check_release.outputs.should_publish == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-artifacts
+
+      - name: Assemble release distribution
+        if: steps.check_release.outputs.should_publish == 'true'
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Copy standalone binaries and archive bundles
+          find downloaded-artifacts -type f \( -name "diffuse-v*" \) -exec cp {} dist/ \;
+          # Aggregate checksums into a single canonical SHA256SUMS file
+          find downloaded-artifacts -type f -name "*.sha256" -exec cat {} + | sort -k2 > dist/SHA256SUMS
+          # Include root documentation files as direct release assets
+          cp README.md dist/
+          cp LICENSE.md dist/
+
+          echo "Staged release assets:"
+          ls -la dist/
+          echo "SHA256SUMS contents:"
+          cat dist/SHA256SUMS
+
+      - name: Create GitHub Release and tag
+        if: steps.check_release.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="releases/v${VERSION}"
+
+          echo "Publishing release $TAG for commit $GITHUB_SHA..."
+          gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            dist/*
