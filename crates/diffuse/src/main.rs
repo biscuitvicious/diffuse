@@ -19,7 +19,7 @@ use diffuse::{
     DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP,
     core::{
         DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions,
-        git::load_git_repo,
+        git::{is_inside_work_tree, load_git_repo},
         notes::{
             NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
             save_notes,
@@ -426,6 +426,13 @@ fn main() -> io::Result<()> {
     // GFM Markdown instead of the TUI.
     if !is_json_contract {
         let repo_root = env::current_dir()?;
+        if !is_inside_work_tree(&repo_root) {
+            eprintln!(
+                "diffuse: not a git repository (or any of the parent directories): {}",
+                repo_root.display()
+            );
+            std::process::exit(2);
+        }
         let notes_path = args
             .notes_file
             .as_ref()
@@ -571,6 +578,13 @@ fn main() -> io::Result<()> {
 
     if diff_opt.is_none() && stdin_tty && piped_stdin.is_empty() {
         let repo_root = env::current_dir()?;
+        if !is_inside_work_tree(&repo_root) {
+            eprintln!(
+                "diffuse: not a git repository (or any of the parent directories): {}",
+                repo_root.display()
+            );
+            std::process::exit(2);
+        }
         let notes_path = args
             .notes_file
             .as_ref()

@@ -40,6 +40,62 @@ fn empty_piped_stdin_routes_to_standalone_reviewer() {
     );
 }
 
+#[test]
+fn non_git_directory_exits_with_stderr_error_without_tui() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "must exit 2 on non-repo dir when invoked directly"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("not a git repository"),
+        "stderr must report 'not a git repository', got: {err}"
+    );
+    assert!(
+        out.stdout.is_empty(),
+        "stdout must remain completely empty (no TUI escape codes), got: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn non_git_directory_in_pty_terminal_exits_with_stderr_without_tui() {
+    let pty = nix::pty::openpty(None, None).expect("openpty failed");
+    // master and slave are OwnedFd; keep master alive so the slave end stays
+    // open, then convert slave to std::fs::File for use as stdin/stdout.
+    let _master = pty.master;
+    let slave = std::fs::File::from(pty.slave);
+
+    let dir = tempfile::tempdir().unwrap();
+    let child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .stdin(slave.try_clone().unwrap())
+        .stdout(slave)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "must exit 2 on non-repo dir even when stdin/stdout are a tty"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("not a git repository"),
+        "stderr must report 'not a git repository', got: {err}"
+    );
+}
+
 /// `diffuse | prog` on a real repo: piped stdout must produce the full ANSI
 /// render — never the JSON contract and never the alternate-screen TUI.
 #[test]
