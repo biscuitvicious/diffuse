@@ -599,3 +599,23 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     assert!(screen_lines[height - 1].contains("[j/k]move"));
     assert!(screen_lines[height - 1].contains("[n/p]file"));
 }
+
+// Long note callouts (including wide emoji) must be clamped to the viewport
+// width like every other grid line.
+#[test]
+fn test_long_note_with_emoji_stays_within_viewport_width() {
+    use diffuse_tui::view::visible_width;
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(sample_output(), "test_repo".into(), path);
+    state.note_draft = Some(
+        "renders the identical golden (the extension's golden walk's rust leg \u{2014} \u{2705} passed); A/B on the real repo with a fairly long trailing tail to push past the edge".into(),
+    );
+    state.commit_note_draft();
+    let frame = state.render_frame(100, 30);
+    assert!(frame.contains("\u{2705}"));
+    for (i, line) in frame.lines().enumerate() {
+        let vw = visible_width(line);
+        assert!(vw <= 100, "frame line {i} width {vw} exceeds 100");
+    }
+}

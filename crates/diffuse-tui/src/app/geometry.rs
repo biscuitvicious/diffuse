@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::render::display_text;
+use crate::render::{display_text, width::display_width};
 
 use super::AppState;
 
@@ -19,13 +19,11 @@ impl AppState {
                 is_collapsed,
                 self.output.common_directory_prefix().as_deref(),
             );
-            use unicode_width::UnicodeWidthStr;
-            let len = txt.width();
+            let len = display_width(txt);
             let text_cols = content_width.max(1);
             return if len == 0 { 1 } else { len.div_ceil(text_cols) };
         }
         if item.is_hunk_divider {
-            use unicode_width::UnicodeWidthStr;
             let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
                 &self.output.files[item.file_idx].raw_hunks
             } else {
@@ -36,18 +34,17 @@ impl AppState {
                 "@@ -{},{} +{},{} @@",
                 h.old_start, h.old_count, h.new_start, h.new_count
             );
-            let len = sep_text.width();
+            let len = display_width(sep_text);
             let text_cols = content_width.max(1);
             return if len == 0 { 1 } else { len.div_ceil(text_cols) };
         }
         let Some(r) = self.row_of(item) else {
             return 1;
         };
-        use unicode_width::UnicodeWidthStr;
         if self.raw_diff {
             let text_cols = content_width.saturating_sub(6).max(1);
             let exp = crate::render::expand_tabs(&r.text, 4);
-            let len = exp.width();
+            let len = display_width(exp);
             if len == 0 { 1 } else { len.div_ceil(text_cols) }
         } else {
             let text_cols = content_width.saturating_sub(6).max(1);
@@ -60,7 +57,7 @@ impl AppState {
                 self.word_diff,
             );
             let exp = crate::render::expand_tabs(&disp, 4);
-            let len = exp.width();
+            let len = display_width(exp);
             if len == 0 { 1 } else { len.div_ceil(text_cols) }
         }
     }
@@ -76,8 +73,7 @@ impl AppState {
         };
         let hidden_gap = self.hunk_leading_gap(fi, hi);
         let txt = crate::view::diff_grid::hunk_divider_text(hi, hunk, hidden_gap);
-        use unicode_width::UnicodeWidthStr;
-        let len = txt.width();
+        let len = display_width(txt);
         let text_cols = content_width.max(1);
         if len == 0 { 1 } else { len.div_ceil(text_cols) }
     }
@@ -90,8 +86,7 @@ impl AppState {
             return 0;
         }
         let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
-        use unicode_width::UnicodeWidthStr;
-        let len = txt.width();
+        let len = display_width(txt);
         let text_cols = content_width.max(1);
         if len == 0 { 1 } else { len.div_ceil(text_cols) }
     }

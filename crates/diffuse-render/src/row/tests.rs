@@ -252,9 +252,9 @@ fn test_render_raw_row_trailing_whitespace() {
     let add_trailing = render_raw_row(RowKind::Add, "  42 + ", "let x = 1;   ", false, false, true);
     assert!(add_trailing.contains("  42 + "));
     assert!(add_trailing.contains("\x1b[38;5;120mlet x = 1;"));
-    // add_fill_bg is Rgb(28,99,52) and add_gutter_num is Fixed(120)
+    // add_fill_bg is Rgb(22,72,38) and add_gutter_num is Fixed(120)
     assert!(
-        add_trailing.contains("\x1b[48;2;28;99;52m\x1b[38;5;120m   "),
+        add_trailing.contains("\x1b[48;2;22;72;38m\x1b[38;5;120m   "),
         "added trailing spaces must have fill bg + gutter-num fg: {add_trailing:?}"
     );
     assert!(
@@ -273,7 +273,7 @@ fn test_render_raw_row_trailing_whitespace() {
         false,
     );
     assert!(
-        !add_wrapped_intermediate.contains("\x1b[48;2;28;99;52m"),
+        !add_wrapped_intermediate.contains("\x1b[48;2;22;72;38m"),
         "intermediate wrapped segments must not highlight spaces at wrap boundary"
     );
 
@@ -335,7 +335,7 @@ fn test_render_moved_row_with_indentation_subwords() {
     assert!(rendered.contains("  10≈+ "));
     // Subline addition fill on the 4 added indentation spaces
     assert!(
-        rendered.contains("\x1b[48;2;28;99;52m"),
+        rendered.contains("\x1b[48;2;22;72;38m"),
         "added indentation spaces on moved row must receive green subline fill"
     );
 }
@@ -386,7 +386,7 @@ fn test_render_mod_row_with_indentation_subwords() {
     );
     assert!(rendered.contains("  20 ~ "));
     assert!(
-        rendered.contains("\x1b[48;2;28;99;52m"),
+        rendered.contains("\x1b[48;2;22;72;38m"),
         "added indentation spaces on mod row must receive green subline fill"
     );
 }
@@ -548,4 +548,103 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
         &theme,
     );
     assert!(full.contains('\t'));
+}
+
+#[test]
+fn test_wide_emoji_never_exceeds_segment_window() {
+    use crate::core::parse::RowKind as RK;
+    let theme = DiffuseTheme::DEFAULT;
+    let prefix = "   1  ";
+    // "ab✅cd": 5 graphemes, 6 visual columns. Window [0,4) must hold
+    // "ab✅" (4 columns), never the 5-column "ab✅c".
+    let del = render_row_segment(
+        "ab✅cd",
+        None,
+        &Spans::default(),
+        RK::Del,
+        &[],
+        0,
+        4,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(
+        !del.contains('c'),
+        "del segment must not overflow its visual window: {del:?}"
+    );
+
+    let runs = vec![OutputRun {
+        kind: RunKind::Common,
+        color: None,
+        sgr: None,
+        text: "ab✅cd".into(),
+    }];
+    let run_seg = render_row_segment(
+        "ab✅cd",
+        None,
+        &Spans::default(),
+        RK::Ctx,
+        &runs,
+        0,
+        4,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(
+        !run_seg.contains('c'),
+        "run segment must not overflow its visual window: {run_seg:?}"
+    );
+
+    let empty = render_row_segment(
+        "ab✅cd",
+        None,
+        &Spans::default(),
+        RK::Ctx,
+        &[],
+        0,
+        4,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(
+        !empty.contains('c'),
+        "runless segment must not overflow its visual window: {empty:?}"
+    );
+
+    // The remainder window still shows the tail content that fits.
+    let tail = render_row_segment(
+        "ab✅cd",
+        None,
+        &Spans::default(),
+        RK::Del,
+        &[],
+        4,
+        6,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(
+        tail.contains('c') && tail.contains('d'),
+        "tail window must keep fitting content: {tail:?}"
+    );
 }

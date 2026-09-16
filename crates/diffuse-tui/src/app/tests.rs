@@ -3165,3 +3165,58 @@ fn test_app_streaming_dot_blinking_and_pause() {
     let t_700ms = t0 + std::time::Duration::from_millis(700);
     assert_eq!(state.streaming_dot_at(t_700ms), " ");
 }
+
+#[test]
+fn test_viewport_line_origin_describes_file_and_row() {
+    use crate::types::FlatRow;
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+
+    // Banner row of the only file.
+    let desc = state.viewport_line_origin(Some(0));
+    assert!(
+        desc.contains("filesystem.rs") && desc.contains('0'),
+        "must name the file and flat row, got: {desc}"
+    );
+
+    // Content row deeper in the file.
+    let desc = state.viewport_line_origin(Some(3));
+    assert!(
+        desc.contains("filesystem.rs") && desc.contains('3'),
+        "must name the file and flat row, got: {desc}"
+    );
+
+    // Out-of-range row.
+    let oob = state.flat.len() + 10;
+    let desc = state.viewport_line_origin(Some(oob));
+    assert!(
+        desc.contains("out of range"),
+        "must flag out-of-range rows, got: {desc}"
+    );
+
+    // Padding filler lines carry no source.
+    assert_eq!(state.viewport_line_origin(None), "viewport padding");
+    // Flat row pointing at a missing file.
+    state.flat.push(FlatRow {
+        file_idx: 999,
+        hunk_idx: 0,
+        row_idx: 0,
+        is_file_header: false,
+        is_hunk_divider: false,
+    });
+    let ghost = state.flat.len() - 1;
+    let desc = state.viewport_line_origin(Some(ghost));
+    assert!(
+        desc.contains("999"),
+        "must flag the unknown file index, got: {desc}"
+    );
+}
+
+#[test]
+fn test_escape_ansi_for_diagnostic() {
+    use super::render::escape_ansi_for_diagnostic;
+    assert_eq!(
+        escape_ansi_for_diagnostic("\x1b[38;5;220mhi\x1b[0m"),
+        "\\x1b[38;5;220mhi\\x1b[0m"
+    );
+    assert_eq!(escape_ansi_for_diagnostic("plain"), "plain");
+}

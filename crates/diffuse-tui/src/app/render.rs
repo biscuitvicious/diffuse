@@ -20,6 +20,12 @@ use crate::{
 
 use super::AppState;
 
+/// Render ANSI escape bytes as the literal text `\x1b` so diagnostic
+/// messages stay readable instead of emitting raw control codes.
+pub(crate) fn escape_ansi_for_diagnostic(s: &str) -> String {
+    s.replace('\x1b', "\\x1b")
+}
+
 impl AppState {
     /// Render full visual screen frame as a String of ANSI terminal lines.
     pub fn render_frame(&mut self, width: usize, height: usize) -> String {
@@ -602,6 +608,22 @@ impl AppState {
 
     /// Render the diff rows for the current viewport slice.
     #[allow(clippy::type_complexity)]
+    /// Origin of a rendered viewport grid line for width-invariant
+    /// diagnostics: the owning file path and flat row, or a marker for
+    /// padding and out-of-range rows.
+    pub(crate) fn viewport_line_origin(&self, flat_idx: Option<usize>) -> String {
+        let Some(i) = flat_idx else {
+            return "viewport padding".to_string();
+        };
+        let Some(item) = self.flat.get(i) else {
+            return format!("flat row {i} (out of range)");
+        };
+        let Some(file) = self.output.files.get(item.file_idx) else {
+            return format!("flat row {i} (unknown file {})", item.file_idx);
+        };
+        format!("{} flat row {i}", file.path)
+    }
+
     pub fn render_diff_viewport_lines(
         &mut self,
         width: usize,
@@ -610,6 +632,9 @@ impl AppState {
     ) -> (Vec<String>, bool, usize, usize, usize) {
         let max_rows = vh.max(4);
         let mut lines = Vec::new();
+        // Flat-row origin of each pushed grid line for width-invariant
+        // diagnostics (None for viewport padding).
+        let mut line_src: Vec<Option<usize>> = Vec::new();
 
         let callouts = self.note_callouts();
         let band = self.band_rows();
@@ -707,6 +732,7 @@ impl AppState {
                 for s_idx in 0..div_segs {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
                         let seg_start = s_idx * text_cols;
+                        line_src.push(Some(idx));
                         lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
                             div_hi,
                             h,
@@ -732,6 +758,7 @@ impl AppState {
                         let is_current = item.file_idx == self.current_file_idx();
                         let text_cols = content_width.max(1);
                         let seg_start = s_idx * text_cols;
+                        line_src.push(Some(idx));
                         lines.push(crate::view::diff_grid::render_file_header_segment_themed(
                             file_obj,
                             is_collapsed,
@@ -765,6 +792,7 @@ impl AppState {
                         let start_col = s_idx * text_cols;
                         let piece = slice_by_visual_width(&sep_text, start_col, text_cols);
                         let is_last_seg = s_idx + 1 == seg_count;
+                        line_src.push(Some(idx));
                         lines.push(render_raw_row(
                             RowKind::Ctx,
                             "",
@@ -829,6 +857,7 @@ impl AppState {
                                 &self.theme,
                             )
                         };
+                        line_src.push(Some(idx));
                         lines.push(rendered_row);
                     }
                     vis_i += 1;
@@ -852,6 +881,7 @@ impl AppState {
                                     seg_start,
                                     content_width,
                                 );
+                            line_src.push(Some(idx));
                             lines.push(bottom_div);
                         }
                         vis_i += 1;
@@ -862,7 +892,8 @@ impl AppState {
             if let Some(note_lines) = callouts.get(&idx) {
                 for nline in note_lines {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                        lines.push(nline.clone());
+                        line_src.push(Some(idx));
+                        lines.push(clamp_or_pad_ansi(nline, content_width));
                     }
                     vis_i += 1;
                 }
@@ -870,6 +901,7 @@ impl AppState {
         }
 
         while lines.len() < vh {
+            line_src.push(None);
             lines.push(String::new());
         }
 
@@ -878,7 +910,9 @@ impl AppState {
                 let vw = visible_width(line);
                 debug_assert!(
                     vw <= content_width,
-                    "render_diff_viewport_lines produced grid line {idx} with visual width ({vw}) > content_width ({content_width}): {line:?}"
+                    "render_diff_viewport_lines produced grid line {idx} ({}) with visual width ({vw}) > content_width ({content_width}):\n\n{}",
+                    self.viewport_line_origin(line_src.get(idx).copied().flatten()),
+                    escape_ansi_for_diagnostic(line),
                 );
             }
         }

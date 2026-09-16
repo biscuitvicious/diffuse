@@ -3,14 +3,14 @@
 use super::header::truncate_pad;
 use crate::{
     core::wire::{OutputFile, OutputHunk},
-    render::{ColorExt, DiffuseTheme, slice_by_visual_width},
+    render::{ColorExt, DiffuseTheme, slice_by_visual_width, width::display_width},
 };
 
 /// Shorten a path string to fit within `target_width` columns, preserving the
 /// filename or rename target `old -> new` by abbreviating leading directory
 /// components with `…/`.
 pub fn shorten_path_for_width(path: &str, target_width: usize) -> String {
-    if unicode_width::UnicodeWidthStr::width(path) <= target_width {
+    if display_width(path) <= target_width {
         return path.to_string();
     }
 
@@ -30,7 +30,7 @@ pub fn shorten_path_for_width(path: &str, target_width: usize) -> String {
                 new_parts.last().unwrap_or(&new_part).to_string()
             };
             let candidate = format!("{s_old} -> {s_new}");
-            if unicode_width::UnicodeWidthStr::width(candidate.as_str()) <= target_width {
+            if display_width(&candidate) <= target_width {
                 return candidate;
             }
         }
@@ -46,7 +46,7 @@ pub fn shorten_path_for_width(path: &str, target_width: usize) -> String {
     if parts.len() > 1 {
         for i in 1..parts.len() {
             let candidate = format!("…/{}", parts[i..].join("/"));
-            if unicode_width::UnicodeWidthStr::width(candidate.as_str()) <= target_width {
+            if display_width(&candidate) <= target_width {
                 return candidate;
             }
         }
@@ -96,7 +96,7 @@ fn rename_prefix_visual_span(
         // Prefix starts after "──── ▶ " (7 cols) or "──── " (5 cols for binary)
         // and includes trailing '/'
         let p_start = if file.is_binary { 5 } else { 7 };
-        let p_len = unicode_width::UnicodeWidthStr::width(prefix.as_str()) + 1;
+        let p_len = display_width(prefix) + 1;
         Some((p_start, p_start + p_len))
     } else {
         None
@@ -181,14 +181,14 @@ pub fn render_file_header_segment_themed(
     let bg_code = bg.bg_code();
     let fg_code = fg.fg_code();
 
-    let total_prefix_w = unicode_width::UnicodeWidthStr::width(prefix_text.as_str());
+    let total_prefix_w = display_width(&prefix_text);
     if seg_start >= total_prefix_w {
         let bar_str = "═".repeat(content_width);
         return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
     }
 
     let piece = slice_by_visual_width(&prefix_text, seg_start, content_width);
-    let piece_w = unicode_width::UnicodeWidthStr::width(piece.as_str());
+    let piece_w = display_width(&piece);
 
     let styled_piece =
         if let Some((p_start, p_end)) = rename_prefix_visual_span(file, common_prefix) {
@@ -306,14 +306,14 @@ pub fn render_hunk_divider_segment_themed(
     };
     let fg_code = fg.fg_code();
 
-    let total_txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    let total_txt_w = display_width(&txt);
     if seg_start >= total_txt_w {
         let bar_str = "─".repeat(content_width);
         return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
     }
 
     let piece = slice_by_visual_width(&txt, seg_start, content_width);
-    let piece_w = unicode_width::UnicodeWidthStr::width(piece.as_str());
+    let piece_w = display_width(&piece);
     let bar_str = if piece_w < content_width {
         let ruler_len = content_width - piece_w;
         format!("{piece}{}", "─".repeat(ruler_len))
@@ -393,14 +393,14 @@ pub fn render_bottom_gap_divider_segment(
     };
     let fg_code = fg.fg_code();
 
-    let total_txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    let total_txt_w = display_width(&txt);
     if seg_start >= total_txt_w {
         let bar_str = "─".repeat(content_width);
         return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
     }
 
     let piece = slice_by_visual_width(&txt, seg_start, content_width);
-    let piece_w = unicode_width::UnicodeWidthStr::width(piece.as_str());
+    let piece_w = display_width(&piece);
     let bar_str = if piece_w < content_width {
         let ruler_len = content_width - piece_w;
         format!("{piece}{}", "─".repeat(ruler_len))
@@ -478,7 +478,7 @@ pub fn hunk_divider_line_themed(
     theme: &DiffuseTheme,
 ) -> Line<'static> {
     let txt = hunk_divider_text(hi, hunk, hidden_gap);
-    let txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    let txt_w = display_width(&txt);
     let bar_str = if txt_w < content_width {
         let ruler_len = content_width - txt_w;
         format!("{txt}{}", "─".repeat(ruler_len))
@@ -521,7 +521,7 @@ pub fn bottom_gap_divider_line_themed(
     theme: &DiffuseTheme,
 ) -> Line<'static> {
     let txt = bottom_gap_divider_text(hidden_gap);
-    let txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    let txt_w = display_width(&txt);
     let bar_str = if txt_w < content_width {
         let ruler_len = content_width - txt_w;
         format!("{txt}{}", "─".repeat(ruler_len))

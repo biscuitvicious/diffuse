@@ -1,7 +1,10 @@
 use super::*;
-use crate::core::{
-    counts::FileCounts,
-    wire::{OutputFile, OutputHunk},
+use crate::{
+    core::{
+        counts::FileCounts,
+        wire::{OutputFile, OutputHunk},
+    },
+    render::width::display_width,
 };
 
 fn dummy_file() -> OutputFile {
@@ -298,7 +301,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         rows: (0..50).map(|_| mk(RowKind::Add)).collect(),
     };
     let txt = hunk_divider_text(1, &h, 400);
-    let txt_w = unicode_width::UnicodeWidthStr::width(txt.as_str());
+    let txt_w = display_width(txt);
     assert!(
         txt_w > 30,
         "test setup: hunk divider text must be wider than 30, got {txt_w}"

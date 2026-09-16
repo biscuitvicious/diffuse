@@ -114,8 +114,8 @@ impl ThemePalette {
 
             add_tint_bg: Color::Rgb(22, 38, 23),
             add_cursor_bg: Color::Rgb(36, 56, 37),
-            add_fill_bg: Color::Rgb(28, 99, 52),
-            add_fill_cursor_bg: Color::Rgb(36, 126, 68),
+            add_fill_bg: Color::Rgb(22, 72, 38),
+            add_fill_cursor_bg: Color::Rgb(28, 92, 50),
             add_fg: Color::Fixed(120),
 
             del_tint_bg: Color::Rgb(38, 12, 14),
@@ -126,8 +126,8 @@ impl ThemePalette {
 
             mod_tint_bg: Color::Rgb(30, 30, 30),
             mod_cursor_bg: Color::Rgb(54, 54, 54),
-            mod_fill_bg: Color::Rgb(28, 99, 52),
-            mod_fill_cursor_bg: Color::Rgb(36, 126, 68),
+            mod_fill_bg: Color::Rgb(22, 72, 38),
+            mod_fill_cursor_bg: Color::Rgb(28, 92, 50),
             mod_fg: Color::Fixed(245),
 
             mov_tint_bg: Color::Fixed(233),

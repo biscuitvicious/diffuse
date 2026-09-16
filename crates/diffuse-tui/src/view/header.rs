@@ -1,23 +1,24 @@
 //! Header, status bar, and bottom ribbon rendering.
 
+use crate::{
+    core::{
+        counts::{CountKind, FileCounts},
+        wire::OutputFile,
+    },
+    render::{
+        slice_by_visual_width,
+        width::{char_width, display_width, grapheme_width},
+    },
+};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
 };
 use smallvec::SmallVec;
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-
-use crate::{
-    core::{
-        counts::{CountKind, FileCounts},
-        wire::OutputFile,
-    },
-    render::slice_by_visual_width,
-};
 
 /// Calculate the visible column width of a string by ignoring ANSI escape
-/// sequences and using unicode-width for wide chars (emojis, CJK, etc.).
+/// sequences and measuring grapheme display widths (wide chars count two).
 pub fn visible_width(s: &str) -> usize {
     let mut in_escape = false;
     let mut count = 0;
@@ -32,7 +33,7 @@ pub fn visible_width(s: &str) -> usize {
             let tab_spaces = 4 - (count % 4);
             count += tab_spaces;
         } else {
-            count += c.width().unwrap_or(0);
+            count += char_width(c);
         }
     }
     count
@@ -116,7 +117,7 @@ pub fn clamp_or_pad_ansi(s: &str, target_width: usize) -> String {
             }
         }
 
-        let gw = g.width();
+        let gw = grapheme_width(&g);
         if gw > 0 && vis_w + gw > target_width {
             let rem = target_width.saturating_sub(vis_w);
             if rem > 0 {
@@ -155,7 +156,7 @@ pub fn truncate_pad(s: &str, target_width: usize) -> String {
     let mut current_width = 0;
     let mut out = String::new();
     for g in s.graphemes(true) {
-        let gw = g.width();
+        let gw = grapheme_width(g);
         if current_width + gw > target_width {
             break;
         }
@@ -645,10 +646,7 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ));
     }
-    let used_w: usize = spans
-        .iter()
-        .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
-        .sum();
+    let used_w: usize = spans.iter().map(|s| display_width(&s.content)).sum();
     if used_w < ctx.width {
         spans.push(Span::raw(" ".repeat(ctx.width - used_w)));
     }

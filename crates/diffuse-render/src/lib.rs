@@ -11,9 +11,11 @@ pub mod diff;
 pub mod markdown;
 pub mod row;
 pub mod theme;
+pub mod width;
 
 pub use ansi::*;
 pub use diff::*;
 pub use markdown::*;
 pub use row::*;
 pub use theme::*;
+pub use width::*;

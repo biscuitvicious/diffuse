@@ -12,7 +12,6 @@ serde_json = { workspace = true }
 smallvec = { workspace = true }
 difflib = { workspace = true }
 unicode-segmentation = { workspace = true }
-unicode-width = { workspace = true }
 regex = { workspace = true }
 gix = { workspace = true }
 rayon = { workspace = true }

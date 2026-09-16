@@ -3,7 +3,8 @@
 
 use std::{borrow::Cow, fmt::Write};
 use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthChar;
+
+use super::width::{char_width, grapheme_width};
 
 use super::theme::{DiffuseTheme, FG_RESET};
 use crate::{
@@ -224,7 +225,7 @@ pub fn expand_tabs(s: &str, tab_width: usize) -> Cow<'_, str> {
             }
             col += spaces;
         } else {
-            let w = c.width().unwrap_or(0);
+            let w = char_width(c);
             col += w;
             out.push(c);
         }
@@ -244,7 +245,7 @@ pub fn expand_runs_tabs(runs: &[OutputRun], tab_width: usize) -> Vec<OutputRun> 
     for r in runs {
         if !r.text.contains('\t') {
             for c in r.text.chars() {
-                col += c.width().unwrap_or(0);
+                col += char_width(c);
             }
             out.push(r.clone());
         } else {
@@ -257,7 +258,7 @@ pub fn expand_runs_tabs(runs: &[OutputRun], tab_width: usize) -> Vec<OutputRun> 
                     }
                     col += spaces;
                 } else {
-                    let w = c.width().unwrap_or(0);
+                    let w = char_width(c);
                     col += w;
                     exp.push(c);
                 }
@@ -432,11 +433,9 @@ pub fn write_row_segment<W: Write>(
             return write!(out, "{lead_bg}{prefix}{bg}{del_fg}{text}{reset}{trail_bg}");
         }
         let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
-        let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
-        let total_len = slice_graphemes.len();
-        let s_idx = seg_start.min(total_len);
-        let e_idx = seg_end.min(total_len);
-        let piece = slice_graphemes[s_idx..e_idx].concat();
+        // Slice by visual columns, not grapheme count: wide graphemes (CJK,
+        // emoji) occupy two columns, so grapheme-index slicing overshoots.
+        let piece = slice_by_visual_width(&disp, seg_start, seg_end.saturating_sub(seg_start));
         return write!(out, "{lead_bg}{prefix}{bg}{del_fg}{piece}{reset}{trail_bg}");
     }
 
@@ -456,11 +455,7 @@ pub fn write_row_segment<W: Write>(
             return write!(out, "{lead_bg}{prefix}{bg}{text}{trail_bg}");
         }
         let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
-        let slice_graphemes: Vec<&str> = disp.graphemes(true).collect();
-        let total_len = slice_graphemes.len();
-        let s_idx = seg_start.min(total_len);
-        let e_idx = seg_end.min(total_len);
-        let piece = slice_graphemes[s_idx..e_idx].concat();
+        let piece = slice_by_visual_width(&disp, seg_start, seg_end.saturating_sub(seg_start));
         return write!(out, "{lead_bg}{prefix}{bg}{piece}{trail_bg}");
     }
 
@@ -505,28 +500,40 @@ pub fn write_row_segment<W: Write>(
 
     let _disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
     write!(out, "{lead_bg}{prefix}")?;
+    // Visual columns consumed by the col_offset-skipped grapheme prefix, so
+    // run positions map into displayed coordinates even with wide graphemes.
+    let skipped_visual: usize = if col_offset == 0 {
+        0
+    } else {
+        runs.iter()
+            .flat_map(|tok| tok.text.graphemes(true))
+            .take(col_offset)
+            .map(grapheme_width)
+            .sum()
+    };
     let mut pos = 0usize;
     for tok in runs {
-        let tok_len = tok.text.graphemes(true).count();
+        let tok_width: usize = tok.text.graphemes(true).map(grapheme_width).sum();
         let tok_start = pos;
-        let tok_end = pos + tok_len;
+        let tok_end = pos + tok_width;
         pos = tok_end;
 
         // Map the run into the displayed (col_offset-shifted) coordinate
         // space: display position d corresponds to global position
-        // d + col_offset (display_text already skipped the offset chars).
-        let d_start = tok_start.saturating_sub(col_offset);
-        let d_end = tok_end.saturating_sub(col_offset);
+        // d + skipped_visual (display_text already skipped the offset chars).
+        let d_start = tok_start.saturating_sub(skipped_visual);
+        let d_end = tok_end.saturating_sub(skipped_visual);
         if d_end <= seg_start || d_start >= seg_end {
             continue;
         }
 
         let s = seg_start.max(d_start);
         let e = seg_end.min(d_end);
-        let tok_graphemes: Vec<&str> = tok.text.graphemes(true).collect();
-        let idx_s = (s + col_offset).saturating_sub(tok_start);
-        let idx_e = (e + col_offset).saturating_sub(tok_start);
-        let sub_piece: String = tok_graphemes[idx_s..idx_e].concat();
+        let sub_piece = slice_by_visual_width(
+            &tok.text,
+            (s + skipped_visual).saturating_sub(tok_start),
+            e.saturating_sub(s),
+        );
         if sub_piece.is_empty() {
             continue;
         }
@@ -601,14 +608,14 @@ pub fn render_row_segment(
 /// Slices text by visual terminal column width rather than raw bytes or
 /// character counts.
 pub fn slice_by_visual_width(text: &str, start_col: usize, max_cols: usize) -> String {
+    use super::width::grapheme_width;
     use unicode_segmentation::UnicodeSegmentation;
-    use unicode_width::UnicodeWidthStr;
     let exp_text = expand_tabs(text, 4);
     let mut current_col = 0;
     let mut out = String::new();
     let mut accumulated = 0;
     for g in exp_text.graphemes(true) {
-        let gw = g.width();
+        let gw = grapheme_width(g);
         if current_col >= start_col && accumulated + gw <= max_cols {
             out.push_str(g);
             accumulated += gw;

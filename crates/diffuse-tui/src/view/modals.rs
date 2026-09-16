@@ -12,7 +12,10 @@ use super::header::{truncate_pad, visible_width};
 use crate::{
     core::wire::PipelineOutput,
     finder::FileFinderState,
-    render::{DiffuseTheme, render_row_segment, styled_prefix},
+    render::{
+        DiffuseTheme, render_row_segment, styled_prefix,
+        width::{char_width, display_width},
+    },
 };
 
 /// Compute a centered rectangle within an area.
@@ -484,15 +487,12 @@ pub fn render_finder_modal_widget(
                 },
             )];
 
-            let prefix_w = unicode_width::UnicodeWidthStr::width(prefix);
+            let prefix_w = display_width(prefix);
             let stats_w = stats.len();
             let avail_path_w = inner_w.saturating_sub(prefix_w + 2 + stats_w);
             let path_spans =
                 format_path_matches_spans(&m.path, &m.match_indices, avail_path_w, is_sel);
-            let path_len: usize = path_spans
-                .iter()
-                .map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref()))
-                .sum();
+            let path_len: usize = path_spans.iter().map(|s| display_width(&s.content)).sum();
             spans.extend(path_spans);
 
             let bg_color = if is_sel {
@@ -689,7 +689,7 @@ pub fn ansi_to_ratatui_line(s: &str) -> Line<'static> {
             }
             col += spaces;
         } else {
-            col += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+            col += char_width(c);
             text_buf.push(c);
         }
     }

@@ -58,10 +58,10 @@ fn test_default_theme_palette() {
     assert_eq!(palette.add_tint_bg, Color::Rgb(22, 38, 23));
     assert_eq!(palette.add_cursor_bg, Color::Rgb(36, 56, 37));
     assert_eq!(palette.del_tint_bg, Color::Rgb(38, 12, 14));
-    assert_eq!(palette.add_fill_bg, Color::Rgb(28, 99, 52));
-    assert_eq!(palette.add_fill_cursor_bg, Color::Rgb(36, 126, 68));
-    assert_eq!(palette.mod_fill_bg, Color::Rgb(28, 99, 52));
-    assert_eq!(palette.mod_fill_cursor_bg, Color::Rgb(36, 126, 68));
+    assert_eq!(palette.add_fill_bg, Color::Rgb(22, 72, 38));
+    assert_eq!(palette.add_fill_cursor_bg, Color::Rgb(28, 92, 50));
+    assert_eq!(palette.mod_fill_bg, Color::Rgb(22, 72, 38));
+    assert_eq!(palette.mod_fill_cursor_bg, Color::Rgb(28, 92, 50));
     assert_eq!(palette.mod_tint_bg, Color::Rgb(30, 30, 30));
     assert_eq!(palette.mod_cursor_bg, Color::Rgb(54, 54, 54));
 
