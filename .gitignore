@@ -1,5 +1,5 @@
 target/
 extension/*/node_modules/
 extension/pi/bin/
-*.html
+*.log
 
