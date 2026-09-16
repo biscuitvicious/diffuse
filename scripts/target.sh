@@ -75,7 +75,8 @@ is_target_installed() {
     return 1
 }
 
-# Resolve the best target for the host platform vs available targets
+# Resolve the best target for the host platform vs available targets.
+# On Linux, prefers musl for portable static binaries (install/release use).
 detect_best_target() {
     local host="$1"
     case "$host" in
@@ -117,6 +118,19 @@ detect_best_target() {
         *)
             echo "$host"
             ;;
+    esac
+}
+
+# Resolve the native target for the host platform — always the exact host
+# triple, never a cross-compiled variant. Use this for test/verify steps
+# where sharing the artifact cache with the host toolchain is paramount.
+detect_native_target() {
+    local host="$1"
+    # Strip any non-native libc variant and return the canonical host triple.
+    case "$host" in
+        x86_64-unknown-linux-*)  echo "x86_64-unknown-linux-gnu" ;;
+        aarch64-unknown-linux-*) echo "aarch64-unknown-linux-gnu" ;;
+        *)                        echo "$host" ;;
     esac
 }
 

@@ -49,7 +49,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/target.sh"
 
 HOST_TARGET="$(detect_host_target)"
-TARGET="${TARGET:-$(detect_best_target "$HOST_TARGET")}"
+# Use the native host target for fmt/clippy/test steps so the artifact cache
+# is always warm.  The install step (install.sh) independently resolves the
+# best install target (musl on Linux) for a portable static binary.
+TARGET="${TARGET:-$(detect_native_target "$HOST_TARGET")}"
 
 # Helper to measure duration in seconds
 time_diff_sec() {
