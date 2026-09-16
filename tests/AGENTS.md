@@ -14,7 +14,7 @@ discipline for any change in golden output.
   2. **bin leg** — spawn the built `diffuse` binary, feed it the same input,
      decode its JSON, run the SAME walk.
 
-  The bin leg pins the wire contract (PLAN.md §2) to the engine: a JSON
+  The bin leg pins the wire contract ([`crates/diffuse-core/src/wire.rs`](../crates/diffuse-core/src/wire.rs)) to the engine: a JSON
   schema change breaks it even if engine semantics are unchanged.
 - `golden/` — the frozen corpora (below).
 
@@ -156,8 +156,8 @@ rationalize a suspicious diff.
 ### Human review & signoff
 
 - The human does a **visual review** of the rendered before/after to catch
-  "duh" problems (mispaired lines, garbled runs, nonsense hunks) that
-  mechanical checks can't see.
+  obvious visual defects (mispaired lines, garbled runs, nonsense hunks) that
+  mechanical checks cannot detect.
 - Golden fixtures land in the tree only after this signoff — normally just
   before committing (per the root commit policy).
 - If the user has instructed the agent to commit automatically, the agent

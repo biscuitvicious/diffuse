@@ -87,7 +87,7 @@ Each language group must capture representative topological challenges:
 - **Dynamic Corpus Discovery & Parameterized Harness**:
   - Automatically discover all `tests/golden/*.json` and `tests/golden/*.json.gz` files.
   - Separate fixtures into two tiers:
-    - **Core Tier (Fast Smoke, ~10 fixtures)**: Runs on every single `./scripts/check.sh` invocation (lib leg + bin leg + render check + oracle) within `< 1.0\text{s}`.
+    - **Core Tier (Fast Smoke, ~10 fixtures)**: Runs on every single `scripts/check.sh` invocation (lib leg + bin leg + render check + oracle) within `< 1.0\text{s}`.
     - **Wide Tier (Extended Acceptance, 50–100+ fixtures)**: Runs fully in parallel with in-memory Rayon thread pool (`run_lib_leg` + `assert_wire_json_matches` + `apply_oracle`), with fast batch bin-leg checks.
 - **Fixture Cache & Zero-Copy Decompression**:
   - In-memory thread-safe `FIXTURE_CACHE` preventing redundant decompression.
@@ -116,6 +116,6 @@ Each language group must capture representative topological challenges:
 **Goal:** Finalize documentation and update repository guidelines and tracking.
 
 ### Deliverables
-- Update [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md) with the comprehensive corpus table and language coverage statistics.
-- Update [`TODO.md`](file:///home/daniel/lab/diffuse/TODO.md) marking items 5.2 and 5.3 complete.
-- Verify `./scripts/check.sh` runs fully green and sub-3s on warm runs.
+- Update [`tests/AGENTS.md`](../tests/AGENTS.md) with the comprehensive corpus table and language coverage statistics.
+- Update [`TODO.md`](../TODO.md) marking items 5.2 and 5.3 complete.
+- Verify `scripts/check.sh` runs fully green and sub-3s on warm runs.

@@ -53,7 +53,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Eugene W. Myers (1986). *"An $O(ND)$ Difference Algorithm and Its Variations"*. Algorithmica, 1(2), 251–266.  
   [Paper PDF](http://www.xmailserver.org/diff2.pdf) · [Springer DOI:10.1007/BF01840446](https://doi.org/10.1007/BF01840446)
 - **Location**:
-  [`crates/diffuse-core/src/algo/myers_ond.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/myers_ond.rs)
+  [`crates/diffuse-core/src/algo/myers_ond.rs`](../crates/diffuse-core/src/algo/myers_ond.rs)
 - **Why It Is Used**:
   Computes the shortest edit script (SES) between two sequences with runtime proportional to the number of differences $D$ rather than sequence length $N$. In typical code diffs where most lines or tokens are unchanged ($D \ll N$), Myers runs in near-linear time ($O(N + D^2)$) instead of standard quadratic dynamic programming ($O(N^2)$).
 - **For What It Is Used**:
@@ -70,7 +70,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Daniel S. Hirschberg (1975). *"A Linear Space Algorithm for Computing Maximal Common Subsequences"*. Communications of the ACM, 18(6), 341–343.  
   [ACM Digital Library](https://doi.org/10.1145/360825.360861) · [CMU Paper PDF](https://www.cs.cmu.edu/~ckingsf/bio/resources/hirschberg-cacm.pdf)
 - **Location**:
-  [`crates/diffuse-core/src/algo/hirschberg.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/hirschberg.rs)
+  [`crates/diffuse-core/src/algo/hirschberg.rs`](../crates/diffuse-core/src/algo/hirschberg.rs)
 - **Why It Is Used**:
   Standard Wagner–Fischer dynamic programming requires an $O(N \cdot M)$ matrix, which causes prohibitive memory allocations and cache misses when diffing large files (e.g. 50,000 lines or tokens). Hirschberg combines forward and backward 1D dynamic programming sweeps with recursive divide-and-conquer to determine the midpoint crossover, slashing memory consumption to strictly $O(\min(N, M))$.
 - **For What It Is Used**:
@@ -87,7 +87,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   James W. Hunt and Thomas G. Szymanski (1977). *"A Fast Algorithm for Computing Longest Common Subsequences"*. Communications of the ACM, 20(5), 350–353.  
   [ACM Digital Library](https://doi.org/10.1145/359581.359603) · [Dartmouth Paper PDF](https://www.cs.dartmouth.edu/~doug/hunt.pdf)
 - **Location**:
-  [`crates/diffuse-core/src/algo/hunt_szymanski.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/hunt_szymanski.rs)
+  [`crates/diffuse-core/src/algo/hunt_szymanski.rs`](../crates/diffuse-core/src/algo/hunt_szymanski.rs)
 - **Why It Is Used**:
   When the sequence alphabet is large and identical matches between the two sequences are sparse (low match count $r$), standard dynamic programming does wasteful work on non-matching cells. Hunt–Szymanski indexes identical pairs using an inverted index and computes the LCS via Patience-sorting / Longest Increasing Subsequence (LIS) with binary search in $O((r + N) \log N)$ time.
 - **For What It Is Used**:
@@ -106,7 +106,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Heikki Hyyrö (2004). *"Bit-Parallel Computation of Local Similarity Scores"*. In: Combinatorial Pattern Matching (CPM 2004), LNCS 3109, 211–225.  
   [Springer DOI:10.1007/978-3-540-27801-6_16](https://doi.org/10.1007/978-3-540-27801-6_16)
 - **Location**:
-  [`crates/diffuse-core/src/algo/bit_parallel.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/bit_parallel.rs)
+  [`crates/diffuse-core/src/algo/bit_parallel.rs`](../crates/diffuse-core/src/algo/bit_parallel.rs)
 - **Why It Is Used**:
   Calculates the exact LCS using bitwise CPU word operations (AND, OR, XOR, shifts, additions). By packing 64 dynamic programming matrix cells into a single 64-bit integer (`u64`), the algorithm processes DP diagonals in parallel, achieving a $w = 64\times$ speedup without loss of precision.
 - **For What It Is Used**:
@@ -123,7 +123,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Esko Ukkonen (1985). *"Algorithms for Approximate String Matching"*. Information and Control, 64(1–3), 100–118.  
   [ScienceDirect DOI:10.1016/S0019-9958(85)80046-2](https://doi.org/10.1016/S0019-9958(85)80046-2)
 - **Location**:
-  [`crates/diffuse-core/src/algo/bounded_dp.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/bounded_dp.rs)
+  [`crates/diffuse-core/src/algo/bounded_dp.rs`](../crates/diffuse-core/src/algo/bounded_dp.rs)
 - **Why It Is Used**:
   When two sequences are known to be similar or when changes are localized, exploring cells far from the matrix main diagonal ($|i - j| > k$) is mathematically guaranteed to yield suboptimal paths. Banded DP restricts evaluation strictly to a corridor of width $2k + 1$ centered on the diagonal.
 - **For What It Is Used**:
@@ -142,7 +142,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Osamu Gotoh (1982). *"An Improved Algorithm for Matching Biological Sequences"*. Journal of Molecular Biology, 162(3), 705–708.  
   [ScienceDirect DOI:10.1016/0022-2836(82)90398-9](https://doi.org/10.1016/0022-2836(82)90398-9) · [Paper PDF](https://www.cs.cmu.edu/~ckingsf/bio/resources/gotoh-gap-penalty.pdf)
 - **Location**:
-  [`crates/diffuse-core/src/algo/affine_gap.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/affine_gap.rs) (`align_affine`, `AffineGapWorkspace`, `AffineGapPenalties`, `AffineAlignmentSteps`, `DiffuseAffineExt`).
+  [`crates/diffuse-core/src/algo/affine_gap.rs`](../crates/diffuse-core/src/algo/affine_gap.rs) (`align_affine`, `AffineGapWorkspace`, `AffineGapPenalties`, `AffineAlignmentSteps`, `DiffuseAffineExt`).
 - **Why It Is Used**:
   Standard LCS assigns uniform cost to every gap character or token ($c(\text{gap}) = k \cdot g$). This causes anti-fragmentation artifacts where contiguous deletions/insertions are broken up to preserve isolated, coincidental punctuation or single characters (e.g. aligning underscores across unrelated identifiers). Gotoh's algorithm introduces affine gap penalties:
   $$\text{Cost}(\text{gap of length } k) = \alpha + \beta \cdot k \quad (\text{where } \alpha > \beta)$$
@@ -165,7 +165,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Richard M. Karp, Raymond E. Miller, Arnold L. Rosenberg (1972). *"Rapid Identification of Repeated Patterns in Strings, Trees and Arrays"*. STOC '72, 125–136.  
   [ACM Digital Library](https://doi.org/10.1145/800152.804905)
 - **Location**:
-  [`crates/diffuse-core/src/algo/landmarks.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/landmarks.rs) (`find_mums`, `find_monotonic_chain`, `find_monotonic_mums`, `Landmarks`, `DiffuseSequenceExt`); consumed in [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`multi_token_phrase_anchors`, `entropy_anchors`).
+  [`crates/diffuse-core/src/algo/landmarks.rs`](../crates/diffuse-core/src/algo/landmarks.rs) (`find_mums`, `find_monotonic_chain`, `find_monotonic_mums`, `Landmarks`, `DiffuseSequenceExt`); consumed in [`crates/diffuse-core/src/token.rs`](../crates/diffuse-core/src/token.rs) (`multi_token_phrase_anchors`, `entropy_anchors`).
 - **Why It Is Used**:
   Micro-token LCS algorithms easily get trapped in local combinatorial optima (e.g. matching single quotes, dots, or common keywords in reversed or misaligned positions). In contrast, multi-token phrases that occur *exactly once* in both the old and new text (Maximal Unique Matches) provide unambiguous, mathematically provable macro-anchors.
 - **For What It Is Used**:
@@ -184,7 +184,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Edward Fredkin (1960). *"Trie Memory"*. Communications of the ACM, 3(9), 490–499.  
   [ACM Digital Library](https://doi.org/10.1145/367390.367400)
 - **Location**:
-  [`crates/diffuse-core/src/algo/prefix_dfa.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/prefix_dfa.rs)
+  [`crates/diffuse-core/src/algo/prefix_dfa.rs`](../crates/diffuse-core/src/algo/prefix_dfa.rs)
 - **Why It Is Used**:
   Testing line prefixes against hundreds of language profile declaration keywords (`fn`, `pub fn`, `async fn`, `class`, `interface`, etc.) naively causes $O(P \cdot L)$ string comparisons per line. A deterministic finite prefix automaton compiles all candidate dictionary prefixes into a trie with failure transitions, matching the longest prefix in a single linear pass over the line text.
 - **For What It Is Used**:
@@ -206,7 +206,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Noam Chomsky and Marcel-Paul Schützenberger (1963). *"The Algebraic Theory of Context-Free Languages"*. In: Computer Programming and Formal Systems, Studies in Logic and the Foundations of Mathematics, 35, 118–161.  
   [ScienceDirect DOI:10.1016/S0049-237X(08)72019-6](https://doi.org/10.1016/S0049-237X(08)72019-6)
 - **Location**:
-  [`crates/diffuse-core/src/algo/dyck.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/dyck.rs) (`trim_balanced_boundaries`, `track_enclosing_containers`, `DyckBalanced`, `SmallStack`, `DelimiterClassifier`, `AsciiDelimiterClassifier`); consumed in [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`trim_to_balanced_boundaries`, `compute_token_containers`).
+  [`crates/diffuse-core/src/algo/dyck.rs`](../crates/diffuse-core/src/algo/dyck.rs) (`trim_balanced_boundaries`, `track_enclosing_containers`, `DyckBalanced`, `SmallStack`, `DelimiterClassifier`, `AsciiDelimiterClassifier`); consumed in [`crates/diffuse-core/src/token.rs`](../crates/diffuse-core/src/token.rs) (`trim_to_balanced_boundaries`, `compute_token_containers`).
 - **Why It Is Used**:
   Greedy phrase matching across boundaries frequently captures opening delimiters (e.g. `(` or backtick `` ` ``) without their closing partners, or vice-versa. Slicing open an atomic container breaks the structural semantics of code expressions. The Dyck language formalizes well-nested brackets ($\mathcal{D}_n$). A deterministic pushdown automaton verifies container parity and trims dangling boundaries.
 - **For What It Is Used**:
@@ -227,7 +227,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Robert A. Wagner and Michael J. Fischer (1974). *"The String-to-String Correction Problem"*. Journal of the ACM, 21(1), 168–173.  
   [ACM Digital Library](https://doi.org/10.1145/321796.321811)
 - **Location**:
-  [`crates/diffuse-core/src/algo/block_dp.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/block_dp.rs) (`BlockDpWorkspace`, `BlockTransition`, `BlockTransitionEvaluator`, `BlockTransitionsIter`); consumed in [`crates/diffuse-core/src/cluster/dp.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/cluster/dp.rs).
+  [`crates/diffuse-core/src/algo/block_dp.rs`](../crates/diffuse-core/src/algo/block_dp.rs) (`BlockDpWorkspace`, `BlockTransition`, `BlockTransitionEvaluator`, `BlockTransitionsIter`); consumed in [`crates/diffuse-core/src/cluster/dp.rs`](../crates/diffuse-core/src/cluster/dp.rs).
 - **Why It Is Used**:
   Diff hunks often contain reflows where a single deleted line expands into multiple added lines ($1\text{-to-}K$), or multiple deleted lines collapse into one ($K\text{-to-}1$). Standard line-by-line diffing misaligns these into disconnected deletion/addition blocks. The Cluster DP formulates the problem as a 2D transformation grid where transitions include block expansions, block collapses, in-place modifications, moves, and standalone adds/deletes.
 - **For What It Is Used**:
@@ -249,7 +249,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Karen Spärck Jones (1972). *"A Statistical Interpretation of Term Specificity and its Application in Retrieval"*. Journal of Documentation, 28(1), 11–21.  
   [Emerald DOI:10.1108/eb026526](https://doi.org/10.1108/eb026526)
 - **Location**:
-  [`crates/diffuse-core/src/algo/entropy.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/entropy.rs) (`FrequencyRanker`, `EntropyFiltered`, `DiffuseEntropyExt`); consumed in [`crates/diffuse-core/src/token.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/token.rs) (`entropy_anchors`, `token_entropy_score`).
+  [`crates/diffuse-core/src/algo/entropy.rs`](../crates/diffuse-core/src/algo/entropy.rs) (`FrequencyRanker`, `EntropyFiltered`, `DiffuseEntropyExt`); consumed in [`crates/diffuse-core/src/token.rs`](../crates/diffuse-core/src/token.rs) (`entropy_anchors`, `token_entropy_score`).
 - **Why It Is Used**:
   Not all matching tokens carry equal significance. Frequent tokens like punctuation (`(`, `)`, `;`, `,`) and generic keywords (`let`, `fn`, `return`) occur dozens of times and easily create false-positive alignments. Rare tokens (long identifier names, distinctive literals) carry high information content:
   $$I(x) = -\log_2 p(x)$$
@@ -271,7 +271,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Vladimir I. Levenshtein (1966). *"Binary Codes Capable of Correcting Deletions, Insertions, and Reversals"*. Soviet Physics Doklady, 10(8), 707–710.  
   [Math-Net Archive](https://www.mathnet.ru/php/archive.phtml?wnode=18128&jrn=dan&paperid=31464&option_lang=eng)
 - **Location**:
-  [`crates/diffuse-core/src/similarity.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/similarity.rs) (`line_similarity`, `line_similarity_parts`)
+  [`crates/diffuse-core/src/similarity.rs`](../crates/diffuse-core/src/similarity.rs) (`line_similarity`, `line_similarity_parts`)
 - **Why It Is Used**:
   Determining whether a deleted line and an added line represent an in-place modification (`Mod`) requires an objective similarity coefficient that is normalized between $[0.0, 1.0]$ and invariant to leading indentation.
 - **For What It Is Used**:
@@ -290,7 +290,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   James Munkres (1957). *"Algorithms for the Assignment and Transportation Problems"*. Journal of the SIAM, 5(1), 32–38.  
   [SIAM DOI:10.1137/0105003](https://doi.org/10.1137/0105003)
 - **Location**:
-  [`crates/diffuse-core/src/algo/bipartite_matching.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/bipartite_matching.rs) (`BipartiteMatcher`, `greedy_multiset_match`, `expand_neighborhood_matches`, `filter_cohesion_runs`) & [`crates/diffuse-core/src/moves.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/moves.rs) (`mark_moves`, `mark_moves_with_profile`)
+  [`crates/diffuse-core/src/algo/bipartite_matching.rs`](../crates/diffuse-core/src/algo/bipartite_matching.rs) (`BipartiteMatcher`, `greedy_multiset_match`, `expand_neighborhood_matches`, `filter_cohesion_runs`) & [`crates/diffuse-core/src/moves.rs`](../crates/diffuse-core/src/moves.rs) (`mark_moves`, `mark_moves_with_profile`)
 - **Why It Is Used**:
   When blocks of code or renumbered sections are moved elsewhere in a file, displaying them as pure deletions and insertions inflates change statistics and forces reviewers to re-read identical code. Detecting moved lines across hunks requires bipartite matching with spatial clustering to avoid false-positive matches on common trivial lines (like closing braces).
 - **For What It Is Used**:
@@ -308,7 +308,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   [Springer DOI:10.1007/s10664-019-09772-z](https://doi.org/10.1007/s10664-019-09772-z)  
   Michael D. Ernst (2001). *"Research Directions in Software Evolution: Quick and Clean Diffs"*. ACM SIGSOFT Software Engineering Notes.
 - **Location**:
-  [`crates/diffuse-core/src/shift.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/shift.rs)
+  [`crates/diffuse-core/src/shift.rs`](../crates/diffuse-core/src/shift.rs)
 - **Why It Is Used**:
   Diff hunks generated by Git are often mathematically valid but semantically unnatural (e.g. slicing an added function midway through its signature or splitting between closing braces). Shifting a hunk boundary up or down by absorbing and releasing identical lines preserves mathematical identity while aligning boundaries to natural semantic breaks.
 - **For What It Is Used**:
@@ -329,7 +329,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Rolf Landauer (1961). *"Irreversibility and Heat Generation in the Computing Process"*. IBM Journal of Research and Development, 5(3), 183–191.  
   [IBM JRD DOI:10.1147/rd.53.0183](https://doi.org/10.1147/rd.53.0183)
 - **Location**:
-  [`crates/diffuse-core/src/algo/tape.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/tape.rs) (`Tape<T>`, `TapeChunk<T>`, `TapeProjection`) & [`crates/diffuse-core/src/tape.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/tape.rs) (`AlignmentTape`, `TapeChunk`)
+  [`crates/diffuse-core/src/algo/tape.rs`](../crates/diffuse-core/src/algo/tape.rs) (`Tape<T>`, `TapeChunk<T>`, `TapeProjection`) & [`crates/diffuse-core/src/tape.rs`](../crates/diffuse-core/src/tape.rs) (`AlignmentTape`, `TapeChunk`)
 - **Why It Is Used**:
   Diff outputs frequently suffer from coordinate desynchronization and non-invertibility (reversing the diff order does not yield symmetric results). The Alignment Tape models edits as an invertible monoid with typed chunks (`Keep`, `Strike`, `Fill`, `Relocate`) and provable projection functors:
   $$\pi_{\text{left}}(\text{tape}) = \text{OldText}, \quad \pi_{\text{right}}(\text{tape}) = \text{NewText}$$
@@ -349,7 +349,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   John McCarthy (1960). *"Recursive Functions of Symbolic Expressions and Their Computation by Machine, Part I"*. Communications of the ACM, 3(4), 184–195.  
   [ACM Digital Library](https://doi.org/10.1145/367177.367199)
 - **Location**:
-  [`crates/diffuse-core/src/algo/interner.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/algo/interner.rs) (`SymbolTable<T>`, `SymbolId`) & [`crates/diffuse-core/src/similarity.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/similarity.rs) (`TokenInterner`)
+  [`crates/diffuse-core/src/algo/interner.rs`](../crates/diffuse-core/src/algo/interner.rs) (`SymbolTable<T>`, `SymbolId`) & [`crates/diffuse-core/src/similarity.rs`](../crates/diffuse-core/src/similarity.rs) (`TokenInterner`)
 - **Why It Is Used**:
   Comparing strings during token LCS and DP transitions repeatedly evaluates string equality and pointer chasing. Hash-consing maps every unique string token to a compact `u32` integer symbol upon first ingestion.
 - **For What It Is Used**:
@@ -367,7 +367,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Pedro Celis (1986). *"Robin Hood Hashing"*. PhD Thesis, University of Waterloo, Computer Science Department.  
   [Waterloo Archive PDF](https://cs.uwaterloo.ca/research/tr/1986/CS-86-14.pdf)
 - **Location**:
-  Used across [`diffuse-core`](file:///home/daniel/lab/diffuse/crates/diffuse-core/) via `rustc_hash::{FxHashMap, FxHashSet}`.
+  Used across [`diffuse-core`](../crates/diffuse-core/) via `rustc_hash::{FxHashMap, FxHashSet}`.
 - **Why It Is Used**:
   Standard SipHash (Rust's default `std::collections::HashMap`) protects against hash-flooding DoS attacks at the expense of computational overhead per key lookup. In a diff engine processing local git commits, cryptographic security is unnecessary. `FxHash` (originating from Firefox and `rustc`) uses fast multiplication and bit-shifting to maximize throughput and CPU cache friendliness.
 - **For What It Is Used**:
@@ -387,7 +387,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   CIE (1976). *"Official Recommendations on Uniform Color Spaces, Color Difference Equations, Metric Color Terms"*. Color Research & Application, 2(1), 5–6.  
   [Wiley DOI:10.1002/j.1520-6378.1977.tb00102.x](https://doi.org/10.1002/j.1520-6378.1977.tb00102.x)
 - **Location**:
-  [`crates/diffuse-render/src/theme/`](file:///home/daniel/lab/diffuse/crates/diffuse-render/src/theme/)
+  [`crates/diffuse-render/src/theme/`](../crates/diffuse-render/src/theme/)
 - **Why It Is Used**:
   Standard sRGB and HSL color spaces are perceptually non-uniform: hues shift dramatically as lightness or chroma changes (e.g. pure yellow appears far brighter to the human eye than pure blue of identical nominal lightness). Oklab maps colors into a 3D coordinate space $(L, a, b)$ matching human visual cone perception, ensuring that hue rotations and contrast scaling remain perceptually linear and uniform.
 - **For What It Is Used**:
@@ -406,7 +406,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   ITU-R Recommendation BT.709-6 (2015). *"Parameter Values for the HDTV Standards for Production and International Programme Exchange"*.  
   [ITU-R BT.709-6](https://www.itu.int/rec/R-REC-BT.709)
 - **Location**:
-  [`crates/diffuse-render/src/theme/palette.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-render/src/theme/palette.rs)
+  [`crates/diffuse-render/src/theme/palette.rs`](../crates/diffuse-render/src/theme/palette.rs)
 - **Why It Is Used**:
   Terminal diff tools must remain legible under diverse monitor conditions, ambient lighting, and for users with visual impairments. WCAG 2.1 defines relative luminance $Y$:
   $$Y = 0.2126 \cdot R_{\text{lin}} + 0.7152 \cdot G_{\text{lin}} + 0.0722 \cdot B_{\text{lin}}$$
@@ -430,7 +430,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Max Brunsfeld (2018). *"Tree-sitter: An Incremental Parsing System for Programming Tools"*. Strange Loop.  
   [Tree-sitter Documentation](https://tree-sitter.github.io/tree-sitter/)
 - **Location**:
-  [`crates/diffuse-syntax/src/`](file:///home/daniel/lab/diffuse/crates/diffuse-syntax/src/) (`tree_sitter.rs`)
+  [`crates/diffuse-syntax/src/`](../crates/diffuse-syntax/src/) (`tree_sitter.rs`)
 - **Why It Is Used**:
   Regex-based syntax highlighters lack semantic understanding of nested grammars, template literals, multiline comments, and language scopes. Tree-sitter generates concrete syntax trees (CSTs) using Tomita's Generalized LR parsing with graph-structured stacks (GSS), with incremental re-parsing that updates trees in $O(\log N)$ time upon edits.
 - **For What It Is Used**:
@@ -449,7 +449,7 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Bertrand Meyer (1992). *"Applying 'Design by Contract'"*. IEEE Computer, 25(10), 40–51.  
   [IEEE Xplore DOI:10.1109/2.161279](https://doi.org/10.1109/2.161279)
 - **Location**:
-  [`crates/diffuse-core/src/dbc.rs`](file:///home/daniel/lab/diffuse/crates/diffuse-core/src/dbc.rs) (`require!`, `ensure!`, `invariant!`)
+  [`crates/diffuse-core/src/dbc.rs`](../crates/diffuse-core/src/dbc.rs) (`require!`, `ensure!`, `invariant!`)
 - **Why It Is Used**:
   Diff engine pipelines are prone to silent coordinate drift, index off-by-one errors, and corrupt tape states if edge cases go unverified. DbC integrates formal Hoare triples $\{P\}\;S\;\{Q\}$ into runtime code:
   - $\{P\}$ Preconditions (`require!`)

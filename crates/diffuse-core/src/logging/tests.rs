@@ -396,3 +396,150 @@ fn test_log_format_unquoted_messages_and_return_spacing() {
         "Output was: {output}"
     );
 }
+
+#[test]
+fn test_default_log_path_macos() {
+    let path = default_log_path_for(
+        "macos",
+        |var| {
+            if var == "HOME" {
+                Some("/Users/testuser".into())
+            } else {
+                None
+            }
+        },
+        |_| false,
+    )
+    .unwrap();
+    assert_eq!(
+        path,
+        PathBuf::from("/Users/testuser/Library/Logs/diffuse/diffuse.log")
+    );
+}
+
+#[test]
+fn test_default_log_path_windows_localappdata() {
+    let path = default_log_path_for(
+        "windows",
+        |var| {
+            if var == "LOCALAPPDATA" {
+                Some("C:/Users/testuser/AppData/Local".into())
+            } else {
+                None
+            }
+        },
+        |_| false,
+    )
+    .unwrap();
+    assert_eq!(
+        path,
+        PathBuf::from("C:/Users/testuser/AppData/Local")
+            .join("diffuse")
+            .join("diffuse.log")
+    );
+}
+
+#[test]
+fn test_default_log_path_windows_userprofile_fallback() {
+    let path = default_log_path_for(
+        "windows",
+        |var| {
+            if var == "USERPROFILE" {
+                Some("C:/Users/testuser".into())
+            } else {
+                None
+            }
+        },
+        |_| false,
+    )
+    .unwrap();
+    assert_eq!(
+        path,
+        PathBuf::from("C:/Users/testuser")
+            .join("AppData")
+            .join("Local")
+            .join("diffuse")
+            .join("diffuse.log")
+    );
+}
+
+#[test]
+fn test_default_log_path_linux_xdg_state_home() {
+    let path = default_log_path_for(
+        "linux",
+        |var| {
+            if var == "XDG_STATE_HOME" {
+                Some("/custom/state".into())
+            } else {
+                None
+            }
+        },
+        |_| false,
+    )
+    .unwrap();
+    assert_eq!(path, PathBuf::from("/custom/state/diffuse/diffuse.log"));
+}
+
+#[test]
+fn test_default_log_path_linux_xdg_data_home() {
+    let path = default_log_path_for(
+        "linux",
+        |var| {
+            if var == "XDG_DATA_HOME" {
+                Some("/custom/share".into())
+            } else {
+                None
+            }
+        },
+        |_| false,
+    )
+    .unwrap();
+    assert_eq!(path, PathBuf::from("/custom/share/diffuse/diffuse.log"));
+}
+
+#[test]
+fn test_default_log_path_linux_share_exists() {
+    let path = default_log_path_for(
+        "linux",
+        |var| {
+            if var == "HOME" {
+                Some("/home/testuser".into())
+            } else {
+                None
+            }
+        },
+        |p| p == Path::new("/home/testuser/.share"),
+    )
+    .unwrap();
+    assert_eq!(
+        path,
+        PathBuf::from("/home/testuser/.share/diffuse/diffuse.log")
+    );
+}
+
+#[test]
+fn test_default_log_path_linux_local_state_default() {
+    let path = default_log_path_for(
+        "linux",
+        |var| {
+            if var == "HOME" {
+                Some("/home/testuser".into())
+            } else {
+                None
+            }
+        },
+        |p| p == Path::new("/home/testuser/.local/state"),
+    )
+    .unwrap();
+    assert_eq!(
+        path,
+        PathBuf::from("/home/testuser/.local/state/diffuse/diffuse.log")
+    );
+}
+
+#[test]
+fn test_default_log_path_none_when_no_env() {
+    assert!(default_log_path_for("linux", |_| None, |_| false).is_none());
+    assert!(default_log_path_for("macos", |_| None, |_| false).is_none());
+    assert!(default_log_path_for("windows", |_| None, |_| false).is_none());
+}

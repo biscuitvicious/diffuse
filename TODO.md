@@ -7,6 +7,7 @@
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
 - [ ] **Theme styling (deeper black & muted red/green backgrounds)**: Tune default theme palette to make the background more black and mute the red (deletion) and green (addition) background shades for enhanced contrast and reduced eye fatigue.
 - [x] **CLI UX & subcommands**: Explicit subcommands, CLI arguments, and flags (e.g. `diffuse review [commit-range]`, `diffuse parse`, `diffuse -p`/`--pager`, `-U`/`--context`).
+- [ ] **Enforce pure-Rust `gix` independence across all git operations**: Apply guideline to use `gix` for all access that would require `git` to be available, using `git` only as an optimization in extreme cases *if available* and radically faster.
 - [x] ~~**Direct git access via git crate**~~: Migrate all git tool callouts into direct git access using a native git crate (e.g. `gix` or `git2`). (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
 
 ## 2. Streaming Pipeline & Incremental Loading (Pi Extension & Engine)

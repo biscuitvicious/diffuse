@@ -4,7 +4,13 @@
 //! (file, Unix domain socket, TCP stream, or stderr), and zero-overhead
 //! filtering.
 
-use std::{env, fs::File, io, sync::Arc};
+use std::{
+    env,
+    fs::{self, File},
+    io,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use tracing_subscriber::{
     EnvFilter,
@@ -21,7 +27,12 @@ use tracing_subscriber::{
 /// - `tcp:<addr>`: connects to TCP socket
 /// - `unix:<path>`: connects to Unix domain socket
 /// - `<path>`: appends to specified file
-/// - unset: logs to `io::stderr`
+/// - unset: appends to the platform-appropriate default log path (or falls back
+///   to `stderr`):
+///   - Linux/Unix: `$XDG_STATE_HOME/diffuse/diffuse.log`,
+///     `~/.local/state/diffuse/diffuse.log`, or `~/.share/diffuse/diffuse.log`
+///   - macOS: `~/Library/Logs/diffuse/diffuse.log`
+///   - Windows: `%LOCALAPPDATA%\diffuse\diffuse.log`
 ///
 /// Default log filter is `LevelFilter::OFF` unless overridden by `DIFFUSE_LOG`
 /// or `RUST_LOG`.
@@ -48,12 +59,39 @@ pub fn init_tracing_subscriber() -> io::Result<()> {
             let stream = TcpStream::connect(tcp_addr)?;
             BoxMakeWriter::new(Arc::new(stream))
         } else if let Some(socket_path) = log_path.strip_prefix("unix:") {
-            use std::os::unix::net::UnixStream;
-            let stream = UnixStream::connect(socket_path)?;
-            BoxMakeWriter::new(Arc::new(stream))
+            #[cfg(unix)]
+            {
+                use std::os::unix::net::UnixStream;
+                let stream = UnixStream::connect(socket_path)?;
+                BoxMakeWriter::new(Arc::new(stream))
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = socket_path;
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Unix domain sockets are not supported on this platform",
+                ));
+            }
         } else {
-            let file = File::options().create(true).append(true).open(&log_path)?;
+            let path = Path::new(&log_path);
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let file = File::options().create(true).append(true).open(path)?;
             BoxMakeWriter::new(Arc::new(file))
+        }
+    } else if let Some(default_path) = default_log_path() {
+        if let Some(parent) = default_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        match File::options()
+            .create(true)
+            .append(true)
+            .open(&default_path)
+        {
+            Ok(file) => BoxMakeWriter::new(Arc::new(file)),
+            Err(_) => BoxMakeWriter::new(Arc::new(io::stderr())),
         }
     } else {
         BoxMakeWriter::new(Arc::new(io::stderr()))
@@ -80,6 +118,88 @@ pub fn init_tracing_subscriber() -> io::Result<()> {
         .try_init();
 
     Ok(())
+}
+
+/// Returns the platform-appropriate default log file path:
+/// - macOS: `~/Library/Logs/diffuse/diffuse.log`
+/// - Windows: `%LOCALAPPDATA%\diffuse\diffuse.log`
+/// - Linux/Unix: `$XDG_STATE_HOME/diffuse/diffuse.log`, or
+///   `~/.local/state/diffuse/diffuse.log`, or `~/.share/diffuse/diffuse.log`
+pub fn default_log_path() -> Option<PathBuf> {
+    default_log_path_for(
+        env::consts::OS,
+        |var| env::var(var).ok(),
+        |path| path.is_dir(),
+    )
+}
+
+/// Pure resolution logic for the default log file path across operating
+/// systems.
+pub fn default_log_path_for(
+    target_os: &str,
+    env_var: impl Fn(&str) -> Option<String>,
+    dir_exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    match target_os {
+        "macos" => {
+            if let Some(home) = env_var("HOME") {
+                return Some(
+                    PathBuf::from(home)
+                        .join("Library")
+                        .join("Logs")
+                        .join("diffuse")
+                        .join("diffuse.log"),
+                );
+            }
+        }
+        "windows" => {
+            if let Some(local_app_data) = env_var("LOCALAPPDATA") {
+                return Some(
+                    PathBuf::from(local_app_data)
+                        .join("diffuse")
+                        .join("diffuse.log"),
+                );
+            }
+            if let Some(user_profile) = env_var("USERPROFILE") {
+                return Some(
+                    PathBuf::from(user_profile)
+                        .join("AppData")
+                        .join("Local")
+                        .join("diffuse")
+                        .join("diffuse.log"),
+                );
+            }
+        }
+        _ => {
+            // Linux & other Unix platforms (following XDG State / Data
+            // specifications)
+            if let Some(state_home) = env_var("XDG_STATE_HOME")
+                && !state_home.is_empty()
+            {
+                return Some(
+                    PathBuf::from(state_home)
+                        .join("diffuse")
+                        .join("diffuse.log"),
+                );
+            }
+            if let Some(data_home) = env_var("XDG_DATA_HOME")
+                && !data_home.is_empty()
+            {
+                return Some(PathBuf::from(data_home).join("diffuse").join("diffuse.log"));
+            }
+            if let Some(home) = env_var("HOME") {
+                let home_path = PathBuf::from(home);
+                let share = home_path.join(".share");
+                let local_state = home_path.join(".local").join("state");
+
+                if dir_exists(&share) && !dir_exists(&local_state) {
+                    return Some(share.join("diffuse").join("diffuse.log"));
+                }
+                return Some(local_state.join("diffuse").join("diffuse.log"));
+            }
+        }
+    }
+    None
 }
 
 /// Custom log event formatter rendering compact file paths and truncated span

@@ -17,6 +17,12 @@ PROFILE="$PROFILE" "$EXT_DIR/scripts/build-bin.sh"
 
 cd "$EXT_DIR"
 DEST="${INSTALL_DIR:-$HOME/.pi/agent/extensions/diffuse-review}"
+EXT_PARENT="$(dirname "$DEST")"
+if [ -z "${INSTALL_DIR-}" ] && [ ! -d "$EXT_PARENT" ]; then
+	echo "Pi extensions directory not found at $EXT_PARENT; skipping Pi extension installation."
+	exit 0
+fi
+
 BUILD="$(git log -1 --format='%h %ad' --date=short 2>/dev/null || echo dev)"
 
 # Remove old flat installation if it exists
@@ -33,10 +39,18 @@ sed "s/@BUILD@/$BUILD/g" review.ts > "$DEST/review.ts"
 cp index.ts "$DEST/index.ts"
 
 # Pull the binary from target/ directly — no intermediate bin/ copy.
+TARGET_SUBDIR=""
+if [ -n "${TARGET:-}" ]; then
+	TARGET_SUBDIR="$TARGET/"
+fi
+
 if [ "$PROFILE" = "release" ]; then
-	SRC_BIN="../../target/release/diffuse"
+	SRC_BIN="../../target/${TARGET_SUBDIR}release/diffuse"
 else
-	SRC_BIN="../../target/debug/diffuse"
+	SRC_BIN="../../target/${TARGET_SUBDIR}debug/diffuse"
+fi
+if [ ! -f "$SRC_BIN" ] && [ -f "${SRC_BIN}.exe" ]; then
+	SRC_BIN="${SRC_BIN}.exe"
 fi
 cp --remove-destination "$SRC_BIN" "$DEST/bin/diffuse"
 chmod +x "$DEST/bin/diffuse"

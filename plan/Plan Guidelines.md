@@ -29,7 +29,7 @@ Phase (and step) checkboxes use three states:
 - A phase is marked `[x]` **only after review, just before committing**
   (per the repo's commit policy). Normally that review is the human's
   visual review of the change — including any golden/wire output diffs
-  (humans catch "duh" problems mechanical checks can't).
+  (human visual inspection detects obvious anomalies that automated checks cannot detect).
 - If the user has instructed the agent to commit automatically, the agent
   may mark the phase `[x]` after performing the **agent review** of the
   wire/golden output described in

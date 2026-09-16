@@ -1,42 +1,80 @@
 # diffuse — Architecture & Implementation Guidelines
 
-## Language Syntax & Profile Independence
+This document specifies the architectural invariants, engineering principles, and quality standards governing the *diffuse* codebase. All modifications must comply with these guidelines.
 
-- **Declaration & Syntax Rules**: Declaration keyword matching, function signature patterns, comment syntax, block delimiters, and syntactic section boundaries must always be defined in the language profile subsystem ([`crates/diffuse-syntax/src/profile.rs`](crates/diffuse-syntax/src/profile.rs) and [`crates/diffuse-syntax/src/language/`](crates/diffuse-syntax/src/language/)).
-- **Engine Agnosticism**: The diff engine core (`crates/diffuse-core/`) must never hardcode language-specific keywords, regexes, or declaration rules. All syntactic awareness must be queried through the active [`LangProfile`](crates/diffuse-syntax/src/profile.rs).
+---
 
-## Algorithm & Core Separation
+## 1. Subsystem Boundaries & Decoupling
 
-- **Domain Decoupling**: Algorithms in `crates/diffuse-core/src/algo/` operate on generic types and interfaces (`LcsEngine`, `DiffEngine`, `PrefixMatcher`), decoupled from diffuse domain objects.
-- **Latency Budgets**: All algorithms and pipeline operations must remain within sub-second budgets on large diffs, utilizing bit-parallel operations, diagonal corridor bounding, and zero-allocation scratch buffers where appropriate.
-- **No Hardcoded Diff Behaviour**: Changes in diffing behaviour must only be made through algorithmic engine changes and tunable pipeline options, and must never use hardcoded conditionals or wired-in flows. Every flow in the pipeline must be based on algorithmic/mathematical logic, or on logic directly supporting it — no hardcoded diff-behaviour flows may exist.
-- **No Design Regression**: After any code change, the design of the affected area must be equivalently good (but potentially different) or strictly better than it was before. Refactoring to maintain good design of the affected area of a code change is mandatory.
+The codebase is organized into discrete subcrates with strictly unidirectional dependencies:
 
-## Fail-Fast Error Handling & Invariant Enforcement
+- **Language Syntax & Profile Independence**: Declaration matching, function signature patterns, comment syntax, block delimiters, and syntactic section boundaries belong exclusively to the language profile subsystem ([`crates/diffuse-syntax/src/profile.rs`](crates/diffuse-syntax/src/profile.rs) and [`crates/diffuse-syntax/src/language/`](crates/diffuse-syntax/src/language/)).
+- **Engine Agnosticism**: The diff engine core ([`crates/diffuse-core/`](crates/diffuse-core/)) must never hardcode language-specific keywords, regular expressions, or syntax rules. All syntactic classification is queried dynamically via [`LangProfile`](crates/diffuse-syntax/src/profile.rs).
+- **Generic Algorithm Isolation**: Primitives under [`crates/diffuse-core/src/algo/`](crates/diffuse-core/src/algo/) (e.g., Myers O(ND), Hirschberg, Hunt–Szymanski, bit-parallel Myers, affine-gap alignment, bipartite matching) operate over generic sequences and abstractions, decoupled from diff-domain types.
 
-- **Enforce Structural Invariants**: At any point where the normal, correct functioning of the codebase guarantees that an indexing, map lookup, or state query cannot fail (e.g., resolving a `FlatRow` into `output.files`, accessing a hunk by a valid `HunkStart` or selection coordinate), never silently swallow lookups with `.unwrap_or(...)`, empty fallbacks, or silent `None` returns that allow corrupt or desynchronized state to propagate.
-- **Fail Fast with Diagnostics**: Use `.expect("...")` / panics with diagnostic context (such as index vs. slice bounds) on broken invariants so latent bugs and data structure mismatches are caught immediately at the origin.
-- **Explicit Early Return on Preconditions**: When handling functions that legitimately return `Option` or `Result`, propagate precondition failures or unexpected states early and explicitly with `?` rather than continuing execution with invalid default values.
-- **Judicious Application**: Distinguish structural invariants (which should fail fast) from external inputs, optional user state, or legitimate missing elements (e.g., empty repos or non-existent notes), which should remain handled gracefully.
+---
 
-## Test-First Methodology & 100% Branch Coverage
+## 2. Algorithmic Invariants & Performance Budgets
 
-- **Test-First Discipline**: In addition to the "test-first with failing test" methodology of writing new code, every code path added must have 100% **branch coverage** through comprehensive unit tests.
-- **Exhaustive Branch Verification**: All conditionals, match arms, edge cases, error fallbacks, and parameter variations must be explicitly exercised by targeted unit tests (`#[test]`) to prevent dead branches or untested regression vulnerabilities.
+- **Mathematical Foundations**: Changes in diffing behavior must derive from principled algorithmic formulations, cost matrices, and tunable pipeline parameters. Heuristic special-casing, ad-hoc conditionals, and hardcoded exception branches are strictly prohibited.
+- **Latency Budgets**: All algorithms and pipeline operations must execute within sub-second latency budgets on large diffs, utilizing bit-parallel operations, diagonal corridor bounding, and zero-allocation scratch buffers where appropriate.
+- **Non-Regression of Architectural Design**: Modifications must preserve or improve the structural coherence and modularity of affected components. Architectural refactoring to prevent entropy is mandatory.
 
-## ANSI & Theming Encapsulation (No Direct ANSI Escapes)
+---
 
-- **No Direct ANSI Escapes**: Direct ANSI escape sequences (e.g., `\x1b[...]`, raw terminal codes, hardcoded escape strings) must never be scattered across modules, views, renderers, or TUI logic.
-- **Yansi & Theming Engine Authority**: Every single color, attribute, style, and terminal escape sequence is the sole responsibility of the centralized theming engine, utilizing the `yansi` crate as the unified styling currency.
-- **Algorithmic Generation & Overrides**: The theming system must default to auto-generating harmonious style colors using coloring logic, while allowing for targeted overrides through configuration (theme base + overrides, or completely new themes through config).
+## 3. Invariant Enforcement & Fail-Fast Diagnostics
 
-## Build & Installation Conventions
+- **Structural Invariants**: Where internal logic guarantees that a condition holds (e.g., resolving a `FlatRow` index into `output.files`, or indexing a hunk coordinate within established bounds), never swallow failure with silent fallback values or empty defaults (`.unwrap_or_default()`).
+- **Diagnostic Fail-Fast**: Assert structural invariants using explicit panic macros (`.expect(...)`, `panic!`, or crate DBC macros) enriched with contextual diagnostic parameters. Latent state corruption must be surfaced immediately at the point of origin.
+- **Explicit Error Propagation**: Distinguish structural invariants from external inputs, optional user configuration, and empty states. Propagate expected error modes via `Result` or `Option` using `?`.
 
-- **`cargo install --locked`**: Always use `--locked` when installing binaries locally (e.g., `cargo install --locked --path crates/diffuse --force`) to ensure deterministic builds strictly bound to the pinned versions in `Cargo.lock`.
+---
 
-## Golden Corpus Harvesting
+## 4. Test-First Methodology & Exhaustive Branch Coverage
 
-- **Pinned Revisions Only**: Harvested corpora must pin the exact harvested history. `diffuse-harvest` resolves every revision expression to absolute full commit ids before harvesting, so a fixture recorded as `HEAD~150..HEAD` can never silently re-resolve to a different window — always harvest against explicit, absolute ranges.
-- **No Embedded Contents**: The diff and the old/new side snapshots travel as separate corpus files (`diff.patch`, `files/*.old.*`, `files/*.new.*`) recorded by `meta.json`; fixture JSON carries metadata (revision, path mapping) only — never `diff`/`contents`/`oldContents` blobs.
-- **No Self-Referential Harvests**: Golden corpora must not diff the golden tree itself (`--exclude tests/golden`); a corpus that ingests its own history balloons into megabytes of meta-noise.
-- **Regeneration Contract**: Regeneration (`GEN_GOLDEN`) re-runs the engine over the frozen inputs only — it never re-harvests, and it must stay byte-for-byte reproducible from the recorded revision.
+- **Failing Test First**: Every bug fix, functional extension, or behavior adjustment must begin with a targeted automated test (`#[test]`) confirming the initial defect or missing capability prior to code changes.
+- **100% Branch Coverage**: All newly introduced code paths must achieve 100% branch coverage. Unit tests must systematically exercise every conditional branch, pattern match arm, and edge case.
+- **Performance Budgets**: Individual unit tests must execute in under 0.5s, and the warm cargo test suite must finish in under 1.5s per test binary.
+
+---
+
+## 5. Terminal Styling & Theming Encapsulation
+
+- **Zero Direct ANSI Escapes**: Raw ANSI escape sequences (such as `\x1b[...]` and hardcoded SGR strings) must not appear in application, view, or domain logic.
+- **Centralized Palette Authority**: Visual styling is mediated entirely through the theming subsystem ([`crates/diffuse-render/`](crates/diffuse-render/)), using the `yansi` crate as the unified styling abstraction.
+- **Renderer Independence**: Core pipeline models emit semantic classifications (e.g., [`FileCounts::segments`](crates/diffuse-core/src/counts.rs)), allowing terminal renderers and external frontends to project colors independently.
+
+## 6. Repository Access & Git Tooling Independence
+
+- **Zero Hard Dependency on Git Binary**: *diffuse* must function correctly across all usages and workflows even when `git` is not installed on the host system.
+- **Pure-Rust Repository Access via `gix`**: `gix` must be used for all repository access that would otherwise require `git` to be installed, with no exceptions.
+- **Git Binary Permitted as Radically Faster Optimization Only**: Direct execution of the external `git` binary is permitted strictly as an opportunistic optimization if `git` is detected and direct execution would be radically faster. It must never be a hard requirement or single point of failure.
+
+---
+
+## 7. Build, Installation, & Golden Acceptance Invariants
+
+- **Deterministic Builds**: Local binary installations must enforce `--locked` (e.g., `cargo install --locked --path crates/diffuse`) to ensure strict adherence to pinned dependency versions in `Cargo.lock`.
+- **Golden Corpus Immutability**: Acceptance corpora ([`tests/golden/`](tests/golden/)) capture frozen diffs and uncompressed snapshots pinned to absolute commit hashes. They must exclude the golden tree itself and remain byte-for-byte reproducible via `GEN_GOLDEN=1`.
+- **Dual Acceptance Legs**: Changes to engine semantics or wire formats must pass both the library pipeline leg and the spawned CLI binary leg byte-for-byte (see [`tests/AGENTS.md`](tests/AGENTS.md)).
+- **Tool Output Filtering via Negative Exclusion (`grep -v`)**: When post-processing tool, linter, or compiler output in repository scripts, never pipe into positive whitelists (such as `grep -E '^(Fixed|error)'`) which involuntarily swallow unexpected output, panic traces, or warnings. Always use negative blacklists (`grep -v` / `grep -vE`) targeting solely the specific progress strings to suppress (e.g., `grep -vE '^[[:space:]]*(Checking|Compiling|Finished)'`), guaranteeing that any unhandled or unexpected diagnostic output remains visible.
+
+---
+
+## 8. Documentation & Content Creation Standards (GOV.UK Standard)
+
+All project documentation, architectural guidelines, docstrings, user manuals, and written communications must adhere to the principles specified in the **[GOV.UK Writing Guidelines](https://guidance.publishing.service.gov.uk/writing-to-gov-uk-standards/writing-guidelines/)**. This standard serves as the primary benchmark for clarity, economy of language, and informational utility.
+
+### Executive Summary of Key Guidelines
+
+- **Front-Loading & Inverted Pyramid**: Place the most critical information, conclusion, or action at the very top. Structure content in descending order of importance so that readers who skim or scan absorb the essential points immediately.
+- **Clear Structure & Scannability**: Readers scan in an F-shaped pattern, typically consuming only 20% to 28% of words on a page. Keep paragraphs short (1–3 sentences), group related concepts under front-loaded descriptive headings, and use bulleted lists for multi-item sequences.
+- **Plain, Direct Language**: Use plain English and active voice. Favor simple, concrete terms over pretentious synonyms (e.g., write "use" rather than "utilize"). Eliminate jargon, idioms, buzzwords, and acronyms without expansion. Aim for sentences averaging under 25 words.
+- **Tone of Voice**:
+  - **Specific, informative, clear, and concise**: Every phrase must convey substance without padding.
+  - **Brisk, but not terse**: Move swiftly through explanation without omitting necessary mechanics.
+  - **Incisive and precise**: Avoid excessive conversational preamble or conversational filler that obscures technical accuracy.
+  - **Serious, not pompous**: Maintain technical authority without administrative stiffness or self-importance.
+  - **Objective and emotionless**: Avoid promotional hype, marketing rhetoric, and subjective adjectives. Document capabilities factually.
+- **Actionable Titles & Clear Summaries**: Every document, major section, and change note must open with a concise summary stating the exact problem, solution, and outcome upfront. Headings and links must be descriptive, front-loaded, and action-oriented.
+- **Markdown Documentation File Naming**: Use plain Title-Caps filenames for Markdown documentation in subdirectories (e.g., `docs/Algorithms.md`, `plan/Plan Guidelines.md`). Exceptions apply only to Markdown files located directly in the project root (e.g., `README.md`, `CODE_STYLE.md`, `GUIDELINES.md`, `LICENSE.md`) or files that adhere to all-caps per idiomatic conventions (e.g., `tests/AGENTS.md`, `extension/pi/AGENTS.md`).

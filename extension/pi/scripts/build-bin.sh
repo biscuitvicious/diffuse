@@ -14,10 +14,15 @@ if [ -n "$TOOLCHAIN" ]; then
 else
   CARGO=cargo
 fi
+TARGET_FLAG=()
+if [ -n "${TARGET:-}" ]; then
+  TARGET_FLAG=(--target "$TARGET")
+fi
+
 if [ "$PROFILE" = "release" ]; then
-	$CARGO build --release --bin diffuse
-	echo "built: target/release/diffuse"
+	$CARGO build --release --bin diffuse "${TARGET_FLAG[@]}"
+	echo "built: target/${TARGET:+$TARGET/}release/diffuse"
 else
-	$CARGO build --bin diffuse
-	echo "built: target/debug/diffuse"
+	$CARGO build --bin diffuse "${TARGET_FLAG[@]}"
+	echo "built: target/${TARGET:+$TARGET/}debug/diffuse"
 fi

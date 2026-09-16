@@ -1,153 +1,60 @@
-# diffuse — agent guidelines
+# diffuse — Agent & Contributor Guidelines
 
-## What this project is
+## Project Overview & Architecture
 
-A **diff engine** — it reads a `git diff` plus the file contents on both
-sides, and produces a structured, word-level description of what changed:
-which removed line became which added line, which lines moved, what
-changed inside rewritten lines. The output is a **token stream** per
-changed row: which characters are common, struck (deleted), or filled
-(added), plus the semantic token type (keyword, string, comment, …).
+*diffuse* is a structured diff analysis engine and interactive terminal review tool implemented in Rust. Given a unified diff and optional pre- and post-image file snapshots, the engine reconstructs the granular structure of code changes:
+- Line-level correspondence (asymmetric additions and deletions paired into logical modification rows).
+- Relocation detection (moved blocks distinguished from additions and deletions).
+- Sub-line token alignment (common, struck, and filled characters with syntactic token classifications).
 
-The engine is renderer-agnostic — it never touches a terminal. Renderers
-(a review TUI, a CLI pretty-printer, anything) consume the token stream
-over a frozen JSON contract (PLAN.md §2). The crate ships as a library
-(embed the pipeline) and a binary (a CLI that reads a diff and emits the
-token-stream JSON).
+The engine is renderer-agnostic and performs no direct terminal I/O. Renderers (the interactive TUI reviewer, CLI pretty-printers, Markdown generators, or external extensions such as `extension/pi/`) consume a structured token stream over a frozen JSON wire contract specified in [`crates/diffuse-core/src/wire.rs`](crates/diffuse-core/src/wire.rs).
 
-The primary review flow is the `diffuse` CLI binary itself (interactive TUI
-reviewer, `--print` pager, `--json` token-stream output).
+## Canonical Reference & Specification
 
-The workspace also holds **`extension/pi/`** — the pi review extension
-(a thin client over the bundled binary). It remains a supported customer
-of the engine and a project deliverable; its dev install is handled
-automatically by `./scripts/check.sh`, so install it explicitly only if
-requested.
+- **Rust Codebase as Ground Truth**: The native Rust implementation (`crates/`) is the primary engine and canonical specification for all algorithmic, rendering, and interaction behaviors.
+- **Verification via Golden Corpus**: Acceptance criteria and regression baselines are guarded by unit tests and the frozen corpora in [`tests/golden/`](tests/golden/).
+- **Wire Contract**: The JSON wire format defined in [`crates/diffuse-core/src/wire.rs`](crates/diffuse-core/src/wire.rs) forms the public serialization schema between the engine and consuming clients.
 
-## Engine Development & Specification
+## The Golden Corpus
 
-The engine, terminal renderer, and interactive reviewer TUI are all natively implemented in Rust. **The Rust implementation is the primary engine and canonical specification.**
+The golden corpora in [`tests/golden/`](tests/golden/) represent the locked, verified baseline output of the engine across real-world changesets. They encode fine-tuned algorithmic properties: strike/fill minimums, anchor pairings, move-block boundaries, and reverse-stretch behavior.
 
-In this active development phase:
+The acceptance suite in [`tests/golden.rs`](tests/golden.rs) verifies the pipeline across two complementary execution paths:
+1. **Library Leg**: Direct in-process invocation of the pipeline over frozen inputs.
+2. **Binary Leg**: External invocation of the compiled `diffuse` CLI binary, parsing the emitted JSON stream.
 
-- **Rust is the Canonical Reference**: The Rust codebase (`crates/`) is the source of truth for all engine, render, and TUI behavior.
-- **Verification via Test Corpus**: Engine behavior and edge cases are specified and guarded by unit tests (`#[test]` in Rust) and the golden corpus acceptance.
-- **Behavior Improvements & Visual Tuning**: Subword boundaries, reflow pairing, move detection, syntax highlighting, and rendering aesthetics are actively refined to deliver the best visual diff experience.
-- **Golden Corpus**: `tests/golden/` serves as the acceptance baseline
-  (8 frozen corpora). As rendering and subword improvements land, fixtures
-  change only after review — see [`tests/AGENTS.md`](tests/AGENTS.md).
+Both execution paths must match the recorded golden outputs (`.wire.jsonl`, `.render.txt`, `.markdown.md`) byte-for-byte.
 
-## The golden — the ground truth
+> [!IMPORTANT]
+> **Golden Change Policy**: Golden fixtures change only when engine behavior is intentionally modified and reviewed. A failing golden test signifies an unintended deviation; never regenerate fixtures merely to resolve test failures. Detailed fixture inventory and sign-off criteria are specified in [`tests/AGENTS.md`](tests/AGENTS.md).
 
-> **Validated vs. provisional goldens**: `theme-scrollbar-palette` has
-> been hand-reviewed and validated as a clean rendering baseline (strict hard
-> gate). The remaining 7 corpora have not yet been fully hand-reviewed and
-> remain provisional (less of a hard gate when an engine refinement produces
-> demonstrably better diffs). Always walk every golden diff and assert
-> strictly-better-or-equivalent per
-> [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md)
-> before accepting it, and flag and pause on anything suspicious.
+## Test-First Discipline & Quality Invariants
 
-The golden corpora are the locked, reviewed ideal output of the engine.
-They encode the hand-tuned preferences: the exact strike/fill minimums,
-which anchor pairings win, how moved blocks read, the reverse-stretch
-shape.
+Every modification, bug fix, or feature must expand the automated test suite under a strict test-first methodology:
 
-The Rust acceptance (`tests/golden.rs`) proves the engine + the wire
-contract over the frozen corpora in two legs — the **lib leg** (embed the
-engine, run the full pipeline) and the **bin leg** (spawn the built binary,
-feed it the same input, decode its JSON, run the same walk). Both must
-match byte-for-byte; the bin leg exists because the wire contract
-(PLAN.md §2) is itself part of the spec. The same acceptance walks the
-rendered golden (`.render.txt`) and the Markdown output (`.markdown.md`).
+1. **Write Failing Test First**: Author a targeted unit test (`#[test]`) capturing the missing capability or reproducing the defect prior to modifying implementation code.
+2. **Confirm Initial Failure**: Execute the test to verify that the failure mode accurately identifies the condition.
+3. **Implement Minimal Solution**: Author the minimal, architecturally sound changes necessary to satisfy the test.
+4. **Exhaustive Branch Coverage**: Ensure that all new and altered code paths achieve 100% branch coverage, exercising every conditional branch and pattern match arm (see [`GUIDELINES.md`](GUIDELINES.md)).
+5. **Enforce Performance Budgets**:
+   - Individual unit tests must execute in `< 0.5s`.
+   - Test binaries must complete in `< 1.5s`.
+   - The full verification gate (`scripts/check.sh`) must complete in `< 3s` on warm builds.
+   - Long-running stress tests must be tagged with `#[ignore = "..."]`.
 
-**Fixture types, corpus inventory, regeneration commands, and the review
-signoff gate for any golden change live in
-[`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).**
-The essentials: the golden changes only when behavior is deliberately
-changed, after review — never regenerate it to make a test pass. A
-failing golden means the engine deviates from the reviewed ideal; find
-the deviation.
+## Standard Development Workflow
 
-## Working with the reference
+1. **Failing Test**: Write the reproduction or specification test and confirm failure.
+2. **Implementation**: Make the minimal changes required; verify existing tests pass.
+3. **Verification Gate**: Execute `scripts/check.sh` (applies nightly `rustfmt`, runs `clippy --fix`, and executes all cargo tests). All checks must pass with zero warnings.
+4. **Golden Review**: If golden outputs change, review diffs per [`tests/AGENTS.md`](tests/AGENTS.md) to confirm that changes are strictly improvements or equivalent.
+5. **Installation**: `scripts/check.sh` installs the development binary (`~/.cargo/bin/diffuse`) and synchronizes the dev extension automatically. Release builds are compiled via `scripts/install.sh`.
+6. **Review & Sign-Off**: Present changes and diff summaries for review. Do not commit changes without explicit instruction.
 
-- The spec (the original engine): `extension/pi/review.ts` (pristine
-  upstream: `~/lab/pi-review/review.ts` — read-only).
-- The corpus: `tests/golden/` — the single canonical copy of the Rust
-  acceptance. Fixture types, regeneration
-  mechanics, and change policy: [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).
+## Conventions & Standards
 
-## Test-first bugfix & feature discipline
-
-Every bug fix, behavior adjustment, or new feature must expand the test corpus with a targeted test covering the exact scenario:
-
-1. **Write the test first**: Before editing implementation code, write a unit or component test (`#[test]` in Rust) specifying the desired behavior or reproducing the bug.
-2. **Confirm initial failure**: Run the test to verify that it fails in the expected way, proving that the test suite actually catches the bug or missing capability.
-3. **Implement the change**: Write the minimal code needed to fulfill the requirement.
-4. **Verify passing run**: Ensure `cargo test` passes cleanly, permanently expanding the test suite to guard against regressions.
-5. **Verify 100% branch coverage**: All new code and code paths must achieve 100% **branch coverage** with comprehensive unit tests exercising every conditional, match arm, and edge case (see [`GUIDELINES.md § Test-First Methodology & 100% Branch Coverage`](file:///home/daniel/lab/diffuse/GUIDELINES.md#test-first-methodology--100-branch-coverage)).
-
-For bugfixes and new code, failing-test-first is critical — for changes to existing code where the test failures are expected, this can be relaxed to just updating the test with the changes and checking the tests after.
-
-## Test Performance Invariants
-
-To keep development iterations instantaneous and prevent CI / pre-commit stalls, the test suite enforces strict latency budgets:
-
-- **Individual Test Latency**: Any individual `#[test]` must execute in **`< 0.5s`**.
-- **Test Binary Latency**: Any test binary (e.g. `diffuse-core`, `diffuse-tui`, `golden.rs`, `harvest_benchmarks.rs`) must complete in **`< 1.5s`**.
-- **Full `./scripts/check.sh` Suite**: The entire `./scripts/check.sh` gate (fmt check, fast clippy, all cargo tests) must complete in **`< 3s`** (warm cache, less clippy and compile time).
-- **Massive Scale & Stress Benchmarks**: Any whole-evolution history stress test beyond the standard pinned corpora, or a 10,000-file scale generator, must be tagged with `#[ignore = "..."]` so normal developer test sweeps remain sub-second while full stress validation is runnable on-demand via `cargo test -- --ignored`.
-
-## Standard workflow
-
-Every bug fix, behavior change, or feature follows this loop (steps 1–2
-are the test-first discipline above):
-
-1. **Failing test** — write the test demonstrating the missing feature,
-   change, or fix; confirm it fails in the expected way.
-2. **Implement/fix** — make the minimal change; fix any tests broken by
-   the new behavior (an old expectation breaking is a spec change — review
-   it consciously, don't just update it).
-3. **`./scripts/check.sh`** — nightly fmt + clippy `--fix` (both
-   auto-apply) and the full cargo test suite. Everything must pass
-   cleanly.
-4. **Agent review of golden changes** — walk any wire/golden diffs per
-   [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md):
-   assert strictly-better-or-equivalent, flag and pause on anything
-   suspicious.
-5. **Install (dev by default)** — `./scripts/check.sh` already installs
-   the dev CLI binary (`~/.cargo/bin/diffuse`) and syncs the dev pi
-   extension automatically; use `./scripts/install.sh` (release build)
-   only if the profile demands it.
-6. **HUMAN REVIEW** — pause for the human's visual & code review of the
-   rendered result. The human may instruct auto-commit — in that case
-   just install the CLI (step 5, if not already done) and commit.
-
-## Conventions
-
-- Rust edition 2024; the toolchain is pinned in `rust-toolchain.toml`
-  (same pin as the broader workspace it was born from).
-- `cargo +nightly clippy -- -D warnings` and `cargo +nightly fmt --all -- --check`
-  must be clean after every change. Code style, import conventions, and
-  top-down file component layout (public/high-level abstraction at the top
-  down to internal detail and tests at the bottom) are specified in
-  [`CODE_STYLE.md`](file:///home/daniel/lab/diffuse/CODE_STYLE.md). Architecture,
-  language profile decoupling, and algorithm separation rules are specified in
-  [`GUIDELINES.md`](file:///home/daniel/lab/diffuse/GUIDELINES.md).
-- `target/`, `extension/*/node_modules/`, and `extension/pi/bin/` are
-  gitignored (build artifacts).
-- Install: `./scripts/check.sh` installs the dev CLI binary and syncs the
-  dev pi extension automatically (explicit
-  `extension/pi/scripts/install.sh` only if requested); `./scripts/install.sh`
-  builds the release CLI (pinned toolchain, `--locked`) for release-profile
-  demand.
-- Commit policy: do not commit without explicit instruction — present a
-  summary and ask.
-- Engineering Plans: Follow [`plan/Plan Guidelines.md`](file:///home/daniel/lab/diffuse/plan/Plan%20Guidelines.md)
-  when authoring or updating architectural plans in `plan/`. When a major plan completes,
-  move it to `plan/done/<Plan Name>.md`.
-- When a phase ends, update the active plan in `plan/` (see the phase
-  status conventions in [`plan/Plan Guidelines.md`](file:///home/daniel/lab/diffuse/plan/Plan%20Guidelines.md)),
-  and this file if the conventions changed. Golden-output changes that land
-  with a phase follow the review gate in
-  [`tests/AGENTS.md`](file:///home/daniel/lab/diffuse/tests/AGENTS.md).
+- **Rust Toolchain**: Pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (Edition 2024).
+- **Code Style & Formatting**: Nightly `cargo fmt` and `cargo clippy -- -D warnings` enforced by `scripts/check.sh`. Detailed component layout and import conventions are specified in [`CODE_STYLE.md`](CODE_STYLE.md).
+- **Architectural Guidelines**: Decoupling, fail-fast invariants, and algorithmic rules are specified in [`GUIDELINES.md`](GUIDELINES.md).
+- **Documentation & Tone Standards**: All official project documentation (including [`README.md`](README.md), user guides, API docstrings, and architectural specifications) must maintain a clean, neutral, and academic tone. Avoid colloquialisms, promotional phrasing, or informal conversational commentary.
+- **Engineering Plans**: Active design proposals follow [`plan/Plan Guidelines.md`](plan/Plan%20Guidelines.md). Completed plans are archived under `plan/done/`.

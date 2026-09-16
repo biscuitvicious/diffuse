@@ -9,8 +9,8 @@ This document establishes the code style, import conventions, formatting rules, 
 ### Nightly Formatter & Linter
 The project standardizes on nightly tooling for formatting and linting:
 
-- **Pinned stable toolchain**: Defined in [`rust-toolchain.toml`](file:///home/daniel/lab/diffuse/rust-toolchain.toml).
-- **Formatter**: `cargo +nightly fmt` with [`rustfmt.toml`](file:///home/daniel/lab/diffuse/rustfmt.toml) (relies on nightly features: `imports_granularity = "Crate"`, `wrap_comments = true`, `format_code_in_doc_comments = true`).
+- **Pinned stable toolchain**: Defined in [`rust-toolchain.toml`](rust-toolchain.toml).
+- **Formatter**: `cargo +nightly fmt` with [`rustfmt.toml`](rustfmt.toml) (relies on nightly features: `imports_granularity = "Crate"`, `wrap_comments = true`, `format_code_in_doc_comments = true`).
 - **Linter**: `cargo +nightly clippy` (with zero warnings permitted).
 - **Line Length**: `max_width = 100`.
 
@@ -46,7 +46,7 @@ As a general rule of thumb, always aim to import types, traits, and functions at
 - **Never directly reference root `std::` inline**: Always import at least one level down from `std` at the top of the file (e.g. `use std::collections::HashMap;`, `use std::{fs, io};`). Never write `std::collections::HashMap` or `std::io::Result` inline in signatures, structs, or function bodies.
 - **Parent Module Imports for Disambiguation & Idiomatic Context**: For common modules or generic leaf names, import the parent module at the top level and qualify by the module name inline. This is preferred for:
   - Disambiguating types: `use std::io;` → `io::Result<T>`, `io::Error` (avoids clashing with the standard `Result` or other error types).
-  - Module-namespaced functions: `use std::fs;` → `fs::create_dir_all(path)`, `fs::read_to_string(path)` (much clearer than importing bare `read_to_string`).
+  - Module-namespaced functions & constants: `use std::fs;` → `fs::create_dir_all(path)`, `fs::read_to_string(path)`; `use std::env;` → `env::consts::OS`, `env::var(...)`.
   - Formatting / serialization traits: `use std::fmt;` → `fmt::Formatter`, `fmt::Result`.
   - Atomics / memory orderings: `use std::sync::atomic::{AtomicU64, Ordering};` → `Ordering::Relaxed`.
 - **Direct Leaf Imports**: For distinctive, domain-specific types, structs, and traits, import the leaf item directly:
@@ -80,7 +80,7 @@ As a general rule of thumb, always aim to import types, traits, and functions at
 
 ## 3. File Component Layout (Top-Down Organization)
 
-We order components of a file, e.g. structs, impls, traits, its impls, etc and so on, strictly in order of [most externally facing/highest level abstraction] at the *top* of the file and continuing along the spectrum all the way down to the [most internally facing/highest level detail] at the very *bottom* of the file.
+Components within a source file are structured strictly in top-down order of abstraction: the most externally facing contracts (public types and trait definitions) appear at the top, progressing downward toward internal implementation details, private helpers, and finally unit tests at the bottom.
 
 ### Structural Ordering
 1. **Module Doc Comment & Imports**: `//!` module summary, followed by grouped `use` declarations.
@@ -148,9 +148,9 @@ Pattern matching variables should mirror the type names they destructure:
 ## 7. Verification & Tooling
 
 ### All-in-One Check Script
-Run [`scripts/check.sh`](file:///home/daniel/lab/diffuse/scripts/check.sh) to format, auto-fix clippy lints, run tests, and verify extension equivalence:
+Run [`scripts/check.sh`](scripts/check.sh) to format, auto-fix clippy lints, run tests, and verify extension equivalence:
 ```bash
-./scripts/check.sh
+scripts/check.sh
 ```
 
 ### Nightly Clippy
