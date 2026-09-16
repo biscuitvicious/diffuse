@@ -100,6 +100,7 @@ pub struct TokenInterner {
     symbols: SymbolTable<&'static str>,
     pub ws: Vec<bool>,
     pub alnum: Vec<bool>,
+    pub char_lens: Vec<u32>,
 }
 
 impl TokenInterner {
@@ -111,6 +112,7 @@ impl TokenInterner {
         self.symbols.clear();
         self.ws.clear();
         self.alnum.clear();
+        self.char_lens.clear();
     }
 
     pub(crate) fn intern(&mut self, token: &str) -> u32 {
@@ -121,6 +123,7 @@ impl TokenInterner {
         let id = self.symbols.intern(static_token);
         self.ws.push(token_is_ws(token));
         self.alnum.push(token_is_alnum(token));
+        self.char_lens.push(crate::lcs::char_len(token) as u32);
         id.as_u32()
     }
 

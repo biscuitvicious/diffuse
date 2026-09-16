@@ -34,4 +34,4 @@ yansi = { workspace = true }
 difflib = { workspace = true }
 rayon = { workspace = true }
 tempfile = { workspace = true }
-nix = { version = "0.28", features = ["term"] }
+nix = { version = "0.31", features = ["term"] }

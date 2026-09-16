@@ -1,6 +1,11 @@
-# diffuse — Algorithms & Data Structures Reference
+# diffuse — Algorithms Reference
 
-This document provides a comprehensive, rigorous reference of the algorithms, data structures, mathematical models, and formal systems implemented across the `diffuse` codebase. Each entry details:
+This document provides a comprehensive, rigorous reference of the algorithms, mathematical models, and formal systems implemented across the `diffuse` codebase.
+
+> [!NOTE]
+> For the concrete memory layouts, cache locality strategies, thread-local allocation arenas, and data structures (including the `SkylineMatrix`, `AdaptiveEnvelope`, and interning pools), see the companion specification in [`Data Structures.md`](Data%20Structures.md).
+
+Each entry details:
 1. **Academic Foundation & Original Paper**: Formal citation with links to the paper or canonical specification.
 2. **Location in Codebase**: Exact crate and module path.
 3. **Problem & Rationale ("Why")**: The design challenge and mathematical necessity.
@@ -225,17 +230,20 @@ This document provides a comprehensive, rigorous reference of the algorithms, da
   Richard Bellman (1957). *"Dynamic Programming"*. Princeton University Press.  
   [Princeton University Press](https://press.princeton.edu/books/hardcover/9780691146683/dynamic-programming)  
   Robert A. Wagner and Michael J. Fischer (1974). *"The String-to-String Correction Problem"*. Journal of the ACM, 21(1), 168–173.  
-  [ACM Digital Library](https://doi.org/10.1145/321796.321811)
+  [ACM Digital Library](https://doi.org/10.1145/321796.321811)  
+  Santiago Marco-Sola et al. (2021). *"Fast Gap-Affine Alignment of Long Reads Using the Wavefront Alignment Algorithm"*. Bioinformatics, 37(4), 456–463.  
+  [Oxford Academic DOI:10.1093/bioinformatics/btaa777](https://doi.org/10.1093/bioinformatics/btaa777)  
+  Kun-Mao Chao, William R. Pearson, and Michael W. Miller (1992). *"Aligning Two Sequences Within a Specified Dynamic Programming Corridor"*. SAGMB, 4(1), 1–18.
 - **Location**:
-  [`crates/diffuse-core/src/algo/block_dp.rs`](../crates/diffuse-core/src/algo/block_dp.rs) (`BlockDpWorkspace`, `BlockTransition`, `BlockTransitionEvaluator`, `BlockTransitionsIter`); consumed in [`crates/diffuse-core/src/cluster/dp.rs`](../crates/diffuse-core/src/cluster/dp.rs).
+  [`crates/diffuse-core/src/algo/block_dp.rs`](../crates/diffuse-core/src/algo/block_dp.rs) and [`crates/diffuse-core/src/algo/skyline.rs`](../crates/diffuse-core/src/algo/skyline.rs); consumed in [`crates/diffuse-core/src/cluster/dp.rs`](../crates/diffuse-core/src/cluster/dp.rs).
 - **Why It Is Used**:
-  Diff hunks often contain reflows where a single deleted line expands into multiple added lines ($1\text{-to-}K$), or multiple deleted lines collapse into one ($K\text{-to-}1$). Standard line-by-line diffing misaligns these into disconnected deletion/addition blocks. The Cluster DP formulates the problem as a 2D transformation grid where transitions include block expansions, block collapses, in-place modifications, moves, and standalone adds/deletes.
+  Diff hunks often contain reflows where a single deleted line expands into multiple added lines ($1\text{-to-}K$), or multiple deleted lines collapse into one ($K\text{-to-}1$). Standard line-by-line diffing misaligns these into disconnected deletion/addition blocks. Furthermore, massive line replacements ($M, N \approx 7,000$) previously caused quadratic memory explosion and cell cap fallbacks to disconnected deletion/insertion blocks. The Cluster DP integrates an **Adaptive Banded Dynamic Programming corridor** running over a memory-efficient **Skyline Profile Matrix** (`SkylineMatrix<Cell>`), tracking the affine diagonal $j = i \cdot \frac{N}{M}$ with bandwidth $K = \max(K_{\min}, |M - N| + K_{\text{slack}})$.
 - **For What It Is Used**:
   Computes the Pareto-optimal decomposition of each isolated change cluster $(M \text{ del}, N \text{ add})$ using a multi-objective cost function:
   $$\text{Score} = \alpha \cdot \text{matched} - \mu \cdot \text{unmatched} - \beta \cdot \text{rows} - \gamma \cdot \text{fragmentation} + \delta \cdot \text{syntax\_alignment}$$
 - **Complexity**:
-  - Time: $O(M \cdot N \cdot K)$, where $K \le 10$ is the maximum reflow block window (`MAX_BLOCK_K`).
-  - Space: $O(M \cdot N)$ DP grid with traceback pointers.
+  - Time: $O(M \cdot K_{\text{band}} \cdot K_{\text{reflow}})$, where $K_{\text{band}} \ll N$ is the adaptive corridor half-bandwidth and $K_{\text{reflow}} \le 10$ is the maximum reflow block window (`MAX_BLOCK_K`).
+  - Space: $O(M \cdot K_{\text{band}})$ profile envelope memory in `SkylineMatrix`, recyclable across cluster evaluations via `DpScratchArena`.
 
 ---
 

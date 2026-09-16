@@ -1600,3 +1600,213 @@ fn test_cluster_product_cap_falls_back_to_wholesale() {
             .any(|t| matches!(t, dp::DpOp::Mod { .. }))
     );
 }
+
+#[test]
+fn test_skyline_dp_2000_line_wholesale_replacement_pairs_into_mods() {
+    use std::time::Instant;
+
+    use crate::{
+        cluster::{ChangeCluster, dp},
+        parse::{AddLine, DelLine, LineNum},
+    };
+
+    let count = 2000;
+    let old_strings: Vec<String> = (0..count)
+        .map(|i| format!("    let counter_{i:04} = compute_value({i}, false);"))
+        .collect();
+    let new_strings: Vec<String> = (0..count)
+        .map(|i| format!("    let counter_{i:04} = compute_value({i}, true);"))
+        .collect();
+
+    let old_rows: Vec<Row> = old_strings
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Row::Del(DelLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                s.as_str(),
+            ))
+        })
+        .collect();
+    let new_rows: Vec<Row> = new_strings
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Row::Add(AddLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                s.as_str(),
+            ))
+        })
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows,
+        new_rows,
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+
+    let start = Instant::now();
+    let sol = dp::solve_cluster_with(&cluster, None, &dp::Weights::default());
+    let elapsed = start.elapsed();
+
+    // Must solve in under 500ms budget (<0.5s per AGENTS.md)
+    assert!(
+        elapsed.as_millis() < 500,
+        "Expected 2,000-line solve in <500ms, took {elapsed:?}"
+    );
+
+    // All 2,000 lines should be paired into Mod rows rather than 2000 Dels +
+    // 2000 Adds
+    let mod_count = sol
+        .transitions
+        .iter()
+        .filter(|t| matches!(t, dp::DpOp::Mod { .. }))
+        .count();
+    assert_eq!(
+        mod_count,
+        count,
+        "Expected all {count} lines to be paired into Mod rows, got {mod_count} Mods and {} total rows",
+        sol.rows.len()
+    );
+    assert_eq!(sol.rows.len(), count);
+}
+
+#[test]
+fn test_skyline_dp_7000_line_wholesale_replacement_pairs_into_mods() {
+    use crate::{
+        cluster::{ChangeCluster, dp},
+        parse::{AddLine, DelLine, LineNum},
+    };
+
+    let count = 7183;
+    let old_strings: Vec<String> = (0..count)
+        .map(|i| format!("    let counter_{i:04} = compute_value({i}, false);"))
+        .collect();
+    let new_strings: Vec<String> = (0..count)
+        .map(|i| format!("    let counter_{i:04} = compute_value({i}, true);"))
+        .collect();
+
+    let old_rows: Vec<Row> = old_strings
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Row::Del(DelLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                s.as_str(),
+            ))
+        })
+        .collect();
+    let new_rows: Vec<Row> = new_strings
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Row::Add(AddLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                s.as_str(),
+            ))
+        })
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows,
+        new_rows,
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+
+    let sol = dp::solve_cluster_with(&cluster, None, &dp::Weights::default());
+
+    // All 7,183 lines should be paired into Mod rows rather than 7183 Dels +
+    // 7183 Adds
+    let mod_count = sol
+        .transitions
+        .iter()
+        .filter(|t| matches!(t, dp::DpOp::Mod { .. }))
+        .count();
+    assert_eq!(
+        mod_count,
+        count,
+        "Expected all {count} lines to be paired into Mod rows, got {mod_count} Mods and {} total rows",
+        sol.rows.len()
+    );
+    assert_eq!(sol.rows.len(), count);
+}
+
+#[test]
+fn test_skyline_dp_asymmetric_burst_preserves_alignment() {
+    use crate::{
+        cluster::{ChangeCluster, dp},
+        parse::{AddLine, DelLine, LineNum},
+    };
+
+    // 50 lines modified before burst, 40 lines added (asymmetric burst), 50
+    // lines modified after burst
+    let mut old_strings = Vec::new();
+    let mut new_strings = Vec::new();
+
+    for i in 0..50 {
+        old_strings.push(format!("let pre_{i} = alpha({i});"));
+        new_strings.push(format!("let pre_{i} = alpha_updated({i});"));
+    }
+    // Asymmetric insertion of 40 lines
+    for i in 0..40 {
+        new_strings.push(format!("let burst_insert_{i} = new_call({i});"));
+    }
+    // Post-burst lines
+    for i in 0..50 {
+        old_strings.push(format!("let post_{i} = omega({i});"));
+        new_strings.push(format!("let post_{i} = omega_updated({i});"));
+    }
+
+    let old_rows: Vec<Row> = old_strings
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Row::Del(DelLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                s.as_str(),
+            ))
+        })
+        .collect();
+    let new_rows: Vec<Row> = new_strings
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            Row::Add(AddLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                s.as_str(),
+            ))
+        })
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows,
+        new_rows,
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+
+    let sol = dp::solve_cluster_with(&cluster, None, &dp::Weights::default());
+    let mod_count = sol
+        .transitions
+        .iter()
+        .filter(|t| matches!(t, dp::DpOp::Mod { .. }))
+        .count();
+
+    // Both the 50 pre-burst and 50 post-burst lines should be recognized as
+    // Mods (100 total Mods)
+    assert_eq!(
+        mod_count, 100,
+        "Expected 100 paired Mod rows (50 pre + 50 post burst), got {mod_count}"
+    );
+    let add_count = sol
+        .transitions
+        .iter()
+        .filter(|t| matches!(t, dp::DpOp::Add))
+        .count();
+    assert_eq!(add_count, 40, "Expected 40 Add rows for burst insertion");
+}

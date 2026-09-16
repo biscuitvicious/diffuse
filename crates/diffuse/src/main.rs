@@ -16,6 +16,7 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 use diffuse::{
+    DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
     DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP,
     core::{
         DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions,
@@ -66,6 +67,15 @@ struct Args {
     /// 250000).
     #[arg(long, default_value_t = DEFAULT_TOKEN_PRODUCT_CAP, global = true)]
     token_product_cap: usize,
+    /// Maximum cell budget for cluster DP alignment (default: 10000000).
+    #[arg(long, default_value_t = DEFAULT_CLUSTER_BUDGET, global = true)]
+    cluster_budget: usize,
+    /// Minimum corridor half-bandwidth for cluster DP alignment (default: 64).
+    #[arg(long, default_value_t = DEFAULT_CLUSTER_BANDWIDTH_MIN, global = true)]
+    cluster_bandwidth_min: usize,
+    /// Bandwidth slack added to cluster length difference (default: 32).
+    #[arg(long, default_value_t = DEFAULT_CLUSTER_BANDWIDTH_SLACK, global = true)]
+    cluster_bandwidth_slack: usize,
     /// Number of worker threads (default: max(1, #CPUs / 2)).
     #[arg(
         short = 'j',
@@ -184,6 +194,12 @@ struct Input {
     repo: Option<String>,
     #[serde(default)]
     token_product_cap: Option<usize>,
+    #[serde(default)]
+    cluster_budget: Option<usize>,
+    #[serde(default)]
+    cluster_bandwidth_min: Option<usize>,
+    #[serde(default)]
+    cluster_bandwidth_slack: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -227,11 +243,21 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
     let repo_str = args.repo.clone().or_else(|| input.repo.clone());
     let visual = input.context.unwrap_or(args.context);
     let cap = input.token_product_cap.unwrap_or(args.token_product_cap);
+    let budget = input.cluster_budget.unwrap_or(args.cluster_budget);
+    let bw_min = input
+        .cluster_bandwidth_min
+        .unwrap_or(args.cluster_bandwidth_min);
+    let bw_slack = input
+        .cluster_bandwidth_slack
+        .unwrap_or(args.cluster_bandwidth_slack);
     let opts = PipelineOptions::default()
         .with_notes(Some(loaded_db.clone()), repo_str.clone())
         .with_visual_context(visual)
         .with_expand_lines(args.expand_lines)
-        .with_token_product_cap(cap);
+        .with_token_product_cap(cap)
+        .with_cluster_product_cap(budget)
+        .with_cluster_bandwidth_min(bw_min)
+        .with_cluster_bandwidth_slack(bw_slack);
 
     if let Some(ref repo_root) = input.repo_root
         && let Ok(git_res) = load_git_repo(
@@ -452,7 +478,10 @@ fn main() -> io::Result<()> {
             .with_notes(Some(loaded_db.clone()), Some(repo_name.clone()))
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
-            .with_token_product_cap(args.token_product_cap);
+            .with_token_product_cap(args.token_product_cap)
+            .with_cluster_product_cap(args.cluster_budget)
+            .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
+            .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
 
         // Interactive TUI only when both ends are real terminals and not in
         // pager or markdown mode; any piped or redirected end falls
@@ -602,7 +631,10 @@ fn main() -> io::Result<()> {
             .with_notes(Some(loaded_db), Some(repo_name))
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
-            .with_token_product_cap(args.token_product_cap);
+            .with_token_product_cap(args.token_product_cap)
+            .with_cluster_product_cap(args.cluster_budget)
+            .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
+            .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
 
         let (consumer, meta_rx) = spawn_git_stream_pipeline(
             repo_root,
@@ -686,6 +718,9 @@ fn main() -> io::Result<()> {
             notes_file: None,
             repo: None,
             token_product_cap: None,
+            cluster_budget: None,
+            cluster_bandwidth_min: None,
+            cluster_bandwidth_slack: None,
         }))
     });
 
@@ -791,11 +826,21 @@ fn main() -> io::Result<()> {
                     .unwrap_or_else(default_notes_path);
                 let loaded_db = load_notes(&notes_path);
                 let cap = input.token_product_cap.unwrap_or(args.token_product_cap);
+                let budget = input.cluster_budget.unwrap_or(args.cluster_budget);
+                let bw_min = input
+                    .cluster_bandwidth_min
+                    .unwrap_or(args.cluster_bandwidth_min);
+                let bw_slack = input
+                    .cluster_bandwidth_slack
+                    .unwrap_or(args.cluster_bandwidth_slack);
                 let opts = PipelineOptions::default()
                     .with_notes(Some(loaded_db), args.repo.clone().or(input.repo.clone()))
                     .with_visual_context(input.context.unwrap_or(args.context))
                     .with_expand_lines(args.expand_lines)
-                    .with_token_product_cap(cap);
+                    .with_token_product_cap(cap)
+                    .with_cluster_product_cap(budget)
+                    .with_cluster_bandwidth_min(bw_min)
+                    .with_cluster_bandwidth_slack(bw_slack);
                 let consumer = stream_diff_pipeline(
                     &input.diff,
                     input.new_content,

@@ -45,8 +45,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use smallvec::SmallVec;
+
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 use crate::{
+    algo::skyline::{AdaptiveEnvelopeBuilder, SkylineMatrix},
     lcs::{lcs_matched_chars_ids, lcs_pairs_ids},
     parse::Row,
     similarity::TokenInterner,
@@ -61,23 +64,62 @@ pub const MAX_BLOCK_K: usize = 10;
 
 pub const DEFAULT_MIN_CONTAINMENT_LEN: usize = 8;
 
-/// Default maximum cluster product (old lines × new lines) allowed for DP
-/// pairing before falling back to wholesale deletion/addition.
-pub const DEFAULT_CLUSTER_PRODUCT_CAP: usize = 100_000;
+/// Default maximum cluster cell budget allowed for DP pairing before falling
+/// back to wholesale deletion/addition.
+pub const DEFAULT_CLUSTER_BUDGET: usize = 10_000_000;
+pub const DEFAULT_CLUSTER_PRODUCT_CAP: usize = DEFAULT_CLUSTER_BUDGET;
+
+/// Default minimum corridor half-bandwidth (K_min) for Block-DP exploration.
+pub const DEFAULT_CLUSTER_BANDWIDTH_MIN: usize = 64;
+
+/// Default bandwidth slack added to sequence length difference |M - N|.
+pub const DEFAULT_CLUSTER_BANDWIDTH_SLACK: usize = 32;
 
 thread_local! {
-    static CLUSTER_PRODUCT_CAP: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_CLUSTER_PRODUCT_CAP) };
+    static CLUSTER_BUDGET: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_CLUSTER_BUDGET) };
+    static CLUSTER_BANDWIDTH_MIN: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_CLUSTER_BANDWIDTH_MIN) };
+    static CLUSTER_BANDWIDTH_SLACK: std::cell::Cell<usize> = const { std::cell::Cell::new(DEFAULT_CLUSTER_BANDWIDTH_SLACK) };
 }
 
-/// Set the maximum cluster product (old lines × new lines) allowed for DP
-/// pairing before falling back.
+/// Set the maximum cluster cell budget allowed for DP pairing before falling
+/// back.
+pub fn set_cluster_budget(budget: usize) {
+    CLUSTER_BUDGET.with(|c| c.set(budget));
+}
+
+/// Get the current cluster cell budget.
+pub fn cluster_budget() -> usize {
+    CLUSTER_BUDGET.with(|c| c.get())
+}
+
+/// Backwards-compatible alias for set_cluster_budget.
 pub fn set_cluster_product_cap(cap: usize) {
-    CLUSTER_PRODUCT_CAP.with(|c| c.set(cap));
+    set_cluster_budget(cap);
 }
 
-/// Get the current cluster product cap.
+/// Backwards-compatible alias for cluster_budget.
 pub fn cluster_product_cap() -> usize {
-    CLUSTER_PRODUCT_CAP.with(|c| c.get())
+    cluster_budget()
+}
+
+/// Set the minimum corridor half-bandwidth (K_min).
+pub fn set_cluster_bandwidth_min(min: usize) {
+    CLUSTER_BANDWIDTH_MIN.with(|c| c.set(min));
+}
+
+/// Get the minimum corridor half-bandwidth (K_min).
+pub fn cluster_bandwidth_min() -> usize {
+    CLUSTER_BANDWIDTH_MIN.with(|c| c.get())
+}
+
+/// Set the bandwidth slack added to |M - N|.
+pub fn set_cluster_bandwidth_slack(slack: usize) {
+    CLUSTER_BANDWIDTH_SLACK.with(|c| c.set(slack));
+}
+
+/// Get the bandwidth slack added to |M - N|.
+pub fn cluster_bandwidth_slack() -> usize {
+    CLUSTER_BANDWIDTH_SLACK.with(|c| c.get())
 }
 
 /// The multi-objective weights (plan §3.3). Initial tuning; golden review
@@ -198,6 +240,7 @@ pub struct DpTokens {
     chars: usize,
     token_chars: Vec<usize>,
     token_mask: [u64; 4],
+    token_multiset: SmallVec<[(u32, u16); 16]>,
 }
 
 #[inline(always)]
@@ -206,18 +249,22 @@ fn mask_overlap(a: &[u64; 4], b: &[u64; 4]) -> bool {
 }
 
 #[inline(always)]
-fn token_mask_matched_chars_bound(
-    tokens: &DpTokens,
-    target_mask: &[u64; 4],
-    id_ws: &[bool],
-) -> usize {
+fn token_intersection_bound(a: &[(u32, u16)], b: &[(u32, u16)], char_lens: &[u32]) -> usize {
+    let mut i = 0;
+    let mut j = 0;
     let mut bound = 0;
-    for (ti, &id) in tokens.ids.iter().enumerate() {
-        if !id_ws[id as usize] {
-            let bit = (id as usize) % 256;
-            if (target_mask[bit / 64] & (1u64 << (bit % 64))) != 0 {
-                bound += tokens.token_chars[ti];
-            }
+    while i < a.len() && j < b.len() {
+        let (id_a, count_a) = a[i];
+        let (id_b, count_b) = b[j];
+        if id_a == id_b {
+            let count = count_a.min(count_b) as usize;
+            bound += (char_lens[id_a as usize] as usize) * count;
+            i += 1;
+            j += 1;
+        } else if id_a < id_b {
+            i += 1;
+        } else {
+            j += 1;
         }
     }
     bound
@@ -241,11 +288,28 @@ pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
             }
         }
     });
+    let mut non_ws_ids: SmallVec<[u32; 16]> = ids
+        .iter()
+        .copied()
+        .filter(|&id| !interner.ws[id as usize])
+        .collect();
+    non_ws_ids.sort_unstable();
+    let mut token_multiset: SmallVec<[(u32, u16); 16]> = SmallVec::new();
+    for &id in &non_ws_ids {
+        if let Some(last) = token_multiset.last_mut()
+            && last.0 == id
+        {
+            last.1 = last.1.saturating_add(1);
+        } else {
+            token_multiset.push((id, 1));
+        }
+    }
     DpTokens {
         ids,
         chars,
         token_chars,
         token_mask,
+        token_multiset,
     }
 }
 
@@ -285,16 +349,47 @@ pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -
     bm
 }
 
-#[derive(Clone, Copy, Default)]
+#[inline(always)]
+fn merge_multisets(a: &[(u32, u16)], b: &[(u32, u16)], out: &mut SmallVec<[(u32, u16); 32]>) {
+    out.clear();
+    let mut i = 0;
+    let mut j = 0;
+    while i < a.len() && j < b.len() {
+        let (id_a, c_a) = a[i];
+        let (id_b, c_b) = b[j];
+        if id_a == id_b {
+            out.push((id_a, c_a.saturating_add(c_b)));
+            i += 1;
+            j += 1;
+        } else if id_a < id_b {
+            out.push((id_a, c_a));
+            i += 1;
+        } else {
+            out.push((id_b, c_b));
+            j += 1;
+        }
+    }
+    while i < a.len() {
+        out.push(a[i]);
+        i += 1;
+    }
+    while j < b.len() {
+        out.push(b[j]);
+        j += 1;
+    }
+}
+
+#[derive(Clone, Default)]
 pub(crate) struct PrecomputedBlock {
     k: usize,
     mask: [u64; 4],
     chars: usize,
     token_start: usize,
     token_end: usize,
+    token_multiset: SmallVec<[(u32, u16); 32]>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct RowValidBlocks {
     pub(crate) blocks: [PrecomputedBlock; MAX_BLOCK_K],
     pub(crate) len: u8,
@@ -316,6 +411,8 @@ fn precompute_valid_blocks(
     let n = tokens.len();
     out_blocks.clear();
     out_blocks.resize(n, RowValidBlocks::default());
+    let mut merge_scratch: SmallVec<[(u32, u16); 32]> = SmallVec::new();
+
     for j in 0..n {
         if !meta[j].is_reflow {
             continue;
@@ -336,6 +433,8 @@ fn precompute_valid_blocks(
         let token_start = row_token_starts[j];
 
         let mut row_blocks = RowValidBlocks::default();
+        let mut block_multiset: SmallVec<[(u32, u16); 32]> =
+            SmallVec::from_slice(&tokens[j].token_multiset);
 
         for k in 2..=max_k {
             let idx = k - 1;
@@ -369,12 +468,20 @@ fn precompute_valid_blocks(
             chars += tokens[row_idx].chars;
             let token_end = row_token_starts[row_idx + 1];
 
+            merge_multisets(
+                &block_multiset,
+                &tokens[row_idx].token_multiset,
+                &mut merge_scratch,
+            );
+            std::mem::swap(&mut block_multiset, &mut merge_scratch);
+
             row_blocks.blocks[row_blocks.len as usize] = PrecomputedBlock {
                 k,
                 mask,
                 chars,
                 token_start,
                 token_end,
+                token_multiset: block_multiset.clone(),
             };
             row_blocks.len += 1;
         }
@@ -397,7 +504,7 @@ fn block_lcs_fast_precomputed(
 ) -> (usize, usize, usize) {
     let n = old_ids.len();
     let m = block_ids.len();
-    if n == 0 || m == 0 {
+    if n == 0 || m == 0 || n * m > 40_000 {
         return (0, 0, 0);
     }
     let stride = m + 1;
@@ -679,7 +786,7 @@ pub(crate) struct DpScratchArena {
     pub(crate) old_valid_blocks: Vec<RowValidBlocks>,
     pub(crate) new_valid_blocks: Vec<RowValidBlocks>,
     pub(crate) lcs_scratch: Vec<u32>,
-    dp: Vec<Cell>,
+    grid: SkylineMatrix<Cell>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -695,7 +802,7 @@ enum OpKind {
     Collapse,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 struct Cell {
     score: f64,
@@ -703,6 +810,18 @@ struct Cell {
     prev_j: u32,
     k: u8,
     op: OpKind,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self {
+            score: f64::NEG_INFINITY,
+            prev_i: 0,
+            prev_j: 0,
+            k: 0,
+            op: OpKind::None,
+        }
+    }
 }
 
 impl DpScratchArena {
@@ -724,7 +843,6 @@ impl DpScratchArena {
         self.all_new_coords.clear();
         self.all_new_token_chars.clear();
         self.new_row_token_starts.clear();
-        self.dp.clear();
     }
 }
 
@@ -781,7 +899,13 @@ pub(crate) fn solve_cluster_with_arena(
     let m = cluster.old_rows.len();
     let n = cluster.new_rows.len();
 
-    if m == 0 || n == 0 || m.saturating_mul(n) > cluster_product_cap() {
+    let envelope = AdaptiveEnvelopeBuilder::new(m, n)
+        .with_bandwidth_min(cluster_bandwidth_min())
+        .with_bandwidth_slack(cluster_bandwidth_slack())
+        .with_budget(cluster_budget())
+        .build();
+
+    if m == 0 || n == 0 || envelope.total_cells > cluster_budget() {
         let mut rows = Vec::with_capacity(m + n);
         let mut transitions = Vec::with_capacity(m + n);
         for r in &cluster.old_rows {
@@ -1088,25 +1212,22 @@ pub(crate) fn solve_cluster_with_arena(
         old_valid_blocks,
         new_valid_blocks,
         lcs_scratch,
-        dp,
+        grid,
         ..
     } = arena;
 
     let neg = f64::NEG_INFINITY;
-    let stride = n + 1;
-    let total_cells = (m + 1) * stride;
-    dp.clear();
-    dp.resize(
-        total_cells,
-        Cell {
-            score: neg,
-            prev_i: 0,
-            prev_j: 0,
-            k: 0,
-            op: OpKind::None,
-        },
-    );
-    dp[0].score = 0.0;
+    let init_cell = Cell {
+        score: neg,
+        prev_i: 0,
+        prev_j: 0,
+        k: 0,
+        op: OpKind::None,
+    };
+    grid.init_envelope(m, n, &envelope.bounds, init_cell);
+    if let Some(cell0) = grid.get_mut(0, 0) {
+        cell0.score = 0.0;
+    }
 
     let calc_block_score = |matched: usize,
                             moved_lines: usize,
@@ -1157,30 +1278,16 @@ pub(crate) fn solve_cluster_with_arena(
 
     precompute_valid_blocks(new_tokens, new_meta, new_row_token_starts, new_valid_blocks);
 
-    let use_band = m * n > 2500;
-    let band_limit_j = 64.max((n as isize) / 10);
-    let band_limit_i = 64.max((m as isize) / 10);
-    let expected_i_for_j: Vec<isize> = if use_band {
-        (0..=n)
-            .map(|j| (j * m).checked_div(n).unwrap_or(0) as isize)
-            .collect()
-    } else {
-        Vec::new()
-    };
-
     let dummy_tok = DpTokens {
         ids: Vec::new(),
         chars: 0,
         token_chars: Vec::new(),
         token_mask: [0; 4],
+        token_multiset: SmallVec::new(),
     };
     let empty_blocks = RowValidBlocks::default();
 
     for i in 0..=m {
-        let expected_j = (i * n).checked_div(m).unwrap_or(0) as isize;
-        let row_curr_idx = i * stride;
-        let row_next_idx = (i + 1) * stride;
-
         let has_old = i < m;
         let (ot, om, old_valid_blocks_i) = if has_old {
             (&old_tokens[i], old_meta[i], &old_valid_blocks[i])
@@ -1188,15 +1295,17 @@ pub(crate) fn solve_cluster_with_arena(
             (&dummy_tok, DpRowMeta::default(), &empty_blocks)
         };
 
-        for j in 0..=n {
-            let curr = row_curr_idx + j;
-            let base = dp[curr].score;
+        for j in grid.row_range(i) {
+            let base = grid.get(i, j).map_or(neg, |c| c.score);
             if base == neg {
                 continue;
             }
             // Standalone Del / Add.
-            if has_old && base - w.beta > dp[row_next_idx + j].score {
-                dp[row_next_idx + j] = Cell {
+            if has_old
+                && let Some(target) = grid.get_mut(i + 1, j)
+                && base - w.beta > target.score
+            {
+                *target = Cell {
                     score: base - w.beta,
                     prev_i: i as u32,
                     prev_j: j as u32,
@@ -1204,24 +1313,21 @@ pub(crate) fn solve_cluster_with_arena(
                     op: OpKind::Del,
                 };
             }
-            if j < n && base - w.beta >= dp[curr + 1].score {
-                // `>=`: on a del/add tie the path prefers ending with the
-                // add — the emission reads dels first, adds after (the
+            if j < n
+                && let Some(target) = grid.get_mut(i, j + 1)
+                && base - w.beta >= target.score
+            {
+                // `>=`: on a del/add tie the path prefers ending with
+                // the add — the emission reads
+                // dels first, adds after (the
                 // diff reading convention).
-                dp[curr + 1] = Cell {
+                *target = Cell {
                     score: base - w.beta,
                     prev_i: i as u32,
                     prev_j: j as u32,
                     k: 1,
                     op: OpKind::Add,
                 };
-            }
-            if use_band {
-                let diff_j = (j as isize - expected_j).abs();
-                let diff_i = (i as isize - expected_i_for_j[j]).abs();
-                if diff_j > band_limit_j && diff_i > band_limit_i {
-                    continue;
-                }
             }
             // 1-to-1: Mod or Mov.
             let nm = if j < n {
@@ -1230,13 +1336,14 @@ pub(crate) fn solve_cluster_with_arena(
                 DpRowMeta::default()
             };
             if has_old && j < n && om.comment == nm.comment && om.kind.is_compatible(nm.kind) {
-                let next_diag = row_next_idx + j + 1;
                 let nt = &new_tokens[j];
                 if ot.ids.is_empty() && nt.ids.is_empty() {
                     // blank ↔ blank: a trivial full match in one row.
                     let s = base - w.beta + w.delta;
-                    if s > dp[next_diag].score {
-                        dp[next_diag] = Cell {
+                    if let Some(target) = grid.get_mut(i + 1, j + 1)
+                        && s > target.score
+                    {
+                        *target = Cell {
                             score: s,
                             prev_i: i as u32,
                             prev_j: j as u32,
@@ -1250,8 +1357,10 @@ pub(crate) fn solve_cluster_with_arena(
                     let s = base + w.alpha * ot.chars.max(nt.chars) as f64
                         - w.beta
                         - w.gamma * length_diff;
-                    if s > dp[next_diag].score {
-                        dp[next_diag] = Cell {
+                    if let Some(target) = grid.get_mut(i + 1, j + 1)
+                        && s > target.score
+                    {
+                        *target = Cell {
                             score: s,
                             prev_i: i as u32,
                             prev_j: j as u32,
@@ -1272,8 +1381,12 @@ pub(crate) fn solve_cluster_with_arena(
                     let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
                     let min_chars = ot.chars.min(nt.chars);
                     let char_bound = if token_overlap {
-                        token_mask_matched_chars_bound(ot, &nt.token_mask, &interner.ws)
-                            .min(min_chars)
+                        token_intersection_bound(
+                            &ot.token_multiset,
+                            &nt.token_multiset,
+                            &interner.char_lens,
+                        )
+                        .min(min_chars)
                     } else {
                         0
                     };
@@ -1285,6 +1398,10 @@ pub(crate) fn solve_cluster_with_arena(
                     }
                     let total = ot.chars.max(nt.chars);
                     let max_matched = char_bound;
+
+                    let Some(target_diag) = grid.get(i + 1, j + 1) else {
+                        continue;
+                    };
 
                     let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word) {
                         (Some(a), Some(b)) => a == b,
@@ -1299,43 +1416,12 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         0.0
                     };
-                    let max_close = if om.close_dist == 1 && nm.close_dist == 1 {
-                        w.delta
-                    } else {
-                        w.epsilon
-                    };
 
-                    let max_possible_mod_s = base + w.alpha * max_matched as f64
-                        - w.gamma * (total - max_matched) as f64
-                        - w.beta
-                        + max_syn
-                        + max_close
-                        + w.head_agree_bonus
-                        + w.epsilon;
-                    let mod_threshold = (base - 2.0 * w.beta).max(dp[next_diag].score);
-                    if max_possible_mod_s <= mod_threshold {
-                        continue;
-                    }
-
-                    let matched = if token_overlap && char_bound > 0 {
-                        lcs_matched_chars_ids(
-                            &ot.ids,
-                            &nt.ids,
-                            &interner.ws,
-                            &interner.alnum,
-                            &nt.token_chars,
-                            lcs_scratch,
-                        )
-                    } else {
-                        0usize
-                    };
-                    if matched + common_indent == 0 {
-                        continue;
-                    }
                     let ot_trim = cluster.old_rows[i].text().trim();
                     let nt_trim = cluster.new_rows[j].text().trim();
 
                     let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
+                    let offset_diff = (i as isize - j as isize).unsigned_abs();
                     let is_prefix_containment = {
                         let ot_strip = trim_trailing_delims(ot_trim, profile);
                         let nt_strip = trim_trailing_delims(nt_trim, profile);
@@ -1357,6 +1443,64 @@ pub(crate) fn solve_cluster_with_arena(
                             && (is_prefix_at_boundary(ot_strip, nt_strip)
                                 || is_prefix_at_boundary(nt_strip, ot_strip))
                     };
+
+                    let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
+                        0.65
+                    } else if om.comment || nm.comment {
+                        0.35
+                    } else {
+                        0.25
+                    };
+                    let max_similarity_ratio = max_matched as f64 / total as f64;
+                    let could_be_valid_mod = max_similarity_ratio >= min_ratio
+                        || is_property_match
+                        || statement_head_match
+                        || is_prefix_containment
+                        || (om.close_dist == 1 && nm.close_dist == 1);
+                    if !could_be_valid_mod {
+                        continue;
+                    }
+
+                    let syn = if is_prefix_containment {
+                        max_syn + w.head_agree_bonus
+                    } else {
+                        max_syn
+                    };
+                    let max_close = if om.close_dist == 1 && nm.close_dist == 1 {
+                        w.delta
+                    } else {
+                        w.epsilon
+                    };
+
+                    let max_possible_mod_s = base + w.alpha * max_matched as f64
+                        - w.gamma * (total - max_matched) as f64
+                        - w.beta
+                        + syn
+                        + max_close
+                        + w.epsilon;
+                    let next_diag_score = target_diag.score;
+                    let mod_threshold = (base - 2.0 * w.beta).max(next_diag_score);
+                    if max_possible_mod_s <= mod_threshold {
+                        continue;
+                    }
+
+                    let matched = if ot.ids == nt.ids {
+                        ot.chars
+                    } else if token_overlap && char_bound > 0 {
+                        lcs_matched_chars_ids(
+                            &ot.ids,
+                            &nt.ids,
+                            &interner.ws,
+                            &interner.alnum,
+                            &nt.token_chars,
+                            lcs_scratch,
+                        )
+                    } else {
+                        0usize
+                    };
+                    if matched + common_indent == 0 {
+                        continue;
+                    }
                     let unmatched = total.saturating_sub(matched);
                     let (penalty, syntax) = if is_property_match || is_prefix_containment {
                         let core_unmatched = min_chars.saturating_sub(matched);
@@ -1371,20 +1515,12 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         (w.mu * unmatched as f64, max_syn)
                     };
-                    // Distance-based closing-brace proximity bonus, tapering
-                    // with distance
-                    let proximity_old_close = om.prox_close;
-                    let proximity_new_close = nm.prox_close;
-                    let close_bonus = w.epsilon * proximity_old_close * proximity_new_close;
-                    // Distance-based opening-brace proximity bonus
-                    let proximity_old_open = om.prox_open;
-                    let proximity_new_open = nm.prox_open;
-                    let open_bonus = w.epsilon * proximity_old_open * proximity_new_open;
 
+                    let close_bonus = w.epsilon * om.prox_close * nm.prox_close;
+                    let open_bonus = w.epsilon * om.prox_open * nm.prox_open;
                     let indent_diff = indent_shift as f64;
                     let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
 
-                    let offset_diff = (i as isize - j as isize).unsigned_abs();
                     let similarity_ratio = matched as f64 / total as f64;
                     let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
                         let delim_match = if om.close_tail != CloseDelimiter::None
@@ -1458,8 +1594,10 @@ pub(crate) fn solve_cluster_with_arena(
                     let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
                         + syntax
                         + (effective_close_bonus + open_bonus) * proximity_gate;
-                    if s > dp[next_diag].score {
-                        dp[next_diag] = Cell {
+                    if let Some(target) = grid.get_mut(i + 1, j + 1)
+                        && s > target.score
+                    {
+                        *target = Cell {
                             score: s,
                             prev_i: i as u32,
                             prev_j: j as u32,
@@ -1479,13 +1617,20 @@ pub(crate) fn solve_cluster_with_arena(
             {
                 for pblock in new_valid_blocks[j].as_slice() {
                     let k = pblock.k;
+                    let Some(target_cell) = grid.get(i + 1, j + k) else {
+                        continue;
+                    };
                     if !mask_overlap(&ot.token_mask, &pblock.mask) {
                         continue;
                     }
                     let total = ot.chars.max(pblock.chars);
                     let min_chars = ot.chars.min(pblock.chars);
-                    let char_bound = token_mask_matched_chars_bound(ot, &pblock.mask, &interner.ws)
-                        .min(min_chars);
+                    let char_bound = token_intersection_bound(
+                        &ot.token_multiset,
+                        &pblock.token_multiset,
+                        &interner.char_lens,
+                    )
+                    .min(min_chars);
                     if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
                         continue;
                     }
@@ -1503,8 +1648,8 @@ pub(crate) fn solve_cluster_with_arena(
                         + calc_block_score(char_bound, 0, ot.chars, pblock.chars, k)
                         + max_syntax
                         + max_close;
-                    let expand_threshold =
-                        (base - (1 + k) as f64 * w.beta).max(dp[(i + 1) * stride + j + k].score);
+                    let target_score = target_cell.score;
+                    let expand_threshold = (base - (1 + k) as f64 * w.beta).max(target_score);
                     if max_possible_s <= expand_threshold {
                         continue;
                     }
@@ -1544,8 +1689,10 @@ pub(crate) fn solve_cluster_with_arena(
                         + calc_block_score(bm_matched, bm_moved_lines, ot.chars, pblock.chars, k)
                         + syntax
                         + close_bonus;
-                    if s > dp[(i + 1) * stride + j + k].score {
-                        dp[(i + 1) * stride + j + k] = Cell {
+                    if let Some(target) = grid.get_mut(i + 1, j + k)
+                        && s > target.score
+                    {
+                        *target = Cell {
                             score: s,
                             prev_i: i as u32,
                             prev_j: j as u32,
@@ -1566,14 +1713,20 @@ pub(crate) fn solve_cluster_with_arena(
             {
                 for pblock in old_valid_blocks_i.as_slice() {
                     let k = pblock.k;
+                    let Some(target_cell) = grid.get(i + k, j + 1) else {
+                        continue;
+                    };
                     if !mask_overlap(&new_tokens[j].token_mask, &pblock.mask) {
                         continue;
                     }
                     let total = new_tokens[j].chars.max(pblock.chars);
                     let min_chars = new_tokens[j].chars.min(pblock.chars);
-                    let char_bound =
-                        token_mask_matched_chars_bound(&new_tokens[j], &pblock.mask, &interner.ws)
-                            .min(min_chars);
+                    let char_bound = token_intersection_bound(
+                        &new_tokens[j].token_multiset,
+                        &pblock.token_multiset,
+                        &interner.char_lens,
+                    )
+                    .min(min_chars);
                     if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
                         continue;
                     }
@@ -1591,8 +1744,8 @@ pub(crate) fn solve_cluster_with_arena(
                         + calc_block_score(char_bound, 0, new_tokens[j].chars, pblock.chars, k)
                         + max_syntax
                         + max_close;
-                    let collapse_threshold =
-                        (base - (k + 1) as f64 * w.beta).max(dp[(i + k) * stride + j + 1].score);
+                    let target_score = target_cell.score;
+                    let collapse_threshold = (base - (k + 1) as f64 * w.beta).max(target_score);
                     if max_possible_s <= collapse_threshold {
                         continue;
                     }
@@ -1637,8 +1790,10 @@ pub(crate) fn solve_cluster_with_arena(
                             k,
                         ) + syntax
                             + close_bonus;
-                    if s > dp[(i + k) * stride + j + 1].score {
-                        dp[(i + k) * stride + j + 1] = Cell {
+                    if let Some(target) = grid.get_mut(i + k, j + 1)
+                        && s > target.score
+                    {
+                        *target = Cell {
                             score: s,
                             prev_i: i as u32,
                             prev_j: j as u32,
@@ -1654,8 +1809,10 @@ pub(crate) fn solve_cluster_with_arena(
     // Traceback: collect (i, j, op, k) from (m, n) back to (0, 0).
     let mut ops: Vec<(usize, usize, OpKind, usize)> = Vec::new();
     let (mut i, mut j) = (m, n);
-    while dp[i * stride + j].op != OpKind::None {
-        let cell = dp[i * stride + j];
+    while let Some(cell) = grid.get(i, j) {
+        if cell.op == OpKind::None {
+            break;
+        }
         ops.push((
             cell.prev_i as usize,
             cell.prev_j as usize,
@@ -1665,6 +1822,35 @@ pub(crate) fn solve_cluster_with_arena(
         i = cell.prev_i as usize;
         j = cell.prev_j as usize;
     }
+
+    if i != 0 || j != 0 {
+        let mut rows = Vec::with_capacity(m + n);
+        let mut transitions = Vec::with_capacity(m + n);
+        for r in &cluster.old_rows {
+            match r {
+                Row::Del(d) | Row::MovSrc(d) => {
+                    rows.push(Row::Del(d.clone()));
+                    transitions.push(DpOp::Del);
+                }
+                _ => {}
+            }
+        }
+        for r in &cluster.new_rows {
+            match r {
+                Row::Add(a) | Row::MovTgt(a) => {
+                    rows.push(Row::Add(a.clone()));
+                    transitions.push(DpOp::Add);
+                }
+                _ => {}
+            }
+        }
+        return DpSolution {
+            score: 0.0,
+            rows,
+            transitions,
+        };
+    }
+
     ops.reverse();
 
     let old = old_tokens;
@@ -1757,7 +1943,7 @@ pub(crate) fn solve_cluster_with_arena(
     DpSolution {
         rows,
         transitions,
-        score: dp[m * stride + n].score,
+        score: grid.get(m, n).map_or(0.0, |c| c.score),
     }
 }
 

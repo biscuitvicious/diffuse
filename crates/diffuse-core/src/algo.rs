@@ -24,6 +24,7 @@ pub mod interner;
 pub mod landmarks;
 pub mod myers_ond;
 pub mod prefix_dfa;
+pub mod skyline;
 pub mod tape;
 
 pub use affine_gap::{
@@ -52,6 +53,7 @@ pub use landmarks::{
 };
 pub use myers_ond::MyersOnD;
 pub use prefix_dfa::PrefixDfa;
+pub use skyline::{AdaptiveEnvelope, AdaptiveEnvelopeBuilder, SkylineMatrix, SkylineRow};
 pub use tape::{ChunkProjector, Tape, TapeChunk, TapeProjection};
 
 /// An elementary edit operation between two generic sequences.

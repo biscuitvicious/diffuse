@@ -42,8 +42,9 @@ pub use diffuse_tui as tui;
 
 // Top-level direct re-exports for high-frequency engine primitives
 pub use diffuse_core::{
-    DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT,
-    PipelineInput, PipelineOptions,
+    DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
+    DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
+    DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, PipelineInput, PipelineOptions,
     pipeline::{run_pipeline, run_pipeline_full},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
 };
