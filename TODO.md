@@ -52,6 +52,7 @@
 ## 6. Performance Engineering & Algorithm Modernization
 - [x] **Production Performance Optimizations**: Top 5 hot-path optimizations across tokenizer, TUI flat row indexing, precomputed similarity tokens, DP scratch arena, zero-allocation pipeline, and UTF-8 string slicing. (See [Production Performance Optimizations](plan/done/Production%20Performance%20Optimizations.md))
 - [x] **Modular Top-Tier Diffing & LCS Algorithms**: 100% modular, generic sequence alignment engines including Myers' 64-bit Bit-Parallel LCS, Myers' $O(ND)$ diffing, Hunt-Szymanski / Robinson-Schensted patience LIS, Hirschberg linear-space solver, and Aho-Corasick prefix automata. (See [Modular Top-Tier Diffing & LCS Algorithms](plan/done/Modular%20Top-Tier%20Diffing%20&%20LCS%20Algorithms.md))
+- [ ] **High-performance memory allocator for musl target (`mimalloc` / `jemalloc`)**: Introduce a fast Rust memory allocator crate (e.g. `mimalloc` or `tikv-jemallocator`) when compiling for `*-unknown-linux-musl`, preventing standard musl `malloc` from degrading performance during multi-threaded allocation-heavy diff workloads.
 
 ## 7. Execution Context & CLI
 - [x] **Support `-C` (change directory) option**: Conceptually `chdir` to the given directory before scanning for repositories, loading files, and resolving all relative paths. Must be honoured everywhere (git discovery, file I/O, config, golden/corpus paths, etc.). Supports single or multiple sequential `-C` flags (e.g. `diffuse -C <parent> -C <child>`).

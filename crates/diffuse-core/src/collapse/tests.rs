@@ -1750,3 +1750,49 @@ fn test_multiline_to_single_line_collapse_reflow() {
         common
     );
 }
+
+#[test]
+fn test_parallel_assemble_mods_multi_row_parity() {
+    let mut rows = Vec::new();
+    for i in 1..=32 {
+        rows.push(row(
+            RowKind::Del,
+            &format!("    let count_{i} = calculate_value(param_{i});"),
+            None,
+            Some(i as u32),
+        ));
+    }
+    for i in 1..=32 {
+        rows.push(row(
+            RowKind::Add,
+            &format!("    let count_{i} = calculate_value(param_{i}, extra_flag);"),
+            Some(i as u32),
+            None,
+        ));
+    }
+    let h = hunk(rows);
+    let collapsed = collapse_hunk_rows(&h, None, None, None);
+    assert_eq!(collapsed.len(), 32, "Expected 32 Mod rows");
+    for (idx, r) in collapsed.iter().enumerate() {
+        let i = idx + 1;
+        match r {
+            Row::Mod { old_line, new_line } => {
+                assert_eq!(old_line.num.get(), i as u32);
+                assert_eq!(new_line.num.get(), i as u32);
+                assert_eq!(
+                    old_line.text,
+                    format!("    let count_{i} = calculate_value(param_{i});")
+                );
+                assert_eq!(
+                    new_line.text,
+                    format!("    let count_{i} = calculate_value(param_{i}, extra_flag);")
+                );
+                assert!(
+                    !new_line.spans.is_empty(),
+                    "Mod row must have subword spans"
+                );
+            }
+            _ => panic!("Expected Row::Mod at index {idx}, got {r:?}"),
+        }
+    }
+}

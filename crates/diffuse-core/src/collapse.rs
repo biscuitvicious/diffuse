@@ -207,6 +207,39 @@ pub fn pass_assemble_mods(
         }
     }
 
+    use rayon::prelude::*;
+
+    let mut precomputed_pairs: FxHashMap<usize, (String, crate::parse::LineNum, Spans)> =
+        if ctx.paired_dels.len() > 1 {
+            ctx.paired_dels
+                .par_iter()
+                .map(|&ri| {
+                    let add_ri = ctx.add_of[&ri];
+                    let add = &h.rows[add_ri];
+                    let (del_text, first_old_num) =
+                        if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+                            let lines: Vec<&str> =
+                                block_dels.iter().map(|&di| h.rows[di].text()).collect();
+                            let joined = join_collapse_lines(&lines, add.text());
+                            let first_num = block_dels
+                                .first()
+                                .and_then(|&di| h.rows[di].old_line_num())
+                                .unwrap_or_else(|| h.rows[ri].old_line_num().unwrap());
+                            (joined, first_num)
+                        } else {
+                            (
+                                h.rows[ri].text().to_string(),
+                                h.rows[ri].old_line_num().unwrap(),
+                            )
+                        };
+                    let spans = word_spans_with_profile(&del_text, add.text(), profile);
+                    (ri, (del_text, first_old_num, spans))
+                })
+                .collect()
+        } else {
+            FxHashMap::default()
+        };
+
     for (ri, r) in h.rows.iter().enumerate() {
         if matches!(r, Row::MovTgt(_)) {
             out.push(r.clone());
@@ -223,8 +256,13 @@ pub fn pass_assemble_mods(
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
 
-            let (del_text, first_old_num) =
-                if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+            let (del_text, first_old_num, spans) = if let Some(pre) = precomputed_pairs.remove(&ri)
+            {
+                pre
+            } else {
+                let (del_text, first_old_num) = if let Some(block_dels) =
+                    ctx.collapse_blocks.get(&add_ri)
+                {
                     let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
                     let joined = join_collapse_lines(&lines, add.text());
                     let first_num = block_dels
@@ -236,7 +274,9 @@ pub fn pass_assemble_mods(
                     (r.text().to_string(), r.old_line_num().unwrap())
                 };
 
-            let spans = word_spans_with_profile(&del_text, add.text(), profile);
+                let spans = word_spans_with_profile(&del_text, add.text(), profile);
+                (del_text, first_old_num, spans)
+            };
 
             if crate::merge::is_wholesale_replacement_spans(&del_text, add.text(), &spans) {
                 kept_dels.push(ri);
