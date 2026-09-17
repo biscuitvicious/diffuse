@@ -1,8 +1,8 @@
-//! TEMPORARY probe: time mod-pairing on a synthetic whole-file replacement
-//! hunk built from the golden render.txt (≈7174 lines per side, every line
-//! perturbed so pairing engages across the full corridor).
+//! Large-hunk pairing regression tests: whole-file replacements built from
+//! the golden render.txt (very long lines), exercising the narrow-band
+//! corridor and parallel candidate scoring end to end through the pipeline.
 
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, time::Duration};
 
 use diffuse_core::{PipelineOptions, pipeline::run_pipeline_full};
 
@@ -18,14 +18,13 @@ fn load_render_txt() -> Vec<String> {
         .collect()
 }
 
-#[test]
-#[ignore = "manual perf probe: minutes-long pairing workload"]
-fn test_probe_big_replace_pairing_time() {
-    let old_lines = load_render_txt();
+/// Pair a whole-file replacement of the first `num_lines` render.txt lines
+/// (every third line perturbed palette-code style) and return the elapsed
+/// pairing time.
+fn pairing_time(num_lines: usize) -> Duration {
+    let old_lines: Vec<String> = load_render_txt().into_iter().take(num_lines).collect();
     let n = old_lines.len();
-    eprintln!("old lines: {n}");
-    // Perturb every line slightly (palette-code style tweak) so nearly every
-    // del/add pair shares most tokens: worst case for the pairing corridor.
+    assert!(n > 0);
     let new_lines: Vec<String> = old_lines
         .iter()
         .enumerate()
@@ -56,7 +55,7 @@ fn test_probe_big_replace_pairing_time() {
     let mut old_content = HashMap::new();
     old_content.insert("render.txt".to_string(), old_lines.join("\n") + "\n");
 
-    let t = Instant::now();
+    let t = std::time::Instant::now();
     let out = run_pipeline_full(
         &diff,
         Some(new_content),
@@ -67,4 +66,29 @@ fn test_probe_big_replace_pairing_time() {
     let rows: usize = out.files.iter().map(|f| f.rows.len()).sum();
     eprintln!("paired {rows} rows in {elapsed:?}");
     assert!(!out.files.is_empty());
+    elapsed
+}
+
+#[test]
+fn test_big_replace_pairing_time() {
+    // Gated: past the narrow-band threshold with realistic long lines.
+    let elapsed = pairing_time(1100);
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "large-hunk pairing regressed (narrow band not engaging?): {elapsed:?}"
+    );
+}
+
+/// Real-world-anchored stress coverage for the pairing corridor. Deliberate
+/// exception to the unit (<0.5s) and binary (<1.5s) budgets: the full
+/// 7174-line workload is the only fixture that exercises the narrow-band
+/// corridor at production scale, and its ~1.3s dev cost guards directly
+/// against minutes-scale pairing regressions.
+#[test]
+fn test_stress_full_replace_pairing_time() {
+    let elapsed = pairing_time(7174);
+    assert!(
+        elapsed < Duration::from_secs(60),
+        "full-workload pairing regressed: {elapsed:?}"
+    );
 }

@@ -114,9 +114,9 @@ fn test_partition_hunk_segments_with_syntax_barriers() {
 // (Π_old ≡ old ∧ Π_new ≡ new) — the invariant is not optional.
 
 use super::dp::{
-    DpOp, DpRowMeta, DpSolution, Weights, block_anchor, block_lcs, dp_tokens,
-    mod_pair_needs_scoring, score_lcs_candidates_par, score_lcs_candidates_seq, solve_cluster,
-    verify_projection,
+    DpOp, DpRowMeta, DpSolution, Weights, block_anchor, block_lcs, cell_touches_band_edge,
+    dp_tokens, mod_pair_needs_scoring, score_lcs_candidates_par, score_lcs_candidates_seq,
+    solve_cluster, verify_projection,
 };
 use crate::syntax::prelude::CloseDelimiter;
 // (Row, DelLine, AddLine, LineNum already imported at the top of this file)
@@ -2153,4 +2153,53 @@ fn test_anchor_decomposition_large_cluster() {
             .is_none(),
         "cluster with no anchors must return None"
     );
+}
+
+#[test]
+fn band_edge_touch_detection() {
+    // Row bounds with n = 3 columns.
+    let bounds = vec![(0, 2), (0, 2), (1, 3)];
+    assert!(!cell_touches_band_edge(&bounds, 3, 0, 1));
+    assert!(!cell_touches_band_edge(&bounds, 3, 0, 0));
+    assert!(!cell_touches_band_edge(&bounds, 3, 2, 3));
+    assert!(!cell_touches_band_edge(&bounds, 3, 2, 2));
+    assert!(cell_touches_band_edge(&bounds, 3, 0, 2));
+    assert!(cell_touches_band_edge(&bounds, 3, 2, 1));
+    // Missing row bounds defensively count as touched.
+    assert!(cell_touches_band_edge(&bounds, 3, 9, 0));
+    assert!(cell_touches_band_edge(&[], 3, 0, 0));
+}
+
+#[test]
+fn test_narrow_band_large_replacement() {
+    // 1100-line diagonal-hugging replacement: exercises the narrow-band
+    // attempt end to end (projection invariant + determinism).
+    let old_rows: Vec<Row> = (1..=1100)
+        .map(|i| {
+            Row::Del(DelLine::new(
+                LineNum::new(i).unwrap(),
+                format!("old line {i} with some content here"),
+            ))
+        })
+        .collect();
+    let new_rows: Vec<Row> = (1..=1100)
+        .map(|i| {
+            Row::Add(AddLine::new(
+                LineNum::new(i).unwrap(),
+                format!("old line {i} with some content here!"),
+            ))
+        })
+        .collect();
+    let c = code_cluster(old_rows, new_rows);
+    let rs = lang_profile("rs");
+    let first = solve_cluster(&c, rs);
+    verify_projection(&first, &c).expect("projection invariant holds");
+    assert_eq!(first.rows.len(), 1100);
+    let second = solve_cluster(&c, rs);
+    assert_eq!(
+        format!("{:?}", first.rows),
+        format!("{:?}", second.rows),
+        "large solves must be deterministic"
+    );
+    assert_eq!(first.score, second.score);
 }

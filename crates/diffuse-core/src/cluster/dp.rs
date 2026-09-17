@@ -305,6 +305,34 @@ fn is_prefix_at_boundary(longer: &str, shorter: &str) -> bool {
 /// while massive corridors (hundreds of thousands) parallelize.
 const PAR_CANDIDATE_THRESHOLD: usize = 2048;
 
+/// Minimum cluster dimension for a narrow-band solve attempt. Below this
+/// the legacy band applies directly, so small inputs never change behavior
+/// or pay retry overhead. Tunable.
+const NARROW_BAND_MIN_ROWS: usize = 1024;
+
+/// Narrow corridor floor ($K$) and slack for large clusters. The legacy
+/// floor explores $\pm 64$ rows per line even when the optimal path hugs
+/// the diagonal; the narrow attempt shrinks that while the
+/// touch-triggered retry guarantees byte-identical fallback. Tunable.
+const NARROW_BANDWIDTH_MIN: usize = 16;
+const NARROW_BANDWIDTH_SLACK: usize = 8;
+
+/// Whether traceback cell $(i, j)$ touches the band edge: the column sits
+/// on the row's corridor boundary strictly inside the grid (natural grid
+/// edges $j = 0$ and $j = N$ never count). Missing bounds defensively
+/// count as touched so an undersized envelope always retries.
+pub(crate) fn cell_touches_band_edge(
+    bounds: &[(usize, usize)],
+    n: usize,
+    i: usize,
+    j: usize,
+) -> bool {
+    match bounds.get(i) {
+        Some(&(start, end)) => (j == start && start > 0) || (j == end && end < n),
+        None => true,
+    }
+}
+
 /// Grid-independent preconditions for a mod pair `(i, j)` to reach subline
 /// LCS scoring in the fill loop below.
 ///
@@ -1790,821 +1818,866 @@ pub(crate) fn solve_cluster_matrix(
         });
     }
 
-    let DpScratchArena {
-        interner,
-        old_tokens,
-        new_tokens,
-        old_meta,
-        new_meta,
-        all_old_ids,
-        all_old_coords,
-        all_old_token_chars,
-        old_row_token_starts,
-        all_new_ids,
-        all_new_coords,
-        all_new_token_chars,
-        new_row_token_starts,
-        old_valid_blocks,
-        new_valid_blocks,
-        lcs_scratch,
-        grid,
-        precomputed_lcs,
-        lcs_candidates,
-        lcs_scores,
-        ..
-    } = arena;
+    // Full matrix solve with the given corridor bounds, reporting whether
+    // the optimal traceback touched the band edge. Shared by the narrow
+    // attempt and the legacy solve below: tokenize/flatten run once above,
+    // matrices re-initialize on every call.
+    let mut solve_once = |bounds: &[(usize, usize)]| -> (DpSolution, bool) {
+        let DpScratchArena {
+            interner,
+            old_tokens,
+            new_tokens,
+            old_meta,
+            new_meta,
+            all_old_ids,
+            all_old_coords,
+            all_old_token_chars,
+            old_row_token_starts,
+            all_new_ids,
+            all_new_coords,
+            all_new_token_chars,
+            new_row_token_starts,
+            old_valid_blocks,
+            new_valid_blocks,
+            lcs_scratch,
+            grid,
+            precomputed_lcs,
+            lcs_candidates,
+            lcs_scores,
+            ..
+        } = arena;
 
-    let neg = f64::NEG_INFINITY;
-    let init_cell = Cell {
-        score: neg,
-        prev_i: 0,
-        prev_j: 0,
-        k: 0,
-        op: OpKind::None,
-    };
-    grid.init_envelope(m, n, &envelope.bounds, init_cell);
-    precomputed_lcs.init_envelope(m, n, &envelope.bounds, u32::MAX);
-    if let Some(cell0) = grid.get_mut(0, 0) {
-        cell0.score = 0.0;
-    }
-
-    let calc_block_score = |matched: usize,
-                            moved_lines: usize,
-                            side_chars: usize,
-                            block_chars: usize,
-                            k: usize|
-     -> f64 {
-        let total = side_chars.max(block_chars);
-        let unmatched = total.saturating_sub(matched);
-        w.alpha * matched as f64
-            - w.mu * unmatched as f64
-            - w.beta * k as f64
-            - w.gamma * (k - 1) as f64
-            - w.gamma * moved_lines as f64 * 0.5
-    };
-
-    // Flatten old tokens
-    all_old_ids.clear();
-    all_old_coords.clear();
-    all_old_token_chars.clear();
-    old_row_token_starts.clear();
-    for (row_idx, dt) in old_tokens.iter().enumerate() {
-        old_row_token_starts.push(all_old_ids.len());
-        for (ti, &id) in dt.ids.iter().enumerate() {
-            all_old_ids.push(id);
-            all_old_coords.push((row_idx as u8, ti as u8));
-            all_old_token_chars.push(dt.token_chars[ti]);
+        let neg = f64::NEG_INFINITY;
+        let init_cell = Cell {
+            score: neg,
+            prev_i: 0,
+            prev_j: 0,
+            k: 0,
+            op: OpKind::None,
+        };
+        grid.init_envelope(m, n, bounds, init_cell);
+        precomputed_lcs.init_envelope(m, n, bounds, u32::MAX);
+        if let Some(cell0) = grid.get_mut(0, 0) {
+            cell0.score = 0.0;
         }
-    }
-    old_row_token_starts.push(all_old_ids.len());
 
-    // Flatten new tokens
-    all_new_ids.clear();
-    all_new_coords.clear();
-    all_new_token_chars.clear();
-    new_row_token_starts.clear();
-    for (row_idx, dt) in new_tokens.iter().enumerate() {
-        new_row_token_starts.push(all_new_ids.len());
-        for (ti, &id) in dt.ids.iter().enumerate() {
-            all_new_ids.push(id);
-            all_new_coords.push((row_idx as u8, ti as u8));
-            all_new_token_chars.push(dt.token_chars[ti]);
-        }
-    }
-    new_row_token_starts.push(all_new_ids.len());
-
-    precompute_valid_blocks(old_tokens, old_meta, old_row_token_starts, old_valid_blocks);
-
-    precompute_valid_blocks(new_tokens, new_meta, new_row_token_starts, new_valid_blocks);
-
-    let dummy_tok = DpTokens {
-        ids: Vec::new(),
-        chars: 0,
-        token_chars: Vec::new(),
-        token_mask: [0; 4],
-        token_multiset: SmallVec::new(),
-    };
-    let empty_blocks = RowValidBlocks::default();
-
-    // Phase A: enumerate mod-pair LCS candidates and score them up front
-    // (in parallel past PAR_CANDIDATE_THRESHOLD). The fill loop below reads
-    // precomputed scores; any pair the enumeration missed falls back to
-    // inline scoring, so output is unaffected either way.
-    lcs_candidates.clear();
-    for i in 0..m {
-        for j in grid.row_range(i) {
-            if j >= n || !grid.is_in_envelope(i + 1, j + 1) {
-                continue;
-            }
-            if mod_pair_needs_scoring(
-                i, j, cluster, old_tokens, new_tokens, old_meta, new_meta, interner, profile, w,
-            ) {
-                lcs_candidates.push((i, j));
-            }
-        }
-    }
-    score_lcs_candidates(
-        lcs_candidates,
-        old_tokens,
-        new_tokens,
-        interner,
-        lcs_scores,
-        precomputed_lcs,
-    );
-
-    for i in 0..=m {
-        let has_old = i < m;
-        let (ot, om, old_valid_blocks_i) = if has_old {
-            (&old_tokens[i], old_meta[i], &old_valid_blocks[i])
-        } else {
-            (&dummy_tok, DpRowMeta::default(), &empty_blocks)
+        let calc_block_score = |matched: usize,
+                                moved_lines: usize,
+                                side_chars: usize,
+                                block_chars: usize,
+                                k: usize|
+         -> f64 {
+            let total = side_chars.max(block_chars);
+            let unmatched = total.saturating_sub(matched);
+            w.alpha * matched as f64
+                - w.mu * unmatched as f64
+                - w.beta * k as f64
+                - w.gamma * (k - 1) as f64
+                - w.gamma * moved_lines as f64 * 0.5
         };
 
-        for j in grid.row_range(i) {
-            let base = grid.get(i, j).map_or(neg, |c| c.score);
-            if base == neg {
-                continue;
+        // Flatten old tokens
+        all_old_ids.clear();
+        all_old_coords.clear();
+        all_old_token_chars.clear();
+        old_row_token_starts.clear();
+        for (row_idx, dt) in old_tokens.iter().enumerate() {
+            old_row_token_starts.push(all_old_ids.len());
+            for (ti, &id) in dt.ids.iter().enumerate() {
+                all_old_ids.push(id);
+                all_old_coords.push((row_idx as u8, ti as u8));
+                all_old_token_chars.push(dt.token_chars[ti]);
             }
-            // Standalone Del / Add.
-            if has_old
-                && let Some(target) = grid.get_mut(i + 1, j)
-                && base - w.beta > target.score
-            {
-                *target = Cell {
-                    score: base - w.beta,
-                    prev_i: i as u32,
-                    prev_j: j as u32,
-                    k: 1,
-                    op: OpKind::Del,
-                };
+        }
+        old_row_token_starts.push(all_old_ids.len());
+
+        // Flatten new tokens
+        all_new_ids.clear();
+        all_new_coords.clear();
+        all_new_token_chars.clear();
+        new_row_token_starts.clear();
+        for (row_idx, dt) in new_tokens.iter().enumerate() {
+            new_row_token_starts.push(all_new_ids.len());
+            for (ti, &id) in dt.ids.iter().enumerate() {
+                all_new_ids.push(id);
+                all_new_coords.push((row_idx as u8, ti as u8));
+                all_new_token_chars.push(dt.token_chars[ti]);
             }
-            if j < n
-                && let Some(target) = grid.get_mut(i, j + 1)
-                && base - w.beta >= target.score
-            {
-                // `>=`: on a del/add tie the path prefers ending with
-                // the add — the emission reads
-                // dels first, adds after (the
-                // diff reading convention).
-                *target = Cell {
-                    score: base - w.beta,
-                    prev_i: i as u32,
-                    prev_j: j as u32,
-                    k: 1,
-                    op: OpKind::Add,
-                };
+        }
+        new_row_token_starts.push(all_new_ids.len());
+
+        precompute_valid_blocks(old_tokens, old_meta, old_row_token_starts, old_valid_blocks);
+
+        precompute_valid_blocks(new_tokens, new_meta, new_row_token_starts, new_valid_blocks);
+
+        let dummy_tok = DpTokens {
+            ids: Vec::new(),
+            chars: 0,
+            token_chars: Vec::new(),
+            token_mask: [0; 4],
+            token_multiset: SmallVec::new(),
+        };
+        let empty_blocks = RowValidBlocks::default();
+
+        // Phase A: enumerate mod-pair LCS candidates and score them up front
+        // (in parallel past PAR_CANDIDATE_THRESHOLD). The fill loop below reads
+        // precomputed scores; any pair the enumeration missed falls back to
+        // inline scoring, so output is unaffected either way.
+        lcs_candidates.clear();
+        for i in 0..m {
+            for j in grid.row_range(i) {
+                if j >= n || !grid.is_in_envelope(i + 1, j + 1) {
+                    continue;
+                }
+                if mod_pair_needs_scoring(
+                    i, j, cluster, old_tokens, new_tokens, old_meta, new_meta, interner, profile, w,
+                ) {
+                    lcs_candidates.push((i, j));
+                }
             }
-            // 1-to-1: Mod or Mov.
-            let nm = if j < n {
-                new_meta[j]
+        }
+        score_lcs_candidates(
+            lcs_candidates,
+            old_tokens,
+            new_tokens,
+            interner,
+            lcs_scores,
+            precomputed_lcs,
+        );
+
+        for i in 0..=m {
+            let has_old = i < m;
+            let (ot, om, old_valid_blocks_i) = if has_old {
+                (&old_tokens[i], old_meta[i], &old_valid_blocks[i])
             } else {
-                DpRowMeta::default()
+                (&dummy_tok, DpRowMeta::default(), &empty_blocks)
             };
-            if has_old && j < n && om.comment == nm.comment && om.kind.is_compatible(nm.kind) {
-                let nt = &new_tokens[j];
-                if ot.ids.is_empty() && nt.ids.is_empty() {
-                    // blank ↔ blank: a trivial full match in one row.
-                    let s = base - w.beta + w.delta;
-                    if let Some(target) = grid.get_mut(i + 1, j + 1)
-                        && s > target.score
-                    {
-                        *target = Cell {
-                            score: s,
-                            prev_i: i as u32,
-                            prev_j: j as u32,
-                            k: 1,
-                            op: OpKind::Mod,
-                        };
-                    }
-                } else if om.trimmed_id == nm.trimmed_id {
-                    // Verbatim (trim-insensitive) — a Mov.
-                    let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
-                    let s = base + w.alpha * ot.chars.max(nt.chars) as f64
-                        - w.beta
-                        - w.gamma * length_diff;
-                    if let Some(target) = grid.get_mut(i + 1, j + 1)
-                        && s > target.score
-                    {
-                        *target = Cell {
-                            score: s,
-                            prev_i: i as u32,
-                            prev_j: j as u32,
-                            k: 1,
-                            op: OpKind::Mov,
-                        };
-                    }
-                } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
-                    let old_text = cluster.old_rows[i].text();
-                    let new_text = cluster.new_rows[j].text();
-                    let common_indent = old_text
-                        .chars()
-                        .take_while(|c| c.is_whitespace())
-                        .zip(new_text.chars().take_while(|c| c.is_whitespace()))
-                        .take_while(|(c1, c2)| c1 == c2)
-                        .count();
 
-                    let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
-                    let min_chars = ot.chars.min(nt.chars);
-                    let char_bound = if token_overlap {
-                        token_intersection_bound(
-                            &ot.token_multiset,
-                            &nt.token_multiset,
-                            &interner.char_lens,
-                        )
-                        .min(min_chars)
-                    } else {
-                        0
+            for j in grid.row_range(i) {
+                let base = grid.get(i, j).map_or(neg, |c| c.score);
+                if base == neg {
+                    continue;
+                }
+                // Standalone Del / Add.
+                if has_old
+                    && let Some(target) = grid.get_mut(i + 1, j)
+                    && base - w.beta > target.score
+                {
+                    *target = Cell {
+                        score: base - w.beta,
+                        prev_i: i as u32,
+                        prev_j: j as u32,
+                        k: 1,
+                        op: OpKind::Del,
                     };
-                    // Disjoint lines with zero overlapping tokens and zero
-                    // common indentation cannot be in-place
-                    // substitutions (wholesale replacements).
-                    if char_bound + common_indent == 0 {
-                        continue;
-                    }
-                    let total = ot.chars.max(nt.chars);
-                    let max_matched = char_bound;
-
-                    let Some(target_diag) = grid.get(i + 1, j + 1) else {
-                        continue;
+                }
+                if j < n
+                    && let Some(target) = grid.get_mut(i, j + 1)
+                    && base - w.beta >= target.score
+                {
+                    // `>=`: on a del/add tie the path prefers ending with
+                    // the add — the emission reads
+                    // dels first, adds after (the
+                    // diff reading convention).
+                    *target = Cell {
+                        score: base - w.beta,
+                        prev_i: i as u32,
+                        prev_j: j as u32,
+                        k: 1,
+                        op: OpKind::Add,
                     };
-
-                    let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word) {
-                        (Some(a), Some(b)) => a == b,
-                        _ => false,
-                    };
-                    let is_property_match =
-                        om.property_key.is_some() && om.property_key == nm.property_key;
-                    let max_syn = if is_property_match {
-                        w.head_agree_bonus + 200.0
-                    } else if statement_head_match {
-                        w.head_agree_bonus
-                    } else {
-                        0.0
-                    };
-
-                    let ot_trim = cluster.old_rows[i].text().trim();
-                    let nt_trim = cluster.new_rows[j].text().trim();
-
-                    let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
-                    let offset_diff = (i as isize - j as isize).unsigned_abs();
-                    let is_prefix_containment = {
-                        let ot_strip = trim_trailing_delims(ot_trim, profile);
-                        let nt_strip = trim_trailing_delims(nt_trim, profile);
-                        let min_len = ot_strip.len().min(nt_strip.len());
-                        min_len >= w.min_containment_len
-                            && indent_shift <= w.max_indent_shift
-                            && (om.comment == nm.comment)
-                            && (is_prefix_at_boundary(ot_strip, nt_strip)
-                                || is_prefix_at_boundary(nt_strip, ot_strip))
-                    };
-
-                    let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
-                        0.65
-                    } else if om.comment || nm.comment {
-                        0.35
-                    } else {
-                        0.25
-                    };
-                    let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-                        if om.close_tail != CloseDelimiter::None
-                            && nm.close_tail != CloseDelimiter::None
+                }
+                // 1-to-1: Mod or Mov.
+                let nm = if j < n {
+                    new_meta[j]
+                } else {
+                    DpRowMeta::default()
+                };
+                if has_old && j < n && om.comment == nm.comment && om.kind.is_compatible(nm.kind) {
+                    let nt = &new_tokens[j];
+                    if ot.ids.is_empty() && nt.ids.is_empty() {
+                        // blank ↔ blank: a trivial full match in one row.
+                        let s = base - w.beta + w.delta;
+                        if let Some(target) = grid.get_mut(i + 1, j + 1)
+                            && s > target.score
                         {
-                            if let Some(p) = profile {
-                                p.is_direct_tail_match(
-                                    om.close_tail,
-                                    nm.close_tail,
-                                    max_matched,
-                                    w.min_tail_matched_chars,
-                                )
+                            *target = Cell {
+                                score: s,
+                                prev_i: i as u32,
+                                prev_j: j as u32,
+                                k: 1,
+                                op: OpKind::Mod,
+                            };
+                        }
+                    } else if om.trimmed_id == nm.trimmed_id {
+                        // Verbatim (trim-insensitive) — a Mov.
+                        let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
+                        let s = base + w.alpha * ot.chars.max(nt.chars) as f64
+                            - w.beta
+                            - w.gamma * length_diff;
+                        if let Some(target) = grid.get_mut(i + 1, j + 1)
+                            && s > target.score
+                        {
+                            *target = Cell {
+                                score: s,
+                                prev_i: i as u32,
+                                prev_j: j as u32,
+                                k: 1,
+                                op: OpKind::Mov,
+                            };
+                        }
+                    } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
+                        let old_text = cluster.old_rows[i].text();
+                        let new_text = cluster.new_rows[j].text();
+                        let common_indent = old_text
+                            .chars()
+                            .take_while(|c| c.is_whitespace())
+                            .zip(new_text.chars().take_while(|c| c.is_whitespace()))
+                            .take_while(|(c1, c2)| c1 == c2)
+                            .count();
+
+                        let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
+                        let min_chars = ot.chars.min(nt.chars);
+                        let char_bound = if token_overlap {
+                            token_intersection_bound(
+                                &ot.token_multiset,
+                                &nt.token_multiset,
+                                &interner.char_lens,
+                            )
+                            .min(min_chars)
+                        } else {
+                            0
+                        };
+                        // Disjoint lines with zero overlapping tokens and zero
+                        // common indentation cannot be in-place
+                        // substitutions (wholesale replacements).
+                        if char_bound + common_indent == 0 {
+                            continue;
+                        }
+                        let total = ot.chars.max(nt.chars);
+                        let max_matched = char_bound;
+
+                        let Some(target_diag) = grid.get(i + 1, j + 1) else {
+                            continue;
+                        };
+
+                        let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word)
+                        {
+                            (Some(a), Some(b)) => a == b,
+                            _ => false,
+                        };
+                        let is_property_match =
+                            om.property_key.is_some() && om.property_key == nm.property_key;
+                        let max_syn = if is_property_match {
+                            w.head_agree_bonus + 200.0
+                        } else if statement_head_match {
+                            w.head_agree_bonus
+                        } else {
+                            0.0
+                        };
+
+                        let ot_trim = cluster.old_rows[i].text().trim();
+                        let nt_trim = cluster.new_rows[j].text().trim();
+
+                        let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
+                        let offset_diff = (i as isize - j as isize).unsigned_abs();
+                        let is_prefix_containment = {
+                            let ot_strip = trim_trailing_delims(ot_trim, profile);
+                            let nt_strip = trim_trailing_delims(nt_trim, profile);
+                            let min_len = ot_strip.len().min(nt_strip.len());
+                            min_len >= w.min_containment_len
+                                && indent_shift <= w.max_indent_shift
+                                && (om.comment == nm.comment)
+                                && (is_prefix_at_boundary(ot_strip, nt_strip)
+                                    || is_prefix_at_boundary(nt_strip, ot_strip))
+                        };
+
+                        let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
+                            0.65
+                        } else if om.comment || nm.comment {
+                            0.35
+                        } else {
+                            0.25
+                        };
+                        let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
+                            if om.close_tail != CloseDelimiter::None
+                                && nm.close_tail != CloseDelimiter::None
+                            {
+                                if let Some(p) = profile {
+                                    p.is_direct_tail_match(
+                                        om.close_tail,
+                                        nm.close_tail,
+                                        max_matched,
+                                        w.min_tail_matched_chars,
+                                    )
+                                } else {
+                                    CloseDelimiter::default_is_direct_tail_match(
+                                        om.close_tail,
+                                        nm.close_tail,
+                                        max_matched,
+                                        w.min_tail_matched_chars,
+                                    )
+                                }
+                            } else if om.is_terminal_return && nm.is_terminal_return {
+                                if indent_shift == 0 && common_indent > 0 {
+                                    true
+                                } else {
+                                    max_matched >= w.min_tail_matched_chars
+                                }
                             } else {
-                                CloseDelimiter::default_is_direct_tail_match(
-                                    om.close_tail,
-                                    nm.close_tail,
-                                    max_matched,
-                                    w.min_tail_matched_chars,
-                                )
-                            }
-                        } else if om.is_terminal_return && nm.is_terminal_return {
-                            if indent_shift == 0 && common_indent > 0 {
-                                true
-                            } else {
-                                max_matched >= w.min_tail_matched_chars
+                                false
                             }
                         } else {
                             false
+                        };
+                        let max_similarity_ratio = max_matched as f64 / total as f64;
+                        let could_be_valid_mod = max_similarity_ratio >= min_ratio
+                            || is_property_match
+                            || statement_head_match
+                            || is_prefix_containment
+                            || could_be_tail_pair;
+                        if !could_be_valid_mod {
+                            continue;
                         }
-                    } else {
-                        false
-                    };
-                    let max_similarity_ratio = max_matched as f64 / total as f64;
-                    let could_be_valid_mod = max_similarity_ratio >= min_ratio
-                        || is_property_match
-                        || statement_head_match
-                        || is_prefix_containment
-                        || could_be_tail_pair;
-                    if !could_be_valid_mod {
-                        continue;
-                    }
 
-                    let syn = if is_prefix_containment {
-                        max_syn + w.head_agree_bonus
-                    } else {
-                        max_syn
-                    };
-                    let max_close = if could_be_tail_pair {
-                        w.delta
-                    } else {
-                        w.epsilon * om.prox_close * nm.prox_close
-                    };
-                    let max_open = w.epsilon * om.prox_open * nm.prox_open;
-
-                    let indent_penalty = w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
-                    let max_possible_mod_s = base + w.alpha * max_matched as f64
-                        - w.gamma * (total - max_matched) as f64
-                        - w.beta
-                        - indent_penalty
-                        + syn
-                        + max_close
-                        + max_open;
-                    let next_diag_score = target_diag.score;
-                    let mod_threshold = (base - 2.0 * w.beta).max(next_diag_score);
-                    if max_possible_mod_s <= mod_threshold {
-                        continue;
-                    }
-
-                    let matched = if ot.ids == nt.ids {
-                        ot.chars
-                    } else if token_overlap && char_bound > 0 {
-                        // Precomputed in parallel up front; recomputed inline
-                        // on a miss so output never depends on enumeration
-                        // coverage.
-                        match precomputed_lcs.get(i, j).copied() {
-                            Some(m) if m != u32::MAX => m as usize,
-                            _ => lcs_matched_chars_ids(
-                                &ot.ids,
-                                &nt.ids,
-                                &interner.ws,
-                                &interner.alnum,
-                                &nt.token_chars,
-                                lcs_scratch,
-                            ),
-                        }
-                    } else {
-                        0usize
-                    };
-                    if matched + common_indent == 0 {
-                        continue;
-                    }
-                    let unmatched = total.saturating_sub(matched);
-                    let (penalty, syntax) = if is_property_match || is_prefix_containment {
-                        let core_unmatched = min_chars.saturating_sub(matched);
-                        let length_diff = (total - min_chars) as f64;
-                        let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
                         let syn = if is_prefix_containment {
                             max_syn + w.head_agree_bonus
                         } else {
                             max_syn
                         };
-                        (pen, syn)
-                    } else {
-                        (w.mu * unmatched as f64, max_syn)
-                    };
+                        let max_close = if could_be_tail_pair {
+                            w.delta
+                        } else {
+                            w.epsilon * om.prox_close * nm.prox_close
+                        };
+                        let max_open = w.epsilon * om.prox_open * nm.prox_open;
 
-                    let close_bonus = w.epsilon * om.prox_close * nm.prox_close;
-                    let open_bonus = w.epsilon * om.prox_open * nm.prox_open;
-                    let indent_diff = indent_shift as f64;
-                    let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
+                        let indent_penalty =
+                            w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
+                        let max_possible_mod_s = base + w.alpha * max_matched as f64
+                            - w.gamma * (total - max_matched) as f64
+                            - w.beta
+                            - indent_penalty
+                            + syn
+                            + max_close
+                            + max_open;
+                        let next_diag_score = target_diag.score;
+                        let mod_threshold = (base - 2.0 * w.beta).max(next_diag_score);
+                        if max_possible_mod_s <= mod_threshold {
+                            continue;
+                        }
 
-                    let similarity_ratio = matched as f64 / total as f64;
-                    let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-                        let delim_match = if om.close_tail != CloseDelimiter::None
-                            && nm.close_tail != CloseDelimiter::None
-                        {
-                            if let Some(p) = profile {
-                                p.is_direct_tail_match(
-                                    om.close_tail,
-                                    nm.close_tail,
-                                    matched,
-                                    w.min_tail_matched_chars,
-                                )
+                        let matched = if ot.ids == nt.ids {
+                            ot.chars
+                        } else if token_overlap && char_bound > 0 {
+                            // Precomputed in parallel up front; recomputed
+                            // inline on a miss so
+                            // output never depends on enumeration
+                            // coverage.
+                            match precomputed_lcs.get(i, j).copied() {
+                                Some(m) if m != u32::MAX => m as usize,
+                                _ => lcs_matched_chars_ids(
+                                    &ot.ids,
+                                    &nt.ids,
+                                    &interner.ws,
+                                    &interner.alnum,
+                                    &nt.token_chars,
+                                    lcs_scratch,
+                                ),
+                            }
+                        } else {
+                            0usize
+                        };
+                        if matched + common_indent == 0 {
+                            continue;
+                        }
+                        let unmatched = total.saturating_sub(matched);
+                        let (penalty, syntax) = if is_property_match || is_prefix_containment {
+                            let core_unmatched = min_chars.saturating_sub(matched);
+                            let length_diff = (total - min_chars) as f64;
+                            let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
+                            let syn = if is_prefix_containment {
+                                max_syn + w.head_agree_bonus
                             } else {
-                                CloseDelimiter::default_is_direct_tail_match(
-                                    om.close_tail,
-                                    nm.close_tail,
-                                    matched,
-                                    w.min_tail_matched_chars,
-                                )
+                                max_syn
+                            };
+                            (pen, syn)
+                        } else {
+                            (w.mu * unmatched as f64, max_syn)
+                        };
+
+                        let close_bonus = w.epsilon * om.prox_close * nm.prox_close;
+                        let open_bonus = w.epsilon * om.prox_open * nm.prox_open;
+                        let indent_diff = indent_shift as f64;
+                        let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
+
+                        let similarity_ratio = matched as f64 / total as f64;
+                        let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
+                            let delim_match = if om.close_tail != CloseDelimiter::None
+                                && nm.close_tail != CloseDelimiter::None
+                            {
+                                if let Some(p) = profile {
+                                    p.is_direct_tail_match(
+                                        om.close_tail,
+                                        nm.close_tail,
+                                        matched,
+                                        w.min_tail_matched_chars,
+                                    )
+                                } else {
+                                    CloseDelimiter::default_is_direct_tail_match(
+                                        om.close_tail,
+                                        nm.close_tail,
+                                        matched,
+                                        w.min_tail_matched_chars,
+                                    )
+                                }
+                            } else {
+                                false
+                            };
+                            if delim_match {
+                                true
+                            } else if om.is_terminal_return && nm.is_terminal_return {
+                                if indent_diff == 0.0 && common_indent > 0 {
+                                    true
+                                } else {
+                                    matched >= w.min_tail_matched_chars
+                                }
+                            } else {
+                                false
                             }
                         } else {
                             false
                         };
-                        if delim_match {
-                            true
-                        } else if om.is_terminal_return && nm.is_terminal_return {
-                            if indent_diff == 0.0 && common_indent > 0 {
-                                true
-                            } else {
-                                matched >= w.min_tail_matched_chars
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
 
-                    let is_valid_mod_pair = if (om.comment || nm.comment) && offset_diff > 0 {
-                        is_prefix_containment || similarity_ratio >= 0.65
-                    } else if om.comment || nm.comment {
-                        similarity_ratio >= 0.35 || is_prefix_containment
-                    } else {
-                        similarity_ratio >= 0.25
+                        let is_valid_mod_pair = if (om.comment || nm.comment) && offset_diff > 0 {
+                            is_prefix_containment || similarity_ratio >= 0.65
+                        } else if om.comment || nm.comment {
+                            similarity_ratio >= 0.35 || is_prefix_containment
+                        } else {
+                            similarity_ratio >= 0.25
+                                || is_direct_tail_pair
+                                || is_property_match
+                                || statement_head_match
+                                || is_prefix_containment
+                        };
+
+                        if !is_valid_mod_pair {
+                            continue;
+                        }
+
+                        let effective_close_bonus = if is_direct_tail_pair {
+                            w.delta
+                        } else {
+                            close_bonus
+                        };
+                        let proximity_gate = if similarity_ratio >= 0.25
                             || is_direct_tail_pair
                             || is_property_match
                             || statement_head_match
                             || is_prefix_containment
-                    };
-
-                    if !is_valid_mod_pair {
-                        continue;
-                    }
-
-                    let effective_close_bonus = if is_direct_tail_pair {
-                        w.delta
-                    } else {
-                        close_bonus
-                    };
-                    let proximity_gate = if similarity_ratio >= 0.25
-                        || is_direct_tail_pair
-                        || is_property_match
-                        || statement_head_match
-                        || is_prefix_containment
-                    {
-                        1.0
-                    } else {
-                        0.0
-                    };
-
-                    let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
-                        + syntax
-                        + (effective_close_bonus + open_bonus) * proximity_gate;
-                    if let Some(target) = grid.get_mut(i + 1, j + 1)
-                        && s > target.score
-                    {
-                        *target = Cell {
-                            score: s,
-                            prev_i: i as u32,
-                            prev_j: j as u32,
-                            k: 1,
-                            op: OpKind::Mod,
+                        {
+                            1.0
+                        } else {
+                            0.0
                         };
+
+                        let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
+                            + syntax
+                            + (effective_close_bonus + open_bonus) * proximity_gate;
+                        if let Some(target) = grid.get_mut(i + 1, j + 1)
+                            && s > target.score
+                        {
+                            *target = Cell {
+                                score: s,
+                                prev_i: i as u32,
+                                prev_j: j as u32,
+                                k: 1,
+                                op: OpKind::Mod,
+                            };
+                        }
                     }
                 }
-            }
-            // Expand: old i vs new block j..j+k (k >= 2).
-            if has_old
-                && j < n
-                && ot.chars >= 8
-                && om.is_reflow
-                && om.comment == nm.comment
-                && om.indent == nm.indent
-            {
-                for pblock in new_valid_blocks[j].as_slice() {
-                    let k = pblock.k;
-                    let Some(target_cell) = grid.get(i + 1, j + k) else {
-                        continue;
-                    };
-                    if !mask_overlap(&ot.token_mask, &pblock.mask) {
-                        continue;
-                    }
-                    let total = ot.chars.max(pblock.chars);
-                    let min_chars = ot.chars.min(pblock.chars);
-                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
-                        continue;
-                    }
-                    let char_bound = token_intersection_bound(
-                        &ot.token_multiset,
-                        &pblock.token_multiset,
-                        &interner.char_lens,
-                    )
-                    .min(min_chars);
-                    if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
-                        continue;
-                    }
-                    let max_syntax = if om.first_ascii_word.is_some() {
-                        w.delta
-                    } else {
-                        0.0
-                    };
-                    let max_close = if om.close_tail != CloseDelimiter::None {
-                        w.close_agree_bonus
-                    } else {
-                        0.0
-                    };
-                    let max_possible_s = base
-                        + calc_block_score(char_bound, 0, ot.chars, pblock.chars, k)
-                        + max_syntax
-                        + max_close;
-                    let target_score = target_cell.score;
-                    let expand_threshold = (base - (1 + k) as f64 * w.beta).max(target_score);
-                    if max_possible_s <= expand_threshold {
-                        continue;
-                    }
-
-                    let (bm_matched, bm_moved_lines, anchor) = block_lcs_fast_precomputed(
-                        &ot.ids,
-                        &all_new_ids[pblock.token_start..pblock.token_end],
-                        &all_new_coords[pblock.token_start..pblock.token_end],
-                        &all_new_token_chars[pblock.token_start..pblock.token_end],
-                        j,
-                        k,
-                        w.min_block_line_coverage,
-                        &interner.ws,
-                        &interner.alnum,
-                        lcs_scratch,
-                    );
-                    if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
-                        continue;
-                    }
-                    let syntax = if om.first_ascii_word.is_some()
-                        && (om.first_ascii_word == nm.first_ascii_word
-                            || om.first_ascii_word == new_meta[j + anchor].first_ascii_word)
-                    {
-                        w.delta
-                    } else {
-                        0.0
-                    };
-                    let close_agree = om.close_tail != CloseDelimiter::None
-                        && om.close_tail == new_meta[j + k - 1].exact_close;
-                    let close_bonus = if close_agree {
-                        w.close_agree_bonus
-                    } else {
-                        0.0
-                    };
-
-                    let s = base
-                        + calc_block_score(bm_matched, bm_moved_lines, ot.chars, pblock.chars, k)
-                        + syntax
-                        + close_bonus;
-                    if let Some(target) = grid.get_mut(i + 1, j + k)
-                        && s > target.score
-                    {
-                        *target = Cell {
-                            score: s,
-                            prev_i: i as u32,
-                            prev_j: j as u32,
-                            k: k as u8,
-                            op: OpKind::Expand,
+                // Expand: old i vs new block j..j+k (k >= 2).
+                if has_old
+                    && j < n
+                    && ot.chars >= 8
+                    && om.is_reflow
+                    && om.comment == nm.comment
+                    && om.indent == nm.indent
+                {
+                    for pblock in new_valid_blocks[j].as_slice() {
+                        let k = pblock.k;
+                        let Some(target_cell) = grid.get(i + 1, j + k) else {
+                            continue;
                         };
-                    }
-                }
-            }
-            // Collapse: old block i..i+k vs new j (k >= 2).
-            let collapse_indent_diff = (om.indent as isize - nm.indent as isize).unsigned_abs();
-            if j < n
-                && has_old
-                && new_tokens[j].chars >= 8
-                && nm.is_reflow
-                && om.comment == nm.comment
-                && collapse_indent_diff <= w.max_indent_shift
-            {
-                for pblock in old_valid_blocks_i.as_slice() {
-                    let k = pblock.k;
-                    let Some(target_cell) = grid.get(i + k, j + 1) else {
-                        continue;
-                    };
-                    if !mask_overlap(&new_tokens[j].token_mask, &pblock.mask) {
-                        continue;
-                    }
-                    let total = new_tokens[j].chars.max(pblock.chars);
-                    let min_chars = new_tokens[j].chars.min(pblock.chars);
-                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
-                        continue;
-                    }
-                    let char_bound = token_intersection_bound(
-                        &new_tokens[j].token_multiset,
-                        &pblock.token_multiset,
-                        &interner.char_lens,
-                    )
-                    .min(min_chars);
-                    if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
-                        continue;
-                    }
-                    let max_syntax = if nm.first_ascii_word.is_some() {
-                        w.delta
-                    } else {
-                        0.0
-                    };
-                    let max_close = if nm.close_tail != CloseDelimiter::None {
-                        w.close_agree_bonus
-                    } else {
-                        0.0
-                    };
-                    let max_possible_s = base
-                        + calc_block_score(char_bound, 0, new_tokens[j].chars, pblock.chars, k)
-                        + max_syntax
-                        + max_close;
-                    let target_score = target_cell.score;
-                    let collapse_threshold = (base - (k + 1) as f64 * w.beta).max(target_score);
-                    if max_possible_s <= collapse_threshold {
-                        continue;
-                    }
+                        if !mask_overlap(&ot.token_mask, &pblock.mask) {
+                            continue;
+                        }
+                        let total = ot.chars.max(pblock.chars);
+                        let min_chars = ot.chars.min(pblock.chars);
+                        if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        let char_bound = token_intersection_bound(
+                            &ot.token_multiset,
+                            &pblock.token_multiset,
+                            &interner.char_lens,
+                        )
+                        .min(min_chars);
+                        if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        let max_syntax = if om.first_ascii_word.is_some() {
+                            w.delta
+                        } else {
+                            0.0
+                        };
+                        let max_close = if om.close_tail != CloseDelimiter::None {
+                            w.close_agree_bonus
+                        } else {
+                            0.0
+                        };
+                        let max_possible_s = base
+                            + calc_block_score(char_bound, 0, ot.chars, pblock.chars, k)
+                            + max_syntax
+                            + max_close;
+                        let target_score = target_cell.score;
+                        let expand_threshold = (base - (1 + k) as f64 * w.beta).max(target_score);
+                        if max_possible_s <= expand_threshold {
+                            continue;
+                        }
 
-                    let (bm_matched, bm_moved_lines, anchor) = block_lcs_fast_precomputed(
-                        &new_tokens[j].ids,
-                        &all_old_ids[pblock.token_start..pblock.token_end],
-                        &all_old_coords[pblock.token_start..pblock.token_end],
-                        &all_old_token_chars[pblock.token_start..pblock.token_end],
-                        i,
-                        k,
-                        w.min_block_line_coverage,
-                        &interner.ws,
-                        &interner.alnum,
-                        lcs_scratch,
-                    );
-                    if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
-                        continue;
-                    }
-                    let syntax = if nm.first_ascii_word.is_some()
-                        && (nm.first_ascii_word == om.first_ascii_word
-                            || nm.first_ascii_word == old_meta[i + anchor].first_ascii_word)
-                    {
-                        w.delta
-                    } else {
-                        0.0
-                    };
-                    let close_agree = nm.close_tail != CloseDelimiter::None
-                        && nm.close_tail == old_meta[i + k - 1].exact_close;
-                    let close_bonus = if close_agree {
-                        w.close_agree_bonus
-                    } else {
-                        0.0
-                    };
-
-                    let s =
-                        base + calc_block_score(
-                            bm_matched,
-                            bm_moved_lines,
-                            new_tokens[j].chars,
-                            pblock.chars,
+                        let (bm_matched, bm_moved_lines, anchor) = block_lcs_fast_precomputed(
+                            &ot.ids,
+                            &all_new_ids[pblock.token_start..pblock.token_end],
+                            &all_new_coords[pblock.token_start..pblock.token_end],
+                            &all_new_token_chars[pblock.token_start..pblock.token_end],
+                            j,
                             k,
-                        ) + syntax
-                            + close_bonus;
-                    if let Some(target) = grid.get_mut(i + k, j + 1)
-                        && s > target.score
-                    {
-                        *target = Cell {
-                            score: s,
-                            prev_i: i as u32,
-                            prev_j: j as u32,
-                            k: k as u8,
-                            op: OpKind::Collapse,
+                            w.min_block_line_coverage,
+                            &interner.ws,
+                            &interner.alnum,
+                            lcs_scratch,
+                        );
+                        if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        let syntax = if om.first_ascii_word.is_some()
+                            && (om.first_ascii_word == nm.first_ascii_word
+                                || om.first_ascii_word == new_meta[j + anchor].first_ascii_word)
+                        {
+                            w.delta
+                        } else {
+                            0.0
                         };
+                        let close_agree = om.close_tail != CloseDelimiter::None
+                            && om.close_tail == new_meta[j + k - 1].exact_close;
+                        let close_bonus = if close_agree {
+                            w.close_agree_bonus
+                        } else {
+                            0.0
+                        };
+
+                        let s =
+                            base + calc_block_score(
+                                bm_matched,
+                                bm_moved_lines,
+                                ot.chars,
+                                pblock.chars,
+                                k,
+                            ) + syntax
+                                + close_bonus;
+                        if let Some(target) = grid.get_mut(i + 1, j + k)
+                            && s > target.score
+                        {
+                            *target = Cell {
+                                score: s,
+                                prev_i: i as u32,
+                                prev_j: j as u32,
+                                k: k as u8,
+                                op: OpKind::Expand,
+                            };
+                        }
+                    }
+                }
+                // Collapse: old block i..i+k vs new j (k >= 2).
+                let collapse_indent_diff = (om.indent as isize - nm.indent as isize).unsigned_abs();
+                if j < n
+                    && has_old
+                    && new_tokens[j].chars >= 8
+                    && nm.is_reflow
+                    && om.comment == nm.comment
+                    && collapse_indent_diff <= w.max_indent_shift
+                {
+                    for pblock in old_valid_blocks_i.as_slice() {
+                        let k = pblock.k;
+                        let Some(target_cell) = grid.get(i + k, j + 1) else {
+                            continue;
+                        };
+                        if !mask_overlap(&new_tokens[j].token_mask, &pblock.mask) {
+                            continue;
+                        }
+                        let total = new_tokens[j].chars.max(pblock.chars);
+                        let min_chars = new_tokens[j].chars.min(pblock.chars);
+                        if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        let char_bound = token_intersection_bound(
+                            &new_tokens[j].token_multiset,
+                            &pblock.token_multiset,
+                            &interner.char_lens,
+                        )
+                        .min(min_chars);
+                        if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        let max_syntax = if nm.first_ascii_word.is_some() {
+                            w.delta
+                        } else {
+                            0.0
+                        };
+                        let max_close = if nm.close_tail != CloseDelimiter::None {
+                            w.close_agree_bonus
+                        } else {
+                            0.0
+                        };
+                        let max_possible_s = base
+                            + calc_block_score(char_bound, 0, new_tokens[j].chars, pblock.chars, k)
+                            + max_syntax
+                            + max_close;
+                        let target_score = target_cell.score;
+                        let collapse_threshold = (base - (k + 1) as f64 * w.beta).max(target_score);
+                        if max_possible_s <= collapse_threshold {
+                            continue;
+                        }
+
+                        let (bm_matched, bm_moved_lines, anchor) = block_lcs_fast_precomputed(
+                            &new_tokens[j].ids,
+                            &all_old_ids[pblock.token_start..pblock.token_end],
+                            &all_old_coords[pblock.token_start..pblock.token_end],
+                            &all_old_token_chars[pblock.token_start..pblock.token_end],
+                            i,
+                            k,
+                            w.min_block_line_coverage,
+                            &interner.ws,
+                            &interner.alnum,
+                            lcs_scratch,
+                        );
+                        if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        let syntax = if nm.first_ascii_word.is_some()
+                            && (nm.first_ascii_word == om.first_ascii_word
+                                || nm.first_ascii_word == old_meta[i + anchor].first_ascii_word)
+                        {
+                            w.delta
+                        } else {
+                            0.0
+                        };
+                        let close_agree = nm.close_tail != CloseDelimiter::None
+                            && nm.close_tail == old_meta[i + k - 1].exact_close;
+                        let close_bonus = if close_agree {
+                            w.close_agree_bonus
+                        } else {
+                            0.0
+                        };
+
+                        let s =
+                            base + calc_block_score(
+                                bm_matched,
+                                bm_moved_lines,
+                                new_tokens[j].chars,
+                                pblock.chars,
+                                k,
+                            ) + syntax
+                                + close_bonus;
+                        if let Some(target) = grid.get_mut(i + k, j + 1)
+                            && s > target.score
+                        {
+                            *target = Cell {
+                                score: s,
+                                prev_i: i as u32,
+                                prev_j: j as u32,
+                                k: k as u8,
+                                op: OpKind::Collapse,
+                            };
+                        }
                     }
                 }
             }
         }
-    }
 
-    // Traceback: collect (i, j, op, k) from (m, n) back to (0, 0).
-    let mut ops: Vec<(usize, usize, OpKind, usize)> = Vec::new();
-    let (mut i, mut j) = (m, n);
-    while let Some(cell) = grid.get(i, j) {
-        if cell.op == OpKind::None {
-            break;
+        // Traceback: collect (i, j, op, k) from (m, n) back to (0, 0),
+        // recording whether the optimal path touches the band edge.
+        let mut ops: Vec<(usize, usize, OpKind, usize)> = Vec::new();
+        let (mut i, mut j) = (m, n);
+        let mut touched = cell_touches_band_edge(bounds, n, i, j);
+        while let Some(cell) = grid.get(i, j) {
+            if cell.op == OpKind::None {
+                break;
+            }
+            ops.push((
+                cell.prev_i as usize,
+                cell.prev_j as usize,
+                cell.op,
+                cell.k as usize,
+            ));
+            i = cell.prev_i as usize;
+            j = cell.prev_j as usize;
+            touched |= cell_touches_band_edge(bounds, n, i, j);
         }
-        ops.push((
-            cell.prev_i as usize,
-            cell.prev_j as usize,
-            cell.op,
-            cell.k as usize,
-        ));
-        i = cell.prev_i as usize;
-        j = cell.prev_j as usize;
-    }
 
-    if i != 0 || j != 0 {
-        let mut rows = Vec::with_capacity(m + n);
-        let mut transitions = Vec::with_capacity(m + n);
-        for r in &cluster.old_rows {
-            match r {
-                Row::Del(d) | Row::MovSrc(d) => {
-                    rows.push(Row::Del(d.clone()));
+        if i != 0 || j != 0 {
+            let mut rows = Vec::with_capacity(m + n);
+            let mut transitions = Vec::with_capacity(m + n);
+            for r in &cluster.old_rows {
+                match r {
+                    Row::Del(d) | Row::MovSrc(d) => {
+                        rows.push(Row::Del(d.clone()));
+                        transitions.push(DpOp::Del);
+                    }
+                    _ => {}
+                }
+            }
+            for r in &cluster.new_rows {
+                match r {
+                    Row::Add(a) | Row::MovTgt(a) => {
+                        rows.push(Row::Add(a.clone()));
+                        transitions.push(DpOp::Add);
+                    }
+                    _ => {}
+                }
+            }
+            // Disconnected path: treat as band contact so the caller retries
+            // with the legacy corridor.
+            return (
+                DpSolution {
+                    score: 0.0,
+                    rows,
+                    transitions,
+                },
+                true,
+            );
+        }
+
+        ops.reverse();
+
+        let old = old_tokens;
+        let new = new_tokens;
+
+        // Emit rows + transitions in path order.
+        let old_line_of = |idx: usize| match &cluster.old_rows[idx] {
+            Row::Del(d) | Row::MovSrc(d) => d.clone(),
+            other => panic!("cluster old row is not a Del: {other:?}"),
+        };
+        let new_line_of = |idx: usize| match &cluster.new_rows[idx] {
+            Row::Add(a) | Row::MovTgt(a) => a.clone(),
+            other => panic!("cluster new row is not an Add: {other:?}"),
+        };
+
+        let mut rows: Vec<Row> = Vec::new();
+        let mut transitions: Vec<DpOp> = Vec::new();
+        for &(pi, pj, op, k) in &ops {
+            match op {
+                OpKind::Del => {
+                    rows.push(Row::Del(old_line_of(pi)));
                     transitions.push(DpOp::Del);
                 }
-                _ => {}
-            }
-        }
-        for r in &cluster.new_rows {
-            match r {
-                Row::Add(a) | Row::MovTgt(a) => {
-                    rows.push(Row::Add(a.clone()));
+                OpKind::Add => {
+                    rows.push(Row::Add(new_line_of(pj)));
                     transitions.push(DpOp::Add);
                 }
-                _ => {}
+                OpKind::Mov => {
+                    rows.push(Row::MovSrc(old_line_of(pi)));
+                    rows.push(Row::MovTgt(new_line_of(pj)));
+                    transitions.push(DpOp::Mov);
+                }
+                OpKind::Mod => {
+                    rows.push(Row::Mod {
+                        old_line: old_line_of(pi),
+                        new_line: new_line_of(pj),
+                    });
+                    transitions.push(DpOp::Mod { matched: 0 });
+                }
+                OpKind::Expand => {
+                    let bm = block_lcs(&old[pi], &new[pj..pj + k], interner);
+                    let anchor = block_anchor(&bm);
+                    let spans = subline_moves(&bm, anchor);
+
+                    for idx in 0..k {
+                        let nl = new_line_of(pj + idx);
+                        if idx == anchor {
+                            rows.push(Row::Mod {
+                                old_line: old_line_of(pi),
+                                new_line: nl,
+                            });
+                        } else {
+                            rows.push(Row::Add(nl));
+                        }
+                    }
+                    transitions.push(DpOp::Expand {
+                        matched: bm.matched,
+                        k,
+                        anchor,
+                        spans,
+                    });
+                }
+                OpKind::Collapse => {
+                    let bm = block_lcs(&new[pj], &old[pi..pi + k], interner);
+                    let anchor = block_anchor(&bm);
+                    let spans = subline_moves(&bm, anchor);
+
+                    for idx in 0..k {
+                        let ol = old_line_of(pi + idx);
+                        if idx == anchor {
+                            rows.push(Row::Mod {
+                                old_line: ol,
+                                new_line: new_line_of(pj),
+                            });
+                        } else {
+                            rows.push(Row::Del(ol));
+                        }
+                    }
+                    transitions.push(DpOp::Collapse {
+                        matched: bm.matched,
+                        k,
+                        anchor,
+                        spans,
+                    });
+                }
+                OpKind::None => unreachable!(),
             }
         }
-        return DpSolution {
-            score: 0.0,
-            rows,
-            transitions,
-        };
-    }
 
-    ops.reverse();
-
-    let old = old_tokens;
-    let new = new_tokens;
-
-    // Emit rows + transitions in path order.
-    let old_line_of = |idx: usize| match &cluster.old_rows[idx] {
-        Row::Del(d) | Row::MovSrc(d) => d.clone(),
-        other => panic!("cluster old row is not a Del: {other:?}"),
-    };
-    let new_line_of = |idx: usize| match &cluster.new_rows[idx] {
-        Row::Add(a) | Row::MovTgt(a) => a.clone(),
-        other => panic!("cluster new row is not an Add: {other:?}"),
+        (
+            DpSolution {
+                rows,
+                transitions,
+                score: grid.get(m, n).map_or(0.0, |c| c.score),
+            },
+            touched,
+        )
     };
 
-    let mut rows: Vec<Row> = Vec::new();
-    let mut transitions: Vec<DpOp> = Vec::new();
-    for &(pi, pj, op, k) in &ops {
-        match op {
-            OpKind::Del => {
-                rows.push(Row::Del(old_line_of(pi)));
-                transitions.push(DpOp::Del);
+    // Adaptive corridor narrowing for large clusters: attempt a narrow band
+    // first and accept it only if the optimal path never touches the band
+    // edge (hence equals the unconstrained optimum). Otherwise fall back to
+    // the legacy band, byte-identical to previous behavior.
+    if m.min(n) >= NARROW_BAND_MIN_ROWS {
+        let narrow = AdaptiveEnvelopeBuilder::new(m, n)
+            .with_bandwidth_min(NARROW_BANDWIDTH_MIN)
+            .with_bandwidth_slack(NARROW_BANDWIDTH_SLACK)
+            .with_budget(cluster_budget())
+            .build();
+        let legacy_cells = envelope.total_cells;
+        if narrow.total_cells * 2 <= legacy_cells {
+            let (sol, touched) = solve_once(&narrow.bounds);
+            if !touched {
+                return sol;
             }
-            OpKind::Add => {
-                rows.push(Row::Add(new_line_of(pj)));
-                transitions.push(DpOp::Add);
-            }
-            OpKind::Mov => {
-                rows.push(Row::MovSrc(old_line_of(pi)));
-                rows.push(Row::MovTgt(new_line_of(pj)));
-                transitions.push(DpOp::Mov);
-            }
-            OpKind::Mod => {
-                rows.push(Row::Mod {
-                    old_line: old_line_of(pi),
-                    new_line: new_line_of(pj),
-                });
-                transitions.push(DpOp::Mod { matched: 0 });
-            }
-            OpKind::Expand => {
-                let bm = block_lcs(&old[pi], &new[pj..pj + k], interner);
-                let anchor = block_anchor(&bm);
-                let spans = subline_moves(&bm, anchor);
-
-                for idx in 0..k {
-                    let nl = new_line_of(pj + idx);
-                    if idx == anchor {
-                        rows.push(Row::Mod {
-                            old_line: old_line_of(pi),
-                            new_line: nl,
-                        });
-                    } else {
-                        rows.push(Row::Add(nl));
-                    }
-                }
-                transitions.push(DpOp::Expand {
-                    matched: bm.matched,
-                    k,
-                    anchor,
-                    spans,
-                });
-            }
-            OpKind::Collapse => {
-                let bm = block_lcs(&new[pj], &old[pi..pi + k], interner);
-                let anchor = block_anchor(&bm);
-                let spans = subline_moves(&bm, anchor);
-
-                for idx in 0..k {
-                    let ol = old_line_of(pi + idx);
-                    if idx == anchor {
-                        rows.push(Row::Mod {
-                            old_line: ol,
-                            new_line: new_line_of(pj),
-                        });
-                    } else {
-                        rows.push(Row::Del(ol));
-                    }
-                }
-                transitions.push(DpOp::Collapse {
-                    matched: bm.matched,
-                    k,
-                    anchor,
-                    spans,
-                });
-            }
-            OpKind::None => unreachable!(),
         }
     }
-
-    DpSolution {
-        rows,
-        transitions,
-        score: grid.get(m, n).map_or(0.0, |c| c.score),
-    }
+    solve_once(&envelope.bounds).0
 }
 
 /// The bidirectional projection verifier (plan Step 3.4): the solution's
