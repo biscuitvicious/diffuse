@@ -519,3 +519,52 @@ fn test_common_whitespace_does_not_overpower_dissimilar_lines() {
         &[TapeChunk::Strike(old), TapeChunk::Fill(new)]
     );
 }
+
+#[test]
+fn test_prefix_suffix_peeling_equivalence() {
+    let old = "    let result = execute_computation(arg1, old_param, arg3);";
+    let new = "    let result = execute_computation(arg1, new_param, arg3);";
+    let tape = AlignmentTape::from_texts(old, new, None);
+
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    assert_eq!(tape.reverse().reverse(), tape);
+
+    let runs = tape.to_merged_runs();
+    let old_extracted: String = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Common || r.kind == RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    let new_extracted: String = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Common || r.kind == RunKind::Add)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(old_extracted, old);
+    assert_eq!(new_extracted, new);
+
+    // Trailing change (like stress test)
+    let old_tail = "    let value = 42;";
+    let new_tail = "    let value = 42;~";
+    let tape_tail = AlignmentTape::from_texts(old_tail, new_tail, None);
+    assert_eq!(tape_tail.project_old(), old_tail);
+    assert_eq!(tape_tail.project_new(), new_tail);
+    assert_eq!(tape_tail.reverse().reverse(), tape_tail);
+
+    // Leading change (common suffix)
+    let old_head = "prev_calc(42);";
+    let new_head = "next_calc(42);";
+    let tape_head = AlignmentTape::from_texts(old_head, new_head, None);
+    assert_eq!(tape_head.project_old(), old_head);
+    assert_eq!(tape_head.project_new(), new_head);
+    assert_eq!(tape_head.reverse().reverse(), tape_head);
+
+    // Trailing whitespace modification
+    let old_ws = "let x = 1;   ";
+    let new_ws = "let x = 1;   // comment";
+    let tape_ws = AlignmentTape::from_texts(old_ws, new_ws, None);
+    assert_eq!(tape_ws.project_old(), old_ws);
+    assert_eq!(tape_ws.project_new(), new_ws);
+    assert_eq!(tape_ws.reverse().reverse(), tape_ws);
+}

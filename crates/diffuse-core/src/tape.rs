@@ -521,6 +521,35 @@ impl<'a> AlignmentTape<'a> {
             return tape;
         }
 
+        let mut prefix = 0usize;
+        while prefix < ot.len() && prefix < nt.len() && ot[prefix] == nt[prefix] {
+            prefix += 1;
+        }
+        if prefix > 0
+            && (ot[prefix..].iter().all(|t| token_is_ws(t))
+                != nt[prefix..].iter().all(|t| token_is_ws(t)))
+        {
+            while prefix > 0 && token_is_ws(ot[prefix - 1]) {
+                prefix -= 1;
+            }
+        }
+
+        let mut suffix = 0usize;
+        while suffix < (ot.len() - prefix)
+            && suffix < (nt.len() - prefix)
+            && ot[ot.len() - 1 - suffix] == nt[nt.len() - 1 - suffix]
+        {
+            suffix += 1;
+        }
+        if suffix > 0
+            && (ot[..ot.len() - suffix].iter().all(|t| token_is_ws(t))
+                != nt[..nt.len() - suffix].iter().all(|t| token_is_ws(t)))
+        {
+            while suffix > 0 && token_is_ws(ot[ot.len() - suffix]) {
+                suffix -= 1;
+            }
+        }
+
         let mut o_pos = 0usize;
         let mut o_spans = Vec::with_capacity(ot.len());
         for t in &ot {
@@ -537,16 +566,44 @@ impl<'a> AlignmentTape<'a> {
             n_pos += len;
         }
 
+        let ot_last_eq_nt_last = !ot.is_empty() && !nt.is_empty() && ot.last() == nt.last();
+        let ot_first_eq_nt_first = !ot.is_empty() && !nt.is_empty() && ot.first() == nt.first();
+
+        let is_unambiguous_prefix =
+            (prefix == ot.len() || prefix == nt.len()) && !ot_last_eq_nt_last;
+        let is_unambiguous_suffix =
+            (suffix == ot.len() || suffix == nt.len()) && !ot_first_eq_nt_first;
+
         let anchors = unique_token_anchors(&ot, &nt, profile);
         let has_anchors = !anchors.is_empty();
+
         let span = tracing::Span::current();
-        let pairs = if has_anchors {
-            span.record("anchors", tracing::field::debug(&anchors));
-            span.record("strategy", "anchored");
-            lcs_pairs_anchored(&ot, &nt, &anchors)
+        let sorted_pairs = if is_unambiguous_prefix {
+            span.record("strategy", "pure_prefix");
+            let mut pairs = Vec::with_capacity(prefix);
+            for i in 0..prefix {
+                pairs.push((i, i));
+            }
+            pairs
+        } else if is_unambiguous_suffix {
+            span.record("strategy", "pure_suffix");
+            let mut pairs = Vec::with_capacity(suffix);
+            for k in 0..suffix {
+                pairs.push((ot.len() - suffix + k, nt.len() - suffix + k));
+            }
+            pairs
         } else {
-            span.record("strategy", "raw");
-            raw_lcs_pairs(&ot, &nt)
+            let p_map = if has_anchors {
+                span.record("anchors", tracing::field::debug(&anchors));
+                span.record("strategy", "anchored");
+                lcs_pairs_anchored(&ot, &nt, &anchors)
+            } else {
+                span.record("strategy", "raw");
+                raw_lcs_pairs(&ot, &nt)
+            };
+            let mut pairs: Vec<(usize, usize)> = p_map.into_iter().collect();
+            pairs.sort_by_key(|&(o, _)| o);
+            pairs
         };
 
         let token_weight = |tokens: &[&str], idx: usize| -> f64 {
@@ -557,9 +614,9 @@ impl<'a> AlignmentTape<'a> {
                 classify_whitespace(tokens, idx).token_weight(char_len(t))
             }
         };
-        let matched_chars: f64 = pairs
+        let matched_chars: f64 = sorted_pairs
             .iter()
-            .map(|(&i, &j)| {
+            .map(|&(i, j)| {
                 let w_old = token_weight(&ot, i);
                 let w_new = token_weight(&nt, j);
                 w_old.min(w_new)
@@ -587,9 +644,6 @@ impl<'a> AlignmentTape<'a> {
             }
             return tape;
         }
-
-        let mut sorted_pairs: Vec<(usize, usize)> = pairs.into_iter().collect();
-        sorted_pairs.sort_by_key(|&(o, _)| o);
 
         let mut old_tok_idx = 0usize;
         let mut new_tok_idx = 0usize;

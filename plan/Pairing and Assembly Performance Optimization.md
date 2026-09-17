@@ -12,12 +12,12 @@
   - [x] Eliminate $O(D \times A)$ nested loop in `guarded_dels` by indexing add-tail candidates
   - [x] Pre-filter candidate add tails and associated function scopes once per hunk
   - [x] Verify zero regressions across golden fixtures and assert pairing time drop
-- [·] [Phase 3 — Common Prefix & Suffix Token Stripping in AlignmentTape](#3-phase-3--common-prefix--suffix-token-stripping-in-alignmenttape)
-  - [ ] Author unit tests in `tape.rs` asserting exact tape equivalence for prefix/suffix peeling
-  - [ ] Implement fast token-level common prefix and suffix run peeling in `AlignmentTape::from_texts_with_cap`
-  - [ ] Restrict dynamic programming matrix to the differing middle window
-  - [ ] Enforce alignment tape invariants: `project_old`, `project_new`, and invertibility
-- [ ] [Phase 4 — Token DP Matrix Scratch Arena](#4-phase-4--token-dp-matrix-scratch-arena)
+- [x] [Phase 3 — Common Prefix & Suffix Token Stripping in AlignmentTape](#3-phase-3--common-prefix--suffix-token-stripping-in-alignmenttape)
+  - [x] Author unit tests in `tape.rs` asserting exact tape equivalence for prefix/suffix peeling
+  - [x] Implement fast token-level common prefix and suffix run peeling in `AlignmentTape::from_texts_with_cap`
+  - [x] Restrict dynamic programming matrix to the differing middle window
+  - [x] Enforce alignment tape invariants: `project_old`, `project_new`, and invertibility
+- [·] [Phase 4 — Token DP Matrix Scratch Arena](#4-phase-4--token-dp-matrix-scratch-arena)
   - [ ] Benchmark heap allocation overhead in `raw_lcs_pairs_with_context`
   - [ ] Implement thread-local or pooled scratch arena for DP matrices (`m_matrix`, `x_matrix`, `y_matrix`, `tb_m`, `tb_x`, `tb_y`, `run_len`)
   - [ ] Replace per-call `vec![0; (n + 1) * (m + 1)]` heap allocations with re-sliced arena vectors
