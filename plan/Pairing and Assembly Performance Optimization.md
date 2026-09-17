@@ -7,12 +7,12 @@
   - [x] Precompute `word_spans_with_profile` and wholesale replacement classification via Rayon `par_iter`
   - [x] Retain deterministic sequential assembly order in `pass_assemble_mods`
   - [x] Verify byte-identical wire outputs across all golden test suites
-- [·] [Phase 2 — Precomputed Tail Filters in Guarded Deletions](#2-phase-2--precomputed-tail-filters-in-guarded-deletions)
-  - [ ] Author test verifying tail-closing candidate guard behavior on large synthetic hunks
-  - [ ] Eliminate $O(D \times A)$ nested loop in `guarded_dels` by indexing add-tail candidates
-  - [ ] Pre-filter candidate add tails and associated function scopes once per hunk
-  - [ ] Verify zero regressions across golden fixtures and assert pairing time drop
-- [ ] [Phase 3 — Common Prefix & Suffix Token Stripping in AlignmentTape](#3-phase-3--common-prefix--suffix-token-stripping-in-alignmenttape)
+- [x] [Phase 2 — Precomputed Tail Filters in Guarded Deletions](#2-phase-2--precomputed-tail-filters-in-guarded-deletions)
+  - [x] Author test verifying tail-closing candidate guard behavior on large synthetic hunks
+  - [x] Eliminate $O(D \times A)$ nested loop in `guarded_dels` by indexing add-tail candidates
+  - [x] Pre-filter candidate add tails and associated function scopes once per hunk
+  - [x] Verify zero regressions across golden fixtures and assert pairing time drop
+- [·] [Phase 3 — Common Prefix & Suffix Token Stripping in AlignmentTape](#3-phase-3--common-prefix--suffix-token-stripping-in-alignmenttape)
   - [ ] Author unit tests in `tape.rs` asserting exact tape equivalence for prefix/suffix peeling
   - [ ] Implement fast token-level common prefix and suffix run peeling in `AlignmentTape::from_texts_with_cap`
   - [ ] Restrict dynamic programming matrix to the differing middle window

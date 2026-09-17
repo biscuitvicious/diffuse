@@ -2203,3 +2203,30 @@ fn test_narrow_band_large_replacement() {
     );
     assert_eq!(first.score, second.score);
 }
+
+#[test]
+fn test_guarded_dels_tail_candidates_parity() {
+    let rs = lang_profile("rs");
+    // Hunk with del and add lines
+    let rows = vec![
+        Row::Del(DelLine::new(LineNum::new(1).unwrap(), "    let a = 1;")),
+        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "    let b = 2;")),
+        Row::Add(AddLine::new(LineNum::new(1).unwrap(), "    let a = 10;")),
+        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "    let b = 20;")),
+    ];
+    let h = Hunk {
+        old_start: 1,
+        old_count: 2,
+        new_start: 1,
+        new_count: 2,
+        section: String::new(),
+        rows,
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let guarded = super::pairing::guarded_dels(&h, None, None, rs);
+    // Since neither del survives in new_content and neither is identical,
+    // guarded should not skip them
+    assert!(!guarded.contains(&0));
+    assert!(!guarded.contains(&1));
+}

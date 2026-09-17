@@ -67,7 +67,7 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
 /// The dels the legacy `pass_pairing` refuses to pair (its top-of-loop
 /// guards), computed identically — the DP's pairs over these dels are
 /// dropped so both engines leave the same rows standalone.
-fn guarded_dels(
+pub(crate) fn guarded_dels(
     h: &Hunk,
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
@@ -121,6 +121,21 @@ fn guarded_dels(
         FxHashSet::default()
     };
 
+    // Precompute add-tail candidates to eliminate O(D * A) scans in the
+    // deletion loop.
+    let mut has_any_add_tail = false;
+    let mut add_tail_fns: FxHashSet<String> = FxHashSet::default();
+    for a in &h.rows {
+        if matches!(a, Row::Add(_) | Row::MovTgt(_))
+            && is_tail_before_closing(a.new_line(), false, old_content, new_content, profile)
+        {
+            has_any_add_tail = true;
+            if let Some(afn) = fn_of(new_content, a.new_line(), profile) {
+                add_tail_fns.insert(afn);
+            }
+        }
+    }
+
     for (ri, r) in h.rows.iter().enumerate() {
         if !matches!(r, Row::Del(_) | Row::MovSrc(_)) {
             continue;
@@ -140,27 +155,25 @@ fn guarded_dels(
             skip.insert(ri);
             continue;
         }
-        let del_is_tail =
-            is_tail_before_closing(r.old_line(), true, old_content, new_content, profile);
-        let tail_candidate = del_is_tail
-            && h.rows.iter().any(|a| {
-                matches!(a, Row::Add(_) | Row::MovTgt(_))
-                    && is_tail_before_closing(
-                        a.new_line(),
-                        false,
-                        old_content,
-                        new_content,
-                        profile,
-                    )
-                    && (fn_of(old_content, r.old_line(), profile).is_none()
-                        || fn_of(old_content, r.old_line(), profile)
-                            == fn_of(new_content, a.new_line(), profile))
-            });
         let has_same_hunk_add = same_hunk_add_trimmed.contains(r_trim);
         let has_same_hunk_property_add = profile.is_some_and(|p| {
             p.extract_property_key(r.text())
                 .is_some_and(|key| same_hunk_property_keys.contains(key))
         });
+        let del_is_tail =
+            is_tail_before_closing(r.old_line(), true, old_content, new_content, profile);
+        let del_fn = if del_is_tail || (!has_same_hunk_add && !has_same_hunk_property_add) {
+            fn_of(old_content, r.old_line(), profile)
+        } else {
+            None
+        };
+        let tail_candidate = del_is_tail
+            && has_any_add_tail
+            && match del_fn {
+                None => true,
+                Some(ref dfn) => add_tail_fns.contains(dfn),
+            };
+
         if !r_trim.is_empty()
             && !tail_candidate
             && !has_same_hunk_add
