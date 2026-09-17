@@ -78,3 +78,10 @@ All project documentation, architectural guidelines, docstrings, user manuals, a
   - **Objective and emotionless**: Avoid promotional hype, marketing rhetoric, and subjective adjectives. Document capabilities factually.
 - **Actionable Titles & Clear Summaries**: Every document, major section, and change note must open with a concise summary stating the exact problem, solution, and outcome upfront. Headings and links must be descriptive, front-loaded, and action-oriented.
 - **Markdown Documentation File Naming**: Use plain Title-Caps filenames for Markdown documentation in subdirectories (e.g., `docs/Algorithms.md`, `plan/Plan Guidelines.md`). Exceptions apply only to Markdown files located directly in the project root (e.g., `README.md`, `CODE_STYLE.md`, `GUIDELINES.md`, `LICENSE.md`) or files that adhere to all-caps per idiomatic conventions (e.g., `tests/AGENTS.md`, `extension/pi/AGENTS.md`).
+
+---
+
+## 9. Method & Type Naming Standards
+
+- **Method Naming**: Describe clearly, succinctly, and unambiguously either what behaviour the method fulfills, or what the return value of the method is. Describe the most abstract concept the method represents, and avoid naming implementation details. Follow Rust language best practices for idiomatic method naming (`snake_case`, standard conversion and query prefixes like `as_`, `to_`, `into_`, `is_`, `has_`, and front-loaded active verbs for mutating operations).
+- **Type Naming**: Name types (structs, enums, traits, and aliases) clearly, succinctly, and unambiguously based on the core domain concept, entity, or role they represent. Describe the most abstract concept and semantic responsibility, and avoid naming algorithm-specific implementation details or underlying computational machinery (for example, prefer `DiffOp` or `MatchOp` over `DpOp`). Follow Rust language best practices for idiomatic type naming (`UpperCamelCase`, noun phrases for types, capability adjectives or verbs for traits).

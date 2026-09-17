@@ -1809,18 +1809,8 @@ fn scoring_meta(trimmed_id: u32, comment: bool) -> DpRowMeta {
         trimmed_id,
         comment,
         kind: SyntaxSectionKind::Code,
-        first_ascii_word: None,
-        indent: 0,
         close_dist: 99,
-        prox_close: 0.0,
-        prox_open: 0.0,
-        is_reflow: false,
-        ends_with_semi: false,
-        is_stmt_start: false,
-        property_key: None,
-        close_tail: CloseDelimiter::None,
-        exact_close: CloseDelimiter::None,
-        is_terminal_return: false,
+        ..Default::default()
     }
 }
 
@@ -2156,6 +2146,61 @@ fn test_anchor_decomposition_large_cluster() {
 }
 
 #[test]
+fn test_anchor_decomposition_with_normalized_ansi_escapes() {
+    let rs = lang_profile("rs");
+    // 300 lines where 100% of lines have different ANSI escape wrappers around
+    // unique content: Old lines have {48;5;233}, new lines have {48;5;234}
+    // and \x1b[38;5;238m
+    let old_rows: Vec<Row> = (0..300)
+        .map(|i| {
+            Row::Del(DelLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                format!(
+                    "{{48;5;233}}{{38;5;238}}  {i}  fn process_item_unique_name_{i}() {{ {i} }} {{0}}"
+                ),
+            ))
+        })
+        .collect();
+    let new_rows: Vec<Row> = (0..300)
+        .map(|i| {
+            Row::Add(AddLine::new(
+                LineNum::new(i as u32 + 1).unwrap(),
+                format!(
+                    "{{48;5;234}}\x1b[38;5;239m  {i}  fn process_item_unique_name_{i}() {{ {i} }} {{0}}"
+                ),
+            ))
+        })
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows,
+        new_rows,
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+
+    let mut arena = dp::DpScratchArena::default();
+    let decomposed = dp::solve_cluster_with_anchors(&cluster, rs, &Weights::default(), &mut arena);
+    assert!(
+        decomposed.is_some(),
+        "cluster with 300 rows and normalized ANSI anchors must decompose"
+    );
+
+    let sol = decomposed.unwrap();
+    assert_eq!(verify_projection(&sol, &cluster), Ok(()));
+    let mod_count = sol
+        .transitions
+        .iter()
+        .filter(|t| matches!(t, DpOp::Mod { .. }))
+        .count();
+    assert_eq!(
+        mod_count, 300,
+        "all 300 normalized matches must be paired as Mod"
+    );
+}
+
+#[test]
 fn band_edge_touch_detection() {
     // Row bounds with n = 3 columns.
     let bounds = vec![(0, 2), (0, 2), (1, 3)];
@@ -2229,4 +2274,89 @@ fn test_guarded_dels_tail_candidates_parity() {
     // guarded should not skip them
     assert!(!guarded.contains(&0));
     assert!(!guarded.contains(&1));
+}
+
+#[test]
+fn test_mod_pair_precomputed_invariants_and_prefix_containment() {
+    let mut interner = TokenInterner::default();
+    let weights = Weights::default();
+    let old_text = "// compute_primary_record_header";
+    let new_text = "// compute_primary_record_header and then do lots of other completely different things in this long line";
+    let ot = vec![dp_tokens(&mut interner, old_text)];
+    let nt = vec![
+        dp_tokens(&mut interner, "dummy row for offset"),
+        dp_tokens(&mut interner, new_text),
+    ];
+
+    let old_trimmed = old_text.trim();
+    let new_trimmed = new_text.trim();
+
+    let om = DpRowMeta {
+        trimmed_id: interner.intern(old_trimmed),
+        comment: true,
+        indent: 0,
+        stripped_len: old_trimmed.len(),
+        ..Default::default()
+    };
+    let nm = DpRowMeta {
+        trimmed_id: interner.intern(new_trimmed),
+        comment: true,
+        indent: 0,
+        stripped_len: new_trimmed.len(),
+        ..Default::default()
+    };
+    let dummy_nm = DpRowMeta::default();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows: vec![Row::Del(DelLine::new(
+            LineNum::new(1).unwrap(),
+            old_text.to_string(),
+        ))],
+        new_rows: vec![
+            Row::Add(AddLine::new(
+                LineNum::new(1).unwrap(),
+                "dummy row for offset".to_string(),
+            )),
+            Row::Add(AddLine::new(LineNum::new(2).unwrap(), new_text.to_string())),
+        ],
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::LineComment,
+    };
+
+    // (0, 1) has offset_diff = 1 > 0 and comment = true, so min_ratio is 0.65.
+    // similarity_ratio is ~0.31 (< 0.65), so it ONLY passes via prefix
+    // containment!
+    assert!(mod_pair_needs_scoring(
+        0,
+        1,
+        &cluster,
+        &ot,
+        &nt,
+        &[om],
+        &[dummy_nm, nm],
+        &interner,
+        None,
+        &weights,
+    ));
+
+    // If stripped_len is too short (< min_containment_len), it should not be
+    // considered prefix containment
+    let mut om_short = om;
+    om_short.stripped_len = 3;
+    assert!(!mod_pair_needs_scoring(
+        0,
+        1,
+        &cluster,
+        &ot,
+        &nt,
+        &[om_short],
+        &[dummy_nm, nm],
+        &interner,
+        None,
+        &Weights {
+            min_containment_len: 8,
+            ..weights
+        },
+    ));
 }

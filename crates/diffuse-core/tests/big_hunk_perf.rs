@@ -92,3 +92,50 @@ fn test_stress_full_replace_pairing_time() {
         "full-workload pairing regressed: {elapsed:?}"
     );
 }
+
+fn wholesale_pairing_time(num_lines: usize) -> Duration {
+    let old_lines: Vec<String> = load_render_txt().into_iter().take(num_lines).collect();
+    let n = old_lines.len();
+    assert!(n > 0);
+    let new_lines: Vec<String> = old_lines.iter().map(|l| format!("{l}~")).collect();
+
+    let mut diff = format!(
+        "diff --git a/render.txt b/render.txt\n--- a/render.txt\n+++ b/render.txt\n@@ -1,{n} +1,{n} @@\n"
+    );
+    for l in &old_lines {
+        diff.push('-');
+        diff.push_str(l);
+        diff.push('\n');
+    }
+    for l in &new_lines {
+        diff.push('+');
+        diff.push_str(l);
+        diff.push('\n');
+    }
+    let mut new_content = HashMap::new();
+    new_content.insert("render.txt".to_string(), new_lines.join("\n") + "\n");
+    let mut old_content = HashMap::new();
+    old_content.insert("render.txt".to_string(), old_lines.join("\n") + "\n");
+
+    let t = std::time::Instant::now();
+    let out = run_pipeline_full(
+        &diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+    let elapsed = t.elapsed();
+    let rows: usize = out.files.iter().map(|f| f.rows.len()).sum();
+    eprintln!("wholesale paired {rows} rows in {elapsed:?}");
+    assert!(!out.files.is_empty());
+    elapsed
+}
+
+#[test]
+fn test_wholesale_replace_pairing_time() {
+    let elapsed = wholesale_pairing_time(1000);
+    assert!(
+        elapsed < Duration::from_millis(1300),
+        "wholesale replacement pairing regressed: {elapsed:?}"
+    );
+}

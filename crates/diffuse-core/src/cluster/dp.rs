@@ -299,6 +299,17 @@ fn is_prefix_at_boundary(longer: &str, shorter: &str) -> bool {
     }
 }
 
+/// Calculate count of common leading whitespace characters between two lines.
+#[inline]
+fn calc_common_indent(old_text: &str, new_text: &str) -> usize {
+    old_text
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .zip(new_text.chars().take_while(|c| c.is_whitespace()))
+        .take_while(|(c1, c2)| c1 == c2)
+        .count()
+}
+
 /// Minimum candidate count for parallel subline scoring. Below this the
 /// Rayon dispatch overhead outweighs the gain and scoring stays inline.
 /// Tunable; chosen so typical hunks (tens of pairs) never pay for threads
@@ -371,21 +382,17 @@ pub(crate) fn mod_pair_needs_scoring(
         return false;
     }
     let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
+    if !token_overlap {
+        return false;
+    }
     let min_chars = ot.chars.min(nt.chars);
     let char_bound =
         token_intersection_bound(&ot.token_multiset, &nt.token_multiset, &interner.char_lens)
             .min(min_chars);
-    let old_text = cluster.old_rows[i].text();
-    let new_text = cluster.new_rows[j].text();
-    let common_indent = old_text
-        .chars()
-        .take_while(|c| c.is_whitespace())
-        .zip(new_text.chars().take_while(|c| c.is_whitespace()))
-        .take_while(|(c1, c2)| c1 == c2)
-        .count();
-    if char_bound + common_indent == 0 {
+    if char_bound == 0 {
         return false;
     }
+
     let total = ot.chars.max(nt.chars);
     let max_matched = char_bound;
     let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word) {
@@ -393,20 +400,9 @@ pub(crate) fn mod_pair_needs_scoring(
         _ => false,
     };
     let is_property_match = om.property_key.is_some() && om.property_key == nm.property_key;
-    let ot_trim = old_text.trim();
-    let nt_trim = new_text.trim();
     let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
     let offset_diff = (i as isize - j as isize).unsigned_abs();
-    let is_prefix_containment = {
-        let ot_strip = trim_trailing_delims(ot_trim, profile);
-        let nt_strip = trim_trailing_delims(nt_trim, profile);
-        let min_len = ot_strip.len().min(nt_strip.len());
-        min_len >= w.min_containment_len
-            && indent_shift <= w.max_indent_shift
-            && (om.comment == nm.comment)
-            && (is_prefix_at_boundary(ot_strip, nt_strip)
-                || is_prefix_at_boundary(nt_strip, ot_strip))
-    };
+
     let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
         0.65
     } else if om.comment || nm.comment {
@@ -432,8 +428,17 @@ pub(crate) fn mod_pair_needs_scoring(
                 )
             }
         } else if om.is_terminal_return && nm.is_terminal_return {
-            if indent_shift == 0 && common_indent > 0 {
-                true
+            if indent_shift == 0 {
+                let has_common_indent = if om.indent == 0 || nm.indent == 0 {
+                    false
+                } else {
+                    calc_common_indent(cluster.old_rows[i].text(), cluster.new_rows[j].text()) > 0
+                };
+                if has_common_indent {
+                    true
+                } else {
+                    max_matched >= w.min_tail_matched_chars
+                }
             } else {
                 max_matched >= w.min_tail_matched_chars
             }
@@ -444,25 +449,37 @@ pub(crate) fn mod_pair_needs_scoring(
         false
     };
     let max_similarity_ratio = max_matched as f64 / total as f64;
-    let could_be_valid_mod = max_similarity_ratio >= min_ratio
+    let can_have_containment = indent_shift <= w.max_indent_shift
+        && (om.comment == nm.comment)
+        && om.stripped_len >= w.min_containment_len
+        && nm.stripped_len >= w.min_containment_len;
+
+    let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
         || is_property_match
         || statement_head_match
-        || is_prefix_containment
         || could_be_tail_pair;
-    if !could_be_valid_mod {
-        return false;
+
+    let mut is_prefix_containment = None;
+    if !could_be_valid_mod_fast {
+        if !can_have_containment {
+            return false;
+        }
+        let ot_strip = &cluster.old_rows[i].text()[om.indent..om.indent + om.stripped_len];
+        let nt_strip = &cluster.new_rows[j].text()[nm.indent..nm.indent + nm.stripped_len];
+        let is_pc =
+            is_prefix_at_boundary(ot_strip, nt_strip) || is_prefix_at_boundary(nt_strip, ot_strip);
+        if !is_pc {
+            return false;
+        }
+        is_prefix_containment = Some(true);
     }
+
     let max_syn = if is_property_match {
         w.head_agree_bonus + 200.0
     } else if statement_head_match {
         w.head_agree_bonus
     } else {
         0.0
-    };
-    let syn = if is_prefix_containment {
-        max_syn + w.head_agree_bonus
-    } else {
-        max_syn
     };
     let max_close = if could_be_tail_pair {
         w.delta
@@ -471,19 +488,38 @@ pub(crate) fn mod_pair_needs_scoring(
     };
     let max_open = w.epsilon * om.prox_open * nm.prox_open;
     let indent_penalty = w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
-    let max_possible_delta = w.alpha * max_matched as f64
+    let base_delta = w.alpha * max_matched as f64
         - w.gamma * (total - max_matched) as f64
         - w.beta
         - indent_penalty
-        + syn
+        + max_syn
         + max_close
         + max_open;
-    if max_possible_delta <= -2.0 * w.beta {
-        return false;
+
+    if base_delta <= -2.0 * w.beta {
+        if is_prefix_containment == Some(false)
+            || (!can_have_containment && is_prefix_containment.is_none())
+            || (base_delta + w.head_agree_bonus <= -2.0 * w.beta)
+        {
+            return false;
+        }
+        let is_pc = match is_prefix_containment {
+            Some(v) => v,
+            None => {
+                let ot_strip = &cluster.old_rows[i].text()[om.indent..om.indent + om.stripped_len];
+                let nt_strip = &cluster.new_rows[j].text()[nm.indent..nm.indent + nm.stripped_len];
+                is_prefix_at_boundary(ot_strip, nt_strip)
+                    || is_prefix_at_boundary(nt_strip, ot_strip)
+            }
+        };
+        if !is_pc {
+            return false;
+        }
     }
+
     // Pairs the fill loop scores inline without LCS (identical token
     // streams, or nothing to align) need no precomputation.
-    ot.ids != nt.ids && token_overlap && char_bound > 0
+    ot.ids != nt.ids
 }
 
 const PAR_CANDIDATE_CHUNK_SIZE: usize = 256;
@@ -1233,6 +1269,7 @@ pub(crate) struct DpRowMeta {
     pub kind: SyntaxSectionKind,
     pub first_ascii_word: Option<u32>,
     pub indent: usize,
+    pub stripped_len: usize,
     pub close_dist: usize,
     pub prox_close: f64,
     pub prox_open: f64,
@@ -1398,6 +1435,56 @@ pub(crate) fn solve_cluster_with_arena(
     solve_cluster_matrix(cluster, profile, w, arena)
 }
 
+/// Strips ANSI escape sequences and render color tokens (e.g. `{48;5;233}`)
+/// for normalized anchor discovery.
+fn strip_color_escapes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                while let Some(&next_c) = chars.peek() {
+                    chars.next();
+                    if next_c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else if c == '{' {
+            let mut buf = String::new();
+            let mut is_escape = false;
+            while let Some(&next_c) = chars.peek() {
+                if next_c == '}' {
+                    chars.next();
+                    if !buf.is_empty() && buf.chars().all(|ch| ch.is_ascii_digit() || ch == ';') {
+                        is_escape = true;
+                    } else {
+                        out.push('{');
+                        out.push_str(&buf);
+                        out.push('}');
+                    }
+                    break;
+                } else if next_c.is_ascii_digit() || next_c == ';' {
+                    buf.push(next_c);
+                    chars.next();
+                } else {
+                    out.push('{');
+                    out.push_str(&buf);
+                    break;
+                }
+            }
+            if !is_escape && chars.peek().is_none() && !buf.is_empty() {
+                out.push('{');
+                out.push_str(&buf);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// Attempts to solve a large cluster by decomposing it along unique matching
 /// anchors (MUMs).
 ///
@@ -1419,8 +1506,15 @@ pub(crate) fn solve_cluster_with_anchors(
     let old_trimmed: Vec<&str> = cluster.old_rows.iter().map(|r| r.text().trim()).collect();
     let new_trimmed: Vec<&str> = cluster.new_rows.iter().map(|r| r.text().trim()).collect();
 
-    let raw_anchors =
+    let mut raw_anchors =
         crate::algo::find_unique_anchors(&old_trimmed, &new_trimmed, |s| s.len() >= 4);
+
+    if raw_anchors.is_empty() {
+        let old_norm: Vec<String> = old_trimmed.iter().map(|s| strip_color_escapes(s)).collect();
+        let new_norm: Vec<String> = new_trimmed.iter().map(|s| strip_color_escapes(s)).collect();
+        raw_anchors =
+            crate::algo::find_unique_anchors(&old_norm, &new_norm, |s| s.trim().len() >= 8);
+    }
 
     if raw_anchors.is_empty() {
         return None;
@@ -1473,23 +1567,48 @@ pub(crate) fn solve_cluster_with_anchors(
             total_score += sub_sol.score;
         }
 
-        let old_line = match &cluster.old_rows[ai] {
-            Row::Del(d) | Row::MovSrc(d) => d.clone(),
-            other => panic!("cluster old row is not a Del: {other:?}"),
-        };
-        let new_line = match &cluster.new_rows[aj] {
-            Row::Add(a) | Row::MovTgt(a) => a.clone(),
-            other => panic!("cluster new row is not an Add: {other:?}"),
-        };
+        if cluster.old_rows[ai].text().trim() == cluster.new_rows[aj].text().trim() {
+            let old_line = match &cluster.old_rows[ai] {
+                Row::Del(d) | Row::MovSrc(d) => d.clone(),
+                other => panic!("cluster old row is not a Del: {other:?}"),
+            };
+            let new_line = match &cluster.new_rows[aj] {
+                Row::Add(a) | Row::MovTgt(a) => a.clone(),
+                other => panic!("cluster new row is not an Add: {other:?}"),
+            };
 
-        total_rows.push(Row::MovSrc(old_line));
-        total_rows.push(Row::MovTgt(new_line));
-        total_transitions.push(DpOp::Mov);
+            total_rows.push(Row::MovSrc(old_line));
+            total_rows.push(Row::MovTgt(new_line));
+            total_transitions.push(DpOp::Mov);
 
-        let old_chars = cluster.old_rows[ai].text().chars().count();
-        let new_chars = cluster.new_rows[aj].text().chars().count();
-        let length_diff = (old_chars as f64 - new_chars as f64).abs();
-        total_score += w.alpha * (old_chars.max(new_chars) as f64) - w.beta - w.gamma * length_diff;
+            let old_chars = cluster.old_rows[ai].text().chars().count();
+            let new_chars = cluster.new_rows[aj].text().chars().count();
+            let length_diff = (old_chars as f64 - new_chars as f64).abs();
+            total_score +=
+                w.alpha * (old_chars.max(new_chars) as f64) - w.beta - w.gamma * length_diff;
+        } else {
+            let preceding_ctx = if ai == 0 {
+                cluster.preceding_ctx.clone()
+            } else {
+                vec![cluster.old_rows[ai - 1].text()]
+            };
+            let following_ctx = if ai + 1 < m {
+                vec![cluster.old_rows[ai + 1].text()]
+            } else {
+                cluster.following_ctx.clone()
+            };
+            let sub_cluster = ChangeCluster {
+                preceding_ctx,
+                old_rows: vec![cluster.old_rows[ai].clone()],
+                new_rows: vec![cluster.new_rows[aj].clone()],
+                following_ctx,
+                section: cluster.section,
+            };
+            let sub_sol = solve_cluster_with_arena(&sub_cluster, profile, w, arena);
+            total_rows.extend(sub_sol.rows);
+            total_transitions.extend(sub_sol.transitions);
+            total_score += sub_sol.score;
+        }
 
         curr_i = ai + 1;
         curr_j = aj + 1;
@@ -1733,6 +1852,7 @@ pub(crate) fn solve_cluster_matrix(
             let t = text.trim();
             !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
         };
+        let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
 
         arena.old_tokens.push(dt);
@@ -1742,6 +1862,7 @@ pub(crate) fn solve_cluster_matrix(
             kind,
             first_ascii_word,
             indent,
+            stripped_len,
             close_dist,
             prox_close,
             prox_open,
@@ -1796,6 +1917,7 @@ pub(crate) fn solve_cluster_matrix(
             let t = text.trim();
             !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
         };
+        let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
 
         arena.new_tokens.push(dt);
@@ -1805,6 +1927,7 @@ pub(crate) fn solve_cluster_matrix(
             kind,
             first_ascii_word,
             indent,
+            stripped_len,
             close_dist,
             prox_close,
             prox_open,
@@ -2027,15 +2150,6 @@ pub(crate) fn solve_cluster_matrix(
                             };
                         }
                     } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
-                        let old_text = cluster.old_rows[i].text();
-                        let new_text = cluster.new_rows[j].text();
-                        let common_indent = old_text
-                            .chars()
-                            .take_while(|c| c.is_whitespace())
-                            .zip(new_text.chars().take_while(|c| c.is_whitespace()))
-                            .take_while(|(c1, c2)| c1 == c2)
-                            .count();
-
                         let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
                         let min_chars = ot.chars.min(nt.chars);
                         let char_bound = if token_overlap {
@@ -2051,9 +2165,20 @@ pub(crate) fn solve_cluster_matrix(
                         // Disjoint lines with zero overlapping tokens and zero
                         // common indentation cannot be in-place
                         // substitutions (wholesale replacements).
-                        if char_bound + common_indent == 0 {
+                        let mut common_indent: Option<usize> = if char_bound > 0 {
+                            None
+                        } else if om.indent == 0 || nm.indent == 0 {
                             continue;
-                        }
+                        } else {
+                            let ci = calc_common_indent(
+                                cluster.old_rows[i].text(),
+                                cluster.new_rows[j].text(),
+                            );
+                            if ci == 0 {
+                                continue;
+                            }
+                            Some(ci)
+                        };
                         let total = ot.chars.max(nt.chars);
                         let max_matched = char_bound;
 
@@ -2076,21 +2201,8 @@ pub(crate) fn solve_cluster_matrix(
                             0.0
                         };
 
-                        let ot_trim = cluster.old_rows[i].text().trim();
-                        let nt_trim = cluster.new_rows[j].text().trim();
-
                         let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
                         let offset_diff = (i as isize - j as isize).unsigned_abs();
-                        let is_prefix_containment = {
-                            let ot_strip = trim_trailing_delims(ot_trim, profile);
-                            let nt_strip = trim_trailing_delims(nt_trim, profile);
-                            let min_len = ot_strip.len().min(nt_strip.len());
-                            min_len >= w.min_containment_len
-                                && indent_shift <= w.max_indent_shift
-                                && (om.comment == nm.comment)
-                                && (is_prefix_at_boundary(ot_strip, nt_strip)
-                                    || is_prefix_at_boundary(nt_strip, ot_strip))
-                        };
 
                         let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
                             0.65
@@ -2119,7 +2231,21 @@ pub(crate) fn solve_cluster_matrix(
                                     )
                                 }
                             } else if om.is_terminal_return && nm.is_terminal_return {
-                                if indent_shift == 0 && common_indent > 0 {
+                                let has_common_indent = if indent_shift == 0 {
+                                    *common_indent.get_or_insert_with(|| {
+                                        if om.indent == 0 || nm.indent == 0 {
+                                            0
+                                        } else {
+                                            calc_common_indent(
+                                                cluster.old_rows[i].text(),
+                                                cluster.new_rows[j].text(),
+                                            )
+                                        }
+                                    }) > 0
+                                } else {
+                                    false
+                                };
+                                if has_common_indent {
                                     true
                                 } else {
                                     max_matched >= w.min_tail_matched_chars
@@ -2131,20 +2257,32 @@ pub(crate) fn solve_cluster_matrix(
                             false
                         };
                         let max_similarity_ratio = max_matched as f64 / total as f64;
-                        let could_be_valid_mod = max_similarity_ratio >= min_ratio
+                        let can_have_containment = indent_shift <= w.max_indent_shift
+                            && (om.comment == nm.comment)
+                            && om.stripped_len >= w.min_containment_len
+                            && nm.stripped_len >= w.min_containment_len;
+
+                        let mut is_prefix_containment = None;
+                        let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
                             || is_property_match
                             || statement_head_match
-                            || is_prefix_containment
                             || could_be_tail_pair;
-                        if !could_be_valid_mod {
-                            continue;
+                        if !could_be_valid_mod_fast {
+                            if !can_have_containment {
+                                continue;
+                            }
+                            let ot_strip =
+                                &cluster.old_rows[i].text()[om.indent..om.indent + om.stripped_len];
+                            let nt_strip =
+                                &cluster.new_rows[j].text()[nm.indent..nm.indent + nm.stripped_len];
+                            let is_pc = is_prefix_at_boundary(ot_strip, nt_strip)
+                                || is_prefix_at_boundary(nt_strip, ot_strip);
+                            if !is_pc {
+                                continue;
+                            }
+                            is_prefix_containment = Some(true);
                         }
 
-                        let syn = if is_prefix_containment {
-                            max_syn + w.head_agree_bonus
-                        } else {
-                            max_syn
-                        };
                         let max_close = if could_be_tail_pair {
                             w.delta
                         } else {
@@ -2154,11 +2292,24 @@ pub(crate) fn solve_cluster_matrix(
 
                         let indent_penalty =
                             w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
+
+                        let max_syn_bonus = match is_prefix_containment {
+                            Some(true) => max_syn + w.head_agree_bonus,
+                            Some(false) => max_syn,
+                            None => {
+                                max_syn
+                                    + (if can_have_containment {
+                                        w.head_agree_bonus
+                                    } else {
+                                        0.0
+                                    })
+                            }
+                        };
                         let max_possible_mod_s = base + w.alpha * max_matched as f64
                             - w.gamma * (total - max_matched) as f64
                             - w.beta
                             - indent_penalty
-                            + syn
+                            + max_syn_bonus
                             + max_close
                             + max_open;
                         let next_diag_score = target_diag.score;
@@ -2188,9 +2339,38 @@ pub(crate) fn solve_cluster_matrix(
                         } else {
                             0usize
                         };
-                        if matched + common_indent == 0 {
-                            continue;
+                        if matched == 0 {
+                            let ci = *common_indent.get_or_insert_with(|| {
+                                if om.indent == 0 || nm.indent == 0 {
+                                    0
+                                } else {
+                                    calc_common_indent(
+                                        cluster.old_rows[i].text(),
+                                        cluster.new_rows[j].text(),
+                                    )
+                                }
+                            });
+                            if ci == 0 {
+                                continue;
+                            }
                         }
+
+                        let is_prefix_containment = match is_prefix_containment {
+                            Some(v) => v,
+                            None => {
+                                if can_have_containment {
+                                    let ot_strip = &cluster.old_rows[i].text()
+                                        [om.indent..om.indent + om.stripped_len];
+                                    let nt_strip = &cluster.new_rows[j].text()
+                                        [nm.indent..nm.indent + nm.stripped_len];
+                                    is_prefix_at_boundary(ot_strip, nt_strip)
+                                        || is_prefix_at_boundary(nt_strip, ot_strip)
+                                } else {
+                                    false
+                                }
+                            }
+                        };
+
                         let unmatched = total.saturating_sub(matched);
                         let (penalty, syntax) = if is_property_match || is_prefix_containment {
                             let core_unmatched = min_chars.saturating_sub(matched);
@@ -2237,7 +2417,21 @@ pub(crate) fn solve_cluster_matrix(
                             if delim_match {
                                 true
                             } else if om.is_terminal_return && nm.is_terminal_return {
-                                if indent_diff == 0.0 && common_indent > 0 {
+                                let has_common_indent = if indent_diff == 0.0 {
+                                    *common_indent.get_or_insert_with(|| {
+                                        if om.indent == 0 || nm.indent == 0 {
+                                            0
+                                        } else {
+                                            calc_common_indent(
+                                                cluster.old_rows[i].text(),
+                                                cluster.new_rows[j].text(),
+                                            )
+                                        }
+                                    }) > 0
+                                } else {
+                                    false
+                                };
+                                if has_common_indent {
                                     true
                                 } else {
                                     matched >= w.min_tail_matched_chars

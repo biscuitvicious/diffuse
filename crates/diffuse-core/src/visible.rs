@@ -42,7 +42,7 @@ pub fn build_visible(hunks: &[Hunk], _expand_lines: usize) -> Vec<VisibleRow> {
 
 /// Whether the hunk carries any added (new-side) rows — decides which side's
 /// line numbers the context rows display against.
-fn hunk_has_adds(h: &Hunk) -> bool {
+pub fn hunk_has_adds(h: &Hunk) -> bool {
     h.rows
         .iter()
         .any(|r| matches!(r, Row::Add(_) | Row::Mod { .. } | Row::MovTgt(_)))

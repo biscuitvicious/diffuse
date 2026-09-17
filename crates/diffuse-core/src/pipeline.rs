@@ -39,7 +39,7 @@ use crate::{
         profile::LangProfile,
         registry::{fence_lang_ext, lang_profile},
     },
-    visible::{Side as VisibleSide, build_visible},
+    visible::Side as VisibleSide,
     wire::{
         MovSide, OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun,
         PipelineOutput,
@@ -531,50 +531,65 @@ pub fn process_single_diff_file(
     let mut counts = file_counts(&f);
     let regions = fence_regions(&new_lines, profile);
 
+    fn build_hunk_output_row(
+        r: &Row,
+        profile: Option<&LangProfile>,
+        regions: &[FenceRegion],
+    ) -> OutputRow {
+        let (kind, mov_side, new_line, old_line, del_text, spans) = match r {
+            Row::MovSrc(del) => (
+                RowKind::Mov,
+                Some(MovSide::Src),
+                None,
+                Some(del.num.get()),
+                None,
+                Spans::default(),
+            ),
+            Row::MovTgt(add) => (
+                RowKind::Mov,
+                Some(MovSide::Tgt),
+                Some(add.num.get()),
+                None,
+                add.del_text.clone(),
+                add.spans.clone(),
+            ),
+            _ => (
+                r.kind(),
+                None,
+                r.new_line(),
+                r.old_line(),
+                r.del_text().map(String::from),
+                r.spans().cloned().unwrap_or_default(),
+            ),
+        };
+        OutputRow {
+            kind,
+            mov_side,
+            new_line,
+            old_line,
+            text: r.text().to_string(),
+            del_text,
+            spans,
+            runs: colored_runs(r, profile, regions),
+            wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
+        }
+    }
+
     let hunks_out: Vec<OutputHunk> = f
         .hunks
         .par_iter()
         .map(|h| {
-            let mut rows_out = Vec::with_capacity(h.rows.len());
-            for r in &h.rows {
-                let (kind, mov_side, new_line, old_line, del_text, spans) = match r {
-                    Row::MovSrc(del) => (
-                        RowKind::Mov,
-                        Some(MovSide::Src),
-                        None,
-                        Some(del.num.get()),
-                        None,
-                        Spans::default(),
-                    ),
-                    Row::MovTgt(add) => (
-                        RowKind::Mov,
-                        Some(MovSide::Tgt),
-                        Some(add.num.get()),
-                        None,
-                        add.del_text.clone(),
-                        add.spans.clone(),
-                    ),
-                    _ => (
-                        r.kind(),
-                        None,
-                        r.new_line(),
-                        r.old_line(),
-                        r.del_text().map(String::from),
-                        r.spans().cloned().unwrap_or_default(),
-                    ),
-                };
-                rows_out.push(OutputRow {
-                    kind,
-                    mov_side,
-                    new_line,
-                    old_line,
-                    text: r.text().to_string(),
-                    del_text,
-                    spans,
-                    runs: colored_runs(r, profile, &regions),
-                    wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
-                });
-            }
+            let rows_out: Vec<OutputRow> = if h.rows.len() > 64 {
+                h.rows
+                    .par_iter()
+                    .map(|r| build_hunk_output_row(r, profile, &regions))
+                    .collect()
+            } else {
+                h.rows
+                    .iter()
+                    .map(|r| build_hunk_output_row(r, profile, &regions))
+                    .collect()
+            };
             OutputHunk {
                 old_start: h.old_start,
                 old_count: h.old_count,
@@ -635,118 +650,41 @@ pub fn process_single_diff_file(
         crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
     };
 
-    let rows: Vec<OutputRow> = build_visible(&f.hunks, opts.expand_lines)
-        .into_iter()
-        .map(|vis| {
-            let r = vis.row;
-            let (kind, mov_side, new_line, old_line, del_text, spans) = match &r {
-                Row::MovSrc(del) => (
-                    RowKind::Mov,
-                    Some(MovSide::Src),
-                    None,
-                    Some(del.num.get()),
-                    None,
-                    Spans::default(),
-                ),
-                Row::MovTgt(add) => (
-                    RowKind::Mov,
-                    Some(MovSide::Tgt),
-                    Some(add.num.get()),
-                    None,
-                    add.del_text.clone(),
-                    add.spans.clone(),
-                ),
-                Row::Ctx(_) => {
-                    let (new_line, old_line) = match vis.side {
-                        Some(VisibleSide::New) => (r.new_line(), None),
-                        Some(VisibleSide::Old) => (None, r.old_line()),
-                        None => (r.new_line(), r.old_line()),
-                    };
-                    (
-                        r.kind(),
-                        None,
-                        new_line,
-                        old_line,
-                        r.del_text().map(String::from),
-                        r.spans().cloned().unwrap_or_default(),
-                    )
-                }
-                Row::Mod { .. } => (
-                    r.kind(),
-                    None,
-                    r.new_line(),
-                    r.old_line(),
-                    r.del_text().map(String::from),
-                    r.spans().cloned().unwrap_or_default(),
-                ),
-                Row::Add(_) => (
-                    r.kind(),
-                    None,
-                    r.new_line(),
-                    None,
-                    r.del_text().map(String::from),
-                    r.spans().cloned().unwrap_or_default(),
-                ),
-                Row::Del(_) => (
-                    r.kind(),
-                    None,
-                    None,
-                    r.old_line(),
-                    r.del_text().map(String::from),
-                    r.spans().cloned().unwrap_or_default(),
-                ),
-                Row::Sep(_) => (
-                    r.kind(),
-                    None,
-                    None,
-                    None,
-                    r.del_text().map(String::from),
-                    r.spans().cloned().unwrap_or_default(),
-                ),
-            };
-
-            let runs = if matches!(
-                r,
-                Row::Mod { .. } | Row::Add(_) | Row::MovSrc(_) | Row::MovTgt(_) | Row::Del(_)
-            ) {
-                colored_runs(&r, profile, &regions)
-            } else {
-                let mut runs = Vec::new();
-                for_each_ctx_line_token(
-                    r.text(),
-                    match vis.side {
-                        Some(VisibleSide::New) => r.new_line(),
-                        Some(VisibleSide::Old) => None,
-                        None => r.new_line().or_else(|| r.old_line()),
-                    },
-                    profile,
-                    &regions,
-                    |tk| {
-                        runs.push(OutputRun {
-                            kind: RunKind::Ctx,
-                            color: Some(std::borrow::Cow::Borrowed(tk.color)),
-                            sgr: tk.sgr,
-                            text: tk.text.to_string().into(),
+    let total_rows_count: usize = hunks_out.iter().map(|h| h.rows.len()).sum();
+    let mut rows: Vec<OutputRow> = Vec::with_capacity(total_rows_count);
+    for (h, h_out) in f.hunks.iter().zip(&hunks_out) {
+        let side = if crate::visible::hunk_has_adds(h) {
+            VisibleSide::New
+        } else {
+            VisibleSide::Old
+        };
+        for (r, r_out) in h.rows.iter().zip(&h_out.rows) {
+            if matches!(r, Row::Ctx(_)) {
+                let mut row = r_out.clone();
+                match side {
+                    VisibleSide::New => {
+                        row.old_line = None;
+                    }
+                    VisibleSide::Old => {
+                        row.new_line = None;
+                        let mut runs = Vec::new();
+                        for_each_ctx_line_token(r.text(), None, profile, &regions, |tk| {
+                            runs.push(OutputRun {
+                                kind: RunKind::Ctx,
+                                color: Some(std::borrow::Cow::Borrowed(tk.color)),
+                                sgr: tk.sgr,
+                                text: tk.text.to_string().into(),
+                            });
                         });
-                    },
-                );
-                runs
-            };
-
-            let wholesale = matches!(&r, Row::Mod { .. }) && is_wholesale_mod(&r);
-            OutputRow {
-                kind,
-                mov_side,
-                new_line,
-                old_line,
-                text: r.text().to_string(),
-                del_text,
-                spans,
-                runs,
-                wholesale,
+                        row.runs = runs;
+                    }
+                }
+                rows.push(row);
+            } else {
+                rows.push(r_out.clone());
             }
-        })
-        .collect();
+        }
+    }
 
     tracing::debug!(
         path = %f.path,
