@@ -21,6 +21,7 @@ pub mod entropy;
 pub mod hirschberg;
 pub mod hunt_szymanski;
 pub mod interner;
+pub mod interval_tree;
 pub mod landmarks;
 pub mod myers_ond;
 pub mod prefix_dfa;
@@ -47,6 +48,7 @@ pub use entropy::{DiffuseEntropyExt, EntropyFiltered, FrequencyRanker};
 pub use hirschberg::HirschbergLcs;
 pub use hunt_szymanski::HuntSzymanskiLcs;
 pub use interner::{SymbolId, SymbolTable};
+pub use interval_tree::{AugmentedIntervalTree, IntervalNode};
 pub use landmarks::{
     DiffuseSequenceExt, Landmarks, MatchInterval, find_monotonic_chain, find_monotonic_mums,
     find_mums,
