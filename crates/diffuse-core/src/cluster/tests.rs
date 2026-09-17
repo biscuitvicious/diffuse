@@ -1965,3 +1965,54 @@ fn test_parallel_scoring_matches_sequential() {
     assert_eq!(seq, par, "parallel scoring must match sequential exactly");
     assert_eq!(seq.len(), candidates.len());
 }
+
+#[test]
+fn test_parallel_scoring_multi_row_matches_sequential() {
+    let mut interner = TokenInterner::default();
+    let mut old_tokens = Vec::new();
+    let mut new_tokens = Vec::new();
+
+    // Create 30 old rows and 40 new rows, each with varying tokens
+    for i in 0..30 {
+        let text = format!(
+            "fn function_name_{i}(arg_a: usize, arg_b: String) -> Result<i32, Error> {{ val_{i} = {i} * 2; }}"
+        );
+        old_tokens.push(dp_tokens(&mut interner, &text));
+    }
+    for j in 0..40 {
+        let text = format!(
+            "fn function_name_{j}(arg_a: usize, arg_b: String) -> Result<i32, Error> {{ val_{j} = {j} * 3; }}"
+        );
+        new_tokens.push(dp_tokens(&mut interner, &text));
+    }
+
+    // Generate 1200 candidate pairs across all rows (well above chunk size 256)
+    let mut candidates = Vec::new();
+    for i in 0..30 {
+        for j in 0..40 {
+            candidates.push((i, j));
+        }
+    }
+    assert_eq!(candidates.len(), 1200);
+
+    let mut seq = Vec::new();
+    let mut par = Vec::new();
+
+    score_lcs_candidates_seq(&candidates, &old_tokens, &new_tokens, &interner, &mut seq);
+    score_lcs_candidates_par(&candidates, &old_tokens, &new_tokens, &interner, &mut par);
+
+    assert_eq!(
+        seq, par,
+        "parallel scoring must match sequential scoring across multi-row chunks"
+    );
+    assert_eq!(seq.len(), 1200);
+    // Spot check that identical function signature pairs produce positive
+    // character matches
+    for i in 0..30 {
+        let idx = i * 40 + i; // (i, i)
+        assert!(
+            seq[idx] > 0,
+            "matching pair ({i}, {i}) must have positive score"
+        );
+    }
+}

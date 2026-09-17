@@ -385,6 +385,87 @@ pub fn bit_parallel_suffix_matched_chars_64(
     bit_parallel_suffix_matched_chars_64_scratch(a, b, id_ws, id_alnum, b_token_chars, &mut scratch)
 }
 
+pub struct SuffixPattern64<'a> {
+    pub a: &'a [u32],
+    pub p_keys: [u32; 64],
+    pub p_masks: [u64; 64],
+    pub p_len: usize,
+    pub a_bloom: [u64; 4],
+}
+
+impl<'a> SuffixPattern64<'a> {
+    pub fn new(a: &'a [u32]) -> Self {
+        let n = a.len();
+        debug_assert!(n <= 64);
+
+        let mut a_rev = [0u32; 64];
+        for (i, &ai) in a.iter().rev().enumerate() {
+            a_rev[i] = ai;
+        }
+        let a_rev = &a_rev[..n];
+
+        let mut p_keys = [0u32; 64];
+        let mut p_masks = [0u64; 64];
+        let mut p_len = 0;
+        let mut a_bloom = [0u64; 4];
+
+        for (i, &ai) in a_rev.iter().enumerate() {
+            let bit = (ai as usize) & 255;
+            a_bloom[bit / 64] |= 1u64 << (bit % 64);
+
+            let mut found = false;
+            for k in 0..p_len {
+                if p_keys[k] == ai {
+                    p_masks[k] |= 1u64 << i;
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                p_keys[p_len] = ai;
+                p_masks[p_len] = 1u64 << i;
+                p_len += 1;
+            }
+        }
+
+        Self {
+            a,
+            p_keys,
+            p_masks,
+            p_len,
+            a_bloom,
+        }
+    }
+
+    pub fn match_chars(
+        &self,
+        b: &[u32],
+        id_ws: &[bool],
+        id_alnum: &[bool],
+        b_token_chars: &[usize],
+        scratch: &mut Vec<u64>,
+    ) -> usize {
+        let m = b.len();
+        if self.a.is_empty() || m == 0 {
+            return 0;
+        }
+        if scratch.len() < m {
+            scratch.resize(m, 0);
+        }
+        bit_parallel_suffix_walk_64(
+            self.a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+            &self.p_keys[..self.p_len],
+            &self.p_masks[..self.p_len],
+            &self.a_bloom,
+            &mut scratch[..m],
+        )
+    }
+}
+
 pub fn bit_parallel_suffix_matched_chars_64_scratch(
     a: &[u32],
     b: &[u32],
@@ -393,57 +474,10 @@ pub fn bit_parallel_suffix_matched_chars_64_scratch(
     b_token_chars: &[usize],
     scratch: &mut Vec<u64>,
 ) -> usize {
-    let n = a.len();
-    let m = b.len();
-    if n == 0 || m == 0 {
+    if a.is_empty() || b.is_empty() {
         return 0;
     }
-    debug_assert!(n <= 64);
-
-    let mut a_rev = [0u32; 64];
-    for (i, &ai) in a.iter().rev().enumerate() {
-        a_rev[i] = ai;
-    }
-    let a_rev = &a_rev[..n];
-
-    let mut p_keys = [0u32; 64];
-    let mut p_masks = [0u64; 64];
-    let mut p_len = 0;
-    let mut a_bloom = [0u64; 4];
-
-    for (i, &ai) in a_rev.iter().enumerate() {
-        let bit = (ai as usize) & 255;
-        a_bloom[bit / 64] |= 1u64 << (bit % 64);
-
-        let mut found = false;
-        for k in 0..p_len {
-            if p_keys[k] == ai {
-                p_masks[k] |= 1u64 << i;
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            p_keys[p_len] = ai;
-            p_masks[p_len] = 1u64 << i;
-            p_len += 1;
-        }
-    }
-
-    if scratch.len() < m {
-        scratch.resize(m, 0);
-    }
-    bit_parallel_suffix_walk_64(
-        a,
-        b,
-        id_ws,
-        id_alnum,
-        b_token_chars,
-        &p_keys[..p_len],
-        &p_masks[..p_len],
-        &a_bloom,
-        &mut scratch[..m],
-    )
+    SuffixPattern64::new(a).match_chars(b, id_ws, id_alnum, b_token_chars, scratch)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -735,9 +769,10 @@ fn bit_parallel_suffix_walk_fixed_inner<const K: usize>(
         for (idx, &bj) in b.iter().rev().enumerate() {
             let bit = (bj as usize) & 255;
             if (a_bloom[bit / 64] & (1u64 << (bit % 64))) != 0
-                && let Some(p_mask) = map.get(&bj) {
-                    v.step(p_mask);
-                }
+                && let Some(p_mask) = map.get(&bj)
+            {
+                v.step(p_mask);
+            }
             v_history[idx] = v;
         }
     } else {
@@ -768,78 +803,100 @@ fn bit_parallel_suffix_walk_fixed_inner<const K: usize>(
     suffix_walk_ladder(a, b, id_ws, id_alnum, b_token_chars, dp)
 }
 
-fn bit_parallel_suffix_matched_chars_fixed<const K: usize>(
-    a: &[u32],
-    b: &[u32],
-    id_ws: &[bool],
-    id_alnum: &[bool],
-    b_token_chars: &[usize],
-    scratch: &mut Vec<u64>,
-) -> usize {
-    let n = a.len();
-    let m = b.len();
-    if n == 0 || m == 0 {
-        return 0;
-    }
-    debug_assert!(n <= K * 64);
+pub struct SuffixPatternFixed<'a, const K: usize> {
+    pub a: &'a [u32],
+    pub p_keys: [u32; 64],
+    pub p_masks: [BitVector<K>; 64],
+    pub p_len: usize,
+    pub overflow_map: Option<FxHashMap<u32, BitVector<K>>>,
+    pub a_bloom: [u64; 4],
+}
 
-    let mut p_keys = [0u32; 64];
-    let mut p_masks = [BitVector::<K>::ZERO; 64];
-    let mut p_len = 0;
-    let mut overflow_map: Option<FxHashMap<u32, BitVector<K>>> = None;
-    let mut a_bloom = [0u64; 4];
+impl<'a, const K: usize> SuffixPatternFixed<'a, K> {
+    pub fn new(a: &'a [u32]) -> Self {
+        let n = a.len();
+        debug_assert!(n <= K * 64);
 
-    for (i, &ai) in a.iter().rev().enumerate() {
-        let bit = (ai as usize) & 255;
-        a_bloom[bit / 64] |= 1u64 << (bit % 64);
+        let mut p_keys = [0u32; 64];
+        let mut p_masks = [BitVector::<K>::ZERO; 64];
+        let mut p_len = 0;
+        let mut overflow_map: Option<FxHashMap<u32, BitVector<K>>> = None;
+        let mut a_bloom = [0u64; 4];
 
-        if let Some(ref mut map) = overflow_map {
-            map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
-        } else {
-            let mut found = false;
-            for k in 0..p_len {
-                if p_keys[k] == ai {
-                    p_masks[k].set_bit(i);
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                if p_len < 64 {
-                    p_keys[p_len] = ai;
-                    p_masks[p_len].set_bit(i);
-                    p_len += 1;
-                } else {
-                    let mut map = FxHashMap::default();
-                    for k in 0..p_len {
-                        map.insert(p_keys[k], p_masks[k]);
+        for (i, &ai) in a.iter().rev().enumerate() {
+            let bit = (ai as usize) & 255;
+            a_bloom[bit / 64] |= 1u64 << (bit % 64);
+
+            if let Some(ref mut map) = overflow_map {
+                map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
+            } else {
+                let mut found = false;
+                for k in 0..p_len {
+                    if p_keys[k] == ai {
+                        p_masks[k].set_bit(i);
+                        found = true;
+                        break;
                     }
-                    map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
-                    overflow_map = Some(map);
+                }
+                if !found {
+                    if p_len < 64 {
+                        p_keys[p_len] = ai;
+                        p_masks[p_len].set_bit(i);
+                        p_len += 1;
+                    } else {
+                        let mut map = FxHashMap::default();
+                        for k in 0..p_len {
+                            map.insert(p_keys[k], p_masks[k]);
+                        }
+                        map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
+                        overflow_map = Some(map);
+                    }
                 }
             }
         }
+
+        Self {
+            a,
+            p_keys,
+            p_masks,
+            p_len,
+            overflow_map,
+            a_bloom,
+        }
     }
 
-    let needed = m * K;
-    if scratch.len() < needed {
-        scratch.resize(needed, 0);
-    }
-    let v_history: &mut [BitVector<K>] =
-        unsafe { std::slice::from_raw_parts_mut(scratch.as_mut_ptr() as *mut BitVector<K>, m) };
+    pub fn match_chars(
+        &self,
+        b: &[u32],
+        id_ws: &[bool],
+        id_alnum: &[bool],
+        b_token_chars: &[usize],
+        scratch: &mut Vec<u64>,
+    ) -> usize {
+        let m = b.len();
+        if self.a.is_empty() || m == 0 {
+            return 0;
+        }
+        let needed = m * K;
+        if scratch.len() < needed {
+            scratch.resize(needed, 0);
+        }
+        let v_history: &mut [BitVector<K>] =
+            unsafe { std::slice::from_raw_parts_mut(scratch.as_mut_ptr() as *mut BitVector<K>, m) };
 
-    bit_parallel_suffix_walk_fixed_inner(
-        a,
-        b,
-        id_ws,
-        id_alnum,
-        b_token_chars,
-        &p_keys[..p_len],
-        &p_masks[..p_len],
-        overflow_map.as_ref(),
-        &a_bloom,
-        v_history,
-    )
+        bit_parallel_suffix_walk_fixed_inner(
+            self.a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+            &self.p_keys[..self.p_len],
+            &self.p_masks[..self.p_len],
+            self.overflow_map.as_ref(),
+            &self.a_bloom,
+            v_history,
+        )
+    }
 }
 
 fn bit_parallel_suffix_matched_chars_dyn(
@@ -955,6 +1012,72 @@ fn bit_parallel_suffix_matched_chars_dyn(
     suffix_walk_ladder(a, b, id_ws, id_alnum, b_token_chars, dp)
 }
 
+/// Precomputed bit-parallel suffix pattern for sequence A.
+/// Allows repeatedly evaluating sequence A against multiple candidate
+/// sequences B with zero recomputation of sequence A's pattern tables.
+///
+/// Variants up to 128 tokens are stored inline to avoid per-row heap
+/// allocations during candidate scoring; larger, rare sizes are boxed.
+#[allow(clippy::large_enum_variant)]
+#[derive(Default)]
+pub enum SuffixPattern<'a> {
+    #[default]
+    Empty,
+    P64(SuffixPattern64<'a>),
+    P128(SuffixPatternFixed<'a, 2>),
+    P256(Box<SuffixPatternFixed<'a, 4>>),
+    P512(Box<SuffixPatternFixed<'a, 8>>),
+    P1024(Box<SuffixPatternFixed<'a, 16>>),
+    P2048(Box<SuffixPatternFixed<'a, 32>>),
+    Dyn(&'a [u32]),
+}
+
+impl<'a> SuffixPattern<'a> {
+    pub fn new(a: &'a [u32]) -> Self {
+        let n = a.len();
+        if n == 0 {
+            Self::Empty
+        } else if n <= 64 {
+            Self::P64(SuffixPattern64::new(a))
+        } else if n <= 128 {
+            Self::P128(SuffixPatternFixed::<2>::new(a))
+        } else if n <= 256 {
+            Self::P256(Box::new(SuffixPatternFixed::<4>::new(a)))
+        } else if n <= 512 {
+            Self::P512(Box::new(SuffixPatternFixed::<8>::new(a)))
+        } else if n <= 1024 {
+            Self::P1024(Box::new(SuffixPatternFixed::<16>::new(a)))
+        } else if n <= 2048 {
+            Self::P2048(Box::new(SuffixPatternFixed::<32>::new(a)))
+        } else {
+            Self::Dyn(a)
+        }
+    }
+
+    #[inline]
+    pub fn match_chars(
+        &self,
+        b: &[u32],
+        id_ws: &[bool],
+        id_alnum: &[bool],
+        b_token_chars: &[usize],
+        scratch: &mut Vec<u64>,
+    ) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::P64(p) => p.match_chars(b, id_ws, id_alnum, b_token_chars, scratch),
+            Self::P128(p) => p.match_chars(b, id_ws, id_alnum, b_token_chars, scratch),
+            Self::P256(p) => p.match_chars(b, id_ws, id_alnum, b_token_chars, scratch),
+            Self::P512(p) => p.match_chars(b, id_ws, id_alnum, b_token_chars, scratch),
+            Self::P1024(p) => p.match_chars(b, id_ws, id_alnum, b_token_chars, scratch),
+            Self::P2048(p) => p.match_chars(b, id_ws, id_alnum, b_token_chars, scratch),
+            Self::Dyn(a) => {
+                bit_parallel_suffix_matched_chars_dyn(a, b, id_ws, id_alnum, b_token_chars, scratch)
+            }
+        }
+    }
+}
+
 /// Bit-parallel suffix LCS scorer with automatic word-size selection and
 /// caller-managed scratch buffer. Evaluates sequences of arbitrary length at
 /// word-level parallel speed with exact tie-breaking and zero per-call heap
@@ -968,22 +1091,7 @@ pub fn bit_parallel_suffix_matched_chars_scratch(
     b_token_chars: &[usize],
     scratch: &mut Vec<u64>,
 ) -> usize {
-    let n = a.len();
-    if n <= 64 {
-        bit_parallel_suffix_matched_chars_64_scratch(a, b, id_ws, id_alnum, b_token_chars, scratch)
-    } else if n <= 128 {
-        bit_parallel_suffix_matched_chars_fixed::<2>(a, b, id_ws, id_alnum, b_token_chars, scratch)
-    } else if n <= 256 {
-        bit_parallel_suffix_matched_chars_fixed::<4>(a, b, id_ws, id_alnum, b_token_chars, scratch)
-    } else if n <= 512 {
-        bit_parallel_suffix_matched_chars_fixed::<8>(a, b, id_ws, id_alnum, b_token_chars, scratch)
-    } else if n <= 1024 {
-        bit_parallel_suffix_matched_chars_fixed::<16>(a, b, id_ws, id_alnum, b_token_chars, scratch)
-    } else if n <= 2048 {
-        bit_parallel_suffix_matched_chars_fixed::<32>(a, b, id_ws, id_alnum, b_token_chars, scratch)
-    } else {
-        bit_parallel_suffix_matched_chars_dyn(a, b, id_ws, id_alnum, b_token_chars, scratch)
-    }
+    SuffixPattern::new(a).match_chars(b, id_ws, id_alnum, b_token_chars, scratch)
 }
 
 /// Bit-parallel suffix LCS scorer with automatic word-size selection.
@@ -1381,5 +1489,45 @@ mod tests {
             cap_before,
             "scratch capacity should be reused without reallocating"
         );
+    }
+
+    #[test]
+    fn test_suffix_pattern_matches_direct() {
+        let ws = vec![false; 64];
+        let alnum = vec![true; 64];
+        let mut scratch1 = Vec::new();
+        let mut scratch2 = Vec::new();
+
+        for len_a in [0, 10, 50, 100, 200, 400, 800, 1200, 2200] {
+            let len_b = len_a + 20;
+            let a: Vec<u32> = (0..len_a).map(|x| (x % 30) as u32).collect();
+            let b1: Vec<u32> = (0..len_b).map(|x| ((x * 2) % 30) as u32).collect();
+            let b2: Vec<u32> = (0..len_b).map(|x| ((x * 3) % 30) as u32).collect();
+            let b1_chars = vec![1; b1.len()];
+            let b2_chars = vec![1; b2.len()];
+
+            let pat = SuffixPattern::new(&a);
+            let m1_pat = pat.match_chars(&b1, &ws, &alnum, &b1_chars, &mut scratch1);
+            let m1_dir = bit_parallel_suffix_matched_chars_scratch(
+                &a,
+                &b1,
+                &ws,
+                &alnum,
+                &b1_chars,
+                &mut scratch2,
+            );
+            assert_eq!(m1_pat, m1_dir, "mismatch on b1 for len_a = {len_a}");
+
+            let m2_pat = pat.match_chars(&b2, &ws, &alnum, &b2_chars, &mut scratch1);
+            let m2_dir = bit_parallel_suffix_matched_chars_scratch(
+                &a,
+                &b2,
+                &ws,
+                &alnum,
+                &b2_chars,
+                &mut scratch2,
+            );
+            assert_eq!(m2_pat, m2_dir, "mismatch on b2 for len_a = {len_a}");
+        }
     }
 }

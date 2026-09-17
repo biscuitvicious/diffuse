@@ -52,7 +52,10 @@ use smallvec::SmallVec;
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 use crate::{
     algo::skyline::{AdaptiveEnvelopeBuilder, SkylineMatrix},
-    lcs::{bit_parallel::BitVector, lcs_matched_chars_ids, lcs_pairs_ids},
+    lcs::{
+        bit_parallel::{BitVector, SuffixPattern},
+        lcs_matched_chars_ids, lcs_pairs_ids,
+    },
     parse::Row,
     similarity::TokenInterner,
     syntax::{
@@ -422,23 +425,7 @@ pub(crate) fn mod_pair_needs_scoring(
     ot.ids != nt.ids && token_overlap && char_bound > 0
 }
 
-/// Score one candidate mod pair: the exact subline LCS call from the fill
-/// loop, with a caller-provided scratch buffer.
-fn score_lcs_pair(
-    ot: &DpTokens,
-    nt: &DpTokens,
-    interner: &TokenInterner,
-    scratch: &mut Vec<u64>,
-) -> usize {
-    lcs_matched_chars_ids(
-        &ot.ids,
-        &nt.ids,
-        &interner.ws,
-        &interner.alnum,
-        &nt.token_chars,
-        scratch,
-    )
-}
+const PAR_CANDIDATE_CHUNK_SIZE: usize = 256;
 
 /// Score all candidate pairs, in parallel past [`PAR_CANDIDATE_THRESHOLD`].
 /// Results are written into `matrix_out` (indexed via SkylineMatrix corridor)
@@ -476,8 +463,20 @@ pub(crate) fn score_lcs_candidates_seq(
     scores_out.clear();
     scores_out.reserve(candidates.len());
     let mut scratch: Vec<u64> = Vec::new();
+    let mut curr_i = usize::MAX;
+    let mut pat = SuffixPattern::Empty;
     for &(i, j) in candidates {
-        let score = score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, &mut scratch) as u32;
+        if i != curr_i {
+            curr_i = i;
+            pat = SuffixPattern::new(&old_tokens[i].ids);
+        }
+        let score = pat.match_chars(
+            &new_tokens[j].ids,
+            &interner.ws,
+            &interner.alnum,
+            &new_tokens[j].token_chars,
+            &mut scratch,
+        ) as u32;
         scores_out.push(score);
     }
 }
@@ -489,13 +488,27 @@ pub(crate) fn score_lcs_candidates_par(
     interner: &TokenInterner,
     scores_out: &mut Vec<u32>,
 ) {
-    scores_out.clear();
+    scores_out.resize(candidates.len(), 0);
     candidates
-        .par_iter()
-        .map_init(Vec::<u64>::new, |scratch, &(i, j)| {
-            score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, scratch) as u32
-        })
-        .collect_into_vec(scores_out);
+        .par_chunks(PAR_CANDIDATE_CHUNK_SIZE)
+        .zip(scores_out.par_chunks_mut(PAR_CANDIDATE_CHUNK_SIZE))
+        .for_each_init(Vec::<u64>::new, |scratch, (cand_chunk, score_chunk)| {
+            let mut curr_i = usize::MAX;
+            let mut pat = SuffixPattern::Empty;
+            for (&(i, j), score_out) in cand_chunk.iter().zip(score_chunk.iter_mut()) {
+                if i != curr_i {
+                    curr_i = i;
+                    pat = SuffixPattern::new(&old_tokens[i].ids);
+                }
+                *score_out = pat.match_chars(
+                    &new_tokens[j].ids,
+                    &interner.ws,
+                    &interner.alnum,
+                    &new_tokens[j].token_chars,
+                    scratch,
+                ) as u32;
+            }
+        });
 }
 
 pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
