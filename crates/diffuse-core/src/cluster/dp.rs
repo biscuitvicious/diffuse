@@ -1435,54 +1435,19 @@ pub(crate) fn solve_cluster_with_arena(
     solve_cluster_matrix(cluster, profile, w, arena)
 }
 
-/// Strips ANSI escape sequences and render color tokens (e.g. `{48;5;233}`)
-/// for normalized anchor discovery.
-fn strip_color_escapes(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                while let Some(&next_c) = chars.peek() {
-                    chars.next();
-                    if next_c.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
+/// Extracts a normalized sequence of substantive content words from a line,
+/// ignoring punctuation, delimiters, numeric literals, and escape sequences.
+fn word_skeleton(text: &str) -> String {
+    let mut skeleton = String::new();
+    crate::lcs::for_each_token(text, |t| {
+        if t.len() >= 2 && t.chars().all(|c| c.is_alphabetic()) {
+            if !skeleton.is_empty() {
+                skeleton.push(' ');
             }
-        } else if c == '{' {
-            let mut buf = String::new();
-            let mut is_escape = false;
-            while let Some(&next_c) = chars.peek() {
-                if next_c == '}' {
-                    chars.next();
-                    if !buf.is_empty() && buf.chars().all(|ch| ch.is_ascii_digit() || ch == ';') {
-                        is_escape = true;
-                    } else {
-                        out.push('{');
-                        out.push_str(&buf);
-                        out.push('}');
-                    }
-                    break;
-                } else if next_c.is_ascii_digit() || next_c == ';' {
-                    buf.push(next_c);
-                    chars.next();
-                } else {
-                    out.push('{');
-                    out.push_str(&buf);
-                    break;
-                }
-            }
-            if !is_escape && chars.peek().is_none() && !buf.is_empty() {
-                out.push('{');
-                out.push_str(&buf);
-            }
-        } else {
-            out.push(c);
+            skeleton.push_str(t);
         }
-    }
-    out
+    });
+    skeleton
 }
 
 /// Attempts to solve a large cluster by decomposing it along unique matching
@@ -1506,33 +1471,34 @@ pub(crate) fn solve_cluster_with_anchors(
     let old_trimmed: Vec<&str> = cluster.old_rows.iter().map(|r| r.text().trim()).collect();
     let new_trimmed: Vec<&str> = cluster.new_rows.iter().map(|r| r.text().trim()).collect();
 
-    let mut raw_anchors =
-        crate::algo::find_unique_anchors(&old_trimmed, &new_trimmed, |s| s.len() >= 4);
-
-    if raw_anchors.is_empty() {
-        let old_norm: Vec<String> = old_trimmed.iter().map(|s| strip_color_escapes(s)).collect();
-        let new_norm: Vec<String> = new_trimmed.iter().map(|s| strip_color_escapes(s)).collect();
-        raw_anchors =
-            crate::algo::find_unique_anchors(&old_norm, &new_norm, |s| s.trim().len() >= 8);
-    }
-
-    if raw_anchors.is_empty() {
-        return None;
-    }
-
     let max_corridor = cluster_bandwidth_min() + cluster_bandwidth_slack() + m.abs_diff(n);
-    let mut anchors = Vec::new();
-    for (ai, aj) in raw_anchors {
-        let expected_j = (ai * n) / m;
-        if aj.abs_diff(expected_j) > max_corridor {
-            continue;
+    let filter_anchors = |raw: Vec<(usize, usize)>| -> Vec<(usize, usize)> {
+        let mut valid = Vec::new();
+        for (ai, aj) in raw {
+            let expected_j = (ai * n) / m;
+            if aj.abs_diff(expected_j) > max_corridor {
+                continue;
+            }
+            let old_indent = cluster.old_rows[ai].text().len() - old_trimmed[ai].len();
+            let new_indent = cluster.new_rows[aj].text().len() - new_trimmed[aj].len();
+            if old_indent.abs_diff(new_indent) > 8 {
+                continue;
+            }
+            valid.push((ai, aj));
         }
-        let old_indent = cluster.old_rows[ai].text().len() - old_trimmed[ai].len();
-        let new_indent = cluster.new_rows[aj].text().len() - new_trimmed[aj].len();
-        if old_indent.abs_diff(new_indent) > 8 {
-            continue;
-        }
-        anchors.push((ai, aj));
+        valid
+    };
+
+    let raw_anchors =
+        crate::algo::find_unique_anchors(&old_trimmed, &new_trimmed, |s| s.len() >= 4);
+    let mut anchors = filter_anchors(raw_anchors);
+
+    if anchors.is_empty() {
+        let old_skeletons: Vec<String> = old_trimmed.iter().map(|s| word_skeleton(s)).collect();
+        let new_skeletons: Vec<String> = new_trimmed.iter().map(|s| word_skeleton(s)).collect();
+        let raw_skeleton_anchors =
+            crate::algo::find_unique_anchors(&old_skeletons, &new_skeletons, |s| s.len() >= 16);
+        anchors = filter_anchors(raw_skeleton_anchors);
     }
 
     if anchors.is_empty() {

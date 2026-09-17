@@ -2146,27 +2146,37 @@ fn test_anchor_decomposition_large_cluster() {
 }
 
 #[test]
-fn test_anchor_decomposition_with_normalized_ansi_escapes() {
+fn test_anchor_decomposition_with_word_skeleton() {
     let rs = lang_profile("rs");
+    let tag = |mut i: usize| -> String {
+        let mut s = String::new();
+        for _ in 0..3 {
+            s.push((b'a' + (i % 26) as u8) as char);
+            i /= 26;
+        }
+        s
+    };
     // 300 lines where 100% of lines have different ANSI escape wrappers around
-    // unique content: Old lines have {48;5;233}, new lines have {48;5;234}
-    // and \x1b[38;5;238m
+    // unique substantive code content: Old lines have {48;5;233}, new lines
+    // have {48;5;234} and \x1b[38;5;238m
     let old_rows: Vec<Row> = (0..300)
         .map(|i| {
+            let t = tag(i);
             Row::Del(DelLine::new(
                 LineNum::new(i as u32 + 1).unwrap(),
                 format!(
-                    "{{48;5;233}}{{38;5;238}}  {i}  fn process_item_unique_name_{i}() {{ {i} }} {{0}}"
+                    "{{48;5;233}}{{38;5;238}}  {i}  fn process_item_unique_tag_{t}() {{ {i} }} {{0}}"
                 ),
             ))
         })
         .collect();
     let new_rows: Vec<Row> = (0..300)
         .map(|i| {
+            let t = tag(i);
             Row::Add(AddLine::new(
                 LineNum::new(i as u32 + 1).unwrap(),
                 format!(
-                    "{{48;5;234}}\x1b[38;5;239m  {i}  fn process_item_unique_name_{i}() {{ {i} }} {{0}}"
+                    "{{48;5;234}}\x1b[38;5;239m  {i}  fn process_item_unique_tag_{t}() {{ {i} }} {{0}}"
                 ),
             ))
         })
@@ -2184,7 +2194,7 @@ fn test_anchor_decomposition_with_normalized_ansi_escapes() {
     let decomposed = dp::solve_cluster_with_anchors(&cluster, rs, &Weights::default(), &mut arena);
     assert!(
         decomposed.is_some(),
-        "cluster with 300 rows and normalized ANSI anchors must decompose"
+        "cluster with 300 rows and normalized word skeleton anchors must decompose"
     );
 
     let sol = decomposed.unwrap();
