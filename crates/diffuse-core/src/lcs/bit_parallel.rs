@@ -6,6 +6,7 @@
 //! allocations.
 
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 /// Maximum sequence length supported by a single 64-bit machine word.
 pub const BIT_PARALLEL_WORD_SIZE: usize = 64;
@@ -484,6 +485,25 @@ fn bit_parallel_suffix_walk_64(
         }
     };
 
+    suffix_walk_ladder(a, b, id_ws, id_alnum, b_token_chars, dp)
+}
+
+/// Shared tie-breaking ladder walk for suffix dynamic programming.
+/// Evaluates candidates in forward document order using suffix DP lookups.
+#[inline(always)]
+pub(crate) fn suffix_walk_ladder<F>(
+    a: &[u32],
+    b: &[u32],
+    id_ws: &[bool],
+    id_alnum: &[bool],
+    b_token_chars: &[usize],
+    dp: F,
+) -> usize
+where
+    F: Fn(usize, usize) -> u32,
+{
+    let n = a.len();
+    let m = b.len();
     if dp(0, 0) == 0 {
         return 0;
     }
@@ -628,70 +648,290 @@ fn bit_parallel_suffix_walk_128(
         }
     };
 
-    if dp(0, 0) == 0 {
-        return 0;
+    suffix_walk_ladder(a, b, id_ws, id_alnum, b_token_chars, dp)
+}
+
+/// Fixed-capacity multi-word bitvector for bit-parallel LCS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BitVector<const K: usize> {
+    pub words: [u64; K],
+}
+
+impl<const K: usize> BitVector<K> {
+    pub const ZERO: Self = Self { words: [0; K] };
+
+    #[inline(always)]
+    pub fn set_bit(&mut self, i: usize) {
+        let w = i / 64;
+        let b = i % 64;
+        if w < K {
+            self.words[w] |= 1u64 << b;
+        }
     }
 
-    let mut matched = 0usize;
-    let mut i = 0;
-    let mut j = 0;
-    let mut in_add_run = false;
+    #[inline(always)]
+    pub fn step(&mut self, p: &Self) {
+        let mut carry_bit = 1u64;
+        let mut borrow = false;
+        for k in 0..K {
+            let u_k = self.words[k] | p.words[k];
+            let next_carry = self.words[k] >> 63;
+            let x_k = (self.words[k] << 1) | carry_bit;
+            carry_bit = next_carry;
 
-    while i < n && j < m {
-        if a[i] == b[j] {
-            if id_ws[a[i] as usize]
-                && in_add_run
-                && !(i + 1 < n && j + 1 < m && a[i + 1] == b[j + 1] && !id_ws[a[i + 1] as usize])
-            {
-                j += 1;
-                continue;
+            let (diff1, b1) = u_k.overflowing_sub(x_k);
+            let (diff2, b2) = diff1.overflowing_sub(borrow as u64);
+            borrow = b1 || b2;
+
+            self.words[k] = u_k & !diff2;
+        }
+    }
+
+    #[inline(always)]
+    pub fn count_ones_prefix(&self, len: usize) -> u32 {
+        let full_words = len / 64;
+        let rem_bits = len % 64;
+        let mut total = 0u32;
+        for k in 0..full_words.min(K) {
+            total += self.words[k].count_ones();
+        }
+        if rem_bits > 0 && full_words < K {
+            let mask = (1u64 << rem_bits) - 1;
+            total += (self.words[full_words] & mask).count_ones();
+        }
+        total
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn bit_parallel_suffix_walk_fixed_inner<const K: usize>(
+    a: &[u32],
+    b: &[u32],
+    id_ws: &[bool],
+    id_alnum: &[bool],
+    b_token_chars: &[usize],
+    p_keys: &[u32],
+    p_masks: &[BitVector<K>],
+    overflow_map: Option<&FxHashMap<u32, BitVector<K>>>,
+    v_history: &mut [BitVector<K>],
+) -> usize {
+    let n = a.len();
+    let m = b.len();
+
+    let mut v = BitVector::<K>::ZERO;
+    if let Some(map) = overflow_map {
+        for (idx, &bj) in b.iter().rev().enumerate() {
+            if let Some(p_mask) = map.get(&bj) {
+                v.step(p_mask);
             }
-            if in_add_run
-                && dp(i, j + 1) == dp(i, j)
-                && (j + 1..m).any(|k| b[k] == a[i] && dp(i + 1, k + 1) + 1 == dp(i, j))
-            {
-                j += 1;
-                continue;
-            }
-            matched += b_token_chars[j];
-            i += 1;
-            j += 1;
-            in_add_run = false;
-        } else {
-            let down = dp(i + 1, j);
-            let right = dp(i, j + 1);
-            if down > right {
-                i += 1;
-            } else if down < right {
-                j += 1;
-                in_add_run = true;
-            } else if id_ws[a[i] as usize] && !id_ws[b[j] as usize] {
-                if i + 1 < n && a[i + 1] == b[j] {
-                    i += 1;
-                } else {
-                    j += 1;
-                    in_add_run = true;
+            v_history[idx] = v;
+        }
+    } else {
+        for (idx, &bj) in b.iter().rev().enumerate() {
+            for k in 0..p_keys.len() {
+                if p_keys[k] == bj {
+                    v.step(&p_masks[k]);
+                    break;
                 }
-            } else if id_ws[b[j] as usize] && !id_ws[a[i] as usize] {
-                j += 1;
-                in_add_run = true;
-            } else if !b[j + 1..].contains(&a[i])
-                || (!id_alnum[a[i] as usize] && id_alnum[b[j] as usize])
-            {
-                i += 1;
-            } else {
-                j += 1;
-                in_add_run = true;
+            }
+            v_history[idx] = v;
+        }
+    }
+
+    let dp = |i: usize, j: usize| -> u32 {
+        let rem_a = n - i;
+        let rem_b = m - j;
+        if rem_a == 0 || rem_b == 0 {
+            0
+        } else {
+            v_history[rem_b - 1].count_ones_prefix(rem_a)
+        }
+    };
+
+    suffix_walk_ladder(a, b, id_ws, id_alnum, b_token_chars, dp)
+}
+
+fn bit_parallel_suffix_matched_chars_fixed<const K: usize>(
+    a: &[u32],
+    b: &[u32],
+    id_ws: &[bool],
+    id_alnum: &[bool],
+    b_token_chars: &[usize],
+) -> usize {
+    let n = a.len();
+    let m = b.len();
+    if n == 0 || m == 0 {
+        return 0;
+    }
+    debug_assert!(n <= K * 64);
+
+    let mut p_keys = [0u32; 64];
+    let mut p_masks = [BitVector::<K>::ZERO; 64];
+    let mut p_len = 0;
+    let mut overflow_map: Option<FxHashMap<u32, BitVector<K>>> = None;
+
+    for (i, &ai) in a.iter().rev().enumerate() {
+        if let Some(ref mut map) = overflow_map {
+            map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
+        } else {
+            let mut found = false;
+            for k in 0..p_len {
+                if p_keys[k] == ai {
+                    p_masks[k].set_bit(i);
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                if p_len < 64 {
+                    p_keys[p_len] = ai;
+                    p_masks[p_len].set_bit(i);
+                    p_len += 1;
+                } else {
+                    let mut map = FxHashMap::default();
+                    for k in 0..p_len {
+                        map.insert(p_keys[k], p_masks[k]);
+                    }
+                    map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
+                    overflow_map = Some(map);
+                }
             }
         }
     }
 
-    matched
+    if m <= 128 {
+        let mut v_history = [BitVector::<K>::ZERO; 128];
+        bit_parallel_suffix_walk_fixed_inner(
+            a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+            &p_keys[..p_len],
+            &p_masks[..p_len],
+            overflow_map.as_ref(),
+            &mut v_history[..m],
+        )
+    } else {
+        let mut v_history = vec![BitVector::<K>::ZERO; m];
+        bit_parallel_suffix_walk_fixed_inner(
+            a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+            &p_keys[..p_len],
+            &p_masks[..p_len],
+            overflow_map.as_ref(),
+            &mut v_history,
+        )
+    }
+}
+
+fn bit_parallel_suffix_matched_chars_dyn(
+    a: &[u32],
+    b: &[u32],
+    id_ws: &[bool],
+    id_alnum: &[bool],
+    b_token_chars: &[usize],
+) -> usize {
+    let n = a.len();
+    let m = b.len();
+    if n == 0 || m == 0 {
+        return 0;
+    }
+    let k_words = n.div_ceil(64);
+
+    let mut p_keys: SmallVec<[u32; 64]> = SmallVec::new();
+    let mut p_masks: Vec<u64> = Vec::new();
+    let mut overflow_map: Option<FxHashMap<u32, usize>> = None;
+
+    for (i, &ai) in a.iter().rev().enumerate() {
+        let word_idx = i / 64;
+        let bit = 1u64 << (i % 64);
+        if let Some(ref map) = overflow_map {
+            if let Some(&idx) = map.get(&ai) {
+                p_masks[idx * k_words + word_idx] |= bit;
+            }
+        } else if let Some(idx) = p_keys.iter().position(|&k| k == ai) {
+            p_masks[idx * k_words + word_idx] |= bit;
+        } else if p_keys.len() < 64 {
+            let idx = p_keys.len();
+            p_keys.push(ai);
+            p_masks.resize((idx + 1) * k_words, 0);
+            p_masks[idx * k_words + word_idx] |= bit;
+        } else {
+            let mut map = FxHashMap::default();
+            for (idx, &k) in p_keys.iter().enumerate() {
+                map.insert(k, idx);
+            }
+            let idx = p_keys.len();
+            p_keys.push(ai);
+            map.insert(ai, idx);
+            p_masks.resize((idx + 1) * k_words, 0);
+            p_masks[idx * k_words + word_idx] |= bit;
+            overflow_map = Some(map);
+        }
+    }
+
+    let mut v = vec![0u64; k_words];
+    let mut v_history = vec![0u64; m * k_words];
+
+    for (idx, &bj) in b.iter().rev().enumerate() {
+        let mask_idx = if let Some(ref map) = overflow_map {
+            map.get(&bj).copied()
+        } else {
+            p_keys.iter().position(|&k| k == bj)
+        };
+
+        if let Some(m_idx) = mask_idx {
+            let p_mask = &p_masks[m_idx * k_words..(m_idx + 1) * k_words];
+            let mut carry_bit = 1u64;
+            let mut borrow = false;
+            for k in 0..k_words {
+                let u_k = v[k] | p_mask[k];
+                let next_carry = v[k] >> 63;
+                let x_k = (v[k] << 1) | carry_bit;
+                carry_bit = next_carry;
+
+                let (diff1, b1) = u_k.overflowing_sub(x_k);
+                let (diff2, b2) = diff1.overflowing_sub(borrow as u64);
+                borrow = b1 || b2;
+
+                v[k] = u_k & !diff2;
+            }
+        }
+        let hist_offset = idx * k_words;
+        v_history[hist_offset..hist_offset + k_words].copy_from_slice(&v);
+    }
+
+    let dp = |i: usize, j: usize| -> u32 {
+        let rem_a = n - i;
+        let rem_b = m - j;
+        if rem_a == 0 || rem_b == 0 {
+            0
+        } else {
+            let row = &v_history[(rem_b - 1) * k_words..rem_b * k_words];
+            let full_words = rem_a / 64;
+            let rem_bits = rem_a % 64;
+            let mut total = 0u32;
+            for &word in &row[..full_words] {
+                total += word.count_ones();
+            }
+            if rem_bits > 0 && full_words < k_words {
+                let mask = (1u64 << rem_bits) - 1;
+                total += (row[full_words] & mask).count_ones();
+            }
+            total
+        }
+    };
+
+    suffix_walk_ladder(a, b, id_ws, id_alnum, b_token_chars, dp)
 }
 
 /// Bit-parallel suffix LCS scorer with automatic word-size selection.
-/// Evaluates sequences where $|a| \le 128$ at register speed with exact
-/// tie-breaking.
+/// Evaluates sequences of arbitrary length at word-level parallel speed
+/// with exact tie-breaking.
 #[inline]
 pub fn bit_parallel_suffix_matched_chars(
     a: &[u32],
@@ -700,7 +940,8 @@ pub fn bit_parallel_suffix_matched_chars(
     id_alnum: &[bool],
     b_token_chars: &[usize],
 ) -> Option<usize> {
-    if a.len() <= 64 {
+    let n = a.len();
+    if n <= 64 {
         Some(bit_parallel_suffix_matched_chars_64(
             a,
             b,
@@ -708,8 +949,40 @@ pub fn bit_parallel_suffix_matched_chars(
             id_alnum,
             b_token_chars,
         ))
-    } else if a.len() <= 128 {
-        Some(bit_parallel_suffix_matched_chars_128(
+    } else if n <= 128 {
+        Some(bit_parallel_suffix_matched_chars_fixed::<2>(
+            a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+        ))
+    } else if n <= 256 {
+        Some(bit_parallel_suffix_matched_chars_fixed::<4>(
+            a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+        ))
+    } else if n <= 512 {
+        Some(bit_parallel_suffix_matched_chars_fixed::<8>(
+            a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+        ))
+    } else if n <= 1024 {
+        Some(bit_parallel_suffix_matched_chars_fixed::<16>(
+            a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+        ))
+    } else if n <= 2048 {
+        Some(bit_parallel_suffix_matched_chars_fixed::<32>(
             a,
             b,
             id_ws,
@@ -717,7 +990,13 @@ pub fn bit_parallel_suffix_matched_chars(
             b_token_chars,
         ))
     } else {
-        None
+        Some(bit_parallel_suffix_matched_chars_dyn(
+            a,
+            b,
+            id_ws,
+            id_alnum,
+            b_token_chars,
+        ))
     }
 }
 
@@ -1030,6 +1309,47 @@ mod tests {
                 bp, sc,
                 "Suffix 128 mismatch! bp={bp}, sc={sc}\na={a:?}\nb={b:?}"
             );
+        }
+    }
+
+    #[test]
+    fn test_suffix_matched_chars_above_128() {
+        let mut ws = vec![false; 64];
+        let mut alnum = vec![false; 64];
+        let mut token_lens = vec![1usize; 64];
+        ws[0..4].fill(true);
+        alnum[4..30].fill(true);
+        for i in 0..64 {
+            token_lens[i] = if ws[i] { 1 } else { (i % 7) + 1 };
+        }
+
+        let mut seed = 0x1234_5678_9abc_def0_u64;
+        let mut rng = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+
+        for len_a in [150, 250, 350, 600, 1200] {
+            let len_b = len_a + 50;
+            let mut a = Vec::with_capacity(len_a);
+            let mut b = Vec::with_capacity(len_b);
+            let mut b_chars = Vec::with_capacity(len_b);
+
+            for _ in 0..len_a {
+                a.push((rng() % 40) as u32);
+            }
+            for _ in 0..len_b {
+                let id = (rng() % 40) as u32;
+                b.push(id);
+                b_chars.push(token_lens[id as usize]);
+            }
+
+            let bp = bit_parallel_suffix_matched_chars(&a, &b, &ws, &alnum, &b_chars);
+            assert!(bp.is_some(), "Expected Some for len_a = {len_a}");
+            let sc = scalar_suffix_matched_chars_ref(&a, &b, &ws, &alnum, &b_chars);
+            assert_eq!(bp.unwrap(), sc, "Mismatch for len_a = {len_a}");
         }
     }
 }
