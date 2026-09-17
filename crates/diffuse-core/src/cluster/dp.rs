@@ -1309,6 +1309,9 @@ pub(crate) struct DpScratchArena {
     precomputed_lcs: SkylineMatrix<u32>,
     lcs_candidates: Vec<(usize, usize)>,
     lcs_scores: Vec<u32>,
+    pub(crate) anchor_token_ids: Vec<u32>,
+    pub(crate) old_anchor_ranges: Vec<(usize, usize, usize)>,
+    pub(crate) new_anchor_ranges: Vec<(usize, usize, usize)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -1367,6 +1370,9 @@ impl DpScratchArena {
         self.new_row_token_starts.clear();
         self.lcs_candidates.clear();
         self.lcs_scores.clear();
+        self.anchor_token_ids.clear();
+        self.old_anchor_ranges.clear();
+        self.new_anchor_ranges.clear();
     }
 }
 
@@ -1435,19 +1441,38 @@ pub(crate) fn solve_cluster_with_arena(
     solve_cluster_matrix(cluster, profile, w, arena)
 }
 
-/// Extracts a normalized sequence of substantive content words from a line,
-/// ignoring punctuation, delimiters, numeric literals, and escape sequences.
-fn word_skeleton(text: &str) -> String {
-    let mut skeleton = String::new();
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AnchorTokenSlice<'a> {
+    ids: &'a [u32],
+    total_chars: usize,
+}
+
+impl std::hash::Hash for AnchorTokenSlice<'_> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ids.hash(state);
+    }
+}
+
+/// Extracts substantive word tokens from a line, interning each token and
+/// appending its ID into `anchor_ids`. Returns `(start_idx, end_idx,
+/// total_chars)`.
+#[inline]
+fn extract_anchor_tokens(
+    text: &str,
+    interner: &mut TokenInterner,
+    anchor_ids: &mut Vec<u32>,
+) -> (usize, usize, usize) {
+    let start = anchor_ids.len();
+    let mut total_chars = 0;
     crate::lcs::for_each_token(text, |t| {
         if t.len() >= 2 && t.chars().all(|c| c.is_alphabetic()) {
-            if !skeleton.is_empty() {
-                skeleton.push(' ');
-            }
-            skeleton.push_str(t);
+            let id = interner.intern(t);
+            anchor_ids.push(id);
+            total_chars += crate::lcs::char_len(t);
         }
     });
-    skeleton
+    let end = anchor_ids.len();
+    (start, end, total_chars)
 }
 
 /// Attempts to solve a large cluster by decomposing it along unique matching
@@ -1494,10 +1519,43 @@ pub(crate) fn solve_cluster_with_anchors(
     let mut anchors = filter_anchors(raw_anchors);
 
     if anchors.is_empty() {
-        let old_skeletons: Vec<String> = old_trimmed.iter().map(|s| word_skeleton(s)).collect();
-        let new_skeletons: Vec<String> = new_trimmed.iter().map(|s| word_skeleton(s)).collect();
+        arena.anchor_token_ids.clear();
+        arena.old_anchor_ranges.clear();
+        arena.new_anchor_ranges.clear();
+        arena.interner.clear();
+
+        for row in &cluster.old_rows {
+            let range =
+                extract_anchor_tokens(row.text(), &mut arena.interner, &mut arena.anchor_token_ids);
+            arena.old_anchor_ranges.push(range);
+        }
+
+        for row in &cluster.new_rows {
+            let range =
+                extract_anchor_tokens(row.text(), &mut arena.interner, &mut arena.anchor_token_ids);
+            arena.new_anchor_ranges.push(range);
+        }
+
+        let ids = arena.anchor_token_ids.as_slice();
+        let old_slices: Vec<AnchorTokenSlice> = arena
+            .old_anchor_ranges
+            .iter()
+            .map(|&(start, end, total_chars)| AnchorTokenSlice {
+                ids: &ids[start..end],
+                total_chars,
+            })
+            .collect();
+        let new_slices: Vec<AnchorTokenSlice> = arena
+            .new_anchor_ranges
+            .iter()
+            .map(|&(start, end, total_chars)| AnchorTokenSlice {
+                ids: &ids[start..end],
+                total_chars,
+            })
+            .collect();
+
         let raw_skeleton_anchors =
-            crate::algo::find_unique_anchors(&old_skeletons, &new_skeletons, |s| s.len() >= 16);
+            crate::algo::find_unique_anchors(&old_slices, &new_slices, |ts| ts.total_chars >= 16);
         anchors = filter_anchors(raw_skeleton_anchors);
     }
 
