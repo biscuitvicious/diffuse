@@ -392,6 +392,31 @@ pub(crate) fn mod_pair_needs_scoring(
     if !could_be_valid_mod {
         return false;
     }
+    let max_syn = if is_property_match {
+        w.head_agree_bonus + 200.0
+    } else if statement_head_match {
+        w.head_agree_bonus
+    } else {
+        0.0
+    };
+    let syn = if is_prefix_containment {
+        max_syn + w.head_agree_bonus
+    } else {
+        max_syn
+    };
+    let max_close = if om.close_dist == 1 && nm.close_dist == 1 {
+        w.delta
+    } else {
+        w.epsilon
+    };
+    let max_possible_delta =
+        w.alpha * max_matched as f64 - w.gamma * (total - max_matched) as f64 - w.beta
+            + syn
+            + max_close
+            + w.epsilon;
+    if max_possible_delta <= -2.0 * w.beta {
+        return false;
+    }
     // Pairs the fill loop scores inline without LCS (identical token
     // streams, or nothing to align) need no precomputation.
     ot.ids != nt.ids && token_overlap && char_bound > 0
@@ -403,7 +428,7 @@ fn score_lcs_pair(
     ot: &DpTokens,
     nt: &DpTokens,
     interner: &TokenInterner,
-    scratch: &mut Vec<u32>,
+    scratch: &mut Vec<u64>,
 ) -> usize {
     lcs_matched_chars_ids(
         &ot.ids,
@@ -450,7 +475,7 @@ pub(crate) fn score_lcs_candidates_seq(
 ) {
     scores_out.clear();
     scores_out.reserve(candidates.len());
-    let mut scratch = Vec::new();
+    let mut scratch: Vec<u64> = Vec::new();
     for &(i, j) in candidates {
         let score = score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, &mut scratch) as u32;
         scores_out.push(score);
@@ -467,7 +492,7 @@ pub(crate) fn score_lcs_candidates_par(
     scores_out.clear();
     candidates
         .par_iter()
-        .map_init(Vec::new, |scratch, &(i, j)| {
+        .map_init(Vec::<u64>::new, |scratch, &(i, j)| {
             score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, scratch) as u32
         })
         .collect_into_vec(scores_out);
@@ -953,7 +978,7 @@ fn block_lcs_fast_precomputed(
     min_block_line_coverage: f64,
     id_ws: &[bool],
     id_alnum: &[bool],
-    _lcs_scratch: &mut Vec<u32>,
+    _lcs_scratch: &mut Vec<u64>,
 ) -> (usize, usize, usize) {
     let n = old_ids.len();
     let m = block_ids.len();
@@ -1168,7 +1193,7 @@ pub(crate) struct DpScratchArena {
     pub(crate) new_row_token_starts: Vec<usize>,
     pub(crate) old_valid_blocks: Vec<RowValidBlocks>,
     pub(crate) new_valid_blocks: Vec<RowValidBlocks>,
-    pub(crate) lcs_scratch: Vec<u32>,
+    pub(crate) lcs_scratch: Vec<u64>,
     grid: SkylineMatrix<Cell>,
     precomputed_lcs: SkylineMatrix<u32>,
     lcs_candidates: Vec<(usize, usize)>,
@@ -1676,7 +1701,7 @@ pub(crate) fn solve_cluster_with_arena(
     lcs_candidates.clear();
     for i in 0..m {
         for j in grid.row_range(i) {
-            if j >= n {
+            if j >= n || !grid.is_in_envelope(i + 1, j + 1) {
                 continue;
             }
             if mod_pair_needs_scoring(

@@ -1063,7 +1063,7 @@ pub fn lcs_matched_chars_ids(
     id_ws: &[bool],
     id_alnum: &[bool],
     b_token_chars: &[usize],
-    scratch: &mut Vec<u32>,
+    scratch: &mut Vec<u64>,
 ) -> usize {
     let n = a.len();
     let m = b.len();
@@ -1081,108 +1081,14 @@ pub fn lcs_matched_chars_ids(
         }
         return total;
     }
-    if let Some(matched) =
-        bit_parallel::bit_parallel_suffix_matched_chars(a, b, id_ws, id_alnum, b_token_chars)
-    {
-        return matched;
-    }
-    let stride = m + 1;
-    let total_len = (n + 1) * stride;
-    if scratch.len() < total_len {
-        scratch.resize(total_len, 0);
-    }
-    let dp_ptr = scratch.as_mut_ptr();
-    unsafe {
-        let mut next_row_ptr = dp_ptr.add(n * stride);
-        for col in 0..=m {
-            *next_row_ptr.add(col) = 0;
-        }
-        let mut i = n;
-        while i > 0 {
-            i -= 1;
-            let curr_row_ptr = dp_ptr.add(i * stride);
-            *curr_row_ptr.add(m) = 0;
-            let ai = *a.get_unchecked(i);
-            let mut j = m;
-            let mut right = 0;
-            while j > 0 {
-                j -= 1;
-                let bj = *b.get_unchecked(j);
-                let val = if ai == bj {
-                    *next_row_ptr.add(j + 1) + 1
-                } else {
-                    let down = *next_row_ptr.add(j);
-                    down.max(right)
-                };
-                *curr_row_ptr.add(j) = val;
-                right = val;
-            }
-            next_row_ptr = curr_row_ptr;
-        }
-    }
-    let dp = &mut scratch[..total_len];
-    if dp[0] == 0 {
-        return 0;
-    }
-    let mut matched = 0usize;
-    let mut i = 0;
-    let mut j = 0;
-    let mut in_add_run = false;
-    let mut row_curr = 0;
-    let mut row_next = stride;
-    while i < n && j < m {
-        if a[i] == b[j] {
-            if id_ws[a[i] as usize]
-                && in_add_run
-                && !(i + 1 < n && j + 1 < m && a[i + 1] == b[j + 1] && !id_ws[a[i + 1] as usize])
-            {
-                j += 1;
-                continue;
-            }
-            if in_add_run
-                && dp[row_curr + j + 1] == dp[row_curr + j]
-                && (j + 1..m).any(|k| b[k] == a[i] && dp[row_next + k + 1] + 1 == dp[row_curr + j])
-            {
-                j += 1;
-                continue;
-            }
-            matched += b_token_chars[j];
-            i += 1;
-            j += 1;
-            row_curr += stride;
-            row_next += stride;
-            in_add_run = false;
-        } else if dp[row_next + j] > dp[row_curr + j + 1] {
-            i += 1;
-            row_curr += stride;
-            row_next += stride;
-        } else if dp[row_next + j] < dp[row_curr + j + 1] {
-            j += 1;
-            in_add_run = true;
-        } else if id_ws[a[i] as usize] && !id_ws[b[j] as usize] {
-            if i + 1 < n && a[i + 1] == b[j] {
-                i += 1;
-                row_curr += stride;
-                row_next += stride;
-            } else {
-                j += 1;
-                in_add_run = true;
-            }
-        } else if id_ws[b[j] as usize] && !id_ws[a[i] as usize] {
-            j += 1;
-            in_add_run = true;
-        } else if !b[j + 1..].contains(&a[i])
-            || (!id_alnum[a[i] as usize] && id_alnum[b[j] as usize])
-        {
-            i += 1;
-            row_curr += stride;
-            row_next += stride;
-        } else {
-            j += 1;
-            in_add_run = true;
-        }
-    }
-    matched
+    bit_parallel::bit_parallel_suffix_matched_chars_scratch(
+        a,
+        b,
+        id_ws,
+        id_alnum,
+        b_token_chars,
+        scratch,
+    )
 }
 
 /// Char-offset spans of the UNMATCHED (changed) tokens in `toks`.

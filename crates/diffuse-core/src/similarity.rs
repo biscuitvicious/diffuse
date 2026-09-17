@@ -201,7 +201,7 @@ pub fn sim_window(
     nt_trimmed: &str,
     ws: &[bool],
     alnum: &[bool],
-    scratch: &mut Vec<u32>,
+    scratch: &mut Vec<u64>,
 ) -> f64 {
     if ot.tokens.is_empty() || nt_ids.is_empty() {
         return if ot.trimmed == nt_trimmed { 1.0 } else { 0.0 };
