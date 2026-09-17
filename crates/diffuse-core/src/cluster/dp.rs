@@ -46,12 +46,13 @@
 use std::collections::{HashMap, HashSet};
 
 use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 use crate::{
     algo::skyline::{AdaptiveEnvelopeBuilder, SkylineMatrix},
-    lcs::{lcs_matched_chars_ids, lcs_pairs_ids},
+    lcs::{bit_parallel::BitVector, lcs_matched_chars_ids, lcs_pairs_ids},
     parse::Row,
     similarity::TokenInterner,
     syntax::{
@@ -691,8 +692,8 @@ fn precompute_valid_blocks(
     }
 }
 
-#[expect(clippy::too_many_arguments)]
-fn block_lcs_fast_precomputed(
+#[allow(clippy::too_many_arguments)]
+fn block_lcs_fast_fixed_walk<const K: usize>(
     old_ids: &[u32],
     block_ids: &[u32],
     block_coords: &[(u8, u8)],
@@ -702,51 +703,48 @@ fn block_lcs_fast_precomputed(
     min_block_line_coverage: f64,
     id_ws: &[bool],
     id_alnum: &[bool],
-    lcs_scratch: &mut Vec<u32>,
+    p_keys: &[u32],
+    p_masks: &[BitVector<K>],
+    overflow_map: Option<&FxHashMap<u32, BitVector<K>>>,
+    v_history: &mut [BitVector<K>],
 ) -> (usize, usize, usize) {
     let n = old_ids.len();
     let m = block_ids.len();
-    if n == 0 || m == 0 || n * m > 40_000 {
-        return (0, 0, 0);
-    }
-    let stride = m + 1;
-    let total_len = (n + 1) * stride;
-    if lcs_scratch.len() < total_len {
-        lcs_scratch.resize(total_len, 0);
-    }
-    let dp_ptr = lcs_scratch.as_mut_ptr();
-    unsafe {
-        let mut next_row_ptr = dp_ptr.add(n * stride);
-        for col in 0..=m {
-            *next_row_ptr.add(col) = 0;
-        }
-        let mut i = n;
-        while i > 0 {
-            i -= 1;
-            let curr_row_ptr = dp_ptr.add(i * stride);
-            *curr_row_ptr.add(m) = 0;
-            let ai = *old_ids.get_unchecked(i);
-            let mut j = m;
-            let mut right = 0;
-            while j > 0 {
-                j -= 1;
-                let bj = *block_ids.get_unchecked(j);
-                let val = if ai == bj {
-                    *next_row_ptr.add(j + 1) + 1
-                } else {
-                    let down = *next_row_ptr.add(j);
-                    down.max(right)
-                };
-                *curr_row_ptr.add(j) = val;
-                right = val;
+
+    let mut v = BitVector::<K>::ZERO;
+    if let Some(map) = overflow_map {
+        for (idx, &bj) in block_ids.iter().rev().enumerate() {
+            if let Some(p_mask) = map.get(&bj) {
+                v.step(p_mask);
             }
-            next_row_ptr = curr_row_ptr;
+            v_history[idx] = v;
+        }
+    } else {
+        for (idx, &bj) in block_ids.iter().rev().enumerate() {
+            for idx_k in 0..p_keys.len() {
+                if p_keys[idx_k] == bj {
+                    v.step(&p_masks[idx_k]);
+                    break;
+                }
+            }
+            v_history[idx] = v;
         }
     }
-    let dp = &mut lcs_scratch[..total_len];
-    if dp[0] == 0 {
+
+    let dp = |i: usize, j: usize| -> u32 {
+        let rem_a = n - i;
+        let rem_b = m - j;
+        if rem_a == 0 || rem_b == 0 {
+            0
+        } else {
+            v_history[rem_b - 1].count_ones_prefix(rem_a)
+        }
+    };
+
+    if dp(0, 0) == 0 {
         return (0, 0, 0);
     }
+
     let mut matched = 0usize;
     let mut line_matched_counts = [0usize; MAX_BLOCK_K + 1];
     let mut line_matched_alnum = [0usize; MAX_BLOCK_K + 1];
@@ -775,11 +773,9 @@ fn block_lcs_fast_precomputed(
                 continue;
             }
             if in_add_run
-                && dp[i * stride + j + 1] == dp[i * stride + j]
-                && (j + 1..m).any(|k| {
-                    block_ids[k] == old_ids[i]
-                        && dp[(i + 1) * stride + k + 1] + 1 == dp[i * stride + j]
-                })
+                && dp(i, j + 1) == dp(i, j)
+                && (j + 1..m)
+                    .any(|k| block_ids[k] == old_ids[i] && dp(i + 1, k + 1) + 1 == dp(i, j))
             {
                 j += 1;
                 continue;
@@ -799,9 +795,9 @@ fn block_lcs_fast_precomputed(
             i += 1;
             j += 1;
             in_add_run = false;
-        } else if dp[(i + 1) * stride + j] > dp[i * stride + j + 1] {
+        } else if dp(i + 1, j) > dp(i, j + 1) {
             i += 1;
-        } else if dp[(i + 1) * stride + j] < dp[i * stride + j + 1] {
+        } else if dp(i + 1, j) < dp(i, j + 1) {
             j += 1;
             in_add_run = true;
         } else if id_ws[old_ids[i] as usize] && !id_ws[block_ids[j] as usize] {
@@ -814,7 +810,7 @@ fn block_lcs_fast_precomputed(
         } else if id_ws[block_ids[j] as usize] && !id_ws[old_ids[i] as usize] {
             j += 1;
             in_add_run = true;
-        } else if !block_ids[j + 1..].iter().any(|t| *t == old_ids[i])
+        } else if !block_ids[j + 1..].contains(&old_ids[i])
             || (!id_alnum[old_ids[i] as usize] && id_alnum[block_ids[j] as usize])
         {
             i += 1;
@@ -854,6 +850,191 @@ fn block_lcs_fast_precomputed(
         most
     };
     (matched, moved_lines, anchor)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn block_lcs_fast_fixed<const K: usize>(
+    old_ids: &[u32],
+    block_ids: &[u32],
+    block_coords: &[(u8, u8)],
+    block_token_chars: &[usize],
+    start_row: usize,
+    k: usize,
+    min_block_line_coverage: f64,
+    id_ws: &[bool],
+    id_alnum: &[bool],
+) -> (usize, usize, usize) {
+    let n = old_ids.len();
+    let m = block_ids.len();
+    if n == 0 || m == 0 {
+        return (0, 0, 0);
+    }
+    debug_assert!(n <= K * 64);
+
+    let mut p_keys = [0u32; 64];
+    let mut p_masks = [BitVector::<K>::ZERO; 64];
+    let mut p_len = 0;
+    let mut overflow_map: Option<FxHashMap<u32, BitVector<K>>> = None;
+
+    for (i, &ai) in old_ids.iter().rev().enumerate() {
+        if let Some(ref mut map) = overflow_map {
+            map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
+        } else {
+            let mut found = false;
+            for idx in 0..p_len {
+                if p_keys[idx] == ai {
+                    p_masks[idx].set_bit(i);
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                if p_len < 64 {
+                    p_keys[p_len] = ai;
+                    p_masks[p_len].set_bit(i);
+                    p_len += 1;
+                } else {
+                    let mut map = FxHashMap::default();
+                    for idx in 0..p_len {
+                        map.insert(p_keys[idx], p_masks[idx]);
+                    }
+                    map.entry(ai).or_insert(BitVector::ZERO).set_bit(i);
+                    overflow_map = Some(map);
+                }
+            }
+        }
+    }
+
+    if m <= 256 {
+        let mut v_history = [BitVector::<K>::ZERO; 256];
+        block_lcs_fast_fixed_walk(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+            &p_keys[..p_len],
+            &p_masks[..p_len],
+            overflow_map.as_ref(),
+            &mut v_history[..m],
+        )
+    } else {
+        let mut v_history = vec![BitVector::<K>::ZERO; m];
+        block_lcs_fast_fixed_walk(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+            &p_keys[..p_len],
+            &p_masks[..p_len],
+            overflow_map.as_ref(),
+            &mut v_history,
+        )
+    }
+}
+
+#[expect(clippy::too_many_arguments)]
+fn block_lcs_fast_precomputed(
+    old_ids: &[u32],
+    block_ids: &[u32],
+    block_coords: &[(u8, u8)],
+    block_token_chars: &[usize],
+    start_row: usize,
+    k: usize,
+    min_block_line_coverage: f64,
+    id_ws: &[bool],
+    id_alnum: &[bool],
+    _lcs_scratch: &mut Vec<u32>,
+) -> (usize, usize, usize) {
+    let n = old_ids.len();
+    let m = block_ids.len();
+    if n == 0 || m == 0 || n * m > 40_000 {
+        return (0, 0, 0);
+    }
+    if n <= 64 {
+        block_lcs_fast_fixed::<1>(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+        )
+    } else if n <= 128 {
+        block_lcs_fast_fixed::<2>(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+        )
+    } else if n <= 256 {
+        block_lcs_fast_fixed::<4>(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+        )
+    } else if n <= 512 {
+        block_lcs_fast_fixed::<8>(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+        )
+    } else if n <= 1024 {
+        block_lcs_fast_fixed::<16>(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+        )
+    } else if n <= 2048 {
+        block_lcs_fast_fixed::<32>(
+            old_ids,
+            block_ids,
+            block_coords,
+            block_token_chars,
+            start_row,
+            k,
+            min_block_line_coverage,
+            id_ws,
+            id_alnum,
+        )
+    } else {
+        (0, 0, 0)
+    }
 }
 
 fn is_reflow_candidate(text: &str) -> bool {
@@ -1847,6 +2028,9 @@ pub(crate) fn solve_cluster_with_arena(
                     }
                     let total = ot.chars.max(pblock.chars);
                     let min_chars = ot.chars.min(pblock.chars);
+                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
                     let char_bound = token_intersection_bound(
                         &ot.token_multiset,
                         &pblock.token_multiset,
@@ -1943,6 +2127,9 @@ pub(crate) fn solve_cluster_with_arena(
                     }
                     let total = new_tokens[j].chars.max(pblock.chars);
                     let min_chars = new_tokens[j].chars.min(pblock.chars);
+                    if min_chars < 8 || (min_chars as f64 / total as f64) < 0.35 {
+                        continue;
+                    }
                     let char_bound = token_intersection_bound(
                         &new_tokens[j].token_multiset,
                         &pblock.token_multiset,
