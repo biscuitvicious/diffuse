@@ -74,7 +74,7 @@ fn test_big_replace_pairing_time() {
     // Gated: past the narrow-band threshold with realistic long lines.
     let elapsed = pairing_time(1100);
     assert!(
-        elapsed < Duration::from_secs(10),
+        elapsed < Duration::from_secs(3),
         "large-hunk pairing regressed (narrow band not engaging?): {elapsed:?}"
     );
 }
@@ -82,13 +82,13 @@ fn test_big_replace_pairing_time() {
 /// Real-world-anchored stress coverage for the pairing corridor. Deliberate
 /// exception to the unit (<0.5s) and binary (<1.5s) budgets: the full
 /// 7174-line workload is the only fixture that exercises the narrow-band
-/// corridor at production scale, and its ~1.3s dev cost guards directly
+/// corridor at production scale, and its ~0.6s dev cost guards directly
 /// against minutes-scale pairing regressions.
 #[test]
 fn test_stress_full_replace_pairing_time() {
     let elapsed = pairing_time(7174);
     assert!(
-        elapsed < Duration::from_secs(60),
+        elapsed < Duration::from_secs(10),
         "full-workload pairing regressed: {elapsed:?}"
     );
 }
