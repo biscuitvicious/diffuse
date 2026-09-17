@@ -407,7 +407,7 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
         String::new()
     };
     let line = format!(
-        " {files_badge}{file_seg}{stream_txt} \x1b[38;5;240m·\x1b[0m {hunk_badge}{hunk_counts_txt}{mode_txt}{col_txt}{go_txt}"
+        " {files_badge}{stream_txt}{file_seg} \x1b[38;5;240m·\x1b[0m {hunk_badge}{hunk_counts_txt}{mode_txt}{col_txt}{go_txt}"
     );
     let vw = visible_width(&line);
     if vw <= ctx.width {
@@ -554,6 +554,23 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
             .fg(Color::Indexed(220))
             .add_modifier(Modifier::BOLD),
     ));
+    if ctx.is_streaming {
+        let dot = if ctx.streaming_dot.is_empty() {
+            "●"
+        } else {
+            ctx.streaming_dot
+        };
+        spans.push(Span::styled(
+            " · ",
+            Style::default().fg(Color::Indexed(240)),
+        ));
+        spans.push(Span::styled(
+            format!("{dot} streaming..."),
+            Style::default()
+                .fg(Color::Indexed(117))
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
     if let Some(f) = ctx.file {
         spans.push(Span::styled(
             " · ",
@@ -577,23 +594,6 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
             spans.extend(format_counts_spans(&f.counts));
             spans.push(Span::raw(")"));
         }
-    }
-    if ctx.is_streaming {
-        let dot = if ctx.streaming_dot.is_empty() {
-            "●"
-        } else {
-            ctx.streaming_dot
-        };
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
-        spans.push(Span::styled(
-            format!("{dot} streaming..."),
-            Style::default()
-                .fg(Color::Indexed(117))
-                .add_modifier(Modifier::BOLD),
-        ));
     }
     spans.push(Span::styled(
         " · ",

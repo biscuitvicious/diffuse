@@ -162,6 +162,26 @@ fn test_ratatui_header_and_status_lines() {
     assert!(status_line.to_string().contains("main.rs"));
     assert!(status_line.to_string().contains("−2 +5 ~1"));
 
+    // Streaming indicator sits between the file badge and the filename.
+    let text = status_line.to_string();
+    let badge = text.find("file 1/2").expect("must show file badge");
+    let stream = text.find("streaming...").expect("must show streaming");
+    let path = text.find("main.rs").expect("must show file path");
+    assert!(
+        badge < stream && stream < path,
+        "streaming must come after the file badge and before the filename: {text}"
+    );
+    let ansi = render_status_bar(ctx).join("\n");
+    let (a_badge, a_stream, a_path) = (
+        ansi.find("file 1/2").expect("ansi file badge"),
+        ansi.find("streaming...").expect("ansi streaming"),
+        ansi.find("main.rs").expect("ansi file path"),
+    );
+    assert!(
+        a_badge < a_stream && a_stream < a_path,
+        "ANSI streaming must come after the file badge and before the filename"
+    );
+
     // Renamed files render the stripped old -> new path in the status bar.
     let rename_ctx = StatusBarContext {
         common_prefix: Some("crates/"),
