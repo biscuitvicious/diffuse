@@ -291,3 +291,66 @@ fn test_classify_whitespace_non_ws() {
     let tokens: Vec<&str> = vec!["let"];
     classify_whitespace(&tokens, 0);
 }
+
+#[test]
+fn test_multi_token_phrase_anchors_indexed_matching() {
+    let rs = lang_profile("rs");
+    // Sequence with repeated prefix, unique core phrase, and repeated suffix
+    let a: Vec<&str> = vec![
+        "pub",
+        " ",
+        "fn",
+        " ",
+        "process_item",
+        "(",
+        "data",
+        ":",
+        " ",
+        "&",
+        "[",
+        "u8",
+        "]",
+        ")",
+        " ",
+        "->",
+        " ",
+        "Result",
+        "<",
+        "()",
+        ">",
+    ];
+    let b: Vec<&str> = vec![
+        "pub",
+        " ",
+        "async",
+        " ",
+        "fn",
+        " ",
+        "process_item",
+        "(",
+        "data",
+        ":",
+        " ",
+        "&",
+        "[",
+        "u8",
+        "]",
+        ")",
+        " ",
+        "->",
+        " ",
+        "Result",
+        "<",
+        "()",
+        ">",
+    ];
+
+    let anchors = multi_token_phrase_anchors(&a, &b, rs);
+    assert!(
+        !anchors.is_empty(),
+        "must find phrase anchors between matching signatures"
+    );
+    for &(ai, bi) in &anchors {
+        assert_eq!(a[ai], b[bi], "anchored tokens must match verbatim");
+    }
+}

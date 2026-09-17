@@ -2,6 +2,7 @@
 //! multi-token phrase landmark detection for robust alignment anchoring.
 
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::{
     lcs::{char_len, token_is_ws},
@@ -388,13 +389,28 @@ pub fn multi_token_phrase_anchors(
 
     let mut candidates = Vec::new();
 
+    // Inverted index of token occurrences in B to prune non-matching (i, j)
+    // pairs
+    let mut b_pos: FxHashMap<&str, SmallVec<[usize; 4]>> = FxHashMap::default();
+    for (j, &tok) in b.iter().enumerate() {
+        b_pos.entry(tok).or_default().push(j);
+    }
+
+    // Inverted index of token occurrences in A to fast-check phrase uniqueness
+    let mut a_pos: FxHashMap<&str, SmallVec<[usize; 4]>> = FxHashMap::default();
+    for (i, &tok) in a.iter().enumerate() {
+        a_pos.entry(tok).or_default().push(i);
+    }
+
     for i in 0..a.len() {
-        for j in 0..b.len() {
+        let tok = a[i];
+        let Some(matching_js) = b_pos.get(tok) else {
+            continue;
+        };
+
+        for &j in matching_js {
             // Only inspect left-maximal matches
             if i > 0 && j > 0 && a[i - 1] == b[j - 1] {
-                continue;
-            }
-            if a[i] != b[j] {
                 continue;
             }
 
@@ -444,18 +460,61 @@ pub fn multi_token_phrase_anchors(
             }
             let phrase_slice = &a[a_start..a_start + trimmed_len];
 
-            // Verify unique occurrence in both token slices
-            let count_a = a
-                .windows(trimmed_len)
-                .filter(|w| *w == phrase_slice)
-                .count();
+            // Verify unique occurrence in both token slices.
+            // A phrase cannot occur at any window where its least frequent
+            // token is not present.
+            let min_a_idx = (0..trimmed_len)
+                .min_by_key(|&idx| a_pos.get(phrase_slice[idx]).map_or(0, |p| p.len()))
+                .unwrap_or(0);
+            let count_a = {
+                let tok = phrase_slice[min_a_idx];
+                let positions = &a_pos[tok];
+                if positions.len() == 1 {
+                    1
+                } else {
+                    let mut c = 0;
+                    for &pos in positions {
+                        if pos >= min_a_idx && pos + trimmed_len - min_a_idx <= a.len() {
+                            let start = pos - min_a_idx;
+                            if &a[start..start + trimmed_len] == phrase_slice {
+                                c += 1;
+                                if c > 1 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    c
+                }
+            };
             if count_a != 1 {
                 continue;
             }
-            let count_b = b
-                .windows(trimmed_len)
-                .filter(|w| *w == phrase_slice)
-                .count();
+
+            let min_b_idx = (0..trimmed_len)
+                .min_by_key(|&idx| b_pos.get(phrase_slice[idx]).map_or(0, |p| p.len()))
+                .unwrap_or(0);
+            let count_b = {
+                let tok = phrase_slice[min_b_idx];
+                let positions = &b_pos[tok];
+                if positions.len() == 1 {
+                    1
+                } else {
+                    let mut c = 0;
+                    for &pos in positions {
+                        if pos >= min_b_idx && pos + trimmed_len - min_b_idx <= b.len() {
+                            let start = pos - min_b_idx;
+                            if &b[start..start + trimmed_len] == phrase_slice {
+                                c += 1;
+                                if c > 1 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    c
+                }
+            };
             if count_b != 1 {
                 continue;
             }

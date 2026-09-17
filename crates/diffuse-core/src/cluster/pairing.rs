@@ -77,6 +77,50 @@ fn guarded_dels(
     let mut new_trimmed_set: Option<FxHashSet<&str>> = None;
     let has_any_moved = h.rows.iter().any(|a| a.is_moved());
 
+    let same_hunk_add_trimmed: FxHashSet<&str> = h
+        .rows
+        .iter()
+        .filter_map(|a| match a {
+            Row::Add(_) | Row::MovTgt(_) => Some(a.text().trim()),
+            _ => None,
+        })
+        .collect();
+
+    let same_hunk_property_keys: FxHashSet<&str> = if let Some(p) = profile {
+        h.rows
+            .iter()
+            .filter_map(|a| match a {
+                Row::Add(_) | Row::MovTgt(_) => p.extract_property_key(a.text()),
+                _ => None,
+            })
+            .collect()
+    } else {
+        FxHashSet::default()
+    };
+
+    let moved_old_lines: FxHashSet<u32> = if has_any_moved {
+        h.rows
+            .iter()
+            .filter_map(|a| if a.is_moved() { a.old_line() } else { None })
+            .collect()
+    } else {
+        FxHashSet::default()
+    };
+    let moved_trimmed: FxHashSet<&str> = if has_any_moved {
+        h.rows
+            .iter()
+            .filter_map(|a| {
+                if a.is_moved() {
+                    Some(a.text().trim())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        FxHashSet::default()
+    };
+
     for (ri, r) in h.rows.iter().enumerate() {
         if !matches!(r, Row::Del(_) | Row::MovSrc(_)) {
             continue;
@@ -88,9 +132,10 @@ fn guarded_dels(
         let r_trim = r.text().trim();
         let was_moved = has_any_moved
             && !r_trim.is_empty()
-            && h.rows.iter().any(|a| {
-                a.is_moved() && (a.old_line() == r.old_line() || a.text().trim() == r_trim)
-            });
+            && (r
+                .old_line()
+                .is_some_and(|num| moved_old_lines.contains(&num))
+                || moved_trimmed.contains(r_trim));
         if was_moved {
             skip.insert(ri);
             continue;
@@ -111,19 +156,10 @@ fn guarded_dels(
                         || fn_of(old_content, r.old_line(), profile)
                             == fn_of(new_content, a.new_line(), profile))
             });
-        let has_same_hunk_add = h
-            .rows
-            .iter()
-            .any(|a| matches!(a, Row::Add(_) | Row::MovTgt(_)) && a.text().trim() == r_trim);
+        let has_same_hunk_add = same_hunk_add_trimmed.contains(r_trim);
         let has_same_hunk_property_add = profile.is_some_and(|p| {
-            if let Some(key) = p.extract_property_key(r.text()) {
-                h.rows.iter().any(|a| {
-                    matches!(a, Row::Add(_) | Row::MovTgt(_))
-                        && p.extract_property_key(a.text()) == Some(key)
-                })
-            } else {
-                false
-            }
+            p.extract_property_key(r.text())
+                .is_some_and(|key| same_hunk_property_keys.contains(key))
         });
         if !r_trim.is_empty()
             && !tail_candidate
