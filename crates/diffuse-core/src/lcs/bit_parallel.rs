@@ -974,7 +974,8 @@ mod tests {
 
         // Tokens 20..31: delimiters (remain ws=false, alnum=false by default)
 
-        // Assign character lengths to all 32 synthetic token IDs (1 for whitespace, 1..7 for others)
+        // Assign character lengths to all 32 synthetic token IDs (1 for
+        // whitespace, 1..7 for others)
         for i in 0..32 {
             token_lens[i] = if ws[i] { 1 } else { (i % 7) + 1 };
         }

@@ -114,8 +114,11 @@ fn test_partition_hunk_segments_with_syntax_barriers() {
 // (Π_old ≡ old ∧ Π_new ≡ new) — the invariant is not optional.
 
 use super::dp::{
-    DpOp, DpSolution, block_anchor, block_lcs, dp_tokens, solve_cluster, verify_projection,
+    DpOp, DpRowMeta, DpSolution, Weights, block_anchor, block_lcs, dp_tokens,
+    mod_pair_needs_scoring, score_lcs_candidates_par, score_lcs_candidates_seq, solve_cluster,
+    verify_projection,
 };
+use crate::syntax::prelude::CloseDelimiter;
 // (Row, DelLine, AddLine, LineNum already imported at the top of this file)
 
 fn del_row(n: u32, text: &str) -> Row {
@@ -1799,4 +1802,152 @@ fn test_skyline_dp_asymmetric_burst_preserves_alignment() {
         .filter(|t| matches!(t, dp::DpOp::Add))
         .count();
     assert_eq!(add_count, 40, "Expected 40 Add rows for burst insertion");
+}
+
+fn scoring_meta(trimmed_id: u32, comment: bool) -> DpRowMeta {
+    DpRowMeta {
+        trimmed_id,
+        comment,
+        kind: SyntaxSectionKind::Code,
+        first_ascii_word: None,
+        indent: 0,
+        close_dist: 99,
+        prox_close: 0.0,
+        prox_open: 0.0,
+        is_reflow: false,
+        ends_with_semi: false,
+        is_stmt_start: false,
+        property_key: None,
+        close_tail: CloseDelimiter::None,
+        exact_close: CloseDelimiter::None,
+        is_terminal_return: false,
+    }
+}
+
+struct ScoringFixture {
+    cluster: ChangeCluster<'static>,
+    old_tokens: Vec<crate::cluster::dp::DpTokens>,
+    new_tokens: Vec<crate::cluster::dp::DpTokens>,
+    old_meta: Vec<DpRowMeta>,
+    new_meta: Vec<DpRowMeta>,
+    interner: crate::similarity::TokenInterner,
+    weights: Weights,
+}
+
+fn scoring_fixture() -> ScoringFixture {
+    // Distinct vocabularies per row so cross pairs share (almost) nothing.
+    // Only (0, 0) is a genuine mod candidate.
+    let old_texts = [
+        "let alpha = 1;",
+        "zzz qqq;",
+        "",
+        "return x;",
+        "var z=3;",
+        "x1 = 1 + aaaa bbbb cccc dddd;",
+    ];
+    let new_texts = [
+        "let alpha = 2;",
+        "aaa bbb;",
+        "",
+        "return x;",
+        "var z = 3;",
+        "x1 = 2 + eeee ffff gggg hhhh;",
+    ];
+    let mut interner = crate::similarity::TokenInterner::new();
+    let old_tokens: Vec<_> = old_texts
+        .iter()
+        .map(|t| dp_tokens(&mut interner, t))
+        .collect();
+    let new_tokens: Vec<_> = new_texts
+        .iter()
+        .map(|t| dp_tokens(&mut interner, t))
+        .collect();
+    // Trimmed ids: shared only by the verbatim pair (3, 3); distinct
+    // everywhere else, including the whitespace-only-different pair (4, 4).
+    let mut tids = [0u32; 12];
+    for (k, t) in old_texts.iter().chain(new_texts.iter()).enumerate() {
+        tids[k] = interner.intern(t.trim());
+    }
+    tids[3] = tids[9];
+    tids[10] = tids[10].wrapping_add(1_000_000);
+    let old_meta: Vec<_> = (0..6).map(|i| scoring_meta(tids[i], i == 1)).collect();
+    let new_meta: Vec<_> = (0..6).map(|i| scoring_meta(tids[6 + i], false)).collect();
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows: old_texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                Row::Del(DelLine::new(
+                    LineNum::new(i as u32 + 1).unwrap(),
+                    (*t).to_string(),
+                ))
+            })
+            .collect(),
+        new_rows: new_texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                Row::Add(AddLine::new(
+                    LineNum::new(i as u32 + 1).unwrap(),
+                    (*t).to_string(),
+                ))
+            })
+            .collect(),
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+    ScoringFixture {
+        cluster,
+        old_tokens,
+        new_tokens,
+        old_meta,
+        new_meta,
+        interner,
+        weights: Weights::default(),
+    }
+}
+
+fn collect_all(fx: &ScoringFixture) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for i in 0..6 {
+        for j in 0..6 {
+            if mod_pair_needs_scoring(
+                i,
+                j,
+                &fx.cluster,
+                &fx.old_tokens,
+                &fx.new_tokens,
+                &fx.old_meta,
+                &fx.new_meta,
+                &fx.interner,
+                None,
+                &fx.weights,
+            ) {
+                out.push((i, j));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn mod_pair_candidate_count() {
+    // Only the genuinely similar pair survives every guard arm:
+    // (1,*) fall on comment mismatch, (2,2) is blank-skipped,
+    // (3,3) takes the verbatim Mov path, (4,4) has identical token
+    // streams, (5,5) fails the similarity ratio, and everything else
+    // shares no tokens at zero indent.
+    assert_eq!(collect_all(&scoring_fixture()), vec![(0, 0)]);
+}
+
+#[test]
+fn test_parallel_scoring_matches_sequential() {
+    let fx = scoring_fixture();
+    let candidates = collect_all(&fx);
+    assert!(!candidates.is_empty());
+    let seq = score_lcs_candidates_seq(&candidates, &fx.old_tokens, &fx.new_tokens, &fx.interner);
+    let par = score_lcs_candidates_par(&candidates, &fx.old_tokens, &fx.new_tokens, &fx.interner);
+    assert_eq!(seq, par, "parallel scoring must match sequential exactly");
+    assert_eq!(seq.len(), candidates.len());
 }

@@ -45,6 +45,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rayon::prelude::*;
 use smallvec::SmallVec;
 
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
@@ -268,6 +269,201 @@ fn token_intersection_bound(a: &[(u32, u16)], b: &[(u32, u16)], char_lens: &[u32
         }
     }
     bound
+}
+
+/// Strip trailing delimiters for prefix-containment checks, shared by the
+/// fill loop and the parallel candidate pre-pass below.
+fn trim_trailing_delims<'a>(t: &'a str, profile: Option<&LangProfile>) -> &'a str {
+    if let Some(p) = profile {
+        p.trim_trailing_delimiters(t)
+    } else {
+        t.trim_end_matches(|c: char| {
+            c.is_whitespace() || matches!(c, '{' | '}' | ';' | ':' | ',' | ')' | ']')
+        })
+    }
+}
+
+/// Whether `longer` starts with `shorter` at a token boundary, shared by
+/// the fill loop and the parallel candidate pre-pass below.
+fn is_prefix_at_boundary(longer: &str, shorter: &str) -> bool {
+    if let Some(rest) = longer.strip_prefix(shorter) {
+        rest.is_empty()
+            || shorter.ends_with(|c: char| !c.is_alphanumeric() && c != '_')
+            || rest.starts_with(|c: char| c.is_whitespace() || (!c.is_alphanumeric() && c != '_'))
+    } else {
+        false
+    }
+}
+
+/// Minimum candidate count for parallel subline scoring. Below this the
+/// Rayon dispatch overhead outweighs the gain and scoring stays inline.
+/// Tunable; chosen so typical hunks (tens of pairs) never pay for threads
+/// while massive corridors (hundreds of thousands) parallelize.
+const PAR_CANDIDATE_THRESHOLD: usize = 2048;
+
+/// Grid-independent preconditions for a mod pair `(i, j)` to reach subline
+/// LCS scoring in the fill loop below.
+///
+/// MUST stay in sync with the guard chain guarding the `lcs_matched_chars_ids`
+/// call: over-inclusion only wastes parallel work, under-inclusion falls back
+/// to inline scoring via the precomputed map miss path — either way the
+/// emitted pairing is unaffected. The `mod_pair_candidate_count` test locks
+/// the enumeration on a fixed fixture so guard drift surfaces immediately.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn mod_pair_needs_scoring(
+    i: usize,
+    j: usize,
+    cluster: &ChangeCluster,
+    old_tokens: &[DpTokens],
+    new_tokens: &[DpTokens],
+    old_meta: &[DpRowMeta],
+    new_meta: &[DpRowMeta],
+    interner: &TokenInterner,
+    profile: Option<&LangProfile>,
+    w: &Weights,
+) -> bool {
+    let ot = &old_tokens[i];
+    let om = old_meta[i];
+    let nt = &new_tokens[j];
+    let nm = new_meta[j];
+    if om.comment != nm.comment || !om.kind.is_compatible(nm.kind) {
+        return false;
+    }
+    if ot.ids.is_empty() && nt.ids.is_empty() {
+        return false;
+    }
+    if om.trimmed_id == nm.trimmed_id {
+        return false;
+    }
+    if ot.ids.is_empty() || nt.ids.is_empty() {
+        return false;
+    }
+    let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
+    let min_chars = ot.chars.min(nt.chars);
+    let char_bound =
+        token_intersection_bound(&ot.token_multiset, &nt.token_multiset, &interner.char_lens)
+            .min(min_chars);
+    let old_text = cluster.old_rows[i].text();
+    let new_text = cluster.new_rows[j].text();
+    let common_indent = old_text
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .zip(new_text.chars().take_while(|c| c.is_whitespace()))
+        .take_while(|(c1, c2)| c1 == c2)
+        .count();
+    if char_bound + common_indent == 0 {
+        return false;
+    }
+    let total = ot.chars.max(nt.chars);
+    let max_matched = char_bound;
+    let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    };
+    let is_property_match = om.property_key.is_some() && om.property_key == nm.property_key;
+    let ot_trim = old_text.trim();
+    let nt_trim = new_text.trim();
+    let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
+    let offset_diff = (i as isize - j as isize).unsigned_abs();
+    let is_prefix_containment = {
+        let ot_strip = trim_trailing_delims(ot_trim, profile);
+        let nt_strip = trim_trailing_delims(nt_trim, profile);
+        let min_len = ot_strip.len().min(nt_strip.len());
+        min_len >= w.min_containment_len
+            && indent_shift <= w.max_indent_shift
+            && (om.comment == nm.comment)
+            && (is_prefix_at_boundary(ot_strip, nt_strip)
+                || is_prefix_at_boundary(nt_strip, ot_strip))
+    };
+    let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
+        0.65
+    } else if om.comment || nm.comment {
+        0.35
+    } else {
+        0.25
+    };
+    let max_similarity_ratio = max_matched as f64 / total as f64;
+    let could_be_valid_mod = max_similarity_ratio >= min_ratio
+        || is_property_match
+        || statement_head_match
+        || is_prefix_containment
+        || (om.close_dist == 1 && nm.close_dist == 1);
+    if !could_be_valid_mod {
+        return false;
+    }
+    // Pairs the fill loop scores inline without LCS (identical token
+    // streams, or nothing to align) need no precomputation.
+    ot.ids != nt.ids && token_overlap && char_bound > 0
+}
+
+/// Score one candidate mod pair: the exact subline LCS call from the fill
+/// loop, with a caller-provided scratch buffer.
+fn score_lcs_pair(
+    ot: &DpTokens,
+    nt: &DpTokens,
+    interner: &TokenInterner,
+    scratch: &mut Vec<u32>,
+) -> usize {
+    lcs_matched_chars_ids(
+        &ot.ids,
+        &nt.ids,
+        &interner.ws,
+        &interner.alnum,
+        &nt.token_chars,
+        scratch,
+    )
+}
+
+/// Score all candidate pairs, in parallel past [`PAR_CANDIDATE_THRESHOLD`].
+/// Returns scores keyed by `(old_row, new_row)`; collection order is the
+/// enumeration order, so output is deterministic.
+fn score_lcs_candidates(
+    candidates: &[(usize, usize)],
+    old_tokens: &[DpTokens],
+    new_tokens: &[DpTokens],
+    interner: &TokenInterner,
+) -> HashMap<(usize, usize), usize> {
+    if candidates.len() >= PAR_CANDIDATE_THRESHOLD {
+        score_lcs_candidates_par(candidates, old_tokens, new_tokens, interner)
+    } else {
+        score_lcs_candidates_seq(candidates, old_tokens, new_tokens, interner)
+    }
+}
+
+pub(crate) fn score_lcs_candidates_seq(
+    candidates: &[(usize, usize)],
+    old_tokens: &[DpTokens],
+    new_tokens: &[DpTokens],
+    interner: &TokenInterner,
+) -> HashMap<(usize, usize), usize> {
+    let mut scratch = Vec::new();
+    candidates
+        .iter()
+        .map(|&(i, j)| {
+            (
+                (i, j),
+                score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, &mut scratch),
+            )
+        })
+        .collect()
+}
+
+pub(crate) fn score_lcs_candidates_par(
+    candidates: &[(usize, usize)],
+    old_tokens: &[DpTokens],
+    new_tokens: &[DpTokens],
+    interner: &TokenInterner,
+) -> HashMap<(usize, usize), usize> {
+    candidates
+        .par_iter()
+        .map(|&(i, j)| {
+            let mut scratch = Vec::new();
+            (
+                (i, j),
+                score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, &mut scratch),
+            )
+        })
+        .collect()
 }
 
 pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
@@ -964,16 +1160,6 @@ pub(crate) fn solve_cluster_with_arena(
             CloseDelimiter::default_classify_exact(t)
         }
     };
-    fn trim_trailing_delims<'a>(t: &'a str, profile: Option<&LangProfile>) -> &'a str {
-        if let Some(p) = profile {
-            p.trim_trailing_delimiters(t)
-        } else {
-            t.trim_end_matches(|c: char| {
-                c.is_whitespace() || matches!(c, '{' | '}' | ';' | ':' | ',' | ')' | ']')
-            })
-        }
-    }
-
     let compute_close_dist =
         |rows: &[crate::parse::Row], following: &[&str], out: &mut Vec<usize>| {
             let count = rows.len();
@@ -1287,6 +1473,25 @@ pub(crate) fn solve_cluster_with_arena(
     };
     let empty_blocks = RowValidBlocks::default();
 
+    // Phase A: enumerate mod-pair LCS candidates and score them up front
+    // (in parallel past PAR_CANDIDATE_THRESHOLD). The fill loop below reads
+    // precomputed scores; any pair the enumeration missed falls back to
+    // inline scoring, so output is unaffected either way.
+    let mut lcs_candidates = Vec::new();
+    for i in 0..m {
+        for j in grid.row_range(i) {
+            if j >= n {
+                continue;
+            }
+            if mod_pair_needs_scoring(
+                i, j, cluster, old_tokens, new_tokens, old_meta, new_meta, interner, profile, w,
+            ) {
+                lcs_candidates.push((i, j));
+            }
+        }
+    }
+    let precomputed_lcs = score_lcs_candidates(&lcs_candidates, old_tokens, new_tokens, interner);
+
     for i in 0..=m {
         let has_old = i < m;
         let (ot, om, old_valid_blocks_i) = if has_old {
@@ -1426,17 +1631,6 @@ pub(crate) fn solve_cluster_with_arena(
                         let ot_strip = trim_trailing_delims(ot_trim, profile);
                         let nt_strip = trim_trailing_delims(nt_trim, profile);
                         let min_len = ot_strip.len().min(nt_strip.len());
-                        let is_prefix_at_boundary = |longer: &str, shorter: &str| -> bool {
-                            if let Some(rest) = longer.strip_prefix(shorter) {
-                                rest.is_empty()
-                                    || shorter.ends_with(|c: char| !c.is_alphanumeric() && c != '_')
-                                    || rest.starts_with(|c: char| {
-                                        c.is_whitespace() || (!c.is_alphanumeric() && c != '_')
-                                    })
-                            } else {
-                                false
-                            }
-                        };
                         min_len >= w.min_containment_len
                             && indent_shift <= w.max_indent_shift
                             && (om.comment == nm.comment)
@@ -1487,14 +1681,20 @@ pub(crate) fn solve_cluster_with_arena(
                     let matched = if ot.ids == nt.ids {
                         ot.chars
                     } else if token_overlap && char_bound > 0 {
-                        lcs_matched_chars_ids(
-                            &ot.ids,
-                            &nt.ids,
-                            &interner.ws,
-                            &interner.alnum,
-                            &nt.token_chars,
-                            lcs_scratch,
-                        )
+                        // Precomputed in parallel up front; recomputed inline
+                        // on a miss so output never depends on enumeration
+                        // coverage.
+                        match precomputed_lcs.get(&(i, j)) {
+                            Some(&m) => m,
+                            None => lcs_matched_chars_ids(
+                                &ot.ids,
+                                &nt.ids,
+                                &interner.ws,
+                                &interner.alnum,
+                                &nt.token_chars,
+                                lcs_scratch,
+                            ),
+                        }
                     } else {
                         0usize
                     };
