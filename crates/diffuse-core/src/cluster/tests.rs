@@ -1946,8 +1946,22 @@ fn test_parallel_scoring_matches_sequential() {
     let fx = scoring_fixture();
     let candidates = collect_all(&fx);
     assert!(!candidates.is_empty());
-    let seq = score_lcs_candidates_seq(&candidates, &fx.old_tokens, &fx.new_tokens, &fx.interner);
-    let par = score_lcs_candidates_par(&candidates, &fx.old_tokens, &fx.new_tokens, &fx.interner);
+    let mut seq = Vec::new();
+    let mut par = Vec::new();
+    score_lcs_candidates_seq(
+        &candidates,
+        &fx.old_tokens,
+        &fx.new_tokens,
+        &fx.interner,
+        &mut seq,
+    );
+    score_lcs_candidates_par(
+        &candidates,
+        &fx.old_tokens,
+        &fx.new_tokens,
+        &fx.interner,
+        &mut par,
+    );
     assert_eq!(seq, par, "parallel scoring must match sequential exactly");
     assert_eq!(seq.len(), candidates.len());
 }

@@ -415,18 +415,28 @@ fn score_lcs_pair(
 }
 
 /// Score all candidate pairs, in parallel past [`PAR_CANDIDATE_THRESHOLD`].
-/// Returns scores keyed by `(old_row, new_row)`; collection order is the
-/// enumeration order, so output is deterministic.
+/// Results are written into `matrix_out` (indexed via SkylineMatrix corridor)
+/// and `scores_out`.
 fn score_lcs_candidates(
     candidates: &[(usize, usize)],
     old_tokens: &[DpTokens],
     new_tokens: &[DpTokens],
     interner: &TokenInterner,
-) -> HashMap<(usize, usize), usize> {
+    scores_out: &mut Vec<u32>,
+    matrix_out: &mut SkylineMatrix<u32>,
+) {
+    if candidates.is_empty() {
+        return;
+    }
     if candidates.len() >= PAR_CANDIDATE_THRESHOLD {
-        score_lcs_candidates_par(candidates, old_tokens, new_tokens, interner)
+        score_lcs_candidates_par(candidates, old_tokens, new_tokens, interner, scores_out);
     } else {
-        score_lcs_candidates_seq(candidates, old_tokens, new_tokens, interner)
+        score_lcs_candidates_seq(candidates, old_tokens, new_tokens, interner, scores_out);
+    }
+    for (&(i, j), &score) in candidates.iter().zip(scores_out.iter()) {
+        if let Some(cell) = matrix_out.get_mut(i, j) {
+            *cell = score;
+        }
     }
 }
 
@@ -435,17 +445,15 @@ pub(crate) fn score_lcs_candidates_seq(
     old_tokens: &[DpTokens],
     new_tokens: &[DpTokens],
     interner: &TokenInterner,
-) -> HashMap<(usize, usize), usize> {
+    scores_out: &mut Vec<u32>,
+) {
+    scores_out.clear();
+    scores_out.reserve(candidates.len());
     let mut scratch = Vec::new();
-    candidates
-        .iter()
-        .map(|&(i, j)| {
-            (
-                (i, j),
-                score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, &mut scratch),
-            )
-        })
-        .collect()
+    for &(i, j) in candidates {
+        let score = score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, &mut scratch) as u32;
+        scores_out.push(score);
+    }
 }
 
 pub(crate) fn score_lcs_candidates_par(
@@ -453,17 +461,15 @@ pub(crate) fn score_lcs_candidates_par(
     old_tokens: &[DpTokens],
     new_tokens: &[DpTokens],
     interner: &TokenInterner,
-) -> HashMap<(usize, usize), usize> {
+    scores_out: &mut Vec<u32>,
+) {
+    scores_out.clear();
     candidates
         .par_iter()
-        .map(|&(i, j)| {
-            let mut scratch = Vec::new();
-            (
-                (i, j),
-                score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, &mut scratch),
-            )
+        .map_init(Vec::new, |scratch, &(i, j)| {
+            score_lcs_pair(&old_tokens[i], &new_tokens[j], interner, scratch) as u32
         })
-        .collect()
+        .collect_into_vec(scores_out);
 }
 
 pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
@@ -983,6 +989,9 @@ pub(crate) struct DpScratchArena {
     pub(crate) new_valid_blocks: Vec<RowValidBlocks>,
     pub(crate) lcs_scratch: Vec<u32>,
     grid: SkylineMatrix<Cell>,
+    precomputed_lcs: SkylineMatrix<u32>,
+    lcs_candidates: Vec<(usize, usize)>,
+    lcs_scores: Vec<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -1039,6 +1048,8 @@ impl DpScratchArena {
         self.all_new_coords.clear();
         self.all_new_token_chars.clear();
         self.new_row_token_starts.clear();
+        self.lcs_candidates.clear();
+        self.lcs_scores.clear();
     }
 }
 
@@ -1399,6 +1410,9 @@ pub(crate) fn solve_cluster_with_arena(
         new_valid_blocks,
         lcs_scratch,
         grid,
+        precomputed_lcs,
+        lcs_candidates,
+        lcs_scores,
         ..
     } = arena;
 
@@ -1411,6 +1425,7 @@ pub(crate) fn solve_cluster_with_arena(
         op: OpKind::None,
     };
     grid.init_envelope(m, n, &envelope.bounds, init_cell);
+    precomputed_lcs.init_envelope(m, n, &envelope.bounds, u32::MAX);
     if let Some(cell0) = grid.get_mut(0, 0) {
         cell0.score = 0.0;
     }
@@ -1477,7 +1492,7 @@ pub(crate) fn solve_cluster_with_arena(
     // (in parallel past PAR_CANDIDATE_THRESHOLD). The fill loop below reads
     // precomputed scores; any pair the enumeration missed falls back to
     // inline scoring, so output is unaffected either way.
-    let mut lcs_candidates = Vec::new();
+    lcs_candidates.clear();
     for i in 0..m {
         for j in grid.row_range(i) {
             if j >= n {
@@ -1490,7 +1505,14 @@ pub(crate) fn solve_cluster_with_arena(
             }
         }
     }
-    let precomputed_lcs = score_lcs_candidates(&lcs_candidates, old_tokens, new_tokens, interner);
+    score_lcs_candidates(
+        lcs_candidates,
+        old_tokens,
+        new_tokens,
+        interner,
+        lcs_scores,
+        precomputed_lcs,
+    );
 
     for i in 0..=m {
         let has_old = i < m;
@@ -1684,9 +1706,9 @@ pub(crate) fn solve_cluster_with_arena(
                         // Precomputed in parallel up front; recomputed inline
                         // on a miss so output never depends on enumeration
                         // coverage.
-                        match precomputed_lcs.get(&(i, j)) {
-                            Some(&m) => m,
-                            None => lcs_matched_chars_ids(
+                        match precomputed_lcs.get(i, j).copied() {
+                            Some(m) if m != u32::MAX => m as usize,
+                            _ => lcs_matched_chars_ids(
                                 &ot.ids,
                                 &nt.ids,
                                 &interner.ws,
