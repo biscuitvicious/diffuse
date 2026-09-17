@@ -10,6 +10,8 @@
 
 pub mod bit_parallel;
 
+use std::cell::RefCell;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{parse::Spans, syntax::profile::LangProfile, token::WhitespaceKind};
@@ -631,9 +633,56 @@ const GAP_EXTEND: i32 = 2;
 const CONTIG_BONUS: i32 = 6;
 const NEG_INF: i32 = -1_000_000;
 
+/// Reusable scratch memory arena for Gotoh 3-state affine gap dynamic
+/// programming matrices, eliminating repeated per-invocation heap allocations.
+#[derive(Default)]
+pub struct LcsScratchArena {
+    m_matrix: Vec<i32>,
+    x_matrix: Vec<i32>,
+    y_matrix: Vec<i32>,
+    run_len: Vec<u16>,
+    tb_m: Vec<u8>,
+    tb_x: Vec<u8>,
+    tb_y: Vec<u8>,
+}
+
+impl LcsScratchArena {
+    /// Create a new scratch arena.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Prepares backing matrices for a DP run of size `total_cells`.
+    /// Reallocates only if the existing capacity is insufficient, and
+    /// resets initial values without releasing allocated memory.
+    pub fn prepare(&mut self, total_cells: usize) {
+        if self.m_matrix.len() < total_cells {
+            self.m_matrix.resize(total_cells, NEG_INF);
+            self.x_matrix.resize(total_cells, NEG_INF);
+            self.y_matrix.resize(total_cells, NEG_INF);
+            self.run_len.resize(total_cells, 0);
+            self.tb_m.resize(total_cells, 0);
+            self.tb_x.resize(total_cells, 0);
+            self.tb_y.resize(total_cells, 0);
+        }
+        self.m_matrix[..total_cells].fill(NEG_INF);
+        self.x_matrix[..total_cells].fill(NEG_INF);
+        self.y_matrix[..total_cells].fill(NEG_INF);
+        self.run_len[..total_cells].fill(0);
+        self.tb_m[..total_cells].fill(0);
+        self.tb_x[..total_cells].fill(0);
+        self.tb_y[..total_cells].fill(0);
+    }
+}
+
+thread_local! {
+    static SCRATCH_ARENA: RefCell<LcsScratchArena> = RefCell::new(LcsScratchArena::default());
+}
+
 /// Core sequence alignment backtrace with Gotoh 3-state affine gap dynamic
-/// programming.
-pub fn raw_lcs_pairs_with_context(
+/// programming using a reusable scratch arena.
+pub fn raw_lcs_pairs_with_arena(
+    arena: &mut LcsScratchArena,
     a: &[&str],
     b: &[&str],
     prev_a: &[&str],
@@ -651,13 +700,14 @@ pub fn raw_lcs_pairs_with_context(
     let idx = |i: usize, j: usize| i * stride + j;
     let total_cells = (n + 1) * (m + 1);
 
-    let mut m_matrix = vec![NEG_INF; total_cells];
-    let mut x_matrix = vec![NEG_INF; total_cells];
-    let mut y_matrix = vec![NEG_INF; total_cells];
-    let mut run_len = vec![0u16; total_cells];
-    let mut tb_m = vec![0u8; total_cells];
-    let mut tb_x = vec![0u8; total_cells];
-    let mut tb_y = vec![0u8; total_cells];
+    arena.prepare(total_cells);
+    let m_matrix = &mut arena.m_matrix[..total_cells];
+    let x_matrix = &mut arena.x_matrix[..total_cells];
+    let y_matrix = &mut arena.y_matrix[..total_cells];
+    let run_len = &mut arena.run_len[..total_cells];
+    let tb_m = &mut arena.tb_m[..total_cells];
+    let tb_x = &mut arena.tb_x[..total_cells];
+    let tb_y = &mut arena.tb_y[..total_cells];
 
     // Backward Gotoh DP over suffixes: cell (i, j) aligns a[i..n] and b[j..m].
     m_matrix[idx(n, m)] = 0;
@@ -784,6 +834,21 @@ pub fn raw_lcs_pairs_with_context(
     }
 
     pairs
+}
+
+/// Core sequence alignment backtrace with Gotoh 3-state affine gap dynamic
+/// programming using thread-local scratch memory.
+pub fn raw_lcs_pairs_with_context(
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
+) -> FxHashMap<usize, usize> {
+    SCRATCH_ARENA.with_borrow_mut(|arena| {
+        raw_lcs_pairs_with_arena(arena, a, b, prev_a, prev_b, next_a, next_b)
+    })
 }
 
 /// LCS backtrace: map of old-token index → matched new-token index.

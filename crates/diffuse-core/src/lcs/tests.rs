@@ -688,3 +688,21 @@ fn test_trailing_whitespace_does_not_match_leading_whitespace() {
         "Trailing whitespace must not match leading indentation: {pairs:?}"
     );
 }
+
+#[test]
+fn test_scratch_arena_equivalence_and_reuse() {
+    let a1 = ["alpha", "beta", "gamma", "delta"];
+    let b1 = ["alpha", "gamma", "delta", "epsilon"];
+    let p1 = raw_lcs_pairs(&a1, &b1);
+
+    // Call with different sizes to exercise resize and dirty buffer overwrite
+    let a2 = ["x", "y"];
+    let b2 = ["x", "z", "y"];
+    let p2 = raw_lcs_pairs(&a2, &b2);
+
+    let p1_repeat = raw_lcs_pairs(&a1, &b1);
+    assert_eq!(p1, p1_repeat);
+
+    let p2_repeat = raw_lcs_pairs(&a2, &b2);
+    assert_eq!(p2, p2_repeat);
+}

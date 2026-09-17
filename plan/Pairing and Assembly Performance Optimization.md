@@ -17,12 +17,12 @@
   - [x] Implement fast token-level common prefix and suffix run peeling in `AlignmentTape::from_texts_with_cap`
   - [x] Restrict dynamic programming matrix to the differing middle window
   - [x] Enforce alignment tape invariants: `project_old`, `project_new`, and invertibility
-- [·] [Phase 4 — Token DP Matrix Scratch Arena](#4-phase-4--token-dp-matrix-scratch-arena)
-  - [ ] Benchmark heap allocation overhead in `raw_lcs_pairs_with_context`
-  - [ ] Implement thread-local or pooled scratch arena for DP matrices (`m_matrix`, `x_matrix`, `y_matrix`, `tb_m`, `tb_x`, `tb_y`, `run_len`)
-  - [ ] Replace per-call `vec![0; (n + 1) * (m + 1)]` heap allocations with re-sliced arena vectors
-  - [ ] Verify thread-safety and exact LCS backtrace identity
-- [ ] [Phase 5 — Full Gate Verification & Performance Locking](#5-phase-5--full-gate-verification--performance-locking)
+- [x] [Phase 4 — Token DP Matrix Scratch Arena](#4-phase-4--token-dp-matrix-scratch-arena)
+  - [x] Benchmark heap allocation overhead in `raw_lcs_pairs_with_context`
+  - [x] Implement thread-local or pooled scratch arena for DP matrices (`m_matrix`, `x_matrix`, `y_matrix`, `tb_m`, `tb_x`, `tb_y`, `run_len`)
+  - [x] Replace per-call `vec![0; (n + 1) * (m + 1)]` heap allocations with re-sliced arena vectors
+  - [x] Verify thread-safety and exact LCS backtrace identity
+- [·] [Phase 5 — Full Gate Verification & Performance Locking](#5-phase-5--full-gate-verification--performance-locking)
   - [ ] Execute `scripts/check.sh` with zero warnings and zero golden regressions
   - [ ] Record end-to-end speedup on 7,174-line benchmark in `tests/big_hunk_perf.rs`
   - [ ] Lock new performance thresholds in test assertions
