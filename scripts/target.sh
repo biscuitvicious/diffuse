@@ -134,7 +134,8 @@ detect_native_target() {
     esac
 }
 
-# Ensure toolchain and target are installed via rustup before executing operations
+# Ensure toolchain and target are installed via rustup before executing operations.
+# An empty target skips the triple provisioning (cargo default target).
 ensure_toolchain_and_target() {
     local target="$1"
     local need_nightly="${2:-false}"
@@ -149,7 +150,7 @@ ensure_toolchain_and_target() {
             echo "Installing pinned toolchain $PINNED_TOOLCHAIN..."
             rustup toolchain install "$PINNED_TOOLCHAIN" --profile minimal
         fi
-        if ! is_target_installed "$target" "$PINNED_TOOLCHAIN"; then
+        if [ -n "$target" ] && ! is_target_installed "$target" "$PINNED_TOOLCHAIN"; then
             echo "Installing target $target for toolchain $PINNED_TOOLCHAIN..."
             rustup target add --toolchain "$PINNED_TOOLCHAIN" "$target"
         fi

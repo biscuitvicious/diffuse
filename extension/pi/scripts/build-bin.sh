@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # Build the diffuse binary.  The binary stays in target/ — install.sh
 # copies it from there directly into the extension destination, so there
 # is no intermediate extension/pi/bin/ copy step.
@@ -20,9 +20,9 @@ if [ -n "${TARGET:-}" ]; then
 fi
 
 if [ "$PROFILE" = "release" ]; then
-	$CARGO build --release --bin diffuse "${TARGET_FLAG[@]}"
+	$CARGO build --quiet --release --bin diffuse "${TARGET_FLAG[@]}"
 	echo "built: target/${TARGET:+$TARGET/}release/diffuse"
 else
-	$CARGO build --bin diffuse "${TARGET_FLAG[@]}"
+	$CARGO build --quiet --bin diffuse "${TARGET_FLAG[@]}"
 	echo "built: target/${TARGET:+$TARGET/}debug/diffuse"
 fi

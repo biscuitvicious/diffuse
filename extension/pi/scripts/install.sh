@@ -25,13 +25,6 @@ fi
 
 BUILD="$(git log -1 --format='%h %ad' --date=short 2>/dev/null || echo dev)"
 
-# Remove old flat installation if it exists
-if [ -z "${INSTALL_DIR-}" ]; then
-	rm -rf "$HOME/.pi/agent/extensions/review.ts" \
-	       "$HOME/.pi/agent/extensions/src"       \
-	       "$HOME/.pi/agent/extensions/bin"
-fi
-
 mkdir -p "$DEST/bin"
 rm -rf "$DEST/src"
 cp -r src "$DEST/"

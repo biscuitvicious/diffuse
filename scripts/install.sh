@@ -5,10 +5,14 @@ set -euo pipefail
 # into the local user environment (~/.cargo/bin/diffuse) using the
 # toolchain pinned in rust-toolchain.toml (single source of truth).
 #
-#   ./scripts/install.sh                   # release binary (default)
-#   PROFILE=dev ./scripts/install.sh       # debug binary (used by check.sh)
-#   TARGET=... ./scripts/install.sh        # override target triple
-#   INSTALL_HARVEST=1 ./scripts/install.sh # also install diffuse-harvest
+#   ./scripts/install.sh            # release binary (default)
+#   PROFILE=dev ./scripts/install.sh  # debug binary (used by check.sh)
+#   TARGET=... ./scripts/install.sh   # override target triple (e.g. musl static)
+#   INSTALL_HARVEST=1 ./scripts/install.sh  # also install diffuse-harvest
+#
+# Without an explicit TARGET (or DIFFUSE_TARGET), no --target flag is
+# passed to cargo, so the build shares the warm artifact cache with
+# manual cargo runs instead of rebuilding into target/<triple>/.
 #
 # check.sh shells out to this script for the dev install so install logic
 # lives in exactly one place.
@@ -17,9 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/target.sh"
 
 HOST_TARGET="$(detect_host_target)"
-TARGET="${TARGET:-${DIFFUSE_TARGET:-$(detect_best_target "$HOST_TARGET")}}"
+TARGET="${TARGET:-${DIFFUSE_TARGET:-}}"
 
-echo "Target platform: $TARGET (host: $HOST_TARGET)"
+echo "Target platform: ${TARGET:-$HOST_TARGET (cargo default)} (host: $HOST_TARGET)"
 
 # Ensure required toolchain and target are installed before performing operations
 ensure_toolchain_and_target "$TARGET" false
@@ -36,7 +40,10 @@ if [ "${INSTALL_HARVEST:-}" = "1" ]; then
 fi
 
 PROFILE="${PROFILE:-release}"
-CARGO_INSTALL_ARGS=(install --locked --path crates/diffuse "${BINS[@]}" --target "$TARGET" --force)
+CARGO_INSTALL_ARGS=(install --quiet --locked --path crates/diffuse "${BINS[@]}" --force)
+if [ -n "$TARGET" ]; then
+    CARGO_INSTALL_ARGS+=(--target "$TARGET")
+fi
 
 if [ "$PROFILE" = "dev" ]; then
   CARGO_INSTALL_ARGS+=(--debug)
@@ -46,17 +53,12 @@ fi
 
 # Determine installed binary path
 BIN_NAME="diffuse"
-case "$TARGET" in
+EFFECTIVE_TARGET="${TARGET:-$HOST_TARGET}"
+case "$EFFECTIVE_TARGET" in
   *windows*) BIN_NAME="diffuse.exe" ;;
 esac
 INSTALLED_BIN="$(command -v "$BIN_NAME" 2>/dev/null || echo "$HOME/.cargo/bin/$BIN_NAME")"
-echo "diffuse binary installed to $INSTALLED_BIN ($PROFILE, $TARGET)"
+echo "diffuse binary installed to $INSTALLED_BIN ($PROFILE, ${TARGET:-$HOST_TARGET (cargo default)})"
 
-# Only install the Pi extension if Pi is actually installed (target extensions folder exists)
-PI_EXTENSIONS_DIR="${INSTALL_DIR:-$HOME/.pi/agent/extensions}"
-if [ -d "$PI_EXTENSIONS_DIR" ] && [ -f "$WORKSPACE_ROOT/extension/pi/scripts/install.sh" ]; then
-  echo "Pi extensions directory detected ($PI_EXTENSIONS_DIR). Syncing diffuse-review extension..."
-  PROFILE="$PROFILE" TARGET="$TARGET" "$WORKSPACE_ROOT/extension/pi/scripts/install.sh"
-else
-  echo "Pi extensions directory not found at $PI_EXTENSIONS_DIR; skipping Pi extension install."
-fi
+# Install the Pi extension (only if Pi is installed)
+PROFILE="$PROFILE" TARGET="$TARGET" "$WORKSPACE_ROOT/extension/pi/scripts/install.sh"
