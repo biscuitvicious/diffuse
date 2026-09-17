@@ -157,6 +157,86 @@ pub fn find_monotonic_mums<T: Hash + Eq>(a: &[T], b: &[T], min_len: usize) -> Ve
     find_monotonic_chain(&mums, |m| *m, |m| m.len as f64)
 }
 
+/// Finds a strictly monotonic chain of unique matching elements between
+/// sequence A and sequence B using hash-indexed frequency counting and $O(K
+/// \log K)$ Longest Increasing Subsequence (LIS).
+///
+/// Elements that occur more than once in either sequence, or that do not
+/// satisfy `predicate`, are ignored.
+pub fn find_unique_anchors<T: Hash + Eq>(
+    a: &[T],
+    b: &[T],
+    predicate: impl Fn(&T) -> bool,
+) -> Vec<(usize, usize)> {
+    if a.is_empty() || b.is_empty() {
+        return Vec::new();
+    }
+
+    use rustc_hash::FxHashMap;
+
+    let mut map_a: FxHashMap<&T, (usize, usize)> = FxHashMap::default();
+    for (i, item) in a.iter().enumerate() {
+        if predicate(item) {
+            let entry = map_a.entry(item).or_insert((0, i));
+            entry.0 += 1;
+        }
+    }
+
+    let mut map_b: FxHashMap<&T, (usize, usize)> = FxHashMap::default();
+    for (j, item) in b.iter().enumerate() {
+        if predicate(item) {
+            let entry = map_b.entry(item).or_insert((0, j));
+            entry.0 += 1;
+        }
+    }
+
+    let mut matches = Vec::new();
+    for (&item, &(count_a, idx_a)) in &map_a {
+        if count_a == 1
+            && let Some(&(count_b, idx_b)) = map_b.get(item)
+            && count_b == 1
+        {
+            matches.push((idx_a, idx_b));
+        }
+    }
+
+    if matches.is_empty() {
+        return Vec::new();
+    }
+
+    matches.sort_unstable_by_key(|&(idx_a, _)| idx_a);
+
+    // Compute Longest Increasing Subsequence (LIS) on idx_b in O(K log K)
+    let mut tails: Vec<usize> = Vec::new();
+    let mut tail_prev: Vec<usize> = Vec::new();
+    let mut prev_idx: Vec<Option<usize>> = vec![None; matches.len()];
+
+    for (k, &(_, b_val)) in matches.iter().enumerate() {
+        let pos = tails.partition_point(|&val| val < b_val);
+        if pos == tails.len() {
+            tails.push(b_val);
+            tail_prev.push(k);
+        } else {
+            tails[pos] = b_val;
+            tail_prev[pos] = k;
+        }
+        if pos > 0 {
+            prev_idx[k] = Some(tail_prev[pos - 1]);
+        }
+    }
+
+    let mut chain = Vec::new();
+    if let Some(&last_match_idx) = tail_prev.last() {
+        let mut curr = Some(last_match_idx);
+        while let Some(idx) = curr {
+            chain.push(matches[idx]);
+            curr = prev_idx[idx];
+        }
+        chain.reverse();
+    }
+    chain
+}
+
 /// Dedicated iterator struct for streaming maximal unique match landmarks.
 pub struct Landmarks<I1, I2, T> {
     stream_a: Option<I1>,
@@ -385,5 +465,21 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn test_find_unique_anchors_lis() {
+        let a = ["apple", "banana", "cherry", "date", "fig", "grape"];
+        let b = ["banana", "apple", "cherry", "kiwi", "date", "grape"];
+        let anchors = find_unique_anchors(&a, &b, |_| true);
+        assert_eq!(anchors, vec![(1, 0), (2, 2), (3, 4), (5, 5)]);
+
+        let anchors_no_cherry = find_unique_anchors(&a, &b, |&s| s != "cherry");
+        assert_eq!(anchors_no_cherry, vec![(1, 0), (3, 4), (5, 5)]);
+
+        let a_dup = ["apple", "apple", "banana", "cherry"];
+        let b_dup = ["apple", "banana", "cherry"];
+        let anchors_dup = find_unique_anchors(&a_dup, &b_dup, |_| true);
+        assert_eq!(anchors_dup, vec![(2, 1), (3, 2)]);
     }
 }

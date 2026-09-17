@@ -1942,6 +1942,63 @@ fn mod_pair_candidate_count() {
 }
 
 #[test]
+fn test_mod_pair_prunes_incompatible_tail_and_high_indent() {
+    let mut interner = TokenInterner::default();
+    let weights = Weights::default();
+    let old_text = "    let x = foo();";
+    let new_text = "                let y = bar();";
+    let ot = vec![dp_tokens(&mut interner, old_text)];
+    let nt = vec![dp_tokens(&mut interner, new_text)];
+
+    let om = DpRowMeta {
+        trimmed_id: 1,
+        indent: 4,
+        close_dist: 1,
+        close_tail: CloseDelimiter::Brace,
+        ..Default::default()
+    };
+
+    let nm = DpRowMeta {
+        trimmed_id: 2,
+        indent: 16,
+        close_dist: 1,
+        close_tail: CloseDelimiter::Paren, // Different delimiter!
+        ..Default::default()
+    };
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows: vec![Row::Del(DelLine::new(
+            LineNum::new(1).unwrap(),
+            old_text.to_string(),
+        ))],
+        new_rows: vec![Row::Add(AddLine::new(
+            LineNum::new(1).unwrap(),
+            new_text.to_string(),
+        ))],
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+
+    let needed = mod_pair_needs_scoring(
+        0,
+        0,
+        &cluster,
+        &ot,
+        &nt,
+        &[om],
+        &[nm],
+        &interner,
+        None,
+        &weights,
+    );
+    assert!(
+        !needed,
+        "pair with mismatching close tails and heavy indent shift must be pruned"
+    );
+}
+
+#[test]
 fn test_parallel_scoring_matches_sequential() {
     let fx = scoring_fixture();
     let candidates = collect_all(&fx);
@@ -2015,4 +2072,85 @@ fn test_parallel_scoring_multi_row_matches_sequential() {
             "matching pair ({i}, {i}) must have positive score"
         );
     }
+}
+
+#[test]
+fn test_anchor_decomposition_large_cluster() {
+    let rs = lang_profile("rs");
+    // Create 300 old lines and 300 new lines where every 3rd line is modified
+    let old_lines: Vec<String> = (0..300)
+        .map(|i| format!("    fn test_func_{i}() -> usize {{ {i} * 10 }}"))
+        .collect();
+    let new_lines: Vec<String> = (0..300)
+        .map(|i| {
+            if i % 3 == 0 {
+                format!("    fn test_func_{i}() -> usize {{ {i} * 20 }}")
+            } else {
+                format!("    fn test_func_{i}() -> usize {{ {i} * 10 }}")
+            }
+        })
+        .collect();
+
+    let old_rows: Vec<Row> = old_lines
+        .iter()
+        .enumerate()
+        .map(|(i, s)| Row::Del(DelLine::new(LineNum::new(i as u32 + 1).unwrap(), s.clone())))
+        .collect();
+    let new_rows: Vec<Row> = new_lines
+        .iter()
+        .enumerate()
+        .map(|(i, s)| Row::Add(AddLine::new(LineNum::new(i as u32 + 1).unwrap(), s.clone())))
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows,
+        new_rows,
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+
+    let mut arena = dp::DpScratchArena::default();
+    let decomposed = dp::solve_cluster_with_anchors(&cluster, rs, &Weights::default(), &mut arena);
+    assert!(
+        decomposed.is_some(),
+        "cluster with 300 rows and anchors must decompose"
+    );
+
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(verify_projection(&sol, &cluster), Ok(()));
+    let mov_count = sol
+        .transitions
+        .iter()
+        .filter(|t| matches!(t, DpOp::Mov))
+        .count();
+    let mod_count = sol
+        .transitions
+        .iter()
+        .filter(|t| matches!(t, DpOp::Mod { .. }))
+        .count();
+    assert_eq!(mov_count, 200, "200 identical lines must be paired as Mov");
+    assert_eq!(mod_count, 100, "100 modified lines must be paired as Mod");
+    assert_eq!(sol.transitions.len(), 300);
+
+    // Cluster with no anchors must return None from solve_cluster_with_anchors
+    let all_diff_cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows: cluster.old_rows,
+        new_rows: (0..300)
+            .map(|i| {
+                Row::Add(AddLine::new(
+                    LineNum::new(i as u32 + 1).unwrap(),
+                    format!("    let totally_different_{i} = 999;"),
+                ))
+            })
+            .collect(),
+        following_ctx: Vec::new(),
+        section: SyntaxSectionKind::Code,
+    };
+    assert!(
+        dp::solve_cluster_with_anchors(&all_diff_cluster, rs, &Weights::default(), &mut arena)
+            .is_none(),
+        "cluster with no anchors must return None"
+    );
 }

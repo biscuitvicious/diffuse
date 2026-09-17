@@ -386,12 +386,41 @@ pub(crate) fn mod_pair_needs_scoring(
     } else {
         0.25
     };
+    let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
+        if om.close_tail != CloseDelimiter::None && nm.close_tail != CloseDelimiter::None {
+            if let Some(p) = profile {
+                p.is_direct_tail_match(
+                    om.close_tail,
+                    nm.close_tail,
+                    max_matched,
+                    w.min_tail_matched_chars,
+                )
+            } else {
+                CloseDelimiter::default_is_direct_tail_match(
+                    om.close_tail,
+                    nm.close_tail,
+                    max_matched,
+                    w.min_tail_matched_chars,
+                )
+            }
+        } else if om.is_terminal_return && nm.is_terminal_return {
+            if indent_shift == 0 && common_indent > 0 {
+                true
+            } else {
+                max_matched >= w.min_tail_matched_chars
+            }
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     let max_similarity_ratio = max_matched as f64 / total as f64;
     let could_be_valid_mod = max_similarity_ratio >= min_ratio
         || is_property_match
         || statement_head_match
         || is_prefix_containment
-        || (om.close_dist == 1 && nm.close_dist == 1);
+        || could_be_tail_pair;
     if !could_be_valid_mod {
         return false;
     }
@@ -407,16 +436,20 @@ pub(crate) fn mod_pair_needs_scoring(
     } else {
         max_syn
     };
-    let max_close = if om.close_dist == 1 && nm.close_dist == 1 {
+    let max_close = if could_be_tail_pair {
         w.delta
     } else {
-        w.epsilon
+        w.epsilon * om.prox_close * nm.prox_close
     };
-    let max_possible_delta =
-        w.alpha * max_matched as f64 - w.gamma * (total - max_matched) as f64 - w.beta
-            + syn
-            + max_close
-            + w.epsilon;
+    let max_open = w.epsilon * om.prox_open * nm.prox_open;
+    let indent_penalty = w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
+    let max_possible_delta = w.alpha * max_matched as f64
+        - w.gamma * (total - max_matched) as f64
+        - w.beta
+        - indent_penalty
+        + syn
+        + max_close
+        + max_open;
     if max_possible_delta <= -2.0 * w.beta {
         return false;
     }
@@ -1314,9 +1347,155 @@ pub fn solve_cluster_with(
     solve_cluster_with_tls(cluster, profile, w)
 }
 
+pub(crate) const ANCHOR_DECOMPOSITION_MIN_ROWS: usize = 256;
+
 /// Solves a cluster using a reusable scratch arena for zero-allocation
 /// buffers.
 pub(crate) fn solve_cluster_with_arena(
+    cluster: &ChangeCluster,
+    profile: Option<&LangProfile>,
+    w: &Weights,
+    arena: &mut DpScratchArena,
+) -> DpSolution {
+    let m = cluster.old_rows.len();
+    let n = cluster.new_rows.len();
+
+    if m >= ANCHOR_DECOMPOSITION_MIN_ROWS
+        && n >= ANCHOR_DECOMPOSITION_MIN_ROWS
+        && let Some(sol) = solve_cluster_with_anchors(cluster, profile, w, arena)
+    {
+        return sol;
+    }
+
+    solve_cluster_matrix(cluster, profile, w, arena)
+}
+
+/// Attempts to solve a large cluster by decomposing it along unique matching
+/// anchors (MUMs).
+///
+/// Returns `None` if the cluster is smaller than
+/// [`ANCHOR_DECOMPOSITION_MIN_ROWS`] or if no valid anchors within the corridor
+/// bandwidth are found.
+pub(crate) fn solve_cluster_with_anchors(
+    cluster: &ChangeCluster,
+    profile: Option<&LangProfile>,
+    w: &Weights,
+    arena: &mut DpScratchArena,
+) -> Option<DpSolution> {
+    let m = cluster.old_rows.len();
+    let n = cluster.new_rows.len();
+    if m < ANCHOR_DECOMPOSITION_MIN_ROWS || n < ANCHOR_DECOMPOSITION_MIN_ROWS {
+        return None;
+    }
+
+    let old_trimmed: Vec<&str> = cluster.old_rows.iter().map(|r| r.text().trim()).collect();
+    let new_trimmed: Vec<&str> = cluster.new_rows.iter().map(|r| r.text().trim()).collect();
+
+    let raw_anchors =
+        crate::algo::find_unique_anchors(&old_trimmed, &new_trimmed, |s| s.len() >= 4);
+
+    if raw_anchors.is_empty() {
+        return None;
+    }
+
+    let max_corridor = cluster_bandwidth_min() + cluster_bandwidth_slack() + m.abs_diff(n);
+    let mut anchors = Vec::new();
+    for (ai, aj) in raw_anchors {
+        let expected_j = (ai * n) / m;
+        if aj.abs_diff(expected_j) > max_corridor {
+            continue;
+        }
+        let old_indent = cluster.old_rows[ai].text().len() - old_trimmed[ai].len();
+        let new_indent = cluster.new_rows[aj].text().len() - new_trimmed[aj].len();
+        if old_indent.abs_diff(new_indent) > 8 {
+            continue;
+        }
+        anchors.push((ai, aj));
+    }
+
+    if anchors.is_empty() {
+        return None;
+    }
+
+    let mut total_rows = Vec::with_capacity(m + n);
+    let mut total_transitions = Vec::with_capacity(m + n);
+    let mut total_score = 0.0;
+
+    let mut curr_i = 0;
+    let mut curr_j = 0;
+
+    for &(ai, aj) in &anchors {
+        if curr_i < ai || curr_j < aj {
+            let preceding_ctx = if curr_i == 0 {
+                cluster.preceding_ctx.clone()
+            } else {
+                vec![cluster.old_rows[curr_i - 1].text()]
+            };
+            let following_ctx = vec![cluster.old_rows[ai].text()];
+            let sub_cluster = ChangeCluster {
+                preceding_ctx,
+                old_rows: cluster.old_rows[curr_i..ai].to_vec(),
+                new_rows: cluster.new_rows[curr_j..aj].to_vec(),
+                following_ctx,
+                section: cluster.section,
+            };
+            let sub_sol = solve_cluster_with_arena(&sub_cluster, profile, w, arena);
+            total_rows.extend(sub_sol.rows);
+            total_transitions.extend(sub_sol.transitions);
+            total_score += sub_sol.score;
+        }
+
+        let old_line = match &cluster.old_rows[ai] {
+            Row::Del(d) | Row::MovSrc(d) => d.clone(),
+            other => panic!("cluster old row is not a Del: {other:?}"),
+        };
+        let new_line = match &cluster.new_rows[aj] {
+            Row::Add(a) | Row::MovTgt(a) => a.clone(),
+            other => panic!("cluster new row is not an Add: {other:?}"),
+        };
+
+        total_rows.push(Row::MovSrc(old_line));
+        total_rows.push(Row::MovTgt(new_line));
+        total_transitions.push(DpOp::Mov);
+
+        let old_chars = cluster.old_rows[ai].text().chars().count();
+        let new_chars = cluster.new_rows[aj].text().chars().count();
+        let length_diff = (old_chars as f64 - new_chars as f64).abs();
+        total_score += w.alpha * (old_chars.max(new_chars) as f64) - w.beta - w.gamma * length_diff;
+
+        curr_i = ai + 1;
+        curr_j = aj + 1;
+    }
+
+    if curr_i < m || curr_j < n {
+        let preceding_ctx = if curr_i == 0 {
+            cluster.preceding_ctx.clone()
+        } else {
+            vec![cluster.old_rows[curr_i - 1].text()]
+        };
+        let following_ctx = cluster.following_ctx.clone();
+        let sub_cluster = ChangeCluster {
+            preceding_ctx,
+            old_rows: cluster.old_rows[curr_i..m].to_vec(),
+            new_rows: cluster.new_rows[curr_j..n].to_vec(),
+            following_ctx,
+            section: cluster.section,
+        };
+        let sub_sol = solve_cluster_with_arena(&sub_cluster, profile, w, arena);
+        total_rows.extend(sub_sol.rows);
+        total_transitions.extend(sub_sol.transitions);
+        total_score += sub_sol.score;
+    }
+
+    Some(DpSolution {
+        score: total_score,
+        rows: total_rows,
+        transitions: total_transitions,
+    })
+}
+
+/// Solves a cluster using matrix DP with Skyline envelope.
+pub(crate) fn solve_cluster_matrix(
     cluster: &ChangeCluster,
     profile: Option<&LangProfile>,
     w: &Weights,
@@ -1886,12 +2065,43 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         0.25
                     };
+                    let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
+                        if om.close_tail != CloseDelimiter::None
+                            && nm.close_tail != CloseDelimiter::None
+                        {
+                            if let Some(p) = profile {
+                                p.is_direct_tail_match(
+                                    om.close_tail,
+                                    nm.close_tail,
+                                    max_matched,
+                                    w.min_tail_matched_chars,
+                                )
+                            } else {
+                                CloseDelimiter::default_is_direct_tail_match(
+                                    om.close_tail,
+                                    nm.close_tail,
+                                    max_matched,
+                                    w.min_tail_matched_chars,
+                                )
+                            }
+                        } else if om.is_terminal_return && nm.is_terminal_return {
+                            if indent_shift == 0 && common_indent > 0 {
+                                true
+                            } else {
+                                max_matched >= w.min_tail_matched_chars
+                            }
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
                     let max_similarity_ratio = max_matched as f64 / total as f64;
                     let could_be_valid_mod = max_similarity_ratio >= min_ratio
                         || is_property_match
                         || statement_head_match
                         || is_prefix_containment
-                        || (om.close_dist == 1 && nm.close_dist == 1);
+                        || could_be_tail_pair;
                     if !could_be_valid_mod {
                         continue;
                     }
@@ -1901,18 +2111,21 @@ pub(crate) fn solve_cluster_with_arena(
                     } else {
                         max_syn
                     };
-                    let max_close = if om.close_dist == 1 && nm.close_dist == 1 {
+                    let max_close = if could_be_tail_pair {
                         w.delta
                     } else {
-                        w.epsilon
+                        w.epsilon * om.prox_close * nm.prox_close
                     };
+                    let max_open = w.epsilon * om.prox_open * nm.prox_open;
 
+                    let indent_penalty = w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
                     let max_possible_mod_s = base + w.alpha * max_matched as f64
                         - w.gamma * (total - max_matched) as f64
                         - w.beta
+                        - indent_penalty
                         + syn
                         + max_close
-                        + w.epsilon;
+                        + max_open;
                     let next_diag_score = target_diag.score;
                     let mod_threshold = (base - 2.0 * w.beta).max(next_diag_score);
                     if max_possible_mod_s <= mod_threshold {

@@ -57,7 +57,7 @@ pub use interner::{SymbolId, SymbolTable};
 pub use interval_tree::{AugmentedIntervalTree, IntervalNode};
 pub use landmarks::{
     DiffuseSequenceExt, Landmarks, MatchInterval, find_monotonic_chain, find_monotonic_mums,
-    find_mums,
+    find_mums, find_unique_anchors,
 };
 pub use myers_ond::MyersOnD;
 pub use prefix_dfa::PrefixDfa;
