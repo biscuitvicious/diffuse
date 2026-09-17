@@ -10,6 +10,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+diffuse-algo = { path = "crates/diffuse-algo", version = "0.1.0" }
 diffuse-syntax = { path = "crates/diffuse-syntax", version = "0.1.0" }
 diffuse-core = { path = "crates/diffuse-core", version = "0.1.0" }
 diffuse-render = { path = "crates/diffuse-render", version = "0.1.0" }

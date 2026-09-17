@@ -6,6 +6,7 @@ license.workspace = true
 description = "Core diff engine, AST parsing, sequence alignment, DP clustering, and wire contracts for diffuse"
 
 [dependencies]
+diffuse-algo = { workspace = true }
 diffuse-syntax = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

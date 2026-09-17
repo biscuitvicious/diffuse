@@ -30,11 +30,11 @@ This document provides a comprehensive, rigorous reference of the foundational a
    - [Bipartite Spatial Coalescence Graph & Cost Matrix](#61-bipartite-spatial-coalescence-graph--cost-matrix)
 7. [Repository Review & Coordinate Indexes](#7-repository-review--coordinate-indexes)
    - [Coordinate-Indexed Notes Database (`NotesDB`)](#71-coordinate-indexed-notes-database-notesdb)
+   - [Cache-Conscious Flat Augmented Interval Tree (`AugmentedIntervalTree<T>`)](#72-cache-conscious-flat-augmented-interval-tree-augmentedintervaltreet)
 8. [Future Architectural Opportunities](#8-future-architectural-opportunities)
-   - [Static Augmented Interval Tree (AST & Note Stabbing Queries)](#81-static-augmented-interval-tree-ast--note-stabbing-queries)
-   - [Succinct Suffix Automaton / Directed Acyclic Word Graph (DAWG)](#82-succinct-suffix-automaton--directed-acyclic-word-graph-dawg)
-   - [Roaring Bitmaps for Token Set Operations](#83-roaring-bitmaps-for-token-set-operations)
-   - [Chunked Arena String Interner (`Symbol32`)](#84-chunked-arena-string-interner-symbol32)
+   - [Succinct Suffix Automaton / Directed Acyclic Word Graph (DAWG)](#81-succinct-suffix-automaton--directed-acyclic-word-graph-dawg)
+   - [Roaring Bitmaps for Token Set Operations](#82-roaring-bitmaps-for-token-set-operations)
+   - [Chunked Arena String Interner (`Symbol32`)](#83-chunked-arena-string-interner-symbol32)
 
 ---
 
@@ -46,7 +46,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
   Alan Jennings (1966). *"A Compact Storage Scheme for Simultaneous Linear Equations"*. The Computer Journal, 9(3), 281–285.  
   [Oxford Academic DOI:10.1093/comjnl/9.3.281](https://doi.org/10.1093/comjnl/9.3.281)
 - **Location**:
-  [`crates/diffuse-core/src/algo/skyline.rs`](../crates/diffuse-core/src/algo/skyline.rs) (`SkylineMatrix<T>`, `SkylineRow`)
+  [`crates/diffuse-algo/src/skyline.rs`](../crates/diffuse-algo/src/skyline.rs) (`SkylineMatrix<T>`, `SkylineRow`)
 - **Why It Is Used**:
   Dynamic programming alignment over large hunks ($M, N \approx 7,000$ lines) requires evaluating cells near an optimal path. A full dense matrix requires $M \times N \approx 50,000,000$ cells, incurring tens of megabytes of memory allocations and catastrophic CPU L3 cache thrashing. General-purpose sparse matrices (Compressed Sparse Row / CSR or Dictionary of Keys / DOK) incur expensive $O(N)$ row shifts on sequential writes or pointer indirection. The Skyline (envelope profile) scheme stores only the active column interval $[j_{\min}(i) \dots j_{\max}(i)]$ for each row $i$ packed contiguously in a single flat contiguous `Vec<T>`.
 - **For What It Is Used**:
@@ -65,7 +65,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
   [Oxford Academic DOI:10.1093/bioinformatics/btaa777](https://doi.org/10.1093/bioinformatics/btaa777)  
   Kun-Mao Chao, William R. Pearson, and Michael W. Miller (1992). *"Aligning Two Sequences Within a Specified Dynamic Programming Corridor"*. SAGMB, 4(1), 1–18.
 - **Location**:
-  [`crates/diffuse-core/src/algo/skyline.rs`](../crates/diffuse-core/src/algo/skyline.rs) (`AdaptiveEnvelope`, `AdaptiveEnvelopeBuilder`)
+  [`crates/diffuse-algo/src/skyline.rs`](../crates/diffuse-algo/src/skyline.rs) (`AdaptiveEnvelope`, `AdaptiveEnvelopeBuilder`)
 - **Why It Is Used**:
   Code hunk modifications are frequently asymmetric (e.g. inserting or deleting 50 lines within a 200-line hunk). A fixed diagonal band centered on $i = j$ drifts away from the true alignment corridor, causing downstream aligned lines to be clipped outside the matrix. The `AdaptiveEnvelope` calculates an asymmetric corridor tracking the true affine diagonal $j = i \cdot \frac{N}{M}$ with bandwidth $K = \max(K_{\min}, |M - N| + K_{\text{slack}})$, with safe cell budget clamping.
 - **For What It Is Used**:
@@ -120,7 +120,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
 - **Canonical Reference**:
   Osamu Gotoh (1982). *"An Improved Algorithm for Matching Biological Sequences"*. Journal of Molecular Biology, 162(3), 705–708.
 - **Location**:
-  [`crates/diffuse-core/src/algo/affine_gap.rs`](../crates/diffuse-core/src/algo/affine_gap.rs) (`AffineGapWorkspace`, `align_affine`)
+  [`crates/diffuse-algo/src/affine_gap.rs`](../crates/diffuse-algo/src/affine_gap.rs) (`AffineGapWorkspace`, `align_affine`)
 - **Why It Is Used**:
   Sub-line Gotoh alignment computes three concurrent recurrence planes: match/mismatch ($M$), deletion gap ($I_x$), and insertion gap ($I_y$). When evaluating token sequences of length $N, M$, maintaining full 2D matrices requires $3 \times N \times M \times 8$ bytes. The recycled stripe workspace retains only the current and previous row vectors, recycling memory across token comparisons.
 - **For What It Is Used**:
@@ -139,7 +139,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
   Walther von Dyck (1882). *"Gruppentheoretische Studien"*. Mathematische Annalen, 20(1), 1–44.  
   John E. Hopcroft and Jeffrey D. Ullman (1979). *"Introduction to Automata Theory, Languages, and Computation"*. Addison-Wesley.
 - **Location**:
-  [`crates/diffuse-core/src/algo/dyck.rs`](../crates/diffuse-core/src/algo/dyck.rs) (`DyckMatcher`, `DelimiterFrame`, `NestingDepth`)
+  [`crates/diffuse-algo/src/dyck.rs`](../crates/diffuse-algo/src/dyck.rs) (`DyckMatcher`, `DelimiterFrame`, `NestingDepth`)
 - **Why It Is Used**:
   Programming languages represent balanced Dyck-1/Dyck-N languages over nested delimiters: `()`, `[]`, `{}`. Unbalanced delimiters across hunk boundaries produce syntactic fractures. A pushdown stack automaton tracks open delimiter frames, line-origin coordinates, and nesting depth to ensure diff hunk expansions maintain delimiter integrity.
 - **For What It Is Used**:
@@ -156,7 +156,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
   Alfred V. Aho and Margaret J. Corasick (1975). *"Efficient String Matching: An Aid to Bibliographic Search"*. Communications of the ACM, 18(6), 333–340.  
   [ACM Digital Library](https://doi.org/10.1145/360825.360855)
 - **Location**:
-  [`crates/diffuse-core/src/algo/prefix_dfa.rs`](../crates/diffuse-core/src/algo/prefix_dfa.rs) (`PrefixDfa`)
+  [`crates/diffuse-algo/src/prefix_dfa.rs`](../crates/diffuse-algo/src/prefix_dfa.rs) (`PrefixDfa`)
 - **Why It Is Used**:
   Detecting comment markers, heredoc delimiters, directive prefixes, or statement terminators across hundreds of language profiles requires matching multiple keywords simultaneously. Naive substring scanning takes $O(P \cdot N)$ where $P$ is the number of keyword patterns. The Aho–Corasick automaton compiles keyword dictionaries into a deterministic trie with failure links.
 - **For What It Is Used**:
@@ -191,7 +191,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
 ### 4.2 Landmark Inverted $N$-Gram Index
 
 - **Location**:
-  [`crates/diffuse-core/src/algo/landmarks.rs`](../crates/diffuse-core/src/algo/landmarks.rs)
+  [`crates/diffuse-algo/src/landmarks.rs`](../crates/diffuse-algo/src/landmarks.rs)
 - **Why It Is Used**:
   Detecting Maximal Unique Matches (MUMs) between pre-image and post-image files requires identifying matching phrase anchors that occur exactly once in both documents.
 - **For What It Is Used**:
@@ -209,7 +209,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
 - **Canonical Reference**:
   Saunders Mac Lane (1971). *"Categories for the Working Mathematician"*. Springer-Verlag.
 - **Location**:
-  [`crates/diffuse-core/src/algo/tape.rs`](../crates/diffuse-core/src/algo/tape.rs) (`EditTape`, `EditOp`)
+  [`crates/diffuse-algo/src/tape.rs`](../crates/diffuse-algo/src/tape.rs) (`EditTape`, `EditOp`)
 - **Why It Is Used**:
   Diff operations (`Keep`, `Insert`, `Delete`, `Replace`) form a free monoid under sequence concatenation with identity element $\varepsilon$ (empty tape). Maintaining edits as an algebraic tape allows compositional transformations, slicing, inversion ($T^{-1}$), and replay without reparsing text.
 - **For What It Is Used**:
@@ -228,7 +228,7 @@ This document provides a comprehensive, rigorous reference of the foundational a
 - **Canonical Reference**:
   Harold W. Kuhn (1955). *"The Hungarian Method for the Assignment Problem"*. Naval Research Logistics Quarterly, 2(1–2), 83–97.
 - **Location**:
-  [`crates/diffuse-core/src/algo/bipartite_matching.rs`](../crates/diffuse-core/src/algo/bipartite_matching.rs)
+  [`crates/diffuse-algo/src/bipartite_matching.rs`](../crates/diffuse-algo/src/bipartite_matching.rs)
 - **Why It Is Used**:
   Identifying moved code blocks requires pairing deleted line clusters with inserted line clusters across disparate regions of a file or commit. Greedy matching easily locks onto false positives (e.g. repeated boilerplate functions).
 - **For What It Is Used**:
@@ -255,22 +255,32 @@ This document provides a comprehensive, rigorous reference of the foundational a
 
 ---
 
+### 7.2 Cache-Conscious Flat Augmented Interval Tree (`AugmentedIntervalTree<T>`)
+
+- **Canonical Reference**:
+  Thomas H. Cormen, Charles E. Leiserson, Ronald L. Rivest, and Clifford Stein (2009). *"Introduction to Algorithms"* (3rd ed.), §14.3 "Interval Trees", pp. 348–354. MIT Press.
+- **Location**:
+  [`crates/diffuse-algo/src/interval_tree.rs`](../crates/diffuse-algo/src/interval_tree.rs) (`AugmentedIntervalTree<T>`, `IntervalNode<T>`)
+- **Why It Is Used**:
+  During syntax-aware token diffing, relocation mapping, and interactive review coordinate lookup, the engine repeatedly performs stabbing queries ($p \in [low, high)$) and range-overlap queries ($[start, end) \cap [low, high) \neq \emptyset$). Dynamic node allocations with heap pointer chasing cause memory fragmentation and cache line thrashing.
+  `AugmentedIntervalTree` is an array-backed, balanced binary search tree ordered by `low`, where each node is augmented with the maximum upper bound in its subtree:
+  $$\text{node}.\text{max} = \max(\text{node}.\text{high}, \text{left}.\text{max}, \text{right}.\text{max})$$
+  All nodes reside contiguously in a single flat `Vec<IntervalNode<T>>`, using compact 32-bit integer handles (`u32`) for child links with `u32::MAX` as sentinel, completely eliminating heap allocations and pointer indirection during traversal.
+- **For What It Is Used**:
+  Enables zero-heap-allocation stabbing queries and range overlap queries across code coordinate spans, relocation blocks, and syntax ranges with fixed stack traversal buffers.
+- **Complexity**:
+  - Construction: $O(N)$ from pre-sorted slices; $O(N \log N)$ from unsorted slices or owned vectors.
+  - Stabbing Query (`visit_stabbing`, `stabbing_query`): $O(\log N + M)$ time with zero dynamic heap allocations.
+  - Overlap Query (`visit_overlapping`, `overlapping_query`): $O(\log N + M)$ time with zero dynamic heap allocations.
+  - Space: Contiguous $O(N)$ flat vector storage; exactly one contiguous memory buffer.
+
+---
+
 ## 8. Future Architectural Opportunities
 
 The following high-leverage data structures represent identified opportunities to further optimize memory consumption, cache locality, and algorithmic throughput across `diffuse`:
 
-### 8.1 Static Augmented Interval Tree (AST & Note Stabbing Queries)
-
-- **Target Scenario**:
-  During syntax-aware token diffing and TUI viewport rendering, the engine frequently performs point queries (e.g. "which AST syntax scopes or user review notes cover line $L$ or byte offset $O$?"). Currently, this scans vector slices or runs binary searches across start offsets.
-- **Proposed Data Structure**:
-  A **Static Augmented Interval Tree** (or flat array-backed Centered Interval Tree / Fenwick tree).
-- **Projected Advantage**:
-  Reduces interval stabbing queries from $O(K)$ linear scan to strictly $O(\log K + M)$ time (where $K$ is the number of intervals and $M$ is the number of overlapping matches). For deeply nested syntax trees (50+ AST nodes covering an expression), this yields zero-allocation, cache-friendly lookups during high-frequency interactive cursor movement.
-
----
-
-### 8.2 Succinct Suffix Automaton / Directed Acyclic Word Graph (DAWG)
+### 8.1 Succinct Suffix Automaton / Directed Acyclic Word Graph (DAWG)
 
 - **Target Scenario**:
   Maximal Unique Match (MUM) detection and moved block relocation across massive files (e.g. 50,000-line generated files or data dumps). The current inverted $N$-gram table allocates hash table entries and posting vectors for every $k$-mer.
@@ -281,7 +291,7 @@ The following high-leverage data structures represent identified opportunities t
 
 ---
 
-### 8.3 Roaring Bitmaps for Token Set Operations
+### 8.2 Roaring Bitmaps for Token Set Operations
 
 - **Target Scenario**:
   Line-level token set presence checks, vocabulary uniqueness filters, and relocation candidate filtering currently use `rustc_hash::FxHashSet<u32>` or `Vec<bool>`.

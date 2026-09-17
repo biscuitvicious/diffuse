@@ -465,10 +465,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "diffuse-algo"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash",
+ "tracing",
+]
+
+[[package]]
 name = "diffuse-core"
 version = "0.1.0"
 dependencies = [
  "difflib",
+ "diffuse-algo",
  "diffuse-syntax",
  "flate2",
  "gix",

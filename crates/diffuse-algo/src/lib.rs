@@ -1,7 +1,8 @@
-//! Modular, algorithm-agnostic diffing, LCS, and pattern matching interfaces.
+//! diffuse-algo — Renderer-agnostic, zero-I/O foundational algorithms and data
+//! structures.
 //!
 //! # Strict Architectural Separation
-//! All algorithms in this module operate strictly on generic sequences (`&[T]
+//! All algorithms in this crate operate strictly on generic sequences (`&[T]
 //! where T: PartialEq`, `&[u8]`, or string slices). They have **zero
 //! dependency** on diffuse ASTs, hunks, rows, terminal colors, notes, or wire
 //! representations.
@@ -16,6 +17,8 @@ pub mod bipartite_matching;
 pub mod bit_parallel;
 pub mod block_dp;
 pub mod bounded_dp;
+#[macro_use]
+pub mod dbc;
 pub mod dyck;
 pub mod entropy;
 pub mod hirschberg;
@@ -23,10 +26,13 @@ pub mod hunt_szymanski;
 pub mod interner;
 pub mod interval_tree;
 pub mod landmarks;
+pub mod lcs;
 pub mod myers_ond;
 pub mod prefix_dfa;
 pub mod skyline;
 pub mod tape;
+
+pub use bipartite_matching as bipartite;
 
 pub use affine_gap::{
     AffineAlignmentSteps, AffineGapPenalties, AffineGapWorkspace, DiffuseAffineExt, align_affine,

@@ -13,7 +13,7 @@
 //! Reusable [`AffineGapWorkspace`] avoids heap allocations across repeated
 //! runs.
 
-use crate::algo::EditOp;
+use crate::EditOp;
 
 /// Scoring parameters for Gotoh's affine gap penalty model.
 ///

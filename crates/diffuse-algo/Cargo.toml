@@ -1,0 +1,10 @@
+[package]
+name = "diffuse-algo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Renderer-agnostic, zero-I/O foundational algorithms and data structures for sequence alignment, LCS, and diffing"
+
+[dependencies]
+rustc-hash = { workspace = true }
+tracing = { workspace = true }
