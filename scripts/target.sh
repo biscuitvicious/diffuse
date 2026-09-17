@@ -155,19 +155,14 @@ ensure_toolchain_and_target() {
         fi
     fi
 
-    # 2. Nightly toolchain (for check.sh fmt / clippy)
+    # 2. Nightly toolchain (for check.sh fmt)
     if [ "$need_nightly" = "true" ]; then
         if ! rustup toolchain list 2>/dev/null | grep -Fq "nightly"; then
             echo "Installing nightly toolchain..."
-            rustup toolchain install nightly --profile minimal --component rustfmt clippy
+            rustup toolchain install nightly --profile minimal --component rustfmt
         fi
-        # Ensure nightly has rustfmt and clippy components
-        rustup component add --toolchain nightly rustfmt clippy 2>/dev/null || true
-        # Install target on nightly if not already installed
-        if ! is_target_installed "$target" "nightly"; then
-            echo "Installing target $target for toolchain nightly..."
-            rustup target add --toolchain nightly "$target" 2>/dev/null || true
-        fi
+        # Ensure nightly has rustfmt component
+        rustup component add --toolchain nightly rustfmt 2>/dev/null || true
     fi
 }
 

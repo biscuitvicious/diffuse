@@ -1,10 +1,10 @@
 # Data Structure Optimizations & Algorithm Extraction
 
-- [ ] **Phase 1: Bit-Parallel Myers / Hyyrö LCS Engine & Word-Level Parallelism**
-  - [ ] Implement `BitParallelLcs64` and `BitParallelLcs128` in `crates/diffuse-core/src/lcs/bit_parallel.rs`
-  - [ ] Support character-weighted score summation without 2D table allocations
-  - [ ] Author exhaustive differential unit tests comparing bit-parallel output against scalar 2D LCS
-  - [ ] Wire bit-parallel LCS into `lcs_matched_chars_ids` and the Block-DP `Mod` transition
+- [x] **Phase 1: Bit-Parallel Myers / Hyyrö LCS Engine & Word-Level Parallelism**
+  - [x] Implement `BitParallelLcs64` and `BitParallelLcs128` in `crates/diffuse-core/src/lcs/bit_parallel.rs`
+  - [x] Support character-weighted score summation without 2D table allocations
+  - [x] Author exhaustive differential unit tests comparing bit-parallel output against scalar 2D LCS
+  - [x] Wire bit-parallel LCS into `lcs_matched_chars_ids` and the Block-DP `Mod` transition
 - [ ] **Phase 2: Token Salience Partitioning & Diagonal Early-Abort**
   - [ ] Classify tokens in `TokenInterner` into Salient (semantic identifiers/literals) vs Delimiter/Format (punctuation, ANSI escapes, whitespace)
   - [ ] Update `token_multiset` bounds in `DpTokens` to enforce salient token correspondence

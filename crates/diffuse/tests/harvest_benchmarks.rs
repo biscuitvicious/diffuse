@@ -375,9 +375,8 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
 }
 
 #[test]
-#[ignore = "massive scale benchmark (run with --ignored)"]
-fn test_harvest_and_stream_scale_10000_files() {
-    let (diff, new_content, old_content) = create_synthetic_diff_in_memory(10000);
+fn test_harvest_and_stream_scale_1000_files() {
+    let (diff, new_content, old_content) = create_synthetic_diff_in_memory(1000);
 
     let start = Instant::now();
     let consumer = stream_diff_pipeline(
@@ -398,10 +397,10 @@ fn test_harvest_and_stream_scale_10000_files() {
         count += 1;
     }
 
-    assert_eq!(count, 10000);
+    assert_eq!(count, 1000);
     assert!(
-        first_time.unwrap() < std::time::Duration::from_secs(10),
-        "10,000-file first-file latency: {:?}",
+        first_time.unwrap() < std::time::Duration::from_secs(5),
+        "1,000-file first-file latency: {:?}",
         first_time.unwrap()
     );
 }

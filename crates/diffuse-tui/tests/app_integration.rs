@@ -663,10 +663,9 @@ fn test_deep_scroll_renders_correct_window() {
     assert!(plain.contains("line 0001"));
 }
 
-// Manual perf gate for very large hunks: repeated scrolled frames must
-// stay interactive. Ignored by default (timing-sensitive, slow fixture).
+// Large-hunk scroll test: verifies repeated scrolled frames stay interactive
+// and performant across 7,000 modified rows.
 #[test]
-#[ignore = "manual perf gate: large-hunk frame budget"]
 fn test_perf_big_hunk_scrolled_frames() {
     let mut body = String::new();
     for i in 1..=7000 {

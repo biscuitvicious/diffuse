@@ -11,7 +11,7 @@ The project standardizes on nightly tooling for formatting and linting:
 
 - **Pinned stable toolchain**: Defined in [`rust-toolchain.toml`](rust-toolchain.toml).
 - **Formatter**: `cargo +nightly fmt` with [`rustfmt.toml`](rustfmt.toml) (relies on nightly features: `imports_granularity = "Crate"`, `wrap_comments = true`, `format_code_in_doc_comments = true`).
-- **Linter**: `cargo +nightly clippy` (with zero warnings permitted).
+- **Linter**: `cargo clippy` (with zero warnings permitted).
 - **Line Length**: `max_width = 100`.
 
 To format the workspace:
@@ -153,15 +153,15 @@ Run [`scripts/check.sh`](scripts/check.sh) to format, auto-fix clippy lints, run
 scripts/check.sh
 ```
 
-### Nightly Clippy
-All code must pass strict nightly Clippy linter checks with warnings treated as errors:
+### Clippy
+All code must pass strict Clippy linter checks with warnings treated as errors using the pinned toolchain:
 ```bash
-cargo +nightly clippy -- -D warnings
+cargo clippy -- -D warnings
 ```
 
 To auto-apply clippy fixes across the workspace:
 ```bash
-cargo +nightly clippy --fix --allow-dirty --no-deps --all-targets --workspace -- -D warnings
+cargo clippy --fix --allow-dirty --no-deps --all-targets --workspace -- -D warnings
 ```
 
 ### Test Discipline

@@ -86,10 +86,10 @@ if [ "$clippy_mode" != "no" ]; then
     echo
     echo "-----{ CLIPPY: CHECK & FIX }-----"
     t_start=$(date +%s%N)
-    CLIPPY_CMD=(cargo +nightly clippy --target "$TARGET" --quiet --no-deps --workspace --all-targets -- -D warnings)
+    CLIPPY_CMD=(cargo clippy --target "$TARGET" --quiet --no-deps --workspace --all-targets -- -D warnings)
     if ! clippy_out=$("${CLIPPY_CMD[@]}" 2>&1); then
         echo "-----{ CLIPPY: WARNINGS DETECTED, APPLYING FIXES }-----"
-        cargo +nightly clippy --fix --allow-dirty --no-deps --all-targets --workspace --target "$TARGET" -- -D warnings 2>&1 | grep -vE '^[[:space:]]*(Checking|Compiling|Finished)[[:space:]]' || true
+        cargo clippy --fix --allow-dirty --no-deps --all-targets --workspace --target "$TARGET" -- -D warnings 2>&1 | grep -vE '^[[:space:]]*(Checking|Compiling|Finished)[[:space:]]' || true
         echo "-----{ CLIPPY: RE-CHECKING AFTER FIX }-----"
         "${CLIPPY_CMD[@]}" 2>&1
     fi

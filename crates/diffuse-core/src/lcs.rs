@@ -8,6 +8,8 @@
 //! renderer receives, so behavior is identical; only the raw offset
 //! values differ for non-ASCII lines.
 
+pub mod bit_parallel;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{parse::Spans, syntax::profile::LangProfile, token::WhitespaceKind};
@@ -1078,6 +1080,11 @@ pub fn lcs_matched_chars_ids(
             }
         }
         return total;
+    }
+    if let Some(matched) =
+        bit_parallel::bit_parallel_suffix_matched_chars(a, b, id_ws, id_alnum, b_token_chars)
+    {
+        return matched;
     }
     let stride = m + 1;
     let total_len = (n + 1) * stride;
