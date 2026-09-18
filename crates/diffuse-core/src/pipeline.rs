@@ -636,6 +636,7 @@ pub fn process_single_diff_file(
                 text: n.text.clone(),
                 created_at: n.created_at,
                 runs: note_runs(&n.text),
+                line_hash: n.line_hash,
             })
             .collect(),
         _ => Vec::new(),

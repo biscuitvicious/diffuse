@@ -280,6 +280,31 @@ fn test_notes_commit_and_delete_via_public_api() {
     assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 0);
 }
 
+#[test]
+fn test_notes_key_scopes_state_to_head() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(sample_output(), "test_repo".into(), path.clone())
+        .with_notes_key("test_repo@abc123".into());
+
+    let file = state.current_file().unwrap().path.clone();
+    state.note_draft = Some("head-scoped note".into());
+    state.commit_note_draft();
+
+    // Visible under the scoped key, invisible under the bare repo name or
+    // any other head; the display name stays human-readable.
+    assert_eq!(
+        notes_for_file(&state.notes, "test_repo@abc123", &file).count(),
+        1
+    );
+    assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 0);
+    assert_eq!(
+        notes_for_file(&state.notes, "test_repo@def456", &file).count(),
+        0
+    );
+    assert_eq!(state.repo, "test_repo");
+}
+
 // 6. Finder — open, query, confirm, cancel
 #[test]
 fn test_finder_open_query_and_confirm() {

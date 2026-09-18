@@ -44,7 +44,8 @@ pub use diffuse_tui as tui;
 pub use diffuse_core::{
     DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
     DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
-    DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, PipelineInput, PipelineOptions,
+    DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, PipelineInput, PipelineOptions, Repo,
+    ReviewTarget, RevisionRange,
     pipeline::{run_pipeline, run_pipeline_full},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
 };
@@ -58,7 +59,7 @@ pub use diffuse_tui::{run_interactive_tui, run_tui};
 pub mod prelude {
     pub use diffuse_core::{
         DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT,
-        PipelineInput, PipelineOptions,
+        LineHash, PipelineInput, PipelineOptions, Repo, ReviewTarget, RevisionRange,
         merge::RunKind,
         parse::{Row, RowKind},
         pipeline::{run_pipeline, run_pipeline_full},

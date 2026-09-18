@@ -44,6 +44,13 @@ pub struct AppState {
     pub confirmed_sel: Option<Selection>,
     pub theme: DiffuseTheme,
     pub repo: String,
+    /// HEAD-scoped notes-DB key (`{repo}@{head}`); the display name in
+    /// `repo` stays human-readable while notes isolate per commit.
+    /// Resolved once at startup and never re-resolved mid-session, so all
+    /// notes filed while the TUI is open land under the commit it opened
+    /// with even if HEAD moves outside diffuse.
+    pub notes_key: String,
+    pub target: diffuse_core::ReviewTarget,
     pub should_quit: bool,
     pub status_message: Option<(String, bool)>, // (message, is_error)
     pub viewport_height: usize,
@@ -110,7 +117,7 @@ impl AppState {
         let hunk_meta = Self::build_hunk_meta(&output);
 
         let loaded_notes = load_notes(&notes_path);
-        Self {
+        let mut state = Self {
             output,
             flat,
             row_idx: start_row,
@@ -127,7 +134,9 @@ impl AppState {
             sel_pivot: None,
             confirmed_sel: None,
             theme: DiffuseTheme::from_env(),
-            repo,
+            repo: repo.clone(),
+            notes_key: repo.clone(),
+            target: diffuse_core::ReviewTarget::from_repo(diffuse_core::Repo::from_name(repo)),
             should_quit: false,
             status_message: None,
             viewport_height: 20,
@@ -157,7 +166,9 @@ impl AppState {
             scroll_pin: None,
             auto_scroll_on_load: None,
             geo_cache: Default::default(),
-        }
+        };
+        state.sync_all_notes();
+        state
     }
 
     pub fn with_expand_lines(mut self, expand_lines: usize) -> Self {
@@ -175,10 +186,35 @@ impl AppState {
         self
     }
 
-    pub fn with_repo_context(mut self, repo_root: PathBuf, git_args: Vec<String>) -> Self {
-        self.commit_range = diffuse_core::git::resolve_commit_range(&repo_root, &git_args);
-        self.repo_root = repo_root;
-        self.git_args = git_args;
+    /// Set the review target, synchronizing repo, notes_key, repo_root,
+    /// commit_range, and git_args fields.
+    pub fn with_target(mut self, target: diffuse_core::ReviewTarget) -> Self {
+        self.repo = target.repo_name().to_string();
+        self.notes_key = target.notes_key();
+        if let Some(root) = target.repo_root() {
+            self.repo_root = root.to_path_buf();
+        }
+        self.commit_range = target.commit_range();
+        self.git_args = target.git_args.clone();
+        self.target = target;
+        self.sync_all_notes();
+        self
+    }
+
+    pub fn with_repo_context(self, repo_root: PathBuf, git_args: Vec<String>) -> Self {
+        let repo_name = self.repo.clone();
+        let target = diffuse_core::ReviewTarget::from_repo_args(
+            diffuse_core::Repo::from_root(repo_root).with_name(repo_name),
+            git_args,
+        );
+        self.with_target(target)
+    }
+
+    /// Scope note storage/lookup to the live HEAD of `repo_root`
+    /// (`{repo}@{head}`); falls back to the bare repo name outside git.
+    pub fn with_notes_key(mut self, notes_key: String) -> Self {
+        self.notes_key = notes_key;
+        self.sync_all_notes();
         self
     }
 
@@ -239,7 +275,7 @@ impl AppState {
         let source = f.raw_source.as_ref()?;
         let opts = diffuse_core::PipelineOptions::default()
             .with_repo(self.repo_root.to_str().map(String::from))
-            .with_notes(Some(self.notes.clone()), Some(self.repo.clone()))
+            .with_notes(Some(self.notes.clone()), Some(self.notes_key.clone()))
             .with_expand_lines(self.expand_lines);
         diffuse_core::pipeline::render_file_from_source(
             source,
@@ -291,7 +327,7 @@ impl AppState {
             let repo_root = self.repo_root.clone();
             let git_args = self.git_args.clone();
             let notes = self.notes.clone();
-            let repo = self.repo.clone();
+            let repo = self.notes_key.clone();
             let expand_lines = self.expand_lines;
 
             std::thread::spawn(move || {
@@ -319,6 +355,7 @@ impl AppState {
         self.record_stream_activity();
         if fi < self.output.files.len() {
             self.output.files[fi] = rendered;
+            self.sync_file_notes(fi);
             if fi < self.hunk_meta.len() {
                 self.hunk_meta[fi] = Self::build_file_hunk_meta(&self.output.files[fi]);
             }

@@ -285,7 +285,7 @@ pub fn reload_diff(
         .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
-        .with_notes(Some(state.notes.clone()), Some(state.repo.clone()))
+        .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
         .with_expand_lines(state.expand_lines);
     let mut new_out = run_pipeline_full(
         &git_res.diff,

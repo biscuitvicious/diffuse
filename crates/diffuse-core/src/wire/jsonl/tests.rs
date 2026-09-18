@@ -555,6 +555,7 @@ fn test_output_hunk_note_count() {
         text: String::new(),
         created_at: 0,
         runs: vec![],
+        line_hash: None,
     };
     // Old lines [10, 15), new lines [20, 24).
     let hunk = OutputHunk {

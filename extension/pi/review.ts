@@ -3,9 +3,12 @@
  */
 
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { diffuseBinPath, parseReviewArgs } from "./src/backend.ts";
-import { allNotes, loadNotes, NOTES_FILE } from "./src/persistence.ts";
+
+const NOTES_FILE = join(homedir(), ".pi", "review", "notes.json");
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("review", {
@@ -58,12 +61,7 @@ export default function (pi: ExtensionAPI) {
 				return { render: () => [], invalidate: () => {} };
 			});
 
-			const notes = loadNotes();
-			const total = allNotes(notes, repoName).length;
-			ctx.ui.notify(
-				`review closed · ${total} note${total === 1 ? "" : "s"} in this repo`,
-				"info",
-			);
+			ctx.ui.notify("review closed", "info");
 		},
 	});
 }

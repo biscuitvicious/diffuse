@@ -47,8 +47,12 @@ pub fn run_tui(
     theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
+    let target = diffuse_core::ReviewTarget::from_repo_args(
+        diffuse_core::Repo::from_root(repo_root).with_name(repo.clone()),
+        git_args,
+    );
     let mut state = AppState::new(initial_output, repo, notes_path)
-        .with_repo_context(repo_root, git_args)
+        .with_target(target)
         .with_expand_lines(expand_lines)
         .with_theme(theme);
     state.enable_async_on_demand();

@@ -150,6 +150,7 @@ fn test_nonzero_notes_still_rendered() {
             text: "a note".to_string(),
             created_at: 0,
             runs: vec![],
+            line_hash: None,
         }],
         content_runs: vec![],
         rows: vec![],

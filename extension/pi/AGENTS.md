@@ -7,7 +7,7 @@
 > **Backend**: the extension is a **thin client** for the native Rust binary.
 > `/review` stops the pi TUI, resolves the git workspace and arguments, and
 > spawns the bundled `diffuse` binary (`bin/diffuse`) in interactive TUI mode
-> with `stdio: "inherit"`. On exit, it restarts the pi TUI and notifies note counts.
+> with `stdio: "inherit"`. On exit, it restarts the pi TUI and notifies completion.
 
 Interactive git-diff review for [pi](https://github.com/earendil-works/pi-mono).
 `/review` opens the working-tree diff in the native diffuse TUI: syntax-highlighted
@@ -20,7 +20,6 @@ jump, and interactive fuzzy file finder.
 review.ts              # thin client command registration & diffuse binary launcher
 index.ts               # extension entrypoint
 src/backend.ts         # binary path resolver & arg parser
-src/persistence.ts     # notes database reader for summary notification
 test/smoke.test.ts     # smoke test verifying binary execution & args
 scripts/build-bin.sh   # builds & bundles bin/diffuse
 scripts/install.sh     # installs the extension into ~/.pi/agent/extensions/
@@ -36,7 +35,7 @@ scripts/uninstall.sh   # removes the extension from ~/.pi/agent/extensions/
    - Stops pi TUI (`ctx.tui.stop()`).
    - Spawns `bin/diffuse` (`stdio: "inherit"`, `cwd: repoRoot`).
    - Awaits exit, restarts pi TUI (`ctx.tui.start()`, `ctx.tui.requestRender(true)`).
-   - Reads `~/.pi/review/notes.json` to display summary notification.
+   - Displays exit notification.
 
 2. **Native Rust Binary (`diffuse`)**:
    - Implements the complete engine, renderer, event loop, notes persistence, and git actions natively in Rust.

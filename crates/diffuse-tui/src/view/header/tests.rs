@@ -331,6 +331,7 @@ fn test_header_bar_nonzero_notes_shown() {
                 text: "note one".to_string(),
                 created_at: 0,
                 runs: vec![],
+                line_hash: None,
             },
             OutputNote {
                 id: "n2".to_string(),
@@ -341,6 +342,7 @@ fn test_header_bar_nonzero_notes_shown() {
                 text: "note two".to_string(),
                 created_at: 0,
                 runs: vec![],
+                line_hash: None,
             },
         ],
         content_runs: vec![],
@@ -1200,6 +1202,7 @@ fn test_status_bar_shows_file_and_hunk_stats() {
             text: "hunk note".to_string(),
             created_at: 0,
             runs: vec![],
+            line_hash: None,
         }],
         content_runs: vec![],
         rows: vec![],

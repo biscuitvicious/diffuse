@@ -19,7 +19,7 @@ use diffuse::{
     DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
     DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP,
     core::{
-        DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions,
+        DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions, Repo, ReviewTarget,
         git::{is_inside_work_tree, load_git_repo},
         notes::{
             NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
@@ -209,6 +209,16 @@ enum InputPayload {
     Single(Box<Input>),
 }
 
+/// Notes-DB key for a JSON-protocol input: commit-scoped when the input
+/// carries a repo root, bare repo name otherwise.
+fn notes_key_for_input(input: &Input, repo: &str) -> String {
+    let base_repo = match input.repo_root.as_deref() {
+        Some(root) => Repo::from_root(Path::new(root)).with_name(repo),
+        None => Repo::from_name(repo),
+    };
+    ReviewTarget::from_repo_args(base_repo, input.base_args.clone()).notes_key()
+}
+
 fn process_input(input: Input, args: &Args) -> PipelineOutput {
     let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
     let notes_path = notes_file_path
@@ -221,7 +231,7 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
         && let (Some(n), Some(r)) = (input.note.clone(), input.repo.as_deref())
     {
         let mut db = load_notes(&notes_path);
-        add_note(&mut db, r, n);
+        add_note(&mut db, &notes_key_for_input(&input, r), n);
         let _ = save_notes(&notes_path, &db);
     }
 
@@ -235,12 +245,16 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
         )
     {
         let mut db = load_notes(&notes_path);
-        remove_notes(&mut db, r, f, s, st, en);
+        remove_notes(&mut db, &notes_key_for_input(&input, r), f, s, st, en);
         let _ = save_notes(&notes_path, &db);
     }
 
     let loaded_db = load_notes(&notes_path);
-    let repo_str = args.repo.clone().or_else(|| input.repo.clone());
+    let repo_str = args
+        .repo
+        .clone()
+        .or_else(|| input.repo.clone())
+        .map(|r| notes_key_for_input(&input, &r));
     let visual = input.context.unwrap_or(args.context);
     let cap = input.token_product_cap.unwrap_or(args.token_product_cap);
     let budget = input.cluster_budget.unwrap_or(args.cluster_budget);
@@ -467,15 +481,13 @@ fn main() -> io::Result<()> {
             .unwrap_or_else(default_notes_path);
         let loaded_db = load_notes(&notes_path);
 
-        let repo_name = args.repo.clone().unwrap_or_else(|| {
-            repo_root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "diffuse".to_string())
-        });
+        let target = ReviewTarget::from_repo_args(
+            Repo::from_root(&repo_root).with_name_opt(args.repo.clone()),
+            git_args.clone(),
+        );
 
         let pipeline_opts = PipelineOptions::default()
-            .with_notes(Some(loaded_db.clone()), Some(repo_name.clone()))
+            .with_notes(Some(loaded_db.clone()), Some(target.notes_key()))
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
             .with_token_product_cap(args.token_product_cap)
@@ -505,7 +517,7 @@ fn main() -> io::Result<()> {
                 initial_out,
                 Some(consumer.into_receiver()),
                 Some(meta_rx),
-                repo_name,
+                target.repo_name().to_string(),
                 notes_path,
                 repo_root.clone(),
                 git_args.clone(),
@@ -621,14 +633,12 @@ fn main() -> io::Result<()> {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(default_notes_path);
         let loaded_db = load_notes(&notes_path);
-        let repo_name = args.repo.clone().unwrap_or_else(|| {
-            repo_root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "diffuse".to_string())
-        });
+        let target = ReviewTarget::from_repo_args(
+            Repo::from_root(&repo_root).with_name_opt(args.repo.clone()),
+            git_args.clone(),
+        );
         let pipeline_opts = PipelineOptions::default()
-            .with_notes(Some(loaded_db), Some(repo_name))
+            .with_notes(Some(loaded_db), Some(target.notes_key()))
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
             .with_token_product_cap(args.token_product_cap)
@@ -834,7 +844,13 @@ fn main() -> io::Result<()> {
                     .cluster_bandwidth_slack
                     .unwrap_or(args.cluster_bandwidth_slack);
                 let opts = PipelineOptions::default()
-                    .with_notes(Some(loaded_db), args.repo.clone().or(input.repo.clone()))
+                    .with_notes(
+                        Some(loaded_db),
+                        args.repo
+                            .clone()
+                            .or(input.repo.clone())
+                            .map(|r| notes_key_for_input(&input, &r)),
+                    )
                     .with_visual_context(input.context.unwrap_or(args.context))
                     .with_expand_lines(args.expand_lines)
                     .with_token_product_cap(cap)

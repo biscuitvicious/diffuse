@@ -5,13 +5,14 @@ use std::{
     collections::HashMap,
     env,
     ffi::OsString,
-    fs, io,
+    fmt, fs, io,
+    num::NonZero,
     path::{Path, PathBuf},
     sync::OnceLock,
 };
 
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     merge::RunKind,
@@ -48,9 +49,15 @@ pub struct ReviewNote {
     pub end: u32,
     pub text: String,
     pub created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_hash: Option<LineHash>,
 }
 
 /// The notes database: repo -> (`file_path` -> list of notes).
+///
+/// The top-level repo key is HEAD-scoped (see [`notes_key`]): notes saved
+/// under one commit are invisible after the working tree is committed or
+/// the branch changes, instead of lingering as stale annotations.
 pub type NotesDB = HashMap<String, HashMap<String, Vec<ReviewNote>>>;
 
 /// Extension-agnostic state directory for diffuse: `$XDG_STATE_HOME/diffuse`,
@@ -93,6 +100,213 @@ pub fn now_millis() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Resolve the HEAD commit hash of the repository containing `repo_root`.
+/// Returns `None` outside a work tree or when the repo has no commits yet.
+pub fn head_commit(repo_root: &Path) -> Option<String> {
+    crate::git::run_git(repo_root, &["rev-parse", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Resolve the commit hash to scope review notes to.
+///
+/// When reviewing a commit range (e.g. `main..feature`, `A...B`, `HEAD^!`),
+/// notes are keyed off the second-to-last (next newest) commit in the range.
+/// When reviewing uncommitted changes against the working tree (or when the
+/// range has no parent), notes fall back to the live HEAD commit.
+pub fn notes_commit(repo_root: &Path, git_args: &[String]) -> Option<String> {
+    let ref_pair = crate::git::resolve_refs(repo_root, git_args, false);
+    if !ref_pair.worktree_new
+        && let (Some(old), Some(new)) = (ref_pair.old_ref, ref_pair.new_ref)
+    {
+        // Try resolving the second newest commit in the range via git rev-list:
+        let range = format!("{old}..{new}");
+        if let Some(revs) = crate::git::run_git(repo_root, &["rev-list", "-n", "2", &range]) {
+            let lines: Vec<&str> = revs.lines().filter(|l| !l.trim().is_empty()).collect();
+            if lines.len() >= 2 {
+                return Some(lines[1].trim().to_string());
+            }
+        }
+        // Single commit in range: the commit immediately preceding `new` in the
+        // range is `old`.
+        if let Some(h) =
+            crate::git::run_git(repo_root, &["rev-parse", &format!("{old}^{{commit}}")])
+        {
+            let h = h.trim().to_string();
+            if !h.is_empty() {
+                return Some(h);
+            }
+        }
+        if let Some(h) =
+            crate::git::run_git(repo_root, &["rev-parse", &format!("{new}~1^{{commit}}")])
+        {
+            let h = h.trim().to_string();
+            if !h.is_empty() {
+                return Some(h);
+            }
+        }
+        if let Some(h) =
+            crate::git::run_git(repo_root, &["rev-parse", &format!("{new}^{{commit}}")])
+        {
+            let h = h.trim().to_string();
+            if !h.is_empty() {
+                return Some(h);
+            }
+        }
+    }
+
+    head_commit(repo_root)
+}
+
+/// Notes-DB key for a repo at a given HEAD: `{repo}@{head}`.
+///
+/// Falls back to the bare repo name when HEAD is unknown (non-git
+/// contexts, repos without commits yet) so notes keep working there.
+/// Entries saved under a previous bare-repo key are simply never matched
+/// again once a HEAD is known; they are left on disk untouched.
+pub fn notes_key(repo: &str, head: Option<&str>) -> String {
+    match head {
+        Some(h) if !h.is_empty() => format!("{repo}@{h}"),
+        _ => repo.to_string(),
+    }
+}
+
+/// Convenience wrapper: resolve the target notes commit for `repo_root` under
+/// `git_args` (second-to-last commit when reviewing a range, otherwise HEAD)
+/// and build the notes-DB key for `repo`.
+pub fn notes_key_for_repo_args(repo_root: &Path, repo: &str, git_args: &[String]) -> String {
+    notes_key(repo, notes_commit(repo_root, git_args).as_deref())
+}
+
+/// Convenience wrapper: resolve the live HEAD under `repo_root` and build
+/// the notes-DB key for `repo`.
+pub fn notes_key_for_repo(repo_root: &Path, repo: &str) -> String {
+    notes_key_for_repo_args(repo_root, repo, &[])
+}
+
+/// A deterministic 32-bit short hash of trimmed line content.
+///
+/// Transparently wraps a [`NonZero<u32>`] so that `Option<LineHash>` has
+/// zero-cost niche optimization (occupying exactly 4 bytes with no
+/// discriminant). Serializes to and deserializes from an 8-character
+/// hexadecimal string.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+#[repr(transparent)]
+pub struct LineHash(pub NonZero<u32>);
+
+impl LineHash {
+    /// Compute a deterministic line hash from trimmed line content.
+    ///
+    /// Uses FNV-1a 32-bit over `content.trim().as_bytes()`. If the hash
+    /// evaluates to 0, wraps to 1 to maintain the non-zero niche invariant.
+    pub fn from_content(content: &str) -> Self {
+        let mut hash: u32 = 0x811c9dc5;
+        for byte in content.trim().as_bytes() {
+            hash ^= *byte as u32;
+            hash = hash.wrapping_mul(0x01000193);
+        }
+        let val = if hash == 0 { 1 } else { hash };
+        // SAFETY: val is guaranteed non-zero.
+        Self(unsafe { NonZero::new_unchecked(val) })
+    }
+
+    /// Parse a line hash from a hexadecimal string (up to 8 hex chars).
+    pub fn from_hex(hex: &str) -> Result<Self, std::num::ParseIntError> {
+        let val = u32::from_str_radix(hex.trim(), 16)?;
+        let val = if val == 0 { 1 } else { val };
+        // SAFETY: val is guaranteed non-zero.
+        Ok(Self(unsafe { NonZero::new_unchecked(val) }))
+    }
+
+    /// The raw non-zero integer representation.
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+
+    /// Check if this hash matches the trimmed content of a line.
+    pub fn matches_content(self, content: &str) -> bool {
+        Self::from_content(content) == self
+    }
+
+    /// Return the formatted 8-character hexadecimal string.
+    pub fn to_hex(self) -> String {
+        format!("{:08x}", self.0.get())
+    }
+}
+
+impl fmt::Display for LineHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:08x}", self.0.get())
+    }
+}
+
+impl fmt::LowerHex for LineHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:08x}", self.0.get())
+    }
+}
+
+impl Serialize for LineHash {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for LineHash {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct LineHashVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for LineHashVisitor {
+            type Value = LineHash;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a 1-8 character hexadecimal string or u32 integer")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<LineHash, E>
+            where
+                E: serde::de::Error,
+            {
+                LineHash::from_hex(v).map_err(serde::de::Error::custom)
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<LineHash, E>
+            where
+                E: serde::de::Error,
+            {
+                let val = if (v as u32) == 0 { 1 } else { v as u32 };
+                // SAFETY: val is guaranteed non-zero.
+                Ok(LineHash(unsafe { NonZero::new_unchecked(val) }))
+            }
+        }
+
+        deserializer.deserialize_any(LineHashVisitor)
+    }
+}
+
+/// Convenience alias: compute the deterministic line hash from line content.
+pub fn hash_line_content(content: &str) -> LineHash {
+    LineHash::from_content(content)
+}
+
+/// Check whether a note anchors cleanly against the content of its target line.
+///
+/// If the note has a recorded `line_hash`, returns `true` only if the hash
+/// of `line_content` matches. Notes without a hash (legacy) always anchor
+/// by line number.
+pub fn note_anchors_cleanly(note: &ReviewNote, line_content: &str) -> bool {
+    match note.line_hash {
+        Some(expected) => expected.matches_content(line_content),
+        None => true,
+    }
 }
 
 /// Load notes from disk. Returns an empty DB if the file does not exist or

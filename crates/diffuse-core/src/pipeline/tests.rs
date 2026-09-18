@@ -1074,6 +1074,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
                 end: 1,
                 text: text.to_string(),
                 created_at: 0,
+                line_hash: None,
             },
         );
     }
@@ -1089,6 +1090,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
             end: 1,
             text: "other".to_string(),
             created_at: 0,
+            line_hash: None,
         },
     );
 
@@ -1113,4 +1115,89 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
     let out_no_repo = run_pipeline_full(diff, None, None, PipelineOptions::default());
     assert_eq!(out_no_repo.files[0].counts.notes, 0);
     assert_eq!(out_no_repo.total_counts().notes, 0);
+}
+
+#[test]
+fn test_pipeline_preserves_all_notes_in_counts() {
+    use crate::notes::{LineHash, ReviewNote, Side, add_note, hash_line_content};
+
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
+    let mut db = crate::notes::NotesDB::new();
+
+    // 1. Cleanly anchored note (matching line_hash) -> kept
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "clean".into(),
+            file: "a.txt".into(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            text: "clean note".into(),
+            created_at: 0,
+            line_hash: Some(hash_line_content("new one")),
+        },
+    );
+
+    // 2. Mismatched line_hash note -> kept (displayed on file banner)
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "mismatch".into(),
+            file: "a.txt".into(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            text: "mismatched note".into(),
+            created_at: 0,
+            line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
+        },
+    );
+
+    // 3. Nonexistent line note -> kept (displayed on file banner)
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "orphan".into(),
+            file: "a.txt".into(),
+            side: Side::New,
+            start: 9999,
+            end: 9999,
+            text: "orphan note".into(),
+            created_at: 0,
+            line_hash: Some(hash_line_content("some content")),
+        },
+    );
+
+    // 4. Legacy note without line_hash on an existing line -> kept (displayed
+    //    on file banner)
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "legacy".into(),
+            file: "a.txt".into(),
+            side: Side::New,
+            start: 2,
+            end: 2,
+            text: "legacy note".into(),
+            created_at: 0,
+            line_hash: None,
+        },
+    );
+
+    let opts = PipelineOptions::default().with_notes(Some(db), Some("myrepo".into()));
+    let out = run_pipeline_full(diff, None, None, opts);
+    assert_eq!(out.files.len(), 1);
+    assert_eq!(
+        out.files[0].counts.notes, 4,
+        "all notes (clean, mismatch, orphan, legacy) must be retained in counts"
+    );
+    assert_eq!(out.files[0].notes.len(), 4);
+    let note_ids: Vec<_> = out.files[0].notes.iter().map(|n| n.id.as_str()).collect();
+    assert_eq!(note_ids, vec!["clean", "mismatch", "orphan", "legacy"]);
+    assert_eq!(out.total_counts().notes, 4);
 }

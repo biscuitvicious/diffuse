@@ -114,6 +114,7 @@ impl AppState {
         }
 
         self.output.files.push(file);
+        self.sync_file_notes(fi);
 
         if self.flat.len() == 1
             && self.flat[0].is_file_header
