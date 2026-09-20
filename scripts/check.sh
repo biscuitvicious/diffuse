@@ -137,7 +137,7 @@ if [ "$no_test" != true ]; then
         echo
         echo "-----{ TEST: CARGO TEST (WARM RUN) }-----"
         t_start=$(date +%s%N)
-        cargo test "${TARGET_ARGS[@]}" --quiet --workspace 2>&1 | grep -vE '^(running [[:digit:]]+ test|test result: |$|all doctests ran in )'
+        cargo test "${TARGET_ARGS[@]}" --quiet --workspace | grep -vE '^(running [[:digit:]]+ test|test result: |$|all doctests ran in )'
         t_end=$(date +%s%N)
         echo "-----{ TEST: ALL CLEAR ($(time_diff_sec "$t_start" "$t_end")s) }-----"
     else
