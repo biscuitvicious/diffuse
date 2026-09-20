@@ -218,7 +218,7 @@ impl AppState {
         &self,
         content_width: usize,
     ) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
-        let callouts = self.note_callouts();
+        let callouts = self.note_callouts(content_width);
         self.compute_geometry(content_width, &callouts)
     }
 
@@ -238,7 +238,7 @@ impl AppState {
             return hit.clone();
         }
         let started = std::time::Instant::now();
-        let callouts = self.note_callouts();
+        let callouts = self.note_callouts(content_width);
         let (starts, counts, seg_counts, total_vis_lines) =
             self.compute_geometry(content_width, &callouts);
         tracing::debug!(
@@ -380,7 +380,6 @@ impl AppState {
                 .map(|h| (h.flat, (h.file, h.hunk)))
                 .collect()
         };
-        let callouts = self.note_callouts();
         let width = if self.terminal_width > 0 {
             self.terminal_width
         } else if self.last_content_width > 0 {
@@ -393,6 +392,7 @@ impl AppState {
         } else {
             width.saturating_sub(1)
         };
+        let callouts = self.note_callouts(content_width);
 
         let mut vis_i = 0;
         for (i, _item) in self.flat.iter().enumerate() {

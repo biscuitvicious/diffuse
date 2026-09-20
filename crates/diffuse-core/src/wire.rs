@@ -240,6 +240,7 @@ impl OutputFile {
             FileStatus::Renamed => "renamed".to_string(),
             FileStatus::Untracked => "untracked".to_string(),
             FileStatus::ModeChanged => "mode changed".to_string(),
+            FileStatus::Note => "note".to_string(),
         };
         Self {
             path: f.path.clone(),
@@ -339,6 +340,7 @@ impl OutputFile {
             "renamed" => FileStatus::Renamed,
             "untracked" => FileStatus::Untracked,
             "mode changed" => FileStatus::ModeChanged,
+            "note" => FileStatus::Note,
             _ => FileStatus::Modified,
         };
         DiffFile {

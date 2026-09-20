@@ -304,7 +304,7 @@ impl AppState {
                                 && self.hunk_trailing_gap(item.file_idx) > 0
                             {
                                 let row_segs = seg_counts[i];
-                                let note_lines = self.note_callouts().get(&i).map_or(0, Vec::len);
+                                let note_lines = self.note_callouts(cw).get(&i).map_or(0, Vec::len);
                                 let bottom_start = s + div_lines + row_segs + note_lines;
                                 if target_vis >= bottom_start {
                                     let seg_off = target_vis - bottom_start;

@@ -359,6 +359,7 @@ pub enum FileStatus {
     Renamed,
     Untracked,
     ModeChanged,
+    Note,
 }
 
 impl FileStatus {
@@ -370,6 +371,7 @@ impl FileStatus {
             FileStatus::Renamed => FileStatus::Renamed,
             FileStatus::Untracked => FileStatus::Untracked,
             FileStatus::ModeChanged => FileStatus::ModeChanged,
+            FileStatus::Note => FileStatus::Note,
         }
     }
 }
@@ -733,6 +735,7 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
                 || f.status == FileStatus::Renamed
                 || f.status == FileStatus::Untracked
                 || f.status == FileStatus::ModeChanged
+                || f.status == FileStatus::Note
                 || f.is_binary)
     });
 
@@ -743,9 +746,10 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
                     || f.status == FileStatus::Renamed
                     || f.status == FileStatus::Untracked
                     || f.status == FileStatus::ModeChanged
+                    || f.status == FileStatus::Note
                     || f.is_binary)
         }),
-        "All parsed DiffFiles must have non-empty paths and non-empty hunks or be renamed/untracked/mode changed/binary"
+        "All parsed DiffFiles must have non-empty paths and non-empty hunks or be renamed/untracked/mode changed/note/binary"
     );
 
     files

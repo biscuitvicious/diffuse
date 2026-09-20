@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 
+use crate::render::ColorExt;
+
 use crate::core::notes::{
     ReviewNote, Side, add_note, hash_line_content, note_anchors_cleanly, note_runs, notes_for_file,
     now_millis, remove_notes, save_notes,
@@ -194,8 +196,27 @@ impl AppState {
     /// their target line display inline on the last row in their coordinate
     /// range. Notes that do not anchor cleanly, or do not have a line hash,
     /// display attached to the file banner.
-    pub(crate) fn note_callouts(&self) -> HashMap<usize, Vec<String>> {
+    pub(crate) fn note_callouts(&self, content_width: usize) -> HashMap<usize, Vec<String>> {
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
+        let gutter_fg = crate::render::Color::Rgb(220, 220, 20).fg_code();
+        let glyph_fg = crate::render::Color::Fixed(255).fg_code();
+        let amber_fg = crate::render::Color::Rgb(250, 75, 40).fg_code();
+        let note_bg = crate::render::Color::Fixed(234).bg_code();
+        let fg_reset = crate::render::FG_RESET;
+        const STRIPE_LEFT: &str = "\u{258C}";
+        const BAND_BLOCK: &str = "\u{2588}";
+        // Note background spans the full line; left‑edge amber stripe and
+        // filled yellow band use foreground color, then white glyph.
+        let first_prefix = format!(
+            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}💬 {fg_reset}"
+        );
+        let line_prefix = format!(
+            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
+        );
+        let final_prefix = format!(
+            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}└┄ {fg_reset}"
+        );
+        let text_cols = content_width.saturating_sub(8).max(1);
         for (file_idx, f) in self.output.files.iter().enumerate() {
             let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
@@ -232,13 +253,46 @@ impl AppState {
                     banner_idx
                 };
 
-                let mut body = String::new();
-                for r in note_runs(&n.text) {
-                    let color = r.color.as_deref().unwrap_or("warning");
-                    body.push_str(&self.theme.render_token(color, &r.text, "ctx", None, r.sgr));
+                let note_rows = crate::core::pipeline::markdown_file_rows(&n.text);
+                let segment_counts: Vec<usize> = note_rows
+                    .iter()
+                    .map(|r| {
+                        let exp = crate::render::expand_tabs(&r.text, 4);
+                        let line_len = crate::render::display_width(&exp);
+                        if line_len == 0 {
+                            1
+                        } else {
+                            line_len.div_ceil(text_cols)
+                        }
+                    })
+                    .collect();
+                let total_segments = segment_counts.iter().copied().sum::<usize>().max(1);
+                let mut visual_idx = 0usize;
+                for (line_idx, r) in note_rows.iter().enumerate() {
+                    let num_segs = segment_counts[line_idx];
+                    for s_idx in 0..num_segs {
+                        let prefix = match visual_idx {
+                            0 => first_prefix.as_str(),
+                            n if total_segments > 1 && n + 1 == total_segments => {
+                                final_prefix.as_str()
+                            }
+                            _ => line_prefix.as_str(),
+                        };
+                        let seg_start = s_idx * text_cols;
+                        let seg_end = seg_start + text_cols;
+                        let rendered_seg = crate::render::render_note_segment(
+                            &r.text,
+                            &r.runs,
+                            seg_start,
+                            seg_end,
+                            prefix,
+                            self.syntax_on,
+                            &self.theme,
+                        );
+                        out.entry(target_row).or_default().push(rendered_seg);
+                        visual_idx += 1;
+                    }
                 }
-                let line = format!("\x1b[38;5;220m   💬 \x1b[39m{}", body);
-                out.entry(target_row).or_default().push(line);
             }
         }
         out

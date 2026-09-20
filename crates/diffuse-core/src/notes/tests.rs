@@ -276,11 +276,11 @@ fn test_notes_persistence() {
 }
 
 #[test]
-fn test_render_note_markdown_inline() {
+fn test_note_runs_inline() {
     let text = "This is **bold** and `code` span";
-    let tokens = render_note_markdown(text);
+    let runs = note_runs(text);
 
-    let texts: Vec<&str> = tokens.iter().map(|t| t.text).collect();
+    let texts: Vec<&str> = runs.iter().map(|t| t.text.as_ref()).collect();
     assert_eq!(
         texts,
         vec![
@@ -288,18 +288,18 @@ fn test_render_note_markdown_inline() {
         ]
     );
 
-    let colors: Vec<&str> = tokens.iter().map(|t| t.color).collect();
-    assert_eq!(colors[0], "warning");
-    assert_eq!(colors[2], "mdBold");
-    assert_eq!(colors[6], "syntaxString");
+    let colors: Vec<Option<&str>> = runs.iter().map(|t| t.color.as_deref()).collect();
+    assert_eq!(colors[0], Some("text"));
+    assert_eq!(colors[2], Some("mdBold"));
+    assert_eq!(colors[6], Some("syntaxString"));
 }
 
 #[test]
-fn test_render_note_markdown_underscores_and_asterisks() {
+fn test_note_runs_underscores_and_asterisks() {
     let text = "**Markdown** __note!__ and *italic* _also italic_";
-    let tokens = render_note_markdown(text);
+    let runs = note_runs(text);
 
-    let texts: Vec<&str> = tokens.iter().map(|t| t.text).collect();
+    let texts: Vec<&str> = runs.iter().map(|t| t.text.as_ref()).collect();
     assert_eq!(
         texts,
         vec![
@@ -321,20 +321,27 @@ fn test_render_note_markdown_underscores_and_asterisks() {
         ]
     );
 
-    let colors: Vec<&str> = tokens.iter().map(|t| t.color).collect();
+    let colors: Vec<Option<&str>> = runs.iter().map(|t| t.color.as_deref()).collect();
     assert_eq!(
         colors,
         vec![
-            "accent", "mdBold", "accent", "warning", "accent", "mdBold", "accent", "warning",
-            "accent", "mdItalic", "accent", "warning", "accent", "mdItalic", "accent"
+            Some("accent"),
+            Some("mdBold"),
+            Some("accent"),
+            Some("text"),
+            Some("accent"),
+            Some("mdBold"),
+            Some("accent"),
+            Some("text"),
+            Some("accent"),
+            Some("mdItalic"),
+            Some("accent"),
+            Some("text"),
+            Some("accent"),
+            Some("mdItalic"),
+            Some("accent")
         ]
     );
-
-    // Verify SGR modifiers are set for bold and italic inner content
-    assert_eq!(tokens[1].sgr, Some(crate::syntax::profile::MD_SGR_BOLD));
-    assert_eq!(tokens[5].sgr, Some(crate::syntax::profile::MD_SGR_BOLD));
-    assert_eq!(tokens[9].sgr, Some(crate::syntax::profile::MD_SGR_ITALIC));
-    assert_eq!(tokens[13].sgr, Some(crate::syntax::profile::MD_SGR_ITALIC));
 }
 
 #[test]

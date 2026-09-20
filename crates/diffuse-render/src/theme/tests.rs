@@ -64,6 +64,7 @@ fn test_default_theme_palette() {
     assert_eq!(palette.mod_fill_cursor_bg, Color::Rgb(28, 92, 50));
     assert_eq!(palette.mod_tint_bg, Color::Rgb(30, 30, 30));
     assert_eq!(palette.mod_cursor_bg, Color::Rgb(54, 54, 54));
+    assert_eq!(palette.note_tint_bg, Color::Rgb(76, 64, 20));
 
     let theme = DiffuseTheme::DEFAULT;
     assert_eq!(theme.name, "default");
@@ -144,5 +145,15 @@ fn test_theme_palette_helpers() {
     );
 
     assert_eq!(p.named_color("warning"), Some(Color::Fixed(220)));
+    assert_eq!(p.named_color("note"), Some(Color::Fixed(220)));
+    assert_eq!(p.named_color("note_tint_bg"), Some(Color::Rgb(76, 64, 20)));
     assert_eq!(p.named_color("nonexistent"), None);
+    assert_eq!(
+        DiffuseTheme::fallback_named_color("note"),
+        Some("\x1b[38;5;220m")
+    );
+    assert_eq!(
+        DiffuseTheme::fallback_named_color("note_tint_bg"),
+        Some("\x1b[48;2;76;64;20m")
+    );
 }

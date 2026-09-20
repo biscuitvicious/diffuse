@@ -8,6 +8,7 @@ use crate::{
         pipeline::run_pipeline_full,
         wire::PipelineOutput,
     },
+    render::ColorExt,
 };
 
 fn sample_output() -> PipelineOutput {
@@ -186,7 +187,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         line_hash: Some(matching_hash),
     };
     add_note(&mut state.notes, &state.notes_key, valid_note);
-    let callouts = state.note_callouts();
+    let callouts = state.note_callouts(80);
     assert_eq!(
         callouts.len(),
         1,
@@ -210,7 +211,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
     };
     add_note(&mut state.notes, &state.notes_key, mismatch_note);
-    let callouts_mismatch = state.note_callouts();
+    let callouts_mismatch = state.note_callouts(80);
     assert_eq!(
         callouts_mismatch.len(),
         1,
@@ -234,7 +235,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         line_hash: Some(LineHash::from_hex("87654321").unwrap()),
     };
     add_note(&mut state.notes, &state.notes_key, nonexistent_line_note);
-    let callouts_orphan = state.note_callouts();
+    let callouts_orphan = state.note_callouts(80);
     assert_eq!(
         callouts_orphan.len(),
         1,
@@ -258,7 +259,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         line_hash: None,
     };
     add_note(&mut state.notes, &state.notes_key, legacy_note);
-    let callouts_legacy = state.note_callouts();
+    let callouts_legacy = state.note_callouts(80);
     assert_eq!(
         callouts_legacy.len(),
         1,
@@ -313,7 +314,7 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
     assert_eq!(state.output.files[0].notes.len(), 2);
 
     // The unanchored note displays attached to the file banner
-    let callouts = state.note_callouts();
+    let callouts = state.note_callouts(100);
     assert!(
         callouts.contains_key(&banner_idx),
         "unanchored note must display attached to the file banner"
@@ -355,7 +356,7 @@ fn test_note_callouts_render_across_all_files_and_banners() {
     state.sync_all_notes();
 
     // Callouts must include banner_1 even when cursor is on file 0!
-    let callouts = state.note_callouts();
+    let callouts = state.note_callouts(100);
     assert!(
         callouts.contains_key(&banner_1),
         "note on second.rs must be attached to second.rs file banner (index {banner_1}), even when cursor is on file 0"
@@ -397,7 +398,7 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
     state.sync_all_notes();
 
     let banner_1 = state.first_row_of_file(1);
-    let callouts_expanded = state.note_callouts();
+    let callouts_expanded = state.note_callouts(100);
     assert!(
         !callouts_expanded.contains_key(&banner_1),
         "when expanded and cleanly anchored, note should not be on the banner"
@@ -407,7 +408,7 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
     // absent from flat
     state.toggle_file_collapse(1);
     let banner_1_collapsed = state.first_row_of_file(1);
-    let callouts_collapsed = state.note_callouts();
+    let callouts_collapsed = state.note_callouts(100);
     assert!(
         callouts_collapsed.contains_key(&banner_1_collapsed),
         "when collapsed, cleanly anchored note must display attached to the file banner"
@@ -418,5 +419,218 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
         frame.contains("inline note on second.rs"),
         "frame must render the note on the collapsed banner: {:.300}",
         frame
+    );
+}
+
+#[test]
+fn test_note_callouts_full_markdown_multiline_and_wrap() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+
+    let note_text = "Test *Markdown* **formatting:**\n\n`this is a code span` with a comment.\n\n* List item one\n* List item two with a very long line that should certainly wrap when the terminal width is constrained\n\n```bash\nif [ -f hello.txt ]; then\n  cat hello.txt\nfi\n```";
+
+    let banner_idx = state.first_row_of_file(0);
+    add_note(
+        &mut state.notes,
+        &state.notes_key,
+        ReviewNote {
+            id: "md-note".into(),
+            file: "first.rs".into(),
+            side: Side::New,
+            start: 9999,
+            end: 9999,
+            text: note_text.into(),
+            created_at: 300,
+            line_hash: None,
+        },
+    );
+    state.sync_all_notes();
+
+    // Callouts at content_width = 50:
+    // text_cols = 50 - 6 = 44 columns.
+    let callouts = state.note_callouts(50);
+    let note_lines = callouts
+        .get(&banner_idx)
+        .expect("must have callout on file banner");
+
+    // Must have multiple lines
+    assert!(
+        note_lines.len() > 10,
+        "note must expand into multiple visual lines: found {}",
+        note_lines.len()
+    );
+
+    // First line must start with the 💬 icon.
+    let clean_first = crate::render::strip_ansi(&note_lines[0]);
+    assert_eq!(
+        clean_first, "▌███ 💬 Test *Markdown* **formatting:**",
+        "first line must have correct prefix and content: {}",
+        clean_first
+    );
+
+    // Continuation lines must start with the gutter line (│)
+    for (i, line) in note_lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .take(note_lines.len() - 2)
+    {
+        let clean = crate::render::strip_ansi(line);
+        assert!(
+            clean.starts_with("▌███ │  "),
+            "continuation line {i} must be indented with gutter line: {line:?}"
+        );
+    }
+
+    // Last line must start with the final corner (└)
+    if let Some(last) = note_lines.last() {
+        let clean = crate::render::strip_ansi(last);
+        assert!(
+            clean.starts_with("▌███ └┄ "),
+            "last line must start with final corner: {last:?}"
+        );
+    }
+
+    // Check code fence syntax styling
+    let bash_line = note_lines
+        .iter()
+        .find(|l| crate::render::strip_ansi(l).contains("cat hello.txt"))
+        .expect("must find bash fence line");
+    assert!(
+        bash_line.contains("cat"),
+        "bash fence line must contain cat: {}",
+        bash_line
+    );
+
+    // Ensure render_frame works cleanly without visual overflow or panic
+    let frame = state.render_frame(50, 40);
+    assert!(
+        crate::render::strip_ansi(&frame).contains("Test"),
+        "rendered frame must contain note content"
+    );
+    assert!(
+        crate::render::strip_ansi(&frame).contains("cat hello.txt"),
+        "rendered frame must contain code fence content"
+    );
+}
+
+#[test]
+fn test_note_callout_gutter_band_and_terminal_line() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let banner_idx = state.first_row_of_file(0);
+
+    add_note(
+        &mut state.notes,
+        &state.notes_key,
+        ReviewNote {
+            id: "gutter-note".into(),
+            file: "first.rs".into(),
+            side: Side::New,
+            start: 9999,
+            end: 9999,
+            text: "This is\na 4-line\nnote:\n`let a = 17;`".into(),
+            created_at: 301,
+            line_hash: None,
+        },
+    );
+    state.sync_all_notes();
+
+    let callouts = state.note_callouts(80);
+    let note_lines = callouts
+        .get(&banner_idx)
+        .expect("must have callout on file banner");
+    assert_eq!(note_lines.len(), 4);
+
+    let amber = crate::render::Color::Rgb(250, 75, 40).fg_code();
+    let yellow = crate::render::Color::Rgb(220, 220, 20).fg_code();
+    let note_bg = crate::render::Color::Fixed(234).bg_code();
+    let white = crate::render::Color::Fixed(255).fg_code();
+    let muted = state.theme.palette.note_tint_bg.bg_code();
+    for line in note_lines {
+        assert!(
+            line.starts_with(&note_bg),
+            "note background must start at the line start: {line:?}"
+        );
+        assert!(line.contains(&amber), "note stripe must be amber: {line:?}");
+        assert!(
+            line.contains(&yellow),
+            "note gutter must use filled yellow blocks: {line:?}"
+        );
+        assert!(
+            !line.contains(&muted),
+            "note content must not use the muted note background: {line:?}"
+        );
+    }
+    assert!(
+        note_lines[0].contains(&white),
+        "speech bubble must be pure white: {:?}",
+        note_lines[0]
+    );
+
+    let plain: Vec<_> = note_lines
+        .iter()
+        .map(|line| crate::render::strip_ansi(line))
+        .collect();
+    assert_eq!(plain[0], "▌███ 💬 This is");
+    assert_eq!(plain[1], "▌███ │  a 4-line");
+    assert_eq!(plain[2], "▌███ │  note:");
+    assert_eq!(plain[3], "▌███ └┄ `let a = 17;`");
+}
+
+#[test]
+fn test_note_callout_long_line_wrapping() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let banner_idx = state.first_row_of_file(0);
+
+    // A very long single line that will exceed the gutter + text_cols at
+    // content_width = 50
+    let long_line = "a".repeat(120);
+    let note_text = format!("Short line\n{long_line}\nAnother line");
+
+    add_note(
+        &mut state.notes,
+        &state.notes_key,
+        ReviewNote {
+            id: "wrap-test".into(),
+            file: "first.rs".into(),
+            side: Side::New,
+            start: 9999,
+            end: 9999,
+            text: note_text,
+            created_at: 400,
+            line_hash: None,
+        },
+    );
+    state.sync_all_notes();
+
+    let content_width = 50;
+    let callouts = state.note_callouts(content_width);
+    let note_lines = callouts
+        .get(&banner_idx)
+        .expect("must have callout on file banner");
+
+    // Verify every rendered line fits within the content_width (including
+    // gutter)
+    for line in note_lines {
+        let visual_width = crate::view::visible_width(line);
+        assert!(
+            visual_width <= content_width,
+            "line exceeds content_width: {} > {}: {:?}",
+            visual_width,
+            content_width,
+            line
+        );
+    }
+
+    // The long line should be split into at least two visual segments
+    assert!(
+        note_lines.len() >= 4,
+        "expected wrapping to produce multiple lines, got {}",
+        note_lines.len()
     );
 }

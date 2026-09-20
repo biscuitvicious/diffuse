@@ -1201,3 +1201,116 @@ fn test_pipeline_preserves_all_notes_in_counts() {
     assert_eq!(note_ids, vec!["clean", "mismatch", "orphan", "legacy"]);
     assert_eq!(out.total_counts().notes, 4);
 }
+
+#[test]
+fn test_markdown_file_rows_multiline_fences_and_syntax() {
+    let text = "Test *Markdown* **formatting:**\n\n`this is a code span` with a comment.\n\n* List\n* Two\n\n## Header\n\n```bash\nif -f hello.txt\n  cat hello.txt\nfi\n```\n\nDone!";
+    let rows = markdown_file_rows(text);
+
+    // 16 lines from document lines
+    assert_eq!(rows.len(), 16);
+
+    // Line 0: Test *Markdown* **formatting:**
+    assert_eq!(rows[0].text, "Test *Markdown* **formatting:**");
+    assert!(
+        rows[0]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("text") && r.text == "Test ")
+    );
+    assert!(
+        rows[0]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("mdItalic") && r.text == "Markdown")
+    );
+    assert!(
+        rows[0]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("mdBold") && r.text == "formatting:")
+    );
+
+    // Line 1: empty line between paragraphs
+    assert!(rows[1].runs.is_empty());
+
+    // Line 2: `this is a code span` with a comment.
+    assert!(
+        rows[2]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("syntaxString") && r.text == "this is a code span")
+    );
+    assert!(
+        rows[2]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("text") && r.text == " with a comment.")
+    );
+
+    // Line 7: ## Header
+    assert!(
+        rows[7]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("accent") && r.text == "##")
+    );
+
+    // Line 9: opening code fence ```bash -> muted
+    assert_eq!(rows[9].runs.len(), 1);
+    assert_eq!(rows[9].runs[0].color.as_deref(), Some("muted"));
+    assert_eq!(rows[9].runs[0].text, "```bash");
+
+    // Line 10: bash syntax highlighted `if -f hello.txt`
+    assert!(
+        rows[10]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("syntaxKeyword") && r.text == "if")
+    );
+
+    // Line 13: closing code fence ``` -> muted
+    assert_eq!(rows[13].runs.len(), 1);
+    assert_eq!(rows[13].runs[0].color.as_deref(), Some("muted"));
+    assert_eq!(rows[13].runs[0].text, "```");
+
+    // Line 15: Done!
+    assert_eq!(rows[15].text, "Done!");
+    assert!(
+        rows[15]
+            .runs
+            .iter()
+            .any(|r| r.color.as_deref() == Some("text") && r.text == "Done!")
+    );
+}
+
+#[test]
+fn test_render_plain_common_context_super_function() {
+    let lines = [
+        "plain text line",
+        "**bold** and `code`",
+        "```rust",
+        "let x = 42;",
+        "```",
+    ];
+    let md_profile = crate::syntax::registry::lang_profile("md");
+
+    let rows = render_plain_common_context(&lines, md_profile);
+    assert_eq!(rows.len(), 5);
+    assert_eq!(rows[0].runs[0].color.as_deref(), Some("text"));
+    assert_eq!(rows[1].runs[1].color.as_deref(), Some("mdBold"));
+    assert_eq!(rows[3].runs[0].color.as_deref(), Some("syntaxKeyword")); // "let"
+}
+
+#[test]
+fn test_synthesize_plain_common_context_hunk() {
+    let lines = ["hello", "world"];
+    let hunk = synthesize_plain_common_context_hunk(&lines);
+    assert_eq!(hunk.old_start, 1);
+    assert_eq!(hunk.old_count, 2);
+    assert_eq!(hunk.new_start, 1);
+    assert_eq!(hunk.new_count, 2);
+    assert_eq!(hunk.rows.len(), 2);
+    assert!(matches!(hunk.rows[0], crate::parse::Row::Ctx(_)));
+    assert!(matches!(hunk.rows[1], crate::parse::Row::Ctx(_)));
+}

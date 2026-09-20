@@ -28,7 +28,7 @@ use crate::{
     lcs::word_spans_with_profile,
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs},
     moves::mark_moves_with_profile,
-    notes::{NotesDB, note_runs, notes_for_file},
+    notes::{NotesDB, notes_for_file},
     parse::{DiffFile, Row, RowKind, Spans},
     syntax::{
         classifier::{
@@ -265,7 +265,10 @@ fn split_content_lines(s: &str) -> Vec<&str> {
     let stripped = s.strip_suffix('\r').unwrap_or(s);
     let stripped = stripped.strip_suffix('\n').unwrap_or(stripped);
     let stripped = stripped.strip_suffix('\r').unwrap_or(stripped);
-    stripped.split('\n').collect()
+    stripped
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .collect()
 }
 
 /// Whether a diff file is collapsed by default upon initial ingestion.
@@ -313,6 +316,7 @@ pub fn process_single_diff_file(
             crate::parse::FileStatus::Renamed => "renamed".to_string(),
             crate::parse::FileStatus::Untracked => "untracked".to_string(),
             crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
+            crate::parse::FileStatus::Note => "note".to_string(),
         };
         Some(crate::wire::RawFileSource::Git {
             path: f.path.clone(),
@@ -364,8 +368,12 @@ pub fn process_single_diff_file(
     crate::cluster::dp::set_cluster_product_cap(opts.cluster_product_cap);
     crate::cluster::dp::set_cluster_bandwidth_min(opts.cluster_bandwidth_min);
     crate::cluster::dp::set_cluster_bandwidth_slack(opts.cluster_bandwidth_slack);
-    let ext = f.path.rsplit('.').next().unwrap_or("");
-    let profile = lang_profile(ext);
+    let profile = if f.status == crate::parse::FileStatus::Note {
+        lang_profile("md")
+    } else {
+        let ext = f.path.rsplit('.').next().unwrap_or("");
+        lang_profile(ext)
+    };
     let new_lines_fallback: Vec<String>;
     let new_lines: Vec<&str> = if let Some(c) = new_content
         && !c.is_empty()
@@ -471,33 +479,15 @@ pub fn process_single_diff_file(
     // Final step: normalize the carried context to the requested visual width.
     crate::shift::normalize_context(&mut f, opts.visual_context);
 
-    // If pure rename or pure mode change (0 hunks), synthesize the entire
-    // file content as context rows
-    if !f.is_binary
+    let is_plain_common_context = !f.is_binary
         && (f.status == crate::parse::FileStatus::Renamed
-            || f.status == crate::parse::FileStatus::ModeChanged)
+            || f.status == crate::parse::FileStatus::ModeChanged
+            || f.status == crate::parse::FileStatus::Note)
         && f.hunks.is_empty()
-        && !new_lines.is_empty()
-    {
-        let mut ctx_rows = Vec::with_capacity(new_lines.len());
-        for (i, line) in new_lines.iter().enumerate() {
-            if let Some(pos) = std::num::NonZero::new((i + 1) as u32) {
-                ctx_rows.push(crate::parse::Row::Ctx(crate::parse::CtxLine::new(
-                    pos, pos, *line,
-                )));
-            }
-        }
-        let count = ctx_rows.len() as u32;
-        let hunk = crate::parse::Hunk {
-            old_start: 1,
-            old_count: count,
-            new_start: 1,
-            new_count: count,
-            section: String::new(),
-            rows: ctx_rows,
-            above_ctx: 0,
-            below_ctx: 0,
-        };
+        && !new_lines.is_empty();
+
+    if is_plain_common_context {
+        let hunk = synthesize_plain_common_context_hunk(&new_lines);
         f.hunks = vec![hunk.clone()];
         f.raw_hunks = vec![hunk];
     } else if !f.is_binary
@@ -531,74 +521,40 @@ pub fn process_single_diff_file(
     let mut counts = file_counts(&f);
     let regions = fence_regions(&new_lines, profile);
 
-    fn build_hunk_output_row(
-        r: &Row,
-        profile: Option<&LangProfile>,
-        regions: &[FenceRegion],
-    ) -> OutputRow {
-        let (kind, mov_side, new_line, old_line, del_text, spans) = match r {
-            Row::MovSrc(del) => (
-                RowKind::Mov,
-                Some(MovSide::Src),
-                None,
-                Some(del.num.get()),
-                None,
-                Spans::default(),
-            ),
-            Row::MovTgt(add) => (
-                RowKind::Mov,
-                Some(MovSide::Tgt),
-                Some(add.num.get()),
-                None,
-                add.del_text.clone(),
-                add.spans.clone(),
-            ),
-            _ => (
-                r.kind(),
-                None,
-                r.new_line(),
-                r.old_line(),
-                r.del_text().map(String::from),
-                r.spans().cloned().unwrap_or_default(),
-            ),
-        };
-        OutputRow {
-            kind,
-            mov_side,
-            new_line,
-            old_line,
-            text: r.text().to_string(),
-            del_text,
-            spans,
-            runs: colored_runs(r, profile, regions),
-            wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
-        }
-    }
-
-    let hunks_out: Vec<OutputHunk> = f
-        .hunks
-        .par_iter()
-        .map(|h| {
-            let rows_out: Vec<OutputRow> = if h.rows.len() > 64 {
-                h.rows
-                    .par_iter()
-                    .map(|r| build_hunk_output_row(r, profile, &regions))
-                    .collect()
-            } else {
-                h.rows
-                    .iter()
-                    .map(|r| build_hunk_output_row(r, profile, &regions))
-                    .collect()
-            };
-            OutputHunk {
-                old_start: h.old_start,
-                old_count: h.old_count,
-                new_start: h.new_start,
-                new_count: h.new_count,
-                rows: rows_out,
-            }
-        })
-        .collect();
+    let hunks_out: Vec<OutputHunk> = if is_plain_common_context {
+        let rows = render_plain_common_context(&new_lines, profile);
+        vec![OutputHunk {
+            old_start: 1,
+            old_count: rows.len() as u32,
+            new_start: 1,
+            new_count: rows.len() as u32,
+            rows,
+        }]
+    } else {
+        f.hunks
+            .par_iter()
+            .map(|h| {
+                let rows_out: Vec<OutputRow> = if h.rows.len() > 64 {
+                    h.rows
+                        .par_iter()
+                        .map(|r| build_hunk_output_row(r, profile, &regions))
+                        .collect()
+                } else {
+                    h.rows
+                        .iter()
+                        .map(|r| build_hunk_output_row(r, profile, &regions))
+                        .collect()
+                };
+                OutputHunk {
+                    old_start: h.old_start,
+                    old_count: h.old_count,
+                    new_start: h.new_start,
+                    new_count: h.new_count,
+                    rows: rows_out,
+                }
+            })
+            .collect()
+    };
 
     let mut raw_hunks_out = Vec::new();
     for h in &f.raw_hunks {
@@ -649,43 +605,49 @@ pub fn process_single_diff_file(
         crate::parse::FileStatus::Renamed => "renamed".to_string(),
         crate::parse::FileStatus::Untracked => "untracked".to_string(),
         crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
+        crate::parse::FileStatus::Note => "note".to_string(),
     };
 
-    let total_rows_count: usize = hunks_out.iter().map(|h| h.rows.len()).sum();
-    let mut rows: Vec<OutputRow> = Vec::with_capacity(total_rows_count);
-    for (h, h_out) in f.hunks.iter().zip(&hunks_out) {
-        let side = if crate::visible::hunk_has_adds(h) {
-            VisibleSide::New
-        } else {
-            VisibleSide::Old
-        };
-        for (r, r_out) in h.rows.iter().zip(&h_out.rows) {
-            if matches!(r, Row::Ctx(_)) {
-                let mut row = r_out.clone();
-                match side {
-                    VisibleSide::New => {
-                        row.old_line = None;
-                    }
-                    VisibleSide::Old => {
-                        row.new_line = None;
-                        let mut runs = Vec::new();
-                        for_each_ctx_line_token(r.text(), None, profile, &regions, |tk| {
-                            runs.push(OutputRun {
-                                kind: RunKind::Ctx,
-                                color: Some(std::borrow::Cow::Borrowed(tk.color)),
-                                sgr: tk.sgr,
-                                text: tk.text.to_string().into(),
-                            });
-                        });
-                        row.runs = runs;
-                    }
-                }
-                rows.push(row);
+    let rows: Vec<OutputRow> = if is_plain_common_context {
+        hunks_out[0].rows.clone()
+    } else {
+        let total_rows_count: usize = hunks_out.iter().map(|h| h.rows.len()).sum();
+        let mut rows: Vec<OutputRow> = Vec::with_capacity(total_rows_count);
+        for (h, h_out) in f.hunks.iter().zip(&hunks_out) {
+            let side = if crate::visible::hunk_has_adds(h) {
+                VisibleSide::New
             } else {
-                rows.push(r_out.clone());
+                VisibleSide::Old
+            };
+            for (r, r_out) in h.rows.iter().zip(&h_out.rows) {
+                if matches!(r, Row::Ctx(_)) {
+                    let mut row = r_out.clone();
+                    match side {
+                        VisibleSide::New => {
+                            row.old_line = None;
+                        }
+                        VisibleSide::Old => {
+                            row.new_line = None;
+                            let mut runs = Vec::new();
+                            for_each_ctx_line_token(r.text(), None, profile, &regions, |tk| {
+                                runs.push(OutputRun {
+                                    kind: RunKind::Ctx,
+                                    color: Some(std::borrow::Cow::Borrowed(tk.color)),
+                                    sgr: tk.sgr,
+                                    text: tk.text.to_string().into(),
+                                });
+                            });
+                            row.runs = runs;
+                        }
+                    }
+                    rows.push(row);
+                } else {
+                    rows.push(r_out.clone());
+                }
             }
         }
-    }
+        rows
+    };
 
     tracing::debug!(
         path = %f.path,
@@ -733,8 +695,9 @@ pub fn process_single_diff_file(
             || res.status == "untracked"
             || res.status == "deleted"
             || res.status == "mode changed"
+            || res.status == "note"
             || res.is_binary,
-        "OutputFile must contain raw hunks or be renamed/untracked/deleted/mode changed/binary"
+        "OutputFile must contain raw hunks or be renamed/untracked/deleted/mode changed/note/binary"
     );
     crate::ensure!(
         f.hunks.iter().all(|h| h
@@ -1050,6 +1013,131 @@ pub fn context_line_runs(line_text: &str, line_num: Option<u32>, ext: &str) -> V
         });
     });
     runs
+}
+
+fn build_hunk_output_row(
+    r: &Row,
+    profile: Option<&LangProfile>,
+    regions: &[FenceRegion],
+) -> OutputRow {
+    let (kind, mov_side, new_line, old_line, del_text, spans) = match r {
+        Row::MovSrc(del) => (
+            RowKind::Mov,
+            Some(MovSide::Src),
+            None,
+            Some(del.num.get()),
+            None,
+            Spans::default(),
+        ),
+        Row::MovTgt(add) => (
+            RowKind::Mov,
+            Some(MovSide::Tgt),
+            Some(add.num.get()),
+            None,
+            add.del_text.clone(),
+            add.spans.clone(),
+        ),
+        _ => (
+            r.kind(),
+            None,
+            r.new_line(),
+            r.old_line(),
+            r.del_text().map(String::from),
+            r.spans().cloned().unwrap_or_default(),
+        ),
+    };
+    OutputRow {
+        kind,
+        mov_side,
+        new_line,
+        old_line,
+        text: r.text().to_string(),
+        del_text,
+        spans,
+        runs: colored_runs(r, profile, regions),
+        wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
+    }
+}
+
+/// Synthesizes a plain common context hunk from line strings.
+///
+/// Used for pure renames, mode changes, and note documents where the entire
+/// content is presented as common context rows.
+pub fn synthesize_plain_common_context_hunk(lines: &[&str]) -> crate::parse::Hunk {
+    let mut ctx_rows = Vec::with_capacity(lines.len());
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(pos) = std::num::NonZero::new((i + 1) as u32) {
+            ctx_rows.push(crate::parse::Row::Ctx(crate::parse::CtxLine::new(
+                pos, pos, *line,
+            )));
+        }
+    }
+    let count = ctx_rows.len() as u32;
+    crate::parse::Hunk {
+        old_start: 1,
+        old_count: count,
+        new_start: 1,
+        new_count: count,
+        section: String::new(),
+        rows: ctx_rows,
+        above_ctx: 0,
+        below_ctx: 0,
+    }
+}
+
+/// Generalized super-function for plain common context rendering.
+///
+/// Renders a slice of line strings into classified `OutputRow`s using the given
+/// language profile and fence regions detection.
+pub fn render_plain_common_context(
+    lines: &[&str],
+    profile: Option<&LangProfile>,
+) -> Vec<OutputRow> {
+    let hunk = synthesize_plain_common_context_hunk(lines);
+    let regions = fence_regions(lines, profile);
+    hunk.rows
+        .iter()
+        .map(|r| build_hunk_output_row(r, profile, &regions))
+        .collect()
+}
+
+/// Tokenizes and classifies a complete markdown document into `OutputRow`s
+/// using the standard diffuse pipeline and note file status (fence detection,
+/// nested language syntax highlighting, and note styling).
+pub fn markdown_file_rows(text: &str) -> Vec<OutputRow> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let f = crate::parse::DiffFile {
+        path: "note.md".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: crate::parse::FileStatus::Note,
+        is_binary: false,
+        hunks: vec![],
+        raw_hunks: vec![],
+        new_line_count: 0,
+        old_line_count: 0,
+        new_bytes: Some(text.len()),
+        old_bytes: None,
+        new_content: vec![],
+        old_content: vec![],
+        no_content: false,
+    };
+    let opts = PipelineOptions::default().with_lazy_collapsed(false);
+    let output_file = process_single_diff_file(f, Some(text), None, None, &opts);
+    output_file.rows
+}
+
+/// Tokenizes a single line of note text using the shared markdown file pipeline
+/// with note styling.
+pub fn note_runs(text: &str) -> Vec<OutputRun> {
+    let norm = crate::notes::normalize_note_text(text);
+    markdown_file_rows(&norm)
+        .into_iter()
+        .flat_map(|r| r.runs)
+        .collect()
 }
 
 #[cfg(test)]

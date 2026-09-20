@@ -11,6 +11,7 @@ pub struct ThemePalette {
     pub bg_modal: Color,
     pub border: Color,
     pub warning: Color,
+    pub note: Color,
     pub accent: Color,
     pub muted: Color,
 
@@ -42,6 +43,9 @@ pub struct ThemePalette {
     pub mov_tint_bg: Color,
     pub mov_cursor_bg: Color,
     pub mov_fg: Color,
+
+    // Notes
+    pub note_tint_bg: Color,
 
     // Gutter / Line Numbers / Icons
     pub ctx_gutter_in_hunk: Color,
@@ -104,6 +108,7 @@ impl ThemePalette {
             bg_modal: Color::Fixed(234),
             border: Color::Fixed(238),
             warning: Color::Fixed(220),
+            note: Color::Fixed(220),
             accent: Color::Fixed(51),
             muted: Color::Fixed(241),
 
@@ -133,6 +138,8 @@ impl ThemePalette {
             mov_tint_bg: Color::Fixed(233),
             mov_cursor_bg: Color::Fixed(235),
             mov_fg: Color::Fixed(245),
+
+            note_tint_bg: Color::Rgb(76, 64, 20),
 
             ctx_gutter_in_hunk: Color::Fixed(245),
             ctx_gutter_out_hunk: Color::Fixed(238),
@@ -190,6 +197,8 @@ impl ThemePalette {
             "toolDiffRemoved" => Some(self.del_fg),
             "toolDiffContext" | "muted" => Some(self.muted),
             "warning" => Some(self.warning),
+            "note" => Some(self.note),
+            "note_tint_bg" => Some(self.note_tint_bg),
             "border" => Some(self.border),
             "accent" => Some(self.accent),
             _ => None,

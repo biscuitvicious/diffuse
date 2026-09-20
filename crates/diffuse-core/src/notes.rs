@@ -1,4 +1,4 @@
-//! Note storage, persistence, and markdown rendering for review notes.
+//! Note storage, persistence, and line anchoring for review notes.
 
 use std::{
     borrow::Cow,
@@ -8,20 +8,11 @@ use std::{
     fmt, fs, io,
     num::NonZero,
     path::{Path, PathBuf},
-    sync::OnceLock,
 };
 
-use regex::Regex;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    merge::RunKind,
-    syntax::{
-        classifier::{ClassifiedToken, classify_tokens, for_each_markdown_token},
-        registry::lang_profile,
-    },
-    wire::OutputRun,
-};
+pub use crate::pipeline::note_runs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -380,68 +371,6 @@ pub fn remove_notes(
     removed
 }
 
-/// Render/tokenize review note markdown into `ClassifiedToken`s.
-/// Note text uses `"warning"` for plain text, code fences with syntax colors,
-/// and inline markdown (bold/italic/strike/link/code).
-pub fn render_note_markdown<'a>(text: &'a str) -> Vec<ClassifiedToken<'a>> {
-    static FENCE: OnceLock<Regex> = OnceLock::new();
-    let fence_re =
-        FENCE.get_or_init(|| Regex::new(r"^\s*```([A-Za-z0-9_+-]*)\s*$").expect("note fence"));
-    if let Some(fence) = fence_re.captures(text) {
-        let lang = fence[1].to_lowercase();
-        let rest = &text[fence.get(0).unwrap().end()..];
-        let body = rest.strip_prefix('\n').unwrap_or(rest);
-        let end_idx = body.rfind("```");
-        let code = match end_idx {
-            Some(idx) => &body[..idx],
-            None => body,
-        };
-        let profile = lang_profile(&lang);
-        let mut out = Vec::new();
-        out.push(ClassifiedToken {
-            color: "muted",
-            sgr: None,
-            text: fence.get(0).unwrap().as_str(),
-        });
-        out.push(ClassifiedToken {
-            color: "text",
-            sgr: None,
-            text: "\n",
-        });
-        if let Some(p) = profile {
-            out.extend(classify_tokens(code, Some(p)));
-        } else {
-            out.push(ClassifiedToken {
-                color: "text",
-                sgr: None,
-                text: code,
-            });
-        }
-        if end_idx.is_some() {
-            out.push(ClassifiedToken {
-                color: "text",
-                sgr: None,
-                text: "\n",
-            });
-            out.push(ClassifiedToken {
-                color: "muted",
-                sgr: None,
-                text: "```",
-            });
-        }
-        return out;
-    }
-
-    let mut out = Vec::new();
-    for_each_markdown_token(text, |mut t| {
-        if t.color == "text" {
-            t.color = "warning";
-        }
-        out.push(t);
-    });
-    out
-}
-
 /// Normalize non-fenced note text for inline callout rendering:
 /// - Strips leading and trailing whitespace
 /// - Collapses all runs of whitespace (spaces, tabs, newlines) into a single
@@ -483,27 +412,6 @@ pub fn normalize_note_text<'a>(text: &'a str) -> Cow<'a, str> {
         out.push_str(w);
     }
     Cow::Owned(out)
-}
-
-/// Convert note classified tokens to `OutputRun` wire format.
-pub fn note_runs(text: &str) -> Vec<OutputRun> {
-    static FENCE: OnceLock<Regex> = OnceLock::new();
-    let fence_re =
-        FENCE.get_or_init(|| Regex::new(r"^\s*```([A-Za-z0-9_+-]*)\s*$").expect("note fence"));
-    let normalized = if fence_re.is_match(text) {
-        Cow::Borrowed(text)
-    } else {
-        normalize_note_text(text)
-    };
-    render_note_markdown(&normalized)
-        .into_iter()
-        .map(|t| OutputRun {
-            kind: RunKind::Ctx,
-            color: Some(std::borrow::Cow::Borrowed(t.color)),
-            sgr: t.sgr,
-            text: t.text.to_string().into(),
-        })
-        .collect()
 }
 
 #[cfg(test)]
