@@ -45,6 +45,7 @@ Outstanding work items, grouped by subsystem. Checked items are complete.
 - [ ] **Notes / diff lifecycle, stale notes reconciliation & auto-sync to underlying files**: Notes anchored to absolute line numbers can become detached or orphaned when underlying files are edited or git state advances. Implement 1) content-aware anchor tracking (contextual hashing / snippet anchoring rather than pure line numbers), 2) auto-reanchoring and line offset adjustment across diff reloads, 3) visual indicators and a tray for orphaned / detached notes that no longer match the active diff hunks, and 4) file-watcher / auto-sync lifecycle integration.
 - [ ] **Project-local notes storage (git metadata)**: Store review notes directly in project git metadata and refs by default, rather than in global database storage.
 - [ ] **Reload file state & version-tracked patches**: Add a key shortcut to reload the current file's state. Track file changes as patches on top of the previous file state. Tie notes to file versions using a hash of the row selection the notes are attached to, so notes survive file reloads and remain anchored to their original content regardless of subsequent edits.
+- [ ] **Incremental Markdown rendering in the note creation modal**: Render the text typed into the note creation modal incrementally as source-accurate Markdown — the source stays exactly as typed with all markers visible, and only styling is applied on top. Unlike the note callout rendering mode (`plan/Note Markdown Rendering.md`), no source characters are stripped or replaced.
 
 ## 5. Golden acceptance and engine roadmap
 
@@ -78,6 +79,7 @@ Outstanding work items, grouped by subsystem. Checked items are complete.
 - [x] ~~**Switch to yansi for terminal styling**~~: Replace the centralized ANSI module with the `yansi` crate for terminal styling. Leverage yansi's `Colorize` trait, `Paint` type, and runtime style customization instead of the custom ANSI module. Update GUIDELINES to reflect `yansi` as the styling source. (See [Yansi Terminal Styling Engine Migration](plan/Yansi%20Terminal%20Styling%20Engine%20Migration.md))
 - [ ] **Analyze and refactor method names across entire codebase**: Analyze method and function names across the entire codebase and ensure they fulfill the method naming guidelines: describe the fulfilled behavior or return value clearly, succinctly, and unambiguously; represent the most abstract concept; avoid naming implementation details; adhere to idiomatic Rust naming conventions.
 - [ ] **Audit and refactor type names for conceptual abstraction**: Audit and refactor type names (structs, enums, traits) across the codebase to adhere to the type naming guidelines: name types according to their core domain concept and semantic role, not the underlying algorithm or implementation mechanics (for example, refactor `DpOp` to `DiffOp` / `MatchOp`).
+- [ ] **Move `self` into `reverse` methods (`reverse(self) -> Self`)**: Update all `reverse(&self) -> Self` methods to take `self` by value and return the new `Self`, entirely avoiding clones inside `reverse` implementations.
 
 ## 9. Observability, tracing and logging
 
