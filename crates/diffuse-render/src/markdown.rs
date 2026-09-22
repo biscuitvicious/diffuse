@@ -383,5 +383,9 @@ fn push_diff_row<'a>(
     }
 }
 
+pub mod terminal;
+
+pub use terminal::{MarkdownLine, markdown_lines, render_markdown_line, write_markdown_line};
+
 #[cfg(test)]
 mod tests;

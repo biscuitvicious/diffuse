@@ -21,6 +21,7 @@
 pub mod classifier;
 pub mod fence;
 pub mod language;
+pub mod markdown;
 pub mod profile;
 pub mod registry;
 

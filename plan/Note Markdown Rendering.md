@@ -1,7 +1,7 @@
 # Note Markdown Rendering
 
-- [ ] 1. [Phase 1 — Block and Inline Markdown Classification (`crates/diffuse-syntax/`)](#1-phase-1--block-and-inline-markdown-classification-cratesdiffuse-syntax)
-- [ ] 2. [Phase 2 — Markdown Line Assembly and Reflow (`crates/diffuse-render/`)](#2-phase-2--markdown-line-assembly-and-reflow-cratesdiffuse-render)
+- [x] 1. [Phase 1 — Block and Inline Markdown Classification (`crates/diffuse-syntax/`)](#1-phase-1--block-and-inline-markdown-classification-cratesdiffuse-syntax)
+- [x] 2. [Phase 2 — Markdown Line Assembly and Reflow (`crates/diffuse-render/`)](#2-phase-2--markdown-line-assembly-and-reflow-cratesdiffuse-render)
 - [ ] 3. [Phase 3 — TUI Note Callout Integration (`crates/diffuse-tui/`)](#3-phase-3--tui-note-callout-integration-cratesdiffuse-tui)
 - [ ] 4. [Phase 4 — Task List Checkbox Glyphs](#4-phase-4--task-list-checkbox-glyphs)
 - [ ] 5. [Phase 5 — Unicode Table Rendering with Cell Squashing](#5-phase-5--unicode-table-rendering-with-cell-squashing)
@@ -110,7 +110,8 @@ Two architectural invariants govern the solution:
 7. [Phase 4 — Task List Checkbox Glyphs](#4-phase-4--task-list-checkbox-glyphs)
 8. [Phase 5 — Unicode Table Rendering with Cell Squashing](#5-phase-5--unicode-table-rendering-with-cell-squashing)
 9. [Phase 6 — Verification and Acceptance Gate](#6-phase-6--verification-and-acceptance-gate)
-10. [Open Questions](#open-questions)
+10. [Implementation Notes (review findings)](#implementation-notes-review-findings)
+11. [Open Questions](#open-questions)
 
 ---
 
@@ -418,7 +419,8 @@ Draw task list states as unicode glyphs instead of bracket source text.
 ### Steps
 
 1. **Glyph mapping** in `crates/diffuse-render/src/markdown/terminal.rs`
-   (`Span::Task` rendering): `TaskState::Empty | InProgress | Checked` →
+   (`Span::Task` rendering — implemented in Phase 2 for the wrapping test;
+   this phase adds the dedicated mapping tests): `TaskState::Empty | InProgress | Checked` →
    glyph run + trailing space:
    `☐` (U+2610) for `[ ]`, `◐` (U+25D0) for `[·]`, `☑` (U+2611) for
    `[x]`. Task items live inside list items, so continuation lines indent
@@ -439,10 +441,9 @@ wider than the content width.
 
 ### Steps
 
-1. **Extend the syntax block model** (`crates/diffuse-syntax/src/markdown.rs`)
-   with `Block::Table`: rows of cells (each cell an `Inline<'a>`, sharing
-   the `Para` content representation), a header-row flag, and per-column
-   alignment (`Left | Center | Right` from GFM `---:` markers).
+1. **Use the Phase 1 block model** (`Block::Table` with header rows,
+   body rows of `Inline` cells, and `ColumnAlign` per column — extraction
+   already done; see Implementation Notes §4).
    pulldown-cmark's `ENABLE_TABLES` events drive extraction.
 2. **Column layout algorithm** in `crates/diffuse-render/src/markdown/terminal.rs`:
    - Measure natural column widths = max display width of each column's
@@ -487,6 +488,43 @@ wider than the content width.
    sign-off per the checkoff discipline in
    [`plan/Plan Guidelines.md`](plan%20Guidelines.md).
 5. **Archive**: move this plan to `plan/done/Note Markdown Rendering.md`.
+
+---
+
+## Implementation Notes (review findings)
+
+Deviations from the original design adopted during Phase 1 review:
+
+1. **Offset ranges are hierarchical, not sequential.** `into_offset_iter`
+   `Start` ranges cover whole subtrees (`Start(List)` spans the full list),
+   so generic gap scanning was unusable. The blank cursor advances only on
+   `End` and leaf events, with boundary-aware line analysis
+   (`gap_has_blank`). Loose inter-item gaps are detected via trailing
+   blanks *inside* item ranges (`range_text_ends_blank`) — an undocumented
+   pulldown-cmark 0.13 behavior pinned by contract tests
+   (`test_pulldown_item_range_includes_trailing_blank`,
+   `test_pulldown_bare_inline_under_item`).
+2. **Bare inline under items is normalized by a pre-pass.**
+   `with_item_paragraphs` wraps tight-item text and task markers (which
+   carry no `Paragraph` events) in synthetic `Start/End(Paragraph)` using
+   the first/last inline range, so the main walk only creates paragraphs in
+   one place.
+3. **Shared inline builder, explicit normalization.** `blocks()` builds
+   `Inline` directly from the outer event stream through the same
+   `InlineBuilder` that `spans()` drives (no double parse); **every**
+   Unicode whitespace run (`char::is_whitespace`: NBSP, em/ideographic
+   spaces, tabs, newlines) folds to one ASCII space via
+   `normalize_inline_whitespace`, with join-aware collapsing across merged
+   spans and clean text keeping its borrow. Code spans keep
+   pulldown-cmark's exact content (no extra `.trim()`).
+4. **`Block::Table` moved to Phase 1.** The header row carries no
+   `TableRow` (cells land directly under `TableHead`), `Start(TableHead)`
+   pushes no frame, and extraction (header, rows, `ColumnAlign`) lives in
+   the block model so renderers match exhaustively. Phase 2 renders tables
+   simply (aligned when they fit); Phase 5 keeps only cell squashing.
+5. **Task glyphs land in Phase 2.** The marker-indent wrapping test needs
+   the `☐`/`◐`/`☑` mapping, so rendering implements it; Phase 4 adds the
+   dedicated mapping tests.
 
 ---
 
