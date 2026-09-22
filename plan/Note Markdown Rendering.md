@@ -2,7 +2,7 @@
 
 - [x] 1. [Phase 1 — Block and Inline Markdown Classification (`crates/diffuse-syntax/`)](#1-phase-1--block-and-inline-markdown-classification-cratesdiffuse-syntax)
 - [x] 2. [Phase 2 — Markdown Line Assembly and Reflow (`crates/diffuse-render/`)](#2-phase-2--markdown-line-assembly-and-reflow-cratesdiffuse-render)
-- [ ] 3. [Phase 3 — TUI Note Callout Integration (`crates/diffuse-tui/`)](#3-phase-3--tui-note-callout-integration-cratesdiffuse-tui)
+- [x] 3. [Phase 3 — TUI Note Callout Integration (`crates/diffuse-tui/`)](#3-phase-3--tui-note-callout-integration-cratesdiffuse-tui)
 - [ ] 4. [Phase 4 — Task List Checkbox Glyphs](#4-phase-4--task-list-checkbox-glyphs)
 - [ ] 5. [Phase 5 — Unicode Table Rendering with Cell Squashing](#5-phase-5--unicode-table-rendering-with-cell-squashing)
 - [ ] 6. [Phase 6 — Verification and Acceptance Gate](#6-phase-6--verification-and-acceptance-gate)
@@ -525,6 +525,11 @@ Deviations from the original design adopted during Phase 1 review:
 5. **Task glyphs land in Phase 2.** The marker-indent wrapping test needs
    the `☐`/`◐`/`☑` mapping, so rendering implements it; Phase 4 adds the
    dedicated mapping tests.
+6. **Heading titles stack bold + underline** (Open Questions §2
+   reversed): `write_token_stacked` combines SGR into one escape with
+   reverse-order resets; `MarkdownRun` mirrors `OutputRun` plus an
+   `underline` flag propagated through nested emphasis (deduped against
+   link underlines). Markers, bars, and borders never underline.
 
 ---
 
@@ -535,10 +540,12 @@ Deviations from the original design adopted during Phase 1 review:
    BALLOT BOX WITH CHECK) for `[x]`. The half-filled circle contrasts
    cleanly with the two ballot boxes for the in-progress state.
 
-2. **Header emphasis** — decided: bold title only (`###` prefix accent).
-   Bold + underline would require stacked SGR emission (write_token emits
-   a single `\x1b[{s}m`); a rule underneath the header remains an
-   alternative if bold alone reads weakly in review.
+2. **Header emphasis** — reversed: bold title **plus underline** (`###`
+   prefix accent, title `MD_SGR_BOLD` + `MD_SGR_UNDERLINE` via one combined
+   `\x1b[1;4m` escape). `DiffuseTheme::write_token_stacked` emits combined
+   SGR with reverse-order resets; `MarkdownLine` carries `MarkdownRun`
+   (mirror of `OutputRun` plus an `underline` flag) so the single-SGR wire
+   types stay untouched. Single-style output is byte-identical to before.
 
 3. **Loose lists** — decided (re-aligned with CommonMark after two
    reversals): blank-separated items stay in ONE `List`; the gap sets the

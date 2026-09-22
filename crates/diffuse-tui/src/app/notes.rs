@@ -253,45 +253,27 @@ impl AppState {
                     banner_idx
                 };
 
-                let note_rows = crate::core::pipeline::markdown_file_rows(&n.text);
-                let segment_counts: Vec<usize> = note_rows
-                    .iter()
-                    .map(|r| {
-                        let exp = crate::render::expand_tabs(&r.text, 4);
-                        let line_len = crate::render::display_width(&exp);
-                        if line_len == 0 {
-                            1
-                        } else {
-                            line_len.div_ceil(text_cols)
-                        }
-                    })
-                    .collect();
-                let total_segments = segment_counts.iter().copied().sum::<usize>().max(1);
-                let mut visual_idx = 0usize;
-                for (line_idx, r) in note_rows.iter().enumerate() {
-                    let num_segs = segment_counts[line_idx];
-                    for s_idx in 0..num_segs {
-                        let prefix = match visual_idx {
-                            0 => first_prefix.as_str(),
-                            n if total_segments > 1 && n + 1 == total_segments => {
-                                final_prefix.as_str()
-                            }
-                            _ => line_prefix.as_str(),
-                        };
-                        let seg_start = s_idx * text_cols;
-                        let seg_end = seg_start + text_cols;
-                        let rendered_seg = crate::render::render_note_segment(
-                            &r.text,
-                            &r.runs,
-                            seg_start,
-                            seg_end,
-                            prefix,
-                            self.syntax_on,
-                            &self.theme,
-                        );
-                        out.entry(target_row).or_default().push(rendered_seg);
-                        visual_idx += 1;
-                    }
+                let lines = crate::render::markdown_lines(&n.text, text_cols);
+                // An empty note still occupies its single gutter line.
+                let lines = if lines.is_empty() {
+                    vec![crate::render::MarkdownLine { runs: Vec::new() }]
+                } else {
+                    lines
+                };
+                let total = lines.len();
+                for (visual_idx, line) in lines.iter().enumerate() {
+                    let prefix = match visual_idx {
+                        0 => first_prefix.as_str(),
+                        n if total > 1 && n + 1 == total => final_prefix.as_str(),
+                        _ => line_prefix.as_str(),
+                    };
+                    let rendered = crate::render::render_markdown_line(
+                        line,
+                        prefix,
+                        self.syntax_on,
+                        &self.theme,
+                    );
+                    out.entry(target_row).or_default().push(rendered);
                 }
             }
         }

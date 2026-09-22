@@ -62,7 +62,10 @@ fn test_heading_prefix_bold_and_blanks() {
     let texts: Vec<String> = lines.iter().map(plain).collect();
     assert_eq!(texts, vec!["### Title"]);
     let out = rendered("### Title", 40);
-    assert!(out[0].contains("\x1b[1m"), "heading bold in {out:?}");
+    assert!(
+        out[0].contains("\x1b[1;4m"),
+        "heading bold+underline in {out:?}"
+    );
 }
 
 #[test]
@@ -208,4 +211,28 @@ fn test_cow_discipline_borrowed_prefixes_owned_splits() {
         .max()
         .unwrap_or(0);
     assert!(total_width <= 10);
+}
+
+#[test]
+fn test_heading_title_bold_and_underlined_markers_not() {
+    let lines = markdown_lines("### Title here", 40);
+    assert_eq!(lines.len(), 1);
+    let out = render_markdown_line(&lines[0], "", true, &theme());
+    // Stacked bold + underline on the title text …
+    assert!(out.contains("\x1b[1;4m"), "{out:?}");
+    // … but the ### marker run carries no SGR.
+    let marker_end = out.find("###").expect("marker present");
+    assert!(!out[..marker_end].contains("\x1b[1;4m"), "{out:?}");
+}
+
+#[test]
+fn test_link_inside_heading_dedupes_underline() {
+    let lines = markdown_lines("### See [docs](https://example.com) now", 80);
+    let out = lines
+        .iter()
+        .map(|l| render_markdown_line(l, "", true, &theme()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!out.contains("4;4"), "no doubled underline: {out:?}");
+    assert!(out.contains("https://example.com"), "{out:?}");
 }

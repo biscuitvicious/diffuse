@@ -178,6 +178,56 @@ impl DiffuseTheme {
         }
     }
 
+    /// Render a token with stacked SGR modifiers as one combined sequence
+    /// (`\x1b[1;4m`), with per-modifier resets in reverse order. Styles
+    /// like heading titles combine bold and underline, which a single SGR
+    /// slot cannot express.
+    pub fn write_token_stacked<W: std::fmt::Write>(
+        &self,
+        color: &str,
+        text: &str,
+        row_kind: &str,
+        tok_kind: Option<&str>,
+        sgrs: &[u32],
+        out: &mut W,
+    ) {
+        use diffuse_core::parse::RowKind;
+        let rk = if row_kind == "add" || tok_kind == Some("add") {
+            RowKind::Add
+        } else if row_kind == "del" || tok_kind == Some("del") {
+            RowKind::Del
+        } else if row_kind == "mod" {
+            RowKind::Mod
+        } else {
+            RowKind::Ctx
+        };
+
+        let ansi_color = self.palette.syntax_token_color(color, rk);
+
+        if !sgrs.is_empty() {
+            let _ = out.write_str("\x1b[");
+            for (i, s) in sgrs.iter().enumerate() {
+                if i > 0 {
+                    let _ = out.write_str(";");
+                }
+                let _ = write!(out, "{s}");
+            }
+            let _ = out.write_str("m");
+        }
+        if let Some(c) = ansi_color {
+            let _ = c.write_fg(out);
+            let _ = out.write_str(text);
+            let _ = out.write_str(FG_RESET);
+        } else {
+            let _ = out.write_str(text);
+        }
+        for s in sgrs.iter().rev() {
+            if let Some(off) = sgr_off(*s) {
+                let _ = out.write_str(off);
+            }
+        }
+    }
+
     /// Render a syntax/markdown token to styled ANSI text.
     #[must_use]
     pub fn render_token(

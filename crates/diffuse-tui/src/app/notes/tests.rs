@@ -448,7 +448,7 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
     state.sync_all_notes();
 
     // Callouts at content_width = 50:
-    // text_cols = 50 - 6 = 44 columns.
+    // text_cols = 50 - 8 = 42 columns.
     let callouts = state.note_callouts(50);
     let note_lines = callouts
         .get(&banner_idx)
@@ -461,12 +461,24 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
         note_lines.len()
     );
 
-    // First line must start with the 💬 icon.
+    // First line must start with the 💬 icon, markers rendered away.
     let clean_first = crate::render::strip_ansi(&note_lines[0]);
     assert_eq!(
-        clean_first, "▌███ 💬 Test *Markdown* **formatting:**",
+        clean_first, "▌███ 💬 Test Markdown formatting:",
         "first line must have correct prefix and content: {}",
         clean_first
+    );
+
+    // Bullets draw as • instead of source dashes.
+    assert!(
+        note_lines
+            .iter()
+            .any(|l| crate::render::strip_ansi(l) == "▌███ │  • List item one"),
+        "must render bullet list items: {:?}",
+        note_lines
+            .iter()
+            .map(|l| crate::render::strip_ansi(l))
+            .collect::<Vec<_>>()
     );
 
     // Continuation lines must start with the gutter line (│)
@@ -542,7 +554,10 @@ fn test_note_callout_gutter_band_and_terminal_line() {
     let note_lines = callouts
         .get(&banner_idx)
         .expect("must have callout on file banner");
-    assert_eq!(note_lines.len(), 4);
+    // Soft-wrapped source lines join into one reflowed paragraph (no blank
+    // source lines): "This is a 4-line note: let a = 17;" fits text_cols =
+    // 80 - 8 = 72 on a single visual line, code span without backticks.
+    assert_eq!(note_lines.len(), 1);
 
     let amber = crate::render::Color::Rgb(250, 75, 40).fg_code();
     let yellow = crate::render::Color::Rgb(220, 220, 20).fg_code();
@@ -574,10 +589,37 @@ fn test_note_callout_gutter_band_and_terminal_line() {
         .iter()
         .map(|line| crate::render::strip_ansi(line))
         .collect();
-    assert_eq!(plain[0], "▌███ 💬 This is");
-    assert_eq!(plain[1], "▌███ │  a 4-line");
-    assert_eq!(plain[2], "▌███ │  note:");
-    assert_eq!(plain[3], "▌███ └┄ `let a = 17;`");
+    assert_eq!(plain[0], "▌███ 💬 This is a 4-line note: let a = 17;");
+}
+
+#[test]
+fn test_note_callout_empty_text_renders_one_line() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let banner_idx = state.first_row_of_file(0);
+
+    add_note(
+        &mut state.notes,
+        &state.notes_key,
+        ReviewNote {
+            id: "empty-note".into(),
+            file: "first.rs".into(),
+            side: Side::New,
+            start: 9999,
+            end: 9999,
+            text: String::new(),
+            created_at: 302,
+            line_hash: None,
+        },
+    );
+    state.sync_all_notes();
+
+    let callouts = state.note_callouts(80);
+    let note_lines = callouts
+        .get(&banner_idx)
+        .expect("must have callout on file banner");
+    assert_eq!(note_lines.len(), 1);
 }
 
 #[test]

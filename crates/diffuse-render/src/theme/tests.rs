@@ -157,3 +157,19 @@ fn test_theme_palette_helpers() {
         Some("\x1b[48;2;76;64;20m")
     );
 }
+
+#[test]
+fn test_stacked_sgr_emission_order_and_reset() {
+    let theme = DiffuseTheme::DEFAULT;
+    let mut out = String::new();
+    theme.write_token_stacked("mdBold", "Title", "ctx", None, &[1, 4], &mut out);
+    assert!(
+        out.starts_with("\x1b[1;4m"),
+        "combined on-sequence: {out:?}"
+    );
+    assert!(out.contains("Title"), "{out:?}");
+    assert!(
+        out.ends_with("\x1b[24m\x1b[22m"),
+        "reverse-order offs: {out:?}"
+    );
+}
