@@ -12,7 +12,7 @@ A prioritized roadmap of outstanding features, engine refinements, and ecosystem
    - Interactive search prompt: `/` searches forward, `?` searches backward, with live match highlighting and `n`/`N` navigation across files and hunks.
 2. **File / Status Filtering (`F` / Quick Filter Modal)**
    - Quick-toggle to filter files by status: only Modified `M`, Added `A`, Untracked `?`, or files with comments or notes.
-3. **Interactive Line / Hunk Staging (`s` / `u`)**
+3. **Interactive Line / Hunk Staging (`s` / `u`)** — Done (`s`/`S` stage, `u`/`U` unstage in TUI)
    - Direct staging and unstaging of individual selected lines, selections (`v`), or whole hunks, without dropping to a shell or editor.
 4. **Hunk Folding / Unfolding (`z` / `zo` / `zc`)**
    - Collapse or expand individual hunks independently of the entire file header.
@@ -57,5 +57,5 @@ A prioritized roadmap of outstanding features, engine refinements, and ecosystem
    - Generate standalone, self-contained HTML reports with the *diffuse* color theme, or clean GitHub-flavored Markdown summaries for pull request descriptions.
 2. **User Theme Configuration (`~/.config/diffuse/theme.toml`)**
    - Allow custom terminal color definitions (RGB / 256-color) and palette overrides beyond the built-in dark and light presets.
-3. **Performance Profiling on Massive Repositories (>10,000 files)**
+3. **Performance Profiling on Massive Repositories (>10,000 files)** — Done (streaming worker pool / rayon thread pool in `diffuse-core::streaming`)
    - Add an asynchronous streaming worker pool for initial diff parsing and syntax classification on massive monorepos.

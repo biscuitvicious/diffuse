@@ -8,7 +8,7 @@ Outstanding work items, grouped by subsystem. Checked items are complete.
 - [x] **Pager mode**: Non-interactive pretty-printed pager mode in the Rust binary (`diffuse` as a drop-in `git diff` pager).
 - [x] ~~**Migrate TUI layout rendering to ratatui**~~: Migrate custom TUI layout, buffer rendering, and terminal primitives to `ratatui`. (See [Ratatui TUI Layout & Rendering Migration](plan/Ratatui%20Migration.md))
 - [ ] **TUI configuration**: Configurable theme, colors, and keybindings loaded from `~/.config/diffuse/config.toml`.
-- [ ] **Theme styling (deeper black & muted red/green backgrounds)**: Tune the default theme palette to make the background more black, and mute the red (deletion) and green (addition) background shades, for enhanced contrast and reduced eye fatigue.
+- [x] **Theme styling (deeper black & muted red/green backgrounds)**: Tune the default theme palette to make the background more black, and mute the red (deletion) and green (addition) background shades, for enhanced contrast and reduced eye fatigue.
 - [x] **CLI UX & subcommands**: Explicit subcommands, CLI arguments, and flags (for example, `diffuse review [commit-range]`, `diffuse parse`, `diffuse -p`/`--pager`, `-U`/`--context`).
 - [ ] **Enforce pure-Rust `gix` independence across all git operations**: Apply the guideline to use `gix` for all access that would require `git` to be available. Use `git` only as an optimization in extreme cases, and only if it is available and radically faster.
 - [x] ~~**Direct git access via git crate**~~: Migrate all git tool callouts into direct git access using a native git crate (for example, `gix` or `git2`). (See [Native Git Engine & Asynchronous Repository Loader](plan/done/Native%20Git%20Engine%20&%20Async%20Loader.md))
