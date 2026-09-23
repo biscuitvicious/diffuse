@@ -152,9 +152,9 @@ struct InlineStyle {
 
 fn task_glyph(state: TaskState) -> &'static str {
     match state {
-        TaskState::Empty => "☐",
-        TaskState::InProgress => "◐",
-        TaskState::Checked => "☑",
+        TaskState::Empty => "⬜",
+        TaskState::InProgress => "🔄",
+        TaskState::Checked => "✅",
     }
 }
 
@@ -241,7 +241,7 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                 });
             }
             Span::Task(state) => {
-                let mut glyph = String::with_capacity(4);
+                let mut glyph = String::with_capacity(8);
                 glyph.push_str(task_glyph(*state));
                 glyph.push(' ');
                 runs.push(Run {
@@ -536,8 +536,8 @@ impl Renderer {
             .iter()
             .map(|item| display_width(marker_string(item)))
             .collect();
-        let widest = widths.into_iter().max().unwrap_or(1).max(1);
-        let marker_col = widest + 1;
+        let widest = widths.into_iter().max().unwrap_or(0);
+        let marker_col = if widest > 0 { widest + 1 } else { 0 };
         for (idx, item) in items.iter().enumerate() {
             if idx > 0 && item.blank_before {
                 out.push(VisualLine {
@@ -550,21 +550,23 @@ impl Renderer {
             let marker_text = marker_string(item);
             let marker_width = display_width(&marker_text);
             let mut marker = Vec::new();
-            if widest > marker_width {
-                marker.push(borrowed_spaces(widest - marker_width));
+            if widest > 0 {
+                if widest > marker_width {
+                    marker.push(borrowed_spaces(widest - marker_width));
+                }
+                marker.push(Run {
+                    color: "accent",
+                    sgr: None,
+                    underline: false,
+                    text: marker_text,
+                });
+                marker.push(Run {
+                    color: "text",
+                    sgr: None,
+                    underline: false,
+                    text: Cow::Borrowed(" "),
+                });
             }
-            marker.push(Run {
-                color: "accent",
-                sgr: None,
-                underline: false,
-                text: marker_text,
-            });
-            marker.push(Run {
-                color: "text",
-                sgr: None,
-                underline: false,
-                text: Cow::Borrowed(" "),
-            });
             // A leading task span joins the marker chain (bullet + glyph +
             // space) so continuations indent past it; the glyph is stripped
             // from the paragraph content.
@@ -576,9 +578,13 @@ impl Renderer {
                 },
                 _ => None,
             };
-            let glyph_col = if task_state.is_some() { 2 } else { 0 };
+            let glyph_col = if let Some(state) = task_state {
+                display_width(task_glyph(state)) + 1
+            } else {
+                0
+            };
             if let Some(state) = task_state {
-                let mut glyph = String::with_capacity(4);
+                let mut glyph = String::with_capacity(8);
                 glyph.push_str(task_glyph(state));
                 glyph.push(' ');
                 marker.push(Run {
@@ -775,6 +781,7 @@ fn marker_string(item: &crate::syntax::markdown::ListItem<'_>) -> Cow<'static, s
     match &item.marker {
         ListMarker::Bullet => Cow::Borrowed("•"),
         ListMarker::Numbered(n) => Cow::Owned(format!("{n}.")),
+        ListMarker::None => Cow::Borrowed(""),
     }
 }
 

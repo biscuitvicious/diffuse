@@ -428,3 +428,102 @@ fn test_task_marker_with_nbsp_separator() {
         Some(Span::Task(TaskState::Checked))
     ));
 }
+
+#[test]
+fn test_task_marker_in_progress_in_list_items() {
+    let flow = blocks("- [·] doing\n- [ ] todo\n- [x] done");
+    match &flow.blocks()[0] {
+        Block::List { items } => {
+            assert_eq!(items.len(), 3);
+            let first_para = items[0]
+                .children
+                .blocks()
+                .iter()
+                .find_map(|b| match b {
+                    Block::Para { content } => Some(content),
+                    _ => None,
+                })
+                .expect("first item has Para");
+            assert_eq!(
+                first_para.spans().first(),
+                Some(&Span::Task(TaskState::InProgress))
+            );
+        }
+        other => panic!("expected List, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_standalone_paragraph_task_markers() {
+    let flow = blocks("[ ] todo\n\n[·] doing\n\n[x] done");
+    assert_eq!(flow.len(), 5); // 3 lists + 2 blanks
+    let states = [TaskState::Empty, TaskState::InProgress, TaskState::Checked];
+    let lists: Vec<&Block<'_>> = flow
+        .blocks()
+        .iter()
+        .filter(|b| matches!(b, Block::List { .. }))
+        .collect();
+    assert_eq!(lists.len(), 3);
+    for (block, want_state) in lists.iter().zip(states) {
+        match block {
+            Block::List { items } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].marker, ListMarker::None);
+                let para = items_para(&items[0]);
+                assert_eq!(para.spans().first(), Some(&Span::Task(want_state)));
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn test_empty_task_list_items() {
+    let flow = blocks("- [ ]\n- [·]\n- [x]");
+    match &flow.blocks()[0] {
+        Block::List { items } => {
+            assert_eq!(items.len(), 3);
+            let states = [TaskState::Empty, TaskState::InProgress, TaskState::Checked];
+            for (item, want_state) in items.iter().zip(states) {
+                let para = items_para(item);
+                assert_eq!(para.spans(), &[Span::Task(want_state)]);
+            }
+        }
+        other => panic!("expected List, got {other:?}"),
+    }
+}
+
+fn items_para<'a>(item: &'a ListItem<'a>) -> &'a Inline<'a> {
+    item.children
+        .blocks()
+        .iter()
+        .find_map(|b| match b {
+            Block::Para { content } => Some(content),
+            _ => None,
+        })
+        .expect("item has Para")
+}
+
+#[test]
+fn test_bulletless_task_list_items() {
+    let src = "[ ] Unselected\n[·] In progress\n[x] Completed\n[X] Completed #2";
+    let flow = blocks(src);
+    assert_eq!(flow.len(), 1);
+    match &flow.blocks()[0] {
+        Block::List { items } => {
+            assert_eq!(items.len(), 4);
+            let states = [
+                TaskState::Empty,
+                TaskState::InProgress,
+                TaskState::Checked,
+                TaskState::Checked,
+            ];
+            for (item, want_state) in items.iter().zip(states) {
+                assert_eq!(item.marker, ListMarker::None);
+                let para = items_para(item);
+                assert_eq!(para.spans().first(), Some(&Span::Task(want_state)));
+            }
+        }
+        other => panic!("expected List, got {other:?}"),
+    }
+}

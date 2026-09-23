@@ -122,6 +122,7 @@ pub enum TaskState {
 pub enum ListMarker<'a> {
     Bullet,
     Numbered(Cow<'a, str>),
+    None,
 }
 
 /// Per-column alignment of a [`Block::Table`], from the GFM delimiter row.
@@ -192,8 +193,11 @@ pub fn blocks(text: &str) -> Flow<'_> {
         .collect();
     // Tight items and task markers carry no `Paragraph` events, so a
     // pre-pass wraps their bare inline runs in synthetic paragraphs. The
-    // main walk below then only ever sees explicit paragraphs.
-    let events = with_item_paragraphs(collected);
+    // main walk below then only ever sees explicit paragraphs. Adjacent
+    // text events are coalesced so non-standard markers (`[·]`) and
+    // bracketed task markers aren't split across events. Top-level paragraph
+    // lines starting with task markers are split into bulletless list items.
+    let events = with_item_paragraphs(split_paragraph_task_lists(coalesce_text_events(collected)));
     let mut stack: Vec<Frame<'_>> = vec![Frame::Root(Vec::new())];
     let mut pos = 0usize;
     for (event, range) in events {
@@ -241,11 +245,190 @@ pub fn spans(text: &str) -> Inline<'_> {
         builder.push_task(state);
         rest = tail;
     }
-    let parser = Parser::new_ext(rest, md_options());
-    for event in parser {
+    let collected: Vec<(Event<'_>, Range<usize>)> = Parser::new_ext(rest, md_options())
+        .into_offset_iter()
+        .collect();
+    for (event, _) in coalesce_text_events(collected) {
         feed_inline_event(&mut builder, event);
     }
     builder.finish()
+}
+
+/// Coalesce adjacent [`Event::Text`] events into a single event with the
+/// combined range. pulldown-cmark emits separate text events around bracket
+/// characters (`[`, `]`, `·`), which prevents pattern matching on task
+/// markers like `[·]` or standalone `[ ]`.
+fn coalesce_text_events<'a, I>(events: I) -> Vec<(Event<'a>, Range<usize>)>
+where
+    I: IntoIterator<Item = (Event<'a>, Range<usize>)>,
+{
+    let mut out: Vec<(Event<'a>, Range<usize>)> = Vec::new();
+    for (event, range) in events {
+        match event {
+            Event::Text(text) => {
+                if let Some((Event::Text(prev), prev_range)) = out.last_mut() {
+                    let mut s = prev.to_string();
+                    s.push_str(&text);
+                    *prev = CowStr::Boxed(s.into_boxed_str());
+                    prev_range.end = range.end;
+                } else {
+                    out.push((Event::Text(text), range));
+                }
+            }
+            _ => out.push((event, range)),
+        }
+    }
+    out
+}
+
+/// Split top-level paragraph blocks containing lines that start with task
+/// markers (`[ ]`, `[·]`, `[x]`, `[X]`) into dedicated list items so
+/// bulletless task lists do not collapse into a single joined paragraph.
+fn split_paragraph_task_lists<'a>(
+    events: Vec<(Event<'a>, Range<usize>)>,
+) -> Vec<(Event<'a>, Range<usize>)> {
+    let mut out: Vec<(Event<'a>, Range<usize>)> = Vec::with_capacity(events.len());
+    let mut item_depth = 0usize;
+    let mut i = 0usize;
+    while i < events.len() {
+        match &events[i].0 {
+            Event::Start(Tag::Item) => {
+                item_depth += 1;
+                out.push(events[i].clone());
+                i += 1;
+            }
+            Event::End(TagEnd::Item) => {
+                item_depth = item_depth.saturating_sub(1);
+                out.push(events[i].clone());
+                i += 1;
+            }
+            Event::Start(Tag::Paragraph) if item_depth == 0 => {
+                let start_range = events[i].1.clone();
+                i += 1;
+                let mut para_events: Vec<(Event<'a>, Range<usize>)> = Vec::new();
+                while i < events.len() && !matches!(events[i].0, Event::End(TagEnd::Paragraph)) {
+                    para_events.push(events[i].clone());
+                    i += 1;
+                }
+                let end_range = if i < events.len() {
+                    let r = events[i].1.clone();
+                    i += 1;
+                    r
+                } else {
+                    start_range.clone()
+                };
+
+                let mut lines: Vec<Vec<(Event<'a>, Range<usize>)>> = Vec::new();
+                let mut current_line: Vec<(Event<'a>, Range<usize>)> = Vec::new();
+                for ev in para_events {
+                    if matches!(ev.0, Event::SoftBreak | Event::HardBreak) {
+                        lines.push(mem::take(&mut current_line));
+                    } else {
+                        current_line.push(ev);
+                    }
+                }
+                if !current_line.is_empty() {
+                    lines.push(current_line);
+                }
+
+                let line_starts_with_task = |line: &[(Event<'a>, Range<usize>)]| -> bool {
+                    match line.first() {
+                        Some((Event::Text(t), _)) => starts_with_task_marker(t),
+                        _ => false,
+                    }
+                };
+
+                let has_task_line = lines.iter().any(|l| line_starts_with_task(l));
+                if !has_task_line {
+                    out.push((Event::Start(Tag::Paragraph), start_range));
+                    for (li, line) in lines.into_iter().enumerate() {
+                        if li > 0 {
+                            out.push((Event::SoftBreak, end_range.clone()));
+                        }
+                        out.extend(line);
+                    }
+                    out.push((Event::End(TagEnd::Paragraph), end_range));
+                    continue;
+                }
+
+                let mut line_idx = 0usize;
+                let mut leading_lines: Vec<Vec<(Event<'a>, Range<usize>)>> = Vec::new();
+                while line_idx < lines.len() && !line_starts_with_task(&lines[line_idx]) {
+                    leading_lines.push(mem::take(&mut lines[line_idx]));
+                    line_idx += 1;
+                }
+
+                if !leading_lines.is_empty() {
+                    let lead_start = leading_lines[0]
+                        .first()
+                        .map(|e| e.1.start)
+                        .unwrap_or(start_range.start);
+                    let lead_end = leading_lines
+                        .last()
+                        .and_then(|l| l.last())
+                        .map(|e| e.1.end)
+                        .unwrap_or(start_range.end);
+                    out.push((Event::Start(Tag::Paragraph), lead_start..lead_end));
+                    for (li, line) in leading_lines.into_iter().enumerate() {
+                        if li > 0 {
+                            out.push((Event::SoftBreak, lead_start..lead_end));
+                        }
+                        out.extend(line);
+                    }
+                    out.push((Event::End(TagEnd::Paragraph), lead_start..lead_end));
+                }
+
+                let list_start = lines[line_idx]
+                    .first()
+                    .map(|e| e.1.start)
+                    .unwrap_or(start_range.start);
+                let list_end = lines
+                    .last()
+                    .and_then(|l| l.last())
+                    .map(|e| e.1.end)
+                    .unwrap_or(end_range.end);
+                out.push((Event::Start(Tag::List(None)), list_start..list_end));
+
+                while line_idx < lines.len() {
+                    let mut item_lines: Vec<Vec<(Event<'a>, Range<usize>)>> =
+                        vec![mem::take(&mut lines[line_idx])];
+                    line_idx += 1;
+                    while line_idx < lines.len() && !line_starts_with_task(&lines[line_idx]) {
+                        item_lines.push(mem::take(&mut lines[line_idx]));
+                        line_idx += 1;
+                    }
+                    let item_start = item_lines[0]
+                        .first()
+                        .map(|e| e.1.start)
+                        .unwrap_or(list_start);
+                    let item_end = item_lines
+                        .last()
+                        .and_then(|l| l.last())
+                        .map(|e| e.1.end)
+                        .unwrap_or(list_end);
+                    let item_range = item_start..item_end;
+
+                    out.push((Event::Start(Tag::Item), item_range.clone()));
+                    out.push((Event::Start(Tag::Paragraph), item_range.clone()));
+                    for (li, line) in item_lines.into_iter().enumerate() {
+                        if li > 0 {
+                            out.push((Event::SoftBreak, item_range.clone()));
+                        }
+                        out.extend(line);
+                    }
+                    out.push((Event::End(TagEnd::Paragraph), item_range.clone()));
+                    out.push((Event::End(TagEnd::Item), item_range));
+                }
+
+                out.push((Event::End(TagEnd::List(false)), list_start..list_end));
+            }
+            _ => {
+                out.push(events[i].clone());
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 fn heading_level(level: HeadingLevel) -> u8 {
@@ -615,7 +798,12 @@ fn feed_block_event<'a>(
                                 }
                             }
                         } else {
-                            ListMarker::Bullet
+                            let head = item_src.trim_start();
+                            if starts_with_task_marker(head) && !head.starts_with(['-', '*', '+']) {
+                                ListMarker::None
+                            } else {
+                                ListMarker::Bullet
+                            }
                         };
                         (marker, blank_before && !list.items.is_empty())
                     }
@@ -1016,19 +1204,21 @@ fn normalize_inline_whitespace(text: &str) -> String {
     out
 }
 
-/// Split a leading task marker (`[ ]`, `[x]`/`[X]`, `[·]`) followed by a
-/// space, tab, or end of text from paragraph text.
+/// Split a leading task marker (`[ ]`, `[x]`/`[X]`, `[·]`) optionally
+/// preceded by whitespace, followed by a space, tab, or end of text from
+/// paragraph text.
 fn split_leading_task(text: &str) -> Option<(TaskState, &str)> {
-    let (marker_len, state) = if text.starts_with("[ ]") {
+    let trimmed = text.trim_start();
+    let (marker_len, state) = if trimmed.starts_with("[ ]") {
         (3, TaskState::Empty)
-    } else if text.starts_with("[x]") || text.starts_with("[X]") {
+    } else if trimmed.starts_with("[x]") || trimmed.starts_with("[X]") {
         (3, TaskState::Checked)
-    } else if text.starts_with("[·]") {
+    } else if trimmed.starts_with("[·]") {
         ("[·]".len(), TaskState::InProgress)
     } else {
         return None;
     };
-    let rest = &text[marker_len..];
+    let rest = &trimmed[marker_len..];
     if rest.is_empty() {
         return Some((state, ""));
     }
@@ -1037,6 +1227,10 @@ fn split_leading_task(text: &str) -> Option<(TaskState, &str)> {
     } else {
         None
     }
+}
+
+fn starts_with_task_marker(text: &str) -> bool {
+    split_leading_task(text).is_some()
 }
 
 struct InlineBuilder<'a> {

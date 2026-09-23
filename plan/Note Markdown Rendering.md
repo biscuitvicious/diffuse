@@ -3,7 +3,7 @@
 - [x] 1. [Phase 1 — Block and Inline Markdown Classification (`crates/diffuse-syntax/`)](#1-phase-1--block-and-inline-markdown-classification-cratesdiffuse-syntax)
 - [x] 2. [Phase 2 — Markdown Line Assembly and Reflow (`crates/diffuse-render/`)](#2-phase-2--markdown-line-assembly-and-reflow-cratesdiffuse-render)
 - [x] 3. [Phase 3 — TUI Note Callout Integration (`crates/diffuse-tui/`)](#3-phase-3--tui-note-callout-integration-cratesdiffuse-tui)
-- [ ] 4. [Phase 4 — Task List Checkbox Glyphs](#4-phase-4--task-list-checkbox-glyphs)
+- [x] 4. [Phase 4 — Task List Checkbox Glyphs](#4-phase-4--task-list-checkbox-glyphs)
 - [ ] 5. [Phase 5 — Unicode Table Rendering with Cell Squashing](#5-phase-5--unicode-table-rendering-with-cell-squashing)
 - [ ] 6. [Phase 6 — Verification and Acceptance Gate](#6-phase-6--verification-and-acceptance-gate)
 
@@ -422,9 +422,9 @@ Draw task list states as unicode glyphs instead of bracket source text.
    (`Span::Task` rendering — implemented in Phase 2 for the wrapping test;
    this phase adds the dedicated mapping tests): `TaskState::Empty | InProgress | Checked` →
    glyph run + trailing space:
-   `☐` (U+2610) for `[ ]`, `◐` (U+25D0) for `[·]`, `☑` (U+2611) for
+   `⬜` (U+2B1C) for `[ ]`, `🔄` (U+1F504) for `[·]`, `✅` (U+2705) for
    `[x]`. Task items live inside list items, so continuation lines indent
-   past the full marker chain (bullet + glyph + space) per the
+   past the full marker chain (bullet + 2-col glyph + space) per the
    marker-indent wrapping rule.
 2. **Test-first**: each state maps to the chosen glyph; the bracket source
    (`[ ]`, `[·]`, `[x]`) never appears in rendered output; mixed task lists
