@@ -584,7 +584,7 @@ fn main() -> io::Result<()> {
             let mut stdout = io::stdout().lock();
             if is_raw {
                 for file in consumer {
-                    let mut rendered = render_raw_file_diff(&file);
+                    let mut rendered = render_raw_file_diff(&file, None);
                     if !colorize {
                         rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
                     }
@@ -597,7 +597,7 @@ fn main() -> io::Result<()> {
                 }
             } else {
                 for file in consumer {
-                    let mut rendered = render_file_diff(&file, &theme, true);
+                    let mut rendered = render_file_diff(&file, None, &theme, true);
                     if !colorize {
                         rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
                     }
@@ -662,7 +662,7 @@ fn main() -> io::Result<()> {
         if is_raw {
             let mut stdout = io::stdout().lock();
             for file in consumer {
-                let rendered = render_raw_file_diff(&file);
+                let rendered = render_raw_file_diff(&file, None);
                 if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         return Ok(());

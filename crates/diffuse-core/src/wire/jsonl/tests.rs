@@ -346,12 +346,12 @@ fn test_display_status_mode_change_and_renames() {
     // Renamed + mode change
     file.old_path = Some("old_script.sh".to_string());
     file.status = "renamed".to_string();
-    assert_eq!(file.display_status(), "mode 100644 ➞ 100755, 1kB");
+    assert_eq!(file.display_status(), "renamed, mode 100644 ➞ 100755, 1kB");
 
     // Renamed only
     file.old_mode = None;
     file.new_mode = None;
-    assert_eq!(file.display_status(), "1kB");
+    assert_eq!(file.display_status(), "renamed, 1kB");
 
     // Standard modified file
     file.old_path = None;
@@ -367,13 +367,13 @@ fn test_display_status_mode_change_and_renames() {
     file.status = "added".to_string();
     file.old_bytes = None;
     file.new_bytes = Some(1024);
-    assert_eq!(file.display_status(), "× ➞ 1kB");
+    assert_eq!(file.display_status(), "added, 1kB");
 
     // Deleted file
     file.status = "deleted".to_string();
     file.old_bytes = Some(1024);
     file.new_bytes = None;
-    assert_eq!(file.display_status(), "1kB ➞ ×");
+    assert_eq!(file.display_status(), "deleted, 1kB");
 
     // When both old_bytes and new_bytes are None, size is omitted completely
     file.old_bytes = None;
@@ -417,7 +417,14 @@ fn test_format_byte_size() {
     // Decimals
     assert_eq!(format_byte_size(1536), "1.5kB");
     assert_eq!(format_byte_size(2427), "2.4kB");
-    assert_eq!(format_byte_size(138883072), "132.4MB");
+    assert_eq!(format_byte_size(5120), "5kB");
+    assert_eq!(format_byte_size(10240), "10kB");
+    assert_eq!(format_byte_size(138883072), "132MB");
+
+    // At and above 5.0 the value rounds to an integer, never truncates:
+    // 14849 bytes is 14.5009kB, which rounds up, not down to 14kB.
+    assert_eq!(format_byte_size(14849), "15kB");
+    assert_eq!(format_byte_size(15360), "15kB");
 
     // Large units
     assert_eq!(format_byte_size(1024 * 1024 * 1024), "1GB");
@@ -541,48 +548,4 @@ fn test_output_hunk_counts() {
     assert_eq!(counts.mods, 1);
     assert_eq!(counts.movs, 2);
     assert_eq!(counts.notes, 0);
-}
-
-#[test]
-fn test_output_hunk_note_count() {
-    use crate::{notes::Side as NoteSide, wire::OutputNote};
-    let note = |side: NoteSide, start: u32, end: u32| OutputNote {
-        id: "n".to_string(),
-        file: "src/sample.rs".to_string(),
-        side,
-        start,
-        end,
-        text: String::new(),
-        created_at: 0,
-        runs: vec![],
-        line_hash: None,
-    };
-    // Old lines [10, 15), new lines [20, 24).
-    let hunk = OutputHunk {
-        old_start: 10,
-        old_count: 5,
-        new_start: 20,
-        new_count: 4,
-        rows: vec![],
-    };
-    let notes = vec![
-        note(NoteSide::New, 21, 22), // ends inside the new range
-        note(NoteSide::Old, 10, 10), // ends at the old range start
-        note(NoteSide::New, 24, 30), // starts where the new range ends
-        note(NoteSide::Old, 20, 21), // overlaps new range, wrong side
-        note(NoteSide::New, 18, 29), // spans through the hunk, ends outside
-        note(NoteSide::New, 15, 18), // ends before the new range starts
-    ];
-    assert_eq!(hunk.note_count(&notes), 2);
-
-    // Empty hunk ranges never match, even for spanning notes.
-    let empty = OutputHunk {
-        old_start: 5,
-        old_count: 0,
-        new_start: 5,
-        new_count: 0,
-        rows: vec![],
-    };
-    assert_eq!(empty.note_count(&[note(NoteSide::New, 4, 6)]), 0);
-    assert_eq!(hunk.note_count(&[]), 0);
 }

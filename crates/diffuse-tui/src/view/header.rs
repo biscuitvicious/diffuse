@@ -1,10 +1,7 @@
 //! Header, status bar, and bottom ribbon rendering.
 
 use crate::{
-    core::{
-        counts::{CountKind, FileCounts},
-        wire::OutputFile,
-    },
+    core::{counts::FileCounts, wire::OutputFile},
     render::{
         slice_by_visual_width,
         width::{char_width, display_width, grapheme_width},
@@ -168,26 +165,30 @@ pub fn truncate_pad(s: &str, target_width: usize) -> String {
     }
     out
 }
-
-/// Highlight palette for mod-count segments by bucket.
-fn count_color(kind: CountKind) -> u8 {
-    match kind {
-        CountKind::Dels => 203,
-        CountKind::Adds => 120,
-        CountKind::Mods => 214,
-        CountKind::Movs => 147,
-        CountKind::Notes => 220,
+/// Shorten a status-bar path to fit `budget` columns, keeping the end and
+/// marking the cut with a leading `…` (grapheme-safe for wide glyphs).
+/// Returns `None` when the path fits or the budget cannot hold even the
+/// ellipsis.
+#[must_use]
+pub fn truncate_status_path(path: &str, budget: usize) -> Option<String> {
+    let path_w = display_width(path);
+    if path_w <= budget || budget == 0 {
+        return None;
     }
+    let keep = budget.saturating_sub(1);
+    let tail = slice_by_visual_width(path, path_w.saturating_sub(keep), keep);
+    Some(format!("…{tail}"))
 }
+
+pub use crate::render::counts::{CountCell, count_cells, count_color};
 
 /// Format mod counts as a plain text string (`−dels`, `+adds`, `~mods`,
 /// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
 /// all counts are zero.
 pub fn format_counts_plain(counts: &FileCounts) -> String {
-    counts
-        .segments()
+    count_cells(counts)
         .iter()
-        .map(|seg| format!("{}{}", seg.marker, seg.value))
+        .map(|cell| format!("{}{}", cell.marker, cell.value))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -196,17 +197,14 @@ pub fn format_counts_plain(counts: &FileCounts) -> String {
 /// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
 /// all counts are zero.
 pub fn format_counts_ansi(counts: &FileCounts) -> String {
-    counts
-        .segments()
+    count_cells(counts)
         .iter()
         .enumerate()
-        .map(|(i, seg)| {
+        .map(|(i, cell)| {
             let sep = if i == 0 { "" } else { " " };
             format!(
                 "{sep}\x1b[1m\x1b[38;5;{}m{}{}\x1b[0m",
-                count_color(seg.kind),
-                seg.marker,
-                seg.value
+                cell.color, cell.marker, cell.value
             )
         })
         .collect::<String>()
@@ -218,12 +216,12 @@ pub fn format_counts_ansi(counts: &FileCounts) -> String {
 /// when all counts are zero.
 pub fn format_counts_spans(counts: &FileCounts) -> SmallVec<[Span<'static>; 5]> {
     let mut spans: SmallVec<[Span<'static>; 5]> = SmallVec::new();
-    for (i, seg) in counts.segments().iter().enumerate() {
+    for (i, cell) in count_cells(counts).iter().enumerate() {
         let prefix = if i == 0 { "" } else { " " };
         spans.push(Span::styled(
-            format!("{prefix}{}{}", seg.marker, seg.value),
+            format!("{prefix}{}{}", cell.marker, cell.value),
             Style::default()
-                .fg(Color::Indexed(count_color(seg.kind)))
+                .fg(Color::Indexed(cell.color))
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -244,9 +242,9 @@ pub fn render_header_bar(
     let branch_seg = if let Some(range) = commit_range
         && !range.is_empty()
     {
-        format!(" \x1b[38;5;244m\u{2387}\x1b[0m \x1b[1m\x1b[38;5;252m{range}\x1b[0m")
+        format!(" \x1b[38;5;244m\u{2387}\x1b[0m\x1b[1m\x1b[38;5;252m{range}\x1b[0m")
     } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
-        format!(" \x1b[38;5;244m\u{2387}\x1b[0m \x1b[1m\x1b[38;5;252m{b}\x1b[0m")
+        format!(" \x1b[38;5;244m\u{2387}\x1b[0m\x1b[1m\x1b[38;5;252m{b}\x1b[0m")
     } else {
         String::new()
     };
@@ -302,7 +300,7 @@ pub struct StatusBarContext<'a> {
 
 /// Current file path stripped of the shared directory prefix, rendering
 /// renames as `old -> new`.
-fn stripped_file_path(file: &OutputFile, common_prefix: Option<&str>) -> String {
+pub(crate) fn stripped_file_path(file: &OutputFile, common_prefix: Option<&str>) -> String {
     let stripped_old = file.old_path.as_deref().map(|old| {
         if let Some(pfx) = common_prefix {
             old.strip_prefix(pfx).unwrap_or(old).to_string()
@@ -328,7 +326,7 @@ fn stripped_file_path(file: &OutputFile, common_prefix: Option<&str>) -> String 
 }
 
 /// File status tag; routine `modified`/`renamed` states stay unadorned.
-fn file_status_tag(file: &OutputFile) -> String {
+pub(crate) fn file_status_tag(file: &OutputFile) -> String {
     if file.status == "renamed" || file.status == "modified" {
         String::new()
     } else {
@@ -336,96 +334,37 @@ fn file_status_tag(file: &OutputFile) -> String {
     }
 }
 
-/// Render the secondary status bar: file badge, current file sub-path and
-/// counts, hunk badge and hunk counts, plus mode indicators.
+/// Render the secondary status bar as ANSI strings: the shared
+/// [`status_layout`](super::status_layout) cascade (full badges →
+/// abbreviated badges → path truncation → wrap) emitted as escape runs.
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
-    let files_badge = if ctx.total_files == 0 {
-        "\x1b[1m\x1b[38;5;220mfile 0/0\x1b[0m".to_string()
-    } else {
+    use super::status_layout::{StatusSegment, status_layout};
+
+    let seg_ansi = |seg: &StatusSegment| -> String {
+        let bold = if seg.bold { "\x1b[1m" } else { "" };
+        let bold_off = if seg.bold { "\x1b[22m" } else { "" };
         format!(
-            "\x1b[1m\x1b[38;5;220mfile {}/{}\x1b[0m",
-            ctx.cur_fi + 1,
-            ctx.total_files
+            "\x1b[38;5;{}m{bold}{}{bold_off}\x1b[0m",
+            seg.color, seg.text
         )
     };
-    let file_seg = if let Some(f) = ctx.file {
-        let path = stripped_file_path(f, ctx.common_prefix);
-        let status = file_status_tag(f);
-        let counts_txt = if f.counts.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", format_counts_ansi(&f.counts))
-        };
-        format!(
-            " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;231m{path}\x1b[0m\x1b[38;5;244m{status}\x1b[0m{counts_txt}"
-        )
-    } else {
-        String::new()
-    };
-    let hunk_badge = if ctx.total_files == 0 || ctx.total_hunks == 0 {
-        "\x1b[1m\x1b[38;5;213mhunk 0/0\x1b[0m".to_string()
-    } else {
-        format!(
-            "\x1b[1m\x1b[38;5;213mhunk {}/{}\x1b[0m",
-            ctx.cur_hunk + 1,
-            ctx.total_hunks
-        )
-    };
-    let hunk_counts_txt = match ctx.hunk_counts {
-        Some(c) if !c.is_empty() => format!(" ({})", format_counts_ansi(&c)),
-        _ => String::new(),
-    };
-    let stream_txt = if ctx.is_streaming {
-        let dot = if ctx.streaming_dot.is_empty() {
-            "●"
-        } else {
-            ctx.streaming_dot
-        };
-        format!(" \x1b[38;5;240m\u{00b7}\x1b[0m \x1b[1m\x1b[38;5;117m{dot} streaming...\x1b[0m")
-    } else {
-        String::new()
-    };
-    let mode_txt = if ctx.raw_diff {
-        " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;220mraw diff\x1b[0m"
-    } else {
-        ""
-    };
-    let col_txt = if ctx.col_offset > 0 {
-        format!(
-            " \x1b[38;5;240m·\x1b[0m \x1b[38;5;244mcol {}+\x1b[0m",
-            ctx.col_offset
-        )
-    } else {
-        String::new()
-    };
-    let go_txt = if !ctx.num_buffer.is_empty() {
-        format!(
-            " \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;221mgo {}\x1b[0m",
-            ctx.num_buffer
-        )
-    } else {
-        String::new()
-    };
-    let line = format!(
-        " {files_badge}{stream_txt}{file_seg} \x1b[38;5;240m·\x1b[0m {hunk_badge}{hunk_counts_txt}{mode_txt}{col_txt}{go_txt}"
-    );
-    let vw = visible_width(&line);
-    if vw <= ctx.width {
-        vec![format!(
+    let layout = status_layout(&ctx);
+    let line: String = layout.segments.iter().map(seg_ansi).collect();
+    if !layout.wraps {
+        let vw = visible_width(&line);
+        return vec![format!(
             "{line}{}\x1b[0m",
             " ".repeat(ctx.width.saturating_sub(vw))
-        )]
-    } else {
-        let wrapped = wrap_text_by_visual_width(&line, ctx.width);
-        wrapped
-            .into_iter()
-            .map(|piece| {
-                let piece_vw = visible_width(&piece);
-                let pad = " ".repeat(ctx.width.saturating_sub(piece_vw));
-                format!("{piece}{pad}\x1b[0m")
-            })
-            .collect()
+        )];
     }
+    wrap_text_by_visual_width(&line, ctx.width)
+        .into_iter()
+        .map(|piece| {
+            let piece_vw = visible_width(&piece);
+            let pad = " ".repeat(ctx.width.saturating_sub(piece_vw));
+            format!("{piece}{pad}\x1b[0m")
+        })
+        .collect()
 }
 
 /// Render the bottom navigation key-bindings ribbon.
@@ -467,7 +406,7 @@ pub fn header_bar_line_themed(
         && !range.is_empty()
     {
         spans.push(Span::styled(
-            " \u{2387} ",
+            " \u{2387}",
             Style::default().fg(Color::Indexed(244)),
         ));
         spans.push(Span::styled(
@@ -478,7 +417,7 @@ pub fn header_bar_line_themed(
         ));
     } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
         spans.push(Span::styled(
-            " \u{2387} ",
+            " \u{2387}",
             Style::default().fg(Color::Indexed(244)),
         ));
         spans.push(Span::styled(
@@ -535,120 +474,29 @@ pub fn header_bar_line(
     )
 }
 
-/// Render the secondary status bar as a styled Ratatui [`Line`].
+/// Render the secondary status bar as a styled Ratatui [`Line`], consuming
+/// the same shared [`status_layout`](super::status_layout) cascade as the
+/// ANSI path.
 pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
-    let file_text = if ctx.total_files == 0 {
-        "file 0/0".to_string()
-    } else {
-        format!("file {}/{}", ctx.cur_fi + 1, ctx.total_files)
-    };
-    let hunk_text = if ctx.total_files == 0 || ctx.total_hunks == 0 {
-        "hunk 0/0".to_string()
-    } else {
-        format!("hunk {}/{}", ctx.cur_hunk + 1, ctx.total_hunks)
-    };
-    let mut spans = vec![Span::raw(" ")];
-    spans.push(Span::styled(
-        file_text,
-        Style::default()
-            .fg(Color::Indexed(220))
-            .add_modifier(Modifier::BOLD),
-    ));
-    if ctx.is_streaming {
-        let dot = if ctx.streaming_dot.is_empty() {
-            "●"
-        } else {
-            ctx.streaming_dot
-        };
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
-        spans.push(Span::styled(
-            format!("{dot} streaming..."),
-            Style::default()
-                .fg(Color::Indexed(117))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    if let Some(f) = ctx.file {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
-        spans.push(Span::styled(
-            stripped_file_path(f, ctx.common_prefix),
-            Style::default()
-                .fg(Color::Indexed(231))
-                .add_modifier(Modifier::BOLD),
-        ));
-        let status = file_status_tag(f);
-        if !status.is_empty() {
-            spans.push(Span::styled(
-                status,
-                Style::default().fg(Color::Indexed(244)),
-            ));
+    use super::status_layout::{StatusSegment, status_layout};
+
+    let seg_span = |seg: &StatusSegment| -> Span<'static> {
+        let mut style = Style::default().fg(Color::Indexed(seg.color));
+        if seg.bold {
+            style = style.add_modifier(Modifier::BOLD);
         }
-        if !f.counts.is_empty() {
-            spans.push(Span::raw(" ("));
-            spans.extend(format_counts_spans(&f.counts));
-            spans.push(Span::raw(")"));
-        }
-    }
-    spans.push(Span::styled(
-        " · ",
-        Style::default().fg(Color::Indexed(240)),
-    ));
-    spans.push(Span::styled(
-        hunk_text,
-        Style::default()
-            .fg(Color::Indexed(213))
-            .add_modifier(Modifier::BOLD),
-    ));
-    if let Some(c) = ctx.hunk_counts
-        && !c.is_empty()
-    {
-        spans.push(Span::raw(" ("));
-        spans.extend(format_counts_spans(&c));
-        spans.push(Span::raw(")"));
-    }
-    if ctx.raw_diff {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
-        spans.push(Span::styled(
-            "raw diff",
-            Style::default()
-                .fg(Color::Indexed(220))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    if ctx.col_offset > 0 {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
-        spans.push(Span::styled(
-            format!("col {}+", ctx.col_offset),
-            Style::default().fg(Color::Indexed(244)),
-        ));
-    }
-    if !ctx.num_buffer.is_empty() {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(Color::Indexed(240)),
-        ));
-        spans.push(Span::styled(
-            format!("go {}", ctx.num_buffer),
-            Style::default()
-                .fg(Color::Indexed(221))
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
+        Span::styled(seg.text.to_string(), style)
+    };
+    let layout = status_layout(&ctx);
+    let spans: Vec<Span<'static>> = layout.segments.iter().map(seg_span).collect();
+    padded_line(spans, ctx.width)
+}
+
+/// Pad spans with trailing spaces to `width` and wrap into a [`Line`].
+fn padded_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
     let used_w: usize = spans.iter().map(|s| display_width(&s.content)).sum();
-    if used_w < ctx.width {
-        spans.push(Span::raw(" ".repeat(ctx.width - used_w)));
+    if used_w < width {
+        spans.push(Span::raw(" ".repeat(width - used_w)));
     }
     Line::from(spans)
 }

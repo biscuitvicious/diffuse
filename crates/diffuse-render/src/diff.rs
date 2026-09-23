@@ -6,11 +6,13 @@
 use std::fmt::Write;
 
 use crate::{
+    Badge,
     ansi::{ColorExt, FG_RESET, SGR_RESET},
     core::{
         parse::RowKind,
         wire::{OutputFile, OutputRow, PipelineOutput},
     },
+    counts::count_cells,
 };
 
 use super::{
@@ -19,10 +21,15 @@ use super::{
 };
 
 /// Format a file's header bar directly into an output buffer without
-/// intermediate string allocations.
+/// intermediate string allocations. Mirrors the TUI file banner order:
+/// badge, filename, change counts, then status parens. `badge` carries the
+/// file position (`F3/17`); pass `None` while streaming, where the total is
+/// unknown. The filename and status parens render in the current-file path
+/// white (the pager has no cursor states).
 pub fn write_file_header_bar<W: Write>(
     out: &mut W,
     file: &OutputFile,
+    badge: Option<Badge>,
     theme: &DiffuseTheme,
 ) -> std::fmt::Result {
     let counts = &file.counts;
@@ -30,6 +37,7 @@ pub fn write_file_header_bar<W: Write>(
     let status_display = file.display_status();
     let bg_code = theme.palette.header_bar_bg.bg_code();
     let fg_code = theme.palette.header_bar_fg.fg_code();
+    let path_white = theme.palette.file_header_path_current.fg_code();
 
     let status_suffix = if status_display.is_empty() || status_display == "modified" {
         String::new()
@@ -37,34 +45,32 @@ pub fn write_file_header_bar<W: Write>(
         format!(" ({status_display})")
     };
 
+    write!(out, "{bg_code}\x1b[1m{fg_code} ")?;
+    if let Some(badge) = badge {
+        write!(out, "{} ", badge.file_text())?;
+    }
     write!(
         out,
-        "{bg_code}\x1b[1m{fg_code} {path_display}{status_suffix} · {}+{}{FG_RESET}",
-        theme.palette.add_gutter_icon.fg_code(),
-        counts.adds
+        "\x1b[22m{path_white}{path_display}\x1b[39m\x1b[1m{fg_code}"
     )?;
-    if counts.dels > 0 {
+    // Shared count cells: the same segments, order, and colors as the
+    // status bar and the TUI banners (the ≈ mov count converges on the
+    // shared 147; the gutter icon keeps its own color).
+    for (i, cell) in count_cells(counts).iter().enumerate() {
+        let sep = if i == 0 { "" } else { " " };
         write!(
             out,
-            " {}-{}{FG_RESET}",
-            theme.palette.del_fg.fg_code(),
-            counts.dels
-        )?;
-    }
-    if counts.mods > 0 {
-        write!(
-            out,
-            " {}~{}{FG_RESET}",
-            theme.palette.mod_gutter_icon.fg_code(),
-            counts.mods
+            "{sep}\x1b[1m\x1b[38;5;{}m{}{}{FG_RESET}",
+            cell.color, cell.marker, cell.value
         )?;
     }
     if counts.movs > 0 {
+        write!(out, " moved")?;
+    }
+    if !status_suffix.is_empty() {
         write!(
             out,
-            " {}≈{}{FG_RESET} moved",
-            theme.palette.mov_gutter_icon.fg_code(),
-            counts.movs
+            "\x1b[22m{path_white}{status_suffix}\x1b[39m\x1b[1m{fg_code}"
         )?;
     }
     if !file.notes.is_empty() {
@@ -97,8 +103,14 @@ pub fn render_pipeline_output(
         .sum();
     let mut out = String::with_capacity(total_rows * 128 + output.files.len() * 256 + 16);
 
-    for f in &output.files {
-        out.push_str(&render_file_diff(f, theme, styled_prefixes));
+    let total = output.files.len();
+    for (fi, f) in output.files.iter().enumerate() {
+        out.push_str(&render_file_diff(
+            f,
+            Some(Badge { idx: fi, total }),
+            theme,
+            styled_prefixes,
+        ));
     }
 
     // Rows end with their row tint background active (the TUI relies on it
@@ -110,11 +122,16 @@ pub fn render_pipeline_output(
 }
 
 /// Render a single file's header bar and colored hunks.
-pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes: bool) -> String {
+pub fn render_file_diff(
+    file: &OutputFile,
+    badge: Option<Badge>,
+    theme: &DiffuseTheme,
+    styled_prefixes: bool,
+) -> String {
     let total_rows: usize = file.hunks.iter().map(|h| h.rows.len()).sum();
     let mut out = String::with_capacity(total_rows * 128 + 256);
 
-    let _ = write_file_header_bar(&mut out, file, theme);
+    let _ = write_file_header_bar(&mut out, file, badge, theme);
 
     let render_row = |r: &OutputRow, out: &mut String| {
         let pfx = if styled_prefixes {
@@ -165,8 +182,9 @@ pub fn render_file_diff(file: &OutputFile, theme: &DiffuseTheme, styled_prefixes
 /// toggle.
 pub fn render_raw_pipeline_output(output: &PipelineOutput) -> String {
     let mut out = String::new();
-    for f in &output.files {
-        out.push_str(&render_raw_file_diff(f));
+    let total = output.files.len();
+    for (fi, f) in output.files.iter().enumerate() {
+        out.push_str(&render_raw_file_diff(f, Some(Badge { idx: fi, total })));
     }
     out.push_str("\x1b[0m");
     out
@@ -175,7 +193,7 @@ pub fn render_raw_pipeline_output(output: &PipelineOutput) -> String {
 /// Render a single file's diff in raw mode: flat green/red text on default
 /// black background, colorized number gutter, only - and + rows (no mod rows),
 /// and `@@` hunk headers, equivalent to the TUI's `R` toggle.
-pub fn render_raw_file_diff(file: &OutputFile) -> String {
+pub fn render_raw_file_diff(file: &OutputFile, badge: Option<Badge>) -> String {
     let hunks = if !file.raw_hunks.is_empty() {
         &file.raw_hunks
     } else {
@@ -185,7 +203,7 @@ pub fn render_raw_file_diff(file: &OutputFile) -> String {
     let mut out = String::with_capacity(total_rows * 128 + 256);
 
     let theme = DiffuseTheme::from_env();
-    let _ = write_file_header_bar(&mut out, file, &theme);
+    let _ = write_file_header_bar(&mut out, file, badge, &theme);
 
     for h in hunks {
         let sep_text = format!(

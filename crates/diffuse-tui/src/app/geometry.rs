@@ -56,6 +56,10 @@ impl AppState {
             let is_collapsed = self.collapsed_files.contains(&item.file_idx);
             let txt = crate::view::diff_grid::file_header_text_with_prefix(
                 file_obj,
+                crate::render::Badge {
+                    idx: item.file_idx,
+                    total: self.output.files.len(),
+                },
                 is_collapsed,
                 self.output.common_directory_prefix().as_deref(),
             );
@@ -112,10 +116,15 @@ impl AppState {
             return 1;
         };
         let hidden_gap = self.hunk_leading_gap(fi, hi);
-        let txt = crate::view::diff_grid::hunk_divider_text(hi, hunk, hidden_gap);
-        let len = display_width(txt);
-        let text_cols = content_width.max(1);
-        if len == 0 { 1 } else { len.div_ceil(text_cols) }
+        let txt = crate::view::diff_grid::hunk_divider_text(
+            crate::render::Badge {
+                idx: hi,
+                total: f.hunks.len(),
+            },
+            hunk,
+            hidden_gap,
+        );
+        crate::view::diff_grid::divider_seg_count(&txt, content_width)
     }
 
     /// Returns the number of visual lines taken by a trailing gap divider at
@@ -126,9 +135,7 @@ impl AppState {
             return 0;
         }
         let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
-        let len = display_width(txt);
-        let text_cols = content_width.max(1);
-        if len == 0 { 1 } else { len.div_ceil(text_cols) }
+        crate::view::diff_grid::divider_seg_count(&txt, content_width)
     }
 
     /// Scrollbar thumb height for a track of height `track_h` over

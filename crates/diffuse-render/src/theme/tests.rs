@@ -55,15 +55,15 @@ fn test_default_theme_palette() {
     assert_eq!(palette.bg_base, Color::Fixed(233));
     assert_eq!(palette.add_fg, Color::Fixed(120));
     assert_eq!(palette.del_fg, Color::Fixed(203));
-    assert_eq!(palette.add_tint_bg, Color::Rgb(22, 38, 23));
-    assert_eq!(palette.add_cursor_bg, Color::Rgb(36, 56, 37));
+    assert_eq!(palette.add_tint_bg, Color::Rgb(28, 50, 30));
+    assert_eq!(palette.add_cursor_bg, Color::Rgb(46, 74, 48));
     assert_eq!(palette.del_tint_bg, Color::Rgb(38, 12, 14));
-    assert_eq!(palette.add_fill_bg, Color::Rgb(22, 72, 38));
-    assert_eq!(palette.add_fill_cursor_bg, Color::Rgb(28, 92, 50));
-    assert_eq!(palette.mod_fill_bg, Color::Rgb(22, 72, 38));
-    assert_eq!(palette.mod_fill_cursor_bg, Color::Rgb(28, 92, 50));
-    assert_eq!(palette.mod_tint_bg, Color::Rgb(30, 30, 30));
-    assert_eq!(palette.mod_cursor_bg, Color::Rgb(54, 54, 54));
+    assert_eq!(palette.add_fill_bg, Color::Rgb(30, 96, 50));
+    assert_eq!(palette.add_fill_cursor_bg, Color::Rgb(37, 120, 65));
+    assert_eq!(palette.mod_fill_bg, Color::Rgb(30, 96, 50));
+    assert_eq!(palette.mod_fill_cursor_bg, Color::Rgb(37, 120, 65));
+    assert_eq!(palette.mod_tint_bg, Color::Rgb(38, 38, 38));
+    assert_eq!(palette.mod_cursor_bg, Color::Rgb(66, 66, 66));
     assert_eq!(palette.note_tint_bg, Color::Rgb(76, 64, 20));
 
     let theme = DiffuseTheme::DEFAULT;

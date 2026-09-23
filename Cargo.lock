@@ -505,6 +505,7 @@ dependencies = [
  "diffuse-core",
  "diffuse-syntax",
  "regex",
+ "smallvec",
  "tracing",
  "unicode-segmentation",
  "unicode-width",

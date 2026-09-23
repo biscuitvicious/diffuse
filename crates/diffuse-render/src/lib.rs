@@ -7,6 +7,8 @@ pub use diffuse_core as core;
 pub use diffuse_syntax as syntax;
 
 pub mod ansi;
+pub mod badge;
+pub mod counts;
 pub mod diff;
 pub mod markdown;
 pub mod row;
@@ -14,6 +16,7 @@ pub mod theme;
 pub mod width;
 
 pub use ansi::*;
+pub use badge::*;
 pub use diff::*;
 pub use markdown::*;
 pub use row::*;

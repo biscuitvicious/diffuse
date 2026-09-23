@@ -247,7 +247,14 @@ impl AppState {
                                         // hit area is the glyph's screen cells
                                         // after wrapping.
                                         let seg_off = target_vis - s;
-                                        let txt = hunk_divider_text(div_hi, hunk, hidden_gap);
+                                        let txt = hunk_divider_text(
+                                            crate::render::Badge {
+                                                idx: div_hi,
+                                                total: f.hunks.len(),
+                                            },
+                                            hunk,
+                                            hidden_gap,
+                                        );
 
                                         let hit = |pat: &str| {
                                             wrapped_glyph_hit(&txt, pat, seg_off, col, cw)

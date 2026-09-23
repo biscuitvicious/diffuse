@@ -35,8 +35,7 @@ pub enum CountKind {
 }
 
 /// One non-zero mod-count segment for display: its bucket, marker glyph, and
-/// value. Markers carry their own spacing (`"💬 "` trails a space) so
-/// renderers simply join `marker + value` segments with a single space.
+/// value. Renderers join `marker + value` segments with a single space.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CountSegment {
     pub kind: CountKind,
@@ -86,7 +85,7 @@ impl FileCounts {
         if self.notes > 0 {
             out.push(CountSegment {
                 kind: CountKind::Notes,
-                marker: "💬 ",
+                marker: "💬",
                 value: self.notes,
             });
         }

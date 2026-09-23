@@ -9,6 +9,7 @@ use crate::{
         pipeline::run_pipeline_full,
         wire::{OutputFile, OutputHunk, OutputRow, PipelineOutput},
     },
+    render::Badge,
     view::hunk_divider_text,
 };
 
@@ -170,8 +171,9 @@ index 1111111..2222222 100644
     assert!(file_1_rows[0].is_file_header);
 
     let frame = state.render_frame(100, 30);
+    let plain_frame = crate::render::strip_ansi(&frame);
     assert!(
-        frame.contains("▶ untracked.rs (untracked, × ➞ 21B)"),
+        plain_frame.contains("▶ F2/2 · untracked.rs +1 (untracked, 21B) [collapsed]"),
         "frame shows collapsed indicator"
     );
 
@@ -188,8 +190,9 @@ index 1111111..2222222 100644
     );
 
     let frame_expanded = state.render_frame(100, 30);
+    let plain_expanded = crate::render::strip_ansi(&frame_expanded);
     assert!(
-        frame_expanded.contains("▼ untracked.rs (untracked, × ➞ 21B)"),
+        plain_expanded.contains("▼ F2/2 · untracked.rs +1 (untracked, 21B)"),
         "frame shows expanded indicator"
     );
 }
@@ -281,8 +284,9 @@ Binary files a/old.png and b/new.png differ
     assert_eq!(state.flat.len(), 2, "binary files only have header rows");
 
     let frame = state.render_frame(100, 30);
+    let plain_frame = crate::render::strip_ansi(&frame);
     assert!(
-        frame.contains("════ logo.png (binary)"),
+        plain_frame.contains("════ F1/2 · logo.png"),
         "frame shows flat header rule without expand caret"
     );
     assert!(
@@ -383,7 +387,14 @@ index 1111111..2222222 100644
     // with hidden lines gap and buttons
     let gap = state.hunk_leading_gap(0, 1);
     let frame = state.render_frame(120, 40);
-    let h2_txt = hunk_divider_text(1, &state.output.files[0].hunks[1], gap);
+    let h2_txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: state.output.files[0].hunks.len(),
+        },
+        &state.output.files[0].hunks[1],
+        gap,
+    );
     assert!(
         frame.contains(&h2_txt),
         "rendered frame must show H2 divider with merged gap info"

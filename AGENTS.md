@@ -48,7 +48,7 @@ Every modification, bug fix, or feature must expand the automated test suite und
 
 1. **Failing test**: Write the reproduction or specification test and confirm failure.
 2. **Implementation**: Make the minimal changes required; verify existing tests pass.
-3. **Verification gate**: Execute `scripts/check.sh` (applies nightly `rustfmt`, runs `clippy --fix`, and executes all cargo tests). All checks must pass with zero warnings.
+3. **Verification gate**: Execute `scripts/check.sh` after every change (applies nightly `rustfmt`, runs `clippy --fix`, and executes all cargo tests). All checks must pass with zero warnings. Do not run `cargo fmt` or `cargo clippy` separately — `scripts/check.sh` already applies both to the maximum extent.
 4. **Golden review**: If golden outputs change, review diffs per [`tests/AGENTS.md`](tests/AGENTS.md) to confirm that changes are strictly improvements or equivalent.
 5. **Installation**: `scripts/check.sh` installs the development binary (`~/.cargo/bin/diffuse`) and synchronizes the dev extension automatically. Release builds are compiled via `scripts/install.sh`.
 6. **Review and sign-off**: Present changes and diff summaries for review. Do not commit changes without explicit instruction.

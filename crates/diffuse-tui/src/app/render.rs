@@ -52,11 +52,7 @@ impl AppState {
         let total_files = self.output.files.len();
         let cur_hunk = self.current_hunk().unwrap_or(0);
         let total_hunks = f.map_or(0, |file| file.hunks.len().max(1));
-        let hunk_counts = f.and_then(|file| {
-            file.hunks
-                .get(cur_hunk)
-                .map(|h| h.counts_with_notes(&file.notes))
-        });
+        let hunk_counts = f.and_then(|file| file.hunks.get(cur_hunk).map(|h| h.counts()));
         lines.extend(render_status_bar(crate::view::StatusBarContext {
             cur_fi,
             total_files,
@@ -455,11 +451,7 @@ impl AppState {
 
         // 2. Status Bar
         let cur_hunk = self.current_hunk().unwrap_or(0);
-        let hunk_counts = file.and_then(|fl| {
-            fl.hunks
-                .get(cur_hunk)
-                .map(|h| h.counts_with_notes(&fl.notes))
-        });
+        let hunk_counts = file.and_then(|fl| fl.hunks.get(cur_hunk).map(|h| h.counts()));
         let status_ctx = crate::view::StatusBarContext {
             cur_fi,
             total_files: self.output.files.len(),
@@ -469,7 +461,10 @@ impl AppState {
             col_offset: self.col_offset,
             num_buffer: &self.num_buffer,
             common_prefix: common_prefix.as_deref(),
-            width,
+            // The bar paints into the scrollbar-narrowed app column, not
+            // the full viewport: targeting full width clips the last cell
+            // (usually the filename tail) under the scrollbar.
+            width: main_width,
             is_streaming: self.is_streaming,
             streaming_dot: self.streaming_dot(),
             file,
@@ -754,7 +749,10 @@ impl AppState {
                         let seg_start = s_idx * text_cols;
                         line_src.push(Some(idx));
                         lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
-                            div_hi,
+                            crate::render::Badge {
+                                idx: div_hi,
+                                total: self.output.files[div_fi].hunks.len(),
+                            },
                             h,
                             hidden_gap,
                             is_cur,
@@ -781,6 +779,10 @@ impl AppState {
                         line_src.push(Some(idx));
                         lines.push(crate::view::diff_grid::render_file_header_segment_themed(
                             file_obj,
+                            crate::render::Badge {
+                                idx: item.file_idx,
+                                total: self.output.files.len(),
+                            },
                             is_collapsed,
                             is_selected,
                             is_current,

@@ -190,7 +190,7 @@ fn test_render_markdown_summary_table() {
     assert!(md.contains("### Diff Summary"));
     assert!(md.contains("**2 files changed**: **-1** deletions, **+3** additions"));
     assert!(md.contains("| `src/main.rs` | `0B` | -1 | +1 |"));
-    assert!(md.contains("| `README.md` | `× ➞ 0B` | -0 | +2 |"));
+    assert!(md.contains("| `README.md` | `added, 0B` | -0 | +2 |"));
 }
 
 #[test]
@@ -579,7 +579,7 @@ fn test_render_markdown_renamed_files_show_arrow_and_collapsed_by_default() {
     let opts = MarkdownOptions::default();
     let md = render_markdown_output(&output, &opts);
     // Table shows old -> new path
-    assert!(md.contains("| `src/old.rs -> new.rs` | `0B` | -0 | +0 |"));
+    assert!(md.contains("| `src/old.rs -> new.rs` | `renamed, 0B` | -0 | +0 |"));
     // Renamed file with 0 changes has <details> (collapsed by default) and
     // summary with old -> new path
     assert!(md.contains("<details>\n<summary><b>src/old.rs -> new.rs</b>"));

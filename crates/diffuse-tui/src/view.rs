@@ -4,6 +4,7 @@
 pub mod diff_grid;
 pub mod header;
 pub mod modals;
+pub mod status_layout;
 
 pub use diff_grid::{
     bottom_gap_divider_line, bottom_gap_divider_text, file_header_line, file_header_text,

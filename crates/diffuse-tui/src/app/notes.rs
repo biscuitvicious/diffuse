@@ -214,7 +214,7 @@ impl AppState {
             "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
         );
         let final_prefix = format!(
-            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}└┄ {fg_reset}"
+            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
         );
         let text_cols = content_width.saturating_sub(8).max(1);
         for (file_idx, f) in self.output.files.iter().enumerate() {

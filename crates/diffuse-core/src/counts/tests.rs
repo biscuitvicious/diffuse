@@ -141,7 +141,7 @@ fn segments_collect_nonzero_counts_in_display_order() {
         .iter()
         .map(|s| format!("{}{}", s.marker, s.value))
         .collect();
-    assert_eq!(texts, vec!["+15", "~6", "≈2", "💬 1"]);
+    assert_eq!(texts, vec!["+15", "~6", "≈2", "💬1"]);
 
     let empty = FileCounts::default().segments();
     assert!(empty.is_empty(), "all-zero counts yield no segments");

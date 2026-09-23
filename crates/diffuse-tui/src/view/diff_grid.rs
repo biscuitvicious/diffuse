@@ -3,60 +3,12 @@
 use super::header::truncate_pad;
 use crate::{
     core::wire::{OutputFile, OutputHunk},
-    render::{ColorExt, DiffuseTheme, slice_by_visual_width, width::display_width},
+    render::{Badge, ColorExt, DiffuseTheme, slice_by_visual_width, width::display_width},
 };
-
-/// Shorten a path string to fit within `target_width` columns, preserving the
-/// filename or rename target `old -> new` by abbreviating leading directory
-/// components with `…/`.
-pub fn shorten_path_for_width(path: &str, target_width: usize) -> String {
-    if display_width(path) <= target_width {
-        return path.to_string();
-    }
-
-    if let Some((old_part, new_part)) = path.split_once(" -> ") {
-        let old_parts: Vec<&str> = old_part.split('/').collect();
-        let new_parts: Vec<&str> = new_part.split('/').collect();
-        let max_parts = old_parts.len().max(new_parts.len());
-        for i in 1..max_parts {
-            let s_old = if i < old_parts.len() {
-                format!("…/{}", old_parts[i..].join("/"))
-            } else {
-                old_parts.last().unwrap_or(&old_part).to_string()
-            };
-            let s_new = if i < new_parts.len() {
-                format!("…/{}", new_parts[i..].join("/"))
-            } else {
-                new_parts.last().unwrap_or(&new_part).to_string()
-            };
-            let candidate = format!("{s_old} -> {s_new}");
-            if display_width(&candidate) <= target_width {
-                return candidate;
-            }
-        }
-        return format!(
-            "…/{} -> …/{}",
-            old_parts.last().unwrap_or(&old_part),
-            new_parts.last().unwrap_or(&new_part)
-        );
-    }
-
-    // General path shortening: shorten leading directory segments with "…/"
-    let parts: Vec<&str> = path.split('/').collect();
-    if parts.len() > 1 {
-        for i in 1..parts.len() {
-            let candidate = format!("…/{}", parts[i..].join("/"));
-            if display_width(&candidate) <= target_width {
-                return candidate;
-            }
-        }
-    }
-
-    path.to_string()
-}
 
 fn rename_prefix_visual_span(
     file: &OutputFile,
+    badge: Badge,
     common_prefix: Option<&str>,
 ) -> Option<(usize, usize)> {
     let old_path = file.old_path.as_deref()?;
@@ -93,9 +45,14 @@ fn rename_prefix_visual_span(
 
     if common_len > 0 {
         let prefix = old_parts[..common_len].join("/");
-        // Prefix starts after "──── ▶ " (7 cols) or "──── " (5 cols for binary)
-        // and includes trailing '/'
-        let p_start = if file.is_binary { 5 } else { 7 };
+        // Prefix starts after the indicator, badge and dot (`════ ▼ F3/17 · `
+        // or `════ F3/17 · ` for binaries) and includes trailing '/'
+        let badge_shift = display_width(format!("{} · ", badge.file_text()));
+        let p_start = if file.is_binary {
+            5 + badge_shift
+        } else {
+            7 + badge_shift
+        };
         let p_len = display_width(prefix) + 1;
         Some((p_start, p_start + p_len))
     } else {
@@ -106,21 +63,39 @@ fn rename_prefix_visual_span(
 /// Char column of the collapse/expand triangle in [`file_header_text`].
 pub const FILE_HEADER_INDICATOR_COL: usize = 5;
 
-/// Build the raw text of a file header banner row with optional common prefix
-/// stripping.
-pub fn file_header_text_with_prefix(
-    file: &OutputFile,
-    is_collapsed: bool,
-    common_prefix: Option<&str>,
-) -> String {
-    let f_counts = &file.counts;
-    let (indicator_prefix, collapse_tag) = if file.is_binary {
-        ("════ ".to_string(), "")
+/// Indicator prefix (with file position badge) and collapse tag of a file
+/// header banner row: `════ ▼ F3/17 · ` or `════ F3/17 · ` for binaries.
+fn file_header_indicator(file: &OutputFile, badge: Badge, is_collapsed: bool) -> (String, String) {
+    let badge = format!("{} · ", badge.file_text());
+    if file.is_binary {
+        (format!("════ {badge}"), String::new())
     } else {
         let indicator = if is_collapsed { "▶" } else { "▼" };
         let tag = if is_collapsed { " [collapsed]" } else { "" };
-        (format!("════ {indicator} "), tag)
-    };
+        (format!("════ {indicator} {badge}"), tag.to_string())
+    }
+}
+
+/// Assembled plain parts of a file header banner row, in render order.
+/// Both the raw text builder and the styled segment renderer consume these,
+/// so slicing columns and style ranges cannot drift apart.
+struct FileHeaderParts {
+    indicator: String,
+    path: String,
+    counts: String,
+    status: String,
+    collapse: String,
+}
+
+fn file_header_parts(
+    file: &OutputFile,
+    badge: Badge,
+    is_collapsed: bool,
+    common_prefix: Option<&str>,
+) -> FileHeaderParts {
+    use super::header::format_counts_plain;
+
+    let (indicator_prefix, collapse_tag) = file_header_indicator(file, badge, is_collapsed);
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
     let status_tag = if status_str.is_empty() || status_str == "modified" {
@@ -128,15 +103,101 @@ pub fn file_header_text_with_prefix(
     } else {
         format!(" ({status_str})")
     };
-    format!(
-        "{indicator_prefix}{path_display}{status_tag} -{} +{} ~{}{} ",
-        f_counts.dels, f_counts.adds, f_counts.mods, collapse_tag
-    )
+    FileHeaderParts {
+        indicator: indicator_prefix,
+        path: path_display,
+        counts: format_counts_plain(&file.counts),
+        status: status_tag,
+        collapse: collapse_tag,
+    }
+}
+
+/// Build the raw text of a file header banner row with optional common prefix
+/// stripping. Change counts sit between the filename and the status parens,
+/// rendered with the shared [`format_counts_plain`] (zero counts omitted).
+pub fn file_header_text_with_prefix(
+    file: &OutputFile,
+    badge: Badge,
+    is_collapsed: bool,
+    common_prefix: Option<&str>,
+) -> String {
+    let parts = file_header_parts(file, badge, is_collapsed, common_prefix);
+    if parts.counts.is_empty() {
+        format!(
+            "{}{}{}{} ",
+            parts.indicator, parts.path, parts.status, parts.collapse
+        )
+    } else {
+        format!(
+            "{}{} {}{}{} ",
+            parts.indicator, parts.path, parts.counts, parts.status, parts.collapse
+        )
+    }
 }
 
 /// Build the raw text of a file header banner row.
-pub fn file_header_text(file: &OutputFile, is_collapsed: bool) -> String {
-    file_header_text_with_prefix(file, is_collapsed, None)
+pub fn file_header_text(file: &OutputFile, badge: Badge, is_collapsed: bool) -> String {
+    file_header_text_with_prefix(file, badge, is_collapsed, None)
+}
+
+/// A styled column range over plain banner text: emitted with `open`
+/// before the overlapped slice and `close` after it.
+struct BannerStyleRun {
+    start: usize,
+    end: usize,
+    open: String,
+    close: String,
+}
+
+/// Render a visual slice of plain banner text, applying the styled column
+/// ranges overlapping the window. Returns the styled piece and its visible
+/// width (measured before styling, so ANSI never pollutes layout math).
+fn render_banner_piece(
+    plain: &str,
+    runs: &[BannerStyleRun],
+    seg_start: usize,
+    width: usize,
+) -> (String, usize) {
+    use unicode_segmentation::UnicodeSegmentation;
+
+    use crate::render::width::grapheme_width;
+
+    let mut out = String::new();
+    let mut visible = 0usize;
+    let mut col = 0usize;
+    let mut open: Option<usize> = None;
+    let mut open_emitted = false;
+    for g in plain.graphemes(true) {
+        let gs = col;
+        col += grapheme_width(g);
+        // Latest-starting match wins, so nested ranges (rename underline
+        // inside the white path) resolve innermost.
+        let active = runs.iter().rposition(|r| gs >= r.start && gs < r.end);
+        if active != open {
+            if open_emitted {
+                if let Some(idx) = open {
+                    out.push_str(&runs[idx].close);
+                }
+                open_emitted = false;
+            }
+            open = active;
+        }
+        if gs < seg_start || gs >= seg_start + width {
+            continue;
+        }
+        if let Some(idx) = open
+            && !open_emitted
+        {
+            out.push_str(&runs[idx].open);
+            open_emitted = true;
+        }
+        out.push_str(g);
+        visible += grapheme_width(g);
+    }
+    if open_emitted && let Some(idx) = open {
+        out.push_str(&runs[idx].close);
+    }
+    (out, visible)
 }
 
 /// Render a specific visual segment of a file header banner row with theme
@@ -144,6 +205,7 @@ pub fn file_header_text(file: &OutputFile, is_collapsed: bool) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn render_file_header_segment_themed(
     file: &OutputFile,
+    badge: Badge,
     is_collapsed: bool,
     is_selected: bool,
     is_current: bool,
@@ -153,28 +215,9 @@ pub fn render_file_header_segment_themed(
     theme: &DiffuseTheme,
     common_prefix: Option<&str>,
 ) -> String {
-    let f_counts = &file.counts;
-    let (fixed_prefix, collapse_tag) = if file.is_binary {
-        ("════ ".to_string(), "")
-    } else {
-        let indicator = if is_collapsed { "▶" } else { "▼" };
-        let tag = if is_collapsed { " [collapsed]" } else { "" };
-        (format!("════ {indicator} "), tag)
-    };
-    let path_display = file.display_path_with_prefix(common_prefix);
-    let status_str = file.display_status();
-    let status_tag = if status_str.is_empty() || status_str == "modified" {
-        String::new()
-    } else {
-        format!(" ({status_str})")
-    };
+    use super::header::count_cells;
 
-    let fixed_suffix = format!(
-        "{status_tag} -{} +{} ~{}{} ",
-        f_counts.dels, f_counts.adds, f_counts.mods, collapse_tag
-    );
-
-    let prefix_text = format!("{fixed_prefix}{path_display}{fixed_suffix}");
+    let prefix_text = file_header_text_with_prefix(file, badge, is_collapsed, common_prefix);
     let (bg, fg) = theme
         .palette
         .file_header_colors(is_selected, is_current, in_band);
@@ -187,27 +230,67 @@ pub fn render_file_header_segment_themed(
         return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
     }
 
-    let piece = slice_by_visual_width(&prefix_text, seg_start, content_width);
-    let piece_w = display_width(&piece);
+    // Styled ranges share the status bar's count cells (same segments, same
+    // colors); the filename and status parens render in the per-state path
+    // white (selected brightest, rest most muted).
+    // Columns walk the shared parts in order, so text and ranges cannot
+    // drift apart.
+    let parts = file_header_parts(file, badge, is_collapsed, common_prefix);
+    let path_color = if is_selected {
+        theme.palette.file_header_path_selected
+    } else if in_band || is_current {
+        theme.palette.file_header_path_current
+    } else {
+        theme.palette.file_header_path_rest
+    };
+    let white_open = format!("\x1b[22m{}", path_color.fg_code());
+    let white_close = format!("\x1b[39m\x1b[1m{fg_code}");
+    let mut runs: Vec<BannerStyleRun> = Vec::new();
+    let mut col = display_width(&parts.indicator);
+    let path_w = display_width(&parts.path);
+    runs.push(BannerStyleRun {
+        start: col,
+        end: col + path_w,
+        open: white_open.clone(),
+        close: white_close.clone(),
+    });
+    col += path_w;
+    if !parts.counts.is_empty() {
+        col += 1;
+        for cell in count_cells(&file.counts) {
+            let text = format!("{}{}", cell.marker, cell.value);
+            let w = display_width(&text);
+            runs.push(BannerStyleRun {
+                start: col,
+                end: col + w,
+                open: format!("\x1b[1m\x1b[38;5;{}m", cell.color),
+                close: format!("\x1b[39m{fg_code}"),
+            });
+            col += w + 1;
+        }
+        col -= 1;
+    }
+    if !parts.status.is_empty() {
+        let status_w = display_width(&parts.status);
+        runs.push(BannerStyleRun {
+            start: col,
+            end: col + status_w,
+            open: white_open,
+            close: white_close,
+        });
+    }
+    if let Some((p_start, p_end)) = rename_prefix_visual_span(file, badge, common_prefix) {
+        runs.push(BannerStyleRun {
+            start: p_start,
+            end: p_end,
+            open: "\x1b[4m\x1b[38;5;139m".to_string(),
+            close: format!("\x1b[24m{fg_code}"),
+        });
+    }
+    runs.sort_by_key(|r| r.start);
 
-    let styled_piece =
-        if let Some((p_start, p_end)) = rename_prefix_visual_span(file, common_prefix) {
-            let seg_end = seg_start + piece_w;
-            let overlap_s = p_start.max(seg_start);
-            let overlap_e = p_end.min(seg_end);
-            if overlap_s < overlap_e {
-                let rel_s = overlap_s - seg_start;
-                let rel_e = overlap_e - seg_start;
-                let before = slice_by_visual_width(&piece, 0, rel_s);
-                let underlined = slice_by_visual_width(&piece, rel_s, rel_e - rel_s);
-                let after = slice_by_visual_width(&piece, rel_e, piece_w.saturating_sub(rel_e));
-                format!("{before}\x1b[4m\x1b[38;5;139m{underlined}\x1b[24m{fg_code}{after}")
-            } else {
-                piece
-            }
-        } else {
-            piece
-        };
+    let (styled_piece, piece_w) =
+        render_banner_piece(&prefix_text, &runs, seg_start, content_width);
 
     let bar_str = if piece_w < content_width {
         let ruler_len = content_width - piece_w;
@@ -220,8 +303,10 @@ pub fn render_file_header_segment_themed(
 }
 
 /// Render a specific visual segment of a file header banner row.
+#[allow(clippy::too_many_arguments)]
 pub fn render_file_header_segment(
     file: &OutputFile,
+    badge: Badge,
     is_collapsed: bool,
     is_selected: bool,
     is_current: bool,
@@ -231,6 +316,7 @@ pub fn render_file_header_segment(
 ) -> String {
     render_file_header_segment_themed(
         file,
+        badge,
         is_collapsed,
         is_selected,
         is_current,
@@ -245,6 +331,7 @@ pub fn render_file_header_segment(
 /// Render a file header banner row with collapse status indicator and counts.
 pub fn render_file_header(
     file: &OutputFile,
+    badge: Badge,
     is_collapsed: bool,
     is_selected: bool,
     is_current: bool,
@@ -253,6 +340,7 @@ pub fn render_file_header(
 ) -> String {
     render_file_header_segment(
         file,
+        badge,
         is_collapsed,
         is_selected,
         is_current,
@@ -263,34 +351,65 @@ pub fn render_file_header(
 }
 
 /// Build the raw text of a hunk header divider with format
-/// `{rows} lines (-dels +adds ~mods)` plus the hidden-gap tail.
-/// The caller is responsible for filling any remaining width with `─` chars.
-pub fn hunk_divider_text(hi: usize, hunk: &OutputHunk, hidden_gap: usize) -> String {
+/// `H2/3 · 6 lines: −1 +4 ~1` plus the hidden-gap tail.
+/// Change counts reuse the shared [`format_counts_plain`] (zero counts
+/// omitted). The caller is responsible for filling any remaining width with
+/// `─` chars.
+pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> String {
+    use super::header::format_counts_plain;
+
     let counts = hunk.counts();
     let (dels, adds, mods, movs) = (counts.dels, counts.adds, counts.mods, counts.movs);
     let total = dels + adds + mods + movs;
     let unit = if total == 1 { "line" } else { "lines" };
-    let mov_str = if movs > 0 {
-        format!(" ≈{movs}")
+    let summary = format!("{} {unit}", total);
+    let counts_str = format_counts_plain(&counts);
+    let summary = if counts_str.is_empty() {
+        summary
     } else {
-        String::new()
+        format!("{summary}: {counts_str}")
     };
-    let summary = format!("{total} {unit} (-{dels} +{adds} ~{mods}{mov_str})");
 
     let gap_part = if hidden_gap > 0 {
         let gap_unit = if hidden_gap == 1 { "line" } else { "lines" };
-        let arrows = if hi == 0 { "▼" } else { "⬍ · ▲ · ▼" };
+        let arrows = if badge.idx == 0 {
+            "▼"
+        } else {
+            "⬍ · ▲ · ▼"
+        };
         format!(" · {hidden_gap} more {gap_unit}: {arrows}")
     } else {
         String::new()
     };
-    format!("──── H{} · {summary}{gap_part} ────", hi + 1)
+    format!("──── {} · {summary}{gap_part} ────", badge.hunk_text())
+}
+
+/// Visual segment count for a divider text: ceiling division, except a
+/// trailing segment holding only bar dashes (no salient content) never
+/// wraps alone — as long as the labels fit, the bar is dropped.
+#[must_use]
+pub fn divider_seg_count(txt: &str, content_width: usize) -> usize {
+    let text_cols = content_width.max(1);
+    let len = display_width(txt);
+    if len == 0 {
+        return 1;
+    }
+    let mut count = len.div_ceil(text_cols);
+    while count > 1 {
+        let piece = slice_by_visual_width(txt, (count - 1) * text_cols, text_cols);
+        if piece.chars().all(|c| c == '─' || c.is_whitespace()) {
+            count -= 1;
+        } else {
+            break;
+        }
+    }
+    count.max(1)
 }
 
 /// Render a specific visual segment of a hunk header divider with theme
 /// support.
 pub fn render_hunk_divider_segment_themed(
-    hi: usize,
+    badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
     is_current: bool,
@@ -298,7 +417,7 @@ pub fn render_hunk_divider_segment_themed(
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> String {
-    let txt = hunk_divider_text(hi, hunk, hidden_gap);
+    let txt = hunk_divider_text(badge, hunk, hidden_gap);
     let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
     let bg_code = match bg {
         crate::render::Color::Primary => String::new(),
@@ -325,7 +444,7 @@ pub fn render_hunk_divider_segment_themed(
 
 /// Render a specific visual segment of a hunk header divider.
 pub fn render_hunk_divider_segment(
-    hi: usize,
+    badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
     is_current: bool,
@@ -333,7 +452,7 @@ pub fn render_hunk_divider_segment(
     content_width: usize,
 ) -> String {
     render_hunk_divider_segment_themed(
-        hi,
+        badge,
         hunk,
         hidden_gap,
         is_current,
@@ -347,13 +466,13 @@ pub fn render_hunk_divider_segment(
 /// and context expansion buttons (`⬍ · ▲ · ▼` for interior hunks, or `▼` for H1
 /// at top of file).
 pub fn render_hunk_divider(
-    hi: usize,
+    badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
     is_current: bool,
     content_width: usize,
 ) -> String {
-    render_hunk_divider_segment(hi, hunk, hidden_gap, is_current, 0, content_width)
+    render_hunk_divider_segment(badge, hunk, hidden_gap, is_current, 0, content_width)
 }
 
 /// Screen-space hit area for a divider arrow glyph: exactly the three
@@ -426,8 +545,10 @@ use ratatui::{
 
 /// Render a file header banner row as a styled Ratatui [`Line`] with theme
 /// support.
+#[allow(clippy::too_many_arguments)]
 pub fn file_header_line_themed(
     file: &OutputFile,
+    badge: Badge,
     is_collapsed: bool,
     is_selected: bool,
     is_current: bool,
@@ -435,7 +556,7 @@ pub fn file_header_line_themed(
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> Line<'static> {
-    let bar = file_header_text(file, is_collapsed);
+    let bar = file_header_text(file, badge, is_collapsed);
     let bar_str = truncate_pad(&bar, content_width);
     let (bg, fg) = theme
         .palette
@@ -450,6 +571,7 @@ pub fn file_header_line_themed(
 /// Render a file header banner row as a styled Ratatui [`Line`].
 pub fn file_header_line(
     file: &OutputFile,
+    badge: Badge,
     is_collapsed: bool,
     is_selected: bool,
     is_current: bool,
@@ -458,6 +580,7 @@ pub fn file_header_line(
 ) -> Line<'static> {
     file_header_line_themed(
         file,
+        badge,
         is_collapsed,
         is_selected,
         is_current,
@@ -470,14 +593,14 @@ pub fn file_header_line(
 /// Render a hunk header divider as a styled Ratatui [`Line`] with theme
 /// support.
 pub fn hunk_divider_line_themed(
-    hi: usize,
+    badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
     is_current: bool,
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> Line<'static> {
-    let txt = hunk_divider_text(hi, hunk, hidden_gap);
+    let txt = hunk_divider_text(badge, hunk, hidden_gap);
     let txt_w = display_width(&txt);
     let bar_str = if txt_w < content_width {
         let ruler_len = content_width - txt_w;
@@ -497,14 +620,14 @@ pub fn hunk_divider_line_themed(
 
 /// Render a hunk header divider as a styled Ratatui [`Line`].
 pub fn hunk_divider_line(
-    hi: usize,
+    badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
     is_current: bool,
     content_width: usize,
 ) -> Line<'static> {
     hunk_divider_line_themed(
-        hi,
+        badge,
         hunk,
         hidden_gap,
         is_current,

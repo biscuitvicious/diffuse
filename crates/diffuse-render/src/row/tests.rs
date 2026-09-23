@@ -252,9 +252,9 @@ fn test_render_raw_row_trailing_whitespace() {
     let add_trailing = render_raw_row(RowKind::Add, "  42 + ", "let x = 1;   ", false, false, true);
     assert!(add_trailing.contains("  42 + "));
     assert!(add_trailing.contains("\x1b[38;5;120mlet x = 1;"));
-    // add_fill_bg is Rgb(22,72,38) and add_gutter_num is Fixed(120)
+    // add_fill_bg is Rgb(26,84,44) and add_gutter_num is Fixed(120)
     assert!(
-        add_trailing.contains("\x1b[48;2;22;72;38m\x1b[38;5;120m   "),
+        add_trailing.contains("\x1b[48;2;30;96;50m\x1b[38;5;120m   "),
         "added trailing spaces must have fill bg + gutter-num fg: {add_trailing:?}"
     );
     assert!(
@@ -273,7 +273,7 @@ fn test_render_raw_row_trailing_whitespace() {
         false,
     );
     assert!(
-        !add_wrapped_intermediate.contains("\x1b[48;2;22;72;38m"),
+        !add_wrapped_intermediate.contains("\x1b[48;2;30;96;50m"),
         "intermediate wrapped segments must not highlight spaces at wrap boundary"
     );
 
@@ -335,7 +335,7 @@ fn test_render_moved_row_with_indentation_subwords() {
     assert!(rendered.contains("  10≈+ "));
     // Subline addition fill on the 4 added indentation spaces
     assert!(
-        rendered.contains("\x1b[48;2;22;72;38m"),
+        rendered.contains("\x1b[48;2;30;96;50m"),
         "added indentation spaces on moved row must receive green subline fill"
     );
 }
@@ -386,7 +386,7 @@ fn test_render_mod_row_with_indentation_subwords() {
     );
     assert!(rendered.contains("  20 ~ "));
     assert!(
-        rendered.contains("\x1b[48;2;22;72;38m"),
+        rendered.contains("\x1b[48;2;30;96;50m"),
         "added indentation spaces on mod row must receive green subline fill"
     );
 }

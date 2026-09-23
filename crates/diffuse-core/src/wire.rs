@@ -137,22 +137,25 @@ pub fn format_byte_size(size: usize) -> String {
         .find(|&(size, _)| size >= 0.5)
         .unwrap_or((size as f64, "B"));
 
-    let mut formatted = format!("{:.1}", size);
-
-    // Trim trailing zeros after the decimal point
-    if formatted.contains('.') {
-        formatted = formatted
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string();
-    }
+    // Decimals only below 5.0 adjusted units; at and above, integers.
+    let formatted = if size < 5.0 {
+        let mut trimmed = format!("{:.1}", size);
+        // Trim trailing zeros after the decimal point
+        if trimmed.contains('.') {
+            trimmed = trimmed
+                .trim_end_matches('0')
+                .trim_end_matches('.')
+                .to_string();
+        }
+        trimmed
+    } else {
+        format!("{:.0}", size)
+    };
 
     format!("{}{}", formatted, unit)
 }
 
 pub const NON_EXISTENT_SYMBOL: &str = "×";
-pub const INCEPTION_SYMBOL: &str = NON_EXISTENT_SYMBOL;
-pub const DESTRUCTION_SYMBOL: &str = NON_EXISTENT_SYMBOL;
 pub const UNKNOWN_SYMBOL: &str = "?";
 pub const ARROW_SYMBOL: &str = "➞";
 
@@ -391,11 +394,9 @@ impl OutputFile {
         let new_fmt = self.new_bytes.map(format_byte_size);
         let old_fmt = self.old_bytes.map(format_byte_size);
         if self.status == "added" || self.status == "untracked" {
-            let new_str = new_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string());
-            format!("{INCEPTION_SYMBOL} {ARROW_SYMBOL} {new_str}")
+            new_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
         } else if self.status == "deleted" {
-            let old_str = old_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string());
-            format!("{old_str} {ARROW_SYMBOL} {DESTRUCTION_SYMBOL}")
+            old_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
         } else {
             match (old_fmt, new_fmt) {
                 (Some(o), Some(n)) if o != n => format!("{o} {ARROW_SYMBOL} {n}"),
@@ -435,48 +436,8 @@ impl OutputFile {
         }
 
         match (self.status.as_str(), mode_suffix) {
-            ("renamed", Some(mode_str)) => {
-                if size_str.is_empty() {
-                    mode_str
-                } else {
-                    format!("{mode_str}, {size_str}")
-                }
-            }
-            ("renamed", None) => {
-                if size_str.is_empty() {
-                    "renamed".to_string()
-                } else {
-                    size_str
-                }
-            }
-            ("added", Some(mode_str)) => {
-                if size_str.is_empty() {
-                    format!("added, {mode_str}")
-                } else {
-                    format!("{mode_str}, {size_str}")
-                }
-            }
-            ("added", None) => {
-                if size_str.is_empty() {
-                    "added".to_string()
-                } else {
-                    size_str
-                }
-            }
-            ("deleted", Some(mode_str)) => {
-                if size_str.is_empty() {
-                    format!("deleted, {mode_str}")
-                } else {
-                    format!("{mode_str}, {size_str}")
-                }
-            }
-            ("deleted", None) => {
-                if size_str.is_empty() {
-                    "deleted".to_string()
-                } else {
-                    size_str
-                }
-            }
+            // Added/renamed/deleted share the generic shape below; only the
+            // mode-change prefix is special.
             ("mode changed" | "modified", Some(mode_str)) => {
                 let prefix =
                     if self.counts.adds == 0 && self.counts.dels == 0 && self.counts.mods == 0 {
@@ -716,8 +677,8 @@ impl OutputHunk {
     /// Aggregated line-level change counts for this hunk's rows, mirroring
     /// [`crate::counts::file_counts`] row semantics (moved sources and
     /// targets both count as relocations; context and separators excluded).
-    /// Notes attach at file level, so `notes` is always 0 — use
-    /// [`OutputHunk::note_count`] to attribute a file's notes to this hunk.
+    /// Notes attach at file level, so `notes` is always 0 — note counts
+    /// are never attributed to hunks.
     pub fn counts(&self) -> FileCounts {
         let mut counts = FileCounts::default();
         for r in &self.rows {
@@ -729,32 +690,6 @@ impl OutputHunk {
                 _ => {}
             }
         }
-        counts
-    }
-
-    /// Number of `notes` attached to lines in this hunk. A note counts
-    /// toward the single hunk where its selection range ends (the hunk's
-    /// coordinate range on the note's own side contains `end`), mirroring
-    /// where note callouts anchor. Selection ranges spanning several hunks
-    /// are therefore never double-counted.
-    pub fn note_count(&self, notes: &[OutputNote]) -> usize {
-        notes
-            .iter()
-            .filter(|n| {
-                let (start, count) = match n.side {
-                    NoteSide::New => (self.new_start, self.new_count),
-                    NoteSide::Old => (self.old_start, self.old_count),
-                };
-                count > 0 && n.end >= start && n.end < start + count
-            })
-            .count()
-    }
-
-    /// Row counts for this hunk with `notes` attributed via
-    /// [`OutputHunk::note_count`].
-    pub fn counts_with_notes(&self, notes: &[OutputNote]) -> FileCounts {
-        let mut counts = self.counts();
-        counts.notes = self.note_count(notes);
         counts
     }
 

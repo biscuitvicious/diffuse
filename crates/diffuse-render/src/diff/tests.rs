@@ -59,7 +59,7 @@ fn test_render_raw_pipeline_output() {
     file_fallback.raw_hunks.clear();
     file_fallback.counts.mods = 1;
     file_fallback.counts.movs = 1;
-    let single_raw = render_raw_file_diff(&file_fallback);
+    let single_raw = render_raw_file_diff(&file_fallback, None);
     assert!(single_raw.contains("~1"));
     assert!(single_raw.contains("moved"));
     assert!(single_raw.contains("@@ -1,2 +1,2 @@"));
@@ -89,11 +89,17 @@ fn test_render_renamed_file_diff() {
         new_bytes: Some(0),
         raw_source: None,
     };
-    let visual = render_file_diff(&file, &DiffuseTheme::DEFAULT, true);
-    assert!(visual.contains("src/old.rs -> new.rs (0B)"));
+    let visual = render_file_diff(&file, None, &DiffuseTheme::DEFAULT, true);
+    assert!(
+        crate::ansi::strip_ansi(&visual).contains("src/old.rs -> new.rs (renamed, 0B)"),
+        "zero counts omitted, status parens follow the path: {visual:?}"
+    );
 
-    let raw = render_raw_file_diff(&file);
-    assert!(raw.contains("src/old.rs -> new.rs (0B)"));
+    let raw = render_raw_file_diff(&file, None);
+    assert!(
+        crate::ansi::strip_ansi(&raw).contains("src/old.rs -> new.rs (renamed, 0B)"),
+        "zero counts omitted, status parens follow the path: {raw:?}"
+    );
 }
 
 #[test]
@@ -112,13 +118,13 @@ fn test_zero_notes_not_rendered() {
         PipelineOptions::default(),
     );
     // Styled render: zero notes must be invisible.
-    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
     assert!(
         !rendered.contains("0 note"),
         "styled render must not show '0 notes' when there are no notes"
     );
     // Raw render: same requirement.
-    let raw = render_raw_file_diff(&out.files[0]);
+    let raw = render_raw_file_diff(&out.files[0], None);
     assert!(
         !raw.contains("0 note"),
         "raw render must not show '0 notes' when there are no notes"
@@ -159,12 +165,12 @@ fn test_nonzero_notes_still_rendered() {
         new_bytes: None,
         raw_source: None,
     };
-    let rendered = render_file_diff(&file, &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&file, None, &DiffuseTheme::DEFAULT, true);
     assert!(
         rendered.contains("1 note"),
         "styled render must show '1 note' when there is 1 note"
     );
-    let raw = render_raw_file_diff(&file);
+    let raw = render_raw_file_diff(&file, None);
     assert!(
         raw.contains("1 note"),
         "raw render must show '1 note' when there is 1 note"
@@ -202,10 +208,10 @@ fn test_write_file_header_bar_direct_buffer() {
         raw_source: None,
     };
     let mut buf = String::new();
-    write_file_header_bar(&mut buf, &file, &DiffuseTheme::DEFAULT).unwrap();
+    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::DEFAULT).unwrap();
     assert!(buf.starts_with("\x1b[48;5;234m\x1b[1m\x1b[38;5;231m"));
     assert!(buf.contains("+5"));
-    assert!(buf.contains("-2"));
+    assert!(buf.contains("−2"));
     assert!(buf.contains("~3"));
     assert!(buf.contains("≈1"));
     assert!(buf.ends_with(" \x1b[0m\n"));
@@ -214,8 +220,21 @@ fn test_write_file_header_bar_direct_buffer() {
     // And with added status:
     file.status = "added".to_string();
     let mut buf_added = String::new();
-    write_file_header_bar(&mut buf_added, &file, &DiffuseTheme::DEFAULT).unwrap();
+    write_file_header_bar(&mut buf_added, &file, None, &DiffuseTheme::DEFAULT).unwrap();
     assert!(buf_added.contains("(added)"));
+    // Badged variant carries the file position badge.
+    let mut buf_badged = String::new();
+    write_file_header_bar(
+        &mut buf_badged,
+        &file,
+        Some(Badge { idx: 0, total: 2 }),
+        &DiffuseTheme::DEFAULT,
+    )
+    .unwrap();
+    assert!(
+        buf_badged.contains("F1/2"),
+        "badged banner must show file position: {buf_badged:?}"
+    );
 }
 
 #[test]
@@ -233,7 +252,7 @@ fn test_render_file_diff_resets_background_at_end_of_lines() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered = render_file_diff(&out.files[0], &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
     let rows: Vec<_> = rendered.lines().skip(1).collect();
     assert!(!rows.is_empty(), "must have rendered diff rows");
     for line in rows {

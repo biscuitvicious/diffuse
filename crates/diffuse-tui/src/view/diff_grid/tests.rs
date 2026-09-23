@@ -4,7 +4,7 @@ use crate::{
         counts::FileCounts,
         wire::{OutputFile, OutputHunk},
     },
-    render::width::display_width,
+    render::{Badge, width::display_width},
 };
 
 fn dummy_file() -> OutputFile {
@@ -51,7 +51,15 @@ fn dummy_hunk() -> OutputHunk {
 #[test]
 fn test_file_header_has_background_stripe() {
     let f = dummy_file();
-    let unselected = render_file_header(&f, false, false, false, false, 80);
+    let unselected = render_file_header(
+        &f,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        false,
+        false,
+        80,
+    );
     assert!(
         unselected.contains("\x1b[48;5;233m"),
         "unselected file header must have default file_header_bg_rest (233) background stripe"
@@ -65,7 +73,15 @@ fn test_file_header_has_background_stripe() {
         "unselected file header must reset style at the end"
     );
 
-    let current_file = render_file_header(&f, false, false, true, false, 80);
+    let current_file = render_file_header(
+        &f,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        true,
+        false,
+        80,
+    );
     assert!(
         current_file.contains("\x1b[48;5;235m"),
         "current file header must have default file_header_bg_current (235)"
@@ -75,10 +91,10 @@ fn test_file_header_has_background_stripe() {
         "current file header must have default file_header_fg_current (220)"
     );
 
-    let selected = render_file_header(&f, false, true, true, false, 80);
+    let selected = render_file_header(&f, Badge { idx: 0, total: 1 }, false, true, true, false, 80);
     assert!(
-        selected.contains("\x1b[48;5;237m"),
-        "selected file header must have default file_header_bg_selected (237)"
+        selected.contains("\x1b[48;5;236m"),
+        "selected file header must have default file_header_bg_selected (236)"
     );
     assert!(
         selected.contains("\x1b[38;5;221m"),
@@ -91,7 +107,15 @@ fn test_binary_file_header_has_no_expand_caret() {
     let mut f = dummy_file();
     f.is_binary = true;
     f.path = "test.png".to_string();
-    let rendered = render_file_header(&f, false, false, false, false, 80);
+    let rendered = render_file_header(
+        &f,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        false,
+        false,
+        80,
+    );
     assert!(
         !rendered.contains('▼'),
         "binary file must not show expanded caret ▼"
@@ -100,22 +124,27 @@ fn test_binary_file_header_has_no_expand_caret() {
         !rendered.contains('▶'),
         "binary file must not show collapsed caret ▶"
     );
+    let plain = crate::render::strip_ansi(&rendered);
     assert!(
-        rendered.contains("════ test.png"),
-        "binary file header must start with flat rule without caret"
+        plain.contains("════ F1/1 · test.png −2 +5 ~1"),
+        "binary file header must start with flat rule without caret: {plain:?}"
+    );
+    assert!(
+        rendered.contains("\x1b[22m\x1b[38;5;251m (binary)"),
+        "status parens must be muted white: {rendered:?}"
     );
 }
 
 #[test]
 fn test_hunk_divider_is_orange() {
     let h = dummy_hunk();
-    let regular = render_hunk_divider(0, &h, 8, false, 80);
+    let regular = render_hunk_divider(Badge { idx: 0, total: 1 }, &h, 8, false, 80);
     assert!(
         regular.contains("38;5;213m"),
         "regular hunk divider must use yellow-orange 213 foreground"
     );
 
-    let current = render_hunk_divider(0, &h, 8, true, 80);
+    let current = render_hunk_divider(Badge { idx: 0, total: 1 }, &h, 8, true, 80);
     assert!(
         current.contains("38;5;213m"),
         "current hunk divider must have brighter yellow-orange foreground 213"
@@ -129,7 +158,7 @@ fn test_hunk_divider_is_orange() {
 #[test]
 fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
     let h = dummy_hunk();
-    let rendered = render_hunk_divider(0, &h, 0, false, 80);
+    let rendered = render_hunk_divider(Badge { idx: 0, total: 1 }, &h, 0, false, 80);
     let plain = crate::render::strip_ansi(&rendered);
     assert_eq!(
         plain.chars().count(),
@@ -146,17 +175,17 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
     );
 
     // Segment beyond text width fills with horizontal rule dashes
-    let beyond = render_hunk_divider_segment(0, &h, 0, false, 200, 20);
+    let beyond = render_hunk_divider_segment(Badge { idx: 0, total: 1 }, &h, 0, false, 200, 20);
     let plain_beyond = crate::render::strip_ansi(&beyond);
     assert_eq!(plain_beyond, "─".repeat(20));
 
     // Ratatui Line renderer: text shorter than width fills with rule
-    let h_line = hunk_divider_line(0, &h, 0, false, 80);
+    let h_line = hunk_divider_line(Badge { idx: 0, total: 1 }, &h, 0, false, 80);
     assert_eq!(h_line.to_string().chars().count(), 80);
     assert!(h_line.to_string().ends_with("─────"));
 
     // Ratatui Line renderer: text wider than width slices without trailing fill
-    let h_line_narrow = hunk_divider_line(0, &h, 0, true, 10);
+    let h_line_narrow = hunk_divider_line(Badge { idx: 0, total: 1 }, &h, 0, true, 10);
     assert_eq!(h_line_narrow.to_string().chars().count(), 10);
 
     // Also verify bottom gap divider rule runs to the end of line
@@ -208,8 +237,8 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         rows: vec![],
     };
     // Zero gap (e.g. contiguous diff)
-    let contiguous = render_hunk_divider(1, &h, 0, false, 80);
-    assert!(contiguous.contains("H2 · 0 lines (-0 +0 ~0) ────"));
+    let contiguous = render_hunk_divider(Badge { idx: 1, total: 2 }, &h, 0, false, 80);
+    assert!(contiguous.contains("H2/2 · 0 lines ────"));
     assert!(!contiguous.contains("hidden"));
 
     // With content: 2 ctx, 1 del, 4 adds, 1 mod → 6 modified lines (2 context
@@ -224,24 +253,24 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         mk(RowKind::Add),
         mk(RowKind::Mod),
     ];
-    let with_rows = render_hunk_divider(1, &h, 0, false, 80);
-    assert!(with_rows.contains("H2 · 6 lines (-1 +4 ~1) ────"));
+    let with_rows = render_hunk_divider(Badge { idx: 1, total: 2 }, &h, 0, false, 80);
+    assert!(with_rows.contains("H2/2 · 6 lines: −1 +4 ~1 ────"));
 
     // Normal 8 lines hidden gap
-    let expanded = render_hunk_divider(1, &h, 8, false, 80);
-    assert!(expanded.contains("H2 · 6 lines (-1 +4 ~1) · 8 more lines: ⬍ · ▲ · ▼ ────"));
+    let expanded = render_hunk_divider(Badge { idx: 1, total: 2 }, &h, 8, false, 80);
+    assert!(expanded.contains("H2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────"));
 
     // With movs (both source and target count towards modified lines)
     h.rows.push(mk(RowKind::Mov));
-    let with_movs = render_hunk_divider(1, &h, 0, false, 80);
-    assert!(with_movs.contains("H2 · 7 lines (-1 +4 ~1 ≈1) ────"));
+    let with_movs = render_hunk_divider(Badge { idx: 1, total: 2 }, &h, 0, false, 80);
+    assert!(with_movs.contains("H2/2 · 7 lines: −1 +4 ~1 ≈1 ────"));
 
     // Single line hidden
-    let single = render_hunk_divider(1, &h, 1, false, 80);
+    let single = render_hunk_divider(Badge { idx: 1, total: 2 }, &h, 1, false, 80);
     assert!(single.contains("· 1 more line: ⬍ · ▲ · ▼ ────"));
 
     // Top gap divider (50 lines hidden at top of file, only down arrow)
-    let top_gap = render_hunk_divider(0, &h, 50, false, 80);
+    let top_gap = render_hunk_divider(Badge { idx: 0, total: 1 }, &h, 50, false, 80);
     assert!(top_gap.contains("· 50 more lines: ▼ ────"));
     assert!(!top_gap.contains("▲"));
 
@@ -256,7 +285,7 @@ fn test_hunk_divider_uses_four_dash_prefix_and_postfix() {
     let h = dummy_hunk();
 
     // Hunk divider text must start with exactly "──── " and end with " ────".
-    let txt = hunk_divider_text(0, &h, 0);
+    let txt = hunk_divider_text(Badge { idx: 0, total: 1 }, &h, 0);
     assert!(
         txt.starts_with("──── "),
         "hunk divider must start with '──── ' (4 dashes), got: {txt:?}"
@@ -300,7 +329,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         new_count: 8,
         rows: (0..50).map(|_| mk(RowKind::Add)).collect(),
     };
-    let txt = hunk_divider_text(1, &h, 400);
+    let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, &h, 400);
     let txt_w = display_width(txt);
     assert!(
         txt_w > 30,
@@ -308,11 +337,11 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
     );
 
     // Segment 0 contains the first 30 visual columns
-    let seg0 = render_hunk_divider_segment(1, &h, 400, false, 0, 30);
-    assert!(seg0.contains("──── H2 ·"));
+    let seg0 = render_hunk_divider_segment(Badge { idx: 1, total: 2 }, &h, 400, false, 0, 30);
+    assert!(seg0.contains("──── H2/2 ·"));
 
     // Segment 1 contains the wrapped continuation
-    let seg1 = render_hunk_divider_segment(1, &h, 400, false, 30, 30);
+    let seg1 = render_hunk_divider_segment(Badge { idx: 1, total: 2 }, &h, 400, false, 30, 30);
     assert!(!seg1.is_empty());
 }
 
@@ -341,7 +370,15 @@ fn test_ratatui_diff_grid_lines() {
         raw_source: None,
     };
 
-    let f_line = file_header_line(&file, false, false, false, false, 80);
+    let f_line = file_header_line(
+        &file,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        false,
+        false,
+        80,
+    );
     assert!(f_line.to_string().contains("src/main.rs"));
     assert!(f_line.to_string().contains("▼"));
 
@@ -352,7 +389,7 @@ fn test_ratatui_diff_grid_lines() {
         new_count: 6,
         rows: vec![],
     };
-    let h_line = hunk_divider_line(0, &hunk, 10, true, 80);
+    let h_line = hunk_divider_line(Badge { idx: 0, total: 1 }, &hunk, 10, true, 80);
     assert!(h_line.to_string().contains("H1"));
     assert!(h_line.to_string().contains("10 more lines:"));
 
@@ -385,11 +422,20 @@ fn test_render_file_header_segment_narrow_width() {
         raw_source: None,
     };
 
-    let rendered_seg0 = render_file_header_segment(&file, false, false, false, false, 0, 50);
+    let rendered_seg0 = render_file_header_segment(
+        &file,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        false,
+        false,
+        0,
+        55,
+    );
     let vw0 = crate::view::header::visible_width(&rendered_seg0);
     assert_eq!(
-        vw0, 50,
-        "file header segment 0 visual width must be exactly 50 on 50-col viewport"
+        vw0, 55,
+        "file header segment 0 visual width must be exactly 55 on 55-col viewport"
     );
     assert!(
         rendered_seg0.contains("crates/diffuse-tui/src/view/")
@@ -397,44 +443,24 @@ fn test_render_file_header_segment_narrow_width() {
         "rendered banner segment 0 must preserve the un-truncated directory prefix and from path"
     );
 
-    let rendered_seg1 = render_file_header_segment(&file, false, false, false, false, 50, 50);
+    let rendered_seg1 = render_file_header_segment(
+        &file,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        false,
+        false,
+        55,
+        55,
+    );
     let vw1 = crate::view::header::visible_width(&rendered_seg1);
     assert_eq!(
-        vw1, 50,
-        "file header segment 1 visual width must be exactly 50 on 50-col viewport"
+        vw1, 55,
+        "file header segment 1 visual width must be exactly 55 on 55-col viewport"
     );
     assert!(
         rendered_seg1.contains("mod.rs"),
         "rendered banner segment 1 must contain the wrapped rename target"
-    );
-}
-
-#[test]
-fn test_shorten_path_for_width() {
-    assert_eq!(
-        shorten_path_for_width(
-            "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs",
-            75
-        ),
-        "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs"
-    );
-    assert_eq!(
-        shorten_path_for_width(
-            "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs",
-            50
-        ),
-        "…/src/algo/mod.rs -> …/src/algo.rs"
-    );
-    assert_eq!(
-        shorten_path_for_width(
-            "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs",
-            30
-        ),
-        "…/algo/mod.rs -> …/algo.rs"
-    );
-    assert_eq!(
-        shorten_path_for_width("crates/diffuse-tui/src/view/diff_grid.rs", 25),
-        "…/src/view/diff_grid.rs"
     );
 }
 
@@ -471,7 +497,8 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     // Total plain text:
     // "──── ▶ diffuse-core/src/algo/mod.rs -> algo.rs (100B) -0 +0 ~0
     // [collapsed] "
-    let full_text = file_header_text_with_prefix(&file, true, common_prefix);
+    let full_text =
+        file_header_text_with_prefix(&file, Badge { idx: 0, total: 1 }, true, common_prefix);
     assert!(
         full_text.contains("diffuse-core/src/algo/mod.rs -> algo.rs"),
         "full text must keep the full un-mangled rename path without initial ellipsis: {full_text}"
@@ -480,6 +507,7 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     // Render segment 0 at width 45
     let seg0 = render_file_header_segment_themed(
         &file,
+        Badge { idx: 0, total: 1 },
         true,
         false,
         false,
@@ -503,6 +531,7 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     // Render segment 1 at width 45
     let seg1 = render_file_header_segment_themed(
         &file,
+        Badge { idx: 0, total: 1 },
         true,
         false,
         false,
@@ -518,7 +547,7 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
         "segment 1 must be 45 visual columns"
     );
     assert!(
-        seg1.contains("(100B)"),
+        seg1.contains("(renamed, 100B)"),
         "segment 1 must contain the wrapped suffix: {seg1:?}"
     );
 }
@@ -528,10 +557,10 @@ fn test_file_header_text_identical_formatted_size() {
     let mut f = dummy_file();
     f.old_bytes = Some(15110);
     f.new_bytes = Some(15115);
-    let banner = file_header_text(&f, false);
+    let banner = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
-        banner.contains("(14.8kB)"),
-        "banner must contain '(14.8kB)', got: {banner}"
+        banner.contains("(15kB)"),
+        "banner must contain '(15kB)', got: {banner}"
     );
     assert!(
         !banner.contains('➞') && !banner.contains("->"),
@@ -594,25 +623,25 @@ fn test_wrapped_glyph_hit_never_touches_scrollbar_column() {
 fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
     let mut f = dummy_file();
     f.status = "modified".to_string();
-    let banner = file_header_text(&f, false);
+    let banner = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
         !banner.contains("(modified)"),
         "file header banner must omit '(modified)', got: {banner}"
     );
     assert!(
-        banner.contains("════ ▼ src/main.rs -2 +5 ~1 "),
+        banner.contains("════ ▼ F1/1 · src/main.rs −2 +5 ~1"),
         "file header banner should directly show path and counts without '(modified)', got: {banner}"
     );
 
     f.status = "added".to_string();
-    let banner_added = file_header_text(&f, false);
+    let banner_added = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
         banner_added.contains("(added)"),
         "file header banner must display '(added)', got: {banner_added}"
     );
 
     f.status = "deleted".to_string();
-    let banner_del = file_header_text(&f, false);
+    let banner_del = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
         banner_del.contains("(deleted)"),
         "file header banner must display '(deleted)', got: {banner_del}"
@@ -620,9 +649,132 @@ fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
 
     f.status = "modified".to_string();
     f.is_binary = true;
-    let banner_bin = file_header_text(&f, false);
+    let banner_bin = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
         banner_bin.contains("(binary)"),
         "file header banner must display '(binary)', got: {banner_bin}"
+    );
+}
+
+#[test]
+fn test_divider_seg_count_drops_bar_only_trailing_segment() {
+    // 16 columns of text: at width 14–15 the leftover is only trailing
+    // dashes, so no segment just for the bar.
+    assert_eq!(divider_seg_count("──── H1 · x ────", 14), 1);
+    assert_eq!(divider_seg_count("──── H1 · x ────", 15), 1);
+    // Exact fit stays one segment.
+    let txt = "──── H1 · x ────";
+    assert_eq!(divider_seg_count(txt, display_width(txt)), 1);
+}
+
+#[test]
+fn test_divider_seg_count_keeps_salient_trailing_segment() {
+    // Leftover holds an arrow glyph: the wrap stays.
+    let txt = "──── H1 · 3 more lines: ▼ ────";
+    let w = display_width(txt) - 6;
+    assert_eq!(divider_seg_count(txt, w), 2);
+    // Narrow widths still wrap mid-content.
+    assert_eq!(divider_seg_count(txt, 10), 3);
+}
+
+#[test]
+fn test_divider_seg_count_never_below_one() {
+    assert_eq!(divider_seg_count("────", 1), 1);
+    assert_eq!(divider_seg_count("", 80), 1);
+}
+
+#[test]
+fn test_file_header_counts_colored_like_status_bar() {
+    use crate::render::DiffuseTheme;
+
+    let mut f = dummy_file();
+    f.counts.dels = 2;
+    f.counts.adds = 5;
+    f.counts.mods = 1;
+    let theme = DiffuseTheme::from_env();
+    let seg = render_file_header_segment_themed(
+        &f,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        false,
+        false,
+        0,
+        80,
+        &theme,
+        None,
+    );
+    // Same red/green/orange count colors as the status bar counts.
+    assert!(
+        seg.contains("\x1b[38;5;203m−2"),
+        "deletion count must be red: {seg:?}"
+    );
+    assert!(
+        seg.contains("\x1b[38;5;120m+5"),
+        "addition count must be green: {seg:?}"
+    );
+    assert!(
+        seg.contains("\x1b[38;5;214m~1"),
+        "mod count must be orange: {seg:?}"
+    );
+    // Filename renders in status-bar white.
+    assert!(
+        seg.contains("\x1b[22m\x1b[38;5;251msrc/main.rs"),
+        "rest-state filename must be muted: {seg:?}"
+    );
+    // Cursor states brighten the path: selected brightest, current middle.
+    let seg_cur = render_file_header_segment_themed(
+        &f,
+        Badge { idx: 0, total: 1 },
+        false,
+        false,
+        true,
+        false,
+        0,
+        80,
+        &theme,
+        None,
+    );
+    assert!(
+        seg_cur.contains("\x1b[22m\x1b[38;5;254msrc/main.rs"),
+        "current-state filename must keep mid white: {seg_cur:?}"
+    );
+    let seg_sel = render_file_header_segment_themed(
+        &f,
+        Badge { idx: 0, total: 1 },
+        false,
+        true,
+        false,
+        false,
+        0,
+        80,
+        &theme,
+        None,
+    );
+    assert!(
+        seg_sel.contains("\x1b[22m\x1b[38;5;255msrc/main.rs"),
+        "selected-state filename must be brightest: {seg_sel:?}"
+    );
+    // Counts follow the path, before the status parens.
+    let plain = crate::render::strip_ansi(&seg);
+    let counts_at = plain.find('−').expect("counts present");
+    let path_at = plain.find("src/main.rs").expect("path present");
+    assert!(path_at < counts_at, "counts must follow path: {plain:?}");
+}
+
+#[test]
+fn test_file_header_zero_counts_omitted() {
+    let mut f = dummy_file();
+    f.counts.dels = 0;
+    f.counts.adds = 0;
+    f.counts.mods = 0;
+    let banner = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
+    assert!(
+        !banner.contains("~0") && !banner.contains("−0") && !banner.contains("+0"),
+        "zero counts must be omitted: {banner:?}"
+    );
+    assert!(
+        banner.contains("════ ▼ F1/1 · src/main.rs"),
+        "no double space when counts omitted: {banner:?}"
     );
 }

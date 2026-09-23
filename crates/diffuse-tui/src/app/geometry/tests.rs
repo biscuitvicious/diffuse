@@ -241,7 +241,7 @@ fn test_current_line_highlight_covers_gutter() {
     // Unselected addition row starts with addition background before the gutter
     // numbers
     assert!(
-        frame_ctx.contains("\x1b[48;2;22;38;23m\x1b[38;5;120m"),
+        frame_ctx.contains("\x1b[48;2;28;50;30m\x1b[38;5;120m"),
         "addition row must start with green tint before gutter numbers"
     );
 }

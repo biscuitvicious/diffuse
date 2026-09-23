@@ -495,11 +495,11 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
         );
     }
 
-    // Last line must start with the final corner (└)
+    // Last line must start with the final corner (╰, no dash).
     if let Some(last) = note_lines.last() {
         let clean = crate::render::strip_ansi(last);
         assert!(
-            clean.starts_with("▌███ └┄ "),
+            clean.starts_with("▌███ ╰  "),
             "last line must start with final corner: {last:?}"
         );
     }

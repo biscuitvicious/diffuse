@@ -12,6 +12,7 @@ use crate::{
         pipeline::{PipelineInput, run_pipeline_full},
         wire::PipelineOutput,
     },
+    render::Badge,
     view::hunk_divider_text,
 };
 
@@ -956,7 +957,7 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
 
     let frame = state.render_frame(140, 80);
     assert!(
-        frame.contains("──── H2 ·"),
+        frame.contains("──── H2/"),
         "H2 divider must still exist before fully merged"
     );
     assert!(
@@ -1079,7 +1080,14 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     // Compute exact visual column of '▲' on H2 divider
     let h = &state.output.files[fi].hunks[1];
     let hidden_gap = state.hunk_leading_gap(fi, 1);
-    let txt = hunk_divider_text(1, h, hidden_gap);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: state.output.files[fi].hunks.len(),
+        },
+        h,
+        hidden_gap,
+    );
     let idx = txt.find("▲").unwrap();
     let col = txt[..idx].chars().count();
 
@@ -1183,9 +1191,9 @@ index 111..222 100644
 
     // Verify dividers are re-rendered
     let frame = state.render_frame(140, 200);
-    assert!(frame.contains("──── H1 ·"));
-    assert!(frame.contains("──── H2 ·"));
-    assert!(frame.contains("──── H3 ·"));
+    assert!(frame.contains("──── H1/3 ·"));
+    assert!(frame.contains("──── H2/3 ·"));
+    assert!(frame.contains("──── H3/3 ·"));
 }
 
 #[test]
@@ -1240,7 +1248,14 @@ index 1111111..2222222 100644
     let click_row = state.last_viewport_start + h1_div_vis.saturating_sub(state.scroll);
 
     let h = &state.output.files[fi].hunks[0];
-    let txt = hunk_divider_text(0, h, 6);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 0,
+            total: state.output.files[fi].hunks.len(),
+        },
+        h,
+        6,
+    );
     let idx = txt.find("▼").unwrap();
     let col = txt[..idx].chars().count();
 
@@ -1258,7 +1273,7 @@ index 1111111..2222222 100644
         "file header must remain visible on screen"
     );
     assert!(
-        frame_after.contains("──── H1 ·"),
+        frame_after.contains("──── H1/1 ·"),
         "H1 divider must remain visible on screen"
     );
     assert!(
@@ -1383,7 +1398,14 @@ index 1111111..2222222 100644
         .expect("H1 last row in flat");
 
     let h = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(1, h, gap);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: state.output.files[fi].hunks.len(),
+        },
+        h,
+        gap,
+    );
     let both_idx = txt.find("⬍").expect("divider text must contain ⬍");
     let col = txt[..both_idx].chars().count();
 
@@ -1515,7 +1537,14 @@ index 1111111..2222222 100644
         .flat;
     let gap_before = state.hunk_leading_gap(fi, 1);
     let hk = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(1, hk, gap_before);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: state.output.files[fi].hunks.len(),
+        },
+        hk,
+        gap_before,
+    );
 
     // Find the visual segment holding the '▲▲' button and its column
     // within that segment.
@@ -1834,7 +1863,14 @@ index 1111111..2222222 100644
         tmp.hunk_leading_gap(0, 1)
     };
     assert!(gap_probe > 0, "need a hidden gap for arrow hits");
-    let txt = hunk_divider_text(1, &hk, gap_probe);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: output.files[0].hunks.len(),
+        },
+        &hk,
+        gap_probe,
+    );
     let up_idx = txt.find('▲').expect("divider must carry ▲");
     let c = txt[..up_idx].chars().count();
 
@@ -2243,7 +2279,14 @@ index 1111111..2222222 100644
 
     let gap_before = state.hunk_leading_gap(fi, 1);
     let hk = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(1, hk, gap_before);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: state.output.files[fi].hunks.len(),
+        },
+        hk,
+        gap_before,
+    );
     let idx = txt.find("▲").unwrap();
     let col = txt[..idx].chars().count();
     state.execute(TuiCommand::MouseClick {
@@ -2380,7 +2423,14 @@ index 1111111..2222222 100644
             .expect("anchor must exist");
 
         let hk = state.output.files[fi].hunks[1].clone();
-        let txt = hunk_divider_text(1, &hk, gap);
+        let txt = hunk_divider_text(
+            Badge {
+                idx: 1,
+                total: state.output.files[fi].hunks.len(),
+            },
+            &hk,
+            gap,
+        );
         let idx = txt.find("▲").unwrap();
         let up_col = txt[..idx].chars().count();
         state.execute(TuiCommand::MouseClick {
@@ -2881,7 +2931,14 @@ index 1111111..2222222 100644
     let click_row = state.last_viewport_start + h2_div_vis.saturating_sub(state.scroll);
 
     let h = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(1, h, gap);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: state.output.files[fi].hunks.len(),
+        },
+        h,
+        gap,
+    );
 
     // Locate arrows and separating dots
     let both_idx = txt.find('⬍').unwrap();
@@ -3219,4 +3276,45 @@ fn test_escape_ansi_for_diagnostic() {
         "\\x1b[38;5;220mhi\\x1b[0m"
     );
     assert_eq!(escape_ansi_for_diagnostic("plain"), "plain");
+}
+
+#[test]
+fn test_ratatui_status_bar_uses_scrollbar_narrowed_width() {
+    use ratatui::{Terminal, backend::TestBackend};
+
+    // Long path plus enough hunks to force the scrollbar column on: the
+    // status bar must target the narrowed app column, so the truncated
+    // tail keeps its final character instead of clipping mid-name.
+    let mut hunks = String::new();
+    for h in 0..12 {
+        hunks.push_str(&format!(
+            "@@ -{},1 +{},1 @@\n-old line {}\n+new line {}\n",
+            h * 10 + 1,
+            h * 10 + 1,
+            h,
+            h
+        ));
+    }
+    let diff = format!(
+        "diff --git a/crates/diffuse-core/src/lib.rs b/crates/diffuse-core/src/lib.rs\n--- a/crates/diffuse-core/src/lib.rs\n+++ b/crates/diffuse-core/src/lib.rs\n{hunks}"
+    );
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+
+    let backend = TestBackend::new(48, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    let mut row = String::new();
+    for x in 0..48 {
+        row.push_str(buffer[(x, 1)].symbol());
+    }
+    assert!(
+        row.contains("lib.rs"),
+        "status tail must keep its final character: {row:?}"
+    );
 }

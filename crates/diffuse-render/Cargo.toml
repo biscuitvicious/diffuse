@@ -9,6 +9,7 @@ description = "Terminal ANSI rendering, themes, and styled token diff output for
 diffuse-core = { workspace = true }
 diffuse-syntax = { workspace = true }
 regex = { workspace = true }
+smallvec = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-width = { workspace = true }
 tracing = { workspace = true }

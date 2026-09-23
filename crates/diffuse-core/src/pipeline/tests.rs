@@ -806,7 +806,7 @@ new file mode 100644
     assert_eq!(out.old_bytes, None);
     assert_eq!(out.new_byte_size(), Some(0));
     assert_eq!(out.old_byte_size(), None);
-    assert_eq!(out.display_size(), "× ➞ 0B");
+    assert_eq!(out.display_size(), "0B");
 }
 
 #[test]
@@ -825,8 +825,8 @@ deleted file mode 100644
     assert_eq!(out.old_bytes, Some(6));
     assert_eq!(out.new_byte_size(), None);
     assert_eq!(out.old_byte_size(), Some(6));
-    assert_eq!(out.display_size(), "6B ➞ ×");
-    assert_eq!(out.display_status(), "6B ➞ ×");
+    assert_eq!(out.display_size(), "6B");
+    assert_eq!(out.display_status(), "deleted, 6B");
 }
 
 #[test]
@@ -964,13 +964,13 @@ fn test_formatted_size_identical_renders_single_size() {
     f.new_bytes = Some(15115);
     let opts = PipelineOptions::default();
     let out = process_single_diff_file(f, None, None, None, &opts);
-    assert_eq!(crate::wire::format_byte_size(15110), "14.8kB");
-    assert_eq!(crate::wire::format_byte_size(15115), "14.8kB");
+    assert_eq!(crate::wire::format_byte_size(15110), "15kB");
+    assert_eq!(crate::wire::format_byte_size(15115), "15kB");
     assert_eq!(out.old_bytes, Some(15110));
     assert_eq!(out.new_bytes, Some(15115));
-    // Must render single formatted size "14.8kB", never "14.8kB -> 14.8kB"
-    assert_eq!(out.display_size(), "14.8kB");
-    assert_eq!(out.display_status(), "14.8kB");
+    // Must render single formatted size "15kB", never "15kB -> 15kB"
+    assert_eq!(out.display_size(), "15kB");
+    assert_eq!(out.display_status(), "15kB");
 
     // Exact equal byte sizes also render single formatted size
     let mut f_exact = crate::parse::parse_diff(diff).into_iter().next().unwrap();

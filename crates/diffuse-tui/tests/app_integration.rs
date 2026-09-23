@@ -6,6 +6,7 @@ use diffuse_tui::{
         pipeline::{PipelineInput, run_pipeline_full},
         wire::PipelineOutput,
     },
+    render::Badge,
     view::{diff_grid::FILE_HEADER_INDICATOR_COL, hunk_divider_text},
 };
 
@@ -385,7 +386,14 @@ fn test_hunk_divider_click_expands_and_stays_pinned() {
     let click_row = state.last_viewport_start + div_vis.saturating_sub(state.scroll);
 
     let h = &state.output.files[fi].hunks[1];
-    let txt = hunk_divider_text(1, h, gap_before);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: state.output.files[fi].hunks.len(),
+        },
+        h,
+        gap_before,
+    );
     let col = txt
         .find("▲")
         .map(|i| txt[..i].chars().count())
@@ -440,7 +448,7 @@ fn test_expand_all_merges_and_reset_restores() {
         "reset must split back"
     );
     let frame = state.render_frame(140, 80);
-    assert!(frame.contains("──── H1 ·") || frame.contains("──── H2 ·"));
+    assert!(frame.contains("──── H1/2 ·") || frame.contains("──── H2/2 ·"));
 }
 
 // 11. Streaming append — live file ingestion
@@ -528,14 +536,14 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(!screen_lines[0].contains("filesystem.rs"));
 
     // Row 1: Secondary Status Bar (file badge, sub-path, counts, hunk)
-    assert!(screen_lines[1].starts_with(" file 1/1 · filesystem.rs (+1 ~1) · hunk 1/1"));
+    assert!(screen_lines[1].starts_with(" file 1/1 +1 ~1 · hunk 1/1 +1 ~1 · filesystem.rs"));
 
     // Row 2: File Header Banner in Diff Viewport
-    assert!(screen_lines[2].contains("▼ filesystem.rs"));
-    assert!(screen_lines[2].contains("-0 +1 ~1"));
+    assert!(screen_lines[2].contains("▼ F1/1 · filesystem.rs"));
+    assert!(screen_lines[2].contains("+1 ~1"));
 
     // Row 3: Hunk divider with context
-    assert!(screen_lines[3].contains("H1 · 2 lines"));
+    assert!(screen_lines[3].contains("H1/1 · 2 lines"));
     assert!(screen_lines[3].contains("more lines: ▼"));
 
     // Row 7..: Diff lines with line numbers and change markers
@@ -615,10 +623,11 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     assert!(!screen_lines[0].contains("mod.rs"));
 
     // Row 1: Secondary status bar with file badge, sub-path, multi-file counter
-    assert!(screen_lines[1].starts_with(" file 1/2 · mod.rs"));
+    assert!(screen_lines[1].starts_with(" file 1/2 "));
+    assert!(screen_lines[1].contains("mod.rs"));
 
     // Row 2: File header banner
-    assert!(screen_lines[2].contains("▼ mod.rs"));
+    assert!(screen_lines[2].contains("▼ F1/2 · mod.rs"));
 
     // Bottom Navigation Ribbon
     assert!(screen_lines[height - 1].contains("[j/k]move"));
