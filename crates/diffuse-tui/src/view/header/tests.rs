@@ -689,6 +689,22 @@ fn test_clamp_or_pad_ansi_exact_width_guarantee() {
 }
 
 #[test]
+fn test_visible_width_emoji_zwj_and_ansi() {
+    // Single character emoji
+    assert_eq!(visible_width("🦀"), 2);
+    // Emoji with ANSI styling
+    assert_eq!(visible_width("\x1b[31m🦀\x1b[0m"), 2);
+    // ZWJ sequence (woman technologist: 👩 + ZWJ + 💻) is a single grapheme
+    // cluster of width 2
+    assert_eq!(visible_width("👩\u{200d}💻"), 2);
+    assert_eq!(visible_width("\x1b[32m👩\u{200d}💻\x1b[0m"), 2);
+    // Flag sequence (regional indicators)
+    assert_eq!(visible_width("🇩🇪"), 2);
+    // Mixed text with ZWJ and styling
+    assert_eq!(visible_width("\x1b[1mUnicode: 👩\u{200d}💻 \x1b[0m"), 12);
+}
+
+#[test]
 fn test_header_bar_global_mod_counts_ratatui() {
     let file = OutputFile {
         path: "AGENTS.md".to_string(),

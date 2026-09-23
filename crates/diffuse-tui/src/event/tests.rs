@@ -121,6 +121,36 @@ fn test_note_draft_ctrl_j_n_o_insert_newline() {
 }
 
 #[test]
+fn test_note_draft_carriage_return_key_inserts_newline() {
+    let mut s = state_with_draft();
+    s.note_draft = Some("line 1".into());
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('\r'), KeyModifiers::NONE)),
+    );
+    assert_eq!(
+        s.note_draft.as_deref(),
+        Some("line 1\n"),
+        "Char('\\r') must insert a newline in multiline draft"
+    );
+}
+
+#[test]
+fn test_note_draft_paste_normalizes_crlf_and_cr() {
+    let mut s = state_with_draft();
+    s.note_draft = Some(String::new());
+    handle_event(
+        &mut s,
+        Event::Paste("line 1\r\nline 2\rline 3\nline 4".into()),
+    );
+    assert_eq!(
+        s.note_draft.as_deref(),
+        Some("line 1\nline 2\nline 3\nline 4"),
+        "Pasted CRLF and CR must be normalized to LF"
+    );
+}
+
+#[test]
 fn test_help_modal_key_handling_dismiss_and_swallow() {
     let mut s = state_with_draft();
     s.show_help = true;

@@ -547,6 +547,7 @@ impl LangProfile {
 
 /// The markdown SGR attributes (the renderer's `MD_SGR`).
 pub const MD_SGR_BOLD: u32 = 1;
+pub const MD_SGR_DIM: u32 = 2;
 pub const MD_SGR_ITALIC: u32 = 3;
 pub const MD_SGR_UNDERLINE: u32 = 4;
 pub const MD_SGR_STRIKE: u32 = 9;

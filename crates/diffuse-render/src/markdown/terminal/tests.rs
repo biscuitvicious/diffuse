@@ -29,7 +29,7 @@ fn test_emphasis_markers_absent_sgr_present() {
     );
     assert!(joined.contains("\x1b[1m"), "bold SGR in {joined:?}");
     assert!(joined.contains("\x1b[3m"), "italic SGR in {joined:?}");
-    assert!(joined.contains("\x1b[9m"), "strike SGR in {joined:?}");
+    assert!(joined.contains("\x1b[2;9m"), "strike SGR in {joined:?}");
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn test_task_list_with_inline_formatting() {
     assert!(out.contains("Bold"), "bold text in {out:?}");
     assert!(out.contains("\x1b[3m"), "italic in {out:?}");
     assert!(out.contains("italic"), "italic text in {out:?}");
-    assert!(out.contains("\x1b[9m"), "strike in {out:?}");
+    assert!(out.contains("\x1b[2;9m"), "strike in {out:?}");
     assert!(out.contains("strike"), "strike text in {out:?}");
     assert!(!out.contains("**"), "no markdown markers: {out:?}");
     assert!(!out.contains("~~"), "no markdown markers: {out:?}");
@@ -448,4 +448,159 @@ fn test_bulletless_task_list_continuation_indent() {
             "indent must be exactly 3 spaces: {cont:?}"
         );
     }
+}
+
+#[test]
+fn test_table_aligned_renders_with_borders_and_padding() {
+    let src = "\
+| Name | Age |
+| :--- | ---: |
+| Alice | 30 |
+| Bob | 7 |";
+    let lines = markdown_lines(src, 40);
+    let texts: Vec<String> = lines.iter().map(plain).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "┌───────┬─────┐",
+            "│ Name  │ Age │",
+            "╞═══════╪═════╡",
+            "│ Alice │  30 │",
+            "├───────┼─────┤",
+            "│ Bob   │   7 │",
+            "└───────┴─────┘",
+        ]
+    );
+
+    // Verify header cells have bold, underline, and yellow italic color
+    let head_line = &lines[1];
+    let name_run = head_line
+        .runs
+        .iter()
+        .find(|r| r.text.contains("Name"))
+        .unwrap();
+    assert_eq!(
+        name_run.color.as_deref(),
+        Some("mdItalic"),
+        "header color must be yellow mdItalic"
+    );
+    assert_eq!(name_run.sgr, Some(MD_SGR_BOLD), "header must be bold");
+    assert!(name_run.underline, "header runs must be underlined");
+
+    // Verify border characters and width invariance across all lines
+    let expected_width = 15;
+    for (i, line) in texts.iter().enumerate() {
+        assert_eq!(
+            display_width(line),
+            expected_width,
+            "line {i} width must match: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn test_table_column_alignment_left_right_center() {
+    let src = "\
+| Left | Center | Right |
+| :--- | :---: | ---: |
+| L | C | R |";
+    let lines = markdown_lines(src, 40);
+    let texts: Vec<String> = lines.iter().map(plain).collect();
+    assert_eq!(
+        texts,
+        vec![
+            "┌──────┬────────┬───────┐",
+            "│ Left │ Center │ Right │",
+            "╞══════╪════════╪═══════╡",
+            "│ L    │   C    │     R │",
+            "└──────┴────────┴───────┘",
+        ]
+    );
+}
+
+#[test]
+fn test_table_squash_when_over_wide() {
+    let src = "\
+| Parameter | Description |
+| :--- | :--- |
+| configuration_mode | Specifies the system operational mode for background indexing |
+| timeout_milliseconds | Milliseconds to wait before giving up on connection |";
+
+    let max_width = 40;
+    let lines = markdown_lines(src, max_width);
+    let texts: Vec<String> = lines.iter().map(plain).collect();
+
+    // Must not exceed max_width
+    for (i, line) in texts.iter().enumerate() {
+        let w = display_width(line);
+        assert!(
+            w <= max_width,
+            "table visual line {i} (w={w}) exceeds content width {max_width}: {line:?}"
+        );
+    }
+
+    // Must have wrapped lines (more than 1 top + 1 head + 1 mid + 2 body rows +
+    // 1 bot = 6 lines)
+    assert!(
+        texts.len() > 6,
+        "over-wide table must wrap cell content across multiple lines: {texts:?}"
+    );
+
+    // All lines must start and end with proper box-drawing characters
+    assert!(texts[0].starts_with('┌') && texts[0].ends_with('┐'));
+    assert!(texts.last().unwrap().starts_with('└') && texts.last().unwrap().ends_with('┘'));
+    for line in &texts[1..texts.len() - 1] {
+        assert!(
+            line.starts_with('│') || line.starts_with('├') || line.starts_with('╞'),
+            "row or joint rule: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn test_table_cell_wrapping_preserves_inline_formatting() {
+    let src = "\
+| Header | Description |
+| :--- | :--- |
+| Item | **A very long bold text description that definitely wraps across lines** |";
+
+    let lines = rendered(src, 36);
+    let joined = lines.join("\n");
+    // Bold SGR must be present
+    assert!(joined.contains("\x1b[1m"), "bold SGR in {joined:?}");
+    assert!(joined.contains("bold"), "bold text in {joined:?}");
+    assert!(!joined.contains("**"), "no markdown markers: {joined:?}");
+
+    // Content width must not exceed 36
+    let plain_lines = markdown_lines(src, 36);
+    for (i, line) in plain_lines.iter().enumerate() {
+        let w = display_width(plain(line));
+        assert!(w <= 36, "line {i} (w={w}) must fit width 36: {line:?}");
+    }
+}
+
+#[test]
+fn test_strikethrough_renders_with_dim_and_strike_sgr() {
+    let lines = rendered("~~deprecated~~", 80);
+    let joined = lines.join("\n");
+    assert!(
+        joined.contains("\x1b[2;9m"),
+        "must emit dim + strike stacked SGR: {joined:?}"
+    );
+    assert!(
+        joined.contains("\x1b[29m\x1b[22m"),
+        "must reset strike then dim: {joined:?}"
+    );
+    assert!(joined.contains("deprecated"), "text present: {joined:?}");
+}
+
+#[test]
+fn test_table_cell_with_strikethrough_renders_dim_and_strike() {
+    let src = "| Col |\n| --- |\n| ~~deprecated~~ |";
+    let lines = rendered(src, 40);
+    let joined = lines.join("\n");
+    assert!(
+        joined.contains("\x1b[2;9mdeprecated\x1b[29m\x1b[22m"),
+        "must emit dim + strike stacked SGR around deprecated in cell: {joined:?}"
+    );
 }

@@ -26,8 +26,8 @@ fn test_sgr_modifiers_and_reset() {
     assert_eq!(sgr_on(4), "\x1b[4m");
     assert_eq!(sgr_off(4), Some("\x1b[24m"));
 
-    assert_eq!(sgr_on(9), "\x1b[9m");
-    assert_eq!(sgr_off(9), Some("\x1b[29m"));
+    assert_eq!(sgr_on(9), "\x1b[2;9m");
+    assert_eq!(sgr_off(9), Some("\x1b[29m\x1b[22m"));
 
     assert_eq!(sgr_off(99), None);
 }

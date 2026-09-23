@@ -36,7 +36,7 @@ pub mod prelude {
         },
         fence::{FenceRegion, fence_regions, region_at},
         profile::{
-            BlockDelimStyle, CloseDelimiter, LangProfile, MD_SGR_BOLD, MD_SGR_ITALIC,
+            BlockDelimStyle, CloseDelimiter, LangProfile, MD_SGR_BOLD, MD_SGR_DIM, MD_SGR_ITALIC,
             MD_SGR_STRIKE, MD_SGR_UNDERLINE, PropertySyntax,
         },
         registry::{

@@ -648,3 +648,52 @@ fn test_wide_emoji_never_exceeds_segment_window() {
         "tail window must keep fitting content: {tail:?}"
     );
 }
+
+#[test]
+fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_strike() {
+    let theme = DiffuseTheme::DEFAULT;
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Add,
+            color: Some("accent".into()),
+            sgr: None,
+            text: "~~".into(),
+        },
+        OutputRun {
+            kind: RunKind::Add,
+            color: Some("mdStrike".into()),
+            sgr: Some(9),
+            text: "deprecated".into(),
+        },
+        OutputRun {
+            kind: RunKind::Add,
+            color: Some("accent".into()),
+            sgr: None,
+            text: "~~".into(),
+        },
+    ];
+    let rendered = render_row_segment(
+        "~~deprecated~~",
+        None,
+        &Spans::default(),
+        RowKind::Add,
+        &runs,
+        0,
+        20,
+        "  42 + ",
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(
+        rendered.contains("\x1b[2;9mdeprecated\x1b[29m\x1b[22m"),
+        "rendered row must contain dim+strike wrapped deprecated: {rendered:?}"
+    );
+    assert!(
+        !rendered.contains("\x1b[38;5;168m"),
+        "must not contain pink foreground: {rendered:?}"
+    );
+}

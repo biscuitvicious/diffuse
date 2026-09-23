@@ -676,3 +676,41 @@ fn test_note_callout_long_line_wrapping() {
         note_lines.len()
     );
 }
+
+#[test]
+fn test_table_note_width_at_narrow_content_width() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path);
+    let banner_idx = state.first_row_of_file(0);
+    let table = "| State & Style | Alignment & Code | Metrics | Long Tokens & Wrapping |\n| :--- | :---: | ---: | :--- |\n| ✅ **Ready** | `cargo test` | 100.0% | Normal text with multiple wrapped words |\n| 🔄 *Active* | [diffuse](https://diffuse.rs) | +42 ms | Supercalifragilisticexpialidocious |\n| ⬜ Pending | ~~deprecated~~ | $1,234.56 | `diffuse::render::terminal::wrap_cell` |\n| 🦀 **Mixed** 🚀 | *italic* & **bold** | -99 | **Bold across multiple lines when squashed** |\n| ⚠️ Warning | | 0.00 | Unicode: 👩‍💻 and 🇩🇪 |";
+    add_note(
+        &mut state.notes,
+        &state.notes_key,
+        ReviewNote {
+            id: "table-note".into(),
+            file: "filesystem.rs".into(),
+            side: Side::New,
+            start: 1025,
+            end: 1025,
+            text: table.to_string(),
+            created_at: 0,
+            line_hash: None,
+        },
+    );
+    state.sync_all_notes();
+
+    let content_width = 49;
+    let callouts = state.note_callouts(content_width);
+    let note_lines = callouts
+        .get(&banner_idx)
+        .expect("must have callout on file banner");
+
+    for (i, line) in note_lines.iter().enumerate() {
+        let visual_width = crate::view::visible_width(line);
+        assert!(
+            visual_width <= content_width,
+            "line {i} exceeds content_width: {visual_width} > {content_width}: {line:?}"
+        );
+    }
+}

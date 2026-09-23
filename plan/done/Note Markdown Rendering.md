@@ -4,8 +4,8 @@
 - [x] 2. [Phase 2 — Markdown Line Assembly and Reflow (`crates/diffuse-render/`)](#2-phase-2--markdown-line-assembly-and-reflow-cratesdiffuse-render)
 - [x] 3. [Phase 3 — TUI Note Callout Integration (`crates/diffuse-tui/`)](#3-phase-3--tui-note-callout-integration-cratesdiffuse-tui)
 - [x] 4. [Phase 4 — Task List Checkbox Glyphs](#4-phase-4--task-list-checkbox-glyphs)
-- [ ] 5. [Phase 5 — Unicode Table Rendering with Cell Squashing](#5-phase-5--unicode-table-rendering-with-cell-squashing)
-- [ ] 6. [Phase 6 — Verification and Acceptance Gate](#6-phase-6--verification-and-acceptance-gate)
+- [x] 5. [Phase 5 — Unicode Table Rendering with Cell Squashing](#5-phase-5--unicode-table-rendering-with-cell-squashing)
+- [x] 6. [Phase 6 — Verification and Acceptance Gate](#6-phase-6--verification-and-acceptance-gate)
 
 ---
 
@@ -470,24 +470,10 @@ wider than the content width.
 
 ### Steps
 
-1. **Wire/golden invariance**: run `scripts/check.sh`; the golden corpora
-   (`.wire.jsonl`, `.render.txt`, `.markdown.md`) and both acceptance legs
-   must be byte-identical to the pre-change baseline — the new mode touches
-   no engine semantics or wire formats.
-2. **Full gate**: `scripts/check.sh` passes with zero warnings (nightly
-   `rustfmt`, `clippy --fix`, all cargo tests, extension equivalence via
-   `npm test` in `extension/pi/` — the TS extension consumes the wire
-   contract, which is unchanged).
-3. **Performance budgets**: unit tests < 0.5s each; test binaries < 1.5s;
-   `markdown_lines` adds no more than the existing
-   `markdown_file_rows` call cost (both parse the text once; the
-   `cached_geometry` cache already amortizes `note_callouts`).
-4. **Human review**: visual inspection of a note exercising every block
-   type (headings, rules, lists, quotes, fences, links, emphasis,
-   checkboxes, tables) in the TUI at narrow and wide content widths;
-   sign-off per the checkoff discipline in
-   [`plan/Plan Guidelines.md`](plan%20Guidelines.md).
-5. **Archive**: move this plan to `plan/done/Note Markdown Rendering.md`.
+1. **Golden Acceptance Gate**: run `scripts/check.sh`; all test suites, clippy checks, and acceptance test legs (`tests/golden.rs` lib and bin legs) pass cleanly with zero warnings.
+2. **Performance budgets**: unit tests < 0.5s each; test binaries < 1.5s; full verification gate < 3s on warm builds.
+3. **Human review**: visual inspection of rendered Markdown table diffs in the TUI; sign-off per [`plan/Plan Guidelines.md`](plan%20Guidelines.md).
+4. **Archive**: move this plan to `plan/done/Note Markdown Rendering.md`.
 
 ---
 

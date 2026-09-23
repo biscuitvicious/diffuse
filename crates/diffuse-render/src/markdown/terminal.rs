@@ -16,7 +16,7 @@ use crate::{
     syntax::{
         classifier::for_each_line_classified_token,
         markdown::{Block, ColumnAlign, Inline, ListMarker, Span, TaskState, blocks},
-        profile::{MD_SGR_BOLD, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE},
+        profile::{MD_SGR_BOLD, MD_SGR_DIM, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE},
         registry::lang_profile,
     },
     theme::DiffuseTheme,
@@ -38,6 +38,8 @@ pub struct MarkdownRun {
     pub color: Option<Cow<'static, str>>,
     pub sgr: Option<u32>,
     pub underline: bool,
+    pub strike: bool,
+    pub dim: bool,
     pub text: Cow<'static, str>,
 }
 
@@ -72,11 +74,22 @@ pub fn write_markdown_line<W: Write>(
             continue;
         }
         let color = run.color.as_deref().unwrap_or("text");
-        // Stacked styles (heading titles) combine into one escape;
-        // single styles keep the legacy single-code path byte-identical.
-        let mut codes = [0u32; 2];
+        // Stacked styles (heading titles, dim strikethrough) combine into one
+        // escape; single styles keep the legacy single-code path
+        // byte-identical.
+        let mut codes = [0u32; 4];
         let mut count = 0usize;
-        if let Some(s) = run.sgr {
+        if run.dim && !codes[..count].contains(&MD_SGR_DIM) {
+            codes[count] = MD_SGR_DIM;
+            count += 1;
+        }
+        if run.strike && !codes[..count].contains(&MD_SGR_STRIKE) {
+            codes[count] = MD_SGR_STRIKE;
+            count += 1;
+        }
+        if let Some(s) = run.sgr
+            && !codes[..count].contains(&s)
+        {
             codes[count] = s;
             count += 1;
         }
@@ -122,10 +135,13 @@ static BARS: &str = "▎▎▎▎▎▎▎▎";
 /// pieces (`Borrowed` — bars, indents, bullets, markers). `underline` stacks
 /// with `sgr` (heading titles are bold and underlined); the writer combines
 /// them into one escape.
+#[derive(Clone)]
 struct Run {
     color: &'static str,
     sgr: Option<u32>,
     underline: bool,
+    strike: bool,
+    dim: bool,
     text: Cow<'static, str>,
 }
 
@@ -148,6 +164,8 @@ struct InlineStyle {
     color: &'static str,
     sgr: Option<u32>,
     underline: bool,
+    strike: bool,
+    dim: bool,
 }
 
 fn task_glyph(state: TaskState) -> &'static str {
@@ -173,6 +191,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                         color: base.color,
                         sgr: base.sgr,
                         underline: base.underline,
+                        strike: base.strike,
+                        dim: base.dim,
                         text: Cow::Owned(text.to_string()),
                     });
                 }
@@ -183,6 +203,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                     color: "mdBold",
                     sgr: Some(MD_SGR_BOLD),
                     underline: base.underline,
+                    strike: base.strike,
+                    dim: base.dim,
                 },
                 runs,
             ),
@@ -192,15 +214,19 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                     color: "mdItalic",
                     sgr: Some(MD_SGR_ITALIC),
                     underline: base.underline,
+                    strike: base.strike,
+                    dim: base.dim,
                 },
                 runs,
             ),
             Span::Strike(inner) => inline_runs_into(
                 inner,
                 InlineStyle {
-                    color: "mdStrike",
-                    sgr: Some(MD_SGR_STRIKE),
+                    color: base.color,
+                    sgr: base.sgr,
                     underline: base.underline,
+                    strike: true,
+                    dim: true,
                 },
                 runs,
             ),
@@ -209,6 +235,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                 color: "syntaxString",
                 sgr: base.sgr,
                 underline: base.underline,
+                strike: base.strike,
+                dim: base.dim,
                 text: Cow::Owned(code.to_string()),
             }),
             Span::Link { label, url } => {
@@ -218,6 +246,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                         color: "mdLink",
                         sgr: Some(MD_SGR_UNDERLINE),
                         underline: base.underline,
+                        strike: base.strike,
+                        dim: base.dim,
                     },
                     runs,
                 );
@@ -225,18 +255,24 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                     color: "border",
                     sgr: None,
                     underline: false,
+                    strike: base.strike,
+                    dim: base.dim,
                     text: Cow::Borrowed(" ("),
                 });
                 runs.push(Run {
                     color: "mdLink",
                     sgr: Some(MD_SGR_UNDERLINE),
                     underline: base.underline,
+                    strike: base.strike,
+                    dim: base.dim,
                     text: Cow::Owned(url.to_string()),
                 });
                 runs.push(Run {
                     color: "border",
                     sgr: None,
                     underline: false,
+                    strike: base.strike,
+                    dim: base.dim,
                     text: Cow::Borrowed(")"),
                 });
             }
@@ -248,6 +284,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                     color: "accent",
                     sgr: None,
                     underline: false,
+                    strike: false,
+                    dim: false,
                     text: Cow::Owned(glyph),
                 });
             }
@@ -301,6 +339,8 @@ fn wrap_content(runs: Vec<Run>, first_width: usize, cont_width: usize) -> Vec<Ve
                 color: run.color,
                 sgr: run.sgr,
                 underline: run.underline,
+                strike: run.strike,
+                dim: run.dim,
                 text: Cow::Owned(piece),
             };
             if let Some(last) = lines.last_mut() {
@@ -317,6 +357,8 @@ fn push_merged(line: &mut Vec<Run>, run: Run) {
         && last.color == run.color
         && last.sgr == run.sgr
         && last.underline == run.underline
+        && last.strike == run.strike
+        && last.dim == run.dim
     {
         last.text.to_mut().push_str(&run.text);
         return;
@@ -353,6 +395,8 @@ impl Renderer {
                             color: "text",
                             sgr: None,
                             underline: false,
+                            strike: false,
+                            dim: false,
                         },
                     );
                     let avail = self.avail(indent, bars);
@@ -383,6 +427,8 @@ impl Renderer {
                             // Heading text — markers excluded — underlines
                             // on top of bold via stacked SGR emission.
                             underline: true,
+                            strike: false,
+                            dim: false,
                         },
                     );
                     let avail = self.avail(indent, bars).saturating_sub(marker_width).max(1);
@@ -394,12 +440,16 @@ impl Renderer {
                                 color: "accent",
                                 sgr: None,
                                 underline: false,
+                                strike: false,
+                                dim: false,
                                 text: Cow::Owned(hashes.clone()),
                             });
                             marker.push(Run {
                                 color: "text",
                                 sgr: None,
                                 underline: false,
+                                strike: false,
+                                dim: false,
                                 text: Cow::Borrowed(" "),
                             });
                             indent
@@ -447,6 +497,8 @@ impl Renderer {
                                 color: t.color,
                                 sgr: t.sgr,
                                 underline: false,
+                                strike: false,
+                                dim: false,
                                 text: Cow::Owned(t.text.to_string()),
                             });
                         });
@@ -491,6 +543,8 @@ impl Renderer {
                             color: "mdRule",
                             sgr: Some(MD_SGR_BOLD),
                             underline: false,
+                            strike: false,
+                            dim: false,
                             text: Cow::Owned("─".repeat(avail)),
                         }],
                     });
@@ -558,12 +612,16 @@ impl Renderer {
                     color: "accent",
                     sgr: None,
                     underline: false,
+                    strike: false,
+                    dim: false,
                     text: marker_text,
                 });
                 marker.push(Run {
                     color: "text",
                     sgr: None,
                     underline: false,
+                    strike: false,
+                    dim: false,
                     text: Cow::Borrowed(" "),
                 });
             }
@@ -591,6 +649,8 @@ impl Renderer {
                     color: "accent",
                     sgr: None,
                     underline: false,
+                    strike: false,
+                    dim: false,
                     text: Cow::Owned(glyph),
                 });
             }
@@ -639,7 +699,8 @@ impl Renderer {
         }
     }
 
-    /// Simple aligned table render (fits-width only; squashing is Phase 5).
+    /// Column-aligned table render with proportional squashing and multi-line
+    /// cell wrapping when content overflows the available budget.
     fn render_table(
         &self,
         header: &[Inline<'_>],
@@ -652,8 +713,17 @@ impl Renderer {
             color: "text",
             sgr: None,
             underline: false,
+            strike: false,
+            dim: false,
         };
-        let head_runs: Vec<Vec<Run>> = header.iter().map(|c| inline_runs(c, base)).collect();
+        let head_base = InlineStyle {
+            color: "mdItalic",
+            sgr: Some(MD_SGR_BOLD),
+            underline: true,
+            strike: false,
+            dim: false,
+        };
+        let head_runs: Vec<Vec<Run>> = header.iter().map(|c| inline_runs(c, head_base)).collect();
         let body_runs: Vec<Vec<Vec<Run>>> = rows
             .iter()
             .map(|row| row.iter().map(|c| inline_runs(c, base)).collect())
@@ -666,15 +736,21 @@ impl Renderer {
             return Vec::new();
         }
         let run_width = |runs: &[Run]| runs.iter().map(|r| display_width(&r.text)).sum::<usize>();
-        let mut widths = vec![0usize; cols];
+        let mut natural_widths = vec![1usize; cols];
         for (i, cell) in head_runs.iter().enumerate().take(cols) {
-            widths[i] = widths[i].max(run_width(cell));
+            natural_widths[i] = natural_widths[i].max(run_width(cell));
         }
         for row in &body_runs {
             for (i, cell) in row.iter().enumerate().take(cols) {
-                widths[i] = widths[i].max(run_width(cell));
+                natural_widths[i] = natural_widths[i].max(run_width(cell));
             }
         }
+
+        let avail = self.avail(indent, bars);
+        let overhead = 3 * cols + 1;
+        let budget = avail.saturating_sub(overhead).max(cols);
+        let widths = squash_table_widths(&natural_widths, budget);
+
         let align = |i: usize| {
             if i < alignments.len() {
                 alignments[i]
@@ -687,84 +763,335 @@ impl Renderer {
             color: "border",
             sgr: None,
             underline: false,
+            strike: false,
+            dim: false,
             text,
         };
+
         // Top border.
-        out.push(table_rule(&widths, '┌', '┬', '┐', indent, bars, &border));
+        out.push(table_rule(
+            &widths,
+            ['┌', '─', '┬', '┐'],
+            indent,
+            bars,
+            &border,
+        ));
+
         let render_row = |cells: &[Vec<Run>], out: &mut Vec<VisualLine>| {
-            let mut content = vec![border(Cow::Borrowed("│ "))];
-            for (i, col_width) in widths.iter().enumerate().take(cols) {
-                let cell: &[Run] = cells.get(i).map(Vec::as_slice).unwrap_or(&[]);
-                let text_width = run_width(cell);
-                let pad = col_width.saturating_sub(text_width);
-                let (left, right) = match align(i) {
-                    ColumnAlign::Left => (0, pad),
-                    ColumnAlign::Right => (pad, 0),
-                    ColumnAlign::Center => (pad / 2, pad - pad / 2),
-                };
-                if left > 0 {
-                    content.push(Run {
-                        color: "text",
-                        sgr: None,
-                        underline: false,
-                        text: owned_spaces(left),
-                    });
+            let wrapped_cells: Vec<Vec<Vec<Run>>> = (0..cols)
+                .map(|i| {
+                    let cell_runs = cells.get(i).map(Vec::as_slice).unwrap_or(&[]);
+                    wrap_table_cell(cell_runs, widths[i])
+                })
+                .collect();
+            let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
+
+            for v in 0..row_height {
+                let mut content = vec![border(Cow::Borrowed("│ "))];
+                for (i, col_width) in widths.iter().enumerate().take(cols) {
+                    let cell_line = wrapped_cells[i].get(v).map(Vec::as_slice).unwrap_or(&[]);
+                    let text_width = run_width(cell_line);
+                    let pad = col_width.saturating_sub(text_width);
+                    let (left, right) = match align(i) {
+                        ColumnAlign::Left => (0, pad),
+                        ColumnAlign::Right => (pad, 0),
+                        ColumnAlign::Center => (pad / 2, pad - pad / 2),
+                    };
+                    if left > 0 {
+                        content.push(Run {
+                            color: "text",
+                            sgr: None,
+                            underline: false,
+                            strike: false,
+                            dim: false,
+                            text: owned_spaces(left),
+                        });
+                    }
+                    content.extend(cell_line.iter().cloned());
+                    if right > 0 {
+                        content.push(Run {
+                            color: "text",
+                            sgr: None,
+                            underline: false,
+                            strike: false,
+                            dim: false,
+                            text: owned_spaces(right),
+                        });
+                    }
+                    content.push(border(Cow::Borrowed(if i + 1 == cols {
+                        " │"
+                    } else {
+                        " │ "
+                    })));
                 }
-                content.extend(cell.iter().map(|r| Run {
-                    color: r.color,
-                    sgr: r.sgr,
-                    underline: r.underline,
-                    text: Cow::Owned(r.text.to_string()),
-                }));
-                if right > 0 {
-                    content.push(Run {
-                        color: "text",
-                        sgr: None,
-                        underline: false,
-                        text: owned_spaces(right),
-                    });
-                }
-                content.push(border(Cow::Borrowed(if i + 1 == cols {
-                    " │"
-                } else {
-                    " │ "
-                })));
+                out.push(VisualLine {
+                    bars,
+                    indent,
+                    marker: Vec::new(),
+                    content,
+                });
             }
-            out.push(VisualLine {
-                bars,
-                indent,
-                marker: Vec::new(),
-                // Overflow rows keep full content; Phase 5 squashes them to
-                // the budget with internal cell wrapping.
-                content,
-            });
         };
+
         if !head_runs.is_empty() {
             render_row(&head_runs, &mut out);
-            out.push(table_rule(&widths, '├', '┼', '┤', indent, bars, &border));
+            out.push(table_rule(
+                &widths,
+                ['╞', '═', '╪', '╡'],
+                indent,
+                bars,
+                &border,
+            ));
         }
-        for row in &body_runs {
+        for (idx, row) in body_runs.iter().enumerate() {
+            if idx > 0 {
+                out.push(table_rule(
+                    &widths,
+                    ['├', '─', '┼', '┤'],
+                    indent,
+                    bars,
+                    &border,
+                ));
+            }
             render_row(row, &mut out);
         }
-        out.push(table_rule(&widths, '└', '┴', '┘', indent, bars, &border));
+        out.push(table_rule(
+            &widths,
+            ['└', '─', '┴', '┘'],
+            indent,
+            bars,
+            &border,
+        ));
         out
     }
 }
 
+/// Proportionally squash column widths when total natural width exceeds the
+/// available budget, maintaining at least 1 column width per column.
+fn squash_table_widths(natural_widths: &[usize], budget: usize) -> Vec<usize> {
+    let n = natural_widths.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let total_natural: usize = natural_widths.iter().sum();
+    if total_natural <= budget {
+        return natural_widths.to_vec();
+    }
+    let budget = budget.max(n);
+    let float_widths: Vec<(usize, f64, f64)> = natural_widths
+        .iter()
+        .enumerate()
+        .map(|(i, &w)| {
+            let ideal = (w as f64 / total_natural as f64) * budget as f64;
+            let frac = ideal - ideal.floor();
+            (i, ideal, frac)
+        })
+        .collect();
+
+    let mut widths = vec![1usize; n];
+    let mut current_sum: usize = 0;
+    for (i, ideal, _) in &float_widths {
+        let w = (ideal.floor() as usize).max(1);
+        widths[*i] = w;
+        current_sum += w;
+    }
+
+    if current_sum < budget {
+        let mut by_frac = float_widths.clone();
+        by_frac.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        let diff = budget - current_sum;
+        for item in by_frac.iter().take(diff) {
+            widths[item.0] += 1;
+        }
+    } else if current_sum > budget {
+        while current_sum > budget {
+            let mut reduced = false;
+            let max_w = widths.iter().copied().max().unwrap_or(1);
+            if max_w <= 1 {
+                break;
+            }
+            for w in widths.iter_mut() {
+                if *w == max_w && *w > 1 {
+                    *w -= 1;
+                    current_sum -= 1;
+                    reduced = true;
+                    if current_sum == budget {
+                        break;
+                    }
+                }
+            }
+            if !reduced {
+                break;
+            }
+        }
+    }
+
+    widths
+}
+
+/// Wrap cell runs to fit within `col_width`, breaking on word boundaries
+/// where possible and falling back to grapheme hard-breaks for over-wide words.
+fn wrap_table_cell(runs: &[Run], col_width: usize) -> Vec<Vec<Run>> {
+    let col_width = col_width.max(1);
+    if runs.is_empty() {
+        return vec![Vec::new()];
+    }
+    let total_w: usize = runs.iter().map(|r| display_width(&r.text)).sum();
+    if total_w <= col_width {
+        return vec![runs.to_vec()];
+    }
+
+    struct Token<'a> {
+        run: &'a Run,
+        text: &'a str,
+        is_space: bool,
+        width: usize,
+    }
+    let mut tokens: Vec<Token<'_>> = Vec::new();
+    for run in runs {
+        let s = &run.text;
+        let mut char_indices = s.char_indices().peekable();
+        while let Some((start, c)) = char_indices.next() {
+            let is_space = c.is_whitespace();
+            let mut end = start + c.len_utf8();
+            while let Some(&(_, next_c)) = char_indices.peek() {
+                if next_c.is_whitespace() == is_space {
+                    char_indices.next();
+                    end += next_c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let text = &s[start..end];
+            tokens.push(Token {
+                run,
+                text,
+                is_space,
+                width: display_width(text),
+            });
+        }
+    }
+
+    let mut lines: Vec<Vec<Run>> = vec![Vec::new()];
+    let mut current_width = 0usize;
+
+    for token in tokens {
+        if token.is_space {
+            if current_width == 0 {
+                // Drop leading whitespace at start of a wrapped line.
+                continue;
+            }
+            if current_width + token.width <= col_width {
+                current_width += token.width;
+                push_merged(
+                    lines.last_mut().unwrap(),
+                    Run {
+                        color: token.run.color,
+                        sgr: token.run.sgr,
+                        underline: token.run.underline,
+                        strike: token.run.strike,
+                        dim: token.run.dim,
+                        text: Cow::Owned(token.text.to_string()),
+                    },
+                );
+            } else {
+                lines.push(Vec::new());
+                current_width = 0;
+            }
+        } else if current_width + token.width <= col_width {
+            current_width += token.width;
+            push_merged(
+                lines.last_mut().unwrap(),
+                Run {
+                    color: token.run.color,
+                    sgr: token.run.sgr,
+                    underline: token.run.underline,
+                    strike: token.run.strike,
+                    dim: token.run.dim,
+                    text: Cow::Owned(token.text.to_string()),
+                },
+            );
+        } else if current_width > 0 {
+            lines.push(Vec::new());
+            current_width = 0;
+            if token.width <= col_width {
+                current_width = token.width;
+                push_merged(
+                    lines.last_mut().unwrap(),
+                    Run {
+                        color: token.run.color,
+                        sgr: token.run.sgr,
+                        underline: token.run.underline,
+                        strike: token.run.strike,
+                        dim: token.run.dim,
+                        text: Cow::Owned(token.text.to_string()),
+                    },
+                );
+            } else {
+                for (g, gw) in token.text.graphemes(true).map(|g| (g, grapheme_width(g))) {
+                    if current_width + gw > col_width && current_width > 0 {
+                        lines.push(Vec::new());
+                        current_width = 0;
+                    }
+                    current_width += gw;
+                    push_merged(
+                        lines.last_mut().unwrap(),
+                        Run {
+                            color: token.run.color,
+                            sgr: token.run.sgr,
+                            underline: token.run.underline,
+                            strike: token.run.strike,
+                            dim: token.run.dim,
+                            text: Cow::Owned(g.to_string()),
+                        },
+                    );
+                }
+            }
+        } else {
+            for (g, gw) in token.text.graphemes(true).map(|g| (g, grapheme_width(g))) {
+                if current_width + gw > col_width && current_width > 0 {
+                    lines.push(Vec::new());
+                    current_width = 0;
+                }
+                current_width += gw;
+                push_merged(
+                    lines.last_mut().unwrap(),
+                    Run {
+                        color: token.run.color,
+                        sgr: token.run.sgr,
+                        underline: token.run.underline,
+                        strike: token.run.strike,
+                        dim: token.run.dim,
+                        text: Cow::Owned(g.to_string()),
+                    },
+                );
+            }
+        }
+    }
+
+    if lines.is_empty() {
+        lines.push(Vec::new());
+    }
+    lines
+}
+
 /// Unicode box-drawing separator sized to the column widths.
+///
+/// `chars` defines `[left, bar, joint, right]`.
 fn table_rule(
     widths: &[usize],
-    left: char,
-    joint: char,
-    right: char,
+    chars: [char; 4],
     indent: usize,
     bars: usize,
     border: &dyn Fn(Cow<'static, str>) -> Run,
 ) -> VisualLine {
+    let [left, bar, joint, right] = chars;
     let mut text = String::new();
     text.push(left);
     for (i, w) in widths.iter().enumerate() {
-        text.push_str(&"─".repeat(w + 2));
+        for _ in 0..w + 2 {
+            text.push(bar);
+        }
         text.push(if i + 1 == widths.len() { right } else { joint });
     }
     VisualLine {
@@ -792,6 +1119,8 @@ fn borrowed_spaces(n: usize) -> Run {
             color: "text",
             sgr: None,
             underline: false,
+            strike: false,
+            dim: false,
             text: Cow::Borrowed(&SPACES[..n]),
         }
     } else {
@@ -799,6 +1128,8 @@ fn borrowed_spaces(n: usize) -> Run {
             color: "text",
             sgr: None,
             underline: false,
+            strike: false,
+            dim: false,
             text: Cow::Owned(" ".repeat(n)),
         }
     }
@@ -828,6 +1159,8 @@ fn flatten_line(line: VisualLine) -> MarkdownLine {
             color: Some("border".into()),
             sgr: None,
             underline: false,
+            strike: false,
+            dim: false,
             text,
         });
     }
@@ -838,6 +1171,8 @@ fn flatten_line(line: VisualLine) -> MarkdownLine {
             color: Some("text".into()),
             sgr: None,
             underline: false,
+            strike: false,
+            dim: false,
             text,
         });
     }
@@ -846,6 +1181,8 @@ fn flatten_line(line: VisualLine) -> MarkdownLine {
             color: Some(run.color.into()),
             sgr: run.sgr,
             underline: run.underline,
+            strike: run.strike,
+            dim: run.dim,
             text: run.text,
         });
     }

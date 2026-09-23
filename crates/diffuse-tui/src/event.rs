@@ -17,10 +17,11 @@ pub fn handle_event(state: &mut AppState, event: Event) {
 }
 
 fn handle_paste_event(state: &mut AppState, text: &str) {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     if let Some(ref mut draft) = state.note_draft {
-        draft.push_str(text);
+        draft.push_str(&normalized);
     } else if let Some(ref mut finder) = state.file_finder {
-        finder.query.push_str(text);
+        finder.query.push_str(&normalized);
         let files = state.output.files.clone();
         finder.update_matches(&files);
     }
@@ -103,6 +104,7 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
 
         let is_newline = key.code == KeyCode::Enter
             || key.code == KeyCode::Char('\n')
+            || key.code == KeyCode::Char('\r')
             || (key.modifiers.contains(KeyModifiers::CONTROL)
                 && matches!(
                     key.code,

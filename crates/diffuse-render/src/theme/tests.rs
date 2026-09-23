@@ -36,8 +36,36 @@ fn test_sgr_modifiers_application_and_reset() {
     assert!(bold_tok.ends_with("\x1b[22m"));
 
     let strike_tok = theme.render_token("mdStrike", "removed", "ctx", None, Some(9));
-    assert!(strike_tok.starts_with("\x1b[9m"));
-    assert!(strike_tok.ends_with("\x1b[29m"));
+    assert_eq!(strike_tok, "\x1b[2;9mremoved\x1b[29m\x1b[22m");
+}
+
+#[test]
+fn test_strikethrough_diff_token_dim_strike_no_clashing_foreground() {
+    let theme = DiffuseTheme::DEFAULT;
+    for (row_kind, tok_kind) in [
+        ("ctx", "ctx"),
+        ("add", "add"),
+        ("del", "del"),
+        ("mod", "ctx"),
+    ] {
+        let tok = theme.render_token("mdStrike", "deprecated", row_kind, Some(tok_kind), Some(9));
+        assert!(
+            tok.starts_with("\x1b[2;9m"),
+            "must emit dim + strike stacked SGR for {row_kind}: {tok:?}"
+        );
+        assert!(
+            tok.ends_with("\x1b[29m\x1b[22m"),
+            "must reset strike then dim for {row_kind}: {tok:?}"
+        );
+        assert!(
+            !tok.contains("\x1b[38;5;168m"),
+            "must not contain pink foreground in {row_kind}: {tok:?}"
+        );
+        assert!(
+            !tok.contains("\x1b[39m"),
+            "must not emit foreground reset when inheriting row text color: {tok:?}"
+        );
+    }
 }
 
 #[test]

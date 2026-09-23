@@ -7,7 +7,7 @@ pub mod palette;
 pub use palette::*;
 
 pub use crate::ansi::{
-    Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, strip_ansi,
+    Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -162,7 +162,11 @@ impl DiffuseTheme {
         let ansi_color = self.palette.syntax_token_color(color, rk);
 
         if let Some(s) = sgr {
-            let _ = write!(out, "\x1b[{s}m");
+            if let Some(on) = sgr_on_str(s) {
+                let _ = out.write_str(on);
+            } else {
+                let _ = write!(out, "\x1b[{s}m");
+            }
         }
         if let Some(c) = ansi_color {
             let _ = c.write_fg(out);
@@ -255,7 +259,7 @@ impl DiffuseTheme {
             "toolDiffContext" | "muted" => Some("\x1b[38;5;241m"),
             "warning" | "note" => Some("\x1b[38;5;220m"),
             "note_tint_bg" => Some("\x1b[48;2;76;64;20m"),
-            "border" => Some("\x1b[38;5;238m"),
+            "border" => Some("\x1b[38;5;243m"),
             _ => None,
         }
     }

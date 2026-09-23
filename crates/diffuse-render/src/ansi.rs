@@ -294,21 +294,39 @@ impl AnsiStyle {
     }
 }
 
-/// Return the ANSI sequence to turn on an SGR modifier (e.g. 1=bold, 3=italic,
-/// 4=underline, 9=strike).
+/// Return the static ANSI sequence to turn on a known SGR modifier, if
+/// available.
+#[must_use]
+pub fn sgr_on_str(sgr: u32) -> Option<&'static str> {
+    match sgr {
+        1 => Some("\x1b[1m"),
+        2 => Some("\x1b[2m"),
+        3 => Some("\x1b[3m"),
+        4 => Some("\x1b[4m"),
+        9 => Some("\x1b[2;9m"), // dim + strikethrough
+        _ => None,
+    }
+}
+
+/// Return the ANSI sequence to turn on an SGR modifier (e.g. 1=bold, 2=dim,
+/// 3=italic, 4=underline, 9=dim+strike).
 #[must_use]
 pub fn sgr_on(sgr: u32) -> String {
-    format!("\x1b[{sgr}m")
+    if let Some(s) = sgr_on_str(sgr) {
+        s.to_string()
+    } else {
+        format!("\x1b[{sgr}m")
+    }
 }
 
 /// Return the ANSI sequence to turn off an SGR modifier.
 #[must_use]
 pub fn sgr_off(sgr: u32) -> Option<&'static str> {
     match sgr {
-        1 => Some("\x1b[22m"), // bold off
-        3 => Some("\x1b[23m"), // italic off
-        4 => Some("\x1b[24m"), // underline off
-        9 => Some("\x1b[29m"), // strikethrough off
+        1 | 2 => Some("\x1b[22m"),     // bold / dim off
+        3 => Some("\x1b[23m"),         // italic off
+        4 => Some("\x1b[24m"),         // underline off
+        9 => Some("\x1b[29m\x1b[22m"), // strikethrough off, dim off
         _ => None,
     }
 }
@@ -317,10 +335,10 @@ pub fn sgr_off(sgr: u32) -> Option<&'static str> {
 #[must_use]
 pub fn sgr_off_code(sgr: u32) -> Option<u32> {
     match sgr {
-        1 => Some(22), // bold off
-        3 => Some(23), // italic off
-        4 => Some(24), // underline off
-        9 => Some(29), // strikethrough off
+        1 | 2 => Some(22), // bold / dim off
+        3 => Some(23),     // italic off
+        4 => Some(24),     // underline off
+        9 => Some(29),     // strikethrough off
         _ => None,
     }
 }

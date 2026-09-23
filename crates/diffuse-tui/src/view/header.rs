@@ -4,7 +4,7 @@ use crate::{
     core::{counts::FileCounts, wire::OutputFile},
     render::{
         slice_by_visual_width,
-        width::{char_width, display_width, grapheme_width},
+        width::{display_width, grapheme_width},
     },
 };
 use ratatui::{
@@ -19,19 +19,29 @@ use unicode_segmentation::UnicodeSegmentation;
 pub fn visible_width(s: &str) -> usize {
     let mut in_escape = false;
     let mut count = 0;
-    for c in s.chars() {
+    let mut text_start: Option<usize> = None;
+    for (i, c) in s.char_indices() {
         if c == '\x1b' {
+            if let Some(start) = text_start.take() {
+                count += display_width(&s[start..i]);
+            }
             in_escape = true;
         } else if in_escape {
             if c.is_ascii_alphabetic() {
                 in_escape = false;
             }
         } else if c == '\t' {
+            if let Some(start) = text_start.take() {
+                count += display_width(&s[start..i]);
+            }
             let tab_spaces = 4 - (count % 4);
             count += tab_spaces;
-        } else {
-            count += char_width(c);
+        } else if text_start.is_none() {
+            text_start = Some(i);
         }
+    }
+    if let Some(start) = text_start {
+        count += display_width(&s[start..]);
     }
     count
 }
