@@ -2279,7 +2279,8 @@ fn test_guarded_dels_tail_candidates_parity() {
         above_ctx: 0,
         below_ctx: 0,
     };
-    let guarded = super::pairing::guarded_dels(&h, None, None, rs);
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let guarded = super::pairing::guarded_dels(&h, None, None, rs, &mut fn_cache);
     // Since neither del survives in new_content and neither is identical,
     // guarded should not skip them
     assert!(!guarded.contains(&0));

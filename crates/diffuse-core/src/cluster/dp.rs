@@ -1285,7 +1285,7 @@ pub(crate) struct DpRowMeta {
 
 /// Scratch arena for DP cluster solving to reuse memory across clusters.
 #[derive(Default)]
-pub(crate) struct DpScratchArena {
+pub struct DpScratchArena {
     pub(crate) interner: TokenInterner,
     pub(crate) old_tokens: Vec<DpTokens>,
     pub(crate) new_tokens: Vec<DpTokens>,
@@ -1407,6 +1407,13 @@ pub fn solve_cluster_with_tls(
         "Cluster solved"
     );
     sol
+}
+
+/// Run `f` with this thread's reusable DP scratch arena: every Vec (tokens,
+/// metas, flattened token streams, both skyline matrices) keeps its capacity
+/// across calls instead of regrowing from zero per cluster.
+pub fn with_tls_arena<R>(f: impl FnOnce(&mut DpScratchArena) -> R) -> R {
+    ARENA.with_borrow_mut(f)
 }
 
 /// Solve with explicit weights (the tuning surface for tests and Phase 5

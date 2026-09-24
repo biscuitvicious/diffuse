@@ -22,7 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{
     collapse::PairingResults,
     parse::{Hunk, Row},
-    scope::{fn_of_exists, fn_of_str, is_tail_before_closing},
+    scope::{fn_of_exists, is_tail_before_closing},
     syntax::profile::LangProfile,
 };
 
@@ -64,14 +64,38 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
     (del_runs, run_of, del_ids)
 }
 
+/// Per-hunk memo of [`crate::scope::fn_of_str`] keyed by `(old_side, line)`:
+/// the guarded-dels pass and the transition-walk pair checks query the same
+/// rows' enclosing scopes repeatedly; each is resolved once per hunk.
+type FnScopeCache<'a> = FxHashMap<(bool, u32), Option<&'a str>>;
+
+fn memo_fn_of_str<'a>(
+    cache: &mut FnScopeCache<'a>,
+    old_side: bool,
+    content: Option<&'a [&'a str]>,
+    line: Option<u32>,
+    profile: Option<&LangProfile>,
+) -> Option<&'a str> {
+    let Some(line) = line else {
+        return None;
+    };
+    if let Some(cached) = cache.get(&(old_side, line)) {
+        return *cached;
+    }
+    let computed = crate::scope::fn_of_str(content, Some(line), profile);
+    cache.insert((old_side, line), computed);
+    computed
+}
+
 /// The dels the legacy `pass_pairing` refuses to pair (its top-of-loop
 /// guards), computed identically — the DP's pairs over these dels are
 /// dropped so both engines leave the same rows standalone.
-pub(crate) fn guarded_dels(
+pub(crate) fn guarded_dels<'a>(
     h: &Hunk,
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
+    old_content: Option<&'a [&'a str]>,
+    new_content: Option<&'a [&'a str]>,
     profile: Option<&LangProfile>,
+    fn_cache: &mut FnScopeCache<'a>,
 ) -> FxHashSet<usize> {
     if !h
         .rows
@@ -138,7 +162,7 @@ pub(crate) fn guarded_dels(
             && is_tail_before_closing(a.new_line(), false, old_content, new_content, profile)
         {
             has_any_add_tail = true;
-            if let Some(afn) = fn_of_str(new_content, a.new_line(), profile) {
+            if let Some(afn) = memo_fn_of_str(fn_cache, false, new_content, a.new_line(), profile) {
                 add_tail_fns.insert(afn);
             }
         }
@@ -171,7 +195,7 @@ pub(crate) fn guarded_dels(
         let del_is_tail =
             is_tail_before_closing(r.old_line(), true, old_content, new_content, profile);
         let del_fn = if del_is_tail || (!has_same_hunk_add && !has_same_hunk_property_add) {
-            fn_of_str(old_content, r.old_line(), profile)
+            memo_fn_of_str(fn_cache, true, old_content, r.old_line(), profile)
         } else {
             None
         };
@@ -211,19 +235,20 @@ pub(crate) fn guarded_dels(
     skip
 }
 
-fn is_fragment_pair_rejected(
+fn is_fragment_pair_rejected<'a>(
     gd: usize,
     ga: usize,
     h: &Hunk,
-    old_content: Option<&[&str]>,
-    new_content: Option<&[&str]>,
+    old_content: Option<&'a [&'a str]>,
+    new_content: Option<&'a [&'a str]>,
     profile: Option<&LangProfile>,
+    fn_cache: &mut FnScopeCache<'a>,
 ) -> bool {
     let r = &h.rows[gd];
     let a = &h.rows[ga];
 
-    let del_fn = fn_of_str(old_content, r.old_line(), profile);
-    let add_fn = fn_of_str(new_content, a.new_line(), profile);
+    let del_fn = memo_fn_of_str(fn_cache, true, old_content, r.old_line(), profile);
+    let add_fn = memo_fn_of_str(fn_cache, false, new_content, a.new_line(), profile);
     if let (Some(dfn), Some(afn)) = (del_fn, add_fn)
         && dfn != afn
         && (fn_of_exists(new_content, dfn, profile) || fn_of_exists(old_content, afn, profile))
@@ -256,7 +281,8 @@ pub fn dp_pairing(
         std::sync::atomic::Ordering::Relaxed,
     );
 
-    let guards = guarded_dels(h, old_content, new_content, profile);
+    let mut fn_cache: FnScopeCache = FxHashMap::default();
+    let guards = guarded_dels(h, old_content, new_content, profile, &mut fn_cache);
     let t2 = std::time::Instant::now();
     T_DP[1].fetch_add(
         t2.duration_since(t1).as_micros() as u64,
@@ -290,7 +316,6 @@ pub fn dp_pairing(
     let mut pair_of: FxHashMap<usize, usize> = FxHashMap::default();
     let mut collapse_blocks: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
     let mut expand_blocks: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
-    let mut arena = super::dp::DpScratchArena::default();
 
     let segments = partition_hunk_segments(h, old_content, new_content, profile);
     let t4 = std::time::Instant::now();
@@ -299,126 +324,155 @@ pub fn dp_pairing(
         std::sync::atomic::Ordering::Relaxed,
     );
 
-    for seg in segments {
-        let cluster = match seg {
-            HunkSegment::Cluster(c) => c,
-            HunkSegment::Context(_) => continue,
-        };
-        let t_s0 = std::time::Instant::now();
-        let sol = super::dp::solve_cluster_with_arena(
-            &cluster,
-            profile,
-            &super::dp::Weights::default(),
-            &mut arena,
-        );
-        let t_s1 = std::time::Instant::now();
-        T_DP[4].fetch_add(
-            t_s1.duration_since(t_s0).as_micros() as u64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+    // Reuse the thread-local scratch arena across hunks: every Vec (tokens,
+    // metas, flattened token streams, both skyline matrices) keeps its
+    // capacity instead of regrowing from zero per hunk.
+    super::dp::with_tls_arena(|arena| {
+        for seg in segments {
+            let cluster = match seg {
+                HunkSegment::Cluster(c) => c,
+                HunkSegment::Context(_) => continue,
+            };
+            let t_s0 = std::time::Instant::now();
+            let sol = super::dp::solve_cluster_with_arena(
+                &cluster,
+                profile,
+                &super::dp::Weights::default(),
+                arena,
+            );
+            let t_s1 = std::time::Instant::now();
+            T_DP[4].fetch_add(
+                t_s1.duration_since(t_s0).as_micros() as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
 
-        // Walk the DP's consumption of cluster sides, mapping transitions
-        // to global indices via line numbers.
-        let mut oi = 0usize;
-        let mut ni = 0usize;
-        let global_del = |oi: usize| -> Option<usize> {
-            cluster
-                .old_rows
-                .get(oi)
-                .and_then(Row::old_line)
-                .and_then(|n| del_by_num.get(&n).copied())
-        };
-        let global_add = |ni: usize| -> Option<usize> {
-            cluster
-                .new_rows
-                .get(ni)
-                .and_then(Row::new_line)
-                .and_then(|n| add_by_num.get(&n).copied())
-        };
-        for t in &sol.transitions {
-            match t {
-                dp::DpOp::Del => {
-                    oi += 1;
-                }
-                dp::DpOp::Add => {
-                    ni += 1;
-                }
-                dp::DpOp::Mod { .. } | dp::DpOp::Mov => {
-                    if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni))
-                        && !guards.contains(&gd)
-                        && !h.rows[gd].is_moved()
-                        && !h.rows[ga].is_moved()
-                        && !pair_of.contains_key(&ga)
-                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
-                    {
-                        pair_of.insert(ga, gd);
+            // Walk the DP's consumption of cluster sides, mapping transitions
+            // to global indices via line numbers.
+            let mut oi = 0usize;
+            let mut ni = 0usize;
+            let global_del = |oi: usize| -> Option<usize> {
+                cluster
+                    .old_rows
+                    .get(oi)
+                    .and_then(Row::old_line)
+                    .and_then(|n| del_by_num.get(&n).copied())
+            };
+            let global_add = |ni: usize| -> Option<usize> {
+                cluster
+                    .new_rows
+                    .get(ni)
+                    .and_then(Row::new_line)
+                    .and_then(|n| add_by_num.get(&n).copied())
+            };
+            for t in &sol.transitions {
+                match t {
+                    dp::DpOp::Del => {
+                        oi += 1;
                     }
-                    oi += 1;
-                    ni += 1;
-                }
-                dp::DpOp::Expand { anchor, k, .. } => {
-                    if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni + anchor))
-                        && !guards.contains(&gd)
-                        && !h.rows[gd].is_moved()
-                        && !h.rows[ga].is_moved()
-                        && !pair_of.contains_key(&ga)
-                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
-                    {
-                        pair_of.insert(ga, gd);
-                        let mut block_adds = Vec::with_capacity(*k);
-                        let mut all_valid = true;
-                        for offset in 0..*k {
-                            if let Some(a) = global_add(ni + offset) {
-                                if h.rows[a].is_moved() {
+                    dp::DpOp::Add => {
+                        ni += 1;
+                    }
+                    dp::DpOp::Mod { .. } | dp::DpOp::Mov => {
+                        if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni))
+                            && !guards.contains(&gd)
+                            && !h.rows[gd].is_moved()
+                            && !h.rows[ga].is_moved()
+                            && !pair_of.contains_key(&ga)
+                            && !is_fragment_pair_rejected(
+                                gd,
+                                ga,
+                                h,
+                                old_content,
+                                new_content,
+                                profile,
+                                &mut fn_cache,
+                            )
+                        {
+                            pair_of.insert(ga, gd);
+                        }
+                        oi += 1;
+                        ni += 1;
+                    }
+                    dp::DpOp::Expand { anchor, k, .. } => {
+                        if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni + anchor))
+                            && !guards.contains(&gd)
+                            && !h.rows[gd].is_moved()
+                            && !h.rows[ga].is_moved()
+                            && !pair_of.contains_key(&ga)
+                            && !is_fragment_pair_rejected(
+                                gd,
+                                ga,
+                                h,
+                                old_content,
+                                new_content,
+                                profile,
+                                &mut fn_cache,
+                            )
+                        {
+                            pair_of.insert(ga, gd);
+                            let mut block_adds = Vec::with_capacity(*k);
+                            let mut all_valid = true;
+                            for offset in 0..*k {
+                                if let Some(a) = global_add(ni + offset) {
+                                    if h.rows[a].is_moved() {
+                                        all_valid = false;
+                                        break;
+                                    }
+                                    block_adds.push(a);
+                                } else {
                                     all_valid = false;
                                     break;
                                 }
-                                block_adds.push(a);
-                            } else {
-                                all_valid = false;
-                                break;
+                            }
+                            if all_valid && block_adds.len() == *k {
+                                expand_blocks.insert(ga, block_adds);
                             }
                         }
-                        if all_valid && block_adds.len() == *k {
-                            expand_blocks.insert(ga, block_adds);
-                        }
+                        oi += 1;
+                        ni += k;
                     }
-                    oi += 1;
-                    ni += k;
-                }
-                dp::DpOp::Collapse { anchor, k, .. } => {
-                    if let (Some(gd), Some(ga)) = (global_del(oi + anchor), global_add(ni))
-                        && !guards.contains(&gd)
-                        && !h.rows[gd].is_moved()
-                        && !h.rows[ga].is_moved()
-                        && !pair_of.contains_key(&ga)
-                        && !is_fragment_pair_rejected(gd, ga, h, old_content, new_content, profile)
-                    {
-                        pair_of.insert(ga, gd);
-                        let mut block_dels = Vec::with_capacity(*k);
-                        let mut all_valid = true;
-                        for offset in 0..*k {
-                            if let Some(d) = global_del(oi + offset) {
-                                if guards.contains(&d) || h.rows[d].is_moved() {
+                    dp::DpOp::Collapse { anchor, k, .. } => {
+                        if let (Some(gd), Some(ga)) = (global_del(oi + anchor), global_add(ni))
+                            && !guards.contains(&gd)
+                            && !h.rows[gd].is_moved()
+                            && !h.rows[ga].is_moved()
+                            && !pair_of.contains_key(&ga)
+                            && !is_fragment_pair_rejected(
+                                gd,
+                                ga,
+                                h,
+                                old_content,
+                                new_content,
+                                profile,
+                                &mut fn_cache,
+                            )
+                        {
+                            pair_of.insert(ga, gd);
+                            let mut block_dels = Vec::with_capacity(*k);
+                            let mut all_valid = true;
+                            for offset in 0..*k {
+                                if let Some(d) = global_del(oi + offset) {
+                                    if guards.contains(&d) || h.rows[d].is_moved() {
+                                        all_valid = false;
+                                        break;
+                                    }
+                                    block_dels.push(d);
+                                } else {
                                     all_valid = false;
                                     break;
                                 }
-                                block_dels.push(d);
-                            } else {
-                                all_valid = false;
-                                break;
+                            }
+                            if all_valid && block_dels.len() == *k {
+                                collapse_blocks.insert(ga, block_dels);
                             }
                         }
-                        if all_valid && block_dels.len() == *k {
-                            collapse_blocks.insert(ga, block_dels);
-                        }
+                        oi += k;
+                        ni += 1;
                     }
-                    oi += k;
-                    ni += 1;
                 }
             }
         }
-    }
+    });
 
     PairingResults {
         pair_of,
