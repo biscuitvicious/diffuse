@@ -14,7 +14,7 @@ use std::cell::RefCell;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{parse::Spans, syntax::profile::LangProfile, token::WhitespaceKind};
+use crate::{merge::RunKind, parse::Spans, syntax::profile::LangProfile, token::WhitespaceKind};
 
 /// Slice `s` by char offsets (the port's span convention). The JS
 /// `String.slice(start, end)` clamps out-of-range indices and returns an
@@ -1225,6 +1225,19 @@ pub fn word_spans_with_profile(
     word_spans_with_profile_and_cap(old_text, new_text, profile, token_product_cap())
 }
 
+/**
+ * Word-level change spans plus owned merged runs with active syntax profile
+ * and default token product cap (see
+ * `word_spans_and_runs_with_profile_and_cap`).
+ */
+pub fn word_spans_and_runs_with_profile(
+    old_text: &str,
+    new_text: &str,
+    profile: Option<&LangProfile>,
+) -> (WordSpans, Vec<(RunKind, String)>) {
+    word_spans_and_runs_with_profile_and_cap(old_text, new_text, profile, token_product_cap())
+}
+
 #[inline]
 fn truncate_for_trace(s: &str, max_len: usize) -> &str {
     match s.char_indices().nth(max_len) {
@@ -1256,6 +1269,34 @@ pub fn word_spans_with_profile_and_cap(
     profile: Option<&LangProfile>,
     cap: usize,
 ) -> WordSpans {
+    word_spans_and_runs_with_profile_and_cap(old_text, new_text, profile, cap).0
+}
+
+/**
+ * Word-level change spans plus the owned merged runs from a single
+ * alignment tape build. Render unification: these runs always derive from
+ * the same profiled tape as the spans, so render consuming them can never
+ * contradict the spans' tape (see `merge::tests` agreement/divergence
+ * pins).
+ */
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(
+        old = %truncate_for_trace(old_text, 40),
+        new = %truncate_for_trace(new_text, 40),
+        strategy = tracing::field::Empty,
+        anchors = tracing::field::Empty,
+        matched_chars = tracing::field::Empty,
+        ratio = tracing::field::Empty
+    )
+)]
+pub fn word_spans_and_runs_with_profile_and_cap(
+    old_text: &str,
+    new_text: &str,
+    profile: Option<&LangProfile>,
+    cap: usize,
+) -> (WordSpans, Vec<(RunKind, String)>) {
     let tape = crate::tape::AlignmentTape::from_texts_with_cap(old_text, new_text, profile, cap);
     let res = tape.to_spans();
 
@@ -1280,7 +1321,12 @@ pub fn word_spans_with_profile_and_cap(
         "WordSpans add spans must be non-overlapping and sorted"
     );
 
-    res
+    let runs = tape
+        .to_merged_runs()
+        .iter()
+        .map(|r| (r.kind, r.text.to_string()))
+        .collect();
+    (res, runs)
 }
 
 #[cfg(test)]

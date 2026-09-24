@@ -2,7 +2,7 @@
 //!
 //! Port of TypeScript's `resolveRefs`, `loadReview`, and `rustBackendLoad`.
 
-use std::{collections::HashMap, fs, path::Path, process::Command};
+use std::{collections::HashMap, fs, path::Path, process::Command, sync::Arc};
 
 /// Fixed unified-diff context width used when generating diffs from git (`-U`).
 ///
@@ -534,6 +534,7 @@ pub fn stream_git_repo_to_producer(
                     synthetic_diff.push('\n');
                 }
                 let parsed_files = crate::parse::parse_diff(&synthetic_diff);
+                let synthetic_arc = Arc::new(synthetic_diff);
                 for mut f in parsed_files {
                     f.status = crate::parse::FileStatus::Untracked;
                     producer.push(crate::streaming::FileJob {
@@ -541,7 +542,7 @@ pub fn stream_git_repo_to_producer(
                         file: f,
                         new_content: Some(content.clone().into()),
                         old_content: None,
-                        diff_fallback: Some(synthetic_diff.clone().into()),
+                        diff_fallback: Some(Arc::clone(&synthetic_arc)),
                     });
                     file_idx += 1;
                 }
@@ -802,7 +803,7 @@ pub fn load_single_file_diff(
             f,
             Some(&content),
             None,
-            Some(&synthetic_diff),
+            Some(Arc::new(synthetic_diff)),
             opts,
         );
         rendered.raw_source = Some(crate::wire::RawFileSource::Git {
@@ -891,7 +892,7 @@ pub fn load_single_file_diff(
     }
 
     let fallback = if old_c.is_none() && f.status != crate::parse::FileStatus::Added {
-        Some(diff_str.as_str())
+        Some(Arc::new(diff_str))
     } else {
         None
     };

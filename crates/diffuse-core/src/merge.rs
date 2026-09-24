@@ -142,6 +142,27 @@ pub fn is_pure_deletion_mod(r: &Row) -> bool {
 /// standalone removal like `resolved_`) inserts at its own position, and a
 /// The merged runs of a mod row's display.
 pub fn merged_runs<'a>(r: &'a Row) -> Vec<Run<'a>> {
+    merged_runs_with_profile(r, None)
+}
+
+/// Profile-aware `merged_runs`: prefers the profiled-tape runs handed from
+/// assemble (`Row::cached_runs`); otherwise recomputes with the given
+/// profile (callers that know the row's language pass it so the recompute
+/// matches the spans' tape — see `display_text_with_profile`).
+pub fn merged_runs_with_profile<'a>(
+    r: &'a Row,
+    profile: Option<&crate::syntax::profile::LangProfile>,
+) -> Vec<Run<'a>> {
+    let cached = r.cached_runs();
+    if !cached.is_empty() {
+        return cached
+            .iter()
+            .map(|(kind, text)| Run {
+                kind: *kind,
+                text: text.as_str(),
+            })
+            .collect();
+    }
     let Some(del_text) = r.del_text() else {
         return Vec::new();
     };
@@ -155,18 +176,17 @@ pub fn merged_runs<'a>(r: &'a Row) -> Vec<Run<'a>> {
             s
         }
         _ => {
-            computed_spans = crate::lcs::word_spans(del_text, r.text());
+            computed_spans = crate::lcs::word_spans_with_profile(del_text, r.text(), profile);
             &computed_spans
         }
     };
-    let runs = merged_runs_from_texts(del_text, r.text(), spans);
+    let runs = merged_runs_from_texts_with_profile(del_text, r.text(), spans, profile);
     if matches!(r, Row::Mod { .. }) {
-        let rev = project_reverse(&runs);
         crate::ensure!(
-            rev == del_text,
+            project_reverse_matches(&runs, del_text),
             "1-to-1 Row::Mod project_reverse must perfectly reconstruct old del_text. Expected: {:?}, Got: {:?}",
             del_text,
-            rev
+            project_reverse(&runs)
         );
     }
     runs
@@ -178,6 +198,18 @@ pub fn merged_runs_from_texts<'a>(
     del_text: &'a str,
     add_text: &'a str,
     spans: &Spans,
+) -> Vec<Run<'a>> {
+    merged_runs_from_texts_with_profile(del_text, add_text, spans, None)
+}
+
+/// Profile-aware `merged_runs_from_texts`: when both span sides are present
+/// the runs come from an alignment tape built with the given profile (the
+/// same tape that produced the spans, under render unification).
+pub fn merged_runs_from_texts_with_profile<'a>(
+    del_text: &'a str,
+    add_text: &'a str,
+    spans: &Spans,
+    profile: Option<&crate::syntax::profile::LangProfile>,
 ) -> Vec<Run<'a>> {
     if spans.del.is_empty() {
         let mut runs = Vec::new();
@@ -232,7 +264,7 @@ pub fn merged_runs_from_texts<'a>(
         return coalesce_runs(runs);
     }
 
-    let tape = crate::tape::AlignmentTape::from_texts(del_text, add_text, None);
+    let tape = crate::tape::AlignmentTape::from_texts(del_text, add_text, profile);
     tape.to_merged_runs()
 }
 
@@ -267,6 +299,14 @@ fn char_len_of(s: &str) -> usize {
 /// The merged display string of a row (the runs joined; a wholesale mod is
 /// the whole-old + whole-new pair).
 pub fn display_text(r: &Row) -> String {
+    display_text_with_profile(r, None)
+}
+
+/// Profile-aware `display_text` (see `merged_runs_with_profile`).
+pub fn display_text_with_profile(
+    r: &Row,
+    profile: Option<&crate::syntax::profile::LangProfile>,
+) -> String {
     let use_merged = (matches!(r, Row::Mod { .. })
         || r.is_moved()
         || (matches!(r, Row::Add(_)) && r.del_text().is_some()))
@@ -277,7 +317,10 @@ pub fn display_text(r: &Row) -> String {
     if is_wholesale_mod(r) {
         return format!("{}{}", r.del_text().unwrap_or_default(), r.text());
     }
-    merged_runs(r).iter().map(|x| x.text).collect()
+    merged_runs_with_profile(r, profile)
+        .iter()
+        .map(|x| x.text)
+        .collect()
 }
 
 /// Project the row runs forward to reconstruct the new line (stripping Del
@@ -296,6 +339,20 @@ pub fn project_reverse(runs: &[Run]) -> String {
         .filter(|r| r.kind != RunKind::Add)
         .map(|r| r.text)
         .collect()
+}
+
+/// Checks if backward projection of runs matches `del_text` without allocating.
+pub fn project_reverse_matches(runs: &[Run], del_text: &str) -> bool {
+    let mut remainder = del_text;
+    for r in runs {
+        if r.kind != RunKind::Add {
+            if !remainder.starts_with(r.text) {
+                return false;
+            }
+            remainder = &remainder[r.text.len()..];
+        }
+    }
+    remainder.is_empty()
 }
 
 #[cfg(test)]

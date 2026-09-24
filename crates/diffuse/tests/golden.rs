@@ -36,12 +36,12 @@ use diffuse::{
     core::{
         apply::{apply_file_diff, apply_hunk_rows},
         lcs::char_len,
-        merge::{RunKind, display_text, is_wholesale_mod},
+        merge::{RunKind, display_text_with_profile, is_wholesale_mod},
         parse::{Row, RowKind},
         wire::{MovSide, OutputFile, PipelineOutput},
     },
     render::{default_theme, encode_sgr, render_pipeline_output},
-    syntax::registry::lang_profile,
+    syntax::{profile::LangProfile, registry::lang_profile},
 };
 
 #[derive(Deserialize, Serialize)]
@@ -57,6 +57,18 @@ struct Fixture {
 
 fn golden_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden"))
+}
+
+/// The language profile a file's rows were built with — mirrors
+/// `pipeline::process_single_diff_file` (notes render as markdown; anything
+/// else keys off the path extension).
+fn row_lang_profile(f: &OutputFile) -> Option<&'static LangProfile> {
+    if f.status == "note" {
+        lang_profile("md")
+    } else {
+        let ext = f.path.rsplit('.').next().unwrap_or("");
+        lang_profile(ext)
+    }
 }
 
 fn is_golden_initialized_at(path: &Path) -> bool {
@@ -337,8 +349,10 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 }
                 // The runs concatenate to the display text; del runs carry
                 // no color (the strike is the renderer's), common/add do.
+                // The display text derives from the row's language profile —
+                // the same one the pipeline used to build the row's spans.
                 let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
-                let expected = display_text(&Row::from(r));
+                let expected = display_text_with_profile(&Row::from(r), row_lang_profile(f));
                 check!(
                     concat == expected,
                     "{}:{}: runs concatenate to the display text ({} chars vs {})",

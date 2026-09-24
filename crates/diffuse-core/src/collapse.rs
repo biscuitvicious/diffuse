@@ -13,7 +13,8 @@ use std::cmp::Ordering;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    lcs::{char_slice, tokenize_line, word_spans_with_profile},
+    lcs::{tokenize_line, word_spans_and_runs_with_profile, word_spans_with_profile},
+    merge::RunKind,
     parse::{AddLine, DelLine, Hunk, Row, Spans},
     shift::pass_shift_hunk,
     syntax::profile::LangProfile,
@@ -37,6 +38,10 @@ pub struct AssembledMods {
     pub add_spans: FxHashMap<usize, (Spans, String)>,
 }
 
+/// Per paired del row: donor text, first del number, word spans, and the
+/// profiled-tape merged runs handed from assemble to render.
+type PrecomputedPair = (String, crate::parse::LineNum, Spans, Vec<(RunKind, String)>);
+
 /// Context holding all pairing maps and sets for assembly.
 pub struct PairingContext<'a> {
     pub pair_of: &'a FxHashMap<usize, usize>,
@@ -51,22 +56,37 @@ pub struct PairingContext<'a> {
 /// with its word-diff spans baked in.
 ///
 /// Composed of 4 pure passes over the diff AST.
+pub static T_COLLAPSE: [std::sync::atomic::AtomicU64; 6] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+
 #[tracing::instrument(
     level = "debug",
     skip(h, old_content, new_content, profile),
     fields(old_start = h.old_start, new_start = h.new_start, row_count = h.rows.len())
 )]
+
 pub fn collapse_hunk_rows(
     h: &Hunk,
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
+    let t0 = std::time::Instant::now();
     let h_norm = pass_shift_hunk(h, profile);
     let h = &h_norm;
+    let t1 = std::time::Instant::now();
+    T_COLLAPSE[0].fetch_add(
+        t1.duration_since(t0).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Pass 1: DP cluster pairing engine
     let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
+    let t2 = std::time::Instant::now();
+    T_COLLAPSE[1].fetch_add(
+        t2.duration_since(t1).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
     let add_of: FxHashMap<usize, usize> =
@@ -82,6 +102,11 @@ pub fn collapse_hunk_rows(
         expand_blocks: &p1.expand_blocks,
     };
     let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
+    let t3 = std::time::Instant::now();
+    T_COLLAPSE[2].fetch_add(
+        t3.duration_since(t2).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Pass 3: Filter verbatim reflow dels and adds
     let p3 = pass_filter_reflows(
@@ -92,6 +117,11 @@ pub fn collapse_hunk_rows(
         &pairing_ctx,
         profile,
     );
+    let t4 = std::time::Instant::now();
+    T_COLLAPSE[3].fetch_add(
+        t4.duration_since(t3).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
     let res = pass_sort_ordered_walk(
@@ -101,6 +131,11 @@ pub fn collapse_hunk_rows(
         &p3.kept_adds,
         &p2.add_spans,
         p3.reflow_ctx,
+    );
+    let t5 = std::time::Instant::now();
+    T_COLLAPSE[4].fetch_add(
+        t5.duration_since(t4).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
     );
 
     crate::ensure!(
@@ -209,36 +244,36 @@ pub fn pass_assemble_mods(
 
     use rayon::prelude::*;
 
-    let mut precomputed_pairs: FxHashMap<usize, (String, crate::parse::LineNum, Spans)> =
-        if ctx.paired_dels.len() > 1 {
-            ctx.paired_dels
-                .par_iter()
-                .map(|&ri| {
-                    let add_ri = ctx.add_of[&ri];
-                    let add = &h.rows[add_ri];
-                    let (del_text, first_old_num) =
-                        if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
-                            let lines: Vec<&str> =
-                                block_dels.iter().map(|&di| h.rows[di].text()).collect();
-                            let joined = join_collapse_lines(&lines, add.text());
-                            let first_num = block_dels
-                                .first()
-                                .and_then(|&di| h.rows[di].old_line_num())
-                                .unwrap_or_else(|| h.rows[ri].old_line_num().unwrap());
-                            (joined, first_num)
-                        } else {
-                            (
-                                h.rows[ri].text().to_string(),
-                                h.rows[ri].old_line_num().unwrap(),
-                            )
-                        };
-                    let spans = word_spans_with_profile(&del_text, add.text(), profile);
-                    (ri, (del_text, first_old_num, spans))
-                })
-                .collect()
-        } else {
-            FxHashMap::default()
-        };
+    let mut precomputed_pairs: FxHashMap<usize, PrecomputedPair> = if ctx.paired_dels.len() > 32 {
+        ctx.paired_dels
+            .par_iter()
+            .map(|&ri| {
+                let add_ri = ctx.add_of[&ri];
+                let add = &h.rows[add_ri];
+                let (del_text, first_old_num) = if let Some(block_dels) =
+                    ctx.collapse_blocks.get(&add_ri)
+                {
+                    let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
+                    let joined = join_collapse_lines(&lines, add.text());
+                    let first_num = block_dels
+                        .first()
+                        .and_then(|&di| h.rows[di].old_line_num())
+                        .unwrap_or_else(|| h.rows[ri].old_line_num().unwrap());
+                    (joined, first_num)
+                } else {
+                    (
+                        h.rows[ri].text().to_string(),
+                        h.rows[ri].old_line_num().unwrap(),
+                    )
+                };
+                let (spans, runs) =
+                    word_spans_and_runs_with_profile(&del_text, add.text(), profile);
+                (ri, (del_text, first_old_num, spans, runs))
+            })
+            .collect()
+    } else {
+        FxHashMap::default()
+    };
 
     for (ri, r) in h.rows.iter().enumerate() {
         if matches!(r, Row::MovTgt(_)) {
@@ -256,27 +291,28 @@ pub fn pass_assemble_mods(
             let add_ri = ctx.add_of[&ri];
             let add = &h.rows[add_ri];
 
-            let (del_text, first_old_num, spans) = if let Some(pre) = precomputed_pairs.remove(&ri)
-            {
-                pre
-            } else {
-                let (del_text, first_old_num) = if let Some(block_dels) =
-                    ctx.collapse_blocks.get(&add_ri)
-                {
-                    let lines: Vec<&str> = block_dels.iter().map(|&di| h.rows[di].text()).collect();
-                    let joined = join_collapse_lines(&lines, add.text());
-                    let first_num = block_dels
-                        .first()
-                        .and_then(|&di| h.rows[di].old_line_num())
-                        .unwrap_or_else(|| r.old_line_num().unwrap());
-                    (joined, first_num)
+            let (del_text, first_old_num, spans, runs) =
+                if let Some(pre) = precomputed_pairs.remove(&ri) {
+                    pre
                 } else {
-                    (r.text().to_string(), r.old_line_num().unwrap())
-                };
+                    let (del_text, first_old_num) =
+                        if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+                            let lines: Vec<&str> =
+                                block_dels.iter().map(|&di| h.rows[di].text()).collect();
+                            let joined = join_collapse_lines(&lines, add.text());
+                            let first_num = block_dels
+                                .first()
+                                .and_then(|&di| h.rows[di].old_line_num())
+                                .unwrap_or_else(|| r.old_line_num().unwrap());
+                            (joined, first_num)
+                        } else {
+                            (r.text().to_string(), r.old_line_num().unwrap())
+                        };
 
-                let spans = word_spans_with_profile(&del_text, add.text(), profile);
-                (del_text, first_old_num, spans)
-            };
+                    let (spans, runs) =
+                        word_spans_and_runs_with_profile(&del_text, add.text(), profile);
+                    (del_text, first_old_num, spans, runs)
+                };
 
             if crate::merge::is_wholesale_replacement_spans(&del_text, add.text(), &spans) {
                 kept_dels.push(ri);
@@ -298,10 +334,18 @@ pub fn pass_assemble_mods(
             if !ctx.collapse_blocks.contains_key(&add_ri) {
                 let mut k = max_scanned + 1;
                 let has_deleted_content = spans.del.iter().any(|&(ds, de)| {
-                    let seg = char_slice(&del_text, ds, de);
-                    tokenize_line(seg)
-                        .into_iter()
-                        .any(|tok| !tok.trim().is_empty() && tok.chars().any(char::is_alphanumeric))
+                    if del_text.is_ascii() {
+                        let bytes = del_text.as_bytes();
+                        let start = ds.min(bytes.len());
+                        let end = de.min(bytes.len());
+                        bytes[start..end].iter().any(|&b| b.is_ascii_alphanumeric())
+                    } else {
+                        del_text
+                            .chars()
+                            .skip(ds)
+                            .take(de.saturating_sub(ds))
+                            .any(char::is_alphanumeric)
+                    }
                 });
 
                 if (has_deleted_content || ctx.expand_blocks.contains_key(&add_ri))
@@ -441,7 +485,8 @@ pub fn pass_assemble_mods(
 
             let mod_row = Row::Mod {
                 old_line: DelLine::new(first_old_num, del_text),
-                new_line: AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans),
+                new_line: AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans)
+                    .with_cached_runs(runs),
             };
             out.push(mod_row);
         } else if collapse_absorbed_dels.contains(&ri) {

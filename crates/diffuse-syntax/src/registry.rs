@@ -6,10 +6,7 @@
 //! regex crate's NFA on the ~12-alternative token alternation took ~47µs/call;
 //! the hand-rolled scan is ~ns/char (~50× faster) and behavior-identical.
 
-use std::{
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-};
+use std::sync::OnceLock;
 
 use regex::Regex;
 
@@ -128,7 +125,19 @@ pub fn lang_profile(ext: &str) -> Option<&'static LangProfile> {
 /// The token regex for a profile: the comment/string/number/id/ws/other
 /// alternation in the TS's fixed order.
 pub fn token_re_for(profile: &LangProfile) -> Regex {
-    static CACHE: OnceLock<Mutex<HashMap<u8, Regex>>> = OnceLock::new();
+    // Eight slots (3 flag bits): lock-free after warmup. The old
+    // Mutex<HashMap> serialized every classify call across worker threads;
+    // per-slot OnceLocks pay one atomic load on the hot path.
+    static CACHE: [OnceLock<Regex>; 8] = [
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+        OnceLock::new(),
+    ];
     // The key: the profile's feature flags (the regex depends on them —
     // comment kinds). The TS caches per profile; a per-flags code works the
     // same. THE CACHE MUST BE USED — the regex compile is expensive and the
@@ -136,12 +145,8 @@ pub fn token_re_for(profile: &LangProfile) -> Regex {
     let key = (u8::from(profile.hash_comment))
         | (u8::from(profile.line_comment) << 1)
         | (u8::from(profile.block_comment) << 2);
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    {
-        let guard = cache.lock().unwrap();
-        if let Some(re) = guard.get(&key) {
-            return re.clone();
-        }
+    if let Some(re) = CACHE[key as usize].get() {
+        return re.clone();
     }
     let parts: Vec<&str> = [
         if profile.hash_comment {
@@ -173,8 +178,12 @@ pub fn token_re_for(profile: &LangProfile) -> Regex {
     .flatten()
     .collect();
     let re = Regex::new(&format!("({})", parts.join("|"))).expect("token regex");
-    cache.lock().unwrap().insert(key, re.clone());
-    re
+    let slot = &CACHE[key as usize];
+    if let Some(cached) = slot.get() {
+        return cached.clone();
+    }
+    let _ = slot.set(re.clone());
+    slot.get().unwrap().clone()
 }
 
 // ---------------------------------------------------------------------------

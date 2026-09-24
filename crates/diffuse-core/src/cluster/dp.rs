@@ -43,10 +43,8 @@
 //! The weights are named constants — the tuning surface for the visual
 //! quality gates (`tests/AGENTS.md`).
 
-use std::collections::{HashMap, HashSet};
-
 use rayon::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
@@ -241,9 +239,9 @@ pub struct DpSolution {
 /// lengths, and each content token's byte offset within the raw line (for
 /// later subword-span mapping in Phase 4).
 pub struct DpTokens {
-    ids: Vec<u32>,
+    ids: SmallVec<[u32; 16]>,
     chars: usize,
-    token_chars: Vec<usize>,
+    token_chars: SmallVec<[usize; 16]>,
     token_mask: [u64; 4],
     token_multiset: SmallVec<[(u32, u16); 16]>,
 }
@@ -609,8 +607,8 @@ pub(crate) fn score_lcs_candidates_par(
 }
 
 pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
-    let mut ids = Vec::new();
-    let mut token_chars = Vec::new();
+    let mut ids: SmallVec<[u32; 16]> = SmallVec::new();
+    let mut token_chars: SmallVec<[usize; 16]> = SmallVec::new();
     let mut token_mask = [0u64; 4];
     let mut chars = 0;
     crate::lcs::for_each_token(text, |t| {
@@ -656,14 +654,14 @@ pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
 pub struct BlockMatch {
     matched: usize,
     /// Per block line: its matched token indices.
-    pub per_line: Vec<HashSet<usize>>,
+    pub per_line: Vec<FxHashSet<usize>>,
     /// (block line, token) -> old-side token index.
-    pub pair_of: HashMap<(usize, usize), usize>,
+    pub pair_of: FxHashMap<(usize, usize), usize>,
 }
 
 pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -> BlockMatch {
-    let mut ids = Vec::new();
-    let mut coords = Vec::new();
+    let mut ids: SmallVec<[u32; 16]> = SmallVec::new();
+    let mut coords: SmallVec<[(usize, usize); 16]> = SmallVec::new();
     for (li, lt) in block.iter().enumerate() {
         for (ti, &id) in lt.ids.iter().enumerate() {
             ids.push(id);
@@ -672,7 +670,7 @@ pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -
     }
     let pairs = lcs_pairs_ids(&old.ids, &ids, &interner.ws, &interner.alnum);
     let mut bm = BlockMatch {
-        per_line: vec![HashSet::new(); block.len()],
+        per_line: vec![FxHashSet::default(); block.len()],
         ..Default::default()
     };
     // pairs: old token index -> concatenated-block token index.
@@ -749,6 +747,9 @@ fn precompute_valid_blocks(
     let n = tokens.len();
     out_blocks.clear();
     out_blocks.resize(n, RowValidBlocks::default());
+    if n < 2 {
+        return;
+    }
     let mut merge_scratch: SmallVec<[(u32, u16); 32]> = SmallVec::new();
 
     for j in 0..n {
@@ -2058,9 +2059,9 @@ pub(crate) fn solve_cluster_matrix(
         precompute_valid_blocks(new_tokens, new_meta, new_row_token_starts, new_valid_blocks);
 
         let dummy_tok = DpTokens {
-            ids: Vec::new(),
+            ids: SmallVec::new(),
             chars: 0,
-            token_chars: Vec::new(),
+            token_chars: SmallVec::new(),
             token_mask: [0; 4],
             token_multiset: SmallVec::new(),
         };

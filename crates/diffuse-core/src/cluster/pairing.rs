@@ -22,7 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{
     collapse::PairingResults,
     parse::{Hunk, Row},
-    scope::{fn_of, fn_of_exists, is_tail_before_closing},
+    scope::{fn_of_exists, fn_of_str, is_tail_before_closing},
     syntax::profile::LangProfile,
 };
 
@@ -73,6 +73,14 @@ pub(crate) fn guarded_dels(
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> FxHashSet<usize> {
+    if !h
+        .rows
+        .iter()
+        .any(|r| matches!(r, Row::Del(_) | Row::MovSrc(_)))
+    {
+        return FxHashSet::default();
+    }
+
     let mut skip = FxHashSet::default();
     let mut new_trimmed_set: Option<FxHashSet<&str>> = None;
     let has_any_moved = h.rows.iter().any(|a| a.is_moved());
@@ -124,13 +132,13 @@ pub(crate) fn guarded_dels(
     // Precompute add-tail candidates to eliminate O(D * A) scans in the
     // deletion loop.
     let mut has_any_add_tail = false;
-    let mut add_tail_fns: FxHashSet<String> = FxHashSet::default();
+    let mut add_tail_fns: FxHashSet<&str> = FxHashSet::default();
     for a in &h.rows {
         if matches!(a, Row::Add(_) | Row::MovTgt(_))
             && is_tail_before_closing(a.new_line(), false, old_content, new_content, profile)
         {
             has_any_add_tail = true;
-            if let Some(afn) = fn_of(new_content, a.new_line(), profile) {
+            if let Some(afn) = fn_of_str(new_content, a.new_line(), profile) {
                 add_tail_fns.insert(afn);
             }
         }
@@ -163,7 +171,7 @@ pub(crate) fn guarded_dels(
         let del_is_tail =
             is_tail_before_closing(r.old_line(), true, old_content, new_content, profile);
         let del_fn = if del_is_tail || (!has_same_hunk_add && !has_same_hunk_property_add) {
-            fn_of(old_content, r.old_line(), profile)
+            fn_of_str(old_content, r.old_line(), profile)
         } else {
             None
         };
@@ -171,7 +179,7 @@ pub(crate) fn guarded_dels(
             && has_any_add_tail
             && match del_fn {
                 None => true,
-                Some(ref dfn) => add_tail_fns.contains(dfn),
+                Some(dfn) => add_tail_fns.contains(dfn),
             };
 
         if !r_trim.is_empty()
@@ -179,8 +187,7 @@ pub(crate) fn guarded_dels(
             && !has_same_hunk_add
             && !has_same_hunk_property_add
         {
-            let del_fn = fn_of(old_content, r.old_line(), profile);
-            let in_new = if let Some(ref dfn) = del_fn {
+            let in_new = if let Some(dfn) = del_fn {
                 // If function scope is known, check whether the line survives
                 // within the SAME function in the new file,
                 // rather than an unrelated scope.
@@ -215,9 +222,9 @@ fn is_fragment_pair_rejected(
     let r = &h.rows[gd];
     let a = &h.rows[ga];
 
-    let del_fn = fn_of(old_content, r.old_line(), profile);
-    let add_fn = fn_of(new_content, a.new_line(), profile);
-    if let (Some(dfn), Some(afn)) = (&del_fn, &add_fn)
+    let del_fn = fn_of_str(old_content, r.old_line(), profile);
+    let add_fn = fn_of_str(new_content, a.new_line(), profile);
+    if let (Some(dfn), Some(afn)) = (del_fn, add_fn)
         && dfn != afn
         && (fn_of_exists(new_content, dfn, profile) || fn_of_exists(old_content, afn, profile))
     {
@@ -232,50 +239,82 @@ fn is_fragment_pair_rejected(
 /// (global add row index -> global del row index). 1-to-1 `Mod`/`Mov`
 /// transitions pair directly; block transitions contribute their anchor
 /// pair; guarded dels never pair.
+pub static T_DP: [std::sync::atomic::AtomicU64; 6] =
+    [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+
 pub fn dp_pairing(
     h: &Hunk,
     old_content: Option<&[&str]>,
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> PairingResults {
+    let t0 = std::time::Instant::now();
     let (del_runs, run_of, del_ids) = legacy_index_maps(h);
-    let guards = guarded_dels(h, old_content, new_content, profile);
+    let t1 = std::time::Instant::now();
+    T_DP[0].fetch_add(
+        t1.duration_since(t0).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
-    // Global row indices by line number (unique per hunk side).
-    let del_by_num: FxHashMap<u32, usize> = h
-        .rows
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| match r {
+    let guards = guarded_dels(h, old_content, new_content, profile);
+    let t2 = std::time::Instant::now();
+    T_DP[1].fetch_add(
+        t2.duration_since(t1).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
+    // Global row indices by line number (unique per hunk side). Pre-sized:
+    // at most one entry per row, so these maps never rehash.
+    let del_by_num: FxHashMap<u32, usize> = {
+        let mut m = FxHashMap::with_capacity_and_hasher(h.rows.len(), Default::default());
+        m.extend(h.rows.iter().enumerate().filter_map(|(i, r)| match r {
             Row::Del(d) | Row::MovSrc(d) => Some((d.num.get(), i)),
             _ => None,
-        })
-        .collect();
-    let add_by_num: FxHashMap<u32, usize> = h
-        .rows
-        .iter()
-        .enumerate()
-        .filter_map(|(i, r)| match r {
+        }));
+        m
+    };
+    let add_by_num: FxHashMap<u32, usize> = {
+        let mut m = FxHashMap::with_capacity_and_hasher(h.rows.len(), Default::default());
+        m.extend(h.rows.iter().enumerate().filter_map(|(i, r)| match r {
             Row::Add(a) | Row::MovTgt(a) => Some((a.num.get(), i)),
             _ => None,
-        })
-        .collect();
+        }));
+        m
+    };
+    let t3 = std::time::Instant::now();
+    T_DP[2].fetch_add(
+        t3.duration_since(t2).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     let mut pair_of: FxHashMap<usize, usize> = FxHashMap::default();
     let mut collapse_blocks: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
     let mut expand_blocks: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
     let mut arena = super::dp::DpScratchArena::default();
 
-    for seg in partition_hunk_segments(h, old_content, new_content, profile) {
+    let segments = partition_hunk_segments(h, old_content, new_content, profile);
+    let t4 = std::time::Instant::now();
+    T_DP[3].fetch_add(
+        t4.duration_since(t3).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
+    for seg in segments {
         let cluster = match seg {
             HunkSegment::Cluster(c) => c,
             HunkSegment::Context(_) => continue,
         };
+        let t_s0 = std::time::Instant::now();
         let sol = super::dp::solve_cluster_with_arena(
             &cluster,
             profile,
             &super::dp::Weights::default(),
             &mut arena,
+        );
+        let t_s1 = std::time::Instant::now();
+        T_DP[4].fetch_add(
+            t_s1.duration_since(t_s0).as_micros() as u64,
+            std::sync::atomic::Ordering::Relaxed,
         );
 
         // Walk the DP's consumption of cluster sides, mapping transitions

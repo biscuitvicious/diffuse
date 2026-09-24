@@ -20,13 +20,13 @@
 //! 4. Fence syntax region detection & classification (`src/syntax/`)
 //! 5. Wire contract projection & streaming (`src/wire/`, `src/streaming.rs`)
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     collapse::collapse_hunk_rows,
     counts::file_counts,
-    lcs::word_spans_with_profile,
-    merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs},
+    lcs::word_spans_and_runs_with_profile,
+    merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs_with_profile},
     moves::mark_moves_with_profile,
     notes::{NotesDB, notes_for_file},
     parse::{DiffFile, Row, RowKind, Spans},
@@ -219,9 +219,9 @@ pub fn run_pipeline_with_notes(
 /// Run the pipeline over Arc<String> inputs without string duplication.
 #[tracing::instrument(level = "trace", ret, skip(diff, new_content, old_content, opts), fields(diff_bytes = diff.len(), new_file_count = new_content.as_ref().map(|m| m.len()), old_file_count = old_content.as_ref().map(|m| m.len()), visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn run_pipeline_arc(
-    diff: std::sync::Arc<String>,
-    new_content: Option<HashMap<String, std::sync::Arc<String>>>,
-    old_content: Option<HashMap<String, std::sync::Arc<String>>>,
+    diff: Arc<String>,
+    new_content: Option<HashMap<String, Arc<String>>>,
+    old_content: Option<HashMap<String, Arc<String>>>,
     opts: PipelineOptions,
 ) -> PipelineOutput {
     let out_files =
@@ -281,11 +281,22 @@ pub fn is_initially_collapsed(f: &DiffFile) -> bool {
             && f.raw_hunks.is_empty())
 }
 
+pub static T_STAGE: [std::sync::atomic::AtomicU64; 6] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+pub static T_RENDER_HUNKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static T_RENDER_ROWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Run pipeline diffing, alignment, move detection, and syntax classification
 /// on a single parsed diff file using the specified pipeline options.
 #[tracing::instrument(
     level = "debug",
-    skip(f, new_content, old_content, _diff_fallback, opts),
+    skip(f, new_content, old_content, diff_fallback, opts),
     fields(
         path = %f.path,
         status = ?f.status,
@@ -298,13 +309,18 @@ pub fn process_single_diff_file(
     mut f: DiffFile,
     new_content: Option<&str>,
     old_content: Option<&str>,
-    _diff_fallback: Option<&str>,
+    diff_fallback: Option<Arc<String>>,
     opts: &PipelineOptions,
 ) -> OutputFile {
-    let raw_source = if let Some(fb) = _diff_fallback {
+    // The reload source must always be populated: collapsing a file releases
+    // its rendered rows, and expanding it back re-renders from `raw_source`
+    // (sync fallback included). Gating this on lazy stubs would leave
+    // user-collapsed files unloadable — the `Git` descriptor is ~100 bytes,
+    // and for non-git inputs the embedded `Raw` diff is the only reload path.
+    let raw_source = if let Some(fb) = diff_fallback {
         Some(crate::wire::RawFileSource::Raw {
             path: f.path.clone(),
-            diff: fb.to_string(),
+            diff: fb,
             new_content: new_content.map(String::from),
             old_content: old_content.map(String::from),
         })
@@ -368,6 +384,7 @@ pub fn process_single_diff_file(
     crate::cluster::dp::set_cluster_product_cap(opts.cluster_product_cap);
     crate::cluster::dp::set_cluster_bandwidth_min(opts.cluster_bandwidth_min);
     crate::cluster::dp::set_cluster_bandwidth_slack(opts.cluster_bandwidth_slack);
+    let t_start = std::time::Instant::now();
     let profile = if f.status == crate::parse::FileStatus::Note {
         lang_profile("md")
     } else {
@@ -436,36 +453,73 @@ pub fn process_single_diff_file(
 
     use rayon::prelude::*;
 
+    let t1 = std::time::Instant::now();
+    T_STAGE[0].fetch_add(
+        t1.duration_since(t_start).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
     // Collapse runs first on pre-move rows (source dels survive the collapse).
-    f.hunks.par_iter_mut().for_each(|h| {
+    let collapse_hunk = |h: &mut crate::parse::Hunk| {
         h.rows = collapse_hunk_rows(
             h,
             Some(old_lines.as_slice()),
             Some(new_lines.as_slice()),
             profile,
         );
-    });
+    };
+    if f.hunks.len() > 1 {
+        f.hunks.par_iter_mut().for_each(collapse_hunk);
+    } else {
+        f.hunks.iter_mut().for_each(collapse_hunk);
+    }
+    let t2 = std::time::Instant::now();
+    T_STAGE[1].fetch_add(
+        t2.duration_since(t1).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Mark moves after collapse: creates Row::Mov pairs.
     mark_moves_with_profile(&mut f, profile);
+    let t3 = std::time::Instant::now();
+    T_STAGE[2].fetch_add(
+        t3.duration_since(t2).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     // Span-fill for Mov rows that need subword diff spans.
-    f.hunks.par_iter_mut().for_each(|h| {
+    let fill_spans = |h: &mut crate::parse::Hunk| {
         for r in &mut h.rows {
             if let Row::MovTgt(a) = r
                 && let Some(ref dt) = a.del_text
                 && dt.as_str() != a.text
                 && a.spans.is_empty()
             {
-                a.spans = word_spans_with_profile(dt, &a.text, profile);
+                let (spans, runs) = word_spans_and_runs_with_profile(dt, &a.text, profile);
+                a.spans = spans;
+                a.cached_runs = runs;
             } else if let Row::Mod { old_line, new_line } = r
                 && old_line.text != new_line.text
                 && new_line.spans.is_empty()
             {
-                new_line.spans = word_spans_with_profile(&old_line.text, &new_line.text, profile);
+                let (spans, runs) =
+                    word_spans_and_runs_with_profile(&old_line.text, &new_line.text, profile);
+                new_line.spans = spans;
+                new_line.cached_runs = runs;
             }
         }
-    });
+    };
+    if f.hunks.len() > 1 {
+        f.hunks.par_iter_mut().for_each(fill_spans);
+    } else {
+        f.hunks.iter_mut().for_each(fill_spans);
+    }
+    let t4 = std::time::Instant::now();
+    T_STAGE[3].fetch_add(
+        t4.duration_since(t3).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+
     // Invariant: DiffFile hunks must never contain wholesale replacement Mod
     // rows.
     crate::invariant!(
@@ -520,7 +574,13 @@ pub fn process_single_diff_file(
 
     let mut counts = file_counts(&f);
     let regions = fence_regions(&new_lines, profile);
+    let t5 = std::time::Instant::now();
+    T_STAGE[4].fetch_add(
+        t5.duration_since(t4).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
+    let t_hunks_start = std::time::Instant::now();
     let hunks_out: Vec<OutputHunk> = if is_plain_common_context {
         let rows = render_plain_common_context(&new_lines, profile);
         vec![OutputHunk {
@@ -531,30 +591,37 @@ pub fn process_single_diff_file(
             rows,
         }]
     } else {
-        f.hunks
-            .par_iter()
-            .map(|h| {
-                let rows_out: Vec<OutputRow> = if h.rows.len() > 64 {
-                    h.rows
-                        .par_iter()
-                        .map(|r| build_hunk_output_row(r, profile, &regions))
-                        .collect()
-                } else {
-                    h.rows
-                        .iter()
-                        .map(|r| build_hunk_output_row(r, profile, &regions))
-                        .collect()
-                };
-                OutputHunk {
-                    old_start: h.old_start,
-                    old_count: h.old_count,
-                    new_start: h.new_start,
-                    new_count: h.new_count,
-                    rows: rows_out,
-                }
-            })
-            .collect()
+        let map_hunk = |h: &crate::parse::Hunk| {
+            let rows_out: Vec<OutputRow> = if h.rows.len() > 64 {
+                h.rows
+                    .par_iter()
+                    .map(|r| build_hunk_output_row(r, profile, &regions))
+                    .collect()
+            } else {
+                h.rows
+                    .iter()
+                    .map(|r| build_hunk_output_row(r, profile, &regions))
+                    .collect()
+            };
+            OutputHunk {
+                old_start: h.old_start,
+                old_count: h.old_count,
+                new_start: h.new_start,
+                new_count: h.new_count,
+                rows: rows_out,
+            }
+        };
+        if f.hunks.len() > 1 {
+            f.hunks.par_iter().map(map_hunk).collect()
+        } else {
+            f.hunks.iter().map(map_hunk).collect()
+        }
     };
+    let t_hunks_end = std::time::Instant::now();
+    T_RENDER_HUNKS.fetch_add(
+        t_hunks_end.duration_since(t_hunks_start).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     let mut raw_hunks_out = Vec::new();
     for h in &f.raw_hunks {
@@ -608,6 +675,7 @@ pub fn process_single_diff_file(
         crate::parse::FileStatus::Note => "note".to_string(),
     };
 
+    let t_rows_start = std::time::Instant::now();
     let rows: Vec<OutputRow> = if is_plain_common_context {
         hunks_out[0].rows.clone()
     } else {
@@ -634,7 +702,7 @@ pub fn process_single_diff_file(
                                     kind: RunKind::Ctx,
                                     color: Some(std::borrow::Cow::Borrowed(tk.color)),
                                     sgr: tk.sgr,
-                                    text: tk.text.to_string().into(),
+                                    text: token_cow(tk.text),
                                 });
                             });
                             row.runs = runs;
@@ -648,6 +716,11 @@ pub fn process_single_diff_file(
         }
         rows
     };
+    let t_rows_end = std::time::Instant::now();
+    T_RENDER_ROWS.fetch_add(
+        t_rows_end.duration_since(t_rows_start).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     tracing::debug!(
         path = %f.path,
@@ -687,6 +760,11 @@ pub fn process_single_diff_file(
         rows,
         raw_source,
     };
+    let t6 = std::time::Instant::now();
+    T_STAGE[5].fetch_add(
+        t6.duration_since(t5).as_micros() as u64,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 
     crate::ensure!(!res.path.is_empty(), "OutputFile path must not be empty");
     crate::ensure!(
@@ -753,12 +831,52 @@ pub fn render_file_from_source(
                 f,
                 new_content.as_deref(),
                 old_content.as_deref(),
-                Some(diff.as_str()),
+                Some(Arc::clone(diff)),
                 &active_opts,
             );
             rendered.raw_source = Some(source.clone());
             Some(rendered)
         }
+    }
+}
+
+#[inline]
+pub fn token_cow(s: &str) -> std::borrow::Cow<'static, str> {
+    match s {
+        " " => std::borrow::Cow::Borrowed(" "),
+        "  " => std::borrow::Cow::Borrowed("  "),
+        "   " => std::borrow::Cow::Borrowed("   "),
+        "    " => std::borrow::Cow::Borrowed("    "),
+        "        " => std::borrow::Cow::Borrowed("        "),
+        "(" => std::borrow::Cow::Borrowed("("),
+        ")" => std::borrow::Cow::Borrowed(")"),
+        "{" => std::borrow::Cow::Borrowed("{"),
+        "}" => std::borrow::Cow::Borrowed("}"),
+        "[" => std::borrow::Cow::Borrowed("["),
+        "]" => std::borrow::Cow::Borrowed("]"),
+        ";" => std::borrow::Cow::Borrowed(";"),
+        "," => std::borrow::Cow::Borrowed(","),
+        ":" => std::borrow::Cow::Borrowed(":"),
+        "::" => std::borrow::Cow::Borrowed("::"),
+        "." => std::borrow::Cow::Borrowed("."),
+        "=" => std::borrow::Cow::Borrowed("="),
+        "==" => std::borrow::Cow::Borrowed("=="),
+        "!=" => std::borrow::Cow::Borrowed("!="),
+        "<" => std::borrow::Cow::Borrowed("<"),
+        ">" => std::borrow::Cow::Borrowed(">"),
+        "+" => std::borrow::Cow::Borrowed("+"),
+        "-" => std::borrow::Cow::Borrowed("-"),
+        "*" => std::borrow::Cow::Borrowed("*"),
+        "/" => std::borrow::Cow::Borrowed("/"),
+        "&" => std::borrow::Cow::Borrowed("&"),
+        "|" => std::borrow::Cow::Borrowed("|"),
+        "!" => std::borrow::Cow::Borrowed("!"),
+        "?" => std::borrow::Cow::Borrowed("?"),
+        "->" => std::borrow::Cow::Borrowed("->"),
+        "=>" => std::borrow::Cow::Borrowed("=>"),
+        "\n" => std::borrow::Cow::Borrowed("\n"),
+        "" => std::borrow::Cow::Borrowed(""),
+        _ => std::borrow::Cow::Owned(s.to_string()),
     }
 }
 
@@ -789,7 +907,7 @@ pub fn colored_runs(
                     kind,
                     color: Some(std::borrow::Cow::Borrowed(t.color)),
                     sgr: t.sgr,
-                    text: t.text.to_string().into(),
+                    text: token_cow(t.text),
                 });
             });
         } else {
@@ -797,7 +915,7 @@ pub fn colored_runs(
                 kind: RunKind::Del,
                 color: None,
                 sgr: None,
-                text: r.text().to_string().into(),
+                text: token_cow(r.text()),
             });
         }
         return out;
@@ -819,7 +937,7 @@ pub fn colored_runs(
         });
 
         let mut add_pos = 0usize;
-        for run in merged_runs(r) {
+        for run in merged_runs_with_profile(r, profile) {
             if run.kind == RunKind::Del {
                 push_output_run(
                     &mut out,
@@ -827,7 +945,7 @@ pub fn colored_runs(
                         kind: RunKind::Del,
                         color: None,
                         sgr: None,
-                        text: run.text.to_string().into(),
+                        text: token_cow(run.text),
                     },
                 );
             } else {
@@ -846,7 +964,7 @@ pub fn colored_runs(
                             kind: run.kind,
                             color: Some(std::borrow::Cow::Borrowed(t.color)),
                             sgr: t.sgr,
-                            text: t.text.to_string().into(),
+                            text: token_cow(t.text),
                         },
                     );
                 });
@@ -859,7 +977,7 @@ pub fn colored_runs(
                                 kind: run.kind,
                                 color: Some(std::borrow::Cow::Borrowed(t.color)),
                                 sgr: t.sgr,
-                                text: t.text.to_string().into(),
+                                text: token_cow(t.text),
                             },
                         );
                     };

@@ -5,6 +5,7 @@ use crate::{
     merge::*,
     parse::{AddLine, DelLine, LineNum, Row},
     syntax::registry::lang_profile,
+    tape::AlignmentTape,
 };
 
 fn mk(del: &str, add: &str) -> Row {
@@ -624,4 +625,125 @@ fn test_is_wholesale_replacement_branches() {
         ),
     };
     assert!(is_wholesale_replacement(&r_wholesale));
+}
+
+// The render path historically rebuilt its own unprofiled tape while
+// assemble used the profiled tape; the two coincide on this battery. Fails
+// loudly with any newly divergent pair (a new divergence changes render
+// output under unification — see the witness below).
+#[test]
+fn profiled_unprofiled_merged_runs_agree() {
+    let profile = lang_profile("rs").expect("rs profile must exist");
+    let pairs: &[(&str, &str)] = &[
+        (
+            "    fn alpha_field_0(x: i32) -> i32 { x + 1 }",
+            "    fn beta_field_0(x: i32) -> i32 { x + 1 }",
+        ),
+        (
+            "    let old_value_1 = compute(1, 2);",
+            "    let new_value_1 = compute(1, 3);",
+        ),
+        (
+            "    let s = prefix_middle_suffix + other_operations();",
+            "    let s = prefix_suffix + other_operations();",
+        ),
+        (
+            "trace!(host_path = ?next_lower, \"Found in lower layer\");",
+            "trace!(host_path = ?next_lower, \"Found in layer below the top upper\");",
+        ),
+        (
+            "if a == b && c != d { foo(); }",
+            "if a == b || c != d { bar(); }",
+        ),
+        (
+            "let x: Vec<String> = vec![\"a\", \"b\"];",
+            "let x: Vec<String> = vec![\"a\", \"c\"];",
+        ),
+        (
+            "// ünïcodé cömment with emoji 🎉",
+            "// ünïcodé cömment with emoji 🎊",
+        ),
+        ("", "fn fresh() {}"),
+        ("fn gone() {}", ""),
+        ("identical line, no change", "identical line, no change"),
+        (
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ),
+        ("foo(1, 2, 3)", "foo(1, 2, 3, 4)"),
+        (
+            "self.field.method(arg).chain()",
+            "self.field.method(other).chain()",
+        ),
+    ];
+    for (del, add) in pairs {
+        let plain: Vec<(RunKind, &str)> = AlignmentTape::from_texts(del, add, None)
+            .to_merged_runs()
+            .iter()
+            .map(|r| (r.kind, r.text))
+            .collect();
+        let prof: Vec<(RunKind, &str)> = AlignmentTape::from_texts(del, add, Some(profile))
+            .to_merged_runs()
+            .iter()
+            .map(|r| (r.kind, r.text))
+            .collect();
+        assert_eq!(
+            plain, prof,
+            "profiled/unprofiled merged runs diverge for {del:?} -> {add:?}"
+        );
+    }
+}
+
+// Divergence witness (diffuse-history-mid golden): numbers inside a
+// rewritten comment tail anchor differently under the rs profile — the
+// unprofiled legacy tape keeps the wholesale tail while the profiled tape
+// splits the numbers out. Under render unification the profiled form is the
+// canonical presentation (assemble and render share one tape); the
+// unprofiled computation survives only as the fallback for rows without
+// cached runs. This witness pins both forms so any drift in either tape
+// surfaces immediately.
+#[test]
+fn profiled_unprofiled_merged_runs_diverge_on_comment_tail_numbers() {
+    use RunKind::{Add, Common, Del};
+
+    let profile = lang_profile("rs").expect("rs profile must exist");
+    let del = "    assert_eq!(f.hunks[0].rows.len(), 8); // lines 10..=17";
+    let add = "    assert_eq!(f.hunks[0].rows.len(), 18); // lines 5..=22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)";
+    let runs = |p| {
+        AlignmentTape::from_texts(del, add, p)
+            .to_merged_runs()
+            .iter()
+            .map(|r| (r.kind, r.text))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        runs(None),
+        vec![
+            (Common, "    assert_eq!(f.hunks[0].rows.len(), "),
+            (Del, "8"),
+            (Add, "18"),
+            (Common, "); // lines "),
+            (Del, "10..=17"),
+            (
+                Add,
+                "5..=22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)",
+            ),
+        ],
+        "unprofiled render tape keeps the wholesale comment tail"
+    );
+    assert_eq!(
+        runs(Some(profile)),
+        vec![
+            (Common, "    assert_eq!(f.hunks[0].rows.len(), "),
+            (Del, "8"),
+            (Add, "18"),
+            (Common, "); // lines "),
+            (Del, "10"),
+            (Add, "5"),
+            (Common, "..="),
+            (Del, "17"),
+            (Add, "22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)"),
+        ],
+        "profiled assemble tape splits the comment tail numbers out"
+    );
 }

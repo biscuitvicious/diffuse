@@ -574,8 +574,12 @@ impl<'a> AlignmentTape<'a> {
         let is_unambiguous_suffix =
             (suffix == ot.len() || suffix == nt.len()) && !ot_first_eq_nt_first;
 
-        let anchors = unique_token_anchors(&ot, &nt, profile);
-        let has_anchors = !anchors.is_empty();
+        // Anchors are computed lazily (see below): the pure prefix/suffix
+        // branches never consult them, and the low-ratio fallback only needs
+        // `has_anchors` when the ratio actually drops below threshold (rare).
+        // Same decisions, none of the entropy/phrase/container work on the
+        // common path.
+        let mut anchors: Option<Vec<(usize, usize)>> = None;
 
         let span = tracing::Span::current();
         let sorted_pairs = if is_unambiguous_prefix {
@@ -593,14 +597,17 @@ impl<'a> AlignmentTape<'a> {
             }
             pairs
         } else {
+            let computed = unique_token_anchors(&ot, &nt, profile);
+            let has_anchors = !computed.is_empty();
             let p_map = if has_anchors {
-                span.record("anchors", tracing::field::debug(&anchors));
+                span.record("anchors", tracing::field::debug(&computed));
                 span.record("strategy", "anchored");
-                lcs_pairs_anchored(&ot, &nt, &anchors)
+                lcs_pairs_anchored(&ot, &nt, &computed)
             } else {
                 span.record("strategy", "raw");
                 raw_lcs_pairs(&ot, &nt)
             };
+            anchors = Some(computed);
             let mut pairs: Vec<(usize, usize)> = p_map.into_iter().collect();
             pairs.sort_by_key(|&(o, _)| o);
             pairs
@@ -631,18 +638,27 @@ impl<'a> AlignmentTape<'a> {
         span.record("matched_chars", matched_chars);
         span.record("ratio", ratio);
 
-        if !has_anchors && ratio < 0.25 && old_text.trim() != new_text.trim() {
-            tracing::debug!(
-                ratio,
-                "Subword match ratio below threshold, falling back to whole-line diff"
-            );
-            if !old_text.is_empty() {
-                tape.push(TapeChunk::Strike(old_text));
+        if ratio < 0.25 && old_text.trim() != new_text.trim() {
+            // Anchors were skipped on the pure-prefix/suffix fast paths;
+            // compute them only now that the fallback test actually needs
+            // `has_anchors` (reordered short-circuit, identical outcome).
+            let has_anchors = match anchors {
+                Some(ref computed) => !computed.is_empty(),
+                None => !unique_token_anchors(&ot, &nt, profile).is_empty(),
+            };
+            if !has_anchors {
+                tracing::debug!(
+                    ratio,
+                    "Subword match ratio below threshold, falling back to whole-line diff"
+                );
+                if !old_text.is_empty() {
+                    tape.push(TapeChunk::Strike(old_text));
+                }
+                if !new_text.is_empty() {
+                    tape.push(TapeChunk::Fill(new_text));
+                }
+                return tape;
             }
-            if !new_text.is_empty() {
-                tape.push(TapeChunk::Fill(new_text));
-            }
-            return tape;
         }
 
         let mut old_tok_idx = 0usize;

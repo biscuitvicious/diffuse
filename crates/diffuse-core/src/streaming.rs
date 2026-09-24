@@ -116,6 +116,17 @@ impl PriorityJobQueue {
             state = self.cond.wait(state).unwrap();
         }
     }
+
+    /// Check if the queue is marked closed.
+    pub fn is_closed(&self) -> bool {
+        self.inner.lock().map(|s| s.is_closed).unwrap_or(true)
+    }
+
+    /// Pop the highest priority job without blocking, if available.
+    pub fn try_pop(&self) -> Option<FileJob> {
+        let mut state = self.inner.lock().ok()?;
+        state.heap.pop().map(|j| j.0)
+    }
 }
 
 impl Default for PriorityJobQueue {
@@ -180,6 +191,9 @@ impl StreamingProducer {
 /// Streaming consumer receiving sequentially ordered `OutputFile`s.
 pub struct StreamingConsumer {
     rx: Receiver<OutputFile>,
+    queue: Arc<PriorityJobQueue>,
+    processed_tx: Option<std::sync::mpsc::Sender<ProcessedFile>>,
+    opts: Arc<PipelineOptions>,
     _worker_handles: Vec<JoinHandle<()>>,
     _sequencer_handle: JoinHandle<()>,
 }
@@ -189,7 +203,8 @@ impl StreamingConsumer {
         &self.rx
     }
 
-    pub fn into_receiver(self) -> Receiver<OutputFile> {
+    pub fn into_receiver(mut self) -> Receiver<OutputFile> {
+        self.processed_tx.take();
         self.rx
     }
 }
@@ -198,15 +213,42 @@ impl Iterator for StreamingConsumer {
     type Item = OutputFile;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.rx.recv().ok()
+        loop {
+            match self.rx.try_recv() {
+                Ok(file) => return Some(file),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    if let Some(job) = self.queue.try_pop() {
+                        let out_file = process_single_diff_file(
+                            job.file,
+                            job.new_content.as_deref().map(|s| s.as_str()),
+                            job.old_content.as_deref().map(|s| s.as_str()),
+                            job.diff_fallback.clone(),
+                            &self.opts,
+                        );
+                        if let Some(ref tx) = self.processed_tx {
+                            let _ = tx.send(ProcessedFile {
+                                idx: job.idx,
+                                file: out_file,
+                            });
+                        }
+                    } else {
+                        if self.queue.is_closed() {
+                            self.processed_tx.take();
+                        }
+                        return self.rx.recv().ok();
+                    }
+                }
+            }
+        }
     }
 }
 
-/// Returns the default worker count for the streaming pipeline: `(num_cpus /
-/// 2).max(1)`.
+/// Returns the default worker count for the streaming pipeline: `(num_cpus *
+/// 3 / 4).max(1)`.
 pub fn default_worker_count() -> usize {
     let cpus = available_parallelism().map(|p| p.get()).unwrap_or(4);
-    (cpus / 2).max(1)
+    (cpus * 3 / 4).max(1)
 }
 
 /// Initializes the global rayon thread pool to `workers` threads (if not
@@ -217,8 +259,8 @@ pub fn init_thread_pool(workers: usize) {
         .build_global();
 }
 
-/// Spawns an asynchronous streaming pipeline with `N = (num_cpus / 2).max(1)`
-/// workers.
+/// Spawns an asynchronous streaming pipeline with `N = (num_cpus * 3 /
+/// 4).max(1)` workers.
 #[tracing::instrument(level = "trace", skip(opts), fields(workers = worker_count, visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn spawn_streaming_pipeline(
     worker_count: Option<usize>,
@@ -246,7 +288,7 @@ pub fn spawn_streaming_pipeline(
                     job.file,
                     job.new_content.as_deref().map(|s| s.as_str()),
                     job.old_content.as_deref().map(|s| s.as_str()),
-                    job.diff_fallback.as_deref().map(|s| s.as_str()),
+                    job.diff_fallback.clone(),
                     &opts,
                 );
                 if p_tx
@@ -262,7 +304,6 @@ pub fn spawn_streaming_pipeline(
         });
         worker_handles.push(handle);
     }
-    drop(processed_tx); // Drop initial sender so processed_rx terminates when all workers finish
 
     let sequencer_handle = spawn(move || {
         let mut sequencer = FileSequencer::new();
@@ -282,6 +323,9 @@ pub fn spawn_streaming_pipeline(
 
     let consumer = StreamingConsumer {
         rx: output_rx,
+        queue,
+        processed_tx: Some(processed_tx),
+        opts: opts_arc,
         _worker_handles: worker_handles,
         _sequencer_handle: sequencer_handle,
     };
@@ -299,10 +343,10 @@ pub fn stream_diff_pipeline_arc(
     opts: PipelineOptions,
     worker_count: Option<usize>,
 ) -> StreamingConsumer {
-    let parsed = crate::parse::parse_diff(&diff);
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
 
-    for (idx, f) in parsed.into_iter().enumerate() {
+    let mut idx = 0;
+    crate::parse::parse_diff_for_each(&diff, |f| {
         let new_c = new_content.as_mut().and_then(|nc| nc.remove(&f.path));
         let old_lookup = f.old_path.as_deref().unwrap_or(&f.path);
         let old_c = old_content
@@ -315,7 +359,8 @@ pub fn stream_diff_pipeline_arc(
             old_content: old_c,
             diff_fallback: Some(Arc::clone(&diff)),
         });
-    }
+        idx += 1;
+    });
     producer.finish();
 
     consumer

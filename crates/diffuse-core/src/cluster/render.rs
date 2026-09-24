@@ -356,6 +356,7 @@ fn absorbed_add_row<'a>(
         text: add_text.to_string(),
         del_text: Some(old_text.to_string()),
         spans: spans_out.clone(),
+        cached_runs: Vec::new(),
     };
     RenderedRow {
         row: Row::Add(add_line),

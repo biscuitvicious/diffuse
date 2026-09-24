@@ -215,6 +215,6 @@ fn test_default_worker_count() {
     let cpus = std::thread::available_parallelism()
         .map(|p| p.get())
         .unwrap_or(4);
-    let expected = (cpus / 2).max(1);
+    let expected = (cpus * 3 / 4).max(1);
     assert_eq!(default_worker_count(), expected);
 }

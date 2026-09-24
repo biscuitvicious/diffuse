@@ -6,6 +6,8 @@ use std::num::NonZero;
 
 use serde::{Deserialize, Serialize};
 
+use crate::merge::RunKind;
+
 /// A 1-based source line number.
 pub type LineNum = NonZero<u32>;
 
@@ -62,6 +64,13 @@ pub struct AddLine {
     pub del_text: Option<String>,
     #[serde(default, skip_serializing_if = "Spans::is_empty")]
     pub spans: Spans,
+    /// Merged runs from the same profiled tape as `spans` (render
+    /// unification: render consumes these instead of rebuilding its own
+    /// unprofiled tape, so runs can never contradict the spans' tape).
+    /// Never serialized: the wire contract carries spans only, and empty
+    /// means "legacy recompute on demand".
+    #[serde(skip)]
+    pub cached_runs: Vec<(RunKind, String)>,
 }
 
 impl AddLine {
@@ -72,6 +81,7 @@ impl AddLine {
             text: text.into(),
             del_text: None,
             spans: Spans::default(),
+            cached_runs: Vec::new(),
         }
     }
 
@@ -82,6 +92,7 @@ impl AddLine {
             text: text.into(),
             del_text: None,
             spans,
+            cached_runs: Vec::new(),
         }
     }
 
@@ -97,7 +108,15 @@ impl AddLine {
             text: text.into(),
             del_text: Some(del_text.into()),
             spans,
+            cached_runs: Vec::new(),
         }
+    }
+
+    /// Attach the profiled-tape merged runs (see `cached_runs`).
+    #[inline]
+    pub fn with_cached_runs(mut self, runs: Vec<(RunKind, String)>) -> Self {
+        self.cached_runs = runs;
+        self
     }
 }
 
@@ -250,6 +269,17 @@ impl Row {
     #[inline]
     pub fn is_moved(&self) -> bool {
         matches!(self, Row::MovSrc(_) | Row::MovTgt(_))
+    }
+
+    /// Profiled-tape merged runs handed from assemble (`AddLine::cached_runs`);
+    /// empty when absent (render falls back to its legacy recompute).
+    #[inline]
+    pub fn cached_runs(&self) -> &[(RunKind, String)] {
+        match self {
+            Row::Add(add_line) | Row::MovTgt(add_line) => &add_line.cached_runs,
+            Row::Mod { new_line, .. } => &new_line.cached_runs,
+            _ => &[],
+        }
     }
 
     pub fn reverse(&self) -> Self {
@@ -550,19 +580,30 @@ fn parse_diff_git_paths(rest: &str) -> (Option<String>, Option<String>) {
     }
 }
 
-/// Parse a `git diff` into files, hunks, and rows. The `git diff -U0`
-/// flavor: hunks carry only add/del rows; the context is synthesized later.
-#[tracing::instrument(level = "trace", ret, skip(raw), fields(diff_len = raw.len()))]
-pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
-    let mut files: Vec<DiffFile> = Vec::new();
+#[inline]
+pub fn is_valid_diff_file(f: &DiffFile) -> bool {
+    !f.path.is_empty()
+        && (!f.hunks.is_empty()
+            || f.status == FileStatus::Renamed
+            || f.status == FileStatus::Untracked
+            || f.status == FileStatus::ModeChanged
+            || f.status == FileStatus::Note
+            || f.is_binary)
+}
+
+/// Parse a `git diff` progressively, yielding each `DiffFile` to a callback
+/// as soon as it has been completely parsed.
+pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
     let mut cur: Option<DiffFile> = None;
     let mut oi: u32 = 1;
     let mut ni: u32 = 1;
 
     for line in raw.split('\n') {
         if let Some(rest) = line.strip_prefix("diff --git ") {
-            if let Some(c) = cur.take() {
-                files.push(c);
+            if let Some(c) = cur.take()
+                && is_valid_diff_file(&c)
+            {
+                on_file(c);
             }
             let (_p_a, p_b) = parse_diff_git_paths(rest);
             cur = Some(DiffFile {
@@ -726,32 +767,19 @@ pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
             }
         }
     }
-    if let Some(c) = cur.take() {
-        files.push(c);
+    if let Some(c) = cur.take()
+        && is_valid_diff_file(&c)
+    {
+        on_file(c);
     }
-    files.retain(|f| {
-        !f.path.is_empty()
-            && (!f.hunks.is_empty()
-                || f.status == FileStatus::Renamed
-                || f.status == FileStatus::Untracked
-                || f.status == FileStatus::ModeChanged
-                || f.status == FileStatus::Note
-                || f.is_binary)
-    });
+}
 
-    crate::ensure!(
-        files.iter().all(|f| {
-            !f.path.is_empty()
-                && (!f.hunks.is_empty()
-                    || f.status == FileStatus::Renamed
-                    || f.status == FileStatus::Untracked
-                    || f.status == FileStatus::ModeChanged
-                    || f.status == FileStatus::Note
-                    || f.is_binary)
-        }),
-        "All parsed DiffFiles must have non-empty paths and non-empty hunks or be renamed/untracked/mode changed/note/binary"
-    );
-
+/// Parse a `git diff` into files, hunks, and rows. The `git diff -U0`
+/// flavor: hunks carry only add/del rows; the context is synthesized later.
+#[tracing::instrument(level = "trace", ret, skip(raw), fields(diff_len = raw.len()))]
+pub fn parse_diff(raw: &str) -> Vec<DiffFile> {
+    let mut files: Vec<DiffFile> = Vec::new();
+    parse_diff_for_each(raw, |f| files.push(f));
     files
 }
 

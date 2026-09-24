@@ -61,14 +61,11 @@ pub fn is_tail_before_closing(
 ///   function name.
 /// - `profile.scope_stop_prefixes` list declaration-starting strings that act
 ///   as hard boundaries.
-///
-/// If `profile` or `profile.fn_decl` is `None`, returns `None` (plain text, no
-/// scope detection).
-pub fn fn_of(
-    content: Option<&[&str]>,
+pub fn fn_of_str<'a>(
+    content: Option<&'a [&'a str]>,
     line: Option<u32>,
     profile: Option<&LangProfile>,
-) -> Option<String> {
+) -> Option<&'a str> {
     let profile = profile?;
     let fn_re = profile.fn_decl.as_ref()?;
     let content = content?;
@@ -81,8 +78,9 @@ pub fn fn_of(
         let l = raw.trim();
         if l.contains('(')
             && let Some(caps) = fn_re.captures(l)
+            && let Some(m) = caps.get(1)
         {
-            return Some(caps[1].to_string());
+            return Some(m.as_str());
         }
         if Some(i) != line.checked_sub(1)
             && (profile.is_block_close(l) || stop_prefixes.iter().any(|&pf| l.starts_with(pf)))
@@ -91,6 +89,23 @@ pub fn fn_of(
         }
     }
     None
+}
+
+/// Identifies the enclosing function of `line` (1-indexed) in `content`.
+///
+/// Rules:
+/// - Scans upward from `line` looking for a function declaration line matching
+///   `profile.fn_decl`.
+/// - Stops at any non-function scope boundary (`profile.scope_stop_prefixes`).
+/// - Returns `None` if `line` is before any function declaration.
+/// - If `profile` or `profile.fn_decl` is `None`, returns `None` (plain text,
+///   no scope detection).
+pub fn fn_of(
+    content: Option<&[&str]>,
+    line: Option<u32>,
+    profile: Option<&LangProfile>,
+) -> Option<String> {
+    fn_of_str(content, line, profile).map(ToString::to_string)
 }
 
 /// Return `true` if any line in `content` declares a function named `fn_name`,

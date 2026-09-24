@@ -4,6 +4,8 @@
 //! and consumed by external tooling, the CLI (`--json`), and the pi review
 //! extension. The schema is frozen per PLAN.md §2.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -218,10 +220,11 @@ pub enum RawFileSource {
         status: String,
     },
     /// In-memory diff fallback for non-git diffs (piped diffs, synthetic diffs,
-    /// unit tests).
+    /// unit tests). The diff is shared (`Arc`) — never cloned per file — so
+    /// retaining it for on-demand reload costs one pointer per file.
     Raw {
         path: String,
-        diff: String,
+        diff: Arc<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         new_content: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

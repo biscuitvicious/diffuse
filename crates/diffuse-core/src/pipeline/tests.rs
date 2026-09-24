@@ -63,7 +63,7 @@ fn test_comment_reflow_del_span_positioning() {
             word_spans(old_1078, new_1078),
         ),
     };
-    let runs_1078 = merged_runs(&r_1078);
+    let runs_1078 = crate::merge::merged_runs(&r_1078);
     let non_common_1078: Vec<(RunKind, &str)> = runs_1078
         .iter()
         .filter(|r| r.kind != RunKind::Common)
@@ -91,7 +91,7 @@ fn test_comment_reflow_del_span_positioning() {
             word_spans(old_1079, new_1079),
         ),
     };
-    let runs_1079 = merged_runs(&r_1079);
+    let runs_1079 = crate::merge::merged_runs(&r_1079);
     let non_common_1079: Vec<(RunKind, &str)> = runs_1079
         .iter()
         .filter(|r| r.kind != RunKind::Common)
@@ -998,7 +998,13 @@ index 1111111..0000000
     assert!(is_initially_collapsed(&f));
 
     let lazy_opts = PipelineOptions::default().with_lazy_collapsed(true);
-    let stub = process_single_diff_file(f, None, Some(old_content), Some(diff), &lazy_opts);
+    let stub = process_single_diff_file(
+        f,
+        None,
+        Some(old_content),
+        Some(Arc::new(diff.to_string())),
+        &lazy_opts,
+    );
 
     assert!(!stub.is_loaded(), "lazy stub should not be loaded");
     assert_eq!(stub.counts.dels, 3);
@@ -1036,7 +1042,13 @@ untracked file mode 100644
     assert!(is_initially_collapsed(&f));
 
     let lazy_opts = PipelineOptions::default().with_lazy_collapsed(true);
-    let stub = process_single_diff_file(f, Some(new_content), None, Some(diff), &lazy_opts);
+    let stub = process_single_diff_file(
+        f,
+        Some(new_content),
+        None,
+        Some(Arc::new(diff.to_string())),
+        &lazy_opts,
+    );
 
     assert!(
         !stub.is_loaded(),
@@ -1313,4 +1325,50 @@ fn test_synthesize_plain_common_context_hunk() {
     assert_eq!(hunk.rows.len(), 2);
     assert!(matches!(hunk.rows[0], crate::parse::Row::Ctx(_)));
     assert!(matches!(hunk.rows[1], crate::parse::Row::Ctx(_)));
+}
+
+// Render unification: a row carrying assemble's profiled merged runs must
+// render the profiled split form (Del "10" / Add "5" / Common "..=" /
+// Del "17"), while a row without cached runs keeps the legacy unprofiled
+// recompute (wholesale Del "10..=17").
+#[test]
+fn test_colored_runs_prefers_cached_profiled_runs() {
+    use crate::lcs::{word_spans_and_runs_with_profile, word_spans_with_profile};
+
+    let profile = crate::syntax::registry::lang_profile("rs");
+    let del = "    assert_eq!(f.hunks[0].rows.len(), 8); // lines 10..=17";
+    let add = "    assert_eq!(f.hunks[0].rows.len(), 18); // lines 5..=22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)";
+    let spans = word_spans_with_profile(del, add, profile);
+    let plain = Row::Mod {
+        old_line: DelLine::new(LineNum::new(1).unwrap(), del),
+        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, spans.clone()),
+    };
+    let kinds = |runs: &[crate::wire::OutputRun]| {
+        runs.iter()
+            .map(|r| (format!("{:?}", r.kind), r.text.to_string()))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        kinds(&colored_runs(&plain, None, &[]))
+            .contains(&("Del".to_string(), "10..=17".to_string())),
+        "uncached row keeps the legacy wholesale render"
+    );
+
+    let (_, runs) = word_spans_and_runs_with_profile(del, add, profile);
+    let stored = Row::Mod {
+        old_line: DelLine::new(LineNum::new(1).unwrap(), del),
+        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, spans).with_cached_runs(runs),
+    };
+    let rendered = kinds(&colored_runs(&stored, None, &[]));
+    for want in [
+        ("Del", "10"),
+        ("Add", "5"),
+        ("Common", "..="),
+        ("Del", "17"),
+    ] {
+        assert!(
+            rendered.contains(&(want.0.to_string(), want.1.to_string())),
+            "cached row must render the profiled split form, missing {want:?}"
+        );
+    }
 }

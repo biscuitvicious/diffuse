@@ -168,7 +168,6 @@ pub fn partition_hunk_segments<'a>(
                 break;
             }
             let row = &hunk.rows[i];
-            let _row_kind = classify_syntax_section(row.text(), profile);
 
             match row {
                 Row::Del(_) | Row::MovSrc(_) => old_rows.push(row.clone()),
