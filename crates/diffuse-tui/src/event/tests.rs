@@ -97,7 +97,7 @@ fn test_note_draft_shift_and_alt_enter_insert_newline() {
 }
 
 #[test]
-fn test_note_draft_ctrl_j_n_o_insert_newline() {
+fn test_note_draft_ctrl_j_and_o_insert_newline_and_ctrl_n_navigates() {
     let mut s = state_with_draft();
     s.note_draft = Some("hello".into());
 
@@ -109,15 +109,16 @@ fn test_note_draft_ctrl_j_n_o_insert_newline() {
 
     handle_event(
         &mut s,
-        Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL)),
+        Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
     );
     assert_eq!(s.note_draft.as_deref(), Some("hello\n\n"));
 
+    // Ctrl-n is standard Readline move_down, not newline insertion
     handle_event(
         &mut s,
-        Event::Key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL)),
+        Event::Key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::CONTROL)),
     );
-    assert_eq!(s.note_draft.as_deref(), Some("hello\n\n\n"));
+    assert_eq!(s.note_draft.as_deref(), Some("hello\n\n"));
 }
 
 #[test]
@@ -199,7 +200,7 @@ fn test_note_draft_ctrl_enter_commits() {
 }
 
 #[test]
-fn test_note_draft_ctrl_s_and_ctrl_d_commit() {
+fn test_note_draft_ctrl_s_commits_and_ctrl_d_deletes_forward() {
     let mut s = state_with_draft();
     handle_event(
         &mut s,
@@ -210,9 +211,17 @@ fn test_note_draft_ctrl_s_and_ctrl_d_commit() {
     let mut s2 = state_with_draft();
     handle_event(
         &mut s2,
+        Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+    );
+    handle_event(
+        &mut s2,
         Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
     );
-    assert!(s2.note_draft.is_none());
+    assert!(
+        s2.note_draft.is_some(),
+        "Ctrl-d must delete forward, not commit"
+    );
+    assert_eq!(s2.note_draft.as_deref(), Some("ello"));
 }
 
 #[test]
@@ -223,6 +232,71 @@ fn test_note_draft_esc_cancels() {
         Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
     );
     assert!(s.note_draft.is_none());
+}
+
+#[test]
+fn test_note_draft_readline_kill_yank_undo() {
+    let mut s = state_with_draft();
+    s.note_draft = Some("hello world".into());
+
+    // Move to start: Ctrl-a
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+    );
+    // Kill to end of line: Ctrl-k
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+    );
+    assert_eq!(s.note_draft.as_deref(), Some(""));
+
+    // Yank: Ctrl-y
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)),
+    );
+    assert_eq!(s.note_draft.as_deref(), Some("hello world"));
+
+    // Undo: Ctrl-_
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('_'), KeyModifiers::CONTROL)),
+    );
+    assert_eq!(s.note_draft.as_deref(), Some(""));
+}
+
+#[test]
+fn test_note_draft_readline_word_deletion() {
+    let mut s = state_with_draft();
+    s.note_draft = Some("foo bar baz".into());
+
+    // Cursor is at end of text ("baz")
+    // Kill word backward: Ctrl-w
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+    );
+    assert_eq!(s.note_draft.as_deref(), Some("foo bar "));
+
+    // Kill word backward again: Alt-Backspace
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT)),
+    );
+    assert_eq!(s.note_draft.as_deref(), Some("foo "));
+
+    // Move home: Ctrl-a
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL)),
+    );
+    // Kill word forward: Alt-d
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT)),
+    );
+    assert_eq!(s.note_draft.as_deref(), Some(" "));
 }
 
 #[test]

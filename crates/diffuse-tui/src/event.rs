@@ -18,8 +18,19 @@ pub fn handle_event(state: &mut AppState, event: Event) {
 
 fn handle_paste_event(state: &mut AppState, text: &str) {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    if let Some(ref mut draft) = state.note_draft {
-        draft.push_str(&normalized);
+    if state.note_editor.is_none()
+        && let Some(ref draft) = state.note_draft
+    {
+        let mut ed = crate::editor::Editor::new(draft)
+            .with_highlighter(crate::editor::markdown_highlighter(state.theme));
+        let r = ed.lines().len().saturating_sub(1);
+        let c = ed.lines()[r].chars().count();
+        ed.set_cursor(r, c);
+        state.note_editor = Some(ed);
+    }
+    if let Some(ref mut editor) = state.note_editor {
+        editor.insert_str(&normalized);
+        state.note_draft = Some(editor.text());
     } else if let Some(ref mut finder) = state.file_finder {
         finder.query.push_str(&normalized);
         let files = state.output.files.clone();
@@ -88,44 +99,31 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         return;
     }
 
-    // Note Draft Editing Mode draft typing
-    if let Some(ref mut draft) = state.note_draft {
-        let is_save = (key.modifiers.contains(KeyModifiers::CONTROL)
-            && matches!(
-                key.code,
-                KeyCode::Char('s') | KeyCode::Char('d') | KeyCode::Enter
-            ))
-            || (key.modifiers.contains(KeyModifiers::ALT)
-                && matches!(key.code, KeyCode::Char('s')));
-        if is_save {
-            state.execute(TuiCommand::CommitNoteDraft);
-            return;
-        }
+    // Note Draft Editing Mode
+    if state.note_editor.is_none()
+        && let Some(ref draft) = state.note_draft
+    {
+        let mut ed = crate::editor::Editor::new(draft)
+            .with_highlighter(crate::editor::markdown_highlighter(state.theme));
+        let r = ed.lines().len().saturating_sub(1);
+        let c = ed.lines()[r].chars().count();
+        ed.set_cursor(r, c);
+        state.note_editor = Some(ed);
+    }
 
-        let is_newline = key.code == KeyCode::Enter
-            || key.code == KeyCode::Char('\n')
-            || key.code == KeyCode::Char('\r')
-            || (key.modifiers.contains(KeyModifiers::CONTROL)
-                && matches!(
-                    key.code,
-                    KeyCode::Char('j') | KeyCode::Char('n') | KeyCode::Char('o')
-                ));
-        if is_newline {
-            draft.push('\n');
-            return;
-        }
-
-        match key.code {
-            KeyCode::Esc => {
+    if let Some(ref mut editor) = state.note_editor {
+        match editor.handle_key(key) {
+            crate::editor::EditorAction::Submit => {
+                state.execute(TuiCommand::CommitNoteDraft);
+            }
+            crate::editor::EditorAction::Cancel => {
                 state.execute(TuiCommand::CancelNoteDraft);
             }
-            KeyCode::Backspace => {
-                draft.pop();
+            crate::editor::EditorAction::Modified
+            | crate::editor::EditorAction::CursorMoved
+            | crate::editor::EditorAction::None => {
+                state.note_draft = Some(editor.text());
             }
-            KeyCode::Char(c) => {
-                draft.push(c);
-            }
-            _ => {}
         }
         return;
     }

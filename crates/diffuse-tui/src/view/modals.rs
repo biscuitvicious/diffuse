@@ -5,7 +5,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
 use super::header::{truncate_pad, visible_width};
@@ -581,7 +581,13 @@ pub fn render_finder_modal_widget(
 
 /// Render the Note Draft modal overlay with multi-line support and exact range
 /// coordinates.
-pub fn render_note_modal_widget(f: &mut Frame, loc: &str, draft: &str, area: Rect) {
+pub fn render_note_modal_widget(
+    f: &mut Frame,
+    loc: &str,
+    draft: &str,
+    editor: Option<&mut crate::editor::Editor>,
+    area: Rect,
+) {
     let margin_w = if area.width <= 60 { 2 } else { 4 };
     let modal_w = area.width.saturating_sub(margin_w).min(88);
 
@@ -589,26 +595,29 @@ pub fn render_note_modal_widget(f: &mut Frame, loc: &str, draft: &str, area: Rec
     let max_h = area.height.saturating_sub(2).max(min_h);
 
     let inner_w = modal_w.saturating_sub(2).max(1) as usize;
-    let split_lines: Vec<&str> = if draft.is_empty() {
-        vec![""]
-    } else {
-        draft.split('\n').collect()
-    };
-    let total_lines = split_lines.len();
 
-    let mut visual_rows_count = 0;
-    for (idx, line_text) in split_lines.iter().enumerate() {
-        let is_last = idx + 1 == total_lines;
-        let char_count = line_text.chars().count() + if is_last { 1 } else { 0 };
-        let rows = (char_count / inner_w)
-            + if char_count % inner_w == 0 && char_count > 0 {
-                0
-            } else {
-                1
-            };
-        visual_rows_count += rows.max(1);
-    }
-    let modal_h = (visual_rows_count as u16 + 6).clamp(min_h, max_h);
+    let mut fallback_editor;
+    let ed = match editor {
+        Some(e) => {
+            e.set_width(inner_w);
+            e
+        }
+        None => {
+            fallback_editor = crate::editor::Editor::new(draft);
+            fallback_editor.set_width(inner_w);
+            let r = fallback_editor.lines().len().saturating_sub(1);
+            let c = fallback_editor.lines()[r].chars().count();
+            fallback_editor.set_cursor(r, c);
+            &mut fallback_editor
+        }
+    };
+
+    let total_visual_rows: usize = ed
+        .lines()
+        .iter()
+        .map(|l| crate::editor::Editor::line_seg_count(l, inner_w))
+        .sum();
+    let modal_h = (total_visual_rows as u16 + 6).clamp(min_h, max_h);
     let modal_area = centered_rect(modal_w, modal_h, area);
 
     f.render_widget(Clear, modal_area);
@@ -631,29 +640,7 @@ pub fn render_note_modal_widget(f: &mut Frame, loc: &str, draft: &str, area: Rec
     let inner = block.inner(modal_area);
     f.render_widget(block, modal_area);
 
-    let mut lines = Vec::new();
-    for (idx, &line_text) in split_lines.iter().enumerate() {
-        let is_last = idx + 1 == total_lines;
-        if is_last {
-            lines.push(Line::from(vec![
-                Span::styled(
-                    line_text.to_string(),
-                    Style::default().fg(Color::Indexed(231)),
-                ),
-                Span::styled("█", Style::default().fg(Color::Indexed(51))),
-            ]));
-        } else {
-            lines.push(Line::from(Span::styled(
-                line_text.to_string(),
-                Style::default().fg(Color::Indexed(231)),
-            )));
-        }
-    }
-
-    let p = Paragraph::new(lines)
-        .wrap(Wrap { trim: false })
-        .style(Style::default().bg(Color::Indexed(236)));
-    f.render_widget(p, inner);
+    ed.render(f, inner);
 }
 
 /// Convert an ANSI SGR styled string into a Ratatui `Line`.

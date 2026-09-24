@@ -18,7 +18,7 @@ pub mod view;
 pub use actions::{discard_action, reload_diff, stage_action, unstage_action};
 pub use app::AppState;
 pub use command::TuiCommand;
-pub use editor::{open_editor, resolve_editor_args};
+pub use editor::{Editor, open_editor, resolve_editor_args};
 pub use event::handle_event;
 pub use finder::FileFinderState;
 pub use terminal::TerminalGuard;

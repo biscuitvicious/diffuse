@@ -23,8 +23,9 @@ impl AppState {
             TuiCommand::Dismiss => {
                 if self.file_finder.is_some() {
                     self.cancel_file_finder();
-                } else if self.note_draft.is_some() {
+                } else if self.note_draft.is_some() || self.note_editor.is_some() {
                     self.note_draft = None;
+                    self.note_editor = None;
                     self.editing_note_id = None;
                 } else if self.show_help {
                     self.show_help = false;
@@ -182,6 +183,7 @@ impl AppState {
             TuiCommand::CommitNoteDraft => self.commit_note_draft(),
             TuiCommand::CancelNoteDraft => {
                 self.note_draft = None;
+                self.note_editor = None;
                 self.editing_note_id = None;
             }
             TuiCommand::DeleteNote => self.delete_note(),
@@ -243,47 +245,46 @@ impl AppState {
 
                             if target_vis < s + div_lines
                                 && let Some(&(div_fi, div_hi)) = div_at.get(&i)
-                                    && let Some(f) = self.output.files.get(div_fi)
-                                    && let Some(hunk) = f.hunks.get(div_hi)
-                                {
-                                    let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
-                                    if hidden_gap > 0 {
-                                        // The divider may wrap across several
-                                        // visual segments on narrow screens;
-                                        // the
-                                        // hit area is the glyph's screen cells
-                                        // after wrapping.
-                                        let seg_off = target_vis - s;
-                                        let txt = hunk_divider_text(
-                                            crate::render::Badge {
-                                                idx: div_hi,
-                                                total: f.hunks.len(),
-                                            },
-                                            hunk,
-                                            hidden_gap,
-                                        );
+                                && let Some(f) = self.output.files.get(div_fi)
+                                && let Some(hunk) = f.hunks.get(div_hi)
+                            {
+                                let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
+                                if hidden_gap > 0 {
+                                    // The divider may wrap across several
+                                    // visual segments on narrow screens;
+                                    // the
+                                    // hit area is the glyph's screen cells
+                                    // after wrapping.
+                                    let seg_off = target_vis - s;
+                                    let txt = hunk_divider_text(
+                                        crate::render::Badge {
+                                            idx: div_hi,
+                                            total: f.hunks.len(),
+                                        },
+                                        hunk,
+                                        hidden_gap,
+                                    );
 
-                                        let hit = |pat: &str| {
-                                            wrapped_glyph_hit(&txt, pat, seg_off, col, cw)
-                                        };
+                                    let hit =
+                                        |pat: &str| wrapped_glyph_hit(&txt, pat, seg_off, col, cw);
 
-                                        let mut handled = true;
-                                        if div_hi == 0 && hit("▼") {
-                                            self.expand_hunk_above(div_fi, 0);
-                                        } else if div_hi > 0 && hit("⬍") {
-                                            self.expand_hunk_both(div_fi, div_hi - 1);
-                                        } else if div_hi > 0 && hit("▲") {
-                                            self.expand_hunk_below(div_fi, div_hi - 1);
-                                        } else if div_hi > 0 && hit("▼") {
-                                            self.expand_hunk_above(div_fi, div_hi);
-                                        } else {
-                                            handled = false;
-                                        }
-                                        if handled {
-                                            break;
-                                        }
+                                    let mut handled = true;
+                                    if div_hi == 0 && hit("▼") {
+                                        self.expand_hunk_above(div_fi, 0);
+                                    } else if div_hi > 0 && hit("⬍") {
+                                        self.expand_hunk_both(div_fi, div_hi - 1);
+                                    } else if div_hi > 0 && hit("▲") {
+                                        self.expand_hunk_below(div_fi, div_hi - 1);
+                                    } else if div_hi > 0 && hit("▼") {
+                                        self.expand_hunk_above(div_fi, div_hi);
+                                    } else {
+                                        handled = false;
+                                    }
+                                    if handled {
+                                        break;
                                     }
                                 }
+                            }
 
                             // Clicking the collapse/expand triangle on a file
                             // header toggles the file — the click is swallowed

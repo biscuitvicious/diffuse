@@ -582,7 +582,7 @@ impl AppState {
         }
 
         // 8. Note Draft Modal Overlay
-        if let Some(ref draft) = self.note_draft {
+        if self.note_draft.is_some() || self.note_editor.is_some() {
             let loc = if let Some(sel) = self.compute_selection() {
                 if sel.start == sel.end {
                     format!("{file_path}:{}", sel.start)
@@ -601,7 +601,14 @@ impl AppState {
             } else {
                 area
             };
-            crate::view::render_note_modal_widget(f, &loc, draft, note_area);
+            let draft = self.note_draft.as_deref().unwrap_or("");
+            crate::view::render_note_modal_widget(
+                f,
+                &loc,
+                draft,
+                self.note_editor.as_mut(),
+                note_area,
+            );
         }
     }
 

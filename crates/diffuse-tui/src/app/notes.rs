@@ -92,20 +92,42 @@ impl AppState {
                 VisualTarget::Note { note, .. } => Some((note.id.clone(), note.text.clone())),
                 _ => None,
             });
-        if let Some((id, text)) = note_info {
+        let text = if let Some((id, text)) = note_info {
             self.editing_note_id = Some(id);
-            self.note_draft = Some(text);
+            text
         } else {
             self.editing_note_id = None;
-            self.note_draft = Some(String::new());
-        }
+            String::new()
+        };
+        let mut editor = crate::editor::Editor::new(&text)
+            .with_highlighter(crate::editor::markdown_highlighter(self.theme));
+        let r = editor.lines().len().saturating_sub(1);
+        let c = editor.lines()[r].chars().count();
+        editor.set_cursor(r, c);
+        self.note_editor = Some(editor);
+        self.note_draft = Some(text);
     }
 
     /// Commit the note draft onto the current row (or active selection) and
     /// persist it through the notes DB. Mirrors the reference
     /// `commitNoteAction`.
     pub fn commit_note_draft(&mut self) {
-        let text = match self.note_draft.take() {
+        let text = if let Some(ref draft) = self.note_draft {
+            if let Some(ref ed) = self.note_editor {
+                if draft != &ed.text() {
+                    self.note_draft.take()
+                } else {
+                    self.note_editor.take().map(|e| e.text())
+                }
+            } else {
+                self.note_draft.take()
+            }
+        } else {
+            self.note_editor.take().map(|e| e.text())
+        };
+        self.note_editor = None;
+        self.note_draft = None;
+        let text = match text {
             Some(t) => t.trim().to_string(),
             None => {
                 self.editing_note_id = None;
