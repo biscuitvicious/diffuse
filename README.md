@@ -1,6 +1,6 @@
 # diffuse
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Build & Test](https://img.shields.io/badge/checks-passing-brightgreen.svg)](scripts/check.sh)
 
 *diffuse* is a diff analysis engine, ANSI terminal renderer, and interactive
@@ -314,4 +314,4 @@ branch coverage and pass `scripts/check.sh` cleanly with zero warnings.
 
 ## 8. License
 
-This project is licensed under the MIT License. See [LICENSE.md](LICENSE.md) for the full license text.
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for the full license text.

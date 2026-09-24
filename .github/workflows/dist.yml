@@ -100,7 +100,7 @@ jobs:
           cp "$BIN_SRC" "$BUNDLE_DIR/diffuse"
           chmod +x "$BUNDLE_DIR/diffuse"
           cp README.md "$BUNDLE_DIR/"
-          cp LICENSE.md "$BUNDLE_DIR/"
+          cp LICENSE "$BUNDLE_DIR/"
 
           ARCHIVE_NAME="diffuse-v${VERSION}-${TARGET}.tar.gz"
           tar -czf "$STAGE_DIR/$ARCHIVE_NAME" "$BUNDLE_DIR"
@@ -130,7 +130,7 @@ jobs:
           mkdir -p "$BUNDLE_DIR"
           cp "$BIN_SRC" "$BUNDLE_DIR/diffuse.exe"
           cp README.md "$BUNDLE_DIR/"
-          cp LICENSE.md "$BUNDLE_DIR/"
+          cp LICENSE "$BUNDLE_DIR/"
 
           ARCHIVE_NAME="diffuse-v${VERSION}-${TARGET}.zip"
           powershell -Command "Compress-Archive -Path '$BUNDLE_DIR\*' -DestinationPath '$STAGE_DIR/$ARCHIVE_NAME'"
@@ -203,7 +203,7 @@ jobs:
           find downloaded-artifacts -type f -name "*.sha256" -exec cat {} + | sort -k2 > dist/SHA256SUMS
           # Include root documentation files as direct release assets
           cp README.md dist/
-          cp LICENSE.md dist/
+          cp LICENSE dist/
 
           echo "Staged release assets:"
           ls -la dist/

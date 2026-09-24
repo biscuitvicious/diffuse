@@ -25,6 +25,7 @@
 use std::{
     collections::HashMap,
     fs::{self},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, LazyLock, Mutex},
 };
@@ -54,10 +55,16 @@ struct Fixture {
     old_content: HashMap<String, Arc<String>>,
 }
 
-use std::path::{Path, PathBuf};
-
 fn golden_dir() -> PathBuf {
     PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/golden"))
+}
+
+fn is_golden_initialized_at(path: &Path) -> bool {
+    path.join("diffuse-2026-08").join("meta.json").is_file()
+}
+
+fn is_golden_initialized() -> bool {
+    is_golden_initialized_at(&golden_dir())
 }
 
 fn write_file_plain(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -1238,6 +1245,48 @@ fn run_oracle_for_corpus(name: &str, fixture: &Fixture, wire: &PipelineOutput) {
     }
 }
 
+fn run_acceptance_test_impl(
+    is_inited: bool,
+    name: &str,
+    min: usize,
+    has_render: bool,
+    has_oracle: bool,
+) -> bool {
+    if !is_inited {
+        eprintln!("tests/golden submodule is not initialized; skipping {name} golden_acceptance");
+        return false;
+    }
+    let (fixture, output) = run_lib_leg(name, min);
+    if has_render {
+        assert_render_matches(&output, name);
+        assert_markdown_matches(&output, name);
+    }
+    if has_oracle {
+        run_oracle_for_corpus(name, &fixture, &output);
+    }
+    true
+}
+
+fn run_acceptance_test(name: &str, min: usize, has_render: bool, has_oracle: bool) {
+    run_acceptance_test_impl(is_golden_initialized(), name, min, has_render, has_oracle);
+}
+
+fn run_binary_test_impl(is_inited: bool, name: &str, min: usize, has_render: bool) -> bool {
+    if !is_inited {
+        eprintln!("tests/golden submodule is not initialized; skipping {name} bin_leg");
+        return false;
+    }
+    run_bin_leg(name, min);
+    if has_render {
+        run_bin_markdown_leg(name);
+    }
+    true
+}
+
+fn run_binary_test(name: &str, min: usize, has_render: bool) {
+    run_binary_test_impl(is_golden_initialized(), name, min, has_render);
+}
+
 macro_rules! corpus_tests {
     ($mod_name:ident, $name:expr, $min:expr, $has_render:expr, $has_oracle:expr) => {
         mod $mod_name {
@@ -1245,22 +1294,12 @@ macro_rules! corpus_tests {
 
             #[test]
             fn golden_acceptance() {
-                let (fixture, output) = run_lib_leg($name, $min);
-                if $has_render {
-                    assert_render_matches(&output, $name);
-                    assert_markdown_matches(&output, $name);
-                }
-                if $has_oracle {
-                    run_oracle_for_corpus($name, &fixture, &output);
-                }
+                run_acceptance_test($name, $min, $has_render, $has_oracle);
             }
 
             #[test]
             fn bin_leg() {
-                run_bin_leg($name, $min);
-                if $has_render {
-                    run_bin_markdown_leg($name);
-                }
+                run_binary_test($name, $min, $has_render);
             }
         }
     };
@@ -1271,12 +1310,26 @@ macro_rules! corpus_tests {
             #[test]
             #[ignore = "massive history stress corpus (run with cargo test -- --ignored)"]
             fn lib_leg() {
+                if !is_golden_initialized() {
+                    eprintln!(
+                        "tests/golden submodule is not initialized; skipping {} lib_leg",
+                        $name
+                    );
+                    return;
+                }
                 run_lib_leg($name, $min);
             }
 
             #[test]
             #[ignore = "massive history stress corpus (run with cargo test -- --ignored)"]
             fn bin_leg() {
+                if !is_golden_initialized() {
+                    eprintln!(
+                        "tests/golden submodule is not initialized; skipping {} bin_leg",
+                        $name
+                    );
+                    return;
+                }
                 run_bin_leg($name, $min);
             }
         }
@@ -1297,3 +1350,38 @@ corpus_tests!(
     true,
     true
 );
+
+#[test]
+fn test_golden_initialized_detection() {
+    let tmp = std::env::temp_dir().join(format!("diffuse_test_uninited_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+
+    // Nonexistent directory
+    assert!(!is_golden_initialized_at(&tmp));
+
+    // Empty directory
+    fs::create_dir_all(&tmp).unwrap();
+    assert!(!is_golden_initialized_at(&tmp));
+
+    // Directory with dummy file
+    fs::write(tmp.join("README.md"), "hello").unwrap();
+    assert!(!is_golden_initialized_at(&tmp));
+
+    // Directory with expected corpus fixture
+    let corpus = tmp.join("diffuse-2026-08");
+    fs::create_dir_all(&corpus).unwrap();
+    fs::write(corpus.join("meta.json"), "{}").unwrap();
+    assert!(is_golden_initialized_at(&tmp));
+
+    let _ = fs::remove_dir_all(&tmp);
+
+    // Verify uninitialized skip logic executes cleanly without panic
+    assert!(!run_acceptance_test_impl(
+        false,
+        "test-corpus",
+        1,
+        false,
+        false
+    ));
+    assert!(!run_binary_test_impl(false, "test-corpus", 1, false));
+}
