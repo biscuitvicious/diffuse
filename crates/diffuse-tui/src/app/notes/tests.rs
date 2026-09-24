@@ -1,5 +1,5 @@
 use crate::{
-    app::AppState,
+    app::{AppState, temp_notes_path},
     core::{
         PipelineOptions,
         notes::{
@@ -129,7 +129,8 @@ fn test_note_commit_persists_and_deletes() {
         frame
     );
 
-    state.delete_notes();
+    state.move_down();
+    state.delete_note();
     assert!(
         notes_for_file(&state.notes, "test_repo", &file)
             .next()
@@ -322,7 +323,8 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
     assert_eq!(callouts.get(&banner_idx).unwrap().len(), 1);
 
     // Delete the first note -> counts dynamically decrease to 1
-    state.delete_notes();
+    state.move_down();
+    state.delete_note();
     assert_eq!(state.output.files[0].counts.notes, 1);
     assert_eq!(state.output.total_counts().notes, 1);
 }
@@ -713,4 +715,172 @@ fn test_table_note_width_at_narrow_content_width() {
             "line {i} exceeds content_width: {visual_width} > {content_width}: {line:?}"
         );
     }
+}
+
+#[test]
+fn test_targeted_note_deletion_multiple_notes_on_same_row() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let file = state.current_file().unwrap().path.clone();
+
+    // Commit two notes on the first code row
+    state.note_draft = Some("First note".into());
+    state.commit_note_draft();
+    state.note_draft = Some("Second note".into());
+    state.commit_note_draft();
+
+    let note_row = 1;
+    state.row_idx = note_row;
+    let layout = state.note_callout_layout_for_row(note_row, 80);
+    assert_eq!(layout.len(), 2, "both notes must be laid out");
+
+    // The second note starts after the first note's visual lines
+    // row 1 has: vis_line 0 = hunk divider, vis_line 1 = code segment
+    let note2_vis_line = 1 + 1 + layout[0].1;
+    state.vis_line = note2_vis_line;
+
+    let target = state.visual_target_at(state.row_idx, state.vis_line);
+    let note2_id = match target {
+        Some(crate::app::notes::VisualTarget::Note { note, .. }) => {
+            assert_eq!(note.text, "Second note");
+            note.id.clone()
+        }
+        other => panic!(
+            "expected VisualTarget::Note for second note, got {:?}",
+            other
+        ),
+    };
+
+    // Delete targeted note
+    state.delete_note();
+
+    let remaining: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    assert_eq!(remaining.len(), 1);
+    assert_ne!(remaining[0].id, note2_id);
+    assert_eq!(remaining[0].text, "First note");
+}
+
+#[test]
+fn test_targeted_note_editing_preserves_id_and_updates_text() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let file = state.current_file().unwrap().path.clone();
+
+    state.note_draft = Some("Original comment text".into());
+    state.commit_note_draft();
+
+    let note_row = 1;
+    state.row_idx = note_row;
+    state.vis_line = 2; // vis_line 0 = hunk div, 1 = code seg, 2 = note line
+
+    // Targeted edit via start_note_draft
+    state.start_note_draft();
+    let orig_id = state
+        .editing_note_id
+        .clone()
+        .expect("must set editing_note_id");
+    assert_eq!(state.note_draft.as_deref(), Some("Original comment text"));
+
+    // Modify the draft text
+    state.note_draft = Some("Updated comment text!".into());
+    state.commit_note_draft();
+
+    assert!(state.note_draft.is_none());
+    assert!(state.editing_note_id.is_none());
+
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].id, orig_id, "editing must preserve note id");
+    assert_eq!(notes[0].text, "Updated comment text!");
+}
+
+#[test]
+fn test_delete_note_disabled_on_diff_row_without_selection() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let file = state.current_file().unwrap().path.clone();
+
+    state.note_draft = Some("Keep me safe".into());
+    state.commit_note_draft();
+
+    // Cursor is on row 1, vis_line 1 (code row, not the note)
+    state.row_idx = 1;
+    state.vis_line = 1;
+    state.delete_note();
+
+    assert_eq!(
+        state.status_message.as_ref().map(|(s, _)| s.as_str()),
+        Some("no note here")
+    );
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    assert_eq!(notes.len(), 1, "note must not be deleted from code line");
+}
+
+#[test]
+fn test_style_focused_note_line() {
+    use crate::app::notes::style_focused_note_line;
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    state.note_draft = Some("test note".into());
+    state.commit_note_draft();
+    let callouts = state.note_callouts(80);
+    let note_line = callouts.values().next().unwrap().first().unwrap();
+
+    // Non-current line of focused note keeps note_bg (234) with cyan stripe
+    let focused_non_current = style_focused_note_line(note_line, false);
+    assert!(
+        focused_non_current.contains("\x1b[38;5;81m"),
+        "must switch left stripe to cyan ANSI color"
+    );
+    assert!(
+        focused_non_current.contains("\x1b[48;5;234m"),
+        "non-current line keeps note_bg 234"
+    );
+    assert!(
+        focused_non_current.contains("💬"),
+        "must preserve original note callout glyph"
+    );
+
+    // Current line of focused note gets cursor_bg (237) background highlight
+    let focused_current = style_focused_note_line(note_line, true);
+    assert!(
+        focused_current.contains("\x1b[38;5;81m"),
+        "must switch left stripe to cyan ANSI color"
+    );
+    assert!(
+        focused_current.contains("\x1b[48;5;237m"),
+        "current line receives cursor background 237"
+    );
+    assert!(
+        focused_current.contains("💬"),
+        "must preserve original note callout glyph"
+    );
+}
+
+#[test]
+fn test_multiline_note_stripe_entirely_cyan_when_cursor_on_any_line() {
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    state.note_draft = Some("- First line\n- Second line\n- Third line".into());
+    state.commit_note_draft();
+
+    // Row 1 has: vis_line 0 = hunk div, vis_line 1 = code seg,
+    // vis_line 2 = note line 0, 3 = note line 1, 4 = note line 2
+    state.row_idx = 1;
+    state.vis_line = 3; // hover cursor on the middle line of the note
+
+    let frame = state.render_frame(80, 20);
+    let cyan_count = frame.matches("\x1b[38;5;81m").count();
+    assert_eq!(
+        cyan_count, 3,
+        "all 3 lines of the focused note must have cyan stripe, got {cyan_count}"
+    );
+
+    // The current line of the note must have the cursor background 237
+    // highlight
+    assert!(
+        frame.contains("\x1b[48;5;237m"),
+        "current line of note must receive cursor background 237"
+    );
 }

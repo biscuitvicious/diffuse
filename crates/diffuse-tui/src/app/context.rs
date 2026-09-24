@@ -193,9 +193,25 @@ impl AppState {
 
     /// Check if the cursor is positioned on a hunk divider.
     pub fn is_cursor_on_hunk_divider(&self) -> Option<(usize, usize)> {
+        if self.raw_diff {
+            if let Some(item) = self.flat.get(self.row_idx)
+                && item.is_hunk_divider
+            {
+                return Some((item.file_idx, item.hunk_idx));
+            }
+            return None;
+        }
         for hs in &self.hunk_starts {
             if hs.flat == self.row_idx {
-                return Some((hs.file, hs.hunk));
+                let cw = if self.last_content_width > 0 {
+                    self.last_content_width
+                } else {
+                    80
+                };
+                let div_segs = self.hunk_div_seg_count(hs.file, hs.hunk, cw);
+                if self.vis_line < div_segs {
+                    return Some((hs.file, hs.hunk));
+                }
             }
         }
         None

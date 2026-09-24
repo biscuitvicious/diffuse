@@ -277,7 +277,9 @@ fn test_notes_commit_and_delete_via_public_api() {
     let frame = state.render_frame(100, 30);
     assert!(frame.contains("💬"), "committed note must show callout");
 
-    state.delete_notes();
+    // Targeted deletion requires focusing the note line
+    state.move_down();
+    state.delete_note();
     assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 0);
 }
 

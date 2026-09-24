@@ -146,6 +146,7 @@ impl AppState {
         } else if self.row_idx >= self.flat.len() {
             self.row_idx = self.flat.len().saturating_sub(1);
         }
+        self.vis_line = 0;
         self.adjust_scroll();
         self.bump_content();
     }

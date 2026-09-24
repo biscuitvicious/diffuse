@@ -93,8 +93,8 @@ fn test_file_header_has_background_stripe() {
 
     let selected = render_file_header(&f, Badge { idx: 0, total: 1 }, false, true, true, false, 80);
     assert!(
-        selected.contains("\x1b[48;5;236m"),
-        "selected file header must have default file_header_bg_selected (236)"
+        selected.contains("\x1b[48;5;238m"),
+        "selected file header must have default file_header_bg_selected (238)"
     );
     assert!(
         selected.contains("\x1b[38;5;221m"),
@@ -152,6 +152,26 @@ fn test_hunk_divider_is_orange() {
     assert!(
         current.contains("48;5;235m"),
         "current hunk divider must have default hunk_divider_bg_current (235)"
+    );
+
+    let theme = DiffuseTheme::from_env();
+    let selected = render_hunk_divider_segment_themed(
+        Badge { idx: 0, total: 1 },
+        &h,
+        8,
+        false,
+        true,
+        0,
+        80,
+        &theme,
+    );
+    assert!(
+        selected.contains("38;2;255;155;255m"),
+        "selected hunk divider must have brighter purple foreground"
+    );
+    assert!(
+        selected.contains("48;5;238m"),
+        "selected hunk divider must have hunk_divider_bg_selected 238"
     );
 }
 

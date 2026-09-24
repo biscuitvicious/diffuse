@@ -3,6 +3,39 @@ use crate::{
     core::{PipelineOptions, pipeline::run_pipeline_full, wire::PipelineOutput},
 };
 
+fn sample_output() -> PipelineOutput {
+    let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
+index 1111111..2222222 100644
+--- a/filesystem.rs
++++ b/filesystem.rs
+@@ -1025,6 +1025,8 @@ fn test() {
+      let x = 1;
+ -    // old comment — em dash
+ +    // new comment — em dash updated
+ +    let y = 2;
+ }
+"#;
+    let new_content = [(
+        "filesystem.rs".to_string(),
+        "fn test() {\n    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}\n"
+            .to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let old_content = [(
+        "filesystem.rs".to_string(),
+        "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    )
+}
+
 #[test]
 fn test_app_state_scroll_through_all_rows() {
     let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
@@ -936,4 +969,167 @@ index 1111111..2222222 100644
         .map(|h| h.flat)
         .expect("tracked.rs must have a hunk");
     assert_eq!(state.row_idx, tracked_hunk);
+}
+
+#[test]
+fn test_sub_row_navigation_through_notes_and_wrapped_lines() {
+    let out = sample_output();
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.last_content_width = 80;
+    state.viewport_height = 20;
+
+    // Position cursor on row 2 (code row without hunk divider)
+    state.row_idx = 2;
+    state.vis_line = 0;
+
+    // Add a 2-paragraph note draft (2 rendered lines) and commit it to row 2
+    state.note_draft = Some("First note line\n\nSecond note line".into());
+    state.commit_note_draft();
+
+    let cur_row = state.row_idx;
+    let seg_count = state.row_seg_count(cur_row, 80);
+    assert_eq!(seg_count, 1);
+
+    // Initial vis_line is 0 (code row)
+    assert_eq!(state.vis_line, 0);
+
+    // move_down should step into note line 0 (vis_line = 1)
+    state.move_down();
+    assert_eq!(state.row_idx, cur_row);
+    assert_eq!(state.vis_line, 1);
+
+    // move_down should step into note line 1 (vis_line = 2, blank paragraph
+    // separator)
+    state.move_down();
+    assert_eq!(state.row_idx, cur_row);
+    assert_eq!(state.vis_line, 2);
+
+    // move_down should step into note line 2 (vis_line = 3, Second note line)
+    state.move_down();
+    assert_eq!(state.row_idx, cur_row);
+    assert_eq!(state.vis_line, 3);
+
+    // Next move_down should advance to next row with vis_line = 0
+    state.move_down();
+    assert_eq!(state.row_idx, cur_row + 1);
+    assert_eq!(state.vis_line, 0);
+
+    // move_up should step back to the last note line of cur_row (vis_line = 3)
+    state.move_up();
+    assert_eq!(state.row_idx, cur_row);
+    assert_eq!(state.vis_line, 3);
+
+    state.move_up();
+    assert_eq!(state.row_idx, cur_row);
+    assert_eq!(state.vis_line, 2);
+
+    state.move_up();
+    assert_eq!(state.row_idx, cur_row);
+    assert_eq!(state.vis_line, 1);
+
+    state.move_up();
+    assert_eq!(state.row_idx, cur_row);
+    assert_eq!(state.vis_line, 0);
+}
+
+#[test]
+fn test_viewport_scrolling_through_tall_content_without_min_vis_snap() {
+    let out = sample_output();
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.last_content_width = 80;
+    state.viewport_height = 10;
+
+    state.row_idx = 1;
+    state.vis_line = 0;
+    let tall_note = (0..15)
+        .map(|i| format!("- Note line {i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.note_draft = Some(tall_note);
+    state.commit_note_draft();
+
+    // Move down 12 times into the note
+    for _ in 0..12 {
+        state.move_down();
+    }
+    assert_eq!(state.row_idx, 1);
+    assert_eq!(state.vis_line, 12);
+
+    // Render frame to update scroll clamping
+    state.render_frame(80, 10);
+    assert!(
+        state.scroll > 1,
+        "scroll ({}) should advance past min_vis (1) when cursor is at vis_line 12",
+        state.scroll
+    );
+}
+
+#[test]
+fn test_viewport_scrolling_through_tall_wrapped_diff_line_without_min_vis_snap() {
+    let mut out = sample_output();
+    out.files[0].rows[0].text = "word ".repeat(300);
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.last_content_width = 80;
+    state.viewport_height = 10;
+
+    let target_row = state.first_row_of_file(0) + 1;
+    state.row_idx = target_row;
+    state.vis_line = 0;
+
+    let seg_count = state.row_seg_count(target_row, 80);
+    assert!(seg_count >= 15, "should produce at least 15 segments");
+
+    for _ in 0..12 {
+        state.move_down();
+    }
+    assert_eq!(state.row_idx, target_row);
+    assert_eq!(state.vis_line, 12);
+
+    state.render_frame(80, 10);
+    assert!(
+        state.scroll > target_row,
+        "scroll ({}) should advance past row top ({}) when cursor is at segment 12",
+        state.scroll,
+        target_row
+    );
+}
+
+#[test]
+fn test_hunk_divider_selectable_navigation() {
+    let out = sample_output();
+    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.last_content_width = 80;
+    assert!(state.flat[0].is_file_header);
+    state.row_idx = 0;
+    state.vis_line = 0;
+
+    // Moving down from file header lands on hunk divider of row 1 (vis_line ==
+    // 0)
+    state.move_down();
+    assert_eq!(state.row_idx, 1);
+    assert_eq!(state.vis_line, 0);
+    assert!(
+        state.is_cursor_on_hunk_divider().is_some(),
+        "vis_line 0 of hunk start row must be on the hunk divider"
+    );
+
+    // Moving down again lands on the first code row of row 1 (vis_line == 1)
+    state.move_down();
+    assert_eq!(state.row_idx, 1);
+    assert_eq!(state.vis_line, 1);
+    assert!(
+        state.is_cursor_on_hunk_divider().is_none(),
+        "vis_line 1 of hunk start row is the code segment, not the hunk divider"
+    );
+
+    // Moving up steps back to the hunk divider (vis_line == 0)
+    state.move_up();
+    assert_eq!(state.row_idx, 1);
+    assert_eq!(state.vis_line, 0);
+    assert!(state.is_cursor_on_hunk_divider().is_some());
+
+    // Moving up steps back to the file header
+    state.move_up();
+    assert_eq!(state.row_idx, 0);
+    assert_eq!(state.vis_line, 0);
 }

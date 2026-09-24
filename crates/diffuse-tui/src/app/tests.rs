@@ -174,7 +174,8 @@ fn test_note_commit_persists_and_deletes() {
         frame
     );
 
-    state.delete_notes();
+    state.move_down();
+    state.delete_note();
     assert!(
         notes_for_file(&state.notes, "test_repo", &file)
             .next()
@@ -274,7 +275,8 @@ fn test_selection_requires_coord_rows() {
     // Anchor on the file header (no coordinate) and confirm in place: the
     // range collapses onto the header which carries no line number, so
     // the reference computes no selection.
-    state.move_up();
+    state.row_idx = 0;
+    state.vis_line = 0;
     state.start_or_confirm_selection();
     state.start_or_confirm_selection();
     assert!(state.anchor.is_none());
@@ -283,7 +285,8 @@ fn test_selection_requires_coord_rows() {
     // Anchoring on the header then walking onto a coordinate row snaps
     // the low end down to the first coordinate row of the file.
     let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
-    state.move_up();
+    state.row_idx = 0;
+    state.vis_line = 0;
     state.start_or_confirm_selection();
     state.move_down();
     let sel = state
@@ -858,7 +861,7 @@ index 6f6222d..4aa7a1d 100644
 
     let frame_raw_115 = state.render_frame(120, 30);
     let is_cursor_line = |l: &&str| {
-        l.contains("\x1b[48;5;235m")
+        l.contains("\x1b[48;5;237m")
             || l.contains("\x1b[48;2;54;54;54m")
             || l.contains("\x1b[48;2;36;56;37m")
             || l.contains("\x1b[48;2;68;24;26m")

@@ -70,9 +70,11 @@ pub struct ThemePalette {
     pub file_header_path_current: Color,
     pub file_header_path_rest: Color,
 
+    pub hunk_divider_bg_selected: Color,
     pub hunk_divider_bg_current: Color,
     pub hunk_divider_bg_rest: Color,
     pub hunk_divider_fg: Color,
+    pub hunk_divider_fg_selected: Color,
 
     pub header_bar_bg: Color,
     pub header_bar_fg: Color,
@@ -116,7 +118,7 @@ impl ThemePalette {
             muted: Color::Fixed(241),
 
             ctx_tint_bg: Color::Fixed(233),
-            ctx_cursor_bg: Color::Fixed(235),
+            ctx_cursor_bg: Color::Fixed(237),
             ctx_fg: Color::Fixed(245),
             band_bg: Color::Fixed(235),
 
@@ -139,7 +141,7 @@ impl ThemePalette {
             mod_fg: Color::Fixed(245),
 
             mov_tint_bg: Color::Fixed(233),
-            mov_cursor_bg: Color::Fixed(235),
+            mov_cursor_bg: Color::Fixed(237),
             mov_fg: Color::Fixed(245),
 
             note_tint_bg: Color::Rgb(76, 64, 20),
@@ -155,7 +157,7 @@ impl ThemePalette {
             mov_gutter_num: Color::Fixed(147),
             mov_gutter_icon: Color::Fixed(117),
 
-            file_header_bg_selected: Color::Fixed(236),
+            file_header_bg_selected: Color::Fixed(238),
             file_header_bg_current: Color::Fixed(235),
             file_header_bg_rest: Color::Fixed(233),
             file_header_fg_selected: Color::Fixed(221),
@@ -165,9 +167,11 @@ impl ThemePalette {
             file_header_path_current: Color::Fixed(254),
             file_header_path_rest: Color::Fixed(251),
 
+            hunk_divider_bg_selected: Color::Fixed(238),
             hunk_divider_bg_current: Color::Fixed(235),
             hunk_divider_bg_rest: Color::Primary,
             hunk_divider_fg: Color::Fixed(213),
+            hunk_divider_fg_selected: Color::Rgb(255, 155, 255),
 
             header_bar_bg: Color::Fixed(234),
             header_bar_fg: Color::Fixed(231),
@@ -230,8 +234,10 @@ impl ThemePalette {
 
     /// Resolve visual colors for hunk divider banners.
     #[must_use]
-    pub fn hunk_divider_colors(&self, is_current: bool) -> (Color, Color) {
-        if is_current {
+    pub fn hunk_divider_colors(&self, is_selected: bool, is_current: bool) -> (Color, Color) {
+        if is_selected {
+            (self.hunk_divider_bg_selected, self.hunk_divider_fg_selected)
+        } else if is_current {
             (self.hunk_divider_bg_current, self.hunk_divider_fg)
         } else {
             (self.hunk_divider_bg_rest, self.hunk_divider_fg)

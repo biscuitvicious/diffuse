@@ -25,6 +25,7 @@ impl AppState {
                     self.cancel_file_finder();
                 } else if self.note_draft.is_some() {
                     self.note_draft = None;
+                    self.editing_note_id = None;
                 } else if self.show_help {
                     self.show_help = false;
                 } else if self.anchor.is_some() || self.confirmed_sel.is_some() {
@@ -177,10 +178,13 @@ impl AppState {
                     Err(e) => self.status_message = Some((e, false)),
                 }
             }
-            TuiCommand::StartNoteDraft => self.note_draft = Some(String::new()),
+            TuiCommand::StartNoteDraft => self.start_note_draft(),
             TuiCommand::CommitNoteDraft => self.commit_note_draft(),
-            TuiCommand::CancelNoteDraft => self.note_draft = None,
-            TuiCommand::DeleteNote => self.delete_notes(),
+            TuiCommand::CancelNoteDraft => {
+                self.note_draft = None;
+                self.editing_note_id = None;
+            }
+            TuiCommand::DeleteNote => self.delete_note(),
             TuiCommand::MouseClick { row, col, shift } => {
                 let header_offset = self.last_viewport_start;
                 let vh = self.viewport_height;

@@ -22,13 +22,7 @@ impl AppState {
         let target_vis = starts.get(self.row_idx).copied().unwrap_or(0);
 
         if is_bottom {
-            let hunk_div_offset = if self.hunk_starts.iter().any(|h| h.flat == self.row_idx) {
-                1
-            } else {
-                0
-            };
-            self.scroll =
-                (target_vis + hunk_div_offset).saturating_sub(max_rows.saturating_sub(1 + margin));
+            self.scroll = target_vis.saturating_sub(max_rows.saturating_sub(1 + margin));
         } else {
             self.scroll = target_vis.saturating_sub(margin);
         }
@@ -83,8 +77,13 @@ impl AppState {
     }
 
     pub fn move_down(&mut self) {
-        let seg_count = self.row_seg_count(self.row_idx, self.last_content_width);
-        if self.vis_line + 1 < seg_count {
+        let cw = if self.last_content_width > 0 {
+            self.last_content_width
+        } else {
+            80
+        };
+        let nav_count = self.row_nav_vis_count(self.row_idx, cw);
+        if self.vis_line + 1 < nav_count {
             self.vis_line += 1;
         } else if self.row_idx + 1 < self.flat.len() {
             self.row_idx += 1;
@@ -97,8 +96,13 @@ impl AppState {
             self.vis_line -= 1;
         } else if self.row_idx > 0 {
             self.row_idx -= 1;
-            let prev_seg_count = self.row_seg_count(self.row_idx, self.last_content_width);
-            self.vis_line = prev_seg_count.saturating_sub(1);
+            let cw = if self.last_content_width > 0 {
+                self.last_content_width
+            } else {
+                80
+            };
+            let prev_nav_count = self.row_nav_vis_count(self.row_idx, cw);
+            self.vis_line = prev_nav_count.saturating_sub(1);
         }
     }
 
@@ -110,8 +114,13 @@ impl AppState {
             return;
         }
         let last = self.flat.len() - 1;
-        let seg_count = self.row_seg_count(self.row_idx, self.last_content_width);
-        if self.row_idx == last && self.vis_line + 1 >= seg_count {
+        let cw = if self.last_content_width > 0 {
+            self.last_content_width
+        } else {
+            80
+        };
+        let nav_count = self.row_nav_vis_count(self.row_idx, cw);
+        if self.row_idx == last && self.vis_line + 1 >= nav_count {
             self.row_idx = 0;
             self.vis_line = 0;
         } else {
@@ -128,8 +137,13 @@ impl AppState {
         }
         if self.row_idx == 0 && self.vis_line == 0 {
             self.row_idx = self.flat.len() - 1;
-            let last_seg_count = self.row_seg_count(self.row_idx, self.last_content_width);
-            self.vis_line = last_seg_count.saturating_sub(1);
+            let cw = if self.last_content_width > 0 {
+                self.last_content_width
+            } else {
+                80
+            };
+            let last_nav_count = self.row_nav_vis_count(self.row_idx, cw);
+            self.vis_line = last_nav_count.saturating_sub(1);
         } else {
             self.move_up();
         }
@@ -151,33 +165,25 @@ impl AppState {
     /// Scroll to a specific visual line offset (used by scrollbar dragging and
     /// paging).
     pub fn scroll_to_visual(&mut self, target_vis: usize) {
-        let (starts, counts, seg_counts, total_vis_lines) =
-            self.cached_geometry_tuple(self.last_content_width);
+        let geo = self.cached_geometry(self.last_content_width);
+        let starts = geo.starts;
+        let counts = geo.counts;
+        let nav_counts = geo.nav_counts;
+        let total_vis_lines = geo.total_vis_lines;
         let max_rows = self.viewport_height.max(4);
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = target_vis.min(max_scroll);
 
         // Keep cursor in view
         let cursor_flat = self.row_idx;
-        let hunk_div_offset = if self.hunk_starts.iter().any(|h| h.flat == cursor_flat) {
-            1
-        } else {
-            0
-        };
-        let cursor_vis =
-            starts.get(cursor_flat).copied().unwrap_or(0) + hunk_div_offset + self.vis_line;
+        let cursor_vis = starts.get(cursor_flat).copied().unwrap_or(0) + self.vis_line;
 
         if cursor_vis < self.scroll {
             for (i, &s) in starts.iter().enumerate() {
                 if s + counts[i] > self.scroll {
                     self.row_idx = i;
-                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
-                        1
-                    } else {
-                        0
-                    };
-                    let offset = self.scroll.saturating_sub(s + hunk_div);
-                    self.vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                    let offset = self.scroll.saturating_sub(s);
+                    self.vis_line = offset.min(nav_counts[i].saturating_sub(1));
                     break;
                 }
             }
@@ -188,13 +194,8 @@ impl AppState {
             for (i, &s) in starts.iter().enumerate().rev() {
                 if s <= bottom_vis {
                     target_row = i;
-                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
-                        1
-                    } else {
-                        0
-                    };
-                    let offset = bottom_vis.saturating_sub(s + hunk_div);
-                    target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                    let offset = bottom_vis.saturating_sub(s);
+                    target_vis_line = offset.min(nav_counts[i].saturating_sub(1));
                     break;
                 }
             }
@@ -271,8 +272,10 @@ impl AppState {
         }
         let started = std::time::Instant::now();
         let scroll_before = self.scroll;
-        let (starts, _counts, seg_counts, total_vis_lines) =
-            self.cached_geometry_tuple(self.last_content_width);
+        let geo = self.cached_geometry(self.last_content_width);
+        let starts = geo.starts;
+        let nav_counts = geo.nav_counts;
+        let total_vis_lines = geo.total_vis_lines;
         let max_rows = self.viewport_height.max(4);
         let bottom_vis = (self.scroll + max_rows)
             .saturating_sub(1)
@@ -283,13 +286,8 @@ impl AppState {
         for (i, &s) in starts.iter().enumerate().rev() {
             if s <= bottom_vis {
                 target_row = i;
-                let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
-                    1
-                } else {
-                    0
-                };
-                let offset = bottom_vis.saturating_sub(s + hunk_div);
-                target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                let offset = bottom_vis.saturating_sub(s);
+                target_vis_line = offset.min(nav_counts[i].saturating_sub(1));
                 break;
             }
         }
@@ -307,13 +305,8 @@ impl AppState {
             for (i, &s) in starts.iter().enumerate().rev() {
                 if s <= new_bottom_vis {
                     new_target_row = i;
-                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
-                        1
-                    } else {
-                        0
-                    };
-                    let offset = new_bottom_vis.saturating_sub(s + hunk_div);
-                    new_target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                    let offset = new_bottom_vis.saturating_sub(s);
+                    new_target_vis_line = offset.min(nav_counts[i].saturating_sub(1));
                     break;
                 }
             }
@@ -339,8 +332,10 @@ impl AppState {
         }
         let started = std::time::Instant::now();
         let scroll_before = self.scroll;
-        let (starts, counts, seg_counts, _total_vis_lines) =
-            self.cached_geometry_tuple(self.last_content_width);
+        let geo = self.cached_geometry(self.last_content_width);
+        let starts = geo.starts;
+        let counts = geo.counts;
+        let nav_counts = geo.nav_counts;
         let top_vis = self.scroll;
 
         let mut target_row = self.row_idx;
@@ -348,13 +343,8 @@ impl AppState {
         for (i, &s) in starts.iter().enumerate() {
             if s + counts[i] > top_vis {
                 target_row = i;
-                let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
-                    1
-                } else {
-                    0
-                };
-                let offset = top_vis.saturating_sub(s + hunk_div);
-                target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                let offset = top_vis.saturating_sub(s);
+                target_vis_line = offset.min(nav_counts[i].saturating_sub(1));
                 break;
             }
         }
@@ -371,13 +361,8 @@ impl AppState {
             for (i, &s) in starts.iter().enumerate() {
                 if s + counts[i] > new_top_vis {
                     new_target_row = i;
-                    let hunk_div = if self.hunk_starts.iter().any(|h| h.flat == i) {
-                        1
-                    } else {
-                        0
-                    };
-                    let offset = new_top_vis.saturating_sub(s + hunk_div);
-                    new_target_vis_line = offset.min(seg_counts[i].saturating_sub(1));
+                    let offset = new_top_vis.saturating_sub(s);
+                    new_target_vis_line = offset.min(nav_counts[i].saturating_sub(1));
                     break;
                 }
             }

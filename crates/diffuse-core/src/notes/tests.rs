@@ -94,6 +94,121 @@ fn test_notes_remove() {
 }
 
 #[test]
+fn test_remove_note_by_id_targeted() {
+    let mut db = NotesDB::new();
+    let note1 = ReviewNote {
+        id: "n1".into(),
+        file: "src/main.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 15,
+        text: "First".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    let note2 = ReviewNote {
+        id: "n2".into(),
+        file: "src/main.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 15,
+        text: "Second (same line)".into(),
+        created_at: 1001,
+        line_hash: None,
+    };
+
+    add_note(&mut db, "myrepo", note1);
+    add_note(&mut db, "myrepo", note2);
+
+    // Target specifically note1
+    assert!(remove_note_by_id(&mut db, "myrepo", "src/main.rs", "n1"));
+    let remaining: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].id, "n2");
+    assert_eq!(remaining[0].text, "Second (same line)");
+
+    // Non-existent ID or repo returns false
+    assert!(!remove_note_by_id(
+        &mut db,
+        "myrepo",
+        "src/main.rs",
+        "nonexistent"
+    ));
+    assert!(!remove_note_by_id(
+        &mut db,
+        "unknown_repo",
+        "src/main.rs",
+        "n2"
+    ));
+    assert!(!remove_note_by_id(
+        &mut db,
+        "myrepo",
+        "unknown_file.rs",
+        "n2"
+    ));
+
+    // Removing last note cleans up file entry in DB
+    assert!(remove_note_by_id(&mut db, "myrepo", "src/main.rs", "n2"));
+    assert_eq!(notes_for_file(&db, "myrepo", "src/main.rs").count(), 0);
+    assert!(!db.get("myrepo").unwrap().contains_key("src/main.rs"));
+}
+
+#[test]
+fn test_update_note_text_targeted() {
+    let mut db = NotesDB::new();
+    let note = ReviewNote {
+        id: "n1".into(),
+        file: "src/main.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 15,
+        text: "Initial text".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    add_note(&mut db, "myrepo", note);
+
+    assert!(update_note_text(
+        &mut db,
+        "myrepo",
+        "src/main.rs",
+        "n1",
+        "Updated text".into()
+    ));
+
+    let updated: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
+    assert_eq!(updated.len(), 1);
+    assert_eq!(updated[0].id, "n1");
+    assert_eq!(updated[0].text, "Updated text");
+    assert_eq!(updated[0].start, 10);
+    assert_eq!(updated[0].end, 15);
+    assert_eq!(updated[0].created_at, 1000);
+
+    // Non-existent ID, file, or repo returns false
+    assert!(!update_note_text(
+        &mut db,
+        "myrepo",
+        "src/main.rs",
+        "nonexistent",
+        "New text".into()
+    ));
+    assert!(!update_note_text(
+        &mut db,
+        "unknown_repo",
+        "src/main.rs",
+        "n1",
+        "New text".into()
+    ));
+    assert!(!update_note_text(
+        &mut db,
+        "myrepo",
+        "other.rs",
+        "n1",
+        "New text".into()
+    ));
+}
+
+#[test]
 fn test_notes_key_scopes_repo_by_head() {
     assert_eq!(notes_key("myrepo", Some("abc123")), "myrepo@abc123");
     assert_eq!(notes_key("myrepo", None), "myrepo");

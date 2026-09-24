@@ -93,6 +93,7 @@ fn test_default_theme_palette() {
     assert_eq!(palette.mod_tint_bg, Color::Rgb(38, 38, 38));
     assert_eq!(palette.mod_cursor_bg, Color::Rgb(66, 66, 66));
     assert_eq!(palette.note_tint_bg, Color::Rgb(76, 64, 20));
+    assert_eq!(palette.ctx_cursor_bg, Color::Fixed(237));
 
     let theme = DiffuseTheme::DEFAULT;
     assert_eq!(theme.name, "default");
@@ -164,11 +165,15 @@ fn test_theme_palette_helpers() {
     );
 
     assert_eq!(
-        p.hunk_divider_colors(true),
+        p.hunk_divider_colors(true, false),
+        (p.hunk_divider_bg_selected, p.hunk_divider_fg_selected)
+    );
+    assert_eq!(
+        p.hunk_divider_colors(false, true),
         (p.hunk_divider_bg_current, p.hunk_divider_fg)
     );
     assert_eq!(
-        p.hunk_divider_colors(false),
+        p.hunk_divider_colors(false, false),
         (p.hunk_divider_bg_rest, p.hunk_divider_fg)
     );
 

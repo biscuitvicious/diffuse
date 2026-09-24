@@ -408,17 +408,19 @@ pub fn divider_seg_count(txt: &str, content_width: usize) -> usize {
 
 /// Render a specific visual segment of a hunk header divider with theme
 /// support.
+#[allow(clippy::too_many_arguments)]
 pub fn render_hunk_divider_segment_themed(
     badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
     is_current: bool,
+    is_selected: bool,
     seg_start: usize,
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> String {
     let txt = hunk_divider_text(badge, hunk, hidden_gap);
-    let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
+    let (bg, fg) = theme.palette.hunk_divider_colors(is_selected, is_current);
     let bg_code = match bg {
         crate::render::Color::Primary => String::new(),
         color => color.bg_code(),
@@ -456,6 +458,7 @@ pub fn render_hunk_divider_segment(
         hunk,
         hidden_gap,
         is_current,
+        false,
         seg_start,
         content_width,
         &DiffuseTheme::from_env(),
@@ -505,7 +508,7 @@ pub fn render_bottom_gap_divider_segment(
 ) -> String {
     let txt = bottom_gap_divider_text(hidden_gap);
     let theme = DiffuseTheme::from_env();
-    let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
+    let (bg, fg) = theme.palette.hunk_divider_colors(false, is_current);
     let bg_code = match bg {
         crate::render::Color::Primary => String::new(),
         color => color.bg_code(),
@@ -608,7 +611,7 @@ pub fn hunk_divider_line_themed(
     } else {
         slice_by_visual_width(&txt, 0, content_width)
     };
-    let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
+    let (bg, fg) = theme.palette.hunk_divider_colors(false, is_current);
     let mut style = Style::default()
         .fg(crate::view::to_color(fg))
         .add_modifier(Modifier::BOLD);
@@ -651,7 +654,7 @@ pub fn bottom_gap_divider_line_themed(
     } else {
         slice_by_visual_width(&txt, 0, content_width)
     };
-    let (bg, fg) = theme.palette.hunk_divider_colors(is_current);
+    let (bg, fg) = theme.palette.hunk_divider_colors(false, is_current);
     let mut style = Style::default()
         .fg(crate::view::to_color(fg))
         .add_modifier(Modifier::BOLD);

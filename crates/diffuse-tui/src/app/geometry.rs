@@ -20,6 +20,7 @@ pub(crate) struct CachedGeometry {
     pub(crate) starts: Vec<usize>,
     pub(crate) counts: Vec<usize>,
     pub(crate) seg_counts: Vec<usize>,
+    pub(crate) nav_counts: Vec<usize>,
     pub(crate) total_vis_lines: usize,
     pub(crate) callouts: HashMap<usize, Vec<String>>,
 }
@@ -226,7 +227,16 @@ impl AppState {
         content_width: usize,
     ) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
         let callouts = self.note_callouts(content_width);
-        self.compute_geometry(content_width, &callouts)
+        let (starts, counts, seg_counts, _nav_counts, total_vis_lines) =
+            self.compute_geometry(content_width, &callouts);
+        (starts, counts, seg_counts, total_vis_lines)
+    }
+
+    /// Number of navigable visual sub-lines for row `row_idx`: includes all
+    /// wrapped code segments plus all note callout lines attached to this row.
+    pub fn row_nav_vis_count(&mut self, row_idx: usize, content_width: usize) -> usize {
+        let geo = self.cached_geometry(content_width);
+        geo.nav_counts.get(row_idx).copied().unwrap_or(1)
     }
 
     /// Cached visual layout for frame rendering: recomputed only when the
@@ -246,7 +256,7 @@ impl AppState {
         }
         let started = std::time::Instant::now();
         let callouts = self.note_callouts(content_width);
-        let (starts, counts, seg_counts, total_vis_lines) =
+        let (starts, counts, seg_counts, nav_counts, total_vis_lines) =
             self.compute_geometry(content_width, &callouts);
         tracing::debug!(
             content_width,
@@ -264,6 +274,7 @@ impl AppState {
             starts,
             counts,
             seg_counts,
+            nav_counts,
             total_vis_lines,
             callouts,
         };
@@ -289,7 +300,7 @@ impl AppState {
         &self,
         content_width: usize,
         callouts: &HashMap<usize, Vec<String>>,
-    ) -> (Vec<usize>, Vec<usize>, Vec<usize>, usize) {
+    ) -> (Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>, usize) {
         let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
             HashMap::new()
         } else {
@@ -302,6 +313,7 @@ impl AppState {
         let mut starts = Vec::with_capacity(self.flat.len());
         let mut counts = Vec::with_capacity(self.flat.len());
         let mut seg_counts = Vec::with_capacity(self.flat.len());
+        let mut nav_counts = Vec::with_capacity(self.flat.len());
         let mut total_vis_lines = 0;
 
         for (idx, item) in self.flat.iter().enumerate() {
@@ -324,10 +336,11 @@ impl AppState {
             let item_total = div_lines + row_segs + note_lines + trailing_gap_lines;
             counts.push(item_total);
             seg_counts.push(row_segs.max(1));
+            nav_counts.push((div_lines + row_segs + note_lines).max(1));
             total_vis_lines += item_total;
         }
 
-        (starts, counts, seg_counts, total_vis_lines)
+        (starts, counts, seg_counts, nav_counts, total_vis_lines)
     }
 
     /// Marks all rows belonging to the current hunk envelope for gutter
@@ -403,15 +416,20 @@ impl AppState {
 
         let mut vis_i = 0;
         for (i, _item) in self.flat.iter().enumerate() {
-            if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
-                vis_i += self.hunk_div_seg_count(div_fi, div_hi, content_width);
-            }
+            let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
+                self.hunk_div_seg_count(div_fi, div_hi, content_width)
+            } else {
+                0
+            };
             let seg_count = self.row_seg_count(i, content_width);
+            let note_lines = callouts.get(&i).map_or(0, Vec::len);
+            let nav_count = (div_lines + seg_count + note_lines).max(1);
             if i == self.row_idx {
-                return vis_i + self.vis_line.min(seg_count.saturating_sub(1));
+                return vis_i + self.vis_line.min(nav_count.saturating_sub(1));
             }
+            vis_i += div_lines;
             vis_i += seg_count;
-            vis_i += callouts.get(&i).map_or(0, Vec::len);
+            vis_i += note_lines;
         }
         vis_i
     }

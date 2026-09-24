@@ -371,6 +371,48 @@ pub fn remove_notes(
     removed
 }
 
+/// Remove a specific note matching the repo, file, and unique `note_id`.
+/// Returns `true` if a note was removed, `false` otherwise.
+pub fn remove_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
+    let Some(repo_map) = db.get_mut(repo) else {
+        return false;
+    };
+    let Some(list) = repo_map.get_mut(file) else {
+        return false;
+    };
+    let before = list.len();
+    list.retain(|n| n.id != note_id);
+    let removed = list.len() < before;
+    if list.is_empty() {
+        repo_map.remove(file);
+    }
+    removed
+}
+
+/// Update the text of a specific note matching the repo, file, and unique
+/// `note_id`. Returns `true` if the note was found and updated, `false`
+/// otherwise.
+pub fn update_note_text(
+    db: &mut NotesDB,
+    repo: &str,
+    file: &str,
+    note_id: &str,
+    new_text: String,
+) -> bool {
+    let Some(repo_map) = db.get_mut(repo) else {
+        return false;
+    };
+    let Some(list) = repo_map.get_mut(file) else {
+        return false;
+    };
+    if let Some(note) = list.iter_mut().find(|n| n.id == note_id) {
+        note.text = new_text;
+        true
+    } else {
+        false
+    }
+}
+
 /// Normalize non-fenced note text for inline callout rendering:
 /// - Strips leading and trailing whitespace
 /// - Collapses all runs of whitespace (spaces, tabs, newlines) into a single

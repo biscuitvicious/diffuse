@@ -101,7 +101,8 @@ fn test_selection_requires_coord_rows() {
     // Anchor on the file header (no coordinate) and confirm in place: the
     // range collapses onto the header which carries no line number, so
     // the reference computes no selection.
-    state.move_up();
+    state.row_idx = 0;
+    state.vis_line = 0;
     state.start_or_confirm_selection();
     state.start_or_confirm_selection();
     assert!(state.anchor.is_none());
@@ -110,7 +111,8 @@ fn test_selection_requires_coord_rows() {
     // Anchoring on the header then walking onto a coordinate row snaps
     // the low end down to the first coordinate row of the file.
     let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
-    state.move_up();
+    state.row_idx = 0;
+    state.vis_line = 0;
     state.start_or_confirm_selection();
     state.move_down();
     let sel = state

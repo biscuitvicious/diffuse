@@ -674,23 +674,18 @@ impl AppState {
             starts,
             counts,
             seg_counts,
+            nav_counts,
             total_vis_lines,
             callouts,
             ..
         } = geo;
 
-        // Adjust scroll based on cursor visual position
-        let hunk_div_offset = if let Some(&(div_fi, div_hi)) = div_at.get(&self.row_idx) {
-            self.hunk_div_seg_count(div_fi, div_hi, content_width)
-        } else {
-            0
-        };
-        let cur_row_segs = seg_counts.get(self.row_idx).copied().unwrap_or(1);
-        if self.vis_line >= cur_row_segs {
-            self.vis_line = cur_row_segs.saturating_sub(1);
+        let cur_row_nav = nav_counts.get(self.row_idx).copied().unwrap_or(1);
+        if self.vis_line >= cur_row_nav {
+            self.vis_line = cur_row_nav.saturating_sub(1);
         }
         let min_vis = starts.get(self.row_idx).copied().unwrap_or(0);
-        let cursor_vis = min_vis + hunk_div_offset + self.vis_line;
+        let cursor_vis = min_vis + self.vis_line;
 
         let mut pin_applied = false;
         if let Some((pinned, pin_row)) = self.scroll_pin {
@@ -702,8 +697,13 @@ impl AppState {
             }
         }
         if !pin_applied {
-            if min_vis < self.scroll {
-                self.scroll = min_vis;
+            let top_vis = if self.vis_line == 0 {
+                min_vis
+            } else {
+                cursor_vis
+            };
+            if top_vis < self.scroll {
+                self.scroll = top_vis;
             }
             if cursor_vis >= self.scroll + max_rows {
                 self.scroll = cursor_vis.saturating_sub(max_rows.saturating_sub(1));
@@ -738,14 +738,15 @@ impl AppState {
             let in_band = band[idx];
             let in_hunk_extent = !in_band && hunk_extent[idx];
 
-            if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
+            let div_segs = if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
                 let h = &self.output.files[div_fi].hunks[div_hi];
                 let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
                 let is_cur = div_fi == self.current_file_idx() && cur_hunk == Some(div_hi);
-                let div_segs = self.hunk_div_seg_count(div_fi, div_hi, content_width);
+                let d_segs = self.hunk_div_seg_count(div_fi, div_hi, content_width);
                 let text_cols = content_width.max(1);
-                for s_idx in 0..div_segs {
+                for s_idx in 0..d_segs {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let seg_start = s_idx * text_cols;
                         line_src.push(Some(idx));
                         lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
@@ -756,6 +757,7 @@ impl AppState {
                             h,
                             hidden_gap,
                             is_cur,
+                            is_selected,
                             seg_start,
                             content_width,
                             &self.theme,
@@ -763,7 +765,10 @@ impl AppState {
                     }
                     vis_i += 1;
                 }
-            }
+                d_segs
+            } else {
+                0
+            };
 
             if item.is_file_header {
                 let file_obj = &self.output.files[item.file_idx];
@@ -830,7 +835,7 @@ impl AppState {
                 let seg_count = seg_counts[idx];
                 for s_idx in 0..seg_count {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                        let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                        let is_selected = idx == self.row_idx && self.vis_line == div_segs + s_idx;
                         let pfx = if s_idx == 0 {
                             crate::render::styled_prefix_themed(
                                 r.kind,
@@ -884,38 +889,68 @@ impl AppState {
                     }
                     vis_i += 1;
                 }
-
-                if !self.raw_diff
-                    && idx == self.last_row_of_file(item.file_idx)
-                    && self.hunk_trailing_gap(item.file_idx) > 0
-                {
-                    let gap = self.hunk_trailing_gap(item.file_idx);
-                    let bot_segs = self.bottom_gap_seg_count(item.file_idx, content_width);
-                    let is_cur = item.file_idx == self.current_file_idx() && idx == self.row_idx;
-                    let text_cols = content_width.max(1);
-                    for s_idx in 0..bot_segs {
-                        if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
-                            let seg_start = s_idx * text_cols;
-                            let bottom_div =
-                                crate::view::diff_grid::render_bottom_gap_divider_segment(
-                                    gap,
-                                    is_cur,
-                                    seg_start,
-                                    content_width,
-                                );
-                            line_src.push(Some(idx));
-                            lines.push(bottom_div);
-                        }
-                        vis_i += 1;
-                    }
-                }
             }
 
             if let Some(note_lines) = callouts.get(&idx) {
-                for nline in note_lines {
+                let focused_note_range = if idx == self.row_idx {
+                    match self.visual_target_at(self.row_idx, self.vis_line) {
+                        Some(super::notes::VisualTarget::Note {
+                            line_idx,
+                            total_note_lines,
+                            ..
+                        }) => {
+                            let note_start = div_segs + seg_counts[idx];
+                            if self.vis_line >= note_start {
+                                let start = (self.vis_line - note_start).saturating_sub(line_idx);
+                                Some(start..start + total_note_lines)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                for (nl_idx, nline) in note_lines.iter().enumerate() {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let is_focused = focused_note_range
+                            .as_ref()
+                            .is_some_and(|r| r.contains(&nl_idx));
+                        let is_current_line = idx == self.row_idx
+                            && self.vis_line == div_segs + seg_counts[idx] + nl_idx;
                         line_src.push(Some(idx));
-                        lines.push(clamp_or_pad_ansi(nline, content_width));
+                        let line_str = if is_focused {
+                            super::notes::style_focused_note_line(nline, is_current_line)
+                        } else {
+                            nline.clone()
+                        };
+                        lines.push(clamp_or_pad_ansi(&line_str, content_width));
+                    }
+                    vis_i += 1;
+                }
+            }
+
+            if !self.raw_diff
+                && idx == self.last_row_of_file(item.file_idx)
+                && self.hunk_trailing_gap(item.file_idx) > 0
+            {
+                let gap = self.hunk_trailing_gap(item.file_idx);
+                let bot_segs = self.bottom_gap_seg_count(item.file_idx, content_width);
+                let is_cur = item.file_idx == self.current_file_idx() && idx == self.row_idx;
+                let text_cols = content_width.max(1);
+                for s_idx in 0..bot_segs {
+                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let seg_start = s_idx * text_cols;
+                        let bottom_div = crate::view::diff_grid::render_bottom_gap_divider_segment(
+                            gap,
+                            is_cur,
+                            seg_start,
+                            content_width,
+                        );
+                        line_src.push(Some(idx));
+                        lines.push(bottom_div);
                     }
                     vis_i += 1;
                 }

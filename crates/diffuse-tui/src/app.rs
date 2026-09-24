@@ -39,6 +39,7 @@ pub struct AppState {
     pub raw_diff: bool,
     pub show_help: bool,
     pub note_draft: Option<String>,
+    pub editing_note_id: Option<String>,
     pub anchor: Option<usize>,
     pub sel_pivot: Option<usize>,
     pub confirmed_sel: Option<Selection>,
@@ -113,6 +114,12 @@ impl AppState {
             .iter()
             .position(|r| Self::flat_coord(&output, false, r).is_some())
             .unwrap_or(0);
+        let start_vis_line =
+            if start_row > 0 && !output.files.is_empty() && !output.files[0].hunks.is_empty() {
+                1
+            } else {
+                0
+            };
 
         let hunk_meta = Self::build_hunk_meta(&output);
 
@@ -121,7 +128,7 @@ impl AppState {
             output,
             flat,
             row_idx: start_row,
-            vis_line: 0,
+            vis_line: start_vis_line,
             scroll: 0,
             col_offset: 0,
             num_buffer: String::new(),
@@ -130,6 +137,7 @@ impl AppState {
             raw_diff: false,
             show_help: false,
             note_draft: None,
+            editing_note_id: None,
             anchor: None,
             sel_pivot: None,
             confirmed_sel: None,

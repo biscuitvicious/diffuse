@@ -82,16 +82,17 @@ fn sample_output_two_hunks() -> PipelineOutput {
 #[test]
 fn test_word_wrap_and_visual_subline_navigation() {
     let mut out = sample_output();
-    // Add a very long line to file 0
-    out.files[0].rows[0].text = "A".repeat(150);
+    // Add a very long line to file 0 (row 1 in diff, not the hunk divider row)
+    out.files[0].rows[1].text = "A".repeat(150);
     let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    state.row_idx = 2;
     // content_width = 80 - 1 (sb) = 79. text_cols = 79 - 6 = 73.
     // 150 chars -> 3 segments (73 + 73 + 4).
     let seg_count = state.row_seg_count(state.row_idx, 79);
     assert_eq!(seg_count, 3, "150 chars should produce 3 visual segments");
 
     state.last_content_width = 79;
-    assert_eq!(state.vis_line, 0);
+    state.vis_line = 0;
 
     // move_down advances vis_line within row
     state.move_down();
@@ -230,11 +231,13 @@ fn test_render_frame_lines_do_not_overflow_width() {
 #[test]
 fn test_current_line_highlight_covers_gutter() {
     let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
-    // Context row selected
+    // Context row selected (row 1, vis_line 1 following the hunk divider at
+    // vis_line 0)
     state.row_idx = 1;
+    state.vis_line = 1;
     let frame_ctx = state.render_frame(80, 24);
     assert!(
-        frame_ctx.contains("\x1b[48;5;235m\x1b[38;5;"),
+        frame_ctx.contains("\x1b[48;5;237m\x1b[38;5;"),
         "selected context row must start with cursor background before the gutter numbers"
     );
 
