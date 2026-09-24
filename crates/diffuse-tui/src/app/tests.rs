@@ -3032,6 +3032,165 @@ fn test_file_header_indicator_hit_rectangle_three_chars_wide() {
 }
 
 #[test]
+fn test_mouse_click_hunk_header_selects_hunk_divider() {
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    state.render_frame(120, 40);
+
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let target_flat = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.file == 0 && hs.hunk == 0)
+        .expect("must find hunk 0")
+        .flat;
+    let h0_div_vis = starts[target_flat];
+    let click_row = state.last_viewport_start + h0_div_vis.saturating_sub(state.scroll);
+
+    // Initial cursor is on row 0 (file header)
+    state.row_idx = 0;
+    state.vis_line = 0;
+
+    // Click on column 0 of the hunk divider line (outside of any expand arrow)
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 0,
+        shift: false,
+    });
+
+    assert_eq!(
+        state.row_idx, target_flat,
+        "cursor must move to hunk start row"
+    );
+    assert_eq!(state.vis_line, 0, "vis_line must be on hunk divider");
+    assert!(
+        matches!(
+            state.visual_target_at(state.row_idx, state.vis_line),
+            Some(crate::app::notes::VisualTarget::HunkDivider {
+                file_idx: 0,
+                hunk_idx: 0
+            })
+        ),
+        "visual target must be HunkDivider"
+    );
+}
+
+#[test]
+fn test_mouse_click_note_line_selects_note() {
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    state.row_idx = 1;
+    state.vis_line = 0;
+    state.note_draft = Some("Review this line".into());
+    state.commit_note_draft();
+
+    state.render_frame(120, 40);
+    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let cw = state.last_content_width;
+    let div_lines = state.hunk_div_seg_count(0, 0, cw);
+    let row_segs = seg_counts[1];
+
+    let note_vis = starts[1] + div_lines + row_segs;
+    let click_row = state.last_viewport_start + note_vis.saturating_sub(state.scroll);
+
+    state.row_idx = 0;
+    state.vis_line = 0;
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 10,
+        shift: false,
+    });
+
+    assert_eq!(state.row_idx, 1, "cursor must move to row with the note");
+    assert_eq!(
+        state.vis_line,
+        div_lines + row_segs,
+        "vis_line must be at note callout line"
+    );
+    match state.visual_target_at(state.row_idx, state.vis_line) {
+        Some(crate::app::notes::VisualTarget::Note { note, line_idx, .. }) => {
+            assert_eq!(note.text, "Review this line");
+            assert_eq!(line_idx, 0);
+        }
+        other => panic!("expected VisualTarget::Note, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_mouse_click_multiline_note_selects_specific_line() {
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    state.row_idx = 1;
+    state.vis_line = 0;
+    state.note_draft = Some("Line 1\n\nLine 2".into());
+    state.commit_note_draft();
+
+    state.render_frame(120, 40);
+    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let cw = state.last_content_width;
+    let div_lines = state.hunk_div_seg_count(0, 0, cw);
+    let row_segs = seg_counts[1];
+
+    let layout = state.note_callout_layout_for_row(1, cw);
+    assert!(layout[0].1 >= 2, "note must have at least 2 visual lines");
+
+    // Click on the second line of the note callout: div_lines + row_segs + 1
+    let note_vis_l1 = starts[1] + div_lines + row_segs + 1;
+    let click_row = state.last_viewport_start + note_vis_l1.saturating_sub(state.scroll);
+
+    state.row_idx = 0;
+    state.vis_line = 0;
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 10,
+        shift: false,
+    });
+
+    assert_eq!(state.row_idx, 1);
+    assert_eq!(state.vis_line, div_lines + row_segs + 1);
+    match state.visual_target_at(state.row_idx, state.vis_line) {
+        Some(crate::app::notes::VisualTarget::Note { note, line_idx, .. }) => {
+            assert_eq!(note.text, "Line 1\n\nLine 2");
+            assert_eq!(line_idx, 1);
+        }
+        other => panic!("expected VisualTarget::Note line 1, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_mouse_click_diff_row_with_hunk_divider_selects_code_row() {
+    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    state.render_frame(120, 40);
+
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let cw = state.last_content_width;
+    let div_lines = state.hunk_div_seg_count(0, 0, cw);
+    assert_eq!(div_lines, 1);
+
+    // Click on the code row (after the hunk divider: starts[1] + div_lines)
+    let code_vis = starts[1] + div_lines;
+    let click_row = state.last_viewport_start + code_vis.saturating_sub(state.scroll);
+
+    state.row_idx = 0;
+    state.vis_line = 0;
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 10,
+        shift: false,
+    });
+
+    assert_eq!(state.row_idx, 1);
+    assert_eq!(state.vis_line, div_lines);
+    assert!(
+        matches!(
+            state.visual_target_at(state.row_idx, state.vis_line),
+            Some(crate::app::notes::VisualTarget::DiffRow { seg_idx: 0, .. })
+        ),
+        "visual target must be DiffRow, not HunkDivider"
+    );
+}
+
+#[test]
 fn test_no_diffs_renders_header_footer_and_main_message_frame() {
     let empty_output = PipelineOutput {
         files: Vec::new(),

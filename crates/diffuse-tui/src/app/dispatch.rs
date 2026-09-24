@@ -219,8 +219,11 @@ impl AppState {
                 } else if in_viewport {
                     self.is_dragging_scrollbar = false;
                     let target_vis = self.scroll + (row - header_offset);
-                    let (starts, counts, seg_counts, _total_vis) =
-                        self.cached_geometry_tuple(self.last_content_width);
+                    let geo = self.cached_geometry(self.last_content_width);
+                    let starts = &geo.starts;
+                    let counts = &geo.counts;
+                    let nav_counts = &geo.nav_counts;
+                    let seg_counts = &geo.seg_counts;
                     let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
                         HashMap::new()
                     } else {
@@ -238,8 +241,8 @@ impl AppState {
                                 0
                             };
 
-                            if target_vis < s + div_lines {
-                                if let Some(&(div_fi, div_hi)) = div_at.get(&i)
+                            if target_vis < s + div_lines
+                                && let Some(&(div_fi, div_hi)) = div_at.get(&i)
                                     && let Some(f) = self.output.files.get(div_fi)
                                     && let Some(hunk) = f.hunks.get(div_hi)
                                 {
@@ -281,8 +284,6 @@ impl AppState {
                                         }
                                     }
                                 }
-                                break;
-                            }
 
                             // Clicking the collapse/expand triangle on a file
                             // header toggles the file — the click is swallowed
@@ -315,7 +316,7 @@ impl AppState {
                                 && self.hunk_trailing_gap(item.file_idx) > 0
                             {
                                 let row_segs = seg_counts[i];
-                                let note_lines = self.note_callouts(cw).get(&i).map_or(0, Vec::len);
+                                let note_lines = geo.callouts.get(&i).map_or(0, Vec::len);
                                 let bottom_start = s + div_lines + row_segs + note_lines;
                                 if target_vis >= bottom_start {
                                     let seg_off = target_vis - bottom_start;
@@ -335,8 +336,7 @@ impl AppState {
 
                             let prev_row = self.row_idx;
                             self.row_idx = i;
-                            self.vis_line =
-                                (target_vis - (s + div_lines)).min(seg_counts[i].saturating_sub(1));
+                            self.vis_line = (target_vis - s).min(nav_counts[i].saturating_sub(1));
 
                             if shift {
                                 let pivot = self.sel_pivot.unwrap_or(prev_row);
