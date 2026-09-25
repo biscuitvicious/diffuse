@@ -31,13 +31,15 @@ pub mod registry;
 pub mod prelude {
     pub use super::{
         classifier::{
-            ClassifiedToken, classify_line, classify_tokens, for_each_classified_token,
-            for_each_markdown_token, markdown_tokens,
+            ClassifiedToken, classify_line, classify_line_with_next, classify_tokens,
+            for_each_classified_token, for_each_line_classified_token_with_next,
+            for_each_markdown_token, for_each_markdown_token_with_header, is_line_alignment_row,
+            markdown_document_tokens, markdown_tokens,
         },
         fence::{FenceRegion, fence_regions, region_at},
         profile::{
-            BlockDelimStyle, CloseDelimiter, LangProfile, MD_SGR_BOLD, MD_SGR_DIM, MD_SGR_ITALIC,
-            MD_SGR_STRIKE, MD_SGR_UNDERLINE, PropertySyntax,
+            BlockDelimStyle, CloseDelimiter, LangProfile, MD_SGR_BOLD, MD_SGR_BOLD_UNDERLINE,
+            MD_SGR_DIM, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE, PropertySyntax,
         },
         registry::{
             REGISTERED_EXTENSIONS, all_registered_profiles, ascii_word_prefix,

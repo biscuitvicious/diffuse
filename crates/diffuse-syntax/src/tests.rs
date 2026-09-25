@@ -262,6 +262,74 @@ fn doc_comment_full_markdown_renders() {
 }
 
 #[test]
+fn test_doc_comment_table() {
+    let rs = lang_profile("rs").unwrap();
+    let toks = classify_line("/// | Col A | Col B |", Some(rs), None);
+    assert!(
+        toks.iter()
+            .any(|t| t.color == "muted" && t.text.contains('|')),
+        "pipes in doc comment table must be muted"
+    );
+    let align_toks = classify_line("/// |---|---|", Some(rs), None);
+    assert!(
+        align_toks
+            .iter()
+            .any(|t| t.color == "muted" && t.text.contains('|')),
+        "pipes in doc comment alignment row must be muted"
+    );
+    assert!(
+        align_toks
+            .iter()
+            .all(|t| t.color == "muted" || t.color == "syntaxComment"),
+        "alignment row must only contain muted or comment prefix tokens"
+    );
+}
+
+#[test]
+fn test_doc_comment_table_with_header_and_body() {
+    let rs = lang_profile("rs").unwrap();
+    let header = "/// | Col A | Col B |";
+    let align = "/// |---|---|";
+    let body = "/// | 1 | 2 |";
+
+    let h_toks = classify_line_with_next(header, Some(align), Some(rs), None);
+    assert!(
+        h_toks
+            .iter()
+            .any(|t| t.color == "muted" && t.text.contains('|')),
+        "header pipes must be muted"
+    );
+    assert!(
+        h_toks.iter().any(|t| t.color == "mdItalic"
+            && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)
+            && t.text.contains("Col A")),
+        "header cells must be mdItalic with bold+underline"
+    );
+
+    let a_toks = classify_line_with_next(align, Some(body), Some(rs), None);
+    assert!(
+        a_toks
+            .iter()
+            .all(|t| t.color == "muted" || t.color == "syntaxComment"),
+        "alignment row must be muted"
+    );
+
+    let b_toks = classify_line_with_next(body, None, Some(rs), None);
+    assert!(
+        b_toks
+            .iter()
+            .any(|t| t.color == "muted" && t.text.contains('|')),
+        "body pipes must be muted"
+    );
+    assert!(
+        b_toks
+            .iter()
+            .any(|t| t.color == "syntaxComment" && t.text.contains('1')),
+        "body cells must be syntaxComment"
+    );
+}
+
+#[test]
 fn plain_comment_without_backtick_is_uniform_comment() {
     let rs = lang_profile("rs").unwrap();
     // No backtick, no markdown triggers → the whole line is one syntaxComment
@@ -329,13 +397,250 @@ fn test_markdown_tables_and_borders() {
     let toks = markdown_tokens(table);
     assert!(
         toks.iter()
-            .any(|t| t.color == "border" && t.text.contains('|')),
-        "table pipes must be styled as border"
+            .any(|t| t.color == "muted" && t.text.contains('|')),
+        "table pipes must be styled as muted"
+    );
+    assert!(
+        toks.iter().any(|t| {
+            t.color == "mdItalic"
+                && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)
+                && t.text.contains("Col A")
+        }),
+        "table head must be styled as mdItalic with bold+underline"
+    );
+}
+
+#[test]
+fn test_markdown_table_alignment_and_inline_markup() {
+    let table =
+        "| **Name** | `Type` | Description |\n| :--- | :---: | ---: |\n| foo | `u32` | A number |";
+    let toks = markdown_tokens(table);
+
+    // Pipes and alignment row must be muted
+    let pipes_and_delims: Vec<_> = toks.iter().filter(|t| t.color == "muted").collect();
+    assert!(
+        !pipes_and_delims.is_empty(),
+        "must have muted table borders and alignment row"
+    );
+    assert!(pipes_and_delims.iter().any(|t| t.text.contains("---")));
+
+    // Header cells:
+    assert!(
+        toks.iter().any(|t| t.text == "Name"
+            && t.color == "mdBold"
+            && t.sgr == Some(MD_SGR_BOLD_UNDERLINE))
+    );
+    assert!(toks.iter().any(|t| t.text == "Type"
+        && t.color == "syntaxString"
+        && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)));
+    assert!(toks.iter().any(|t| t.text == "Description"
+        && t.color == "mdItalic"
+        && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)));
+
+    // Body cells:
+    assert!(
+        toks.iter()
+            .any(|t| t.text == "foo" && t.color == "text" && t.sgr.is_none())
     );
     assert!(
         toks.iter()
-            .any(|t| t.sgr == Some(MD_SGR_BOLD) && t.text.contains("Col A")),
-        "table head must be bold"
+            .any(|t| t.text == "A number" && t.color == "text" && t.sgr.is_none())
+    );
+
+    // Reconstruct byte-for-byte
+    let reconstructed: String = toks.iter().map(|t| t.text).collect();
+    assert_eq!(reconstructed, table, "byte-for-byte preservation");
+}
+
+#[test]
+fn test_markdown_single_line_table_row_and_alignment_row() {
+    let row = "| Col A | Col B |";
+    let toks = markdown_tokens(row);
+    assert!(
+        toks.iter().any(|t| t.color == "muted" && t.text == "|"),
+        "single-line table row must classify pipes as muted"
+    );
+    let reconstructed: String = toks.iter().map(|t| t.text).collect();
+    assert_eq!(reconstructed, row);
+
+    let align = "| :--- | :---: | ---: |";
+    let align_toks = markdown_tokens(align);
+    assert!(
+        align_toks.iter().all(|t| t.color == "muted"),
+        "single-line table alignment row must be entirely muted"
+    );
+    let reconstructed_align: String = align_toks.iter().map(|t| t.text).collect();
+    assert_eq!(reconstructed_align, align);
+}
+
+#[test]
+fn test_markdown_table_header_style_stacking_and_no_underlined_spaces() {
+    let md = lang_profile("md").unwrap();
+    let header_line = "| **Name** | `Type` | Description |";
+    let next_line = "| :--- | :---: | ---: |";
+
+    // 1. Single-line classification with next alignment line (diff hunk mode)
+    let single_toks = classify_line_with_next(header_line, Some(next_line), Some(md), None);
+    let reconstructed_single: String = single_toks.iter().map(|t| t.text).collect();
+    assert_eq!(reconstructed_single, header_line);
+
+    // Whitespace tokens must not be underlined
+    for t in &single_toks {
+        if t.text.trim().is_empty() {
+            assert_eq!(
+                t.sgr, None,
+                "whitespace token {:?} must not be underlined",
+                t.text
+            );
+        }
+    }
+
+    // `Name` must be mdBold with stacked bold+underline
+    let name_tok = single_toks
+        .iter()
+        .find(|t| t.text == "Name")
+        .expect("Name token");
+    assert_eq!(name_tok.color, "mdBold");
+    assert_eq!(name_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+
+    // `Type` must be syntaxString with stacked bold+underline
+    let type_tok = single_toks
+        .iter()
+        .find(|t| t.text == "Type")
+        .expect("Type token");
+    assert_eq!(type_tok.color, "syntaxString");
+    assert_eq!(type_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+
+    // `Description` must be mdItalic with bold+underline
+    let desc_tok = single_toks
+        .iter()
+        .find(|t| t.text == "Description")
+        .expect("Description token");
+    assert_eq!(desc_tok.color, "mdItalic");
+    assert_eq!(desc_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+
+    // All `|` must be muted
+    for t in single_toks.iter().filter(|t| t.text == "|") {
+        assert_eq!(t.color, "muted");
+        assert_eq!(t.sgr, None);
+    }
+
+    // Accents around `**Name**` and `` `Type` `` must be bold and underlined
+    let star_toks: Vec<_> = single_toks.iter().filter(|t| t.text == "**").collect();
+    assert_eq!(star_toks.len(), 2, "must have 2 star tokens in single line");
+    for t in star_toks {
+        assert_eq!(t.color, "accent");
+        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    }
+
+    let tick_toks: Vec<_> = single_toks.iter().filter(|t| t.text == "`").collect();
+    assert_eq!(tick_toks.len(), 2, "must have 2 tick tokens in single line");
+    for t in tick_toks {
+        assert_eq!(t.color, "accent");
+        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    }
+
+    // 2. Multi-line document classification (editor mode)
+    let doc = format!("{header_line}\n{next_line}\n| foo | `u32` | desc |");
+    let doc_lines = markdown_document_tokens(&doc);
+    let doc_header_toks = &doc_lines[0];
+    let reconstructed_doc: String = doc_header_toks.iter().map(|t| t.text).collect();
+    assert_eq!(reconstructed_doc, header_line);
+
+    for t in doc_header_toks {
+        if t.text.trim().is_empty() {
+            assert_eq!(
+                t.sgr, None,
+                "doc whitespace token {:?} must not be underlined",
+                t.text
+            );
+        }
+    }
+
+    let doc_name_tok = doc_header_toks
+        .iter()
+        .find(|t| t.text == "Name")
+        .expect("Name token");
+    assert_eq!(doc_name_tok.color, "mdBold");
+    assert_eq!(doc_name_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+
+    let doc_type_tok = doc_header_toks
+        .iter()
+        .find(|t| t.text == "Type")
+        .expect("Type token");
+    assert_eq!(doc_type_tok.color, "syntaxString");
+    assert_eq!(doc_type_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+
+    let doc_desc_tok = doc_header_toks
+        .iter()
+        .find(|t| t.text == "Description")
+        .expect("Description token");
+    assert_eq!(doc_desc_tok.color, "mdItalic");
+    assert_eq!(doc_desc_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+
+    let doc_star_toks: Vec<_> = doc_header_toks.iter().filter(|t| t.text == "**").collect();
+    assert_eq!(
+        doc_star_toks.len(),
+        2,
+        "must have 2 star tokens in doc header"
+    );
+    for t in doc_star_toks {
+        assert_eq!(t.color, "accent");
+        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    }
+
+    let doc_tick_toks: Vec<_> = doc_header_toks.iter().filter(|t| t.text == "`").collect();
+    assert_eq!(
+        doc_tick_toks.len(),
+        2,
+        "must have 2 tick tokens in doc header"
+    );
+    for t in doc_tick_toks {
+        assert_eq!(t.color, "accent");
+        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    }
+}
+
+#[test]
+fn test_markdown_document_tokens() {
+    let doc = "# Header\n\n| Col A | Col B |\n|---|---|\n| 1 | 2 |";
+    let lines = markdown_document_tokens(doc);
+    assert_eq!(lines.len(), 5);
+    // Line 0: Header
+    assert!(
+        lines[0]
+            .iter()
+            .any(|t| t.color == "accent" && t.text == "#")
+    );
+    assert!(
+        lines[0]
+            .iter()
+            .any(|t| t.color == "accent" && t.sgr == Some(MD_SGR_BOLD) && t.text == "Header")
+    );
+    // Line 1: Empty
+    assert!(lines[1].is_empty());
+    // Line 2: Table Head
+    assert!(
+        lines[2]
+            .iter()
+            .any(|t| t.color == "muted" && t.text.contains('|'))
+    );
+    assert!(lines[2].iter().any(|t| t.color == "mdItalic"
+        && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)
+        && t.text == "Col A"));
+    // Line 3: Table Delimiter
+    assert!(lines[3].iter().all(|t| t.color == "muted"));
+    // Line 4: Table Body
+    assert!(
+        lines[4]
+            .iter()
+            .any(|t| t.color == "muted" && t.text.contains('|'))
+    );
+    assert!(lines[4].iter().any(|t| t.color == "text" && t.text == "1"));
+    assert!(
+        lines[4]
+            .iter()
+            .all(|t| t.color == "muted" || t.color == "text")
     );
 }
 

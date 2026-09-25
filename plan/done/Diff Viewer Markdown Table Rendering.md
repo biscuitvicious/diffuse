@@ -1,9 +1,9 @@
 # Diff Viewer Markdown Table Rendering
 
-- [ ] Phase 1 — Composite SGR Encoding in `diffuse-syntax` and `diffuse-render`
-- [ ] Phase 2 — Table Pipe and Alignment Row Syntax Classification
-- [ ] Phase 3 — Table Header Cell Syntax Styling
-- [ ] Phase 4 — Unit Tests, Golden Corpus Review & Verification Gate
+- [x] Phase 1 — Composite SGR Encoding in `diffuse-syntax` and `diffuse-render`
+- [x] Phase 2 — Table Pipe and Alignment Row Syntax Classification
+- [x] Phase 3 — Table Header Cell Syntax Styling
+- [x] Phase 4 — Unit Tests, Golden Corpus Review & Verification Gate
 
 ---
 

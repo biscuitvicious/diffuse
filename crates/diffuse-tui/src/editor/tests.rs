@@ -325,7 +325,10 @@ fn test_editor_handle_key_shortcuts() {
 fn test_markdown_highlighter_styles_markdown_spans() {
     let theme = crate::render::DiffuseTheme::from_env();
     let highlighter = markdown_highlighter(theme);
-    let spans = highlighter("# Header");
+    let lines = vec!["# Header".to_string()];
+    let all_spans = highlighter(&lines);
+    assert_eq!(all_spans.len(), 1);
+    let spans = &all_spans[0];
     assert!(!spans.is_empty());
     let full: String = spans.iter().map(|s| s.content.as_ref()).collect();
     assert_eq!(full, "# Header");
@@ -335,6 +338,143 @@ fn test_markdown_highlighter_styles_markdown_spans() {
             .add_modifier
             .contains(ratatui::style::Modifier::BOLD)
     }));
+}
+
+#[test]
+fn test_markdown_highlighter_table_headers_and_borders() {
+    let theme = crate::render::DiffuseTheme::from_env();
+    let highlighter = markdown_highlighter(theme);
+    let lines = vec![
+        "| Col A | Col B |".to_string(),
+        "|---|---|".to_string(),
+        "| 1 | 2 |".to_string(),
+    ];
+    let all_spans = highlighter(&lines);
+    assert_eq!(all_spans.len(), 3);
+
+    // Line 0: Header should have bold and underline modifier with wheat yellow
+    // italic
+    let h_spans = &all_spans[0];
+    assert!(
+        h_spans.iter().any(|s| {
+            s.style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+                && s.style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+                && s.content.contains("Col A")
+        }),
+        "table header cell must be bold and underlined"
+    );
+    assert!(
+        h_spans.iter().any(|s| s.content.contains('|')),
+        "table header must have pipes"
+    );
+
+    // Line 1: Delimiter row
+    let d_spans = &all_spans[1];
+    assert!(
+        d_spans.iter().any(|s| s.content.contains("---")),
+        "delimiter row must have dashes"
+    );
+
+    // Line 2: Body row
+    let b_spans = &all_spans[2];
+    assert!(
+        b_spans.iter().any(|s| s.content.contains("1")),
+        "body row must have cell content"
+    );
+}
+
+#[test]
+fn test_markdown_highlighter_table_header_style_stacking_and_spaces() {
+    let theme = crate::render::DiffuseTheme::from_env();
+    let highlighter = markdown_highlighter(theme);
+    let lines = vec![
+        "| **Name** | `Type` | Description |".to_string(),
+        "|---|---|---|".to_string(),
+        "| foo | u32 | bar |".to_string(),
+    ];
+    let all_spans = highlighter(&lines);
+    assert_eq!(all_spans.len(), 3);
+
+    let h_spans = &all_spans[0];
+
+    // Name must be BOLD and UNDERLINED
+    assert!(
+        h_spans.iter().any(|s| {
+            s.style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+                && s.style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+                && s.content.contains("Name")
+        }),
+        "**Name** must be bold and underlined"
+    );
+
+    // Type must be BOLD and UNDERLINED
+    assert!(
+        h_spans.iter().any(|s| {
+            s.style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+                && s.style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+                && s.content.contains("Type")
+        }),
+        "`Type` must be bold and underlined"
+    );
+
+    // Description must be BOLD and UNDERLINED
+    assert!(
+        h_spans.iter().any(|s| {
+            s.style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
+                && s.style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+                && s.content.contains("Description")
+        }),
+        "Description must be bold and underlined"
+    );
+
+    // Whitespace spans must NOT be underlined
+    for s in h_spans {
+        if s.content.trim().is_empty() {
+            assert!(
+                !s.style
+                    .add_modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED),
+                "whitespace span {:?} must not be underlined",
+                s.content
+            );
+        }
+    }
+
+    // Accents `**` and `` ` `` must also be underlined in table header
+    assert!(
+        h_spans.iter().any(|s| {
+            s.style
+                .add_modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+                && s.content == "**"
+        }),
+        "** accents must be underlined in table header"
+    );
+    assert!(
+        h_spans.iter().any(|s| {
+            s.style
+                .add_modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+                && s.content == "`"
+        }),
+        "` accents must be underlined in table header"
+    );
 }
 
 #[test]

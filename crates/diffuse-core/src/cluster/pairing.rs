@@ -76,9 +76,7 @@ fn memo_fn_of_str<'a>(
     line: Option<u32>,
     profile: Option<&LangProfile>,
 ) -> Option<&'a str> {
-    let Some(line) = line else {
-        return None;
-    };
+    let line = line?;
     if let Some(cached) = cache.get(&(old_side, line)) {
         return *cached;
     }

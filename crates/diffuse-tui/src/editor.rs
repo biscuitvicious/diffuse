@@ -12,7 +12,7 @@ use std::sync::Arc;
 pub mod external;
 pub use external::*;
 
-pub type HighlightingCallback = Arc<dyn Fn(&str) -> Vec<Span<'static>> + Send + Sync>;
+pub type HighlightingCallback = Arc<dyn Fn(&[String]) -> Vec<Vec<Span<'static>>> + Send + Sync>;
 
 /// Action outcome from handling a key event in [`Editor`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -47,6 +47,7 @@ pub struct Editor {
     scroll_row: usize,
     width: usize,
     highlighter: Option<HighlightingCallback>,
+    cached_highlight: Option<Vec<Vec<Span<'static>>>>,
     kill_ring: Vec<String>,
     last_was_kill: bool,
     undo_stack: Vec<EditorSnapshot>,
@@ -81,6 +82,7 @@ impl Editor {
             scroll_row: 0,
             width: 80,
             highlighter: None,
+            cached_highlight: None,
             kill_ring: Vec::new(),
             last_was_kill: false,
             undo_stack: Vec::new(),
@@ -90,12 +92,14 @@ impl Editor {
     /// Sets the pluggable syntax highlighting callback.
     pub fn with_highlighter(mut self, h: HighlightingCallback) -> Self {
         self.highlighter = Some(h);
+        self.cached_highlight = None;
         self
     }
 
     /// Attaches or clears the pluggable highlighting callback.
     pub fn set_highlighter(&mut self, h: Option<HighlightingCallback>) {
         self.highlighter = h;
+        self.cached_highlight = None;
     }
 
     /// Returns the full text joined with newlines.
@@ -128,6 +132,7 @@ impl Editor {
 
     /// Records an undo snapshot before mutating buffer contents.
     fn record_undo(&mut self) {
+        self.cached_highlight = None;
         self.undo_stack.push(EditorSnapshot {
             lines: self.lines.clone(),
             cursor_row: self.cursor_row,
@@ -139,6 +144,7 @@ impl Editor {
     pub fn undo(&mut self) -> bool {
         if let Some(snapshot) = self.undo_stack.pop() {
             self.lines = snapshot.lines;
+            self.cached_highlight = None;
             self.cursor_row = snapshot.cursor_row.min(self.lines.len().saturating_sub(1));
             let max_col = self.lines[self.cursor_row].chars().count();
             self.cursor_col = snapshot.cursor_col.min(max_col);
@@ -799,15 +805,25 @@ impl Editor {
         let mut cursor_vis_x = 0usize;
         let mut total_vis_rows = 0usize;
 
-        for (l_idx, line) in self.lines.iter().enumerate() {
-            let spans = if let Some(highlighter) = &self.highlighter {
-                highlighter(line)
+        let all_spans = if let Some(highlighter) = &self.highlighter {
+            if let Some(ref cached) = self.cached_highlight {
+                cached.clone()
             } else {
+                let computed = highlighter(&self.lines);
+                self.cached_highlight = Some(computed.clone());
+                computed
+            }
+        } else {
+            Vec::new()
+        };
+
+        for (l_idx, line) in self.lines.iter().enumerate() {
+            let spans = all_spans.get(l_idx).cloned().unwrap_or_else(|| {
                 vec![Span::styled(
                     line.to_string(),
                     ratatui::style::Style::default().fg(ratatui::style::Color::Indexed(231)),
                 )]
-            };
+            });
 
             let seg_count = Self::line_seg_count(line, width);
             if l_idx == self.cursor_row {
@@ -853,15 +869,28 @@ impl Editor {
 }
 
 /// Creates a pluggable syntax highlighting callback that formats Markdown text
-/// using diffuse's standard Markdown classifier and theme.
+/// using diffuse's standard Markdown classifier and theme across the full
+/// document.
 pub fn markdown_highlighter(theme: crate::render::DiffuseTheme) -> HighlightingCallback {
-    Arc::new(move |line: &str| {
-        let mut ansi_buf = String::with_capacity(line.len() + 32);
-        diffuse_syntax::classifier::for_each_markdown_token(line, |tok| {
-            theme.write_token(tok.color, tok.text, "ctx", None, tok.sgr, &mut ansi_buf);
-        });
-        let ratatui_line = crate::view::ansi_to_ratatui_line(&ansi_buf);
-        ratatui_line.spans
+    Arc::new(move |lines: &[String]| {
+        let doc = lines.join("\n");
+        let doc_tokens = diffuse_syntax::classifier::markdown_document_tokens(&doc);
+        let mut out = Vec::with_capacity(lines.len());
+        for line_tokens in doc_tokens {
+            let mut ansi_buf = String::new();
+            for tok in line_tokens {
+                theme.write_token(tok.color, tok.text, "ctx", None, tok.sgr, &mut ansi_buf);
+            }
+            let ratatui_line = crate::view::ansi_to_ratatui_line(&ansi_buf);
+            out.push(ratatui_line.spans);
+        }
+        while out.len() < lines.len() {
+            out.push(vec![Span::styled(
+                lines[out.len()].clone(),
+                ratatui::style::Style::default().fg(ratatui::style::Color::Indexed(231)),
+            )]);
+        }
+        out
     })
 }
 

@@ -1372,3 +1372,233 @@ fn test_colored_runs_prefers_cached_profiled_runs() {
         );
     }
 }
+
+#[test]
+fn test_markdown_and_doc_comment_table_pipeline() {
+    let diff = "diff --git a/test.md b/test.md\n\
+                --- a/test.md\n\
+                +++ b/test.md\n\
+                @@ -1,3 +1,3 @@\n\
+                +| Col A | Col B |\n\
+                +| :--- | :---: |\n\
+                +| val1 | val2 |\n\
+                diff --git a/test.rs b/test.rs\n\
+                --- a/test.rs\n\
+                +++ b/test.rs\n\
+                @@ -1,3 +1,3 @@\n\
+                +/// | Header A | Header B |\n\
+                +/// | :--- | :---: |\n\
+                +/// | Item 1 | Item 2 |\n";
+
+    let mut new_content = HashMap::new();
+    new_content.insert(
+        "test.md".to_string(),
+        "| Col A | Col B |\n| :--- | :---: |\n| val1 | val2 |\n".to_string(),
+    );
+    new_content.insert(
+        "test.rs".to_string(),
+        "/// | Header A | Header B |\n/// | :--- | :---: |\n/// | Item 1 | Item 2 |\n".to_string(),
+    );
+
+    let output = run_pipeline(diff, Some(new_content));
+    assert_eq!(output.files.len(), 2);
+
+    // 1. Verify test.md
+    let md_file = &output.files[0];
+    let md_rows = &md_file.hunks[0].rows;
+    assert_eq!(md_rows.len(), 3);
+
+    // Markdown Header row: pipes muted, header text mdItalic with SGR 14 (bold
+    // underline)
+    let header_runs = &md_rows[0].runs;
+    let pipe_runs: Vec<_> = header_runs
+        .iter()
+        .filter(|r| r.text.as_ref() == "|")
+        .collect();
+    assert_eq!(pipe_runs.len(), 3);
+    for p in pipe_runs {
+        assert_eq!(p.color.as_deref(), Some("muted"));
+    }
+    let col_a = header_runs
+        .iter()
+        .find(|r| r.text.contains("Col A"))
+        .unwrap();
+    assert_eq!(col_a.color.as_deref(), Some("mdItalic"));
+    assert_eq!(col_a.sgr, Some(14));
+
+    // Markdown Alignment row: pipes and dashes muted
+    let align_runs = &md_rows[1].runs;
+    for r in align_runs {
+        assert_eq!(r.color.as_deref(), Some("muted"));
+    }
+
+    // Markdown Body row: pipes muted
+    let body_runs = &md_rows[2].runs;
+    let body_pipes: Vec<_> = body_runs
+        .iter()
+        .filter(|r| r.text.as_ref() == "|")
+        .collect();
+    assert_eq!(body_pipes.len(), 3);
+    for p in body_pipes {
+        assert_eq!(p.color.as_deref(), Some("muted"));
+    }
+
+    // 2. Verify test.rs (Rust doc comment table)
+    let rs_file = &output.files[1];
+    let rs_rows = &rs_file.hunks[0].rows;
+    assert_eq!(rs_rows.len(), 3);
+
+    // Doc comment Header row: /// is syntaxComment, pipes muted, headers
+    // mdItalic with SGR 14
+    let rs_header_runs = &rs_rows[0].runs;
+    assert_eq!(rs_header_runs[0].color.as_deref(), Some("syntaxComment"));
+    assert_eq!(rs_header_runs[0].text.as_ref(), "///");
+    let rs_pipe_runs: Vec<_> = rs_header_runs
+        .iter()
+        .filter(|r| r.text.as_ref() == "|")
+        .collect();
+    assert_eq!(rs_pipe_runs.len(), 3);
+    for p in rs_pipe_runs {
+        assert_eq!(p.color.as_deref(), Some("muted"));
+    }
+    let hdr_a = rs_header_runs
+        .iter()
+        .find(|r| r.text.contains("Header A"))
+        .unwrap();
+    assert_eq!(hdr_a.color.as_deref(), Some("mdItalic"));
+    assert_eq!(hdr_a.sgr, Some(14));
+
+    // Doc comment Alignment row: /// and space are syntaxComment, pipes and
+    // dashes muted
+    let rs_align_runs = &rs_rows[1].runs;
+    assert_eq!(rs_align_runs[0].color.as_deref(), Some("syntaxComment"));
+    assert_eq!(rs_align_runs[0].text.as_ref(), "///");
+    assert_eq!(rs_align_runs[1].color.as_deref(), Some("syntaxComment"));
+    for r in &rs_align_runs[2..] {
+        assert_eq!(r.color.as_deref(), Some("muted"));
+    }
+
+    // Doc comment Body row: /// is syntaxComment, pipes muted
+    let rs_body_runs = &rs_rows[2].runs;
+    assert_eq!(rs_body_runs[0].color.as_deref(), Some("syntaxComment"));
+    let rs_body_pipes: Vec<_> = rs_body_runs
+        .iter()
+        .filter(|r| r.text.as_ref() == "|")
+        .collect();
+    assert_eq!(rs_body_pipes.len(), 3);
+    for p in rs_body_pipes {
+        assert_eq!(p.color.as_deref(), Some("muted"));
+    }
+}
+
+#[test]
+fn test_mod_row_in_table_structure_with_adds_and_dels() {
+    let diff = "diff --git a/table.md b/table.md\n\
+                --- a/table.md\n\
+                +++ b/table.md\n\
+                @@ -1,3 +1,3 @@\n\
+                -| Feature | Old Description |\n\
+                +| Feature | New Description |\n\
+                -| | |\n\
+                +| :--- | :---: |\n\
+                -| `--theme <NAME>` | Color theme (`magic` default, `default`, etc.) |\n\
+                +| `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |\n";
+
+    let mut new_content = HashMap::new();
+    new_content.insert(
+        "table.md".to_string(),
+        "| Feature | New Description |\n| :--- | :---: |\n| `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |\n".to_string(),
+    );
+    let mut old_content = HashMap::new();
+    old_content.insert(
+        "table.md".to_string(),
+        "| Feature | Old Description |\n| | |\n| `--theme <NAME>` | Color theme (`magic` default, `default`, etc.) |\n".to_string(),
+    );
+
+    let opts = PipelineOptions::default().with_lazy_collapsed(false);
+    let output = run_pipeline_full(diff, Some(new_content), Some(old_content), opts);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    assert_eq!(rows.len(), 4);
+
+    // Row 0: Modified Header Row
+    // | Feature | Old Description | -> | Feature | New Description |
+    let row0 = &rows[0];
+    assert_eq!(row0.kind, RowKind::Mod);
+    // Unchanged pipes are Common and muted
+    let row0_pipes: Vec<_> = row0
+        .runs
+        .iter()
+        .filter(|r| r.text.as_ref() == "|")
+        .collect();
+    assert_eq!(row0_pipes.len(), 3);
+    for p in row0_pipes {
+        assert_eq!(p.kind, RunKind::Common);
+        assert_eq!(p.color.as_deref(), Some("muted"));
+    }
+    // "Feature" is Common and mdItalic with SGR 14 (header)
+    let feat = row0
+        .runs
+        .iter()
+        .find(|r| r.text.contains("Feature"))
+        .unwrap();
+    assert_eq!(feat.kind, RunKind::Common);
+    assert_eq!(feat.color.as_deref(), Some("mdItalic"));
+    assert_eq!(feat.sgr, Some(14));
+
+    // "Old" is Del
+    let old_run = row0.runs.iter().find(|r| r.text.contains("Old")).unwrap();
+    assert_eq!(old_run.kind, RunKind::Del);
+
+    // "New" is Add, mdItalic with SGR 14 (header)
+    let new_run = row0.runs.iter().find(|r| r.text.contains("New")).unwrap();
+    assert_eq!(new_run.kind, RunKind::Add);
+    assert_eq!(new_run.color.as_deref(), Some("mdItalic"));
+    assert_eq!(new_run.sgr, Some(14));
+
+    // "Description" is Common and mdItalic with SGR 14 (header)
+    let desc = row0
+        .runs
+        .iter()
+        .find(|r| r.text.contains("Description"))
+        .unwrap();
+    assert_eq!(desc.kind, RunKind::Common);
+    assert_eq!(desc.color.as_deref(), Some("mdItalic"));
+    assert_eq!(desc.sgr, Some(14));
+
+    // Row 3: Modified Body Row with multiple adds and dels:
+    // | `--theme <NAME>` | Color theme (`magic` default, `default`, etc.) |
+    // -> | `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |
+    let row3 = &rows[3];
+    assert_eq!(row3.kind, RowKind::Mod);
+
+    // Unchanged pipes are Common and muted
+    let row3_pipes: Vec<_> = row3
+        .runs
+        .iter()
+        .filter(|r| r.text.as_ref() == "|")
+        .collect();
+    assert_eq!(row3_pipes.len(), 3);
+    for p in row3_pipes {
+        assert_eq!(p.kind, RunKind::Common);
+        assert_eq!(p.color.as_deref(), Some("muted"));
+    }
+
+    // Code span `--theme <NAME>` is Common and styled syntaxString
+    let theme_code = row3
+        .runs
+        .iter()
+        .find(|r| r.text.contains("--theme <NAME>"))
+        .unwrap();
+    assert_eq!(theme_code.kind, RunKind::Common);
+    assert_eq!(theme_code.color.as_deref(), Some("syntaxString"));
+
+    // Del runs: `magic` default, and etc.
+    let magic_del = row3.runs.iter().find(|r| r.text.contains("magic")).unwrap();
+    assert_eq!(magic_del.kind, RunKind::Del);
+
+    // Add runs: `dark`, `black`
+    let dark_add = row3.runs.iter().find(|r| r.text.contains("dark")).unwrap();
+    assert_eq!(dark_add.kind, RunKind::Add);
+    assert_eq!(dark_add.color.as_deref(), Some("syntaxString"));
+}

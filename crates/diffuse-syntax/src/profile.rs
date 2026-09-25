@@ -551,3 +551,4 @@ pub const MD_SGR_DIM: u32 = 2;
 pub const MD_SGR_ITALIC: u32 = 3;
 pub const MD_SGR_UNDERLINE: u32 = 4;
 pub const MD_SGR_STRIKE: u32 = 9;
+pub const MD_SGR_BOLD_UNDERLINE: u32 = 14;

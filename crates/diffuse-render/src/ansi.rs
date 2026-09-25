@@ -303,7 +303,8 @@ pub fn sgr_on_str(sgr: u32) -> Option<&'static str> {
         2 => Some("\x1b[2m"),
         3 => Some("\x1b[3m"),
         4 => Some("\x1b[4m"),
-        9 => Some("\x1b[2;9m"), // dim + strikethrough
+        9 => Some("\x1b[2;9m"),  // dim + strikethrough
+        14 => Some("\x1b[1;4m"), // bold + underline
         _ => None,
     }
 }
@@ -327,6 +328,7 @@ pub fn sgr_off(sgr: u32) -> Option<&'static str> {
         3 => Some("\x1b[23m"),         // italic off
         4 => Some("\x1b[24m"),         // underline off
         9 => Some("\x1b[29m\x1b[22m"), // strikethrough off, dim off
+        14 => Some("\x1b[24;22m"),     // underline off, bold off
         _ => None,
     }
 }

@@ -256,7 +256,7 @@ impl DiffuseTheme {
         match name {
             "toolDiffAdded" => Some("\x1b[38;5;120m"),
             "toolDiffRemoved" => Some("\x1b[38;5;203m"),
-            "toolDiffContext" | "muted" => Some("\x1b[38;5;241m"),
+            "toolDiffContext" | "muted" => Some("\x1b[38;5;243m"),
             "warning" | "note" => Some("\x1b[38;5;220m"),
             "note_tint_bg" => Some("\x1b[48;2;76;64;20m"),
             "border" => Some("\x1b[38;5;243m"),

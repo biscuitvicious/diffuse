@@ -413,7 +413,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                             );
                             if let Some(s) = run.sgr {
                                 check!(
-                                    matches!(s, 1 | 3 | 4 | 9),
+                                    matches!(s, 1 | 3 | 4 | 9 | 14),
                                     "{}: invalid sgr {s} (md emphasis)",
                                     f.path
                                 );

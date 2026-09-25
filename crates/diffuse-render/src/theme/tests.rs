@@ -206,3 +206,30 @@ fn test_stacked_sgr_emission_order_and_reset() {
         "reverse-order offs: {out:?}"
     );
 }
+
+#[test]
+fn test_table_header_token_bold_underline_and_reset() {
+    let theme = DiffuseTheme::DEFAULT;
+    let tok = theme.render_token("mdItalic", "Header", "ctx", None, Some(14));
+    assert!(
+        tok.starts_with("\x1b[1;4m"),
+        "must start with bold+underline SGR: {tok:?}"
+    );
+    assert!(
+        tok.contains("\x1b[38;5;229m"),
+        "must use wheat yellow 229 fg: {tok:?}"
+    );
+    assert!(
+        tok.ends_with("\x1b[24;22m"),
+        "must end with underline+bold reset: {tok:?}"
+    );
+}
+
+#[test]
+fn test_muted_color_resolution() {
+    let theme = DiffuseTheme::DEFAULT;
+    for rk in ["ctx", "add", "del", "mod"] {
+        let tok = theme.render_token("muted", "|", rk, None, None);
+        assert_eq!(tok, "\x1b[38;5;243m|\x1b[39m");
+    }
+}

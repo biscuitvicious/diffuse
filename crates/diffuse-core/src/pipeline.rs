@@ -32,8 +32,9 @@ use crate::{
     parse::{DiffFile, Row, RowKind, Spans},
     syntax::{
         classifier::{
-            ClassifiedToken, for_each_classified_token, for_each_line_classified_token,
-            for_each_markdown_token,
+            ClassifiedToken, for_each_classified_token, for_each_classified_token_with_header,
+            for_each_line_classified_token_with_next, for_each_markdown_token_with_header,
+            is_line_alignment_row,
         },
         fence::{FenceRegion, fence_regions, region_at},
         profile::LangProfile,
@@ -592,15 +593,34 @@ pub fn process_single_diff_file(
         }]
     } else {
         let map_hunk = |h: &crate::parse::Hunk| {
+            let resolve_next_line = |i: usize, r: &Row| {
+                r.new_line()
+                    .and_then(|nl| new_lines.get(nl as usize).copied())
+                    .or_else(|| {
+                        h.rows[i + 1..]
+                            .iter()
+                            .find(|nr| nr.new_line().is_some())
+                            .map(|nr| nr.text())
+                    })
+                    .or_else(|| h.rows.get(i + 1).map(|nr| nr.text()))
+            };
             let rows_out: Vec<OutputRow> = if h.rows.len() > 64 {
                 h.rows
                     .par_iter()
-                    .map(|r| build_hunk_output_row(r, profile, &regions))
+                    .enumerate()
+                    .map(|(i, r)| {
+                        let next_line = resolve_next_line(i, r);
+                        build_hunk_output_row(r, next_line, profile, &regions)
+                    })
                     .collect()
             } else {
                 h.rows
                     .iter()
-                    .map(|r| build_hunk_output_row(r, profile, &regions))
+                    .enumerate()
+                    .map(|(i, r)| {
+                        let next_line = resolve_next_line(i, r);
+                        build_hunk_output_row(r, next_line, profile, &regions)
+                    })
                     .collect()
             };
             OutputHunk {
@@ -687,7 +707,7 @@ pub fn process_single_diff_file(
             } else {
                 VisibleSide::Old
             };
-            for (r, r_out) in h.rows.iter().zip(&h_out.rows) {
+            for (i, (r, r_out)) in h.rows.iter().zip(&h_out.rows).enumerate() {
                 if matches!(r, Row::Ctx(_)) {
                     let mut row = r_out.clone();
                     match side {
@@ -696,15 +716,32 @@ pub fn process_single_diff_file(
                         }
                         VisibleSide::Old => {
                             row.new_line = None;
+                            let next_line = r
+                                .old_line()
+                                .and_then(|ol| old_lines.get(ol as usize).copied())
+                                .or_else(|| {
+                                    h.rows[i + 1..]
+                                        .iter()
+                                        .find(|nr| nr.old_line().is_some())
+                                        .map(|nr| nr.text())
+                                })
+                                .or_else(|| h.rows.get(i + 1).map(|nr| nr.text()));
                             let mut runs = Vec::new();
-                            for_each_ctx_line_token(r.text(), None, profile, &regions, |tk| {
-                                runs.push(OutputRun {
-                                    kind: RunKind::Ctx,
-                                    color: Some(std::borrow::Cow::Borrowed(tk.color)),
-                                    sgr: tk.sgr,
-                                    text: token_cow(tk.text),
-                                });
-                            });
+                            for_each_ctx_line_token(
+                                r.text(),
+                                None,
+                                next_line,
+                                profile,
+                                &regions,
+                                |tk| {
+                                    runs.push(OutputRun {
+                                        kind: RunKind::Ctx,
+                                        color: Some(std::borrow::Cow::Borrowed(tk.color)),
+                                        sgr: tk.sgr,
+                                        text: token_cow(tk.text),
+                                    });
+                                },
+                            );
                             row.runs = runs;
                         }
                     }
@@ -886,6 +923,15 @@ pub fn colored_runs(
     profile: Option<&LangProfile>,
     regions: &[FenceRegion],
 ) -> Vec<OutputRun> {
+    colored_runs_with_next(r, None, profile, regions)
+}
+
+pub fn colored_runs_with_next(
+    r: &Row,
+    next_line: Option<&str>,
+    profile: Option<&LangProfile>,
+    regions: &[FenceRegion],
+) -> Vec<OutputRun> {
     let mut out = Vec::new();
     let new_line = r.new_line();
     let region = new_line.and_then(|n| region_at(regions, n));
@@ -902,7 +948,7 @@ pub fn colored_runs(
             } else {
                 RunKind::Ctx
             };
-            for_each_ctx_line_token(r.text(), new_line, profile, regions, |t| {
+            for_each_ctx_line_token(r.text(), new_line, next_line, profile, regions, |t| {
                 out.push(OutputRun {
                     kind,
                     color: Some(std::borrow::Cow::Borrowed(t.color)),
@@ -928,7 +974,7 @@ pub fn colored_runs(
     CTX_SCRATCH.with(|cell| {
         let mut full_tokens = cell.borrow_mut();
         full_tokens.clear();
-        for_each_ctx_line_token(r.text(), new_line, profile, regions, |t| {
+        for_each_ctx_line_token(r.text(), new_line, next_line, profile, regions, |t| {
             // Safety: tokens are only accessed within this block while r.text()
             // is alive.
             let tok_static =
@@ -989,9 +1035,18 @@ pub fn colored_runs(
                         ),
                         None => {
                             if profile.is_some_and(|p| p.markdown) {
-                                for_each_markdown_token(run.text, push_t)
+                                for_each_markdown_token_with_header(
+                                    run.text,
+                                    next_line.is_some_and(is_line_alignment_row),
+                                    push_t,
+                                );
                             } else {
-                                for_each_classified_token(run.text, profile, push_t)
+                                for_each_classified_token_with_header(
+                                    run.text,
+                                    profile,
+                                    next_line.is_some_and(is_line_alignment_row),
+                                    push_t,
+                                );
                             }
                         }
                     }
@@ -1022,6 +1077,7 @@ fn push_output_run(out: &mut Vec<OutputRun>, run: OutputRun) {
 fn for_each_ctx_line_token<'a>(
     text: &'a str,
     new_line: Option<u32>,
+    next_line: Option<&str>,
     profile: Option<&LangProfile>,
     regions: &[FenceRegion],
     mut f: impl FnMut(ClassifiedToken<'a>),
@@ -1063,7 +1119,7 @@ fn for_each_ctx_line_token<'a>(
         return;
     }
     let region = new_line.and_then(|n| region_at(regions, n));
-    for_each_line_classified_token(text, profile, region, f);
+    for_each_line_classified_token_with_next(text, next_line, profile, region, f);
 }
 
 #[cfg(test)]
@@ -1074,7 +1130,7 @@ fn classify_ctx_line<'a>(
     regions: &[FenceRegion],
 ) -> Vec<ClassifiedToken<'a>> {
     let mut out = Vec::new();
-    for_each_ctx_line_token(text, new_line, profile, regions, |t| out.push(t));
+    for_each_ctx_line_token(text, new_line, None, profile, regions, |t| out.push(t));
     out
 }
 
@@ -1122,7 +1178,7 @@ fn for_each_sliced_token<'a>(
 pub fn context_line_runs(line_text: &str, line_num: Option<u32>, ext: &str) -> Vec<OutputRun> {
     let profile = lang_profile(ext);
     let mut runs = Vec::new();
-    for_each_ctx_line_token(line_text, line_num, profile, &[], |tk| {
+    for_each_ctx_line_token(line_text, line_num, None, profile, &[], |tk| {
         runs.push(OutputRun {
             kind: crate::merge::RunKind::Ctx,
             color: Some(std::borrow::Cow::Borrowed(tk.color)),
@@ -1135,6 +1191,7 @@ pub fn context_line_runs(line_text: &str, line_num: Option<u32>, ext: &str) -> V
 
 fn build_hunk_output_row(
     r: &Row,
+    next_line: Option<&str>,
     profile: Option<&LangProfile>,
     regions: &[FenceRegion],
 ) -> OutputRow {
@@ -1172,7 +1229,7 @@ fn build_hunk_output_row(
         text: r.text().to_string(),
         del_text,
         spans,
-        runs: colored_runs(r, profile, regions),
+        runs: colored_runs_with_next(r, next_line, profile, regions),
         wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
     }
 }
@@ -1215,7 +1272,11 @@ pub fn render_plain_common_context(
     let regions = fence_regions(lines, profile);
     hunk.rows
         .iter()
-        .map(|r| build_hunk_output_row(r, profile, &regions))
+        .enumerate()
+        .map(|(i, r)| {
+            let next_line = hunk.rows.get(i + 1).map(|nr| nr.text());
+            build_hunk_output_row(r, next_line, profile, &regions)
+        })
         .collect()
 }
 
