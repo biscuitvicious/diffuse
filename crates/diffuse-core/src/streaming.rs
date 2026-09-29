@@ -235,8 +235,13 @@ impl Iterator for StreamingConsumer {
                     } else {
                         if self.queue.is_closed() {
                             self.processed_tx.take();
+                            return self.rx.recv().ok();
                         }
-                        return self.rx.recv().ok();
+                        match self.rx.recv_timeout(std::time::Duration::from_millis(10)) {
+                            Ok(file) => return Some(file),
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return None,
+                        }
                     }
                 }
             }

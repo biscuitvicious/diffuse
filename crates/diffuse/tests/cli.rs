@@ -279,6 +279,7 @@ fn large_changeset_progressive_streaming_performance() {
         "time to first file ({time_to_first_file:?}) must be under 500ms"
     );
 
+    std::io::copy(&mut stdout, &mut std::io::sink()).unwrap();
     let status = child.wait().unwrap();
     assert!(status.success());
 }

@@ -439,8 +439,8 @@ pub(crate) fn are_contiguous_subwords(t1: &str, t2: &str) -> bool {
     t1.as_ptr() as usize + t1.len() == t2.as_ptr() as usize
         && !token_is_ws(t1)
         && !token_is_ws(t2)
-        && token_is_alnum(t1)
-        && token_is_alnum(t2)
+        && is_subword_token(t1)
+        && is_subword_token(t2)
 }
 
 #[inline]
@@ -509,6 +509,40 @@ fn path_root_and_stem<'a>(slice: &[&'a str], idx: usize) -> Option<(&'a str, &'a
     Some((root, stem))
 }
 
+fn compound_identifier_root_and_stem<'a>(
+    slice: &[&'a str],
+    idx: usize,
+) -> Option<(&'a str, &'a str)> {
+    if idx >= slice.len() || !is_subword_token(slice[idx]) {
+        return None;
+    }
+    let mut start = idx;
+    while start > 0
+        && is_subword_token(slice[start - 1])
+        && are_contiguous_subwords(slice[start - 1], slice[start])
+    {
+        start -= 1;
+    }
+    let mut end = idx + 1;
+    while end < slice.len()
+        && is_subword_token(slice[end])
+        && are_contiguous_subwords(slice[end - 1], slice[end])
+    {
+        end += 1;
+    }
+
+    let word_slice = &slice[start..end];
+    let mut alnum_tokens = word_slice.iter().copied().filter(|&t| token_is_alnum(t));
+    let root = alnum_tokens.next()?;
+    let stem = alnum_tokens.next_back().unwrap_or(root);
+
+    if word_slice.len() > 1 && (root != stem || word_slice.contains(&"_")) {
+        Some((root, stem))
+    } else {
+        None
+    }
+}
+
 /// Checks whether token `a[i]` and `b[j]` are eligible to match.
 ///
 /// Enforces:
@@ -521,6 +555,10 @@ fn path_root_and_stem<'a>(slice: &[&'a str], idx: usize) -> Option<(&'a str, &'a
 ///    and produce chimeric mutant tokens (e.g. `s_add` vs `add_style` or
 ///    `row_in_vh` vs `scrollbar_scroll_for_row`).
 /// 3. Path root and stem compatibility.
+/// 4. Compound identifier root and stem compatibility: If both tokens belong to
+///    compound identifiers, and neither their prefixes (roots) nor suffixes
+///    (stems) match, the identifiers represent disjoint entities and their
+///    internal subwords cannot match.
 #[inline]
 pub(crate) fn token_ws_kind(
     tokens: &[&str],
@@ -579,6 +617,15 @@ pub(crate) fn tokens_can_match(
     let a_path = path_root_and_stem(a, i);
     let b_path = path_root_and_stem(b, j);
     if let (Some((ra, sa)), Some((rb, sb))) = (a_path, b_path)
+        && ra != rb
+        && sa != sb
+    {
+        return false;
+    }
+
+    let a_ident = compound_identifier_root_and_stem(a, i);
+    let b_ident = compound_identifier_root_and_stem(b, j);
+    if let (Some((ra, sa)), Some((rb, sb))) = (a_ident, b_ident)
         && ra != rb
         && sa != sb
     {

@@ -706,3 +706,49 @@ fn test_scratch_arena_equivalence_and_reuse() {
     let p2_repeat = raw_lcs_pairs(&a2, &b2);
     assert_eq!(p2, p2_repeat);
 }
+
+#[test]
+fn test_note_lines_addition_alignment() {
+    // Verifies that contiguous snake_case subwords retain internal lexical
+    // cohesion rather than splitting across adjacent binary operator
+    // insertions.
+    let old = "            nav_counts.push((div_lines + row_segs + note_lines).max(1));";
+    let new = "            nav_counts.push((div_lines + row_segs + note_lines + trailing_gap_lines).max(1));";
+    let (_, runs) = word_spans_and_runs_with_profile(old, new, None);
+    let formatted: String = runs
+        .iter()
+        .map(|(kind, text)| match kind {
+            RunKind::Common | RunKind::Ctx => text.clone(),
+            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Add => format!("{{+{text}+}}"),
+            RunKind::Mov => format!("[~{text}~]"),
+        })
+        .collect();
+    assert_eq!(
+        formatted,
+        "            nav_counts.push((div_lines + row_segs + note_lines{+ + trailing_gap_lines+}).max(1));"
+    );
+}
+
+#[test]
+fn test_token_is_alnum_replacement() {
+    // Verifies that compound identifiers whose prefixes and suffixes both
+    // differ undergo wholesale replacement rather than splicing
+    // coincidental internal subwords.
+    let old = "        && token_is_alnum(t1)";
+    let new = "        && is_subword_token(t1)";
+    let (_, runs) = word_spans_and_runs_with_profile(old, new, None);
+    let formatted: String = runs
+        .iter()
+        .map(|(kind, text)| match kind {
+            RunKind::Common | RunKind::Ctx => text.clone(),
+            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Add => format!("{{+{text}+}}"),
+            RunKind::Mov => format!("[~{text}~]"),
+        })
+        .collect();
+    assert_eq!(
+        formatted,
+        "        && [-token_is_alnum-]{+is_subword_token+}(t1)"
+    );
+}
