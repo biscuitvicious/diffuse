@@ -499,16 +499,17 @@ pub fn bottom_gap_divider_text(hidden_gap: usize) -> String {
     format!("──── {hidden_gap} more {unit}: ▲ ────")
 }
 
-/// Render a specific visual segment of a bottom gap divider.
-pub fn render_bottom_gap_divider_segment(
+/// Render a specific visual segment of a bottom gap divider with theme support.
+pub fn render_bottom_gap_divider_segment_themed(
     hidden_gap: usize,
     is_current: bool,
+    is_selected: bool,
     seg_start: usize,
     content_width: usize,
+    theme: &DiffuseTheme,
 ) -> String {
     let txt = bottom_gap_divider_text(hidden_gap);
-    let theme = DiffuseTheme::from_env();
-    let (bg, fg) = theme.palette.hunk_divider_colors(false, is_current);
+    let (bg, fg) = theme.palette.hunk_divider_colors(is_selected, is_current);
     let bg_code = match bg {
         crate::render::Color::Primary => String::new(),
         color => color.bg_code(),
@@ -530,6 +531,23 @@ pub fn render_bottom_gap_divider_segment(
         piece
     };
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
+}
+
+/// Render a specific visual segment of a bottom gap divider.
+pub fn render_bottom_gap_divider_segment(
+    hidden_gap: usize,
+    is_current: bool,
+    seg_start: usize,
+    content_width: usize,
+) -> String {
+    render_bottom_gap_divider_segment_themed(
+        hidden_gap,
+        is_current,
+        false,
+        seg_start,
+        content_width,
+        &DiffuseTheme::from_env(),
+    )
 }
 
 /// Render a clean bottom divider for trailing hidden lines after the last hunk.
@@ -643,6 +661,7 @@ pub fn hunk_divider_line(
 pub fn bottom_gap_divider_line_themed(
     hidden_gap: usize,
     is_current: bool,
+    is_selected: bool,
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> Line<'static> {
@@ -654,7 +673,7 @@ pub fn bottom_gap_divider_line_themed(
     } else {
         slice_by_visual_width(&txt, 0, content_width)
     };
-    let (bg, fg) = theme.palette.hunk_divider_colors(false, is_current);
+    let (bg, fg) = theme.palette.hunk_divider_colors(is_selected, is_current);
     let mut style = Style::default()
         .fg(crate::view::to_color(fg))
         .add_modifier(Modifier::BOLD);
@@ -673,6 +692,7 @@ pub fn bottom_gap_divider_line(
     bottom_gap_divider_line_themed(
         hidden_gap,
         is_current,
+        false,
         content_width,
         &DiffuseTheme::from_env(),
     )

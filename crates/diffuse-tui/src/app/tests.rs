@@ -3480,3 +3480,130 @@ fn test_ratatui_status_bar_uses_scrollbar_narrowed_width() {
         "status tail must keep its final character: {row:?}"
     );
 }
+
+fn trailing_gap_output() -> PipelineOutput {
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/sample.rs
+@@ -1,5 +1,6 @@
+ // line 1
+ // line 2
++// inserted
+ // line 3
+ // line 4
+ // line 5
+"#;
+    let new_lines: Vec<String> = (1..=15)
+        .map(|i| {
+            if i == 3 {
+                "// inserted".to_string()
+            } else {
+                format!("// line {i}")
+            }
+        })
+        .collect();
+    let old_lines: Vec<String> = (1..=14).map(|i| format!("// line {i}")).collect();
+    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    run_pipeline_full(
+        diff,
+        Some(contents),
+        Some(old_contents),
+        PipelineOptions::default(),
+    )
+}
+
+#[test]
+fn test_mouse_click_end_of_hunks_divider_selects() {
+    let mut state = AppState::new(trailing_gap_output(), "test_repo".into(), temp_notes_path());
+    state.render_frame(120, 40);
+
+    let fi = 0;
+    let gap = state.hunk_trailing_gap(fi);
+    assert!(gap > 0, "must have trailing gap");
+
+    let last_row = state.last_row_of_file(fi);
+    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let cw = state.last_content_width;
+    let div_lines = if state.hunk_starts.iter().any(|hs| hs.flat == last_row) {
+        state.hunk_div_seg_count(fi, 0, cw)
+    } else {
+        0
+    };
+    let row_segs = seg_counts[last_row];
+    let note_lines = state.note_callouts(cw).get(&last_row).map_or(0, Vec::len);
+    let bottom_vis = starts[last_row] + div_lines + row_segs + note_lines;
+    let click_row = state.last_viewport_start + bottom_vis.saturating_sub(state.scroll);
+
+    // Initial cursor is at top
+    state.row_idx = 0;
+    state.vis_line = 0;
+
+    // Click on col 0 of the end of hunks divider (outside the ▲ arrow)
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: 0,
+        shift: false,
+    });
+
+    assert_eq!(
+        state.row_idx, last_row,
+        "cursor row must be last row of file"
+    );
+    assert_eq!(
+        state.vis_line,
+        div_lines + row_segs + note_lines,
+        "vis_line must target the end of hunks divider"
+    );
+    assert!(
+        matches!(
+            state.visual_target_at(state.row_idx, state.vis_line),
+            Some(crate::app::notes::VisualTarget::BottomGapDivider { file_idx: 0 })
+        ),
+        "visual target must be BottomGapDivider"
+    );
+}
+
+#[test]
+fn test_mouse_click_end_of_hunks_divider_arrow_expands() {
+    let mut state = AppState::new(trailing_gap_output(), "test_repo".into(), temp_notes_path())
+        .with_expand_lines(5);
+    state.render_frame(120, 40);
+
+    let fi = 0;
+    let gap_before = state.hunk_trailing_gap(fi);
+    assert!(gap_before > 0);
+
+    let last_row = state.last_row_of_file(fi);
+    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let cw = state.last_content_width;
+    let div_lines = if state.hunk_starts.iter().any(|hs| hs.flat == last_row) {
+        state.hunk_div_seg_count(fi, 0, cw)
+    } else {
+        0
+    };
+    let row_segs = seg_counts[last_row];
+    let note_lines = state.note_callouts(cw).get(&last_row).map_or(0, Vec::len);
+    let bottom_vis = starts[last_row] + div_lines + row_segs + note_lines;
+    let click_row = state.last_viewport_start + bottom_vis.saturating_sub(state.scroll);
+
+    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap_before);
+    let arrow_col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: arrow_col,
+        shift: false,
+    });
+
+    let gap_after = state.hunk_trailing_gap(fi);
+    assert!(
+        gap_after < gap_before,
+        "clicking ▲ must expand trailing context (before: {gap_before}, after: {gap_after})"
+    );
+}

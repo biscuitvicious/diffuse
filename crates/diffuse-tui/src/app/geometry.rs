@@ -336,7 +336,7 @@ impl AppState {
             let item_total = div_lines + row_segs + note_lines + trailing_gap_lines;
             counts.push(item_total);
             seg_counts.push(row_segs.max(1));
-            nav_counts.push((div_lines + row_segs + note_lines).max(1));
+            nav_counts.push((div_lines + row_segs + note_lines + trailing_gap_lines).max(1));
             total_vis_lines += item_total;
         }
 

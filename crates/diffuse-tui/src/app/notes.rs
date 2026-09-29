@@ -29,6 +29,9 @@ pub enum VisualTarget<'a> {
         line_idx: usize,
         total_note_lines: usize,
     },
+    BottomGapDivider {
+        file_idx: usize,
+    },
 }
 
 /// Apply cursor focus highlight to a rendered note callout line: switches the
@@ -543,6 +546,17 @@ impl AppState {
                     });
                 }
                 note_rel -= note_total_lines;
+            }
+            if !self.raw_diff
+                && row_idx == self.last_row_of_file(item.file_idx)
+                && self.hunk_trailing_gap(item.file_idx) > 0
+            {
+                let bot_segs = self.bottom_gap_seg_count(item.file_idx, cw);
+                if note_rel < bot_segs {
+                    return Some(VisualTarget::BottomGapDivider {
+                        file_idx: item.file_idx,
+                    });
+                }
             }
         }
 

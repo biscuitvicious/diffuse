@@ -233,6 +233,21 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
 
     let b_line_narrow = bottom_gap_divider_line(10, true, 10);
     assert_eq!(b_line_narrow.to_string().chars().count(), 10);
+
+    let theme = DiffuseTheme::from_env();
+    let selected_bottom = render_bottom_gap_divider_segment_themed(10, true, true, 0, 80, &theme);
+    let (sel_bg, sel_fg) = theme.palette.hunk_divider_colors(true, true);
+    assert!(
+        selected_bottom.contains(&sel_bg.bg_code()),
+        "selected bottom gap divider must contain selected background color"
+    );
+    assert!(
+        selected_bottom.contains(&sel_fg.fg_code()),
+        "selected bottom gap divider must contain selected foreground color"
+    );
+
+    let selected_line = bottom_gap_divider_line_themed(10, true, true, 80, &theme);
+    assert_eq!(selected_line.to_string().chars().count(), 80);
 }
 
 #[test]

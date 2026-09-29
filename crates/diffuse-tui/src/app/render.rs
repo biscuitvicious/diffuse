@@ -947,15 +947,22 @@ impl AppState {
                 let bot_segs = self.bottom_gap_seg_count(item.file_idx, content_width);
                 let is_cur = item.file_idx == self.current_file_idx() && idx == self.row_idx;
                 let text_cols = content_width.max(1);
+                let note_count = callouts.get(&idx).map_or(0, std::vec::Vec::len);
+                let bottom_div_vis_start = div_segs + seg_counts[idx] + note_count;
                 for s_idx in 0..bot_segs {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                        let is_selected =
+                            idx == self.row_idx && self.vis_line == bottom_div_vis_start + s_idx;
                         let seg_start = s_idx * text_cols;
-                        let bottom_div = crate::view::diff_grid::render_bottom_gap_divider_segment(
-                            gap,
-                            is_cur,
-                            seg_start,
-                            content_width,
-                        );
+                        let bottom_div =
+                            crate::view::diff_grid::render_bottom_gap_divider_segment_themed(
+                                gap,
+                                is_cur,
+                                is_selected,
+                                seg_start,
+                                content_width,
+                                &self.theme,
+                            );
                         line_src.push(Some(idx));
                         lines.push(bottom_div);
                     }

@@ -331,7 +331,6 @@ impl AppState {
                                         self.expand_hunk_below(item.file_idx, last_hi);
                                         break;
                                     }
-                                    break;
                                 }
                             }
 
