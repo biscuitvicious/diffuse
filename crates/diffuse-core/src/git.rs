@@ -64,11 +64,11 @@ pub fn get_current_branch(cwd: &Path) -> String {
 
 /// Resolve old/new git refs from base args (e.g. `main..feature`, `HEAD^!`,
 /// `main...feature`).
-pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
+pub fn resolve_refs(cwd: &Path, base_args: &[String], staged: bool) -> RefPair {
     let refs: Vec<&str> = base_args
         .iter()
         .map(std::string::String::as_str)
-        .filter(|t| *t != "--cached" && !t.starts_with('-'))
+        .filter(|t| !t.starts_with('-'))
         .collect();
 
     if refs.len() == 1 {
@@ -100,6 +100,13 @@ pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
                 old_ref: Some(mb),
             };
         }
+        if staged {
+            return RefPair {
+                worktree_new: false,
+                new_ref: Some(String::new()),
+                old_ref: Some(r.to_string()),
+            };
+        }
         return RefPair {
             worktree_new: true,
             new_ref: None,
@@ -116,9 +123,9 @@ pub fn resolve_refs(cwd: &Path, base_args: &[String], cached: bool) -> RefPair {
     }
 
     RefPair {
-        worktree_new: true,
-        new_ref: None,
-        old_ref: if cached {
+        worktree_new: !staged,
+        new_ref: if staged { Some(String::new()) } else { None },
+        old_ref: if staged {
             Some("HEAD".to_string())
         } else {
             None
@@ -141,7 +148,7 @@ pub fn resolve_commit_range(cwd: &Path, base_args: &[String]) -> Option<String> 
     let refs: Vec<&str> = base_args
         .iter()
         .map(std::string::String::as_str)
-        .filter(|t| *t != "--cached" && !t.starts_with('-'))
+        .filter(|t| !t.starts_with('-'))
         .collect();
 
     if refs.len() == 1 {
@@ -333,12 +340,12 @@ pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<Stri
 ///// Progressive streaming producer for git diff and blob retrieval.
 /// Directly emits `FileJob`s to `StreamingProducer` as each file's diff chunk
 /// is encountered.
-#[tracing::instrument(level = "trace", skip(paths, producer, meta_tx), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), cached, context))]
+#[tracing::instrument(level = "trace", skip(paths, producer, meta_tx), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context))]
 pub fn stream_git_repo_to_producer(
     repo_root: &Path,
     base_args: &[String],
     paths: &[String],
-    cached: bool,
+    staged: bool,
     context: usize,
     producer: crate::streaming::StreamingProducer,
     meta_tx: &std::sync::mpsc::Sender<Result<crate::streaming::GitRepoMeta, String>>,
@@ -356,7 +363,7 @@ pub fn stream_git_repo_to_producer(
     tracing::info!(branch = %branch, "Streaming git repository diff");
 
     let mut untracked_skipped = Vec::new();
-    let refs = resolve_refs(repo_root, base_args, cached);
+    let refs = resolve_refs(repo_root, base_args, staged);
 
     let mut diff_cmd = vec![
         "diff".to_string(),
@@ -364,6 +371,9 @@ pub fn stream_git_repo_to_producer(
         "-M".to_string(),
         "--no-color".to_string(),
     ];
+    if staged {
+        diff_cmd.push("--staged".to_string());
+    }
     diff_cmd.extend(base_args.iter().cloned());
     diff_cmd.push("--".to_string());
     diff_cmd.extend(paths.iter().cloned());
@@ -507,7 +517,7 @@ pub fn stream_git_repo_to_producer(
     // Untracked files — only relevant when the new side is the working tree.
     // A fixed commit range (worktree_new == false) diffs two historical refs;
     // untracked working-tree files must never appear in those results.
-    if !cached && refs.worktree_new {
+    if !staged && refs.worktree_new {
         let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
         if !paths.is_empty() {
             ls_args.push("--");
@@ -559,12 +569,12 @@ pub fn stream_git_repo_to_producer(
     producer.finish();
 }
 
-#[tracing::instrument(level = "trace", ret, err, skip(paths), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), cached, context))]
+#[tracing::instrument(level = "trace", ret, err, skip(paths), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context))]
 pub fn load_git_repo(
     repo_root: &Path,
     base_args: &[String],
     paths: &[String],
-    cached: bool,
+    staged: bool,
     context: usize,
 ) -> Result<LoadGitResult, String> {
     if !is_inside_work_tree(repo_root) {
@@ -582,6 +592,9 @@ pub fn load_git_repo(
         "-M".to_string(),
         "--no-color".to_string(),
     ];
+    if staged {
+        diff_cmd.push("--staged".to_string());
+    }
     diff_cmd.extend(base_args.iter().cloned());
     diff_cmd.push("--".to_string());
     diff_cmd.extend(paths.iter().cloned());
@@ -594,13 +607,16 @@ pub fn load_git_repo(
         "-M".to_string(),
         "--name-status".to_string(),
     ];
+    if staged {
+        name_cmd.push("--staged".to_string());
+    }
     name_cmd.extend(base_args.iter().cloned());
     name_cmd.push("--".to_string());
     name_cmd.extend(paths.iter().cloned());
     let name_args: Vec<&str> = name_cmd.iter().map(std::string::String::as_str).collect();
     let name_status = run_git(repo_root, &name_args).unwrap_or_default();
 
-    let refs = resolve_refs(repo_root, base_args, cached);
+    let refs = resolve_refs(repo_root, base_args, staged);
     let mut files: Vec<GitFileItem> = Vec::new();
 
     for l in name_status.lines() {
@@ -635,7 +651,7 @@ pub fn load_git_repo(
     // Untracked files — only relevant when the new side is the working tree.
     // A fixed commit range (worktree_new == false) diffs two historical refs;
     // untracked working-tree files must never appear in those results.
-    if !cached && refs.worktree_new {
+    if !staged && refs.worktree_new {
         let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
         if !paths.is_empty() {
             ls_args.push("--");

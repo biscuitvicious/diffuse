@@ -58,8 +58,11 @@ fn test_git_stage_unstage_reload_flow() {
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(out, "test".into(), notes_path)
-        .with_repo_context(repo_root.clone(), Vec::new());
+    let mut state = AppState::new(out, "test".into(), notes_path).with_repo_context(
+        repo_root.clone(),
+        Vec::new(),
+        false,
+    );
 
     assert_eq!(state.output.files.len(), 1);
 
@@ -71,25 +74,24 @@ fn test_git_stage_unstage_reload_flow() {
     reload_diff(&mut state, &repo_root, &[]).unwrap();
     assert!(state.output.files.is_empty(), "working tree is now clean");
 
-    // Reload diff with --cached
-    let cached_args = vec!["--cached".to_string()];
-    let git_res_cached =
-        load_git_repo(&repo_root, &cached_args, &[], false, ENGINE_CONTEXT).unwrap();
-    let out_cached = run_pipeline_full(
-        &git_res_cached.diff,
-        Some(git_res_cached.new_content),
-        Some(git_res_cached.old_content),
+    // Reload diff with staged: true
+    let git_res_staged = load_git_repo(&repo_root, &[], &[], true, ENGINE_CONTEXT).unwrap();
+    let out_staged = run_pipeline_full(
+        &git_res_staged.diff,
+        Some(git_res_staged.new_content),
+        Some(git_res_staged.old_content),
         PipelineOptions::default(),
     );
-    state.reload(out_cached);
-    assert_eq!(state.output.files.len(), 1, "cached diff has 1 file");
+    state.reload(out_staged);
+    state.target.staged = true;
+    assert_eq!(state.output.files.len(), 1, "staged diff has 1 file");
 
     // Unstage hunk
-    let res = unstage_action(&mut state, &repo_root, &cached_args, false);
+    let res = unstage_action(&mut state, &repo_root, &[], false);
     assert!(res.is_ok(), "unstaging succeeded");
 
-    // Reload cached diff - should now be clean
-    reload_diff(&mut state, &repo_root, &cached_args).unwrap();
+    // Reload staged diff - should now be clean
+    reload_diff(&mut state, &repo_root, &[]).unwrap();
     assert!(state.output.files.is_empty(), "index is now clean");
 }
 
@@ -105,8 +107,11 @@ fn test_git_discard_flow() {
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(out, "test".into(), notes_path)
-        .with_repo_context(repo_root.clone(), Vec::new());
+    let mut state = AppState::new(out, "test".into(), notes_path).with_repo_context(
+        repo_root.clone(),
+        Vec::new(),
+        false,
+    );
 
     assert_eq!(state.output.files.len(), 1);
 
@@ -120,4 +125,65 @@ fn test_git_discard_flow() {
         state.output.files.is_empty(),
         "working tree is clean after discard"
     );
+}
+
+#[test]
+fn test_toggle_staged_action_flow() {
+    let (repo_dir, notes_path) = setup_test_git_repo();
+    let repo_root = repo_dir.path().to_path_buf();
+    let git_res = load_git_repo(&repo_root, &[], &[], false, ENGINE_CONTEXT).unwrap();
+    let out = run_pipeline_full(
+        &git_res.diff,
+        Some(git_res.new_content),
+        Some(git_res.old_content),
+        PipelineOptions::default(),
+    );
+
+    let mut state = AppState::new(out, "test".into(), notes_path).with_repo_context(
+        repo_root.clone(),
+        Vec::new(),
+        false,
+    );
+
+    // 1. Initially unstaged: toggle when staged has NO changes -> Err("no
+    //    staged changes")
+    let git_args = state.git_args.clone();
+    let err = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
+    assert_eq!(err, "no staged changes");
+    assert!(!state.target.is_staged());
+
+    // 2. Stage hunk
+    stage_action(&mut state, &repo_root, &[], false).unwrap();
+    // After staging, index has staged changes.
+    // Toggle to staged:
+    let git_args = state.git_args.clone();
+    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
+    assert!(state.target.is_staged());
+    assert_eq!(state.output.files.len(), 1, "staged view has 1 file");
+
+    // 3. Now in staged view: toggle back to unstaged (which is now clean) ->
+    //    Err("no unstaged changes")
+    let git_args = state.git_args.clone();
+    let err2 = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
+    assert_eq!(err2, "no unstaged changes");
+    assert!(state.target.is_staged(), "must remain in staged view");
+
+    // 4. Add new unstaged change to working tree
+    fs::write(
+        repo_root.join("file.rs"),
+        "fn one() {\n    println!(\"1\");\n}\nfn two() { println!(\"2\"); }\n",
+    )
+    .unwrap();
+
+    // Now toggle back to unstaged:
+    let git_args = state.git_args.clone();
+    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
+    assert!(!state.target.is_staged());
+    assert_eq!(state.output.files.len(), 1, "unstaged view has 1 file");
+
+    // 5. Viewing a commit range -> Err
+    state.commit_range = Some("HEAD~1..HEAD".into());
+    let git_args = state.git_args.clone();
+    let err3 = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
+    assert!(err3.contains("commit range"));
 }

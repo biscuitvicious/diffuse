@@ -400,12 +400,12 @@ pub struct GitRepoMeta {
 ///    contents.
 /// 3. Returns a `StreamingConsumer` receiving ordered `OutputFile`s and a
 ///    receiver for `GitRepoMeta`.
-#[tracing::instrument(level = "trace", skip(paths, opts), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), cached, context, visual_context = opts.visual_context))]
+#[tracing::instrument(level = "trace", skip(paths, opts), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context, visual_context = opts.visual_context))]
 pub fn spawn_git_stream_pipeline(
     repo_root: std::path::PathBuf,
     base_args: Vec<String>,
     paths: Vec<String>,
-    cached: bool,
+    staged: bool,
     context: usize,
     opts: PipelineOptions,
     worker_count: Option<usize>,
@@ -415,7 +415,7 @@ pub fn spawn_git_stream_pipeline(
 
     std::thread::spawn(move || {
         crate::git::stream_git_repo_to_producer(
-            &repo_root, &base_args, &paths, cached, context, producer, &meta_tx,
+            &repo_root, &base_args, &paths, staged, context, producer, &meta_tx,
         );
     });
 

@@ -98,9 +98,10 @@ fn test_revision_range_resolution() {
     assert_eq!(r3.bottom(), s2);
     assert_eq!(r3.top(), s3);
 
-    // 4. Working tree diffs (empty args, --cached, single ref without range) ->
-    //    None
+    // 4. Working tree diffs (empty args, --staged, --cached, single ref without
+    //    range) -> None
     assert_eq!(RevisionRange::resolve(dir, &[]), None);
+    assert_eq!(RevisionRange::resolve(dir, &["--staged".into()]), None);
     assert_eq!(RevisionRange::resolve(dir, &["--cached".into()]), None);
 }
 
@@ -115,7 +116,7 @@ fn test_review_target_queries() {
 
     // 1. Reviewing a commit range c1..c4
     let range_args = vec![format!("{c1}..{c4}")];
-    let target_range = ReviewTarget::from_repo_args(repo.clone(), range_args);
+    let target_range = ReviewTarget::from_repo_args(repo.clone(), range_args, false);
     assert!(target_range.is_range());
     assert_eq!(
         target_range.range(),
@@ -127,16 +128,24 @@ fn test_review_target_queries() {
     // Notes commit for range c1..c4 (next newest) is full c3
     assert_eq!(target_range.notes_commit(), Some(c3.clone()));
     assert_eq!(target_range.notes_key(), format!("myrepo@{c3}"));
+    assert!(!target_range.is_staged());
+    assert!(!target_range.is_cached());
 
     // 2. Reviewing working tree (empty args)
-    let target_wt = ReviewTarget::from_repo_args(repo, vec![]);
+    let target_wt = ReviewTarget::from_repo_args(repo, vec![], false);
     assert!(!target_wt.is_range());
     assert_eq!(target_wt.range(), None);
     assert_eq!(target_wt.commit_range(), None);
     assert_eq!(target_wt.notes_commit(), Some(c4.clone()));
     assert_eq!(target_wt.notes_key(), format!("myrepo@{c4}"));
+    assert!(!target_wt.is_staged());
 
-    // 3. Unrooted review target
+    // 3. Staged target
+    let target_staged = ReviewTarget::from_repo_args(Repo::from_root(dir), vec![], true);
+    assert!(target_staged.is_staged());
+    assert!(target_staged.is_cached());
+
+    // 4. Unrooted review target
     let unrooted_repo = Repo::from_name("piped-repo");
     let target_unrooted = ReviewTarget::from_repo(unrooted_repo);
     assert!(!target_unrooted.is_range());
@@ -146,7 +155,7 @@ fn test_review_target_queries() {
     assert_eq!(target_unrooted.branch(), "");
     assert!(!target_unrooted.is_work_tree());
 
-    // 4. from_root constructor and branch / worktree forwarding
+    // 5. from_root constructor and branch / worktree forwarding
     let target_from_root = ReviewTarget::from_root(dir);
     assert_eq!(target_from_root.repo_root(), Some(dir));
     assert!(target_from_root.is_work_tree());
@@ -170,8 +179,11 @@ fn test_repo_edge_cases_and_branches() {
     assert_eq!(unrooted_empty.name(), "diffuse");
 
     // with_target
-    let target =
-        unrooted_empty.with_target(Some(RevisionRange::new("a", "b")), vec!["a..b".into()]);
+    let target = unrooted_empty.with_target(
+        Some(RevisionRange::new("a", "b")),
+        vec!["a..b".into()],
+        false,
+    );
     assert!(target.is_range());
     assert_eq!(target.commit_range(), Some("a..b".into()));
 

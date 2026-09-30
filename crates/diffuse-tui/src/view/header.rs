@@ -248,13 +248,22 @@ pub fn render_header_bar(
     global_counts: Option<FileCounts>,
     branch: Option<&str>,
     commit_range: Option<&str>,
+    is_staged: bool,
 ) -> Vec<String> {
     let branch_seg = if let Some(range) = commit_range
         && !range.is_empty()
     {
         format!(" \x1b[38;5;244m\u{2387}\x1b[0m\x1b[1m\x1b[38;5;252m{range}\x1b[0m")
     } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
-        format!(" \x1b[38;5;244m\u{2387}\x1b[0m\x1b[1m\x1b[38;5;252m{b}\x1b[0m")
+        let staged_badge = if is_staged {
+            " \x1b[38;5;244m(\x1b[1m\x1b[38;5;120mstaged\x1b[0m\x1b[38;5;244m)\x1b[0m"
+        } else {
+            ""
+        };
+        format!(" \x1b[38;5;244m\u{2387}\x1b[0m\x1b[1m\x1b[38;5;252m{b}\x1b[0m{staged_badge}")
+    } else if is_staged {
+        " \x1b[38;5;244m\u{2387}(\x1b[1m\x1b[38;5;120mstaged\x1b[0m\x1b[38;5;244m)\x1b[0m"
+            .to_string()
     } else {
         String::new()
     };
@@ -384,7 +393,7 @@ pub fn render_bottom_ribbon(width: usize) -> (String, String) {
         "─".repeat(width.saturating_sub(2).min(60))
     );
     let ribbon_text = truncate_pad(
-        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [x]discard",
+        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [t]staged [x]discard",
         width.saturating_sub(1),
     );
     let ribbon = format!("\x1b[38;5;244m{ribbon_text}\x1b[39m");
@@ -401,6 +410,7 @@ pub fn header_bar_line_themed(
     global_counts: Option<FileCounts>,
     branch: Option<&str>,
     commit_range: Option<&str>,
+    is_staged: bool,
 ) -> Line<'static> {
     let mut spans = vec![
         Span::raw(" "),
@@ -436,6 +446,29 @@ pub fn header_bar_line_themed(
                 .fg(Color::Indexed(252))
                 .add_modifier(Modifier::BOLD),
         ));
+        if is_staged {
+            spans.push(Span::styled(" (", Style::default().fg(Color::Indexed(244))));
+            spans.push(Span::styled(
+                "staged",
+                Style::default()
+                    .fg(Color::Indexed(120))
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(")", Style::default().fg(Color::Indexed(244))));
+        }
+    } else if is_staged {
+        spans.push(Span::styled(
+            " \u{2387}",
+            Style::default().fg(Color::Indexed(244)),
+        ));
+        spans.push(Span::styled("(", Style::default().fg(Color::Indexed(244))));
+        spans.push(Span::styled(
+            "staged",
+            Style::default()
+                .fg(Color::Indexed(120))
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(")", Style::default().fg(Color::Indexed(244))));
     }
 
     if let Some(ref gc) = global_counts
@@ -473,6 +506,7 @@ pub fn header_bar_line(
     global_counts: Option<FileCounts>,
     branch: Option<&str>,
     commit_range: Option<&str>,
+    is_staged: bool,
 ) -> Line<'static> {
     header_bar_line_themed(
         repo,
@@ -481,6 +515,7 @@ pub fn header_bar_line(
         global_counts,
         branch,
         commit_range,
+        is_staged,
     )
 }
 

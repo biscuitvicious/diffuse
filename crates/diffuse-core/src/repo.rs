@@ -109,11 +109,17 @@ impl Repo {
 
     /// Convenience: combine this repository with a revision range into a
     /// [`ReviewTarget`].
-    pub fn with_target(self, range: Option<RevisionRange>, git_args: Vec<String>) -> ReviewTarget {
+    pub fn with_target(
+        self,
+        range: Option<RevisionRange>,
+        git_args: Vec<String>,
+        staged: bool,
+    ) -> ReviewTarget {
         ReviewTarget {
             repo: self,
             range,
             git_args,
+            staged,
         }
     }
 }
@@ -145,12 +151,12 @@ impl RevisionRange {
     /// Returns `Some(RevisionRange(bottom, top))` for commit-to-commit ranges
     /// (e.g. `c1..c2`, `c1...c2`, `c1 c2`, `c^!`).
     /// Returns `None` for comparisons against the working tree (empty args,
-    /// `--cached`, etc.).
+    /// `--staged`, `--cached`, etc.).
     pub fn resolve(repo_root: &Path, git_args: &[String]) -> Option<Self> {
         let refs: Vec<&str> = git_args
             .iter()
             .map(std::string::String::as_str)
-            .filter(|t| *t != "--cached" && !t.starts_with('-'))
+            .filter(|t| !t.starts_with('-'))
             .collect();
 
         if refs.len() == 1 {
@@ -210,22 +216,30 @@ pub struct ReviewTarget {
     pub repo: Repo,
     pub range: Option<RevisionRange>,
     pub git_args: Vec<String>,
+    pub staged: bool,
 }
 
 impl ReviewTarget {
-    /// Create a review target from a repo, optional range, and preserved git
-    /// args.
-    pub fn new(repo: Repo, range: Option<RevisionRange>, git_args: Vec<String>) -> Self {
+    /// Create a review target from a repo, optional range, preserved git
+    /// args, and staged flag.
+    pub fn new(
+        repo: Repo,
+        range: Option<RevisionRange>,
+        git_args: Vec<String>,
+        staged: bool,
+    ) -> Self {
         Self {
             repo,
             range,
             git_args,
+            staged,
         }
     }
 
-    /// Create a review target from a repo and git arguments, automatically
-    /// resolving whether it represents a commit range or working tree review.
-    pub fn from_repo_args(repo: Repo, git_args: Vec<String>) -> Self {
+    /// Create a review target from a repo, git arguments, and staged flag,
+    /// automatically resolving whether it represents a commit range or
+    /// working tree review.
+    pub fn from_repo_args(repo: Repo, git_args: Vec<String>, staged: bool) -> Self {
         let range = repo
             .root()
             .and_then(|root| RevisionRange::resolve(root, &git_args));
@@ -233,6 +247,7 @@ impl ReviewTarget {
             repo,
             range,
             git_args,
+            staged,
         }
     }
 
@@ -243,6 +258,7 @@ impl ReviewTarget {
             repo,
             range: None,
             git_args: Vec::new(),
+            staged: false,
         }
     }
 
@@ -307,5 +323,16 @@ impl ReviewTarget {
     /// Whether the repository is inside a git work tree.
     pub fn is_work_tree(&self) -> bool {
         self.repo.is_work_tree()
+    }
+
+    /// Whether the review target diffs against the staged index (`--staged` or
+    /// `--cached`).
+    pub fn is_staged(&self) -> bool {
+        self.staged
+    }
+
+    /// Alias for [`ReviewTarget::is_staged`].
+    pub fn is_cached(&self) -> bool {
+        self.is_staged()
     }
 }

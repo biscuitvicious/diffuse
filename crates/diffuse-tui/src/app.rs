@@ -211,11 +211,17 @@ impl AppState {
         self
     }
 
-    pub fn with_repo_context(self, repo_root: PathBuf, git_args: Vec<String>) -> Self {
+    pub fn with_repo_context(
+        self,
+        repo_root: PathBuf,
+        git_args: Vec<String>,
+        staged: bool,
+    ) -> Self {
         let repo_name = self.repo.clone();
         let target = diffuse_core::ReviewTarget::from_repo_args(
             diffuse_core::Repo::from_root(repo_root).with_name(repo_name),
             git_args,
+            staged,
         );
         self.with_target(target)
     }

@@ -90,7 +90,7 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let header_line = header_bar_line("diffuse", Some("src/"), None, None, None);
+    let header_line = header_bar_line("diffuse", Some("src/"), None, None, None, false);
     assert!(header_line.to_string().contains("diffuse"));
     assert!(header_line.to_string().contains("src/"));
     assert!(
@@ -131,7 +131,7 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let rename_header = header_bar_line("diffuse", Some("crates/"), None, None, None);
+    let rename_header = header_bar_line("diffuse", Some("crates/"), None, None, None, false);
     assert!(rename_header.to_string().contains("crates/"));
     assert!(
         !rename_header.to_string().contains("algo.rs"),
@@ -297,7 +297,7 @@ fn test_header_bar_zero_notes_suppressed() {
         "TUI status line must not show note icon when there are no notes"
     );
     // Top header with empty global counts: no note icon either.
-    let header_ansi = render_header_bar("repo", 80, None, None, None, None).join("\n");
+    let header_ansi = render_header_bar("repo", 80, None, None, None, None, false).join("\n");
     assert!(
         !header_ansi.contains("💬"),
         "ANSI header must not show note icon when global counts are empty"
@@ -392,7 +392,8 @@ fn test_header_bar_nonzero_notes_shown() {
         movs: 0,
         notes: 2,
     };
-    let header_ansi = render_header_bar("repo", 80, None, Some(global), None, None).join("\n");
+    let header_ansi =
+        render_header_bar("repo", 80, None, Some(global), None, None, false).join("\n");
     assert!(
         header_ansi.contains("💬2"),
         "ANSI header must show global '💬2'"
@@ -401,7 +402,8 @@ fn test_header_bar_nonzero_notes_shown() {
 
 #[test]
 fn test_header_bar_none_file_no_diffs() {
-    let ansi = render_header_bar("my_repo", 80, Some("crates/"), None, None, None).join("\n");
+    let ansi =
+        render_header_bar("my_repo", 80, Some("crates/"), None, None, None, false).join("\n");
     assert!(ansi.contains("my_repo"), "must contain repo name");
     assert!(ansi.contains("crates/"), "must contain prefix");
 
@@ -412,11 +414,12 @@ fn test_header_bar_none_file_no_diffs() {
         None,
         None,
         None,
+        false,
     );
     assert!(line.to_string().contains("my_repo"));
     assert!(line.to_string().contains("crates/"));
 
-    let plain_line = header_bar_line("my_repo", None, None, None, None);
+    let plain_line = header_bar_line("my_repo", None, None, None, None, false);
     assert!(plain_line.to_string().contains("my_repo"));
 }
 
@@ -743,7 +746,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
         notes: 0,
     };
 
-    let header_line = header_bar_line("diffuse", None, Some(global_counts), None, None);
+    let header_line = header_bar_line("diffuse", None, Some(global_counts), None, None, false);
     let text = header_line.to_string();
     assert_eq!(
         text, " diffuse −7 +15 ~6",
@@ -783,7 +786,8 @@ fn test_header_bar_global_mod_counts_ratatui() {
         movs: 2,
         notes: 0,
     };
-    let mov_header_line = header_bar_line("diffuse", None, Some(global_with_movs), None, None);
+    let mov_header_line =
+        header_bar_line("diffuse", None, Some(global_with_movs), None, None, false);
     let mov_text = mov_header_line.to_string();
     assert_eq!(
         mov_text, " diffuse −7 +15 ~6 ≈2",
@@ -866,7 +870,8 @@ fn test_header_bar_global_mod_counts_ansi() {
         notes: 0,
     };
 
-    let ansi_lines = render_header_bar("diffuse", 120, None, Some(global_counts), None, None);
+    let ansi_lines =
+        render_header_bar("diffuse", 120, None, Some(global_counts), None, None, false);
     let joined = ansi_lines.join("\n");
 
     // Check highlighted global mod counts in ANSI escapes
@@ -911,7 +916,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
     };
 
     // No file in the top header: repo, global counts, prefix only.
-    let none_line = header_bar_line("diffuse", None, Some(global_counts), None, None);
+    let none_line = header_bar_line("diffuse", None, Some(global_counts), None, None, false);
     assert_eq!(none_line.to_string(), " diffuse −5 +20 ~3");
 
     // Common prefix + file
@@ -950,6 +955,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         Some(global_counts),
         None,
         None,
+        false,
     );
     assert_eq!(
         pfx_line.to_string(),
@@ -1069,7 +1075,7 @@ fn test_format_counts_omit_zero_dels() {
 #[test]
 fn test_header_bar_shows_branch_indicator() {
     // ANSI header with branch
-    let ansi = render_header_bar("diffuse", 80, None, None, Some("main"), None).join("\n");
+    let ansi = render_header_bar("diffuse", 80, None, None, Some("main"), None, false).join("\n");
     assert!(
         ansi.contains("\u{2387}"),
         "ANSI header must show branch glyph"
@@ -1088,14 +1094,14 @@ fn test_header_bar_shows_branch_indicator() {
     );
 
     // ANSI header without branch
-    let ansi_no_branch = render_header_bar("diffuse", 80, None, None, None, None).join("\n");
+    let ansi_no_branch = render_header_bar("diffuse", 80, None, None, None, None, false).join("\n");
     assert!(
         !ansi_no_branch.contains("\u{2387}"),
         "ANSI header must not show branch glyph when branch is None"
     );
 
     // Ratatui header with branch — verify spans contain branch
-    let line = header_bar_line("diffuse", None, None, Some("main"), None);
+    let line = header_bar_line("diffuse", None, None, Some("main"), None, false);
     let text = line.to_string();
     assert!(
         text.contains("\u{2387}"),
@@ -1132,9 +1138,46 @@ fn test_header_bar_shows_branch_indicator() {
     );
 
     // Commit range shows the same branch glyph in header
-    let line_range = header_bar_line("diffuse", None, None, None, Some("v1.0..v2.0"));
+    let line_range = header_bar_line("diffuse", None, None, None, Some("v1.0..v2.0"), false);
     assert!(line_range.to_string().contains("v1.0..v2.0"));
     assert!(line_range.to_string().contains("\u{2387}"));
+}
+
+#[test]
+fn test_header_bar_shows_staged_indicator() {
+    // When is_staged is true, the header must show `(staged)` after the branch
+    let ansi = render_header_bar("diffuse", 80, None, None, Some("work"), None, true).join("\n");
+    let visible_ansi = crate::render::ansi::strip_ansi(&ansi);
+    assert!(
+        visible_ansi.contains("work"),
+        "ANSI header must show branch name"
+    );
+    assert!(
+        visible_ansi.contains("(staged)"),
+        "ANSI header must show (staged) indicator"
+    );
+    assert!(
+        ansi.contains("38;5;120m"),
+        "ANSI header must style staged in green"
+    );
+
+    // Ratatui line with is_staged
+    let line = header_bar_line("diffuse", None, None, Some("work"), None, true);
+    let text = line.to_string();
+    assert!(text.contains("work"), "Ratatui line must show branch name");
+    assert!(
+        text.contains("(staged)"),
+        "Ratatui line must show (staged) indicator"
+    );
+
+    // Verify staged span styling: "staged" span has Color 120 (green) + bold
+    let staged_span = line
+        .spans
+        .iter()
+        .find(|s| s.content == "staged")
+        .expect("must have staged span");
+    assert_eq!(staged_span.style.fg, Some(Color::Indexed(120)));
+    assert!(staged_span.style.add_modifier.contains(Modifier::BOLD));
 }
 
 #[test]
@@ -1148,7 +1191,16 @@ fn test_top_header_drops_file_section_and_counts_dot() {
     };
     // ANSI header: repo, glyph, branch, then global counts with no dot and
     // no file section.
-    let ansi = render_header_bar("diffuse", 120, None, Some(global), Some("main"), None).join("\n");
+    let ansi = render_header_bar(
+        "diffuse",
+        120,
+        None,
+        Some(global),
+        Some("main"),
+        None,
+        false,
+    )
+    .join("\n");
     assert!(ansi.contains("diffuse"), "must show repo name");
     let visible = crate::render::ansi::strip_ansi(&ansi);
     assert_eq!(
@@ -1162,7 +1214,7 @@ fn test_top_header_drops_file_section_and_counts_dot() {
     );
 
     // Ratatui header renders the exact compact form.
-    let line = header_bar_line("diffuse", None, Some(global), Some("main"), None);
+    let line = header_bar_line("diffuse", None, Some(global), Some("main"), None, false);
     assert_eq!(
         line.to_string(),
         " diffuse \u{2387}main −7 +15 ~6 💬2",

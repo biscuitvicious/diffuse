@@ -46,6 +46,7 @@ impl AppState {
             Some(self.output.total_counts()),
             Some(&self.output.branch),
             self.commit_range.as_deref(),
+            self.target.is_staged(),
         ));
 
         // Secondary status bar
@@ -441,6 +442,7 @@ impl AppState {
             Some(self.output.total_counts()),
             Some(&self.output.branch),
             self.commit_range.as_deref(),
+            self.target.is_staged(),
         );
         let header_bg = crate::view::to_color(self.theme.palette.header_bar_bg);
         f.render_widget(

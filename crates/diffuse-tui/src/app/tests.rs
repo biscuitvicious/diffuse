@@ -3338,6 +3338,36 @@ fn test_app_commit_range_in_render_ratatui() {
 }
 
 #[test]
+fn test_app_header_bar_shows_staged_badge() {
+    let output = PipelineOutput {
+        files: vec![],
+        branch: "work".into(),
+        untracked_skipped: vec![],
+    };
+    let target = diffuse_core::ReviewTarget::from_repo_args(
+        diffuse_core::Repo::from_name("my_repo"),
+        vec![],
+        true,
+    );
+    let mut state = AppState::new(output, "my_repo".into(), temp_notes_path()).with_target(target);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+    let frame = terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+    let buffer = frame.buffer;
+    let mut row_0 = String::new();
+    for x in 0..80 {
+        row_0.push_str(buffer[(x, 0)].symbol());
+    }
+    assert!(
+        row_0.contains("work (staged)"),
+        "Header bar must show 'work (staged)' when target is staged: {row_0}"
+    );
+}
+
+#[test]
 fn test_app_streaming_dot_blinking_and_pause() {
     let output = PipelineOutput {
         files: vec![],

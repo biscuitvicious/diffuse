@@ -2,7 +2,7 @@
 
 Interactive git-diff review for [pi](https://github.com/earendil-works/pi-mono).
 
-`/review [base] [--cached] [--] [path...]` opens the working-tree diff in a
+`/review [base] [--staged] [--] [path...]` opens the working-tree diff in a
 full-screen TUI: wrapped hunks with syntax highlighting, word-level change
 marks, persistent margin notes, and hunk-level git staging — all from the
 terminal (phone-friendly keys, touch/wheel scrolling).
@@ -48,7 +48,7 @@ Then `/reload` in pi and run `/review` in any git work tree.
 - **Deep git**: stage / unstage / discard the current hunk or whole file
   (`git apply --cached`, reverse apply); discards are safety-stashed
   (`git stash create`). Base selection: worktree vs HEAD (default),
-  `--cached`, refs, ranges, path filters; untracked files are reviewed too.
+  `--staged` / `--cached`, refs, ranges, path filters; untracked files are reviewed too.
 - **Editor**: `o` drops into your editor at the cursor line (range
   pre-selected in vim). Per-binary invocation table (vim family, positional
   editors, `--goto` editors, detached GUI editors).

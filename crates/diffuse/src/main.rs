@@ -115,11 +115,14 @@ struct Args {
     /// Equivalent to the TUI's R (raw diff) toggle.
     #[arg(long, global = true)]
     raw: bool,
+    /// View staged (cached) index changes against HEAD.
+    #[arg(short = 's', long, alias = "cached", global = true)]
+    staged: bool,
 
     #[command(subcommand)]
     command: Option<SubCommand>,
 
-    /// Git diff arguments (e.g. `diffuse HEAD~1`, `diffuse --cached`, `diffuse
+    /// Git diff arguments (e.g. `diffuse HEAD~1`, `diffuse --staged`, `diffuse
     /// path/to/file`).
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     git_args: Vec<String>,
@@ -129,7 +132,7 @@ struct Args {
 enum SubCommand {
     /// Interactive diff reviewer (default when invoked in a repository).
     Review {
-        /// Git diff arguments (e.g. `HEAD~1`, `--cached`, `src/`).
+        /// Git diff arguments (e.g. `HEAD~1`, `--staged`, `src/`).
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         git_args: Vec<String>,
     },
@@ -181,8 +184,8 @@ struct Input {
     base_args: Vec<String>,
     #[serde(default)]
     paths: Vec<String>,
-    #[serde(default)]
-    cached: bool,
+    #[serde(default, alias = "cached")]
+    staged: bool,
     #[serde(default)]
     context: Option<usize>,
     #[allow(dead_code)]
@@ -216,7 +219,7 @@ fn notes_key_for_input(input: &Input, repo: &str) -> String {
         Some(root) => Repo::from_root(Path::new(root)).with_name(repo),
         None => Repo::from_name(repo),
     };
-    ReviewTarget::from_repo_args(base_repo, input.base_args.clone()).notes_key()
+    ReviewTarget::from_repo_args(base_repo, input.base_args.clone(), input.staged).notes_key()
 }
 
 fn process_input(input: Input, args: &Args) -> PipelineOutput {
@@ -278,7 +281,7 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
             Path::new(repo_root),
             &input.base_args,
             &input.paths,
-            input.cached,
+            input.staged,
             ENGINE_CONTEXT,
         )
     {
@@ -484,6 +487,7 @@ fn main() -> io::Result<()> {
         let target = ReviewTarget::from_repo_args(
             Repo::from_root(&repo_root).with_name_opt(args.repo.clone()),
             git_args.clone(),
+            args.staged,
         );
 
         let pipeline_opts = PipelineOptions::default()
@@ -495,6 +499,8 @@ fn main() -> io::Result<()> {
             .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
             .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
 
+        let staged = args.staged;
+
         // Interactive TUI only when both ends are real terminals and not in
         // pager or markdown mode; any piped or redirected end falls
         // back to the full ANSI or Markdown render.
@@ -503,7 +509,7 @@ fn main() -> io::Result<()> {
                 repo_root.clone(),
                 git_args.clone(),
                 Vec::new(),
-                false,
+                staged,
                 ENGINE_CONTEXT,
                 pipeline_opts.with_lazy_collapsed(true),
                 args.jobs,
@@ -521,6 +527,7 @@ fn main() -> io::Result<()> {
                 notes_path,
                 repo_root.clone(),
                 git_args.clone(),
+                args.staged,
                 args.expand_lines,
                 theme,
             )?;
@@ -529,7 +536,7 @@ fn main() -> io::Result<()> {
                 repo_root.clone(),
                 git_args.clone(),
                 Vec::new(),
-                false,
+                staged,
                 ENGINE_CONTEXT,
                 pipeline_opts,
                 args.jobs,
@@ -572,7 +579,7 @@ fn main() -> io::Result<()> {
                 repo_root.clone(),
                 git_args.clone(),
                 Vec::new(),
-                false,
+                staged,
                 ENGINE_CONTEXT,
                 pipeline_opts,
                 args.jobs,
@@ -636,6 +643,7 @@ fn main() -> io::Result<()> {
         let target = ReviewTarget::from_repo_args(
             Repo::from_root(&repo_root).with_name_opt(args.repo.clone()),
             git_args.clone(),
+            args.staged,
         );
         let pipeline_opts = PipelineOptions::default()
             .with_notes(Some(loaded_db), Some(target.notes_key()))
@@ -650,7 +658,7 @@ fn main() -> io::Result<()> {
             repo_root,
             git_args,
             Vec::new(),
-            false,
+            args.staged,
             ENGINE_CONTEXT,
             pipeline_opts,
             args.jobs,
@@ -722,7 +730,7 @@ fn main() -> io::Result<()> {
             repo_root: None,
             base_args: Vec::new(),
             paths: Vec::new(),
-            cached: false,
+            staged: false,
             context: None,
             notes: None,
             notes_file: None,

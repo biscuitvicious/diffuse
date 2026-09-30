@@ -101,7 +101,7 @@ Trailing arguments are passed through to `git diff`. Use any revision
 specification git understands to select the change under review:
 
 ```bash
-diffuse --cached          # staged changes
+diffuse --staged          # staged changes (also --cached)
 diffuse main..feature     # changes on a branch
 diffuse HEAD~3..HEAD      # a range of recent commits
 diffuse -C /path/to/repo  # operate in another directory

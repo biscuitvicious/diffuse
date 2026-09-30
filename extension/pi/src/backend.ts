@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 export interface ReviewBase {
 	baseArgs: string[];
 	label: string;
+	staged: boolean;
 	cached: boolean;
 	paths: string[];
 	repo: string;
@@ -19,7 +20,7 @@ export function parseReviewArgs(args: string | undefined, cwd: string, repoPrefi
 	const tokens = args ? args.split(/\s+/).filter(Boolean) : [];
 	const baseArgs: string[] = [];
 	const paths: string[] = [];
-	let cached = false;
+	let staged = false;
 	let afterDash = false;
 	const toRepoPath = (p: string): string => (repoPrefix && !p.startsWith("/") ? join(repoPrefix, p) : p);
 	for (const t of tokens) {
@@ -27,17 +28,17 @@ export function parseReviewArgs(args: string | undefined, cwd: string, repoPrefi
 			paths.push(toRepoPath(t));
 		} else if (t === "--") {
 			afterDash = true;
-		} else if (t === "--cached" || t === "-c") {
-			cached = true;
-			baseArgs.push("--cached");
+		} else if (t === "--staged" || t === "--cached" || t === "-s" || t === "-c") {
+			staged = true;
+			baseArgs.push("--staged");
 		} else if (existsSync(join(cwd, t))) {
 			paths.push(toRepoPath(t));
 		} else {
 			baseArgs.push(t);
 		}
 	}
-	const label = cached ? "staged" : baseArgs.length > 0 ? baseArgs.join(" ") : "HEAD";
-	return { baseArgs, label, cached, paths, repo: "" };
+	const label = staged ? "staged" : baseArgs.length > 0 ? baseArgs.join(" ") : "HEAD";
+	return { baseArgs, label, staged, cached: staged, paths, repo: "" };
 }
 
 export function diffuseBinPath(): string {

@@ -35,8 +35,11 @@ pub fn hunk_patch(state: &AppState, repo_root: &Path, base_args: &[String]) -> O
     cmd.arg("diff")
         .arg("-M")
         .arg("--no-color")
-        .arg(format!("-U{}", ENGINE_CONTEXT))
-        .args(base_args)
+        .arg(format!("-U{}", ENGINE_CONTEXT));
+    if state.target.is_staged() {
+        cmd.arg("--staged");
+    }
+    cmd.args(base_args)
         .arg("--")
         .arg(&f.path)
         .current_dir(repo_root);
@@ -281,7 +284,8 @@ pub fn reload_diff(
     repo_root: &Path,
     git_args: &[String],
 ) -> Result<(), String> {
-    let git_res = load_git_repo(repo_root, git_args, &[], false, ENGINE_CONTEXT)
+    let staged = state.target.is_staged();
+    let git_res = load_git_repo(repo_root, git_args, &[], staged, ENGINE_CONTEXT)
         .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
@@ -298,6 +302,53 @@ pub fn reload_diff(
     state.commit_range = git_res.commit_range;
 
     state.reload(new_out);
+    Ok(())
+}
+
+/// Toggle between viewing staged changes and unstaged working tree changes.
+/// Returns an error if viewing a commit range, or if the target view has no
+/// changes.
+pub fn toggle_staged_action(
+    state: &mut AppState,
+    repo_root: &Path,
+    git_args: &[String],
+) -> Result<(), String> {
+    if state.commit_range.is_some()
+        || state.target.is_range()
+        || diffuse_core::repo::RevisionRange::resolve(repo_root, git_args).is_some()
+    {
+        return Err("cannot switch between staged and unstaged when viewing a commit range".into());
+    }
+
+    let target_staged = !state.target.is_staged();
+
+    let git_res = load_git_repo(repo_root, git_args, &[], target_staged, ENGINE_CONTEXT)
+        .map_err(|e| format!("failed to reload git repo: {e}"))?;
+
+    let pipeline_opts = PipelineOptions::default()
+        .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
+        .with_expand_lines(state.expand_lines);
+    let mut new_out = run_pipeline_full(
+        &git_res.diff,
+        Some(git_res.new_content),
+        Some(git_res.old_content),
+        pipeline_opts,
+    );
+    new_out.branch = git_res.branch;
+    new_out.untracked_skipped = git_res.untracked_skipped;
+
+    if new_out.files.is_empty() {
+        return Err(if target_staged {
+            "no staged changes".into()
+        } else {
+            "no unstaged changes".into()
+        });
+    }
+
+    state.target.staged = target_staged;
+    state.commit_range = git_res.commit_range;
+    state.reload(new_out);
+
     Ok(())
 }
 

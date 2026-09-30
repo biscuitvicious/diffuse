@@ -252,6 +252,9 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('s')) => {
             state.execute(TuiCommand::Stage);
         }
+        (KeyModifiers::NONE, KeyCode::Char('t')) | (KeyModifiers::SHIFT, KeyCode::Char('T')) => {
+            state.execute(TuiCommand::ToggleStaged);
+        }
         (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
             let repo_root = state.repo_root.clone();
             let git_args = state.git_args.clone();

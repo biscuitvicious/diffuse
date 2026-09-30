@@ -831,3 +831,109 @@ fn test_json_payload_stdin_wire_contract() {
     assert_eq!(wire["files"][0]["path"], "test.rs");
     assert_eq!(wire["files"][0]["hunks"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn diffuse_staged_flag_excludes_untracked_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init"]);
+
+    // Create untracked file
+    fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
+
+    // 1. With --staged
+    let out_staged = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .arg("--staged")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out_staged.status.code(),
+        Some(0),
+        "diffuse -p --staged must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out_staged.stderr)
+    );
+    let stdout_staged = String::from_utf8_lossy(&out_staged.stdout);
+    assert!(
+        !stdout_staged.contains("untracked.rs"),
+        "diffuse --staged stdout must NOT contain untracked files, got: {stdout_staged}"
+    );
+
+    // 2. With --cached
+    let out_cached = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .arg("--cached")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out_cached.status.code(),
+        Some(0),
+        "diffuse -p --cached must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out_cached.stderr)
+    );
+    let stdout_cached = String::from_utf8_lossy(&out_cached.stdout);
+    assert!(
+        !stdout_cached.contains("untracked.rs"),
+        "diffuse --cached stdout must NOT contain untracked files, got: {stdout_cached}"
+    );
+
+    // 3. With -s (short flag parsed by Clap)
+    let out_short_s = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .arg("-s")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out_short_s.status.code(),
+        Some(0),
+        "diffuse -p -s must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out_short_s.stderr)
+    );
+    let stdout_short_s = String::from_utf8_lossy(&out_short_s.stdout);
+    assert!(
+        !stdout_short_s.contains("untracked.rs"),
+        "diffuse -p -s stdout must NOT contain untracked files, got: {stdout_short_s}"
+    );
+
+    // 4. With review --staged subcommand parsed by Clap
+    let out_review_staged = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("review")
+        .arg("-p")
+        .arg("--staged")
+        .current_dir(dir)
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out_review_staged.status.code(),
+        Some(0),
+        "diffuse review -p --staged must exit 0, stderr: {}",
+        String::from_utf8_lossy(&out_review_staged.stderr)
+    );
+    let stdout_review_staged = String::from_utf8_lossy(&out_review_staged.stdout);
+    assert!(
+        !stdout_review_staged.contains("untracked.rs"),
+        "diffuse review -p --staged stdout must NOT contain untracked files, got: {stdout_review_staged}"
+    );
+}

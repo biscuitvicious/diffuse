@@ -12,11 +12,17 @@ test("diffuse binary exists and resolves", () => {
 	ok(existsSync(bin), `diffuse binary must exist at ${bin}`);
 });
 
-test("parseReviewArgs handles flags, paths, and cached", () => {
-	const parsed = parseReviewArgs("--cached -- src/main.rs", process.cwd(), "");
-	strictEqual(parsed.cached, true);
-	ok(parsed.baseArgs.includes("--cached"));
-	ok(parsed.paths.includes("src/main.rs"));
+test("parseReviewArgs handles flags, paths, and staged/cached", () => {
+	const parsedStaged = parseReviewArgs("--staged -- src/main.rs", process.cwd(), "");
+	strictEqual(parsedStaged.staged, true);
+	strictEqual(parsedStaged.cached, true);
+	ok(parsedStaged.baseArgs.includes("--staged"));
+	ok(parsedStaged.paths.includes("src/main.rs"));
+
+	const parsedCached = parseReviewArgs("--cached -- src/main.rs", process.cwd(), "");
+	strictEqual(parsedCached.staged, true);
+	strictEqual(parsedCached.cached, true);
+	ok(parsedCached.paths.includes("src/main.rs"));
 });
 
 test("diffuse binary json wire contract smoke test", async () => {

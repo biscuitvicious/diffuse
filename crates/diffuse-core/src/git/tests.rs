@@ -347,6 +347,7 @@ fn test_resolve_commit_range_in_repo() {
 
     // Non-commit ranges:
     assert_eq!(resolve_commit_range(dir, &[]), None);
+    assert_eq!(resolve_commit_range(dir, &["--staged".into()]), None);
     assert_eq!(resolve_commit_range(dir, &["--cached".into()]), None);
     assert_eq!(resolve_commit_range(dir, &["HEAD".into()]), None);
     assert_eq!(resolve_commit_range(dir, &["a.rs".into()]), None);
@@ -354,4 +355,57 @@ fn test_resolve_commit_range_in_repo() {
     // Also test that load_git_repo populates commit_range
     let res = load_git_repo(dir, &["HEAD~1..HEAD".into()], &[], false, 4).unwrap();
     assert_eq!(res.commit_range, Some(format!("{c1_hash}..{c2_hash}")));
+}
+
+#[test]
+fn test_load_git_repo_staged_excludes_untracked_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    std::fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init"]);
+
+    // Create untracked file and stage a change to tracked.rs
+    std::fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
+    std::fs::write(dir.join("tracked.rs"), "fn tracked() { 42 }\n").unwrap();
+    run(&["add", "tracked.rs"]);
+
+    // 1. With staged param true: excludes untracked files
+    let res_staged = load_git_repo(dir, &[], &[], true, 6).unwrap();
+    assert!(
+        !res_staged.diff.contains("untracked.rs"),
+        "staged diff must NOT contain untracked.rs"
+    );
+    assert!(
+        !res_staged.new_content.contains_key("untracked.rs"),
+        "staged new_content must NOT contain untracked.rs"
+    );
+    assert!(
+        res_staged.diff.contains("tracked.rs"),
+        "staged diff must contain staged tracked.rs"
+    );
+
+    // 2. With staged param false: includes untracked files
+    let res_unstaged = load_git_repo(dir, &[], &[], false, 6).unwrap();
+    assert!(
+        res_unstaged.diff.contains("untracked.rs"),
+        "unstaged diff must contain untracked.rs"
+    );
+    assert!(
+        res_unstaged.new_content.contains_key("untracked.rs"),
+        "unstaged new_content must contain untracked.rs"
+    );
 }

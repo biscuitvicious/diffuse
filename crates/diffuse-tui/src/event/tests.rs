@@ -891,3 +891,32 @@ fn test_shift_click_and_shift_drag_selection_modification() {
     assert_eq!(drag_sel.start, 1024);
     assert_eq!(drag_sel.end, 1027);
 }
+
+#[test]
+fn test_t_toggles_staged() {
+    let mut s = state_with_rows();
+    // 1. When commit range is set, 't' fails and reports status message
+    s.commit_range = Some("HEAD~1..HEAD".into());
+    assert!(s.status_message.is_none());
+
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE)),
+    );
+    assert!(
+        s.status_message.is_some(),
+        "Pressing 't' on commit range must set error status message"
+    );
+
+    s.status_message = None;
+
+    // Shift+T also triggers ToggleStaged
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT)),
+    );
+    assert!(
+        s.status_message.is_some(),
+        "Pressing 'Shift+T' on commit range must set error status message"
+    );
+}

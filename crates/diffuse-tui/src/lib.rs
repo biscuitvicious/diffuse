@@ -15,7 +15,9 @@ pub mod terminal;
 pub mod types;
 pub mod view;
 
-pub use actions::{discard_action, reload_diff, stage_action, unstage_action};
+pub use actions::{
+    discard_action, reload_diff, stage_action, toggle_staged_action, unstage_action,
+};
 pub use app::AppState;
 pub use command::TuiCommand;
 pub use editor::{Editor, open_editor, resolve_editor_args};
@@ -43,6 +45,7 @@ pub fn run_tui(
     notes_path: PathBuf,
     repo_root: PathBuf,
     git_args: Vec<String>,
+    staged: bool,
     expand_lines: usize,
     theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
@@ -50,6 +53,7 @@ pub fn run_tui(
     let target = diffuse_core::ReviewTarget::from_repo_args(
         diffuse_core::Repo::from_root(repo_root).with_name(repo.clone()),
         git_args,
+        staged,
     );
     let mut state = AppState::new(initial_output, repo, notes_path)
         .with_target(target)
@@ -164,6 +168,7 @@ pub fn run_interactive_tui(
     notes_path: PathBuf,
     repo_root: PathBuf,
     git_args: Vec<String>,
+    staged: bool,
     theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
     run_tui(
@@ -174,6 +179,7 @@ pub fn run_interactive_tui(
         notes_path,
         repo_root,
         git_args,
+        staged,
         DEFAULT_EXPAND_LINES,
         theme,
     )

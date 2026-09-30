@@ -31,6 +31,7 @@ pub enum TuiCommand {
     ToggleWordDiff,
     ToggleRawDiff,
     ToggleHelp,
+    ToggleStaged,
     ToggleCollapseFile(Option<usize>),
     ExpandAllHidden,
     ResetCurrentHunkContext,

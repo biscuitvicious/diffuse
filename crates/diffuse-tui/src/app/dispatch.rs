@@ -78,6 +78,14 @@ impl AppState {
             TuiCommand::ToggleWordDiff => self.word_diff = !self.word_diff,
             TuiCommand::ToggleRawDiff => self.toggle_raw_diff(),
             TuiCommand::ToggleHelp => self.show_help = !self.show_help,
+            TuiCommand::ToggleStaged => {
+                let repo_root = self.repo_root.clone();
+                let git_args = self.git_args.clone();
+                match crate::actions::toggle_staged_action(self, &repo_root, &git_args) {
+                    Ok(()) => self.status_message = None,
+                    Err(e) => self.status_message = Some((e, false)),
+                }
+            }
             TuiCommand::ExpandAllHidden => {
                 self.expand_all_hidden();
             }
