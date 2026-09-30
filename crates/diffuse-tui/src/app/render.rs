@@ -697,13 +697,11 @@ impl AppState {
         let cursor_vis = min_vis + self.vis_line;
 
         let mut pin_applied = false;
-        if let Some((pinned, pin_row)) = self.scroll_pin {
-            if self.row_idx == pin_row {
-                self.scroll = pinned;
-                pin_applied = true;
-            } else {
-                self.scroll_pin = None;
-            }
+        if let Some((pinned, pin_row)) = self.scroll_pin.take()
+            && self.row_idx == pin_row
+        {
+            self.scroll = pinned;
+            pin_applied = true;
         }
         if !pin_applied {
             let top_vis = if self.vis_line == 0 {

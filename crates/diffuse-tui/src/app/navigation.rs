@@ -12,6 +12,7 @@ impl AppState {
     /// Position cursor at `target_row` and adjust scroll to preserve a 1/10
     /// viewport margin above the jump point (or below if jumping to bottom).
     pub fn jump_to_row(&mut self, target_row: usize, is_bottom: bool) {
+        self.scroll_pin = None;
         self.row_idx = target_row.min(self.flat.len().saturating_sub(1));
         self.vis_line = 0;
 
@@ -165,6 +166,7 @@ impl AppState {
     /// Scroll to a specific visual line offset (used by scrollbar dragging and
     /// paging).
     pub fn scroll_to_visual(&mut self, target_vis: usize) {
+        self.scroll_pin = None;
         let geo = self.cached_geometry(self.last_content_width);
         let starts = geo.starts;
         let counts = geo.counts;

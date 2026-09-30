@@ -109,6 +109,9 @@ impl AppState {
                         let _ = self.expand_hunk_below(fi, hi - 1);
                         let _ = self.expand_hunk_above(fi, hi);
                     }
+                } else if let Some(fi) = self.is_cursor_on_bottom_divider() {
+                    let last_hi = self.output.files[fi].hunks.len().saturating_sub(1);
+                    let _ = self.expand_hunk_below(fi, last_hi);
                 }
                 // Enter on a content row is a no-op: collapsing is reserved
                 // for the file header row.

@@ -663,3 +663,75 @@ fn test_expand_file_ui_change_while_streaming_cancels_auto_scroll() {
         "UI state change while streaming must cancel auto-scroll"
     );
 }
+
+#[test]
+fn test_enter_on_wrapped_file_header_preserves_visual_line() {
+    let diff = r#"diff --git a/a_very_long_path_to_some_deeply_nested_file_in_the_repository.rs b/a_very_long_path_to_some_deeply_nested_file_in_the_repository.rs
+index 1111111..2222222 100644
+--- a/a_very_long_path_to_some_deeply_nested_file_in_the_repository.rs
++++ b/a_very_long_path_to_some_deeply_nested_file_in_the_repository.rs
+@@ -1,3 +1,3 @@
+ fn main() {
+-    let x = 1;
++    let x = 2;
+ }
+"#;
+    let new_content = [(
+        "a_very_long_path_to_some_deeply_nested_file_in_the_repository.rs".to_string(),
+        "fn main() {\n    let x = 2;\n}\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let old_content = [(
+        "a_very_long_path_to_some_deeply_nested_file_in_the_repository.rs".to_string(),
+        "fn main() {\n    let x = 1;\n}\n".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    let mut state = AppState::new(
+        run_pipeline_full(
+            diff,
+            Some(new_content),
+            Some(old_content),
+            PipelineOptions::default(),
+        ),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    // Render at width 40 so the long header wraps across at least 2 lines.
+    state.render_frame(40, 20);
+
+    let cw = state.effective_content_width();
+    assert!(
+        state.row_seg_count(0, cw) >= 2,
+        "file header must wrap across at least 2 lines"
+    );
+
+    // Position cursor on the file header row, second visual line
+    state.row_idx = 0;
+    state.vis_line = 1;
+
+    // Press Enter to collapse the file
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    assert!(state.collapsed_files.contains(&0), "file must be collapsed");
+    assert_eq!(
+        state.row_idx, 0,
+        "cursor must remain on the file header row"
+    );
+    assert_eq!(
+        state.vis_line, 1,
+        "cursor must remain on the second row of the file header after collapsing"
+    );
+
+    // Press Enter to expand the file
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    assert!(!state.collapsed_files.contains(&0), "file must be expanded");
+    assert_eq!(
+        state.row_idx, 0,
+        "cursor must remain on the file header row"
+    );
+    assert_eq!(
+        state.vis_line, 1,
+        "cursor must remain on the second row of the file header after expanding"
+    );
+}

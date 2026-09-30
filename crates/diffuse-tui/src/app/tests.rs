@@ -2279,7 +2279,7 @@ index 1111111..2222222 100644
         "divider must be on screen for this scenario"
     );
     let cursor_before = state.row_idx;
-
+    let cursor_screen_before = starts[cursor_before].saturating_sub(state.scroll);
     let gap_before = state.hunk_leading_gap(fi, 1);
     let hk = &state.output.files[fi].hunks[1];
     let txt = hunk_divider_text(
@@ -2320,9 +2320,10 @@ index 1111111..2222222 100644
         div_screen_after, div_screen_before,
         "divider must stay pinned even when the cursor is above it"
     );
+    let cursor_screen_after = starts_after[state.row_idx].saturating_sub(state.scroll);
     assert_eq!(
-        state.row_idx, cursor_before,
-        "cursor must not move when clicking an expansion arrow"
+        cursor_screen_after, cursor_screen_before,
+        "cursor must retain its visual screen position when clicking an expansion arrow"
     );
 }
 
@@ -3636,4 +3637,756 @@ fn test_mouse_click_end_of_hunks_divider_arrow_expands() {
         gap_after < gap_before,
         "clicking ▲ must expand trailing context (before: {gap_before}, after: {gap_after})"
     );
+}
+
+fn shrunk_eof_output() -> PipelineOutput {
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/sample.rs
+@@ -5,6 +5,1 @@
+ // line 5
+-// line 6
+-// line 7
+-// line 8
+-// line 9
+-// line 10
+"#;
+    let new_lines: Vec<String> = (1..=5).map(|i| format!("// line {i}")).collect();
+    let old_lines: Vec<String> = (1..=10).map(|i| format!("// line {i}")).collect();
+    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    run_pipeline_full(
+        diff,
+        Some(contents),
+        Some(old_contents),
+        PipelineOptions::default(),
+    )
+}
+
+#[test]
+fn test_hunk_trailing_gap_when_file_shrunk_at_eof() {
+    let state = AppState::new(shrunk_eof_output(), "test_repo".into(), temp_notes_path());
+    let fi = 0;
+    assert_eq!(
+        state.hunk_trailing_gap(fi),
+        0,
+        "shrunk file ending at EOF must have 0 trailing gap, not a phantom gap"
+    );
+}
+
+fn shrunk_eof_context_row_output() -> PipelineOutput {
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/sample.rs
+@@ -1,5 +1,2 @@
+ // line 1
+-// line 2
+-// line 3
+-// line 4
+ // line 5
+"#;
+    let new_lines: Vec<String> = vec!["// line 1".into(), "// line 5".into()];
+    let old_lines: Vec<String> = (1..=5).map(|i| format!("// line {i}")).collect();
+    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    run_pipeline_full(
+        diff,
+        Some(contents),
+        Some(old_contents),
+        PipelineOptions::default(),
+    )
+}
+
+#[test]
+fn test_hunk_trailing_gap_when_file_shrunk_with_eof_context_row() {
+    let mut state = AppState::new(
+        shrunk_eof_context_row_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+    );
+    let fi = 0;
+    assert_eq!(
+        state.hunk_trailing_gap(fi),
+        0,
+        "shrunk file ending at EOF with context line must have 0 trailing gap, not a phantom gap"
+    );
+    assert!(
+        !state.expand_hunk_below(fi, 0),
+        "expand_hunk_below must return false when trailing gap is 0"
+    );
+}
+
+#[test]
+fn test_is_cursor_on_bottom_divider_and_enter_key() {
+    let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+        .with_expand_lines(4);
+    let fi = 0;
+    let gap_before = state.hunk_trailing_gap(fi);
+    assert!(gap_before > 0);
+
+    // On file header (row 0), cursor is not on bottom divider
+    state.row_idx = 0;
+    state.vis_line = 0;
+    assert_eq!(state.is_cursor_on_bottom_divider(), None);
+
+    // On a content row, cursor is not on bottom divider
+    state.row_idx = 1;
+    state.vis_line = 0;
+    assert_eq!(state.is_cursor_on_bottom_divider(), None);
+
+    // Last row of file
+    let last_row = state.last_row_of_file(fi);
+    state.row_idx = last_row;
+    state.vis_line = 0;
+    // Row segment itself is not on bottom divider
+    assert_eq!(state.is_cursor_on_bottom_divider(), None);
+
+    // Position vis_line onto the bottom divider
+    let cw = state.effective_content_width();
+    let row_segs = state.row_seg_count(last_row, cw);
+    state.vis_line = row_segs;
+    assert_eq!(state.is_cursor_on_bottom_divider(), Some(fi));
+
+    // Raw diff mode returns None even if vis_line is set
+    state.raw_diff = true;
+    assert_eq!(state.is_cursor_on_bottom_divider(), None);
+    state.raw_diff = false;
+    assert_eq!(state.is_cursor_on_bottom_divider(), Some(fi));
+
+    // Pressing Enter (ToggleCollapseFile(None)) expands the bottom gap
+    state.execute(TuiCommand::ToggleCollapseFile(None));
+    let gap_after = state.hunk_trailing_gap(fi);
+    assert_eq!(gap_after, gap_before.saturating_sub(4));
+}
+
+fn two_hunk_gap_output() -> PipelineOutput {
+    let diff = r#"diff --git a/sample.rs b/sample.rs
+index 1111111..2222222 100644
+--- a/sample.rs
++++ b/sample.rs
+@@ -1,8 +1,9 @@
+ // line 1
+ // line 2
+ // line 3
+ // line 4
++// inserted one
+ // line 5
+ // line 6
+ // line 7
+ // line 8
+@@ -50,8 +51,9 @@
+ // line 50
+ // line 51
+ // line 52
+ // line 53
++// inserted two
+ // line 54
+ // line 55
+ // line 56
+ // line 57
+"#;
+    let new_lines: Vec<String> = (1..=70)
+        .map(|i| {
+            if i == 5 {
+                "// inserted one".to_string()
+            } else if i == 55 {
+                "// inserted two".to_string()
+            } else {
+                format!("// line {i}")
+            }
+        })
+        .collect();
+    let old_lines: Vec<String> = (1..=68).map(|i| format!("// line {i}")).collect();
+    let contents = [("sample.rs".to_string(), new_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    let old_contents = [("sample.rs".to_string(), old_lines.join("\n") + "\n")]
+        .into_iter()
+        .collect();
+    run_pipeline_full(
+        diff,
+        Some(contents),
+        Some(old_contents),
+        PipelineOptions::default(),
+    )
+}
+
+#[test]
+fn test_hunk_bar_click_pivots_and_retains_cursor_visual_position() {
+    let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+        .with_expand_lines(4);
+    state.render_frame(120, 16);
+    state.scroll = 2;
+
+    let fi = 0;
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let div_flat = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.file == fi && hs.hunk == 1)
+        .unwrap()
+        .flat;
+    let div_vis = starts[div_flat];
+    let div_screen_y = div_vis.saturating_sub(state.scroll);
+    let click_row = state.last_viewport_start + div_screen_y;
+
+    let h = &state.output.files[fi].hunks[1];
+    let hidden_gap = state.hunk_leading_gap(fi, 1);
+    let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+    let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+
+    // 1. Cursor is BEFORE the hunk bar (e.g. line 3 in hunk 0)
+    let line_3_flat = state
+        .flat
+        .iter()
+        .position(|fr| fr.file_idx == fi && state.row_of(fr).is_some_and(|r| r.new_line == Some(3)))
+        .unwrap();
+    state.row_idx = line_3_flat;
+    state.vis_line = 0;
+    let cursor_screen_before = state.cursor_visual_line().saturating_sub(state.scroll);
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col,
+        shift: false,
+    });
+
+    let (starts_after, _, _, _) = state.visual_geometry(state.last_content_width);
+    let div_flat_after = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.file == fi && hs.hunk == 1)
+        .unwrap()
+        .flat;
+    let div_screen_after = starts_after[div_flat_after].saturating_sub(state.scroll);
+    assert_eq!(
+        div_screen_after, div_screen_y,
+        "hunk bar must retain its visual screen position"
+    );
+
+    let cursor_screen_after = state.cursor_visual_line().saturating_sub(state.scroll);
+    assert_eq!(
+        cursor_screen_after, cursor_screen_before,
+        "cursor must retain its visual screen position when before bar"
+    );
+
+    // 2. Cursor is AFTER the hunk bar (e.g. line 52 in hunk 1)
+    let line_52_flat = state
+        .flat
+        .iter()
+        .position(|fr| {
+            fr.file_idx == fi && state.row_of(fr).is_some_and(|r| r.new_line == Some(52))
+        })
+        .unwrap();
+    state.row_idx = line_52_flat;
+    state.vis_line = 0;
+    let cursor_screen_before2 = state.cursor_visual_line().saturating_sub(state.scroll);
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col,
+        shift: false,
+    });
+
+    let (starts_after2, _, _, _) = state.visual_geometry(state.last_content_width);
+    let div_flat_after2 = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.file == fi && hs.hunk == 1)
+        .unwrap()
+        .flat;
+    let div_screen_after2 = starts_after2[div_flat_after2].saturating_sub(state.scroll);
+    assert_eq!(
+        div_screen_after2, div_screen_y,
+        "hunk bar must retain its visual screen position"
+    );
+
+    let cursor_screen_after2 = state.cursor_visual_line().saturating_sub(state.scroll);
+    assert_eq!(
+        cursor_screen_after2, cursor_screen_before2,
+        "cursor must retain its visual screen position when after bar"
+    );
+
+    // 3. Cursor is ON the hunk bar
+    state.row_idx = div_flat_after2;
+    state.vis_line = 0;
+    let cursor_screen_before3 = state.cursor_visual_line().saturating_sub(state.scroll);
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col,
+        shift: false,
+    });
+
+    let cursor_screen_after3 = state.cursor_visual_line().saturating_sub(state.scroll);
+    assert_eq!(
+        cursor_screen_after3, cursor_screen_before3,
+        "cursor must retain its visual screen position when on bar"
+    );
+    let current_div_flat = state
+        .hunk_starts
+        .iter()
+        .find(|hs| hs.file == fi && hs.hunk == 1)
+        .unwrap()
+        .flat;
+    assert_eq!(
+        state.row_idx, current_div_flat,
+        "cursor must remain on the hunk bar"
+    );
+}
+
+#[test]
+fn test_bottom_divider_click_pivots_and_retains_cursor_visual_position() {
+    let mut state = AppState::new(trailing_gap_output(), "test_repo".into(), temp_notes_path())
+        .with_expand_lines(4);
+    state.render_frame(120, 8);
+    state.scroll = 1;
+
+    let fi = 0;
+    let gap_before = state.hunk_trailing_gap(fi);
+    assert!(gap_before > 0);
+
+    let last_row = state.last_row_of_file(fi);
+    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
+    let cw = state.last_content_width;
+    let div_lines = if state.hunk_starts.iter().any(|hs| hs.flat == last_row) {
+        state.hunk_div_seg_count(fi, 0, cw)
+    } else {
+        0
+    };
+    let row_segs = seg_counts[last_row];
+    let note_lines = state.note_callouts(cw).get(&last_row).map_or(0, Vec::len);
+    let bottom_vis = starts[last_row] + div_lines + row_segs + note_lines;
+    let bottom_screen_y = bottom_vis.saturating_sub(state.scroll);
+    let click_row = state.last_viewport_start + bottom_screen_y;
+
+    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap_before);
+    let arrow_col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+
+    // 1. Cursor before bottom divider (e.g. line 2)
+    state.row_idx = 1;
+    state.vis_line = 0;
+    let cursor_screen_before = state.cursor_visual_line().saturating_sub(state.scroll);
+
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: arrow_col,
+        shift: false,
+    });
+
+    let last_row_after = state.last_row_of_file(fi);
+    let (starts_after, _, seg_counts_after, _) = state.visual_geometry(state.last_content_width);
+    let div_lines_after = if state.hunk_starts.iter().any(|hs| hs.flat == last_row_after) {
+        state.hunk_div_seg_count(fi, 0, cw)
+    } else {
+        0
+    };
+    let bottom_vis_after =
+        starts_after[last_row_after] + div_lines_after + seg_counts_after[last_row_after];
+    let bottom_screen_after = bottom_vis_after.saturating_sub(state.scroll);
+    assert_eq!(
+        bottom_screen_after, bottom_screen_y,
+        "bottom divider must retain its visual screen position"
+    );
+
+    let cursor_screen_after = state.cursor_visual_line().saturating_sub(state.scroll);
+    assert_eq!(
+        cursor_screen_after, cursor_screen_before,
+        "cursor must retain its visual screen position when expanding bottom divider"
+    );
+}
+
+#[test]
+fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_below() {
+    let fi = 0;
+
+    // 1. Cursor is ABOVE the screen (scrolled off top)
+    {
+        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+            .with_expand_lines(4);
+        state.render_frame(120, 16);
+        state.scroll = 6;
+
+        let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+        let div_flat = state
+            .hunk_starts
+            .iter()
+            .find(|hs| hs.file == fi && hs.hunk == 1)
+            .unwrap()
+            .flat;
+        let div_vis = starts[div_flat];
+        let div_screen_y = (div_vis as isize) - (state.scroll as isize);
+        let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
+
+        let h = &state.output.files[fi].hunks[1];
+        let hidden_gap = state.hunk_leading_gap(fi, 1);
+        let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+        let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+
+        // Park cursor on line 1 (starts[1] == 1). With scroll == 6, rel_y = 1 -
+        // 6 = -5.
+        state.row_idx = 1;
+        state.vis_line = 0;
+        let cursor_rel_before = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert_eq!(
+            cursor_rel_before, -5,
+            "cursor should be 5 lines above screen"
+        );
+
+        state.execute(TuiCommand::MouseClick {
+            row: click_row,
+            col,
+            shift: false,
+        });
+
+        let (starts_after, _, _, _) = state.visual_geometry(state.last_content_width);
+        let div_flat_after = state
+            .hunk_starts
+            .iter()
+            .find(|hs| hs.file == fi && hs.hunk == 1)
+            .unwrap()
+            .flat;
+        let div_screen_after = (starts_after[div_flat_after] as isize) - (state.scroll as isize);
+        assert_eq!(
+            div_screen_after, div_screen_y,
+            "hunk bar must retain its screen position"
+        );
+
+        let cursor_rel_after = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert_eq!(
+            cursor_rel_after, cursor_rel_before,
+            "cursor must retain its visual position when above screen"
+        );
+    }
+
+    // 2. Cursor is BELOW the screen (scrolled past bottom)
+    {
+        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+            .with_expand_lines(4);
+        state.render_frame(120, 16);
+        state.scroll = 2;
+
+        let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+        let div_flat = state
+            .hunk_starts
+            .iter()
+            .find(|hs| hs.file == fi && hs.hunk == 1)
+            .unwrap()
+            .flat;
+        let div_vis = starts[div_flat];
+        let div_screen_y = (div_vis as isize) - (state.scroll as isize);
+        let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
+
+        let h = &state.output.files[fi].hunks[1];
+        let hidden_gap = state.hunk_leading_gap(fi, 1);
+        let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+        let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+
+        // Park cursor on last row in hunk 1. starts[last] is > 16. With scroll
+        // == 2, rel_y > 16 (below screen).
+        let last_hunk_row = state
+            .flat
+            .iter()
+            .position(|fr| {
+                fr.file_idx == fi && state.row_of(fr).is_some_and(|r| r.new_line == Some(57))
+            })
+            .unwrap();
+        state.row_idx = last_hunk_row;
+        state.vis_line = 0;
+        let cursor_rel_before = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert!(
+            cursor_rel_before >= 16,
+            "cursor should be below screen (>= vh=16)"
+        );
+
+        state.execute(TuiCommand::MouseClick {
+            row: click_row,
+            col,
+            shift: false,
+        });
+
+        let (starts_after, _, _, _) = state.visual_geometry(state.last_content_width);
+        let div_flat_after = state
+            .hunk_starts
+            .iter()
+            .find(|hs| hs.file == fi && hs.hunk == 1)
+            .unwrap()
+            .flat;
+        let div_screen_after = (starts_after[div_flat_after] as isize) - (state.scroll as isize);
+        assert_eq!(
+            div_screen_after, div_screen_y,
+            "hunk bar must retain its screen position"
+        );
+
+        let cursor_rel_after = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert_eq!(
+            cursor_rel_after, cursor_rel_before,
+            "cursor must retain its visual position when below screen"
+        );
+    }
+}
+
+#[test]
+fn test_collapsing_hunk_retains_cursor_visual_position_on_screen_and_outside_screen() {
+    let fi = 0;
+
+    // 1. Cursor ON SCREEN when collapsing
+    {
+        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+            .with_expand_lines(8);
+        state.render_frame(120, 20);
+        state.expand_hunk_below(fi, 0);
+
+        state.scroll = 4;
+        state.row_idx = 10;
+        state.vis_line = 0;
+        let cursor_rel_before = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+
+        state.execute(TuiCommand::ResetCurrentHunkContext);
+
+        let cursor_rel_after = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert_eq!(
+            cursor_rel_after, cursor_rel_before,
+            "collapsing hunk must retain cursor visual position on screen"
+        );
+    }
+
+    // 2. Cursor ABOVE SCREEN when collapsing
+    {
+        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+            .with_expand_lines(8);
+        state.render_frame(120, 10);
+        state.expand_hunk_below(fi, 0);
+
+        state.scroll = 10;
+        state.row_idx = 2; // visual line ~2, scroll=10 -> rel_y ~ -8
+        state.vis_line = 0;
+        let cursor_rel_before = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert!(cursor_rel_before < 0, "cursor must be above screen");
+
+        state.execute(TuiCommand::ResetCurrentHunkContext);
+
+        let cursor_rel_after = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert_eq!(
+            cursor_rel_after, cursor_rel_before,
+            "collapsing hunk must retain cursor visual position above screen"
+        );
+    }
+
+    // 3. Cursor BELOW SCREEN when collapsing
+    {
+        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+            .with_expand_lines(8);
+        state.render_frame(120, 16);
+        state.expand_hunk_below(fi, 0);
+
+        state.scroll = 2;
+        let last_hunk_row = state
+            .flat
+            .iter()
+            .position(|fr| {
+                fr.file_idx == fi && state.row_of(fr).is_some_and(|r| r.new_line == Some(57))
+            })
+            .unwrap();
+        state.row_idx = last_hunk_row;
+        state.vis_line = 0;
+        let cursor_rel_before = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert!(cursor_rel_before >= 16, "cursor must be below screen");
+
+        state.execute(TuiCommand::ResetCurrentHunkContext);
+
+        let cursor_rel_after = (state.cursor_visual_line() as isize) - (state.scroll as isize);
+        assert_eq!(
+            cursor_rel_after, cursor_rel_before,
+            "collapsing hunk must retain cursor visual position below screen"
+        );
+    }
+}
+
+#[test]
+fn test_expand_below_cursor_above_divider() {
+    let fi = 0;
+
+    // Verify cursor_visual_line exactly matches compute_geometry layout.
+    let base_state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path());
+    for test_row in 0..base_state.flat.len() {
+        let mut s = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path());
+        s.render_frame(120, 25);
+        s.row_idx = test_row;
+        s.vis_line = 0;
+        let cv = s.cursor_visual_line();
+        let (starts, _, _, _) = s.visual_geometry(s.last_content_width);
+        let expected = starts[test_row] + s.vis_line;
+        assert_eq!(
+            cv, expected,
+            "cursor_visual_line mismatch at row {test_row}: cv={cv}, expected={expected}"
+        );
+    }
+
+    for test_row in 0..base_state.flat.len() {
+        // Test A: expand_hunk_below API retains visual cursor position
+        {
+            let mut state =
+                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+                    .with_expand_lines(4);
+            state.render_frame(120, 16);
+            state.scroll = 2;
+            state.row_idx = test_row;
+            state.vis_line = 0;
+            let cursor_vis_before = state.cursor_visual_line();
+            let cursor_rel_before = (cursor_vis_before as isize) - (state.scroll as isize);
+
+            state.expand_hunk_below(fi, 0);
+            state.render_frame(120, 16);
+
+            let cursor_vis_after = state.cursor_visual_line();
+            let cursor_rel_after = (cursor_vis_after as isize) - (state.scroll as isize);
+            assert_eq!(
+                cursor_rel_after, cursor_rel_before,
+                "expand_hunk_below: cursor visual position must be retained for row {test_row}"
+            );
+        }
+
+        // Test B: click ▼ (expand context below divider) retains visual cursor
+        // position
+        {
+            let mut state =
+                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+                    .with_expand_lines(4);
+            state.render_frame(120, 16);
+            state.scroll = 2;
+            state.row_idx = test_row;
+            state.vis_line = 0;
+            let cursor_vis_before = state.cursor_visual_line();
+            let cursor_rel_before = (cursor_vis_before as isize) - (state.scroll as isize);
+
+            let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+            let div_flat = state
+                .hunk_starts
+                .iter()
+                .find(|hs| hs.file == fi && hs.hunk == 1)
+                .unwrap()
+                .flat;
+            let div_vis = starts[div_flat];
+            let div_screen_y = (div_vis as isize) - (state.scroll as isize);
+            let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
+
+            let h = &state.output.files[fi].hunks[1];
+            let hidden_gap = state.hunk_leading_gap(fi, 1);
+            let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+            let col = txt.find("▼").map(|i| txt[..i].chars().count()).unwrap();
+
+            state.execute(TuiCommand::MouseClick {
+                row: click_row,
+                col,
+                shift: false,
+            });
+            state.render_frame(120, 16);
+
+            let cursor_vis_after = state.cursor_visual_line();
+            let cursor_rel_after = (cursor_vis_after as isize) - (state.scroll as isize);
+            assert_eq!(
+                cursor_rel_after, cursor_rel_before,
+                "click ▼: cursor visual position must be retained for row {test_row}"
+            );
+        }
+
+        // Test C: click ▲ on divider 1 retains visual cursor position
+        {
+            let mut state =
+                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+                    .with_expand_lines(4);
+            state.render_frame(120, 16);
+            state.scroll = 2;
+            state.row_idx = test_row;
+            state.vis_line = 0;
+            let cursor_vis_before = state.cursor_visual_line();
+            let cursor_rel_before = (cursor_vis_before as isize) - (state.scroll as isize);
+
+            let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+            let div_flat = state
+                .hunk_starts
+                .iter()
+                .find(|hs| hs.file == fi && hs.hunk == 1)
+                .unwrap()
+                .flat;
+            let div_vis = starts[div_flat];
+            let div_screen_y = (div_vis as isize) - (state.scroll as isize);
+            let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
+
+            let h = &state.output.files[fi].hunks[1];
+            let hidden_gap = state.hunk_leading_gap(fi, 1);
+            let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+            let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+
+            state.execute(TuiCommand::MouseClick {
+                row: click_row,
+                col,
+                shift: false,
+            });
+            state.render_frame(120, 16);
+
+            let cursor_vis_after = state.cursor_visual_line();
+            let cursor_rel_after = (cursor_vis_after as isize) - (state.scroll as isize);
+            assert_eq!(
+                cursor_rel_after, cursor_rel_before,
+                "click ▲: cursor visual position must be retained for row {test_row}"
+            );
+        }
+
+        // Test D: click bottom divider retains visual cursor position
+        {
+            let mut state =
+                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
+                    .with_expand_lines(4);
+            state.render_frame(120, 16);
+            state.scroll = 10;
+            state.row_idx = test_row;
+            state.vis_line = 0;
+            let cursor_vis_before = state.cursor_visual_line();
+            let cursor_rel_before = (cursor_vis_before as isize) - (state.scroll as isize);
+
+            let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
+            let callouts = state.note_callouts(state.last_content_width);
+            let div_vis = state
+                .bottom_divider_vis_line_from_layout(
+                    fi,
+                    state.last_content_width,
+                    &starts,
+                    &seg_counts,
+                    &callouts,
+                )
+                .unwrap();
+            let div_screen_y = (div_vis as isize) - (state.scroll as isize);
+            let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;
+
+            let gap = state.hunk_trailing_gap(fi);
+            let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
+            let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
+
+            state.execute(TuiCommand::MouseClick {
+                row: click_row,
+                col,
+                shift: false,
+            });
+            state.render_frame(120, 16);
+
+            let cursor_vis_after = state.cursor_visual_line();
+            let cursor_rel_after = (cursor_vis_after as isize) - (state.scroll as isize);
+            assert_eq!(
+                cursor_rel_after, cursor_rel_before,
+                "click bottom ▲: cursor visual position must be retained for row {test_row}"
+            );
+        }
+    }
 }

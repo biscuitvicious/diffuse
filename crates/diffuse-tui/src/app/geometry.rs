@@ -48,6 +48,22 @@ impl AppState {
         );
     }
 
+    /// Returns the effective content width considering terminal width,
+    /// scrollbar reservations, and last rendered content width.
+    pub(crate) fn effective_content_width(&self) -> usize {
+        if self.last_content_width > 0 {
+            self.last_content_width
+        } else if self.terminal_width > 0 {
+            if self.raw_diff {
+                self.terminal_width
+            } else {
+                self.terminal_width.saturating_sub(1)
+            }
+        } else {
+            80
+        }
+    }
+
     pub fn row_seg_count(&self, idx: usize, content_width: usize) -> usize {
         let Some(item) = self.flat.get(idx) else {
             return 1;
@@ -137,6 +153,65 @@ impl AppState {
         }
         let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
         crate::view::diff_grid::divider_seg_count(&txt, content_width)
+    }
+
+    /// Computes the visual line offset of the bottom gap divider of `file[fi]`
+    /// from pre-calculated layout arrays.
+    pub(crate) fn bottom_divider_vis_line_from_layout(
+        &self,
+        fi: usize,
+        content_width: usize,
+        starts: &[usize],
+        seg_counts: &[usize],
+        callouts: &std::collections::HashMap<usize, Vec<String>>,
+    ) -> Option<usize> {
+        if self.raw_diff || self.hunk_trailing_gap(fi) == 0 {
+            return None;
+        }
+        let last_row = self.last_row_of_file(fi);
+        let s = starts.get(last_row).copied()?;
+        let div_lines = self
+            .hunk_starts
+            .iter()
+            .find(|hs| hs.flat == last_row)
+            .map(|hs| self.hunk_div_seg_count(hs.file, hs.hunk, content_width))
+            .unwrap_or(0);
+        let row_segs = seg_counts.get(last_row).copied().unwrap_or(1);
+        let note_lines = callouts.get(&last_row).map_or(0, std::vec::Vec::len);
+        Some(s + div_lines + row_segs + note_lines)
+    }
+
+    /// Visual line offset where the bottom (trailing gap) divider of `file[fi]`
+    /// starts, or `None` if the file has no trailing gap or raw diff mode is
+    /// active.
+    pub fn bottom_divider_vis_line(&self, fi: usize, content_width: usize) -> Option<usize> {
+        let callouts = self.note_callouts(content_width);
+        let (starts, _, seg_counts, _, _) = self.compute_geometry(content_width, &callouts);
+        self.bottom_divider_vis_line_from_layout(fi, content_width, &starts, &seg_counts, &callouts)
+    }
+
+    /// Visual line offset where hunk divider `hi` of `file[fi]` starts.
+    /// If `hi >= hunks.len()`, targets the bottom gap divider of `file[fi]`.
+    pub fn hunk_divider_vis_line(
+        &self,
+        fi: usize,
+        hi: usize,
+        content_width: usize,
+    ) -> Option<usize> {
+        let is_bottom = self
+            .output
+            .files
+            .get(fi)
+            .is_some_and(|f| hi >= f.hunks.len());
+        if is_bottom {
+            return self.bottom_divider_vis_line(fi, content_width);
+        }
+        let hs = self
+            .hunk_starts
+            .iter()
+            .find(|hs| hs.file == fi && hs.hunk == hi)?;
+        let (starts, _, _, _) = self.visual_geometry(content_width);
+        starts.get(hs.flat).copied()
     }
 
     /// Scrollbar thumb height for a track of height `track_h` over
@@ -296,7 +371,7 @@ impl AppState {
     }
 
     /// Shared layout computation over pre-resolved note callouts.
-    fn compute_geometry(
+    pub(crate) fn compute_geometry(
         &self,
         content_width: usize,
         callouts: &HashMap<usize, Vec<String>>,
@@ -392,46 +467,12 @@ impl AppState {
     /// Compute the exact visual line position of the cursor in the current
     /// layout.
     pub fn cursor_visual_line(&self) -> usize {
-        let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
-            HashMap::new()
-        } else {
-            self.hunk_starts
-                .iter()
-                .map(|h| (h.flat, (h.file, h.hunk)))
-                .collect()
-        };
-        let width = if self.terminal_width > 0 {
-            self.terminal_width
-        } else if self.last_content_width > 0 {
-            self.last_content_width
-        } else {
-            80
-        };
-        let content_width = if self.raw_diff {
-            width
-        } else {
-            width.saturating_sub(1)
-        };
-        let callouts = self.note_callouts(content_width);
-
-        let mut vis_i = 0;
-        for (i, _item) in self.flat.iter().enumerate() {
-            let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
-                self.hunk_div_seg_count(div_fi, div_hi, content_width)
-            } else {
-                0
-            };
-            let seg_count = self.row_seg_count(i, content_width);
-            let note_lines = callouts.get(&i).map_or(0, Vec::len);
-            let nav_count = (div_lines + seg_count + note_lines).max(1);
-            if i == self.row_idx {
-                return vis_i + self.vis_line.min(nav_count.saturating_sub(1));
-            }
-            vis_i += div_lines;
-            vis_i += seg_count;
-            vis_i += note_lines;
-        }
-        vis_i
+        let cw = self.effective_content_width();
+        let callouts = self.note_callouts(cw);
+        let (starts, _, _, nav_counts, _) = self.compute_geometry(cw, &callouts);
+        let min_vis = starts.get(self.row_idx).copied().unwrap_or(0);
+        let cur_row_nav = nav_counts.get(self.row_idx).copied().unwrap_or(1);
+        min_vis + self.vis_line.min(cur_row_nav.saturating_sub(1))
     }
 
     /// Return the number of hidden lines preceding hunk `hi` in file `fi`.
@@ -483,20 +524,42 @@ impl AppState {
         let Some(last_hunk) = f.hunks.last() else {
             return 0;
         };
-        let last_end = last_hunk
+        if f.new_line_count == 0 || f.old_line_count == 0 {
+            return 0;
+        }
+        let last_new = last_hunk
             .rows
             .iter()
             .rev()
-            .find_map(|r| r.new_line.or(r.old_line))
+            .find_map(|r| r.new_line)
             .unwrap_or_else(|| {
                 if last_hunk.new_count > 0 {
-                    last_hunk.new_start + last_hunk.new_count.saturating_sub(1)
+                    last_hunk
+                        .new_start
+                        .saturating_add(last_hunk.new_count)
+                        .saturating_sub(1)
                 } else {
-                    last_hunk.old_start + last_hunk.old_count.saturating_sub(1)
+                    last_hunk.new_start
                 }
             });
-        let total_lines = f.new_line_count.max(f.old_line_count) as u32;
-        total_lines.saturating_sub(last_end) as usize
+        let last_old = last_hunk
+            .rows
+            .iter()
+            .rev()
+            .find_map(|r| r.old_line)
+            .unwrap_or_else(|| {
+                if last_hunk.old_count > 0 {
+                    last_hunk
+                        .old_start
+                        .saturating_add(last_hunk.old_count)
+                        .saturating_sub(1)
+                } else {
+                    last_hunk.old_start
+                }
+            });
+        let new_gap = (f.new_line_count as u32).saturating_sub(last_new) as usize;
+        let old_gap = (f.old_line_count as u32).saturating_sub(last_old) as usize;
+        new_gap.min(old_gap)
     }
 }
 

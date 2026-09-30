@@ -132,6 +132,9 @@ impl AppState {
     }
 
     pub(crate) fn rebuild_flat_preserving_cursor(&mut self, target_fi: usize) {
+        let prev_item = self.flat.get(self.row_idx).cloned();
+        let prev_vis_line = self.vis_line;
+
         let (flat, hunk_starts) = if self.raw_diff {
             Self::build_raw_flat(&self.output, &self.collapsed_files)
         } else {
@@ -146,7 +149,21 @@ impl AppState {
         } else if self.row_idx >= self.flat.len() {
             self.row_idx = self.flat.len().saturating_sub(1);
         }
-        self.vis_line = 0;
+
+        if let Some(item) = prev_item
+            && item.is_file_header
+            && self
+                .flat
+                .get(self.row_idx)
+                .is_some_and(|r| r.is_file_header && r.file_idx == item.file_idx)
+        {
+            let cw = self.effective_content_width();
+            let max_vis = self.row_seg_count(self.row_idx, cw).saturating_sub(1);
+            self.vis_line = prev_vis_line.min(max_vis);
+        } else {
+            self.vis_line = 0;
+        }
+
         self.adjust_scroll();
         self.bump_content();
     }
