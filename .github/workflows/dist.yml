@@ -8,10 +8,25 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
+  prune:
+    name: Prune Stale Artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Prune older artifacts exceeding 100 MB
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAX_ARTIFACTS_MB: "100"
+        run: python3 .github/scripts/prune-artifacts.py
+
   build:
     name: Build (${{ matrix.target }})
+    needs: prune
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -147,6 +162,7 @@ jobs:
           name: diffuse-${{ matrix.target }}
           path: stage-${{ matrix.target }}/*
           if-no-files-found: error
+          retention-days: 10
 
   publish:
     name: Publish Release (main branch only)
@@ -225,3 +241,14 @@ jobs:
             --title "v${VERSION}" \
             --generate-notes \
             dist/*
+
+      - name: Clean up workflow artifacts after release
+        if: steps.check_release.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          echo "Purging temporary workflow artifacts for run ${{ github.run_id }}..."
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq '.artifacts[].id' | \
+            xargs -r -P 8 -I "{}" gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/{}" || true
+
