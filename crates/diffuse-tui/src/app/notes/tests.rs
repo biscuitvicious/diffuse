@@ -100,7 +100,12 @@ index 3333333..4444444 100644
 fn test_note_commit_persists_and_deletes() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path.clone(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("check this **carefully**".into());
@@ -150,7 +155,12 @@ fn test_note_commit_persists_and_deletes() {
 fn test_note_commit_records_line_hash() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("note with hash".into());
@@ -170,7 +180,12 @@ fn test_note_commit_records_line_hash() {
 fn test_note_callout_anchoring_and_banner_placement() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
 
@@ -276,7 +291,12 @@ fn test_note_callout_anchoring_and_banner_placement() {
 fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
 
@@ -333,7 +353,12 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
 fn test_note_callouts_render_across_all_files_and_banners() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Initial cursor is on file 0 (first.rs)
     assert_eq!(state.current_file_idx(), 0);
@@ -380,7 +405,12 @@ fn test_note_callouts_render_across_all_files_and_banners() {
 fn test_note_callouts_on_collapsed_file_render_on_banner() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let matching_hash = hash_line_content("    let a = 20;");
     add_note(
@@ -428,7 +458,12 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
 fn test_note_callouts_full_markdown_multiline_and_wrap() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let note_text = "Test *Markdown* **formatting:**\n\n`this is a code span` with a comment.\n\n* List item one\n* List item two with a very long line that should certainly wrap when the terminal width is constrained\n\n```bash\nif [ -f hello.txt ]; then\n  cat hello.txt\nfi\n```";
 
@@ -533,7 +568,12 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
 fn test_note_callout_gutter_band_and_terminal_line() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let banner_idx = state.first_row_of_file(0);
 
     add_note(
@@ -598,7 +638,12 @@ fn test_note_callout_gutter_band_and_terminal_line() {
 fn test_note_callout_empty_text_renders_one_line() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let banner_idx = state.first_row_of_file(0);
 
     add_note(
@@ -628,7 +673,12 @@ fn test_note_callout_empty_text_renders_one_line() {
 fn test_note_callout_long_line_wrapping() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let banner_idx = state.first_row_of_file(0);
 
     // A very long single line that will exceed the gutter + text_cols at
@@ -683,7 +733,12 @@ fn test_note_callout_long_line_wrapping() {
 fn test_table_note_width_at_narrow_content_width() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path);
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let banner_idx = state.first_row_of_file(0);
     let table = "| State & Style | Alignment & Code | Metrics | Long Tokens & Wrapping |\n| :--- | :---: | ---: | :--- |\n| ✅ **Ready** | `cargo test` | 100.0% | Normal text with multiple wrapped words |\n| 🔄 *Active* | [diffuse](https://diffuse.rs) | +42 ms | Supercalifragilisticexpialidocious |\n| ⬜ Pending | ~~deprecated~~ | $1,234.56 | `diffuse::render::terminal::wrap_cell` |\n| 🦀 **Mixed** 🚀 | *italic* & **bold** | -99 | **Bold across multiple lines when squashed** |\n| ⚠️ Warning | | 0.00 | Unicode: 👩‍💻 and 🇩🇪 |";
     add_note(
@@ -721,7 +776,12 @@ fn test_table_note_width_at_narrow_content_width() {
 fn test_targeted_note_deletion_multiple_notes_on_same_row() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path.clone(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let file = state.current_file().unwrap().path.clone();
 
     // Commit two notes on the first code row
@@ -765,7 +825,12 @@ fn test_targeted_note_deletion_multiple_notes_on_same_row() {
 fn test_targeted_note_editing_preserves_id_and_updates_text() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path.clone(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let file = state.current_file().unwrap().path.clone();
 
     state.note_draft = Some("Original comment text".into());
@@ -800,7 +865,12 @@ fn test_targeted_note_editing_preserves_id_and_updates_text() {
 fn test_delete_note_disabled_on_diff_row_without_selection() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path.clone(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let file = state.current_file().unwrap().path.clone();
 
     state.note_draft = Some("Keep me safe".into());
@@ -822,7 +892,12 @@ fn test_delete_note_disabled_on_diff_row_without_selection() {
 #[test]
 fn test_style_focused_note_line() {
     use crate::app::notes::style_focused_note_line;
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.note_draft = Some("test note".into());
     state.commit_note_draft();
     let callouts = state.note_callouts(80);
@@ -861,7 +936,12 @@ fn test_style_focused_note_line() {
 
 #[test]
 fn test_multiline_note_stripe_entirely_cyan_when_cursor_on_any_line() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.note_draft = Some("- First line\n- Second line\n- Third line".into());
     state.commit_note_draft();
 

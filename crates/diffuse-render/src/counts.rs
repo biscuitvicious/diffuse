@@ -5,37 +5,43 @@
 
 use smallvec::SmallVec;
 
-use crate::core::counts::{CountKind, FileCounts};
+use crate::{
+    core::counts::{CountKind, FileCounts},
+    theme::ThemePalette,
+};
+use yansi::Color;
 
-/// Highlight palette for mod-count segments by bucket.
-pub fn count_color(kind: CountKind) -> u8 {
+/// Highlight color for mod-count segments resolved from a [`ThemePalette`].
+#[must_use]
+pub fn count_color(kind: CountKind, palette: &ThemePalette) -> Color {
     match kind {
-        CountKind::Dels => 203,
-        CountKind::Adds => 120,
-        CountKind::Mods => 214,
-        CountKind::Movs => 147,
-        CountKind::Notes => 220,
+        CountKind::Dels => palette.count_dels,
+        CountKind::Adds => palette.count_adds,
+        CountKind::Mods => palette.count_mods,
+        CountKind::Movs => palette.count_movs,
+        CountKind::Notes => palette.count_notes,
     }
 }
 
 /// One display cell of the shared mod-count rendering: marker glyph, value,
 /// and bucket color.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CountCell {
     pub marker: &'static str,
     pub value: usize,
-    pub color: u8,
+    pub color: Color,
 }
 
 /// Shared count cells: same segments, order, and colors everywhere counts
 /// render (status bars, file banners, pretty printer).
-pub fn count_cells(counts: &FileCounts) -> SmallVec<[CountCell; 5]> {
+pub fn count_cells(counts: &FileCounts, palette: &ThemePalette) -> SmallVec<[CountCell; 5]> {
     counts
         .segments()
         .iter()
         .map(|seg| CountCell {
             marker: seg.marker,
             value: seg.value,
-            color: count_color(seg.kind),
+            color: count_color(seg.kind, palette),
         })
         .collect()
 }
@@ -46,33 +52,51 @@ mod tests {
 
     #[test]
     fn test_count_cells_order_and_colors() {
-        let cells = count_cells(&FileCounts {
-            dels: 7,
-            adds: 3,
-            mods: 1,
-            movs: 2,
-            notes: 4,
-        });
+        let palette = ThemePalette::default_palette();
+        let cells = count_cells(
+            &FileCounts {
+                dels: 7,
+                adds: 3,
+                mods: 1,
+                movs: 2,
+                notes: 4,
+            },
+            &palette,
+        );
         let texts: Vec<String> = cells
             .iter()
             .map(|c| format!("{}{}", c.marker, c.value))
             .collect();
         assert_eq!(texts, vec!["−7", "+3", "~1", "≈2", "💬4"]);
-        let colors: Vec<u8> = cells.iter().map(|c| c.color).collect();
-        assert_eq!(colors, vec![203, 120, 214, 147, 220]);
+        let colors: Vec<Color> = cells.iter().map(|c| c.color).collect();
+        assert_eq!(
+            colors,
+            vec![
+                palette.count_dels,
+                palette.count_adds,
+                palette.count_mods,
+                palette.count_movs,
+                palette.count_notes,
+            ]
+        );
     }
 
     #[test]
     fn test_count_cells_zero_counts_omitted() {
-        let cells = count_cells(&FileCounts {
-            dels: 0,
-            adds: 5,
-            mods: 0,
-            movs: 0,
-            notes: 0,
-        });
+        let palette = ThemePalette::default_palette();
+        let cells = count_cells(
+            &FileCounts {
+                dels: 0,
+                adds: 5,
+                mods: 0,
+                movs: 0,
+                notes: 0,
+            },
+            &palette,
+        );
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].marker, "+");
         assert_eq!(cells[0].value, 5);
+        assert_eq!(cells[0].color, palette.count_adds);
     }
 }

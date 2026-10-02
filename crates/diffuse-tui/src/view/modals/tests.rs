@@ -9,7 +9,7 @@ fn test_ratatui_help_modal_widget() {
 
     terminal
         .draw(|f| {
-            render_help_modal_widget(f, f.area());
+            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
 
@@ -33,7 +33,7 @@ fn test_ratatui_help_modal_visual_layout() {
 
     terminal
         .draw(|f| {
-            render_help_modal_widget(f, f.area());
+            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
 
@@ -94,7 +94,7 @@ fn test_ratatui_finder_modal_widget() {
 
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
 
@@ -207,7 +207,7 @@ fn test_ratatui_finder_modal_visual_layout() {
 
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
 
@@ -252,7 +252,7 @@ fn test_finder_modal_navigation_updates_preview_visual_layout() {
 
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
 
@@ -282,7 +282,7 @@ fn test_ansi_finder_modal_visual_layout() {
     let output = sample_finder_output();
     let finder = FileFinderState::new(&output.files, 0, 0);
 
-    let lines = render_finder_modal(&output, &finder, 80, 24);
+    let lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::DEFAULT);
     assert_eq!(lines.len(), 24);
 
     let joined = lines.join("\n");
@@ -299,7 +299,7 @@ fn test_help_modal_narrow_screen_no_wrapping() {
     use crate::view::header::visible_width;
 
     // Narrow phone width (44 columns, 24 rows)
-    let lines = render_help_modal(44, 24);
+    let lines = render_help_modal(44, 24, &DiffuseTheme::DEFAULT);
     assert!(lines.len() >= 24);
     for (i, line) in lines.iter().enumerate() {
         let vw = visible_width(line);
@@ -314,7 +314,7 @@ fn test_help_modal_narrow_screen_no_wrapping() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|f| {
-            render_help_modal_widget(f, f.area());
+            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
 
@@ -385,7 +385,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
     let finder = FileFinderState::new(&output.files, 0, 0);
 
     // Narrow phone width (44 columns, 24 rows)
-    let lines = render_finder_modal(&output, &finder, 44, 24);
+    let lines = render_finder_modal(&output, &finder, 44, 24, &DiffuseTheme::DEFAULT);
     for (i, line) in lines.iter().enumerate() {
         let vw = visible_width(line);
         assert!(
@@ -399,7 +399,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
 
@@ -476,7 +476,7 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
             let mut finder = FileFinderState::new(&output.files, 0, 0);
             finder.selected_idx = sel;
 
-            let lines = render_finder_modal(&output, &finder, w, 24);
+            let lines = render_finder_modal(&output, &finder, w, 24, &DiffuseTheme::DEFAULT);
             assert_eq!(
                 lines.len(),
                 24,
@@ -577,7 +577,7 @@ fn test_finder_modal_proportional_height_scaling() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
     let buffer = terminal.backend().buffer();
@@ -597,7 +597,7 @@ fn test_finder_modal_proportional_height_scaling() {
     let mut term_constrained = Terminal::new(backend_constrained).unwrap();
     term_constrained
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
         })
         .unwrap();
     let buf_constrained = term_constrained.backend().buffer();
@@ -625,6 +625,7 @@ fn test_ratatui_note_modal_visual_layout() {
                 "src/lib.rs:12-18",
                 "Fix potential off-by-one error\nEnsure bounds are checked",
                 None,
+                &DiffuseTheme::DEFAULT,
                 f.area(),
             );
         })
@@ -664,7 +665,14 @@ fn test_ratatui_note_modal_empty_draft_visual() {
 
     terminal
         .draw(|f| {
-            render_note_modal_widget(f, "Cargo.toml:5", "", None, f.area());
+            render_note_modal_widget(
+                f,
+                "Cargo.toml:5",
+                "",
+                None,
+                &DiffuseTheme::DEFAULT,
+                f.area(),
+            );
         })
         .unwrap();
 
@@ -691,7 +699,14 @@ fn test_ratatui_note_modal_constrained_terminal() {
 
     terminal
         .draw(|f| {
-            render_note_modal_widget(f, "main.rs:1", "short note", None, f.area());
+            render_note_modal_widget(
+                f,
+                "main.rs:1",
+                "short note",
+                None,
+                &DiffuseTheme::DEFAULT,
+                f.area(),
+            );
         })
         .unwrap();
 
@@ -716,7 +731,14 @@ fn test_ratatui_note_modal_long_line_word_wrapping() {
     let long_line = "This is a very long note text that exceeds the width of the modal and should wrap across multiple visual rows cleanly.";
     terminal
         .draw(|f| {
-            render_note_modal_widget(f, "long.rs:10", long_line, None, f.area());
+            render_note_modal_widget(
+                f,
+                "long.rs:10",
+                long_line,
+                None,
+                &DiffuseTheme::DEFAULT,
+                f.area(),
+            );
         })
         .unwrap();
 
@@ -742,7 +764,14 @@ fn test_ratatui_note_modal_equal_margins_on_small_screens() {
 
     terminal
         .draw(|f| {
-            render_note_modal_widget(f, "Cargo.lock:81", "hello", None, f.area());
+            render_note_modal_widget(
+                f,
+                "Cargo.lock:81",
+                "hello",
+                None,
+                &DiffuseTheme::DEFAULT,
+                f.area(),
+            );
         })
         .unwrap();
 

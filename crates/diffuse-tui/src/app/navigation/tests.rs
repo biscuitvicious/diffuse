@@ -69,7 +69,12 @@ index 1111111..2222222 100644
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Step down through every single row and verify render_frame never panics
     for _ in 0..state.flat.len() + 5 {
@@ -143,7 +148,12 @@ index 1111111..2222222 100644
     .collect();
 
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(80, 20);
     assert_eq!(state.scroll, 0);
 
@@ -204,6 +214,7 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 20;
 
@@ -244,6 +255,7 @@ fn test_goto_line_preserves_viewport_margin_above() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 20;
 
@@ -273,6 +285,7 @@ fn test_move_bottom_preserves_viewport_margin_below() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 20;
 
@@ -299,6 +312,7 @@ fn test_viewport_margin_rounding_half_up() {
         },
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
 
     state.viewport_height = 0;
@@ -357,6 +371,7 @@ fn test_next_and_prev_file_land_banner_at_row_zero() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 20;
 
@@ -462,6 +477,7 @@ fn test_prev_file_in_first_file_reveals_banner() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -527,6 +543,7 @@ fn test_next_file_wraps_around_at_end() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -587,6 +604,7 @@ fn test_hunk_jump_wraps_around_at_edges() {
         ),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 6;
     state.last_content_width = 80;
@@ -647,6 +665,7 @@ fn test_hunk_jump_places_head_line_at_top() {
         ),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 6;
     state.last_content_width = 80;
@@ -719,6 +738,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.last_content_width = 80;
     let last = state.flat.len() - 1;
@@ -775,6 +795,7 @@ fn test_hunk_jump_onto_first_hunk_keeps_banner() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -856,6 +877,7 @@ fn test_hunk_jump_from_banner_counts_as_inside_first_hunk() {
         ),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.viewport_height = 6;
     state.last_content_width = 80;
@@ -951,7 +973,12 @@ index 1111111..2222222 100644
         },
     );
 
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.viewport_height = 20;
     state.last_content_width = 80;
     // Untracked files collapse by default: banner only, no hunk starts.
@@ -974,7 +1001,12 @@ index 1111111..2222222 100644
 #[test]
 fn test_sub_row_navigation_through_notes_and_wrapped_lines() {
     let out = sample_output();
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.last_content_width = 80;
     state.viewport_height = 20;
 
@@ -1035,7 +1067,12 @@ fn test_sub_row_navigation_through_notes_and_wrapped_lines() {
 #[test]
 fn test_viewport_scrolling_through_tall_content_without_min_vis_snap() {
     let out = sample_output();
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.last_content_width = 80;
     state.viewport_height = 10;
 
@@ -1068,7 +1105,12 @@ fn test_viewport_scrolling_through_tall_content_without_min_vis_snap() {
 fn test_viewport_scrolling_through_tall_wrapped_diff_line_without_min_vis_snap() {
     let mut out = sample_output();
     out.files[0].rows[0].text = "word ".repeat(300);
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.last_content_width = 80;
     state.viewport_height = 10;
 
@@ -1097,7 +1139,12 @@ fn test_viewport_scrolling_through_tall_wrapped_diff_line_without_min_vis_snap()
 #[test]
 fn test_hunk_divider_selectable_navigation() {
     let out = sample_output();
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.last_content_width = 80;
     assert!(state.flat[0].is_file_header);
     state.row_idx = 0;

@@ -323,7 +323,7 @@ fn test_editor_handle_key_shortcuts() {
 
 #[test]
 fn test_markdown_highlighter_styles_markdown_spans() {
-    let theme = crate::render::DiffuseTheme::from_env();
+    let theme = crate::render::DiffuseTheme::DEFAULT;
     let highlighter = markdown_highlighter(theme);
     let lines = vec!["# Header".to_string()];
     let all_spans = highlighter(&lines);
@@ -342,7 +342,7 @@ fn test_markdown_highlighter_styles_markdown_spans() {
 
 #[test]
 fn test_markdown_highlighter_table_headers_and_borders() {
-    let theme = crate::render::DiffuseTheme::from_env();
+    let theme = crate::render::DiffuseTheme::DEFAULT;
     let highlighter = markdown_highlighter(theme);
     let lines = vec![
         "| Col A | Col B |".to_string(),
@@ -389,7 +389,7 @@ fn test_markdown_highlighter_table_headers_and_borders() {
 
 #[test]
 fn test_markdown_highlighter_table_header_style_stacking_and_spaces() {
-    let theme = crate::render::DiffuseTheme::from_env();
+    let theme = crate::render::DiffuseTheme::DEFAULT;
     let highlighter = markdown_highlighter(theme);
     let lines = vec![
         "| **Name** | `Type` | Description |".to_string(),

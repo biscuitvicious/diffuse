@@ -203,7 +203,7 @@ fn render_banner_piece(
 /// Render a specific visual segment of a file header banner row with theme
 /// support.
 #[allow(clippy::too_many_arguments)]
-pub fn render_file_header_segment_themed(
+pub fn render_file_header_segment(
     file: &OutputFile,
     badge: Badge,
     is_collapsed: bool,
@@ -257,17 +257,18 @@ pub fn render_file_header_segment_themed(
     col += path_w;
     if !parts.counts.is_empty() {
         col += 1;
-        for cell in count_cells(&file.counts) {
+        for cell in count_cells(&file.counts, &theme.palette) {
             let text = format!("{}{}", cell.marker, cell.value);
             let w = display_width(&text);
             runs.push(BannerStyleRun {
                 start: col,
                 end: col + w,
-                open: format!("\x1b[1m\x1b[38;5;{}m", cell.color),
+                open: format!("\x1b[1m{}", cell.color.fg_code()),
                 close: format!("\x1b[39m{fg_code}"),
             });
             col += w + 1;
         }
+
         col -= 1;
     }
     if !parts.status.is_empty() {
@@ -302,33 +303,8 @@ pub fn render_file_header_segment_themed(
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
-/// Render a specific visual segment of a file header banner row.
-#[allow(clippy::too_many_arguments)]
-pub fn render_file_header_segment(
-    file: &OutputFile,
-    badge: Badge,
-    is_collapsed: bool,
-    is_selected: bool,
-    is_current: bool,
-    in_band: bool,
-    seg_start: usize,
-    content_width: usize,
-) -> String {
-    render_file_header_segment_themed(
-        file,
-        badge,
-        is_collapsed,
-        is_selected,
-        is_current,
-        in_band,
-        seg_start,
-        content_width,
-        &DiffuseTheme::from_env(),
-        None,
-    )
-}
-
 /// Render a file header banner row with collapse status indicator and counts.
+#[allow(clippy::too_many_arguments)]
 pub fn render_file_header(
     file: &OutputFile,
     badge: Badge,
@@ -337,6 +313,7 @@ pub fn render_file_header(
     is_current: bool,
     in_band: bool,
     content_width: usize,
+    theme: &DiffuseTheme,
 ) -> String {
     render_file_header_segment(
         file,
@@ -347,6 +324,8 @@ pub fn render_file_header(
         in_band,
         0,
         content_width,
+        theme,
+        None,
     )
 }
 
@@ -409,7 +388,7 @@ pub fn divider_seg_count(txt: &str, content_width: usize) -> usize {
 /// Render a specific visual segment of a hunk header divider with theme
 /// support.
 #[allow(clippy::too_many_arguments)]
-pub fn render_hunk_divider_segment_themed(
+pub fn render_hunk_divider_segment(
     badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
@@ -444,27 +423,6 @@ pub fn render_hunk_divider_segment_themed(
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
-/// Render a specific visual segment of a hunk header divider.
-pub fn render_hunk_divider_segment(
-    badge: Badge,
-    hunk: &OutputHunk,
-    hidden_gap: usize,
-    is_current: bool,
-    seg_start: usize,
-    content_width: usize,
-) -> String {
-    render_hunk_divider_segment_themed(
-        badge,
-        hunk,
-        hidden_gap,
-        is_current,
-        false,
-        seg_start,
-        content_width,
-        &DiffuseTheme::from_env(),
-    )
-}
-
 /// Render a hunk header divider with format `x-y → a-b`, hidden lines gap,
 /// and context expansion buttons (`⬍ · ▲ · ▼` for interior hunks, or `▼` for H1
 /// at top of file).
@@ -474,8 +432,18 @@ pub fn render_hunk_divider(
     hidden_gap: usize,
     is_current: bool,
     content_width: usize,
+    theme: &DiffuseTheme,
 ) -> String {
-    render_hunk_divider_segment(badge, hunk, hidden_gap, is_current, 0, content_width)
+    render_hunk_divider_segment(
+        badge,
+        hunk,
+        hidden_gap,
+        is_current,
+        false,
+        0,
+        content_width,
+        theme,
+    )
 }
 
 /// Screen-space hit area for a divider arrow glyph: exactly the three
@@ -500,7 +468,7 @@ pub fn bottom_gap_divider_text(hidden_gap: usize) -> String {
 }
 
 /// Render a specific visual segment of a bottom gap divider with theme support.
-pub fn render_bottom_gap_divider_segment_themed(
+pub fn render_bottom_gap_divider_segment(
     hidden_gap: usize,
     is_current: bool,
     is_selected: bool,
@@ -533,30 +501,14 @@ pub fn render_bottom_gap_divider_segment_themed(
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
-/// Render a specific visual segment of a bottom gap divider.
-pub fn render_bottom_gap_divider_segment(
-    hidden_gap: usize,
-    is_current: bool,
-    seg_start: usize,
-    content_width: usize,
-) -> String {
-    render_bottom_gap_divider_segment_themed(
-        hidden_gap,
-        is_current,
-        false,
-        seg_start,
-        content_width,
-        &DiffuseTheme::from_env(),
-    )
-}
-
 /// Render a clean bottom divider for trailing hidden lines after the last hunk.
 pub fn render_bottom_gap_divider(
     hidden_gap: usize,
     is_current: bool,
     content_width: usize,
+    theme: &DiffuseTheme,
 ) -> String {
-    render_bottom_gap_divider_segment(hidden_gap, is_current, 0, content_width)
+    render_bottom_gap_divider_segment(hidden_gap, is_current, false, 0, content_width, theme)
 }
 
 use ratatui::{
@@ -567,7 +519,7 @@ use ratatui::{
 /// Render a file header banner row as a styled Ratatui [`Line`] with theme
 /// support.
 #[allow(clippy::too_many_arguments)]
-pub fn file_header_line_themed(
+pub fn file_header_line(
     file: &OutputFile,
     badge: Badge,
     is_collapsed: bool,
@@ -589,31 +541,9 @@ pub fn file_header_line_themed(
     Line::from(Span::styled(bar_str, style))
 }
 
-/// Render a file header banner row as a styled Ratatui [`Line`].
-pub fn file_header_line(
-    file: &OutputFile,
-    badge: Badge,
-    is_collapsed: bool,
-    is_selected: bool,
-    is_current: bool,
-    in_band: bool,
-    content_width: usize,
-) -> Line<'static> {
-    file_header_line_themed(
-        file,
-        badge,
-        is_collapsed,
-        is_selected,
-        is_current,
-        in_band,
-        content_width,
-        &DiffuseTheme::from_env(),
-    )
-}
-
 /// Render a hunk header divider as a styled Ratatui [`Line`] with theme
 /// support.
-pub fn hunk_divider_line_themed(
+pub fn hunk_divider_line(
     badge: Badge,
     hunk: &OutputHunk,
     hidden_gap: usize,
@@ -639,26 +569,8 @@ pub fn hunk_divider_line_themed(
     Line::from(Span::styled(bar_str, style))
 }
 
-/// Render a hunk header divider as a styled Ratatui [`Line`].
-pub fn hunk_divider_line(
-    badge: Badge,
-    hunk: &OutputHunk,
-    hidden_gap: usize,
-    is_current: bool,
-    content_width: usize,
-) -> Line<'static> {
-    hunk_divider_line_themed(
-        badge,
-        hunk,
-        hidden_gap,
-        is_current,
-        content_width,
-        &DiffuseTheme::from_env(),
-    )
-}
-
 /// Render a bottom gap divider as a styled Ratatui [`Line`] with theme support.
-pub fn bottom_gap_divider_line_themed(
+pub fn bottom_gap_divider_line(
     hidden_gap: usize,
     is_current: bool,
     is_selected: bool,
@@ -681,21 +593,6 @@ pub fn bottom_gap_divider_line_themed(
         style = style.bg(crate::view::to_color(bg));
     }
     Line::from(Span::styled(bar_str, style))
-}
-
-/// Render a bottom gap divider as a styled Ratatui [`Line`].
-pub fn bottom_gap_divider_line(
-    hidden_gap: usize,
-    is_current: bool,
-    content_width: usize,
-) -> Line<'static> {
-    bottom_gap_divider_line_themed(
-        hidden_gap,
-        is_current,
-        false,
-        content_width,
-        &DiffuseTheme::from_env(),
-    )
 }
 
 #[cfg(test)]

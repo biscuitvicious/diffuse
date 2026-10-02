@@ -127,6 +127,9 @@ fn test_cli_args_theme_flag() {
 fn test_resolve_theme_prefers_cli_flag() {
     unsafe { env::remove_var("DIFFUSE_THEME") };
     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
+    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::LIGHT);
+    let auto_theme = super::resolve_theme(Some("auto"));
+    assert!(auto_theme == DiffuseTheme::DEFAULT || auto_theme == DiffuseTheme::LIGHT);
     assert_eq!(super::resolve_theme(None), DiffuseTheme::from_env());
 }
 

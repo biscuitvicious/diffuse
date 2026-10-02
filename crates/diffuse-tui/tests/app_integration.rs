@@ -152,7 +152,12 @@ index 3333333..4444444 100644
 // 1. Rendering — header, status, viewport, scrollbar agnostic to syntax
 #[test]
 fn test_render_frame_header_and_viewport() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     let frame = state.render_frame(120, 30);
     assert!(
         frame.contains("filesystem.rs"),
@@ -169,7 +174,12 @@ fn test_render_frame_header_and_viewport() {
 // 2. File collapse — toggle via API and via header triangle click
 #[test]
 fn test_file_collapse_toggle_and_click() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(120, 30);
     assert!(!state.collapsed_files.contains(&0));
     let full_len = state.flat.len();
@@ -197,7 +207,12 @@ fn test_file_collapse_toggle_and_click() {
 // 3. Navigation — move, page, jump between hunks and files
 #[test]
 fn test_navigation_moves_and_hunk_jumps() {
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(80, 20);
     let start = state.row_idx;
     state.move_down();
@@ -229,7 +244,12 @@ fn test_navigation_moves_and_hunk_jumps() {
 // 4. Selection — anchor, band, confirm, clear (black-box via render)
 #[test]
 fn test_selection_anchor_band_and_confirm() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     // walk to first coordinate row then anchor
     for _ in 0..3 {
         state.move_down();
@@ -267,7 +287,12 @@ fn test_selection_anchor_band_and_confirm() {
 fn test_notes_commit_and_delete_via_public_api() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), path.clone());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        path.clone(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("review this".into());
@@ -287,8 +312,13 @@ fn test_notes_commit_and_delete_via_public_api() {
 fn test_notes_key_scopes_state_to_head() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), path.clone())
-        .with_notes_key("test_repo@abc123".into());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        path.clone(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    )
+    .with_notes_key("test_repo@abc123".into());
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("head-scoped note".into());
@@ -311,7 +341,12 @@ fn test_notes_key_scopes_state_to_head() {
 // 6. Finder — open, query, confirm, cancel
 #[test]
 fn test_finder_open_query_and_confirm() {
-    let mut state = AppState::new(multi_file_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        multi_file_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     assert!(state.file_finder.is_none());
     state.open_file_finder();
     assert!(state.file_finder.is_some());
@@ -331,7 +366,12 @@ fn test_finder_open_query_and_confirm() {
 // 7. Raw diff — toggle via execute, cursor anchoring
 #[test]
 fn test_raw_diff_toggle_and_cursor_preserved() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     for _ in 0..4 {
         state.move_down();
     }
@@ -351,8 +391,13 @@ fn test_raw_diff_toggle_and_cursor_preserved() {
 // 8. Context expansion via public API — below/above, gap shrinks
 #[test]
 fn test_context_expand_below_and_above_shrinks_gap() {
-    let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-        .with_expand_lines(6);
+    let mut state = AppState::new(
+        two_hunk_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
     let fi = 0;
     assert_eq!(state.output.files[fi].hunks.len(), 2);
     let gap_before = state.hunk_leading_gap(fi, 1);
@@ -370,8 +415,13 @@ fn test_context_expand_below_and_above_shrinks_gap() {
 // 9. Hunk divider click — expand via hit-testing, divider stays pinned
 #[test]
 fn test_hunk_divider_click_expands_and_stays_pinned() {
-    let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-        .with_expand_lines(6);
+    let mut state = AppState::new(
+        two_hunk_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
     state.render_frame(140, 80);
     let fi = 0;
     let gap_before = state.hunk_leading_gap(fi, 1);
@@ -426,8 +476,13 @@ fn test_hunk_divider_click_expands_and_stays_pinned() {
 // 10. Expand all merges and reset restores
 #[test]
 fn test_expand_all_merges_and_reset_restores() {
-    let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-        .with_expand_lines(12);
+    let mut state = AppState::new(
+        two_hunk_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(12);
     let fi = 0;
     assert_eq!(state.output.files[fi].hunks.len(), 2);
     state.expand_all_hidden();
@@ -456,7 +511,12 @@ fn test_expand_all_merges_and_reset_restores() {
 // 11. Streaming append — live file ingestion
 #[test]
 fn test_streaming_append_new_file() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     let before_files = state.output.files.len();
     let diff = r#"diff --git a/new_stream.rs b/new_stream.rs
 new file mode 100644
@@ -487,7 +547,12 @@ new file mode 100644
 // 12. Help modal — toggles and overlays
 #[test]
 fn test_help_modal_toggle_and_frame_contains_bindings() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     let plain = state.render_frame(100, 30);
     assert!(!plain.contains("KEY BINDINGS"));
     state.execute(TuiCommand::ToggleHelp);
@@ -503,7 +568,12 @@ fn test_help_modal_toggle_and_frame_contains_bindings() {
 fn test_initial_screen_rendered_visual_frame() {
     use ratatui::{Terminal, backend::TestBackend};
 
-    let mut state = AppState::new(sample_output(), "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "diffuse".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     let width = 80;
     let height = 18;
     let backend = TestBackend::new(width as u16, height as u16);
@@ -590,7 +660,12 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
 +fn test_new() {}
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
 
     let width = 100;
     let height = 20;
@@ -643,7 +718,12 @@ fn test_long_note_with_emoji_stays_within_viewport_width() {
     use diffuse_tui::view::visible_width;
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), path);
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        path,
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
     state.note_draft = Some(
         "renders the identical golden (the extension's golden walk's rust leg \u{2014} \u{2705} passed); A/B on the real repo with a fairly long trailing tail to push past the edge".into(),
     );
@@ -669,7 +749,12 @@ fn test_deep_scroll_renders_correct_window() {
         "diff --git a/big.rs b/big.rs\n--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,400 @@\n{body}"
     );
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
 
     // Scroll deep and render: the window must show deep content, every
     // line within the frame width. The cursor travels with the scroll, as
@@ -714,7 +799,12 @@ fn test_perf_big_hunk_scrolled_frames() {
         "diff --git a/big.rs b/big.rs\n--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,7001 @@\n{body}"
     );
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        diffuse_tui::render::DiffuseTheme::DEFAULT,
+    );
 
     for scroll in [0, 1000, 3000, 6000] {
         state.scroll = scroll;

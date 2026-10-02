@@ -55,10 +55,9 @@ pub fn run_tui(
         git_args,
         staged,
     );
-    let mut state = AppState::new(initial_output, repo, notes_path)
+    let mut state = AppState::new(initial_output, repo, notes_path, theme)
         .with_target(target)
-        .with_expand_lines(expand_lines)
-        .with_theme(theme);
+        .with_expand_lines(expand_lines);
     state.enable_async_on_demand();
     if streaming_rx.is_some() {
         state.is_streaming = true;

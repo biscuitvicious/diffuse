@@ -32,7 +32,12 @@ fn test_incremental_file_append_and_streaming_navigation() {
         untracked_skipped: Vec::new(),
     };
 
-    let mut state = AppState::new(initial_output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        initial_output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.is_streaming = true;
     assert_eq!(state.output.files.len(), 0);
 
@@ -78,7 +83,12 @@ fn test_streaming_append_file_multi_hunk_with_gap() {
     // Simulate streaming: start with empty AppState and append files one by one
     let mut empty_output = output.clone();
     empty_output.files.clear();
-    let mut state = AppState::new(empty_output, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        empty_output,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     for file in output.files {
         state.append_file(file);

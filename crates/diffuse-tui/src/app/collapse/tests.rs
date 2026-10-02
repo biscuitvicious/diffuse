@@ -39,6 +39,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.render_frame(120, 30);
 
@@ -142,7 +143,12 @@ new mode 100755
         PipelineOptions::default(),
     );
 
-    let state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // File 0: Pure rename -> collapsed by default
     assert!(
@@ -183,7 +189,12 @@ deleted file mode 100644
 
     let output = run_pipeline_full(diff, None, Some(old_content), PipelineOptions::default());
 
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Deleted file starts collapsed by default
     assert!(
@@ -232,7 +243,12 @@ fn test_collapsing_file_releases_memory_and_expanding_reloads() {
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     assert!(!state.collapsed_files.contains(&0));
     assert!(state.output.files[0].is_loaded());
@@ -288,7 +304,12 @@ fn test_async_on_demand_expansion_sets_streaming_indicator() {
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.enable_async_on_demand();
 
     // Collapse to release memory
@@ -357,7 +378,12 @@ fn create_multi_file_state(
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     for i in 0..file_count {
         state.collapsed_files.insert(i);
         state.output.files[i].release_rendered_memory();
@@ -697,6 +723,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     // Render at width 40 so the long header wraps across at least 2 lines.
     state.render_frame(40, 20);

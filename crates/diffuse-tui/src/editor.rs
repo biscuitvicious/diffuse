@@ -818,12 +818,10 @@ impl Editor {
         };
 
         for (l_idx, line) in self.lines.iter().enumerate() {
-            let spans = all_spans.get(l_idx).cloned().unwrap_or_else(|| {
-                vec![Span::styled(
-                    line.to_string(),
-                    ratatui::style::Style::default().fg(ratatui::style::Color::Indexed(231)),
-                )]
-            });
+            let spans = all_spans
+                .get(l_idx)
+                .cloned()
+                .unwrap_or_else(|| vec![Span::raw(line.to_string())]);
 
             let seg_count = Self::line_seg_count(line, width);
             if l_idx == self.cursor_row {
@@ -887,9 +885,11 @@ pub fn markdown_highlighter(theme: crate::render::DiffuseTheme) -> HighlightingC
         while out.len() < lines.len() {
             out.push(vec![Span::styled(
                 lines[out.len()].clone(),
-                ratatui::style::Style::default().fg(ratatui::style::Color::Indexed(231)),
+                ratatui::style::Style::default()
+                    .fg(crate::view::to_color(theme.palette.modal_text)),
             )]);
         }
+
         out
     })
 }

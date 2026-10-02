@@ -14,6 +14,7 @@ fn state_with_draft() -> AppState {
         },
         "test".into(),
         unique_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     s.note_draft = Some("hello".into());
     s
@@ -53,6 +54,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         unique_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     )
 }
 
@@ -529,6 +531,7 @@ index 3333333..4444444 100644
         run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         unique_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
 
     assert_eq!(s.current_file_idx(), 0, "starts on file 0 (apple.rs)");
@@ -907,16 +910,22 @@ fn test_t_toggles_staged() {
         s.status_message.is_some(),
         "Pressing 't' on commit range must set error status message"
     );
+}
 
-    s.status_message = None;
+#[test]
+fn test_shift_t_toggles_theme() {
+    let mut s = state_with_rows();
+    assert_eq!(s.theme, crate::render::DiffuseTheme::DEFAULT);
 
-    // Shift+T also triggers ToggleStaged
     handle_event(
         &mut s,
         Event::Key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT)),
     );
-    assert!(
-        s.status_message.is_some(),
-        "Pressing 'Shift+T' on commit range must set error status message"
+    assert_eq!(s.theme, crate::render::DiffuseTheme::LIGHT);
+
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT)),
     );
+    assert_eq!(s.theme, crate::render::DiffuseTheme::DEFAULT);
 }

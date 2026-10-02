@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout},
-    style::{Color, Style},
+    style::Style,
     widgets::Paragraph,
 };
 
@@ -47,6 +47,7 @@ impl AppState {
             Some(&self.output.branch),
             self.commit_range.as_deref(),
             self.target.is_staged(),
+            &self.theme.palette,
         ));
 
         // Secondary status bar
@@ -68,14 +69,17 @@ impl AppState {
             streaming_dot: self.streaming_dot(),
             file: f,
             hunk_counts,
+            theme: &self.theme,
         }));
 
         // Ephemeral action feedback (note saved/deleted, git ops, ...)
         if let Some((msg, is_ok)) = self.status_message.clone() {
-            lines.push(format!(
-                "\x1b[{}m {msg}\x1b[39m",
-                if is_ok { "38;5;120" } else { "38;5;203" }
-            ));
+            let color = if is_ok {
+                self.theme.palette.header_staged
+            } else {
+                self.theme.palette.count_dels
+            };
+            lines.push(format!("{} {msg}\x1b[39m", color.fg_code()));
         }
 
         if let Some(f) = f {
@@ -137,25 +141,28 @@ impl AppState {
             self.viewport_height = vh;
             self.screen_height = height;
 
-            lines.push("\x1b[38;5;244m No diff to display.\x1b[0m".to_string());
+            lines.push(format!(
+                "{} No diff to display.\x1b[0m",
+                self.theme.palette.status_bar_dim.fg_code()
+            ));
             for _ in 1..vh {
                 lines.push(String::new());
             }
         }
 
-        let (divider, ribbon) = render_bottom_ribbon(width);
+        let (divider, ribbon) = render_bottom_ribbon(width, &self.theme.palette);
         lines.push(divider);
         lines.push(ribbon);
 
         // Help modal overlays the full screen when toggled on.
         if self.show_help {
-            lines = render_help_modal(width, height);
+            lines = render_help_modal(width, height, &self.theme);
         }
 
         // File finder dialog overlays the full screen with top finder + bottom
         // preview when active.
         if let Some(finder) = &self.file_finder {
-            lines = render_finder_modal(&self.output, finder, width, height);
+            lines = render_finder_modal(&self.output, finder, width, height, &self.theme);
         }
 
         lines.truncate(height);
@@ -435,7 +442,7 @@ impl AppState {
 
         // 1. Header Bar
         let common_prefix = self.output.common_directory_prefix();
-        let header_line = crate::view::header_bar_line_themed(
+        let header_line = crate::view::header_bar_line(
             &self.repo,
             &self.theme,
             common_prefix.as_deref(),
@@ -471,19 +478,25 @@ impl AppState {
             streaming_dot: self.streaming_dot(),
             file,
             hunk_counts,
+            theme: &self.theme,
         };
         let status_line = status_bar_line(status_ctx);
-        f.render_widget(Paragraph::new(status_line), main_chunks[chunk_idx]);
+        let status_bg = crate::view::to_color(self.theme.palette.status_bar_bg);
+        f.render_widget(
+            Paragraph::new(status_line).style(Style::default().bg(status_bg)),
+            main_chunks[chunk_idx],
+        );
         chunk_idx += 1;
 
         // 3. Status Message
         if let Some((ref msg, is_ok)) = self.status_message {
             let color = if is_ok {
-                Color::Indexed(120)
+                crate::view::to_color(self.theme.palette.header_staged)
             } else {
-                Color::Indexed(203)
+                crate::view::to_color(self.theme.palette.count_dels)
             };
-            let p = Paragraph::new(format!(" {msg}")).style(Style::default().fg(color));
+            let bg = crate::view::to_color(self.theme.palette.bg_base);
+            let p = Paragraph::new(format!(" {msg}")).style(Style::default().fg(color).bg(bg));
             f.render_widget(p, main_chunks[chunk_idx]);
             chunk_idx += 1;
         }
@@ -493,12 +506,19 @@ impl AppState {
         let ribbon_area = main_chunks[chunk_idx];
 
         let Some(file) = file else {
-            let p = Paragraph::new(" No diff to display.")
-                .style(Style::default().fg(Color::Indexed(244)));
+            let bg = crate::view::to_color(self.theme.palette.bg_base);
+            let p = Paragraph::new(" No diff to display.").style(
+                Style::default()
+                    .fg(crate::view::to_color(self.theme.palette.status_bar_dim))
+                    .bg(bg),
+            );
             f.render_widget(p, diff_area);
 
-            let (div_line, rib_line) = bottom_ribbon_lines(main_width);
-            f.render_widget(Paragraph::new(vec![div_line, rib_line]), ribbon_area);
+            let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette);
+            f.render_widget(
+                Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(bg)),
+                ribbon_area,
+            );
 
             self.last_viewport_start = diff_area.y as usize;
             self.viewport_height = diff_area.height as usize;
@@ -506,10 +526,10 @@ impl AppState {
             self.screen_height = track_h;
 
             if self.show_help {
-                crate::view::render_help_modal_widget(f, area);
+                crate::view::render_help_modal_widget(f, &self.theme, area);
             }
             if let Some(ref finder) = self.file_finder {
-                crate::view::render_finder_modal_widget(f, &self.output, finder, area);
+                crate::view::render_finder_modal_widget(f, &self.output, finder, &self.theme, area);
             }
             return;
         };
@@ -537,7 +557,12 @@ impl AppState {
             .into_iter()
             .map(|l| crate::view::ansi_to_ratatui_line(&l))
             .collect();
-        f.render_widget(Paragraph::new(paragraph_lines), diff_area);
+        let diff_bg = crate::view::to_color(self.theme.palette.bg_base);
+        let diff_fg = crate::view::to_color(self.theme.palette.ctx_fg);
+        f.render_widget(
+            Paragraph::new(paragraph_lines).style(Style::default().fg(diff_fg).bg(diff_bg)),
+            diff_area,
+        );
 
         // 5. Full-height scrollbar column.
         if let Some(bar) = bar_area
@@ -560,12 +585,20 @@ impl AppState {
                 .iter()
                 .map(|l| crate::view::ansi_to_ratatui_line(l))
                 .collect();
-            f.render_widget(Paragraph::new(bar_lines), bar);
+            let track_bg = crate::view::to_color(self.theme.palette.scrollbar_track);
+            f.render_widget(
+                Paragraph::new(bar_lines).style(Style::default().bg(track_bg)),
+                bar,
+            );
         }
 
         // 6. Bottom Ribbon
-        let (div_line, rib_line) = bottom_ribbon_lines(main_width);
-        f.render_widget(Paragraph::new(vec![div_line, rib_line]), ribbon_area);
+        let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette);
+        let rib_bg = crate::view::to_color(self.theme.palette.bg_base);
+        f.render_widget(
+            Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(rib_bg)),
+            ribbon_area,
+        );
 
         // Update viewport metrics for diff area
         self.last_viewport_start = diff_area.y as usize;
@@ -575,12 +608,12 @@ impl AppState {
 
         // 6. Help Modal Overlay
         if self.show_help {
-            crate::view::render_help_modal_widget(f, area);
+            crate::view::render_help_modal_widget(f, &self.theme, area);
         }
 
         // 7. File Finder Modal Overlay
         if let Some(ref finder) = self.file_finder {
-            crate::view::render_finder_modal_widget(f, &self.output, finder, area);
+            crate::view::render_finder_modal_widget(f, &self.output, finder, &self.theme, area);
         }
 
         // 8. Note Draft Modal Overlay
@@ -609,6 +642,7 @@ impl AppState {
                 &loc,
                 draft,
                 self.note_editor.as_mut(),
+                &self.theme,
                 note_area,
             );
         }
@@ -756,7 +790,7 @@ impl AppState {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let seg_start = s_idx * text_cols;
                         line_src.push(Some(idx));
-                        lines.push(crate::view::diff_grid::render_hunk_divider_segment_themed(
+                        lines.push(crate::view::diff_grid::render_hunk_divider_segment(
                             crate::render::Badge {
                                 idx: div_hi,
                                 total: self.output.files[div_fi].hunks.len(),
@@ -789,7 +823,7 @@ impl AppState {
                         let text_cols = content_width.max(1);
                         let seg_start = s_idx * text_cols;
                         line_src.push(Some(idx));
-                        lines.push(crate::view::diff_grid::render_file_header_segment_themed(
+                        lines.push(crate::view::diff_grid::render_file_header_segment(
                             file_obj,
                             crate::render::Badge {
                                 idx: item.file_idx,
@@ -834,6 +868,7 @@ impl AppState {
                             is_selected,
                             in_band && !is_selected,
                             is_last_seg,
+                            &self.theme,
                         ));
                     }
                     vis_i += 1;
@@ -844,7 +879,7 @@ impl AppState {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
                         let is_selected = idx == self.row_idx && self.vis_line == div_segs + s_idx;
                         let pfx = if s_idx == 0 {
-                            crate::render::styled_prefix_themed(
+                            crate::render::styled_prefix(
                                 r.kind,
                                 r.mov_side,
                                 r.new_line,
@@ -869,6 +904,7 @@ impl AppState {
                                 is_selected,
                                 in_band && !is_selected,
                                 is_last_seg,
+                                &self.theme,
                             )
                         } else {
                             let text_cols = content_width.saturating_sub(6).max(1);
@@ -954,15 +990,14 @@ impl AppState {
                         let is_selected =
                             idx == self.row_idx && self.vis_line == bottom_div_vis_start + s_idx;
                         let seg_start = s_idx * text_cols;
-                        let bottom_div =
-                            crate::view::diff_grid::render_bottom_gap_divider_segment_themed(
-                                gap,
-                                is_cur,
-                                is_selected,
-                                seg_start,
-                                content_width,
-                                &self.theme,
-                            );
+                        let bottom_div = crate::view::diff_grid::render_bottom_gap_divider_segment(
+                            gap,
+                            is_cur,
+                            is_selected,
+                            seg_start,
+                            content_width,
+                            &self.theme,
+                        );
                         line_src.push(Some(idx));
                         lines.push(bottom_div);
                     }

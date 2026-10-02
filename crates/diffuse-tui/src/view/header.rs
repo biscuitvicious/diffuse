@@ -3,12 +3,12 @@
 use crate::{
     core::{counts::FileCounts, wire::OutputFile},
     render::{
-        slice_by_visual_width,
+        ColorExt, slice_by_visual_width,
         width::{display_width, grapheme_width},
     },
 };
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
 };
 use smallvec::SmallVec;
@@ -196,9 +196,10 @@ pub use crate::render::counts::{CountCell, count_cells, count_color};
 /// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
 /// all counts are zero.
 pub fn format_counts_plain(counts: &FileCounts) -> String {
-    count_cells(counts)
+    counts
+        .segments()
         .iter()
-        .map(|cell| format!("{}{}", cell.marker, cell.value))
+        .map(|seg| format!("{}{}", seg.marker, seg.value))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -206,15 +207,17 @@ pub fn format_counts_plain(counts: &FileCounts) -> String {
 /// Format mod counts as an ANSI-highlighted string (`−dels`, `+adds`, `~mods`,
 /// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
 /// all counts are zero.
-pub fn format_counts_ansi(counts: &FileCounts) -> String {
-    count_cells(counts)
+pub fn format_counts_ansi(counts: &FileCounts, palette: &crate::render::ThemePalette) -> String {
+    count_cells(counts, palette)
         .iter()
         .enumerate()
         .map(|(i, cell)| {
             let sep = if i == 0 { "" } else { " " };
             format!(
-                "{sep}\x1b[1m\x1b[38;5;{}m{}{}\x1b[0m",
-                cell.color, cell.marker, cell.value
+                "{sep}\x1b[1m{}{}{}\x1b[0m",
+                cell.color.fg_code(),
+                cell.marker,
+                cell.value
             )
         })
         .collect::<String>()
@@ -224,14 +227,17 @@ pub fn format_counts_ansi(counts: &FileCounts) -> String {
 /// `≈movs`, `💬 notes`), omitting zero counts. At most five spans are ever
 /// produced, stored inline without heap allocation. Returns an empty vec
 /// when all counts are zero.
-pub fn format_counts_spans(counts: &FileCounts) -> SmallVec<[Span<'static>; 5]> {
+pub fn format_counts_spans(
+    counts: &FileCounts,
+    palette: &crate::render::ThemePalette,
+) -> SmallVec<[Span<'static>; 5]> {
     let mut spans: SmallVec<[Span<'static>; 5]> = SmallVec::new();
-    for (i, cell) in count_cells(counts).iter().enumerate() {
+    for (i, cell) in count_cells(counts, palette).iter().enumerate() {
         let prefix = if i == 0 { "" } else { " " };
         spans.push(Span::styled(
             format!("{prefix}{}{}", cell.marker, cell.value),
             Style::default()
-                .fg(Color::Indexed(cell.color))
+                .fg(crate::view::to_color(cell.color))
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -241,6 +247,7 @@ pub fn format_counts_spans(counts: &FileCounts) -> SmallVec<[Span<'static>; 5]> 
 /// Render the top review header bar: repo name, branch/commit-range glyph,
 /// global counts, and common directory prefix. Per-file path and counts live
 /// in the secondary status bar.
+#[expect(clippy::too_many_arguments)]
 pub fn render_header_bar(
     repo: &str,
     width: usize,
@@ -249,21 +256,39 @@ pub fn render_header_bar(
     branch: Option<&str>,
     commit_range: Option<&str>,
     is_staged: bool,
+    palette: &crate::render::ThemePalette,
 ) -> Vec<String> {
     let branch_seg = if let Some(range) = commit_range
         && !range.is_empty()
     {
-        format!(" \x1b[38;5;244m\u{2387}\x1b[0m\x1b[1m\x1b[38;5;252m{range}\x1b[0m")
+        format!(
+            " {}\u{2387}\x1b[0m\x1b[1m{}{range}\x1b[0m",
+            palette.header_dim.fg_code(),
+            palette.header_branch.fg_code()
+        )
     } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
         let staged_badge = if is_staged {
-            " \x1b[38;5;244m(\x1b[1m\x1b[38;5;120mstaged\x1b[0m\x1b[38;5;244m)\x1b[0m"
+            format!(
+                " {}(\x1b[1m{}staged\x1b[0m{})",
+                palette.header_dim.fg_code(),
+                palette.header_staged.fg_code(),
+                palette.header_dim.fg_code()
+            )
         } else {
-            ""
+            String::new()
         };
-        format!(" \x1b[38;5;244m\u{2387}\x1b[0m\x1b[1m\x1b[38;5;252m{b}\x1b[0m{staged_badge}")
+        format!(
+            " {}\u{2387}\x1b[0m\x1b[1m{}{b}\x1b[0m{staged_badge}",
+            palette.header_dim.fg_code(),
+            palette.header_branch.fg_code()
+        )
     } else if is_staged {
-        " \x1b[38;5;244m\u{2387}(\x1b[1m\x1b[38;5;120mstaged\x1b[0m\x1b[38;5;244m)\x1b[0m"
-            .to_string()
+        format!(
+            " {}\u{2387}(\x1b[1m{}staged\x1b[0m{})",
+            palette.header_dim.fg_code(),
+            palette.header_staged.fg_code(),
+            palette.header_dim.fg_code()
+        )
     } else {
         String::new()
     };
@@ -271,7 +296,7 @@ pub fn render_header_bar(
     // already separates them.
     let global_counts_seg = match global_counts {
         Some(ref gc) if !gc.is_empty() => {
-            format!(" {}", format_counts_ansi(gc))
+            format!(" {}", format_counts_ansi(gc, palette))
         }
         _ => String::new(),
     };
@@ -279,20 +304,30 @@ pub fn render_header_bar(
     let prefix_seg = if let Some(pfx) = common_prefix
         && !pfx.is_empty()
     {
-        format!(" \x1b[38;5;240m·\x1b[0m \x1b[1m\x1b[38;5;152m{pfx}\x1b[0m")
+        format!(
+            " {}·\x1b[0m \x1b[1m{}{pfx}\x1b[0m",
+            palette.header_dim.fg_code(),
+            palette.header_prefix.fg_code()
+        )
     } else {
         String::new()
     };
 
-    let head_raw =
-        format!(" \x1b[1m\x1b[38;5;117m{repo}\x1b[0m{branch_seg}{global_counts_seg}{prefix_seg}");
+    let head_raw = format!(
+        " \x1b[1m{}{repo}\x1b[0m{branch_seg}{global_counts_seg}{prefix_seg}",
+        palette.header_repo.fg_code()
+    );
     let wrapped = wrap_text_by_visual_width(&head_raw, width);
     wrapped
         .into_iter()
         .map(|piece| {
             let piece_vw = visible_width(&piece);
             let pad = " ".repeat(width.saturating_sub(piece_vw));
-            format!("\x1b[48;5;237m\x1b[1m\x1b[38;5;231m{piece}{pad}\x1b[0m")
+            format!(
+                "{}\x1b[1m{}{piece}{pad}\x1b[0m",
+                palette.header_bar_bg.bg_code(),
+                palette.header_bar_fg.fg_code()
+            )
         })
         .collect()
 }
@@ -315,6 +350,8 @@ pub struct StatusBarContext<'a> {
     pub file: Option<&'a OutputFile>,
     /// Change counts of the current hunk, shown after the hunk badge.
     pub hunk_counts: Option<FileCounts>,
+    /// Active theme for status bar styling.
+    pub theme: &'a crate::render::DiffuseTheme,
 }
 
 /// Current file path stripped of the shared directory prefix, rendering
@@ -359,20 +396,24 @@ pub(crate) fn file_status_tag(file: &OutputFile) -> String {
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     use super::status_layout::{StatusSegment, status_layout};
 
+    let bg_code = ctx.theme.palette.status_bar_bg.bg_code();
+
     let seg_ansi = |seg: &StatusSegment| -> String {
         let bold = if seg.bold { "\x1b[1m" } else { "" };
         let bold_off = if seg.bold { "\x1b[22m" } else { "" };
         format!(
-            "\x1b[38;5;{}m{bold}{}{bold_off}\x1b[0m",
-            seg.color, seg.text
+            "{}{bold}{}{bold_off}\x1b[39m",
+            seg.color.fg_code(),
+            seg.text
         )
     };
+
     let layout = status_layout(&ctx);
     let line: String = layout.segments.iter().map(seg_ansi).collect();
     if !layout.wraps {
         let vw = visible_width(&line);
         return vec![format!(
-            "{line}{}\x1b[0m",
+            "{bg_code}{line}{}\x1b[0m",
             " ".repeat(ctx.width.saturating_sub(vw))
         )];
     }
@@ -381,29 +422,31 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
         .map(|piece| {
             let piece_vw = visible_width(&piece);
             let pad = " ".repeat(ctx.width.saturating_sub(piece_vw));
-            format!("{piece}{pad}\x1b[0m")
+            format!("{bg_code}{piece}{pad}\x1b[0m")
         })
         .collect()
 }
 
 /// Render the bottom navigation key-bindings ribbon.
-pub fn render_bottom_ribbon(width: usize) -> (String, String) {
-    let divider = format!(
-        "\x1b[38;5;244m {}\x1b[39m",
-        "─".repeat(width.saturating_sub(2).min(60))
-    );
+pub fn render_bottom_ribbon(
+    width: usize,
+    palette: &crate::render::ThemePalette,
+) -> (String, String) {
+    let div_str = format!(" {}", "─".repeat(width.saturating_sub(2).min(60)));
+    let divider = format!("{}{div_str}\x1b[39m", palette.ribbon_divider.fg_code());
     let ribbon_text = truncate_pad(
-        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [t]staged [x]discard",
+        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [t]staged [T]theme [x]discard",
         width.saturating_sub(1),
     );
-    let ribbon = format!("\x1b[38;5;244m{ribbon_text}\x1b[39m");
+
+    let ribbon = format!("{}{ribbon_text}\x1b[39m", palette.ribbon_text.fg_code());
     (divider, ribbon)
 }
 
 /// Render the review header bar as a styled Ratatui [`Line`] with theme
 /// support: repo name, branch/commit-range glyph, global counts, and common
 /// directory prefix.
-pub fn header_bar_line_themed(
+pub fn header_bar_line(
     repo: &str,
     theme: &crate::render::DiffuseTheme,
     common_prefix: Option<&str>,
@@ -417,7 +460,7 @@ pub fn header_bar_line_themed(
         Span::styled(
             repo.to_string(),
             Style::default()
-                .fg(Color::Indexed(117))
+                .fg(crate::view::to_color(theme.palette.header_repo))
                 .add_modifier(Modifier::BOLD),
         ),
     ];
@@ -427,48 +470,60 @@ pub fn header_bar_line_themed(
     {
         spans.push(Span::styled(
             " \u{2387}",
-            Style::default().fg(Color::Indexed(244)),
+            Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
         ));
         spans.push(Span::styled(
             range.to_string(),
             Style::default()
-                .fg(Color::Indexed(252))
+                .fg(crate::view::to_color(theme.palette.header_branch))
                 .add_modifier(Modifier::BOLD),
         ));
     } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
         spans.push(Span::styled(
             " \u{2387}",
-            Style::default().fg(Color::Indexed(244)),
+            Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
         ));
         spans.push(Span::styled(
             b.to_string(),
             Style::default()
-                .fg(Color::Indexed(252))
+                .fg(crate::view::to_color(theme.palette.header_branch))
                 .add_modifier(Modifier::BOLD),
         ));
         if is_staged {
-            spans.push(Span::styled(" (", Style::default().fg(Color::Indexed(244))));
+            spans.push(Span::styled(
+                " (",
+                Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
+            ));
             spans.push(Span::styled(
                 "staged",
                 Style::default()
-                    .fg(Color::Indexed(120))
+                    .fg(crate::view::to_color(theme.palette.header_staged))
                     .add_modifier(Modifier::BOLD),
             ));
-            spans.push(Span::styled(")", Style::default().fg(Color::Indexed(244))));
+            spans.push(Span::styled(
+                ")",
+                Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
+            ));
         }
     } else if is_staged {
         spans.push(Span::styled(
             " \u{2387}",
-            Style::default().fg(Color::Indexed(244)),
+            Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
         ));
-        spans.push(Span::styled("(", Style::default().fg(Color::Indexed(244))));
+        spans.push(Span::styled(
+            "(",
+            Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
+        ));
         spans.push(Span::styled(
             "staged",
             Style::default()
-                .fg(Color::Indexed(120))
+                .fg(crate::view::to_color(theme.palette.header_staged))
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(")", Style::default().fg(Color::Indexed(244))));
+        spans.push(Span::styled(
+            ")",
+            Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
+        ));
     }
 
     if let Some(ref gc) = global_counts
@@ -477,7 +532,7 @@ pub fn header_bar_line_themed(
         // No dot separator: the branch glyph (or repo name) already
         // separates the global counts.
         spans.push(Span::raw(" "));
-        spans.extend(format_counts_spans(gc));
+        spans.extend(format_counts_spans(gc, &theme.palette));
     }
 
     if let Some(pfx) = common_prefix
@@ -485,38 +540,18 @@ pub fn header_bar_line_themed(
     {
         spans.push(Span::styled(
             " · ",
-            Style::default().fg(Color::Indexed(240)),
+            Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
         ));
         spans.push(Span::styled(
             pfx.to_string(),
             Style::default()
-                .fg(Color::Indexed(152))
+                .fg(crate::view::to_color(theme.palette.header_prefix))
                 .add_modifier(Modifier::BOLD),
         ));
     }
 
     let bg = crate::view::to_color(theme.palette.header_bar_bg);
     Line::from(spans).style(Style::default().bg(bg))
-}
-
-/// Render the review header bar as a styled Ratatui [`Line`].
-pub fn header_bar_line(
-    repo: &str,
-    common_prefix: Option<&str>,
-    global_counts: Option<FileCounts>,
-    branch: Option<&str>,
-    commit_range: Option<&str>,
-    is_staged: bool,
-) -> Line<'static> {
-    header_bar_line_themed(
-        repo,
-        &crate::render::DiffuseTheme::from_env(),
-        common_prefix,
-        global_counts,
-        branch,
-        commit_range,
-        is_staged,
-    )
 }
 
 /// Render the secondary status bar as a styled Ratatui [`Line`], consuming
@@ -526,15 +561,17 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
     use super::status_layout::{StatusSegment, status_layout};
 
     let seg_span = |seg: &StatusSegment| -> Span<'static> {
-        let mut style = Style::default().fg(Color::Indexed(seg.color));
+        let mut style = Style::default().fg(crate::view::to_color(seg.color));
         if seg.bold {
             style = style.add_modifier(Modifier::BOLD);
         }
         Span::styled(seg.text.to_string(), style)
     };
+
     let layout = status_layout(&ctx);
     let spans: Vec<Span<'static>> = layout.segments.iter().map(seg_span).collect();
-    padded_line(spans, ctx.width)
+    let bg = crate::view::to_color(ctx.theme.palette.status_bar_bg);
+    padded_line(spans, ctx.width).style(Style::default().bg(bg))
 }
 
 /// Pad spans with trailing spaces to `width` and wrap into a [`Line`].
@@ -548,23 +585,30 @@ fn padded_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
 
 /// Render the bottom navigation key-bindings ribbon as styled Ratatui
 /// [`Line`]s.
-pub fn bottom_ribbon_lines(width: usize) -> (Line<'static>, Line<'static>) {
+pub fn bottom_ribbon_lines(
+    width: usize,
+    palette: &crate::render::ThemePalette,
+) -> (Line<'static>, Line<'static>) {
+    let bg = crate::view::to_color(palette.bg_base);
     let div_str = truncate_pad(
         &format!(" {}", "─".repeat(width.saturating_sub(2).min(60))),
         width,
     );
     let divider = Line::from(Span::styled(
         div_str,
-        Style::default().fg(Color::Indexed(244)),
-    ));
+        Style::default().fg(crate::view::to_color(palette.ribbon_divider)),
+    ))
+    .style(Style::default().bg(bg));
     let ribbon_text = truncate_pad(
-        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [x]discard",
+        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [t]staged [T]theme [x]discard",
         width,
     );
+
     let ribbon = Line::from(Span::styled(
         ribbon_text,
-        Style::default().fg(Color::Indexed(244)),
-    ));
+        Style::default().fg(crate::view::to_color(palette.ribbon_text)),
+    ))
+    .style(Style::default().bg(bg));
     (divider, ribbon)
 }
 

@@ -39,7 +39,7 @@ fn test_render_raw_pipeline_output() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered = render_raw_pipeline_output(&out);
+    let rendered = render_raw_pipeline_output(&out, &DiffuseTheme::DEFAULT);
     assert!(rendered.ends_with("\x1b[0m"));
     assert!(rendered.contains("a.txt"));
     // Must contain @@ hunk header
@@ -59,7 +59,7 @@ fn test_render_raw_pipeline_output() {
     file_fallback.raw_hunks.clear();
     file_fallback.counts.mods = 1;
     file_fallback.counts.movs = 1;
-    let single_raw = render_raw_file_diff(&file_fallback, None);
+    let single_raw = render_raw_file_diff(&file_fallback, None, &DiffuseTheme::DEFAULT);
     assert!(single_raw.contains("~1"));
     assert!(single_raw.contains("moved"));
     assert!(single_raw.contains("@@ -1,2 +1,2 @@"));
@@ -95,7 +95,7 @@ fn test_render_renamed_file_diff() {
         "zero counts omitted, status parens follow the path: {visual:?}"
     );
 
-    let raw = render_raw_file_diff(&file, None);
+    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::DEFAULT);
     assert!(
         crate::ansi::strip_ansi(&raw).contains("src/old.rs -> new.rs (renamed, 0B)"),
         "zero counts omitted, status parens follow the path: {raw:?}"
@@ -124,7 +124,7 @@ fn test_zero_notes_not_rendered() {
         "styled render must not show '0 notes' when there are no notes"
     );
     // Raw render: same requirement.
-    let raw = render_raw_file_diff(&out.files[0], None);
+    let raw = render_raw_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT);
     assert!(
         !raw.contains("0 note"),
         "raw render must not show '0 notes' when there are no notes"
@@ -170,7 +170,7 @@ fn test_nonzero_notes_still_rendered() {
         rendered.contains("1 note"),
         "styled render must show '1 note' when there is 1 note"
     );
-    let raw = render_raw_file_diff(&file, None);
+    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::DEFAULT);
     assert!(
         raw.contains("1 note"),
         "raw render must show '1 note' when there is 1 note"
@@ -261,4 +261,27 @@ fn test_render_file_diff_resets_background_at_end_of_lines() {
             "each diff line must reset background/SGR at end of line to prevent margin color bleeding, but got: {line:?}"
         );
     }
+}
+
+#[test]
+fn test_render_file_diff_light_theme() {
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old line\n+new line\n";
+    let new_content = [("a.txt".to_string(), "new line\n".to_string())]
+        .into_iter()
+        .collect();
+    let old_content = [("a.txt".to_string(), "old line\n".to_string())]
+        .into_iter()
+        .collect();
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        Some(old_content),
+        PipelineOptions::default(),
+    );
+    let rendered_dark = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
+    let rendered_light = render_file_diff(&out.files[0], None, &DiffuseTheme::LIGHT, true);
+
+    assert_ne!(rendered_dark, rendered_light);
+    assert!(rendered_light.contains("48;2;"));
+    assert!(rendered_light.contains("235;238;242"));
 }

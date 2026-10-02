@@ -102,9 +102,11 @@ struct Args {
     /// Disable ANSI colorization (equivalent to --color=never).
     #[arg(long, global = true)]
     no_color: bool,
-    /// Color theme (`default`, `dark`, `black`). Overrides `DIFFUSE_THEME`.
+    /// Color theme ('auto', 'default'/'dark', 'light'). Defaults to 'auto',
+    /// selecting based on terminal background mode. Overrides `DIFFUSE_THEME`.
     #[arg(long, value_name = "NAME", global = true)]
     theme: Option<String>,
+
     /// Run in non-interactive pager mode (print colored diff to terminal).
     #[arg(short = 'p', long, global = true)]
     pager: bool,
@@ -591,7 +593,7 @@ fn main() -> io::Result<()> {
             let mut stdout = io::stdout().lock();
             if is_raw {
                 for file in consumer {
-                    let mut rendered = render_raw_file_diff(&file, None);
+                    let mut rendered = render_raw_file_diff(&file, None, &theme);
                     if !colorize {
                         rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
                     }
@@ -670,7 +672,7 @@ fn main() -> io::Result<()> {
         if is_raw {
             let mut stdout = io::stdout().lock();
             for file in consumer {
-                let rendered = render_raw_file_diff(&file, None);
+                let rendered = render_raw_file_diff(&file, None, &theme);
                 if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         return Ok(());
@@ -778,7 +780,7 @@ fn main() -> io::Result<()> {
             } else if is_raw {
                 let mut stdout = io::stdout().lock();
                 for out in &outputs {
-                    let mut rendered = render_raw_pipeline_output(out);
+                    let mut rendered = render_raw_pipeline_output(out, &theme);
                     if !colorize {
                         rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
                     }
@@ -823,7 +825,7 @@ fn main() -> io::Result<()> {
                 let _ = stdout.flush();
             } else if is_raw {
                 let output = process_input(*input, &args);
-                let mut rendered = render_raw_pipeline_output(&output);
+                let mut rendered = render_raw_pipeline_output(&output, &theme);
                 if !colorize {
                     rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
                 }

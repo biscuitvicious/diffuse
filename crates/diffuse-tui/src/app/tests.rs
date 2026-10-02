@@ -51,8 +51,13 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_with_theme_builder_sets_theme() {
-    let state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path())
-        .with_theme(crate::render::DiffuseTheme::DEFAULT);
+    let state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_theme(crate::render::DiffuseTheme::DEFAULT);
     assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
 }
 
@@ -91,6 +96,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     state.render_frame(120, 30);
 
@@ -145,7 +151,12 @@ index 1111111..2222222 100644
 fn test_note_commit_persists_and_deletes() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
-    let mut state = AppState::new(sample_output(), "test_repo".into(), notes_path.clone());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path.clone(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("check this **carefully**".into());
@@ -193,7 +204,12 @@ fn test_note_commit_persists_and_deletes() {
 
 #[test]
 fn test_help_modal_toggles_and_renders() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let plain = state.render_frame(100, 30);
     assert!(
@@ -212,7 +228,12 @@ fn test_help_modal_toggles_and_renders() {
 
 #[test]
 fn test_selection_anchor_span_snaps_to_coord_rows() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     // flat[0] is the file header (no coordinate); AppState starts on the
     // first coordinate row (1020). The engine pads the hunk with empty
     // above-context rows (1022-1024), then the real rows: ctx
@@ -240,7 +261,12 @@ fn test_selection_anchor_span_snaps_to_coord_rows() {
 
 #[test]
 fn test_selection_v_confirm_clears_anchor_and_band_renders() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     for _ in 0..3 {
         state.move_down();
     }
@@ -271,7 +297,12 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
 
 #[test]
 fn test_selection_requires_coord_rows() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     // Anchor on the file header (no coordinate) and confirm in place: the
     // range collapses onto the header which carries no line number, so
     // the reference computes no selection.
@@ -284,7 +315,12 @@ fn test_selection_requires_coord_rows() {
 
     // Anchoring on the header then walking onto a coordinate row snaps
     // the low end down to the first coordinate row of the file.
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.row_idx = 0;
     state.vis_line = 0;
     state.start_or_confirm_selection();
@@ -298,7 +334,12 @@ fn test_selection_requires_coord_rows() {
 
 #[test]
 fn test_raw_diff_uncollapses_mod_and_renders() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     assert!(!state.raw_diff);
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -340,7 +381,12 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
 
 #[test]
 fn test_raw_diff_toggle_anchors_cursor() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     // flat[5] is the mod pair (new 1026); walk onto it.
     for _ in 0..4 {
         state.move_down();
@@ -390,7 +436,12 @@ fn test_raw_diff_exact_input_reproduction() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.toggle_raw_diff();
     assert!(state.raw_diff);
 
@@ -436,7 +487,12 @@ fn test_toggle_raw_diff_preserves_cursor_screen_pivot() {
         .into_iter()
         .collect();
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.viewport_height = 10;
     state.last_content_width = 80;
     state.render_frame(80, 10);
@@ -478,7 +534,12 @@ fn test_raw_diff_no_right_padding_or_scrollbar() {
         .into_iter()
         .collect();
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.viewport_height = 20;
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -516,7 +577,12 @@ fn test_raw_diff_wrapped_line_no_false_trailing_highlight() {
         .into_iter()
         .collect();
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.viewport_height = 20;
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -566,7 +632,12 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.viewport_height = 20;
 
     // Switch to raw diff
@@ -744,7 +815,12 @@ index 6f6222d..4aa7a1d 100644
  }
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "mirage".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "mirage".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Exact reproduction test matching user's terminal geometry (74 rows, 300
     // cols) on mirage.work
@@ -906,7 +982,13 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
         untracked_skipped: vec![],
     };
 
-    let mut state = AppState::new(output, "opt_1".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(
+        output,
+        "opt_1".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
 
     // Find collapse/mod.rs file index
     let fi = state
@@ -1003,7 +1085,13 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
         untracked_skipped: vec![],
     };
 
-    let mut state = AppState::new(output, "opt_1".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(
+        output,
+        "opt_1".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
 
     // Find collapse/mod.rs file index
     let fi = state
@@ -1157,7 +1245,13 @@ index 111..222 100644
             .collect();
     let output = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
 
-    let mut state = AppState::new(output, "mirage".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(
+        output,
+        "mirage".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
 
     let fi = state
         .output
@@ -1229,7 +1323,12 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let fi = 0;
     let gap = state.hunk_leading_gap(fi, 0);
@@ -1343,8 +1442,13 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state =
-        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(12);
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(12);
 
     let fi = 0;
     assert_eq!(state.output.files[fi].hunks.len(), 2);
@@ -1520,8 +1624,13 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state =
-        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
 
     let fi = 0;
     // Narrow terminal: divider text (~60 chars) wraps across two segments
@@ -1644,7 +1753,12 @@ index 1111111..2222222 100644
         .run();
     // Narrow: the divider (~60 chars with the gap tail) wraps to 2 segs.
     let (w, h) = (48, 16);
-    let mut state = AppState::new(output.clone(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output.clone(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(w, h);
     let vh = state.viewport_height;
     let (_, _, _, total) = state.visual_geometry(state.last_content_width);
@@ -1660,7 +1774,12 @@ index 1111111..2222222 100644
         // Fresh state per target: cursor placement must not leak across
         // probes. Skip targets inside a divider's own segments (whole-
         // divider display is standing behavior there).
-        let mut probe = AppState::new(state.output.clone(), "test_repo".into(), temp_notes_path());
+        let mut probe = AppState::new(
+            state.output.clone(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        );
         probe.render_frame(w, h);
         let (starts, _, _, _) = probe.visual_geometry(probe.last_content_width);
         let on_div_seg = probe.hunk_starts.iter().any(|hs| {
@@ -1742,7 +1861,12 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     state.render_frame(80, 16);
     let cw = state.last_content_width;
@@ -1862,7 +1986,12 @@ index 1111111..2222222 100644
     // Character index of the ▲ glyph in hunk 2's divider text.
     let hk = output.files[0].hunks[1].clone();
     let gap_probe = {
-        let tmp = AppState::new(output.clone(), "test_repo".into(), temp_notes_path());
+        let tmp = AppState::new(
+            output.clone(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        );
         tmp.hunk_leading_gap(0, 1)
     };
     assert!(gap_probe > 0, "need a hidden gap for arrow hits");
@@ -1879,7 +2008,12 @@ index 1111111..2222222 100644
 
     // Case 1: glyph at a segment end (width c+1) is hit from the next
     // segment's first cell.
-    let mut state = AppState::new(output.clone(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output.clone(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let width_end = c + 1;
     state.render_frame(width_end, 40);
     assert!(
@@ -1913,7 +2047,12 @@ index 1111111..2222222 100644
 
     // Cases 2&3: glyph at a segment start (width c) is hit from the
     // previous segment's last cell.
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(c, 40);
     assert!(
         state.last_content_width == c,
@@ -1955,7 +2094,12 @@ fn test_scrollbar_drawn_column_matches_hit_column() {
         diff.push_str(&format!("+line {i}\n"));
     }
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let frame = state.render_frame(80, 30);
     let cw = state.last_content_width;
     let ho = state.last_viewport_start;
@@ -1988,7 +2132,12 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
         diff.push_str(&format!("+line {i}\n"));
     }
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(80, 30);
     let vh = state.viewport_height;
     let track_h = state.screen_height;
@@ -2048,7 +2197,12 @@ fn test_scrollbar_drag_follows_formula_monotonically() {
         diff.push_str(&format!("+line {i}\n"));
     }
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(80, 24);
     let vh = state.viewport_height;
     let track_h = state.screen_height;
@@ -2106,7 +2260,12 @@ fn test_scrollbar_drag_extremes_from_any_grab() {
         diff.push_str(&format!("+line {i}\n"));
     }
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(80, 24);
     let vh = state.viewport_height;
     let track_h = state.screen_height;
@@ -2157,7 +2316,12 @@ fn test_scrollbar_column_spans_full_height() {
         diff.push_str(&format!("+line {i}\n"));
     }
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let backend = TestBackend::new(80, 20);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -2245,8 +2409,13 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state =
-        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
 
     let fi = 0;
 
@@ -2390,8 +2559,13 @@ index 1111111..2222222 100644
         .with_new_content(contents)
         .with_old_content(old_contents)
         .run();
-    let mut state =
-        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
 
     let fi = 0;
     assert_eq!(state.output.files[fi].hunks.len(), 2);
@@ -2492,7 +2666,12 @@ fn test_render_ratatui_frame_layout() {
  }
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.status_message = Some(("Saved note".to_string(), true));
 
     let backend = TestBackend::new(80, 24);
@@ -2554,7 +2733,12 @@ fn test_render_ratatui_frame_modals_overlay() {
  }
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // 1. Help Modal Active
     state.show_help = true;
@@ -2615,7 +2799,12 @@ fn test_render_ratatui_frame_scrolling_clean_spans() {
 +checksum = "2222"
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -2665,7 +2854,12 @@ fn test_render_ratatui_frame_note_modal_overlay_with_range_selection() {
 +fn new_three() {}
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Select range
     state.start_or_confirm_selection();
@@ -2713,7 +2907,12 @@ fn test_render_ratatui_frame_mouse_hit_testing() {
  fn three() {}
 "#;
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -2743,7 +2942,12 @@ fn test_render_ratatui_frame_mouse_hit_testing() {
 fn test_event_paste_into_note_modal() {
     let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     state.execute(TuiCommand::StartNoteDraft);
     assert_eq!(state.note_draft, Some(String::new()));
@@ -2765,7 +2969,12 @@ fn test_event_paste_into_note_modal() {
 fn test_event_paste_into_file_finder() {
     let diff = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n";
     let out = run_pipeline_full(diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     state.execute(TuiCommand::OpenFileFinder);
     assert!(state.file_finder.is_some());
@@ -2788,7 +2997,12 @@ fn test_note_modal_margins_with_scrollbar() {
     }
 
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     state.execute(TuiCommand::StartNoteDraft);
     assert!(state.note_draft.is_some());
@@ -2849,7 +3063,12 @@ fn test_mov_target_and_source_render_in_tui() {
         untracked_skipped: vec![],
     };
 
-    let mut state = AppState::new(output, "opt_1".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "opt_1".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Find collapse/mod.rs file index
     let fi = state
@@ -2923,8 +3142,13 @@ index 1111111..2222222 100644
         .with_new_content(contents.clone())
         .with_old_content(contents)
         .run();
-    let mut state =
-        AppState::new(output, "test_repo".into(), temp_notes_path()).with_expand_lines(6);
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(6);
     state.render_frame(120, 30);
     let fi = 0;
     let gap = state.hunk_leading_gap(fi, 1);
@@ -2982,7 +3206,12 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_file_header_indicator_hit_rectangle_three_chars_wide() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(80, 20);
     let click_row = state.last_viewport_start;
     let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;
@@ -3034,7 +3263,12 @@ fn test_file_header_indicator_hit_rectangle_three_chars_wide() {
 
 #[test]
 fn test_mouse_click_hunk_header_selects_hunk_divider() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(120, 40);
 
     let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
@@ -3077,7 +3311,12 @@ fn test_mouse_click_hunk_header_selects_hunk_divider() {
 
 #[test]
 fn test_mouse_click_note_line_selects_note() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.row_idx = 1;
     state.vis_line = 0;
     state.note_draft = Some("Review this line".into());
@@ -3118,7 +3357,12 @@ fn test_mouse_click_note_line_selects_note() {
 
 #[test]
 fn test_mouse_click_multiline_note_selects_specific_line() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.row_idx = 1;
     state.vis_line = 0;
     state.note_draft = Some("Line 1\n\nLine 2".into());
@@ -3159,7 +3403,12 @@ fn test_mouse_click_multiline_note_selects_specific_line() {
 
 #[test]
 fn test_mouse_click_diff_row_with_hunk_divider_selects_code_row() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(120, 40);
 
     let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
@@ -3198,7 +3447,12 @@ fn test_no_diffs_renders_header_footer_and_main_message_frame() {
         branch: "main".into(),
         untracked_skipped: Vec::new(),
     };
-    let mut state = AppState::new(empty_output, "my_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        empty_output,
+        "my_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let frame = state.render_frame(120, 20);
 
     // Header bar with repo name
@@ -3233,7 +3487,12 @@ fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
         branch: "feature-branch".into(),
         untracked_skipped: Vec::new(),
     };
-    let mut state = AppState::new(empty_output, "demo_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        empty_output,
+        "demo_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let backend = TestBackend::new(120, 20);
     let mut terminal = Terminal::new(backend).unwrap();
 
@@ -3305,8 +3564,13 @@ fn test_app_commit_range_in_render_ratatui() {
         untracked_skipped: vec![],
     };
 
-    let mut state = AppState::new(output, "demo_repo".into(), temp_notes_path())
-        .with_commit_range(Some("3f05a71..7e0caab".into()));
+    let mut state = AppState::new(
+        output,
+        "demo_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_commit_range(Some("3f05a71..7e0caab".into()));
 
     let frame = terminal
         .draw(|f| {
@@ -3350,7 +3614,13 @@ fn test_app_header_bar_shows_staged_badge() {
         vec![],
         true,
     );
-    let mut state = AppState::new(output, "my_repo".into(), temp_notes_path()).with_target(target);
+    let mut state = AppState::new(
+        output,
+        "my_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_target(target);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
     let frame = terminal
         .draw(|f| {
@@ -3375,7 +3645,12 @@ fn test_app_streaming_dot_blinking_and_pause() {
         branch: "work".into(),
         untracked_skipped: vec![],
     };
-    let mut state = AppState::new(output, "repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // When not streaming, dot is always "●"
     state.is_streaming = false;
@@ -3419,7 +3694,12 @@ fn test_app_streaming_dot_blinking_and_pause() {
 #[test]
 fn test_viewport_line_origin_describes_file_and_row() {
     use crate::types::FlatRow;
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Banner row of the only file.
     let desc = state.viewport_line_origin(Some(0));
@@ -3492,7 +3772,12 @@ fn test_ratatui_status_bar_uses_scrollbar_narrowed_width() {
         "diff --git a/crates/diffuse-core/src/lib.rs b/crates/diffuse-core/src/lib.rs\n--- a/crates/diffuse-core/src/lib.rs\n+++ b/crates/diffuse-core/src/lib.rs\n{hunks}"
     );
     let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
-    let mut state = AppState::new(out, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let backend = TestBackend::new(48, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -3551,7 +3836,12 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_mouse_click_end_of_hunks_divider_selects() {
-    let mut state = AppState::new(trailing_gap_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        trailing_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.render_frame(120, 40);
 
     let fi = 0;
@@ -3602,8 +3892,13 @@ fn test_mouse_click_end_of_hunks_divider_selects() {
 
 #[test]
 fn test_mouse_click_end_of_hunks_divider_arrow_expands() {
-    let mut state = AppState::new(trailing_gap_output(), "test_repo".into(), temp_notes_path())
-        .with_expand_lines(5);
+    let mut state = AppState::new(
+        trailing_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(5);
     state.render_frame(120, 40);
 
     let fi = 0;
@@ -3670,7 +3965,12 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_hunk_trailing_gap_when_file_shrunk_at_eof() {
-    let state = AppState::new(shrunk_eof_output(), "test_repo".into(), temp_notes_path());
+    let state = AppState::new(
+        shrunk_eof_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let fi = 0;
     assert_eq!(
         state.hunk_trailing_gap(fi),
@@ -3713,6 +4013,7 @@ fn test_hunk_trailing_gap_when_file_shrunk_with_eof_context_row() {
         shrunk_eof_context_row_output(),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     let fi = 0;
     assert_eq!(
@@ -3728,8 +4029,13 @@ fn test_hunk_trailing_gap_when_file_shrunk_with_eof_context_row() {
 
 #[test]
 fn test_is_cursor_on_bottom_divider_and_enter_key() {
-    let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-        .with_expand_lines(4);
+    let mut state = AppState::new(
+        two_hunk_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(4);
     let fi = 0;
     let gap_before = state.hunk_trailing_gap(fi);
     assert!(gap_before > 0);
@@ -3823,8 +4129,13 @@ index 1111111..2222222 100644
 
 #[test]
 fn test_hunk_bar_click_pivots_and_retains_cursor_visual_position() {
-    let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-        .with_expand_lines(4);
+    let mut state = AppState::new(
+        two_hunk_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(4);
     state.render_frame(120, 16);
     state.scroll = 2;
 
@@ -3947,8 +4258,13 @@ fn test_hunk_bar_click_pivots_and_retains_cursor_visual_position() {
 
 #[test]
 fn test_bottom_divider_click_pivots_and_retains_cursor_visual_position() {
-    let mut state = AppState::new(trailing_gap_output(), "test_repo".into(), temp_notes_path())
-        .with_expand_lines(4);
+    let mut state = AppState::new(
+        trailing_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_expand_lines(4);
     state.render_frame(120, 8);
     state.scroll = 1;
 
@@ -4012,8 +4328,13 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
 
     // 1. Cursor is ABOVE the screen (scrolled off top)
     {
-        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-            .with_expand_lines(4);
+        let mut state = AppState::new(
+            two_hunk_gap_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        )
+        .with_expand_lines(4);
         state.render_frame(120, 16);
         state.scroll = 6;
 
@@ -4071,8 +4392,13 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
 
     // 2. Cursor is BELOW the screen (scrolled past bottom)
     {
-        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-            .with_expand_lines(4);
+        let mut state = AppState::new(
+            two_hunk_gap_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        )
+        .with_expand_lines(4);
         state.render_frame(120, 16);
         state.scroll = 2;
 
@@ -4142,8 +4468,13 @@ fn test_collapsing_hunk_retains_cursor_visual_position_on_screen_and_outside_scr
 
     // 1. Cursor ON SCREEN when collapsing
     {
-        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-            .with_expand_lines(8);
+        let mut state = AppState::new(
+            two_hunk_gap_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        )
+        .with_expand_lines(8);
         state.render_frame(120, 20);
         state.expand_hunk_below(fi, 0);
 
@@ -4163,8 +4494,13 @@ fn test_collapsing_hunk_retains_cursor_visual_position_on_screen_and_outside_scr
 
     // 2. Cursor ABOVE SCREEN when collapsing
     {
-        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-            .with_expand_lines(8);
+        let mut state = AppState::new(
+            two_hunk_gap_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        )
+        .with_expand_lines(8);
         state.render_frame(120, 10);
         state.expand_hunk_below(fi, 0);
 
@@ -4185,8 +4521,13 @@ fn test_collapsing_hunk_retains_cursor_visual_position_on_screen_and_outside_scr
 
     // 3. Cursor BELOW SCREEN when collapsing
     {
-        let mut state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-            .with_expand_lines(8);
+        let mut state = AppState::new(
+            two_hunk_gap_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        )
+        .with_expand_lines(8);
         state.render_frame(120, 16);
         state.expand_hunk_below(fi, 0);
 
@@ -4218,9 +4559,19 @@ fn test_expand_below_cursor_above_divider() {
     let fi = 0;
 
     // Verify cursor_visual_line exactly matches compute_geometry layout.
-    let base_state = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path());
+    let base_state = AppState::new(
+        two_hunk_gap_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     for test_row in 0..base_state.flat.len() {
-        let mut s = AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path());
+        let mut s = AppState::new(
+            two_hunk_gap_output(),
+            "test_repo".into(),
+            temp_notes_path(),
+            crate::render::DiffuseTheme::DEFAULT,
+        );
         s.render_frame(120, 25);
         s.row_idx = test_row;
         s.vis_line = 0;
@@ -4236,9 +4587,13 @@ fn test_expand_below_cursor_above_divider() {
     for test_row in 0..base_state.flat.len() {
         // Test A: expand_hunk_below API retains visual cursor position
         {
-            let mut state =
-                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-                    .with_expand_lines(4);
+            let mut state = AppState::new(
+                two_hunk_gap_output(),
+                "test_repo".into(),
+                temp_notes_path(),
+                crate::render::DiffuseTheme::DEFAULT,
+            )
+            .with_expand_lines(4);
             state.render_frame(120, 16);
             state.scroll = 2;
             state.row_idx = test_row;
@@ -4260,9 +4615,13 @@ fn test_expand_below_cursor_above_divider() {
         // Test B: click ▼ (expand context below divider) retains visual cursor
         // position
         {
-            let mut state =
-                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-                    .with_expand_lines(4);
+            let mut state = AppState::new(
+                two_hunk_gap_output(),
+                "test_repo".into(),
+                temp_notes_path(),
+                crate::render::DiffuseTheme::DEFAULT,
+            )
+            .with_expand_lines(4);
             state.render_frame(120, 16);
             state.scroll = 2;
             state.row_idx = test_row;
@@ -4303,9 +4662,13 @@ fn test_expand_below_cursor_above_divider() {
 
         // Test C: click ▲ on divider 1 retains visual cursor position
         {
-            let mut state =
-                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-                    .with_expand_lines(4);
+            let mut state = AppState::new(
+                two_hunk_gap_output(),
+                "test_repo".into(),
+                temp_notes_path(),
+                crate::render::DiffuseTheme::DEFAULT,
+            )
+            .with_expand_lines(4);
             state.render_frame(120, 16);
             state.scroll = 2;
             state.row_idx = test_row;
@@ -4346,9 +4709,13 @@ fn test_expand_below_cursor_above_divider() {
 
         // Test D: click bottom divider retains visual cursor position
         {
-            let mut state =
-                AppState::new(two_hunk_gap_output(), "test_repo".into(), temp_notes_path())
-                    .with_expand_lines(4);
+            let mut state = AppState::new(
+                two_hunk_gap_output(),
+                "test_repo".into(),
+                temp_notes_path(),
+                crate::render::DiffuseTheme::DEFAULT,
+            )
+            .with_expand_lines(4);
             state.render_frame(120, 16);
             state.scroll = 10;
             state.row_idx = test_row;
@@ -4389,4 +4756,21 @@ fn test_expand_below_cursor_above_divider() {
             );
         }
     }
+}
+
+#[test]
+fn test_app_toggle_theme_command() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
+
+    state.execute(TuiCommand::ToggleTheme);
+    assert_eq!(state.theme, crate::render::DiffuseTheme::LIGHT);
+
+    state.execute(TuiCommand::ToggleTheme);
+    assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
 }

@@ -84,7 +84,12 @@ fn test_word_wrap_and_visual_subline_navigation() {
     let mut out = sample_output();
     // Add a very long line to file 0 (row 1 in diff, not the hunk divider row)
     out.files[0].rows[1].text = "A".repeat(150);
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.row_idx = 2;
     // content_width = 80 - 1 (sb) = 79. text_cols = 79 - 6 = 73.
     // 150 chars -> 3 segments (73 + 73 + 4).
@@ -140,7 +145,12 @@ index 1111111..2222222 100644
         .collect();
 
     let out = run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default());
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     state.toggle_raw_diff();
     assert!(state.raw_diff);
 
@@ -176,6 +186,7 @@ fn test_hunk_divider_renders_and_extent_lift() {
         sample_output_two_hunks(),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
 
     let frame = state.render_frame(120, 80);
@@ -213,7 +224,12 @@ fn test_hunk_divider_renders_and_extent_lift() {
 
 #[test]
 fn test_render_frame_lines_do_not_overflow_width() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     for width in [40, 60, 80, 100, 120] {
         for height in [15, 24, 30, 40] {
             let frame = state.render_frame(width, height);
@@ -230,7 +246,12 @@ fn test_render_frame_lines_do_not_overflow_width() {
 
 #[test]
 fn test_current_line_highlight_covers_gutter() {
-    let mut state = AppState::new(sample_output(), "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     // Context row selected (row 1, vis_line 1 following the hunk divider at
     // vis_line 0)
     state.row_idx = 1;
@@ -253,7 +274,12 @@ fn test_current_line_highlight_covers_gutter() {
 fn test_file_header_wrapping_seg_count() {
     let mut out = sample_output();
     out.files[0].path = "crates/diffuse-core/src/very/long/nested/path/to/my_file.rs".to_string();
-    let state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let header_idx = 0;
     assert!(state.flat[header_idx].is_file_header);
 
@@ -366,7 +392,12 @@ fn test_wrapped_line_never_overflows_scrollbar_gutter() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(output, "repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     let (grid_lines, has_sb, _thumb_off, _thumb_size, cw) =
         state.render_diff_viewport_lines(50, 10, 10);

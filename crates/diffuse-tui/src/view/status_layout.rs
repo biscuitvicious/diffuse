@@ -3,7 +3,7 @@
 //! both renderers — the ANSI string path and the ratatui span path — so
 //! their decisions can never drift apart.
 
-use crate::core::counts::FileCounts;
+use crate::{core::counts::FileCounts, render::Color};
 
 use super::header::{
     StatusBarContext, count_color, file_status_tag, stripped_file_path, truncate_status_path,
@@ -14,7 +14,7 @@ use crate::render::width::display_width;
 /// `bold` carry the styling both renderers apply.
 pub struct StatusSegment {
     pub text: String,
-    pub color: u8,
+    pub color: Color,
     pub bold: bool,
 }
 
@@ -51,7 +51,11 @@ fn badges_for(ctx: &StatusBarContext<'_>, abbrev: bool) -> Badges {
     Badges { files, hunk }
 }
 
-fn counts_segments(counts: &FileCounts, first_space: bool) -> Vec<StatusSegment> {
+fn counts_segments(
+    counts: &FileCounts,
+    first_space: bool,
+    palette: &crate::render::ThemePalette,
+) -> Vec<StatusSegment> {
     counts
         .segments()
         .iter()
@@ -66,7 +70,7 @@ fn counts_segments(counts: &FileCounts, first_space: bool) -> Vec<StatusSegment>
             };
             StatusSegment {
                 text: format!("{sep}{}{}", seg.marker, seg.value),
-                color: count_color(seg.kind),
+                color: count_color(seg.kind, palette),
                 bold: true,
             }
         })
@@ -79,10 +83,11 @@ fn segments_for(
     badges: &Badges,
     path: Option<&str>,
 ) -> Vec<StatusSegment> {
+    let p = &ctx.theme.palette;
     let mut segs = Vec::new();
     segs.push(StatusSegment {
         text: format!(" {}", badges.files),
-        color: 220,
+        color: p.status_bar_accent,
         bold: true,
     });
     if ctx.is_streaming {
@@ -93,87 +98,87 @@ fn segments_for(
         };
         segs.push(StatusSegment {
             text: " \u{00b7} ".to_string(),
-            color: 240,
+            color: p.status_bar_dim,
             bold: false,
         });
         segs.push(StatusSegment {
             text: format!("{dot} streaming..."),
-            color: 117,
+            color: p.accent,
             bold: true,
         });
     }
     if let Some(f) = ctx.file
         && !f.counts.is_empty()
     {
-        segs.extend(counts_segments(&f.counts, true));
+        segs.extend(counts_segments(&f.counts, true, p));
     }
     segs.push(StatusSegment {
         text: " \u{00b7} ".to_string(),
-        color: 240,
+        color: p.status_bar_dim,
         bold: false,
     });
     segs.push(StatusSegment {
         text: badges.hunk.clone(),
-        color: 213,
+        color: p.hunk_divider_fg,
         bold: true,
     });
     if let Some(c) = ctx.hunk_counts
         && !c.is_empty()
     {
-        segs.extend(counts_segments(&c, true));
+        segs.extend(counts_segments(&c, true, p));
     }
     if ctx.raw_diff {
         segs.push(StatusSegment {
             text: " \u{00b7} ".to_string(),
-            color: 240,
+            color: p.status_bar_dim,
             bold: false,
         });
         segs.push(StatusSegment {
             text: "raw diff".to_string(),
-            color: 220,
+            color: p.status_bar_accent,
             bold: true,
         });
     }
     if ctx.col_offset > 0 {
         segs.push(StatusSegment {
             text: " \u{00b7} ".to_string(),
-            color: 240,
+            color: p.status_bar_dim,
             bold: false,
         });
         segs.push(StatusSegment {
             text: format!("col {}+", ctx.col_offset),
-            color: 244,
+            color: p.status_bar_dim,
             bold: false,
         });
     }
     if !ctx.num_buffer.is_empty() {
         segs.push(StatusSegment {
             text: " \u{00b7} ".to_string(),
-            color: 240,
+            color: p.status_bar_dim,
             bold: false,
         });
         segs.push(StatusSegment {
             text: format!("go {}", ctx.num_buffer),
-            color: 221,
+            color: p.warning,
             bold: true,
         });
     }
     if let (Some(f), Some(path)) = (ctx.file, path) {
         segs.push(StatusSegment {
             text: " \u{00b7} ".to_string(),
-            color: 240,
+            color: p.status_bar_dim,
             bold: false,
         });
         segs.push(StatusSegment {
             text: path.to_string(),
-            color: 231,
+            color: p.status_bar_fg,
             bold: true,
         });
         let status = file_status_tag(f);
         if !status.is_empty() {
             segs.push(StatusSegment {
                 text: status,
-                color: 244,
+                color: p.status_bar_dim,
                 bold: false,
             });
         }
@@ -282,6 +287,7 @@ mod tests {
                 streaming_dot: "●",
                 file: None,
                 hunk_counts: None,
+                theme: &crate::render::DiffuseTheme::DEFAULT,
             },
             file,
         )

@@ -13,7 +13,7 @@ use crate::{
     core::wire::PipelineOutput,
     finder::FileFinderState,
     render::{
-        DiffuseTheme, render_row_segment, styled_prefix,
+        ColorExt, DiffuseTheme, render_row_segment, styled_prefix,
         width::{char_width, display_width},
     },
 };
@@ -31,7 +31,7 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 }
 
 /// Render the `?` key-bindings modal as full-screen overlay lines.
-pub fn render_help_modal(width: usize, height: usize) -> Vec<String> {
+pub fn render_help_modal(width: usize, height: usize, theme: &DiffuseTheme) -> Vec<String> {
     let key_w = if width < 48 {
         16
     } else if width < 58 {
@@ -53,6 +53,7 @@ pub fn render_help_modal(width: usize, height: usize) -> Vec<String> {
         ("y", "toggle syntax highlight"),
         ("R", "toggle raw diff view"),
         ("t", "toggle staged / unstaged"),
+        ("T", "toggle light / dark theme"),
         ("a · +", "expand all context lines"),
         ("c / C", "reset hunk / all context"),
         ("m", "new note"),
@@ -61,13 +62,20 @@ pub fn render_help_modal(width: usize, height: usize) -> Vec<String> {
         ("q · Ctrl+c", "quit"),
     ];
 
+    let p = &theme.palette;
+    let bg_code = p.modal_bg.bg_code();
+    let border_code = p.modal_border.fg_code();
+    let title_code = p.modal_title.fg_code();
+    let text_code = p.modal_text.fg_code();
+    let dim_code = p.modal_dim.fg_code();
+
     let mut lines = Vec::new();
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{}\x1b[0m",
+        "{bg_code}\x1b[1m{title_code}{}\x1b[0m",
         truncate_pad("  KEY BINDINGS", width)
     ));
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[38;5;240m{}\x1b[0m",
+        "{bg_code}{border_code}{}\x1b[0m",
         "─".repeat(width)
     ));
 
@@ -83,19 +91,19 @@ pub fn render_help_modal(width: usize, height: usize) -> Vec<String> {
             let k_str = truncate_pad(k, key_w);
             let line_raw = format!("  {k_str} {d}");
             lines.push(format!(
-                "\x1b[48;5;236m\x1b[38;5;255m{}\x1b[0m",
+                "{bg_code}{text_code}{}\x1b[0m",
                 truncate_pad(&line_raw, width)
             ));
         }
     }
 
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[38;5;244m{}\x1b[0m",
+        "{bg_code}{dim_code}{}\x1b[0m",
         truncate_pad("  ? · Esc to close", width)
     ));
 
     while lines.len() < height {
-        lines.push(format!("\x1b[48;5;236m{}\x1b[0m", " ".repeat(width)));
+        lines.push(format!("{bg_code}{}\x1b[0m", " ".repeat(width)));
     }
 
     lines
@@ -151,7 +159,7 @@ pub fn wrap_words(text: &str, max_width: usize) -> Vec<String> {
 
 /// Render the Help Modal directly as a full-screen Ratatui widget popup with
 /// rounded borders.
-pub fn render_help_modal_widget(f: &mut Frame, area: Rect) {
+pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect) {
     let entries: &[(&str, &str)] = &[
         ("j · ↓ / k · ↑", "next / prev line"),
         ("J · } / K · {", "next / prev hunk"),
@@ -165,6 +173,7 @@ pub fn render_help_modal_widget(f: &mut Frame, area: Rect) {
         ("y", "toggle syntax highlight"),
         ("R", "toggle raw diff view"),
         ("t", "toggle staged / unstaged"),
+        ("T", "toggle light / dark theme"),
         ("a · +", "expand all context lines"),
         ("c / C", "reset hunk / all context"),
         ("m", "new note"),
@@ -175,20 +184,21 @@ pub fn render_help_modal_widget(f: &mut Frame, area: Rect) {
 
     f.render_widget(Clear, area);
 
+    let p = &theme.palette;
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(" KEY BINDINGS · ? / Esc close ")
         .title_style(
             Style::default()
-                .fg(Color::Indexed(231))
+                .fg(crate::view::to_color(p.modal_title))
                 .add_modifier(Modifier::BOLD),
         )
-        .border_style(Style::default().fg(Color::Indexed(240)))
+        .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(Color::Indexed(236))
-                .fg(Color::Indexed(252)),
+                .bg(crate::view::to_color(p.modal_bg))
+                .fg(crate::view::to_color(p.modal_text)),
         );
 
     let inner_w = area.width.saturating_sub(2) as usize;
@@ -214,16 +224,19 @@ pub fn render_help_modal_widget(f: &mut Frame, area: Rect) {
                 Span::styled(
                     format!(" {:<key_w$} ", k),
                     Style::default()
-                        .fg(Color::Indexed(51))
+                        .fg(crate::view::to_color(p.accent))
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(d.to_string(), Style::default().fg(Color::Indexed(252))),
+                Span::styled(
+                    d.to_string(),
+                    Style::default().fg(crate::view::to_color(p.modal_text)),
+                ),
             ]));
         }
     }
 
-    let p = Paragraph::new(lines).block(block);
-    f.render_widget(p, area);
+    let p_widget = Paragraph::new(lines).block(block);
+    f.render_widget(p_widget, area);
 }
 
 /// Render the fuzzy file finder popup dialog covering the full screen with a
@@ -233,7 +246,13 @@ pub fn render_finder_modal(
     finder: &FileFinderState,
     width: usize,
     height: usize,
+    theme: &DiffuseTheme,
 ) -> Vec<String> {
+    let p = &theme.palette;
+    let bg_code = p.modal_bg.bg_code();
+    let border_code = p.modal_border.fg_code();
+    let title_code = p.modal_title.fg_code();
+
     let mut lines = Vec::new();
 
     let header_info = if width < 50 {
@@ -258,21 +277,21 @@ pub fn render_finder_modal(
         )
     };
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{}\x1b[0m",
+        "{bg_code}\x1b[1m{title_code}{}\x1b[0m",
         truncate_pad(&header_info, width)
     ));
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[38;5;240m{}\x1b[0m",
+        "{bg_code}{border_code}{}\x1b[0m",
         "─".repeat(width)
     ));
 
     let prompt = format!("  @ {}█", finder.query);
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[1m\x1b[38;5;231m{}\x1b[0m",
+        "{bg_code}\x1b[1m{title_code}{}\x1b[0m",
         truncate_pad(&prompt, width)
     ));
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[38;5;240m{}\x1b[0m",
+        "{bg_code}{border_code}{}\x1b[0m",
         "─".repeat(width)
     ));
 
@@ -280,7 +299,7 @@ pub fn render_finder_modal(
     let total = finder.matches.len();
     if total == 0 {
         lines.push(format!(
-            "\x1b[48;5;236m\x1b[38;5;240m{}\x1b[0m",
+            "{bg_code}{border_code}{}\x1b[0m",
             truncate_pad("  No matching files in diff", width)
         ));
     } else {
@@ -298,20 +317,20 @@ pub fn render_finder_modal(
             let prefix = if is_sel { "▶ " } else { "  " };
             let stats = format!("+{} -{} ~{}", f.counts.adds, f.counts.dels, f.counts.mods);
 
-            let bg_code = if is_sel {
-                "\x1b[48;5;239m"
+            let row_bg_code = if is_sel {
+                p.modal_selected_bg.bg_code()
             } else {
-                "\x1b[48;5;236m"
+                p.modal_bg.bg_code()
             };
             let stats_color = if is_sel {
-                "\x1b[38;5;248m"
+                p.modal_selected_fg.fg_code()
             } else {
-                "\x1b[38;5;242m"
+                p.modal_dim.fg_code()
             };
             let prefix_color = if is_sel {
-                "\x1b[1m\x1b[38;5;120m"
+                format!("\x1b[1m{}", p.count_adds.fg_code())
             } else {
-                "\x1b[38;5;244m"
+                p.modal_dim.fg_code()
             };
 
             let prefix_w = visible_width(prefix);
@@ -320,14 +339,14 @@ pub fn render_finder_modal(
             let avail_path_w = width.saturating_sub(prefix_w + 2 + stats_w + right_margin);
 
             let (path_display, path_vis_w) =
-                format_path_matches(&m.path, &m.match_indices, avail_path_w, is_sel);
+                format_path_matches(&m.path, &m.match_indices, avail_path_w, is_sel, p);
 
             let used_w = prefix_w + path_vis_w + stats_w + right_margin;
             let pad_w = width.saturating_sub(used_w);
             let padding = " ".repeat(pad_w);
 
             let line_raw = format!(
-                "{bg_code}{prefix_color}{prefix}{path_display}{bg_code}{padding}{stats_color}{stats}  \x1b[0m"
+                "{row_bg_code}{prefix_color}{prefix}{path_display}{row_bg_code}{padding}{stats_color}{stats}  \x1b[0m"
             );
             lines.push(line_raw);
         }
@@ -335,7 +354,7 @@ pub fn render_finder_modal(
 
     // Horizontal ruler dividing finder matches from the live diff preview
     lines.push(format!(
-        "\x1b[48;5;236m\x1b[38;5;240m{}\x1b[0m",
+        "{bg_code}{border_code}{}\x1b[0m",
         "─".repeat(width)
     ));
 
@@ -347,15 +366,18 @@ pub fn render_finder_modal(
         let remaining = height.saturating_sub(lines.len());
         if f.rows.is_empty() {
             if remaining > 0 {
+                let dim_code = p.modal_dim.fg_code();
                 lines.push(format!(
-                    "\x1b[48;5;236m\x1b[38;5;242m{}\x1b[0m",
+                    "{bg_code}{dim_code}{}\x1b[0m",
                     truncate_pad("      (No diff rows to display)", width)
                 ));
             }
         } else {
             let text_cols = width.saturating_sub(6).max(1);
             for r in f.rows.iter().take(remaining) {
-                let pfx = styled_prefix(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true);
+                let pfx = styled_prefix(
+                    r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true, theme,
+                );
                 let rendered_row = render_row_segment(
                     &r.text,
                     r.del_text.as_deref(),
@@ -370,7 +392,7 @@ pub fn render_finder_modal(
                     0,
                     true,
                     true,
-                    &DiffuseTheme::DEFAULT,
+                    theme,
                 );
                 let vis_w = visible_width(&rendered_row);
                 let pad_str = if vis_w < width {
@@ -384,7 +406,7 @@ pub fn render_finder_modal(
     }
 
     while lines.len() < height {
-        lines.push(format!("\x1b[48;5;236m{}\x1b[0m", " ".repeat(width)));
+        lines.push(format!("{bg_code}{}\x1b[0m", " ".repeat(width)));
     }
 
     lines
@@ -396,10 +418,12 @@ pub fn render_finder_modal_widget(
     f: &mut Frame,
     output: &PipelineOutput,
     finder: &FileFinderState,
+    theme: &DiffuseTheme,
     area: Rect,
 ) {
     f.render_widget(Clear, area);
 
+    let p = &theme.palette;
     let file_list_h = (area.height / 5).max(3);
     let finder_h = (file_list_h + 4).min(area.height.saturating_sub(4)).max(4);
     let chunks = Layout::default()
@@ -424,10 +448,16 @@ pub fn render_finder_modal_widget(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(title)
+        .title_style(
+            Style::default()
+                .fg(crate::view::to_color(p.modal_title))
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(Color::Indexed(236))
-                .fg(Color::Indexed(252)),
+                .bg(crate::view::to_color(p.modal_bg))
+                .fg(crate::view::to_color(p.modal_text)),
         );
 
     let inner_w = finder_area.width.saturating_sub(2) as usize;
@@ -437,20 +467,20 @@ pub fn render_finder_modal_widget(
         Span::styled(
             "@ ",
             Style::default()
-                .fg(Color::Indexed(220))
+                .fg(crate::view::to_color(p.status_bar_accent))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             finder.query.clone(),
             Style::default()
-                .fg(Color::Indexed(231))
+                .fg(crate::view::to_color(p.modal_title))
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled("█", Style::default().fg(Color::Indexed(51))),
+        Span::styled("█", Style::default().fg(crate::view::to_color(p.accent))),
     ]));
     finder_lines.push(Line::from(Span::styled(
         "─".repeat(inner_w),
-        Style::default().fg(Color::Indexed(240)),
+        Style::default().fg(crate::view::to_color(p.modal_border)),
     )));
 
     let max_visible = (finder_area.height.saturating_sub(4) as usize).max(1);
@@ -458,7 +488,7 @@ pub fn render_finder_modal_widget(
     if total == 0 {
         finder_lines.push(Line::from(Span::styled(
             "  No matching files in diff",
-            Style::default().fg(Color::Indexed(240)),
+            Style::default().fg(crate::view::to_color(p.modal_dim)),
         )));
     } else {
         let start = if total <= max_visible || finder.selected_idx < max_visible {
@@ -482,10 +512,10 @@ pub fn render_finder_modal_widget(
                 prefix,
                 if is_sel {
                     Style::default()
-                        .fg(Color::Indexed(120))
+                        .fg(crate::view::to_color(p.count_adds))
                         .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::Indexed(244))
+                    Style::default().fg(crate::view::to_color(p.modal_dim))
                 },
             )];
 
@@ -493,14 +523,14 @@ pub fn render_finder_modal_widget(
             let stats_w = stats.len();
             let avail_path_w = inner_w.saturating_sub(prefix_w + 2 + stats_w);
             let path_spans =
-                format_path_matches_spans(&m.path, &m.match_indices, avail_path_w, is_sel);
+                format_path_matches_spans(&m.path, &m.match_indices, avail_path_w, is_sel, p);
             let path_len: usize = path_spans.iter().map(|s| display_width(&s.content)).sum();
             spans.extend(path_spans);
 
             let bg_color = if is_sel {
-                Color::Indexed(239)
+                crate::view::to_color(p.modal_selected_bg)
             } else {
-                Color::Indexed(236)
+                crate::view::to_color(p.modal_bg)
             };
             let pad_style = Style::default().bg(bg_color);
 
@@ -510,18 +540,18 @@ pub fn render_finder_modal_widget(
                 stats,
                 if is_sel {
                     Style::default()
-                        .fg(Color::Indexed(248))
-                        .bg(Color::Indexed(239))
+                        .fg(crate::view::to_color(p.modal_selected_fg))
+                        .bg(crate::view::to_color(p.modal_selected_bg))
                 } else {
                     Style::default()
-                        .fg(Color::Indexed(242))
-                        .bg(Color::Indexed(236))
+                        .fg(crate::view::to_color(p.modal_dim))
+                        .bg(crate::view::to_color(p.modal_bg))
                 },
             ));
 
             let mut line = Line::from(spans);
             if is_sel {
-                line = line.style(Style::default().bg(Color::Indexed(239)));
+                line = line.style(Style::default().bg(crate::view::to_color(p.modal_selected_bg)));
             }
             finder_lines.push(line);
         }
@@ -535,10 +565,16 @@ pub fn render_finder_modal_widget(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(" PREVIEW ")
+        .title_style(
+            Style::default()
+                .fg(crate::view::to_color(p.modal_title))
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(Color::Indexed(236))
-                .fg(Color::Indexed(252)),
+                .bg(crate::view::to_color(p.modal_bg))
+                .fg(crate::view::to_color(p.modal_text)),
         );
 
     let mut preview_lines = Vec::new();
@@ -551,11 +587,13 @@ pub fn render_finder_modal_widget(
         if file.rows.is_empty() {
             preview_lines.push(Line::from(Span::styled(
                 "  (No diff lines to preview)",
-                Style::default().fg(Color::Indexed(242)),
+                Style::default().fg(crate::view::to_color(p.modal_dim)),
             )));
         } else {
             for r in file.rows.iter().take(max_preview_rows) {
-                let pfx = styled_prefix(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true);
+                let pfx = styled_prefix(
+                    r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true, theme,
+                );
                 let rendered_row = render_row_segment(
                     &r.text,
                     r.del_text.as_deref(),
@@ -570,7 +608,7 @@ pub fn render_finder_modal_widget(
                     0,
                     true,
                     true,
-                    &DiffuseTheme::DEFAULT,
+                    theme,
                 );
                 preview_lines.push(ansi_to_ratatui_line(&rendered_row));
             }
@@ -588,8 +626,10 @@ pub fn render_note_modal_widget(
     loc: &str,
     draft: &str,
     editor: Option<&mut crate::editor::Editor>,
+    theme: &DiffuseTheme,
     area: Rect,
 ) {
+    let p = &theme.palette;
     let margin_w = if area.width <= 60 { 2 } else { 4 };
     let modal_w = area.width.saturating_sub(margin_w).min(88);
 
@@ -633,10 +673,16 @@ pub fn render_note_modal_widget(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(title)
+        .title_style(
+            Style::default()
+                .fg(crate::view::to_color(p.warning))
+                .add_modifier(Modifier::BOLD),
+        )
+        .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(Color::Indexed(236))
-                .fg(Color::Indexed(220)),
+                .bg(crate::view::to_color(p.modal_bg))
+                .fg(crate::view::to_color(p.modal_text)),
         );
 
     let inner = block.inner(modal_area);
@@ -747,6 +793,7 @@ fn format_path_matches(
     indices: &[usize],
     max_w: usize,
     selected: bool,
+    palette: &crate::render::ThemePalette,
 ) -> (String, usize) {
     let clean = if path.contains('\t') {
         Cow::Owned(path.replace('\t', "⇥"))
@@ -756,13 +803,16 @@ fn format_path_matches(
     let char_count = clean.chars().count();
     if char_count <= max_w {
         (
-            highlight_path_matches(&clean, indices, selected),
+            highlight_path_matches(&clean, indices, selected, palette),
             char_count,
         )
     } else if max_w <= 2 {
         let truncated: String = clean.chars().take(max_w).collect();
         let len = truncated.chars().count();
-        (highlight_path_matches(&truncated, indices, selected), len)
+        (
+            highlight_path_matches(&truncated, indices, selected, palette),
+            len,
+        )
     } else {
         let keep_chars = max_w - 1;
         let skip_chars = char_count - keep_chars;
@@ -787,11 +837,11 @@ fn format_path_matches(
             .map(|idx| idx - actual_skip)
             .collect();
         let default_color = if selected {
-            "\x1b[1m\x1b[38;5;231m"
+            format!("\x1b[1m{}", palette.modal_title.fg_code())
         } else {
-            "\x1b[38;5;250m"
+            palette.modal_text.fg_code()
         };
-        let tail_highlighted = highlight_path_matches(&tail, &shifted_indices, selected);
+        let tail_highlighted = highlight_path_matches(&tail, &shifted_indices, selected, palette);
         (
             format!("{default_color}…{tail_highlighted}"),
             1 + tail.chars().count(),
@@ -804,6 +854,7 @@ fn format_path_matches_spans(
     indices: &[usize],
     max_w: usize,
     selected: bool,
+    palette: &crate::render::ThemePalette,
 ) -> Vec<Span<'static>> {
     let clean = if path.contains('\t') {
         Cow::Owned(path.replace('\t', "⇥"))
@@ -812,10 +863,10 @@ fn format_path_matches_spans(
     };
     let char_count = clean.chars().count();
     if char_count <= max_w {
-        highlight_path_matches_spans(&clean, indices, selected)
+        highlight_path_matches_spans(&clean, indices, selected, palette)
     } else if max_w <= 2 {
         let truncated: String = clean.chars().take(max_w).collect();
-        highlight_path_matches_spans(&truncated, indices, selected)
+        highlight_path_matches_spans(&truncated, indices, selected, palette)
     } else {
         let keep_chars = max_w - 1;
         let skip_chars = char_count - keep_chars;
@@ -841,16 +892,17 @@ fn format_path_matches_spans(
             .collect();
         let default_style = if selected {
             Style::default()
-                .fg(Color::Indexed(231))
+                .fg(crate::view::to_color(palette.modal_title))
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Indexed(250))
+            Style::default().fg(crate::view::to_color(palette.modal_text))
         };
         let mut spans = vec![Span::styled("…", default_style)];
         spans.extend(highlight_path_matches_spans(
             &tail,
             &shifted_indices,
             selected,
+            palette,
         ));
         spans
     }
@@ -860,17 +912,18 @@ fn highlight_path_matches_spans(
     path: &str,
     indices: &[usize],
     selected: bool,
+    palette: &crate::render::ThemePalette,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let default_style = if selected {
         Style::default()
-            .fg(Color::Indexed(231))
+            .fg(crate::view::to_color(palette.modal_title))
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Indexed(250))
+        Style::default().fg(crate::view::to_color(palette.modal_text))
     };
     let match_style = Style::default()
-        .fg(Color::Indexed(51))
+        .fg(crate::view::to_color(palette.accent))
         .add_modifier(Modifier::BOLD);
 
     let mut cur_text = String::new();
@@ -900,23 +953,28 @@ fn highlight_path_matches_spans(
     spans
 }
 
-fn highlight_path_matches(path: &str, indices: &[usize], selected: bool) -> String {
+fn highlight_path_matches(
+    path: &str,
+    indices: &[usize],
+    selected: bool,
+    palette: &crate::render::ThemePalette,
+) -> String {
     let mut out = String::new();
     let default_color = if selected {
-        "\x1b[1m\x1b[38;5;231m"
+        format!("\x1b[1m{}", palette.modal_title.fg_code())
     } else {
-        "\x1b[38;5;250m"
+        palette.modal_text.fg_code()
     };
-    let match_color = "\x1b[1m\x1b[38;5;51m";
+    let match_color = format!("\x1b[1m{}", palette.accent.fg_code());
 
     let mut cur_matched = None;
     for (i, ch) in path.char_indices() {
         let is_m = indices.contains(&i);
         if Some(is_m) != cur_matched {
             if is_m {
-                out.push_str(match_color);
+                out.push_str(&match_color);
             } else {
-                out.push_str(default_color);
+                out.push_str(&default_color);
             }
             cur_matched = Some(is_m);
         }

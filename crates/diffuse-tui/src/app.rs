@@ -94,7 +94,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(output: PipelineOutput, repo: String, notes_path: PathBuf) -> Self {
+    pub fn new(
+        output: PipelineOutput,
+        repo: String,
+        notes_path: PathBuf,
+        theme: DiffuseTheme,
+    ) -> Self {
         let mut collapsed_files = std::collections::HashSet::new();
         for (fi, f) in output.files.iter().enumerate() {
             let has_content_changes = f.counts.adds > 0 || f.counts.dels > 0 || f.counts.mods > 0;
@@ -143,7 +148,7 @@ impl AppState {
             anchor: None,
             sel_pivot: None,
             confirmed_sel: None,
-            theme: DiffuseTheme::from_env(),
+            theme,
             repo: repo.clone(),
             notes_key: repo.clone(),
             target: diffuse_core::ReviewTarget::from_repo(diffuse_core::Repo::from_name(repo)),

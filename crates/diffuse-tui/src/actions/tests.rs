@@ -58,11 +58,13 @@ fn test_git_stage_unstage_reload_flow() {
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(out, "test".into(), notes_path).with_repo_context(
-        repo_root.clone(),
-        Vec::new(),
-        false,
-    );
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_repo_context(repo_root.clone(), Vec::new(), false);
 
     assert_eq!(state.output.files.len(), 1);
 
@@ -107,11 +109,13 @@ fn test_git_discard_flow() {
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(out, "test".into(), notes_path).with_repo_context(
-        repo_root.clone(),
-        Vec::new(),
-        false,
-    );
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_repo_context(repo_root.clone(), Vec::new(), false);
 
     assert_eq!(state.output.files.len(), 1);
 
@@ -139,11 +143,13 @@ fn test_toggle_staged_action_flow() {
         PipelineOptions::default(),
     );
 
-    let mut state = AppState::new(out, "test".into(), notes_path).with_repo_context(
-        repo_root.clone(),
-        Vec::new(),
-        false,
-    );
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_repo_context(repo_root.clone(), Vec::new(), false);
 
     // 1. Initially unstaged: toggle when staged has NO changes -> Err("no
     //    staged changes")

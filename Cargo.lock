@@ -502,8 +502,10 @@ dependencies = [
 name = "diffuse-render"
 version = "0.1.0"
 dependencies = [
+ "crossterm",
  "diffuse-core",
  "diffuse-syntax",
+ "libc",
  "regex",
  "smallvec",
  "tracing",

@@ -78,6 +78,17 @@ impl AppState {
             TuiCommand::ToggleWordDiff => self.word_diff = !self.word_diff,
             TuiCommand::ToggleRawDiff => self.toggle_raw_diff(),
             TuiCommand::ToggleHelp => self.show_help = !self.show_help,
+            TuiCommand::ToggleTheme => {
+                self.theme = if self.theme == crate::render::DiffuseTheme::LIGHT {
+                    crate::render::DiffuseTheme::DEFAULT
+                } else {
+                    crate::render::DiffuseTheme::LIGHT
+                };
+                if let Some(ref mut editor) = self.note_editor {
+                    editor.set_highlighter(Some(crate::editor::markdown_highlighter(self.theme)));
+                }
+                self.bump_content();
+            }
             TuiCommand::ToggleStaged => {
                 let repo_root = self.repo_root.clone();
                 let git_args = self.git_args.clone();

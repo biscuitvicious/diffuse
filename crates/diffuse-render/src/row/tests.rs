@@ -234,22 +234,56 @@ fn test_is_pure_deletion_mod_multibyte_unicode() {
 
 #[test]
 fn test_render_raw_row_colors() {
-    let add = render_raw_row(RowKind::Add, "  42 + ", "added_line", false, false, true);
+    let theme = DiffuseTheme::DEFAULT;
+    let add = render_raw_row(
+        RowKind::Add,
+        "  42 + ",
+        "added_line",
+        false,
+        false,
+        true,
+        &theme,
+    );
     assert!(add.contains("  42 + "));
     assert!(add.contains("\x1b[38;5;120madded_line"));
 
-    let del = render_raw_row(RowKind::Del, "  41 - ", "deleted_line", false, false, true);
+    let del = render_raw_row(
+        RowKind::Del,
+        "  41 - ",
+        "deleted_line",
+        false,
+        false,
+        true,
+        &theme,
+    );
     assert!(del.contains("  41 - "));
     assert!(del.contains("\x1b[38;5;203mdeleted_line"));
 
-    let ctx = render_raw_row(RowKind::Ctx, "  40   ", "context_line", false, false, true);
+    let ctx = render_raw_row(
+        RowKind::Ctx,
+        "  40   ",
+        "context_line",
+        false,
+        false,
+        true,
+        &theme,
+    );
     assert!(ctx.contains("  40   "));
     assert!(ctx.contains("context_line"));
 }
 
 #[test]
 fn test_render_raw_row_trailing_whitespace() {
-    let add_trailing = render_raw_row(RowKind::Add, "  42 + ", "let x = 1;   ", false, false, true);
+    let theme = DiffuseTheme::DEFAULT;
+    let add_trailing = render_raw_row(
+        RowKind::Add,
+        "  42 + ",
+        "let x = 1;   ",
+        false,
+        false,
+        true,
+        &theme,
+    );
     assert!(add_trailing.contains("  42 + "));
     assert!(add_trailing.contains("\x1b[38;5;120mlet x = 1;"));
     // add_fill_bg is Rgb(26,84,44) and add_gutter_num is Fixed(120)
@@ -271,13 +305,22 @@ fn test_render_raw_row_trailing_whitespace() {
         false,
         false,
         false,
+        &theme,
     );
     assert!(
         !add_wrapped_intermediate.contains("\x1b[48;2;30;96;50m"),
         "intermediate wrapped segments must not highlight spaces at wrap boundary"
     );
 
-    let del_trailing = render_raw_row(RowKind::Del, "  41 - ", "foo();  ", false, false, true);
+    let del_trailing = render_raw_row(
+        RowKind::Del,
+        "  41 - ",
+        "foo();  ",
+        false,
+        false,
+        true,
+        &theme,
+    );
     assert!(del_trailing.contains("  41 - "));
     assert!(del_trailing.contains("\x1b[38;5;203mfoo();"));
     // del_cursor_bg is Rgb(68,24,26), del_gutter_num is Fixed(203)

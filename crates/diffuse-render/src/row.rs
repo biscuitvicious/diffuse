@@ -97,7 +97,7 @@ pub fn prefix_of(
 
 /// Generate styled ANSI 6-character prefix gutter with color highlights and
 /// theme support.
-pub fn styled_prefix_themed(
+pub fn styled_prefix(
     kind: RowKind,
     mov_side: Option<crate::core::wire::MovSide>,
     new_line: Option<u32>,
@@ -160,26 +160,6 @@ pub fn styled_prefix_themed(
             format!("{color_fg}{pad}  {FG_RESET}\x1b[23m")
         }
     }
-}
-
-/// Generate styled ANSI 6-character prefix gutter with color highlights.
-pub fn styled_prefix(
-    kind: RowKind,
-    mov_side: Option<crate::core::wire::MovSide>,
-    new_line: Option<u32>,
-    old_line: Option<u32>,
-    runs: &[OutputRun],
-    in_hunk: bool,
-) -> String {
-    styled_prefix_themed(
-        kind,
-        mov_side,
-        new_line,
-        old_line,
-        runs,
-        in_hunk,
-        &DiffuseTheme::from_env(),
-    )
 }
 
 /// Extract display text of a row considering word diff and column offset.
@@ -713,7 +693,7 @@ pub fn slice_by_visual_width(text: &str, start_col: usize, max_cols: usize) -> S
 /// Write a row in the raw unified-diff representation with theme support
 /// directly to a buffer.
 #[allow(clippy::too_many_arguments)]
-pub fn write_raw_row_themed<W: Write>(
+pub fn write_raw_row<W: Write>(
     out: &mut W,
     kind: RowKind,
     prefix: &str,
@@ -787,8 +767,11 @@ pub fn write_raw_row_themed<W: Write>(
     out.write_str("\x1b[39m\x1b[22m")
 }
 
-/// Render a row in the raw unified-diff representation with theme support.
-pub fn render_raw_row_themed(
+/// Render a row in the raw unified-diff representation with theme support:
+/// the 6-character line-number gutter plus the line text in flat
+/// green/red/muted text color on a default black background (or cursor/band
+/// background when selected).
+pub fn render_raw_row(
     kind: RowKind,
     prefix: &str,
     text: &str,
@@ -798,7 +781,7 @@ pub fn render_raw_row_themed(
     theme: &DiffuseTheme,
 ) -> String {
     let mut out = String::with_capacity(text.len() + 64);
-    let _ = write_raw_row_themed(
+    let _ = write_raw_row(
         &mut out,
         kind,
         prefix,
@@ -809,28 +792,6 @@ pub fn render_raw_row_themed(
         theme,
     );
     out
-}
-
-/// Render a row in the raw unified-diff representation: the 6-character
-/// line-number gutter plus the line text in flat green/red/muted text color
-/// on a default black background (or cursor/band background when selected).
-pub fn render_raw_row(
-    kind: RowKind,
-    prefix: &str,
-    text: &str,
-    selected: bool,
-    band: bool,
-    highlight_trailing: bool,
-) -> String {
-    render_raw_row_themed(
-        kind,
-        prefix,
-        text,
-        selected,
-        band,
-        highlight_trailing,
-        &DiffuseTheme::from_env(),
-    )
 }
 
 #[cfg(test)]

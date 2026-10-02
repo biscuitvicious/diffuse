@@ -60,6 +60,7 @@ fn test_hunk_starts_and_navigation() {
         sample_output_two_hunks(),
         "test_repo".into(),
         temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
     );
     assert_eq!(state.hunk_starts.len(), 2, "both hunks must be located");
     // Start from file header (row 0): the banner counts as inside hunk 1,
@@ -149,7 +150,12 @@ index 1111111..2222222 100644
         raw_source: None,
     });
 
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     assert!(
         state.collapsed_files.contains(&1),
@@ -216,7 +222,12 @@ rename to src/new.rs
     assert_eq!(out.files[0].path, "src/new.rs");
     assert_eq!(out.files[0].rows.len(), 3);
 
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     assert!(
         state.collapsed_files.contains(&0),
         "renamed file (index 0) must be collapsed by default"
@@ -276,7 +287,12 @@ Binary files a/old.png and b/new.png differ
     assert_eq!(out.files[0].display_status(), "binary");
     assert_eq!(out.files[1].display_status(), "binary");
 
-    let mut state = AppState::new(out, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     assert!(
         state.collapsed_files.contains(&0) && state.collapsed_files.contains(&1),
         "binary files must be collapsed by default"
@@ -366,7 +382,12 @@ index 1111111..2222222 100644
         Some(old_content),
         PipelineOptions::default(),
     );
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     assert_eq!(state.hunk_starts.len(), 2, "must find 2 hunk starts");
 
@@ -418,7 +439,12 @@ fn test_diffuse_golden_plan_md_hunk_divider() {
         branch: String::new(),
         untracked_skipped: vec![],
     };
-    let mut state = AppState::new(output, "diffuse".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "diffuse".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     // Find PLAN.md file index
     let fi = state
@@ -538,7 +564,12 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
         untracked_skipped: vec![],
     };
 
-    let mut state = AppState::new(output, "test_repo".into(), temp_notes_path());
+    let mut state = AppState::new(
+        output,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
 
     assert_eq!(state.hunk_starts.len(), 2);
     assert_eq!(
@@ -585,7 +616,12 @@ fn test_palette_rs_commit_hunk_starts_not_interleaved() {
     if pipeline_out.files.is_empty() {
         return;
     }
-    let state = AppState::new(pipeline_out, "test_repo".into(), temp_notes_path());
+    let state = AppState::new(
+        pipeline_out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let file = &state.output.files[0];
     assert_eq!(state.hunk_starts.len(), file.hunks.len());
     let mut expected_flat = 1;

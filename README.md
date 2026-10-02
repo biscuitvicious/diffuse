@@ -145,8 +145,9 @@ constitute the machine interface for external tooling.
 | `-m, --markdown` | Render GitHub-Flavored Markdown |
 | `--color <WHEN>` | ANSI colorization: `always`, `never`, or `auto` (default) |
 | `--no-color` | Disable ANSI colorization |
-| `--theme <NAME>` | Color theme (`default`, `dark`, `black`) |
+| `--theme <NAME>` | Color theme (`auto`, `default`/`dark`, `light`). Defaults to `auto` |
 | `-p, --pager`, `--no-tui` | Print the rendered diff and exit |
+
 | `--raw` | Flat red/green rendering without sub-line detail |
 | `-h, --help` | Print help |
 | `-V, --version` | Print version information |
@@ -201,8 +202,11 @@ File (`n`/`p`) and hunk (`J`/`K`) jumps wrap as well.
 | `s` / `S` | Stage current hunk / current file |
 | `u` / `U` | Unstage current hunk / current file |
 | `x` / `X` | Discard current hunk / current file |
+| `t` | Toggle staged versus unstaged changes |
+| `T` | Toggle light versus dark theme |
 | `?` | Keybinding reference |
 | `q`, `Ctrl-c` | Quit; `Esc` dismisses dialogs and selections |
+
 
 ### 4.3. Review notes
 

@@ -6,6 +6,9 @@
 pub mod palette;
 pub use palette::*;
 
+pub mod detect;
+pub use detect::*;
+
 pub use crate::ansi::{
     Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
 };
@@ -95,6 +98,11 @@ impl DiffuseTheme {
     pub const DEFAULT: Self = Self {
         name: "default",
         palette: ThemePalette::default_palette(),
+    };
+
+    pub const LIGHT: Self = Self {
+        name: "light",
+        palette: ThemePalette::light_palette(),
     };
 
     /// Get the row background and icon style for the specified diff row kind
@@ -252,37 +260,37 @@ impl DiffuseTheme {
         self.palette.named_color(name)
     }
 
-    pub fn fallback_named_color(name: &str) -> Option<&'static str> {
-        match name {
-            "toolDiffAdded" => Some("\x1b[38;5;120m"),
-            "toolDiffRemoved" => Some("\x1b[38;5;203m"),
-            "toolDiffContext" | "muted" => Some("\x1b[38;5;243m"),
-            "warning" | "note" => Some("\x1b[38;5;220m"),
-            "note_tint_bg" => Some("\x1b[48;2;76;64;20m"),
-            "border" => Some("\x1b[38;5;243m"),
-            _ => None,
+    /// Automatically detect the theme based on the terminal's background mode.
+    /// Falls back to `DiffuseTheme::DEFAULT` when detection is unavailable.
+    #[must_use]
+    pub fn auto_detect() -> Self {
+        match detect_terminal_mode() {
+            Some(TerminalMode::Light) => Self::LIGHT,
+            Some(TerminalMode::Dark) | None => Self::DEFAULT,
         }
     }
 
-    /// Resolve a theme by name (`"default"`, `"dark"`, `"black"`).
+    /// Resolve a theme by name (`"default"`, `"dark"`, `"black"`, `"light"`,
+    /// `"white"`, `"auto"`).
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name.trim().to_lowercase().as_str() {
             "default" | "dark" | "black" => Some(Self::DEFAULT),
+            "light" | "white" => Some(Self::LIGHT),
+            "auto" => Some(Self::auto_detect()),
             _ => None,
         }
     }
 
     /// Resolve the active theme from the `DIFFUSE_THEME` environment variable,
-    /// falling back to `default` if unset or invalid.
+    /// falling back to automated detection if unset or `auto`, and defaulting
+    /// to `default` if invalid.
     #[must_use]
     pub fn from_env() -> Self {
-        if let Ok(val) = std::env::var("DIFFUSE_THEME")
-            && let Some(theme) = Self::from_name(&val)
-        {
-            theme
+        if let Ok(val) = std::env::var("DIFFUSE_THEME") {
+            Self::from_name(&val).unwrap_or_else(Self::auto_detect)
         } else {
-            Self::DEFAULT
+            Self::auto_detect()
         }
     }
 }
