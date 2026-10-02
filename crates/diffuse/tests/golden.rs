@@ -1364,6 +1364,7 @@ corpus_tests!(
     true,
     true
 );
+corpus_tests!(theme_light_toggle, "theme-light-toggle", 40, true, true);
 
 #[test]
 fn test_golden_initialized_detection() {

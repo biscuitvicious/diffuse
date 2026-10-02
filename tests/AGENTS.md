@@ -28,6 +28,7 @@ discipline for any change in golden output.
 | corpus | rust walk | render golden | status | notes |
 |---|---|---|---|---|
 | `theme-scrollbar-palette` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline; strict hard gate |
+| `theme-light-toggle` | ✅ | ✅ | Provisional | Light theme, terminal luminance, and import alignment fixture (pending full review) |
 | `diffuse-2026-08` | ✅ | ✅ | Provisional | The engine diffing its own repo (pending full review) |
 | `opt-1-cache-regex-window-slice` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
 | `opt-2-cache-markdown-regex` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |

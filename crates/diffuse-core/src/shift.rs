@@ -340,6 +340,7 @@ pub fn calculate_needed_shift_down(
             || p.is_block_open(t)
             || p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
             || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
+            || p.import_prefixes.iter().any(|&pf| t.starts_with(pf))
     };
 
     // Check if what follows split_idx is a declaration / doc comment boundary

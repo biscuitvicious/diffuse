@@ -655,6 +655,8 @@ pub struct BlockMatch {
     matched: usize,
     /// Per block line: its matched token indices.
     pub per_line: Vec<FxHashSet<usize>>,
+    /// Per block line: number of matched alphanumeric/salient tokens.
+    pub per_line_alnum: Vec<usize>,
     /// (block line, token) -> old-side token index.
     pub pair_of: FxHashMap<(usize, usize), usize>,
 }
@@ -671,6 +673,7 @@ pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -
     let pairs = lcs_pairs_ids(&old.ids, &ids, &interner.ws, &interner.alnum);
     let mut bm = BlockMatch {
         per_line: vec![FxHashSet::default(); block.len()],
+        per_line_alnum: vec![0; block.len()],
         ..Default::default()
     };
     // pairs: old token index -> concatenated-block token index.
@@ -680,6 +683,10 @@ pub fn block_lcs(old: &DpTokens, block: &[DpTokens], interner: &TokenInterner) -
         let (li, ti) = coords[ni];
         bm.matched += block[li].token_chars[ti];
         bm.per_line[li].insert(ti);
+        let id = block[li].ids[ti] as usize;
+        if id < interner.alnum.len() && interner.alnum[id] {
+            bm.per_line_alnum[li] += 1;
+        }
         bm.pair_of.insert((li, ti), oi);
     }
     bm
@@ -839,6 +846,7 @@ fn block_lcs_fast_fixed_walk<const K: usize>(
     min_block_line_coverage: f64,
     id_ws: &[bool],
     id_alnum: &[bool],
+    head_is_stmt_start: bool,
     p_keys: &[u32],
     p_masks: &[BitVector<K>],
     overflow_map: Option<&FxHashMap<u32, BitVector<K>>>,
@@ -956,6 +964,7 @@ fn block_lcs_fast_fixed_walk<const K: usize>(
         }
     }
     let mut most = 0usize;
+    let mut most_alnum = 0usize;
     let mut most_n = 0usize;
     let mut moved_lines = 0usize;
     let mut lines_with_matches = 0usize;
@@ -964,7 +973,9 @@ fn block_lcs_fast_fixed_walk<const K: usize>(
             return (0, 0, 0);
         }
         lines_with_matches += 1;
-        if count > most_n {
+        let alnum = line_matched_alnum[li];
+        if alnum > most_alnum || (alnum == most_alnum && count > most_n) {
+            most_alnum = alnum;
             most_n = count;
             most = li;
         }
@@ -976,12 +987,13 @@ fn block_lcs_fast_fixed_walk<const K: usize>(
         return (0, 0, 0);
     }
     let anchor = if let Some(h) = head {
-        let head_count = line_matched_counts[h];
-        if most_n >= head_count.saturating_mul(3) && most_n >= 6 {
-            most
+        let head_alnum = line_matched_alnum[h];
+        let override_anchor = if head_is_stmt_start {
+            false
         } else {
-            h
-        }
+            most_alnum >= head_alnum.saturating_mul(3) && most_alnum >= 3
+        };
+        if override_anchor { most } else { h }
     } else {
         most
     };
@@ -999,6 +1011,7 @@ fn block_lcs_fast_fixed<const K: usize>(
     min_block_line_coverage: f64,
     id_ws: &[bool],
     id_alnum: &[bool],
+    head_is_stmt_start: bool,
 ) -> (usize, usize, usize) {
     let n = old_ids.len();
     let m = block_ids.len();
@@ -1053,6 +1066,7 @@ fn block_lcs_fast_fixed<const K: usize>(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
             &p_keys[..p_len],
             &p_masks[..p_len],
             overflow_map.as_ref(),
@@ -1070,6 +1084,7 @@ fn block_lcs_fast_fixed<const K: usize>(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
             &p_keys[..p_len],
             &p_masks[..p_len],
             overflow_map.as_ref(),
@@ -1089,6 +1104,7 @@ fn block_lcs_fast_precomputed(
     min_block_line_coverage: f64,
     id_ws: &[bool],
     id_alnum: &[bool],
+    head_is_stmt_start: bool,
     _lcs_scratch: &mut Vec<u64>,
 ) -> (usize, usize, usize) {
     let n = old_ids.len();
@@ -1107,6 +1123,7 @@ fn block_lcs_fast_precomputed(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
         )
     } else if n <= 128 {
         block_lcs_fast_fixed::<2>(
@@ -1119,6 +1136,7 @@ fn block_lcs_fast_precomputed(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
         )
     } else if n <= 256 {
         block_lcs_fast_fixed::<4>(
@@ -1131,6 +1149,7 @@ fn block_lcs_fast_precomputed(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
         )
     } else if n <= 512 {
         block_lcs_fast_fixed::<8>(
@@ -1143,6 +1162,7 @@ fn block_lcs_fast_precomputed(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
         )
     } else if n <= 1024 {
         block_lcs_fast_fixed::<16>(
@@ -1155,6 +1175,7 @@ fn block_lcs_fast_precomputed(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
         )
     } else if n <= 2048 {
         block_lcs_fast_fixed::<32>(
@@ -1167,6 +1188,7 @@ fn block_lcs_fast_precomputed(
             min_block_line_coverage,
             id_ws,
             id_alnum,
+            head_is_stmt_start,
         )
     } else {
         (0, 0, 0)
@@ -1185,6 +1207,7 @@ pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> b
     if let Some(p) = profile {
         if p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
             || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
+            || p.import_prefixes.iter().any(|&pf| t.starts_with(pf))
         {
             return true;
         }
@@ -1210,12 +1233,15 @@ pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> b
 /// block transitions as the anchor `Mod` followed by the remaining
 /// `Add`/`Del` rows — the anchor owns the head, the tail reads as
 /// absorbed/reflowed.
-pub fn block_anchor(bm: &BlockMatch) -> usize {
+pub fn block_anchor(bm: &BlockMatch, head_is_stmt_start: bool) -> usize {
     let mut head = None;
     let mut most = 0usize;
+    let mut most_alnum = 0usize;
     let mut most_n = 0usize;
     for (li, s) in bm.per_line.iter().enumerate() {
-        if s.len() > most_n {
+        let alnum = bm.per_line_alnum.get(li).copied().unwrap_or(0);
+        if alnum > most_alnum || (alnum == most_alnum && s.len() > most_n) {
+            most_alnum = alnum;
             most_n = s.len();
             most = li;
         }
@@ -1226,8 +1252,13 @@ pub fn block_anchor(bm: &BlockMatch) -> usize {
         }
     }
     if let Some(h) = head {
-        let head_n = bm.per_line[h].len();
-        if most_n >= head_n.saturating_mul(3) && most_n >= 6 {
+        let head_alnum = bm.per_line_alnum.get(h).copied().unwrap_or(0);
+        let override_anchor = if head_is_stmt_start {
+            false
+        } else {
+            most_alnum >= head_alnum.saturating_mul(3) && most_alnum >= 3
+        };
+        if override_anchor {
             return most;
         }
         return h;
@@ -2583,6 +2614,7 @@ pub(crate) fn solve_cluster_matrix(
                             w.min_block_line_coverage,
                             &interner.ws,
                             &interner.alnum,
+                            new_meta[j].is_stmt_start,
                             lcs_scratch,
                         );
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
@@ -2687,6 +2719,7 @@ pub(crate) fn solve_cluster_matrix(
                             w.min_block_line_coverage,
                             &interner.ws,
                             &interner.alnum,
+                            old_meta[i].is_stmt_start,
                             lcs_scratch,
                         );
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
@@ -2827,7 +2860,7 @@ pub(crate) fn solve_cluster_matrix(
                 }
                 OpKind::Expand => {
                     let bm = block_lcs(&old[pi], &new[pj..pj + k], interner);
-                    let anchor = block_anchor(&bm);
+                    let anchor = block_anchor(&bm, new_meta[pj].is_stmt_start);
                     let spans = subline_moves(&bm, anchor);
 
                     for idx in 0..k {
@@ -2850,7 +2883,7 @@ pub(crate) fn solve_cluster_matrix(
                 }
                 OpKind::Collapse => {
                     let bm = block_lcs(&new[pj], &old[pi..pi + k], interner);
-                    let anchor = block_anchor(&bm);
+                    let anchor = block_anchor(&bm, old_meta[pi].is_stmt_start);
                     let spans = subline_moves(&bm, anchor);
 
                     for idx in 0..k {

@@ -786,10 +786,19 @@ pub fn process_single_diff_file(
         counts,
         fences: regions
             .iter()
-            .map(|r| OutputFence {
-                start: r.start,
-                end: r.end,
-                lang: fence_lang_ext(&r.lang.clone().unwrap_or_default()).to_string(),
+            .map(|r| {
+                let raw_lang = r.lang.as_deref().unwrap_or_default();
+                let norm = fence_lang_ext(raw_lang);
+                let lang = if lang_profile(norm).is_some() {
+                    norm.to_string()
+                } else {
+                    String::new()
+                };
+                OutputFence {
+                    start: r.start,
+                    end: r.end,
+                    lang,
+                }
             })
             .collect(),
         notes: notes_out,

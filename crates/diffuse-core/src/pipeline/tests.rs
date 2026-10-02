@@ -1602,3 +1602,23 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
     assert_eq!(dark_add.kind, RunKind::Add);
     assert_eq!(dark_add.color.as_deref(), Some("syntaxString"));
 }
+
+#[test]
+fn test_unrecognized_fence_language_normalizes_to_empty() {
+    let diff = "\
+diff --git a/test.md b/test.md
+new file mode 100644
+--- /dev/null
++++ b/test.md
+@@ -0,0 +1,5 @@
++```mermaid
++flowchart TD
++  A --> B
++```
+";
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let file = &output.files[0];
+    assert_eq!(file.fences.len(), 1);
+    assert_eq!(file.fences[0].lang, "");
+}

@@ -510,7 +510,7 @@ fn block_anchor_fires_for_use_std_brace() {
     eprintln!("per_line match counts: {:?}", bm.per_line);
     eprintln!("pair_of: {:?}", bm.pair_of);
 
-    let anchor = block_anchor(&bm);
+    let anchor = block_anchor(&bm, true);
     eprintln!("block_anchor -> {anchor}");
 
     assert_eq!(
@@ -535,7 +535,7 @@ fn block_anchor_fires_for_fn_signature() {
         .collect();
 
     let bm = block_lcs(&old_tokens, &new_tokens, &interner);
-    let anchor = block_anchor(&bm);
+    let anchor = block_anchor(&bm, true);
     eprintln!("fn block_anchor -> {anchor}");
     assert_eq!(
         anchor, 0,
@@ -1447,10 +1447,106 @@ fn test_block_anchor_prefers_overwhelming_content_over_trivial_prefix_head() {
         .collect();
 
     let bm = block_lcs(&old_tokens, &new_tokens, &interner);
-    let anchor = block_anchor(&bm);
+    let anchor = block_anchor(&bm, false);
     assert_eq!(
         anchor, 1,
         "anchor should be line 1 (the content carrying prelude::{{...}}), not line 0 (trivial prefix), got {anchor}"
+    );
+}
+
+#[test]
+fn test_use_crate_expand_anchors_on_statement_head() {
+    let old = "use crate::core::counts::{CountKind, FileCounts};";
+    let new_lines = [
+        "use crate::{",
+        "    core::counts::{CountKind, FileCounts},",
+        "    theme::ThemePalette,",
+        "};",
+    ];
+
+    let mut interner = TokenInterner::new();
+    let old_tokens = dp_tokens(&mut interner, old);
+    let new_tokens: Vec<_> = new_lines
+        .iter()
+        .map(|s| dp_tokens(&mut interner, s))
+        .collect();
+
+    let bm = block_lcs(&old_tokens, &new_tokens, &interner);
+    let anchor = block_anchor(&bm, true);
+    assert_eq!(
+        anchor, 0,
+        "anchor should be line 0 (`use crate::{{` statement head), not line 1 (`core::counts`), got {anchor}"
+    );
+
+    // Assignment line wraps (`let var = \n expr`) should anchor on the
+    // expression (line 1), preserving sub-line diffs within the expression.
+    let old_score = "    let score_mid = semantic_boundary_score(Some(\"        let x = 1;\"), Some(\"        let y = 2;\"));";
+    let new_score_lines = [
+        "    let score_mid =",
+        "        semantic_boundary_score(Some(\"        let x = 1;\"), Some(\"        let y = 2;\"), rs);",
+    ];
+    let old_score_tok = dp_tokens(&mut interner, old_score);
+    let new_score_tok: Vec<_> = new_score_lines
+        .iter()
+        .map(|s| dp_tokens(&mut interner, s))
+        .collect();
+    let bm_score = block_lcs(&old_score_tok, &new_score_tok, &interner);
+    assert_eq!(
+        block_anchor(&bm_score, false),
+        1,
+        "Assignment wrap should anchor on the substantive expression on line 1"
+    );
+
+    let old_sb = "                    let sb_char = if row_i >= thumb_offset && row_i < thumb_offset + thumb_size {";
+    let new_sb_lines = [
+        "                    let sb_char =",
+        "                        if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {",
+    ];
+    let old_sb_tok = dp_tokens(&mut interner, old_sb);
+    let new_sb_tok: Vec<_> = new_sb_lines
+        .iter()
+        .map(|s| dp_tokens(&mut interner, s))
+        .collect();
+    let bm_sb = block_lcs(&old_sb_tok, &new_sb_tok, &interner);
+    assert_eq!(
+        block_anchor(&bm_sb, false),
+        1,
+        "Assignment wrap should anchor on the substantive expression on line 1"
+    );
+
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 9,
+        old_count: 1,
+        new_start: 8,
+        new_count: 4,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(
+                LineNum::new(9).unwrap(),
+                "use crate::core::counts::{CountKind, FileCounts};",
+            )),
+            Row::Add(AddLine::new(LineNum::new(8).unwrap(), "use crate::{")),
+            Row::Add(AddLine::new(
+                LineNum::new(9).unwrap(),
+                "    core::counts::{CountKind, FileCounts},",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(10).unwrap(),
+                "    theme::ThemePalette,",
+            )),
+            Row::Add(AddLine::new(LineNum::new(11).unwrap(), "};")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+
+    let results = crate::cluster::pairing::dp_pairing(&h, None, None, rs);
+    assert_eq!(
+        results.pair_of.get(&1),
+        Some(&0),
+        "Statement head 'use crate::{{' must be paired with the old 'use crate::...' line, got {:?}",
+        results.pair_of
     );
 }
 
