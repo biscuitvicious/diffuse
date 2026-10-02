@@ -182,6 +182,33 @@ fn dp_similar_lines_pair_as_mod() {
 }
 
 #[test]
+fn test_match_arms_pair_one_to_one() {
+    let old_lines = vec![
+        del_row(13, "        CountKind::Dels => 203,"),
+        del_row(14, "        CountKind::Adds => 120,"),
+        del_row(15, "        CountKind::Mods => 214,"),
+        del_row(16, "        CountKind::Movs => 147,"),
+        del_row(17, "        CountKind::Notes => 220,"),
+    ];
+    let new_lines = vec![
+        add_row(18, "        CountKind::Dels => palette.count_dels,"),
+        add_row(19, "        CountKind::Adds => palette.count_adds,"),
+        add_row(20, "        CountKind::Mods => palette.count_mods,"),
+        add_row(21, "        CountKind::Movs => palette.count_movs,"),
+        add_row(22, "        CountKind::Notes => palette.count_notes,"),
+    ];
+    let c = code_cluster(old_lines, new_lines);
+    let rs = lang_profile("rs");
+    let sol = solve_cluster(&c, rs);
+    assert_eq!(
+        signature(&sol),
+        ["mod", "mod", "mod", "mod", "mod"],
+        "Parallel match arms must pair 1-to-1 as Mods, got {:?}",
+        signature(&sol)
+    );
+}
+
+#[test]
 fn dp_unrelated_lines_stay_del_and_add() {
     // Zero shared tokens: pairing is worthless — a standalone Del + Add
     // decomposition must win.

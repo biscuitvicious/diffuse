@@ -786,8 +786,9 @@ fn precompute_valid_blocks(
             let idx = k - 1;
             let row_idx = j + idx;
 
-            // Check if previous row (idx - 1) ended with semicolon
-            if meta[row_idx - 1].ends_with_semi {
+            // Check if previous row (idx - 1) ended with semicolon or finished
+            // match arm
+            if meta[row_idx - 1].ends_with_semi || meta[row_idx - 1].is_arm_terminal {
                 break;
             }
             // Check candidate conditions for new row
@@ -1199,6 +1200,48 @@ fn is_reflow_candidate(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
+fn is_match_arm_line(text: &str, profile: Option<&LangProfile>) -> bool {
+    let Some(p) = profile else {
+        return false;
+    };
+    if p.name != "rust" {
+        return false;
+    }
+    if !p.operators.contains(&"=>") {
+        return false;
+    }
+    let t = text.trim();
+    if t.is_empty()
+        || p.is_comment_line(t)
+        || t.starts_with("//")
+        || t.starts_with("/*")
+        || t.starts_with('*')
+    {
+        return false;
+    }
+    let mut in_quote = false;
+    let mut escaped = false;
+    let chars: Vec<char> = t.chars().collect();
+    for i in 0..chars.len() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if chars[i] == '\\' {
+            escaped = true;
+            continue;
+        }
+        if chars[i] == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+        if !in_quote && chars[i] == '=' && i + 1 < chars.len() && chars[i + 1] == '>' {
+            return true;
+        }
+    }
+    false
+}
+
 pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> bool {
     let t = text.trim();
     if t.is_empty() {
@@ -1218,6 +1261,12 @@ pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> b
             return true;
         }
         if p.section_headers && t.starts_with('[') && t.ends_with(']') {
+            return true;
+        }
+        if t.starts_with("case ") || t.starts_with("default:") {
+            return true;
+        }
+        if is_match_arm_line(t, profile) {
             return true;
         }
         return false;
@@ -1308,6 +1357,7 @@ pub(crate) struct DpRowMeta {
     pub is_reflow: bool,
     pub ends_with_semi: bool,
     pub is_stmt_start: bool,
+    pub is_arm_terminal: bool,
     pub property_key: Option<u32>,
     pub close_tail: CloseDelimiter,
     pub exact_close: CloseDelimiter,
@@ -1904,6 +1954,8 @@ pub(crate) fn solve_cluster_matrix(
         let is_reflow = is_reflow_candidate(text);
         let ends_with_semi = trimmed.ends_with(';');
         let is_stmt_start = is_statement_start(text, profile);
+        let is_arm_terminal = is_match_arm_line(trimmed, profile)
+            && (trimmed.ends_with(',') || trimmed.ends_with('}') || trimmed.ends_with("},"));
         let property_key = profile
             .and_then(|p| p.extract_property_key(text))
             .map(|w| arena.interner.intern(w));
@@ -1932,6 +1984,7 @@ pub(crate) fn solve_cluster_matrix(
             is_reflow,
             ends_with_semi,
             is_stmt_start,
+            is_arm_terminal,
             property_key,
             close_tail,
             exact_close,
@@ -1969,6 +2022,8 @@ pub(crate) fn solve_cluster_matrix(
         let is_reflow = is_reflow_candidate(text);
         let ends_with_semi = trimmed.ends_with(';');
         let is_stmt_start = is_statement_start(text, profile);
+        let is_arm_terminal = is_match_arm_line(trimmed, profile)
+            && (trimmed.ends_with(',') || trimmed.ends_with('}') || trimmed.ends_with("},"));
         let property_key = profile
             .and_then(|p| p.extract_property_key(text))
             .map(|w| arena.interner.intern(w));
@@ -1997,6 +2052,7 @@ pub(crate) fn solve_cluster_matrix(
             is_reflow,
             ends_with_semi,
             is_stmt_start,
+            is_arm_terminal,
             property_key,
             close_tail,
             exact_close,
