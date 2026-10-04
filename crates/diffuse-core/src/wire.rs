@@ -15,6 +15,8 @@ use crate::{
     parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind, Spans},
 };
 
+pub use crate::parse::RowGroup;
+
 pub mod jsonl;
 
 /// Identifies which side of a moved line an `OutputRow` represents.
@@ -729,6 +731,8 @@ pub struct OutputRow {
     /// decision, baked by the engine so the TS merge machinery can go.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub wholesale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<RowGroup>,
 }
 
 impl From<&OutputRow> for Row {
@@ -741,39 +745,43 @@ impl From<&OutputRow> for Row {
             }
             RowKind::Del => {
                 let num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                Row::Del(DelLine::new(num, &r.text))
+                let mut del = DelLine::new(num, &r.text);
+                del.group = r.group;
+                Row::Del(del)
             }
             RowKind::Add => {
                 let num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                if let Some(ref dt) = r.del_text {
-                    Row::Add(AddLine::with_donor(num, &r.text, dt, r.spans.clone()))
+                let mut add = if let Some(ref dt) = r.del_text {
+                    AddLine::with_donor(num, &r.text, dt, r.spans.clone())
                 } else {
-                    Row::Add(AddLine::with_spans(num, &r.text, r.spans.clone()))
-                }
+                    AddLine::with_spans(num, &r.text, r.spans.clone())
+                };
+                add.group = r.group;
+                Row::Add(add)
             }
             RowKind::Mod => {
                 let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
                 let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
                 let del_text = r.del_text.as_deref().unwrap_or(&r.text);
-                Row::Mod {
-                    old_line: DelLine::new(old_num, del_text),
-                    new_line: AddLine::with_spans(new_num, &r.text, r.spans.clone()),
-                }
+                let mut old_line = DelLine::new(old_num, del_text);
+                old_line.group = r.group;
+                let mut new_line = AddLine::with_spans(new_num, &r.text, r.spans.clone());
+                new_line.group = r.group;
+                Row::Mod { old_line, new_line }
             }
             RowKind::Mov => match r.mov_side {
                 Some(MovSide::Src) => {
                     let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                    Row::MovSrc(DelLine::new(old_num, &r.text))
+                    let mut del = DelLine::new(old_num, &r.text);
+                    del.group = r.group;
+                    Row::MovSrc(del)
                 }
                 Some(MovSide::Tgt) | None => {
                     let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
                     let del_text = r.del_text.as_deref().unwrap_or(&r.text);
-                    Row::MovTgt(AddLine::with_donor(
-                        new_num,
-                        &r.text,
-                        del_text,
-                        r.spans.clone(),
-                    ))
+                    let mut add = AddLine::with_donor(new_num, &r.text, del_text, r.spans.clone());
+                    add.group = r.group;
+                    Row::MovTgt(add)
                 }
             },
             RowKind::File | RowKind::Sep => {
@@ -802,6 +810,7 @@ impl OutputRow {
             spans: self.spans.reverse(),
             runs: self.runs.iter().map(OutputRun::reverse).collect(),
             wholesale: self.wholesale,
+            group: self.group,
         }
     }
 

@@ -376,7 +376,7 @@ pub fn render_finder_modal(
             let text_cols = width.saturating_sub(6).max(1);
             for r in f.rows.iter().take(remaining) {
                 let pfx = styled_prefix(
-                    r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true, theme,
+                    r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
                 );
                 let rendered_row = render_row_segment(
                     &r.text,
@@ -592,7 +592,7 @@ pub fn render_finder_modal_widget(
         } else {
             for r in file.rows.iter().take(max_preview_rows) {
                 let pfx = styled_prefix(
-                    r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true, theme,
+                    r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
                 );
                 let rendered_row = render_row_segment(
                     &r.text,

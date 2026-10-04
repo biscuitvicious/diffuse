@@ -657,6 +657,7 @@ pub fn process_single_diff_file(
                 spans: r.spans().cloned().unwrap_or_default(),
                 runs: Vec::new(),
                 wholesale: false,
+                group: r.group(),
             });
         }
         raw_hunks_out.push(OutputHunk {
@@ -1240,6 +1241,7 @@ fn build_hunk_output_row(
         spans,
         runs: colored_runs_with_next(r, next_line, profile, regions),
         wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
+        group: r.group(),
     }
 }
 

@@ -130,6 +130,7 @@ index 1111111..2222222 100644
                 spans: Default::default(),
                 runs: Vec::new(),
                 wholesale: false,
+                group: None,
             }],
         }],
         raw_hunks: Vec::new(),
@@ -482,6 +483,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
             spans: Default::default(),
             runs: vec![],
             wholesale: false,
+            group: None,
         });
     }
     for old in 107..=111 {
@@ -495,6 +497,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
             spans: Default::default(),
             runs: vec![],
             wholesale: false,
+            group: None,
         });
     }
     let h0 = OutputHunk {
@@ -518,6 +521,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
             spans: Default::default(),
             runs: vec![],
             wholesale: false,
+            group: None,
         });
     }
     let h1 = OutputHunk {

@@ -320,6 +320,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         spans: Default::default(),
         runs: Vec::new(),
         wholesale: false,
+        group: None,
     };
     let mut h = OutputHunk {
         old_start: 85,
@@ -455,6 +456,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         spans: Default::default(),
         runs: Vec::new(),
         wholesale: false,
+        group: None,
     };
     let h = OutputHunk {
         old_start: 1,

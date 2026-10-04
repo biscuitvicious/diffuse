@@ -1796,3 +1796,49 @@ fn test_parallel_assemble_mods_multi_row_parity() {
         }
     }
 }
+
+#[test]
+fn test_expansion_group_anchor_and_aux_tagging() {
+    use crate::parse::RowGroup;
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "use std::{cell::RefCell, num::NonZeroUsize, os::unix::fs::MetadataExt, path::PathBuf};",
+            None,
+            Some(1),
+        ),
+        row(RowKind::Add, "use std::{", Some(1), None),
+        row(RowKind::Add, "    cell::RefCell,", Some(2), None),
+        row(RowKind::Add, "    num::NonZeroUsize,", Some(3), None),
+        row(
+            RowKind::Add,
+            "    os::unix::fs::MetadataExt,",
+            Some(4),
+            None,
+        ),
+        row(RowKind::Add, "    path::PathBuf,", Some(5), None),
+        row(
+            RowKind::Add,
+            "    sync::atomic::{AtomicU64, Ordering},",
+            Some(6),
+            None,
+        ),
+        row(RowKind::Add, "};", Some(7), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+    assert_eq!(c[0].kind(), RowKind::Mod);
+    assert_eq!(
+        c[0].group(),
+        Some(RowGroup::Anchor),
+        "Expansion anchor row must have RowGroup::Anchor"
+    );
+    for (idx, r) in c[1..].iter().enumerate() {
+        assert_eq!(r.kind(), RowKind::Add);
+        assert_eq!(
+            r.group(),
+            Some(RowGroup::Aux { anchor: 1 }),
+            "Expansion auxiliary add row at index {idx} must have RowGroup::Aux with anchor 1"
+        );
+    }
+}

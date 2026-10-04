@@ -46,6 +46,7 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: None,
                             wholesale: false,
+                            group: None,
                         },
                         OutputRow {
                             kind: RowKind::Mod,
@@ -62,6 +63,7 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: Some("    println!(\"Hello World!\");".to_string()),
                             wholesale: false,
+                            group: None,
                         },
                         OutputRow {
                             kind: RowKind::Ctx,
@@ -78,6 +80,7 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: None,
                             wholesale: false,
+                            group: None,
                         },
                     ],
                 }],
@@ -139,6 +142,7 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: None,
                             wholesale: false,
+                            group: None,
                         },
                         OutputRow {
                             kind: RowKind::Add,
@@ -155,6 +159,7 @@ fn sample_output() -> PipelineOutput {
                             }],
                             del_text: None,
                             wholesale: false,
+                            group: None,
                         },
                     ],
                 }],
@@ -317,6 +322,7 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
+                            group: None,
                         },
                         OutputRow {
                             kind: RowKind::Del,
@@ -328,6 +334,7 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
+                            group: None,
                         },
                         OutputRow {
                             kind: RowKind::Sep,
@@ -339,6 +346,7 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                             runs: vec![],
                             del_text: None,
                             wholesale: false,
+                            group: None,
                         },
                     ],
                 }],
@@ -449,6 +457,7 @@ fn test_render_markdown_language_profile_syntax_highlighting() {
                     runs: vec![], // Empty runs triggers syntax profile classify_tokens fallback
                     del_text: Some("pub fn old_algo() -> bool { false }".to_string()),
                     wholesale: false,
+                    group: None,
                 }],
             }],
             raw_hunks: vec![],
@@ -611,6 +620,7 @@ fn test_render_markdown_renamed_files_show_arrow_and_collapsed_by_default() {
                     spans: Spans::default(),
                     runs: vec![],
                     wholesale: false,
+                    group: None,
                 }],
             }],
             raw_hunks: vec![],
@@ -663,6 +673,7 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                     OutputRow {
                         kind: RowKind::Del,
@@ -674,6 +685,7 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                     OutputRow {
                         kind: RowKind::Del,
@@ -685,6 +697,7 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                     OutputRow {
                         kind: RowKind::Del,
@@ -696,6 +709,7 @@ fn test_render_markdown_fenced_code_blocks_syntax_highlighting() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                 ],
             }],
@@ -758,6 +772,7 @@ fn test_render_markdown_diff_prefix_resets_fg_color() {
                     runs: vec![],
                     del_text: None,
                     wholesale: false,
+                    group: None,
                 }],
             }],
             raw_hunks: vec![],
@@ -817,6 +832,7 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                     OutputRow {
                         kind: RowKind::Del,
@@ -828,6 +844,7 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                     OutputRow {
                         kind: RowKind::Add,
@@ -839,6 +856,7 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                     OutputRow {
                         kind: RowKind::Add,
@@ -850,6 +868,7 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                     OutputRow {
                         kind: RowKind::Add,
@@ -861,6 +880,7 @@ fn test_render_markdown_raw_hunks_deletions_before_additions() {
                         runs: vec![],
                         del_text: None,
                         wholesale: false,
+                        group: None,
                     },
                 ],
             }],

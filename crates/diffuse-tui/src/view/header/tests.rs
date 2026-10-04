@@ -1388,6 +1388,7 @@ fn test_status_bar_shows_file_and_hunk_stats() {
         spans: Default::default(),
         runs: vec![],
         wholesale: false,
+        group: None,
     };
     let _ = MovSide::Tgt;
     let file = OutputFile {

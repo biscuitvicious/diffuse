@@ -379,6 +379,9 @@ pub fn multi_token_phrase_anchors(
         return Vec::new();
     }
 
+    let a_containers = compute_token_containers(a);
+    let b_containers = compute_token_containers(b);
+
     #[derive(Clone, Copy, Debug)]
     struct PhraseCandidate {
         a_start: usize,
@@ -437,6 +440,63 @@ pub fn multi_token_phrase_anchors(
             let b_start = j + start;
             let a_end = a_start + trimmed_len;
             let b_end = b_start + trimmed_len;
+
+            // Invariant 1: A phrase cannot start or end on a dangling operator
+            // or separator.
+            if matches!(
+                a[a_start],
+                "+" | "-"
+                    | "*"
+                    | "/"
+                    | "%"
+                    | "^"
+                    | "&"
+                    | "|"
+                    | "="
+                    | "≈"
+                    | "~"
+                    | ","
+                    | ";"
+                    | ":"
+                    | "."
+                    | ")"
+                    | "]"
+                    | "}"
+            ) || matches!(
+                a[a_end - 1],
+                "+" | "-"
+                    | "*"
+                    | "/"
+                    | "%"
+                    | "^"
+                    | "&"
+                    | "|"
+                    | "="
+                    | "≈"
+                    | "~"
+                    | ","
+                    | ";"
+                    | ":"
+                    | "("
+                    | "["
+                    | "{"
+            ) {
+                continue;
+            }
+
+            // Invariant 2: A phrase that starts inside a syntactic container
+            // (e.g. string literal or backtick code span) must not cross out
+            // of that container into the outer scope or adjacent containers.
+            if let Some(c_a) = a_containers[a_start]
+                && a_containers[a_start..a_end].iter().any(|&c| c != Some(c_a))
+            {
+                continue;
+            }
+            if let Some(c_b) = b_containers[b_start]
+                && b_containers[b_start..b_end].iter().any(|&c| c != Some(c_b))
+            {
+                continue;
+            }
 
             let starts_inside_word = (a_start > 0
                 && crate::lcs::is_subword_token(a[a_start - 1])

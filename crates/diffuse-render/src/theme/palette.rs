@@ -177,7 +177,7 @@ impl ThemePalette {
 
             ctx_tint_bg: Color::Fixed(233),
             ctx_cursor_bg: Color::Fixed(237),
-            ctx_fg: Color::Fixed(245),
+            ctx_fg: Color::Primary,
             band_bg: Color::Fixed(235),
 
             add_tint_bg: Color::Rgb(28, 50, 30),

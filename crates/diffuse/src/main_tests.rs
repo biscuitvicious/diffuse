@@ -93,8 +93,11 @@ fn test_init_color_mode_no_color_flag() {
     assert!(!yansi::is_enabled());
 }
 
+static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_init_color_mode_auto_default() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::remove_var("NO_COLOR") };
     let enabled = super::init_color_mode("auto", false);
     assert!(enabled);
@@ -103,6 +106,7 @@ fn test_init_color_mode_auto_default() {
 
 #[test]
 fn test_init_color_mode_auto_with_no_color_env() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::set_var("NO_COLOR", "1") };
     let enabled = super::init_color_mode("auto", false);
     assert!(!enabled);
@@ -125,6 +129,7 @@ fn test_cli_args_theme_flag() {
 
 #[test]
 fn test_resolve_theme_prefers_cli_flag() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::remove_var("DIFFUSE_THEME") };
     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
     assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::LIGHT);
@@ -135,6 +140,7 @@ fn test_resolve_theme_prefers_cli_flag() {
 
 #[test]
 fn test_resolve_theme_falls_back_on_unknown_name() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::remove_var("DIFFUSE_THEME") };
     assert_eq!(
         super::resolve_theme(Some("bogus-theme")),

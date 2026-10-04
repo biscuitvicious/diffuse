@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::{
     lcs::{tokenize_line, word_spans_and_runs_with_profile, word_spans_with_profile},
     merge::RunKind,
-    parse::{AddLine, DelLine, Hunk, Row, Spans},
+    parse::{AddLine, DelLine, Hunk, Row, RowGroup, Spans},
     shift::pass_shift_hunk,
     syntax::profile::LangProfile,
 };
@@ -36,6 +36,7 @@ pub struct AssembledMods {
     pub kept_dels: Vec<usize>,
     pub pure_adds: Vec<usize>,
     pub add_spans: FxHashMap<usize, (Spans, String)>,
+    pub add_groups: FxHashMap<usize, RowGroup>,
 }
 
 /// Per paired del row: donor text, first del number, word spans, and the
@@ -130,6 +131,7 @@ pub fn collapse_hunk_rows(
         &p3.meaningful_dels,
         &p3.kept_adds,
         &p2.add_spans,
+        &p2.add_groups,
         p3.reflow_ctx,
     );
     let t5 = std::time::Instant::now();
@@ -234,6 +236,7 @@ pub fn pass_assemble_mods(
     let mut kept_dels: Vec<usize> = Vec::new();
     let mut pure_adds: Vec<usize> = Vec::new();
     let mut add_spans: FxHashMap<usize, (Spans, String)> = FxHashMap::default();
+    let mut add_groups: FxHashMap<usize, RowGroup> = FxHashMap::default();
 
     let mut collapse_absorbed_dels: FxHashSet<usize> = FxHashSet::default();
     for dels in ctx.collapse_blocks.values() {
@@ -399,8 +402,12 @@ pub fn pass_assemble_mods(
             // (where the donor distribution shows where it went).  The
             // source strike is what connects the two; suppressing it made
             // wrapped tails silently vanish from the diff.
+            let mut anchor_group = None;
             if !next_adds.is_empty() {
+                let anchor_num = add.new_line_num().unwrap().get();
+                anchor_group = Some(RowGroup::Anchor);
                 for &nxt_i in &next_adds {
+                    add_groups.insert(nxt_i, RowGroup::Aux { anchor: anchor_num });
                     let add_nxt = &h.rows[nxt_i];
                     let mut donor_spans =
                         word_spans_with_profile(&del_text, add_nxt.text(), profile);
@@ -483,11 +490,12 @@ pub fn pass_assemble_mods(
                 }
             }
 
-            let mod_row = Row::Mod {
-                old_line: DelLine::new(first_old_num, del_text),
-                new_line: AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans)
-                    .with_cached_runs(runs),
-            };
+            let mut old_line = DelLine::new(first_old_num, del_text);
+            old_line.group = anchor_group;
+            let mut new_line = AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans)
+                .with_cached_runs(runs);
+            new_line.group = anchor_group;
+            let mod_row = Row::Mod { old_line, new_line };
             out.push(mod_row);
         } else if collapse_absorbed_dels.contains(&ri) {
             continue;
@@ -501,6 +509,7 @@ pub fn pass_assemble_mods(
         kept_dels,
         pure_adds,
         add_spans,
+        add_groups,
     }
 }
 
@@ -653,6 +662,7 @@ pub fn pass_sort_ordered_walk(
     meaningful_dels: &[usize],
     kept_adds: &[usize],
     add_spans: &FxHashMap<usize, (Spans, String)>,
+    add_groups: &FxHashMap<usize, RowGroup>,
     reflow_ctx: Vec<Row>,
 ) -> Vec<Row> {
     let mut anchor_of: FxHashMap<usize, usize> = FxHashMap::default();
@@ -701,27 +711,31 @@ pub fn pass_sort_ordered_walk(
     for &ai in kept_adds {
         let a = match &h.rows[ai] {
             Row::Add(add_line) => {
-                if let Some((spans, del_text)) = add_spans.get(&ai) {
-                    Row::Add(AddLine::with_donor(
+                let mut line = if let Some((spans, del_text)) = add_spans.get(&ai) {
+                    AddLine::with_donor(
                         add_line.num,
                         add_line.text.clone(),
                         del_text.clone(),
                         spans.clone(),
-                    ))
+                    )
                 } else {
-                    Row::Add(add_line.clone())
+                    add_line.clone()
+                };
+                if let Some(&grp) = add_groups.get(&ai) {
+                    line.group = Some(grp);
                 }
+                Row::Add(line)
             }
             Row::MovTgt(new_line) => {
-                if let Some((spans, _)) = add_spans.get(&ai) {
-                    Row::MovTgt(AddLine::with_spans(
-                        new_line.num,
-                        new_line.text.clone(),
-                        spans.clone(),
-                    ))
+                let mut line = if let Some((spans, _)) = add_spans.get(&ai) {
+                    AddLine::with_spans(new_line.num, new_line.text.clone(), spans.clone())
                 } else {
-                    Row::MovTgt(new_line.clone())
+                    new_line.clone()
+                };
+                if let Some(&grp) = add_groups.get(&ai) {
+                    line.group = Some(grp);
                 }
+                Row::MovTgt(line)
             }
             _ => h.rows[ai].clone(),
         };

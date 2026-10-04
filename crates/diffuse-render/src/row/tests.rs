@@ -3,14 +3,114 @@ use crate::core::{merge::RunKind, wire::OutputRun};
 
 #[test]
 fn test_prefix_gutters() {
-    let r_add = prefix_of(RowKind::Add, None, Some(42), None, &[]);
+    let r_add = prefix_of(RowKind::Add, None, None, Some(42), None, &[]);
     assert_eq!(r_add, "  42 +");
 
-    let r_del = prefix_of(RowKind::Del, None, None, Some(10), &[]);
+    let r_del = prefix_of(RowKind::Del, None, None, None, Some(10), &[]);
     assert_eq!(r_del, "  10 -");
 
-    let r_mod = prefix_of(RowKind::Mod, None, Some(55), Some(54), &[]);
+    // Non-group 1-to-1 mod row styles with right-aligned ~ ("  55 ~")
+    let r_mod = prefix_of(RowKind::Mod, None, None, Some(55), Some(54), &[]);
     assert_eq!(r_mod, "  55 ~");
+}
+
+#[test]
+fn test_prefix_group_gutters() {
+    // Group anchor row has single left-aligned ~ (" 141~ ")
+    let r_anchor = prefix_of(
+        RowKind::Mod,
+        None,
+        Some(RowGroup::Anchor),
+        Some(141),
+        Some(140),
+        &[],
+    );
+    assert_eq!(r_anchor, " 141~ ");
+
+    // Group aux add row has ~+
+    let r_aux_add = prefix_of(
+        RowKind::Add,
+        None,
+        Some(RowGroup::Aux { anchor: 141 }),
+        Some(140),
+        None,
+        &[],
+    );
+    assert_eq!(r_aux_add, " 140~+");
+
+    // Group aux del row has ~-
+    let r_aux_del = prefix_of(
+        RowKind::Del,
+        None,
+        Some(RowGroup::Aux { anchor: 141 }),
+        None,
+        Some(140),
+        &[],
+    );
+    assert_eq!(r_aux_del, " 140~-");
+}
+
+#[test]
+fn test_styled_prefix_group_and_non_group() {
+    let theme = DiffuseTheme::DEFAULT;
+
+    // Non-group mod row has right-aligned ~ ("  55 ~")
+    let s_mod = styled_prefix(
+        RowKind::Mod,
+        None,
+        None,
+        Some(55),
+        Some(54),
+        &[],
+        true,
+        &theme,
+    );
+    assert_eq!(crate::ansi::strip_ansi(&s_mod), "  55 ~");
+    assert!(s_mod.contains(&theme.palette.mod_gutter_icon.fg_code()));
+
+    // Group anchor row has left-aligned ~ (" 141~ ")
+    let s_anchor = styled_prefix(
+        RowKind::Mod,
+        None,
+        Some(RowGroup::Anchor),
+        Some(141),
+        Some(140),
+        &[],
+        true,
+        &theme,
+    );
+    assert_eq!(crate::ansi::strip_ansi(&s_anchor), " 141~ ");
+    assert!(s_anchor.contains(&theme.palette.mod_gutter_icon.fg_code()));
+
+    // Group aux add row has ~+ (" 140~+")
+    let s_aux_add = styled_prefix(
+        RowKind::Add,
+        None,
+        Some(RowGroup::Aux { anchor: 141 }),
+        Some(140),
+        None,
+        &[],
+        true,
+        &theme,
+    );
+    assert_eq!(crate::ansi::strip_ansi(&s_aux_add), " 140~+");
+    assert!(s_aux_add.contains(&theme.palette.mod_gutter_icon.fg_code()));
+    assert!(s_aux_add.contains(&theme.palette.add_gutter_icon.fg_code()));
+
+    // Group aux del row has ~- (" 140~-")
+    let s_aux_del = styled_prefix(
+        RowKind::Del,
+        None,
+        Some(RowGroup::Aux { anchor: 141 }),
+        None,
+        Some(140),
+        &[],
+        true,
+        &theme,
+    );
+    assert_eq!(crate::ansi::strip_ansi(&s_aux_del), " 140~-");
+    assert!(s_aux_del.contains(&theme.palette.mod_gutter_icon.fg_code()));
+    assert!(s_aux_del.contains(&theme.palette.del_gutter_icon.fg_code()));
 }
 
 #[test]
@@ -21,7 +121,7 @@ fn test_addition_row_with_all_common_runs_preserves_plus_gutter() {
         sgr: None,
         text: "    syntax::{".into(),
     }];
-    let r_add = prefix_of(RowKind::Add, None, Some(53), None, &runs);
+    let r_add = prefix_of(RowKind::Add, None, None, Some(53), None, &runs);
     assert_eq!(
         r_add, "  53 +",
         "Leading add row must keep '+' in gutter even if runs are common"

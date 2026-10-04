@@ -122,6 +122,7 @@ fn dummy_row(kind: RowKind, line: u32, text: &str) -> crate::core::wire::OutputR
         spans: crate::core::parse::Spans::default(),
         runs: vec![],
         wholesale: false,
+        group: None,
     }
 }
 

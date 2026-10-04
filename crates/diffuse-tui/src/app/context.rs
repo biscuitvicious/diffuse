@@ -306,6 +306,7 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
+                    group: None,
                 });
             }
 
@@ -378,6 +379,7 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
+                    group: None,
                 });
             }
 
@@ -506,6 +508,7 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
+                    group: None,
                 });
             }
 
@@ -573,6 +576,7 @@ impl AppState {
                     spans: Spans::default(),
                     runs,
                     wholesale: false,
+                    group: None,
                 });
             }
 
@@ -674,6 +678,7 @@ impl AppState {
                 spans: Spans::default(),
                 runs,
                 wholesale: false,
+                group: None,
             }
         };
 

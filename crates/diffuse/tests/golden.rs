@@ -1038,6 +1038,9 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
 }
 
 fn run_bin_leg(name: &str, min: usize) {
+    if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
+        return;
+    }
     let fixture = load_fixture(name);
     let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))

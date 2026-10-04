@@ -94,6 +94,8 @@ fn test_default_theme_palette() {
     assert_eq!(palette.mod_cursor_bg, Color::Rgb(66, 66, 66));
     assert_eq!(palette.note_tint_bg, Color::Rgb(76, 64, 20));
     assert_eq!(palette.ctx_cursor_bg, Color::Fixed(237));
+    assert_eq!(palette.ctx_fg, Color::Primary);
+    assert_eq!(palette.syntax_text, Color::Primary);
 
     let theme = DiffuseTheme::DEFAULT;
     assert_eq!(theme.name, "default");

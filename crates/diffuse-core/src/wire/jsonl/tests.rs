@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{RowKind, Spans},
+    parse::{RowGroup, RowKind, Spans},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
 };
 
@@ -38,6 +38,7 @@ fn sample_output_file() -> OutputFile {
                         text: "fn main() {".into(),
                     }],
                     wholesale: false,
+                    group: None,
                 },
                 OutputRow {
                     kind: RowKind::Mod,
@@ -54,6 +55,7 @@ fn sample_output_file() -> OutputFile {
                         text: "    println!(\"hello\");".into(),
                     }],
                     wholesale: false,
+                    group: None,
                 },
                 OutputRow {
                     kind: RowKind::Ctx,
@@ -70,6 +72,7 @@ fn sample_output_file() -> OutputFile {
                         text: "}".into(),
                     }],
                     wholesale: false,
+                    group: None,
                 },
             ],
         }],
@@ -447,6 +450,7 @@ fn test_output_file_release_rendered_memory() {
         spans: Default::default(),
         runs: Vec::new(),
         wholesale: false,
+        group: None,
     });
     file.new_content = vec!["line".to_string()];
     file.hunks = vec![crate::wire::OutputHunk {
@@ -526,6 +530,7 @@ fn test_output_hunk_counts() {
         spans: Spans::default(),
         runs: vec![],
         wholesale: false,
+        group: None,
     };
     let hunk = OutputHunk {
         old_start: 1,
@@ -548,4 +553,82 @@ fn test_output_hunk_counts() {
     assert_eq!(counts.mods, 1);
     assert_eq!(counts.movs, 2);
     assert_eq!(counts.notes, 0);
+}
+
+#[test]
+fn test_row_group_wire_serialization() {
+    let anchor = RowGroup::Anchor;
+    let anchor_json = serde_json::to_string(&anchor).unwrap();
+    assert_eq!(anchor_json, r#"{"role":"anchor"}"#);
+    let de_anchor: RowGroup = serde_json::from_str(&anchor_json).unwrap();
+    assert_eq!(de_anchor, RowGroup::Anchor);
+
+    let aux = RowGroup::Aux { anchor: 141 };
+    let aux_json = serde_json::to_string(&aux).unwrap();
+    assert_eq!(aux_json, r#"{"role":"aux","anchor":141}"#);
+    let de_aux: RowGroup = serde_json::from_str(&aux_json).unwrap();
+    assert_eq!(de_aux, RowGroup::Aux { anchor: 141 });
+
+    // OutputRow with anchor group
+    let row_anchor = OutputRow {
+        kind: RowKind::Mod,
+        mov_side: None,
+        new_line: Some(141),
+        old_line: Some(140),
+        text: "mod text".into(),
+        del_text: Some("old text".into()),
+        spans: Spans::default(),
+        runs: vec![],
+        wholesale: false,
+        group: Some(RowGroup::Anchor),
+    };
+    let json_anchor = serde_json::to_string(&row_anchor).unwrap();
+    assert!(
+        json_anchor.contains(r#""group":{"role":"anchor"}"#),
+        "serialized OutputRow must contain group with anchor role: {json_anchor}"
+    );
+    let de_row_anchor: OutputRow = serde_json::from_str(&json_anchor).unwrap();
+    assert_eq!(de_row_anchor.group, Some(RowGroup::Anchor));
+
+    // OutputRow with aux group
+    let row_aux = OutputRow {
+        kind: RowKind::Add,
+        mov_side: None,
+        new_line: Some(142),
+        old_line: None,
+        text: "add text".into(),
+        del_text: None,
+        spans: Spans::default(),
+        runs: vec![],
+        wholesale: false,
+        group: Some(RowGroup::Aux { anchor: 141 }),
+    };
+    let json_aux = serde_json::to_string(&row_aux).unwrap();
+    assert!(
+        json_aux.contains(r#""group":{"role":"aux","anchor":141}"#),
+        "serialized OutputRow must contain group with aux role and anchor num: {json_aux}"
+    );
+    let de_row_aux: OutputRow = serde_json::from_str(&json_aux).unwrap();
+    assert_eq!(de_row_aux.group, Some(RowGroup::Aux { anchor: 141 }));
+
+    // OutputRow without group: group field is omitted from JSON
+    let row_none = OutputRow {
+        kind: RowKind::Add,
+        mov_side: None,
+        new_line: Some(1),
+        old_line: None,
+        text: "add text".into(),
+        del_text: None,
+        spans: Spans::default(),
+        runs: vec![],
+        wholesale: false,
+        group: None,
+    };
+    let json_none = serde_json::to_string(&row_none).unwrap();
+    assert!(
+        !json_none.contains("group"),
+        "OutputRow with None group must omit group key entirely: {json_none}"
+    );
+    let de_row_none: OutputRow = serde_json::from_str(&json_none).unwrap();
+    assert_eq!(de_row_none.group, None);
 }

@@ -952,6 +952,7 @@ index 1111111..2222222 100644
                     spans: Default::default(),
                     runs: Vec::new(),
                     wholesale: false,
+                    group: None,
                 }],
             }],
             raw_hunks: Vec::new(),

@@ -517,6 +517,7 @@ fn test_lcs_symmetric_tie_breaker_json_runs() {
         old_line: crate::parse::DelLine {
             num: crate::parse::LineNum::new(90).unwrap(),
             text: old_line.to_string(),
+            group: None,
         },
         new_line: crate::parse::AddLine::with_spans(
             crate::parse::LineNum::new(90).unwrap(),
@@ -750,5 +751,25 @@ fn test_token_is_alnum_replacement() {
     assert_eq!(
         formatted,
         "        && [-token_is_alnum-]{+is_subword_token+}(t1)"
+    );
+}
+
+#[test]
+fn test_prefix_gutter_comment_alignment() {
+    let old = "/// Generate plain 6-character prefix gutter (` 123 + `, ` 123≈+`, ` 123≈-`).";
+    let new = "/// Generate plain 6-character prefix gutter (` 123 +`, ` 123 -`, ` 123 ~`, `";
+    let (_, runs) = word_spans_and_runs_with_profile(old, new, None);
+    let formatted: String = runs
+        .iter()
+        .map(|(kind, text)| match kind {
+            RunKind::Common | RunKind::Ctx => text.clone(),
+            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Add => format!("{{+{text}+}}"),
+            RunKind::Mov => format!("[~{text}~]"),
+        })
+        .collect();
+    assert_eq!(
+        formatted,
+        "/// Generate plain 6-character prefix gutter (` 123 +[- -]`, ` 123[-≈+-]{+ -+}`, ` 123[-≈--]{+ ~`, +}`[-).-]"
     );
 }

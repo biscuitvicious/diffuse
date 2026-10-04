@@ -461,6 +461,63 @@ fn test_numeric_goto_buffer() {
     assert_eq!(s.num_buffer, "");
     let cur_row = s.current_flat_row().expect("cur row");
     assert_eq!(s.flat_row_coord(cur_row), Some(1026));
+
+    // '0' with empty buffer resets col_offset to 0 without buffering
+    s.col_offset = 12;
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('0'), KeyModifiers::NONE)),
+    );
+    assert_eq!(s.col_offset, 0);
+    assert_eq!(s.num_buffer, "");
+
+    // Backspace removes trailing digits from num_buffer
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('4'), KeyModifiers::NONE)),
+    );
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE)),
+    );
+    assert_eq!(s.num_buffer, "42");
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+    );
+    assert_eq!(s.num_buffer, "4");
+
+    // Backspace on last digit empties buffer and triggers Dismiss
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+    );
+    assert_eq!(s.num_buffer, "");
+
+    // Esc clears the buffer
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('9'), KeyModifiers::NONE)),
+    );
+    assert_eq!(s.num_buffer, "9");
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+    );
+    assert_eq!(s.num_buffer, "");
+
+    // Backspace with empty buffer acts as Dismiss (e.g. cancels active
+    // selection)
+    s.start_or_confirm_selection();
+    assert!(s.anchor.is_some());
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
+    );
+    assert!(
+        s.anchor.is_none(),
+        "Backspace on empty buffer must dismiss selection"
+    );
 }
 
 #[test]

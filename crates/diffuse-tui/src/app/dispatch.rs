@@ -21,7 +21,9 @@ impl AppState {
         match cmd {
             TuiCommand::Quit => self.should_quit = true,
             TuiCommand::Dismiss => {
-                if self.file_finder.is_some() {
+                if !self.num_buffer.is_empty() {
+                    self.num_buffer.clear();
+                } else if self.file_finder.is_some() {
                     self.cancel_file_finder();
                 } else if self.note_draft.is_some() || self.note_editor.is_some() {
                     self.note_draft = None;

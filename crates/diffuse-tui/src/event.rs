@@ -163,7 +163,21 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             state.execute(TuiCommand::PageUp);
         }
         (KeyModifiers::NONE, KeyCode::Char(c @ '0'..='9')) => {
-            state.num_buffer.push(c);
+            if c == '0' && state.num_buffer.is_empty() {
+                state.col_offset = 0;
+            } else {
+                state.num_buffer.push(c);
+            }
+        }
+        (KeyModifiers::NONE, KeyCode::Backspace) => {
+            if !state.num_buffer.is_empty() {
+                state.num_buffer.pop();
+                if state.num_buffer.is_empty() {
+                    state.execute(TuiCommand::Dismiss);
+                }
+            } else {
+                state.execute(TuiCommand::Dismiss);
+            }
         }
         (KeyModifiers::NONE, KeyCode::Home) | (KeyModifiers::NONE, KeyCode::Char('g')) => {
             if !state.num_buffer.is_empty() {

@@ -558,7 +558,7 @@ impl AppState {
             .map(|l| crate::view::ansi_to_ratatui_line(&l))
             .collect();
         let diff_bg = crate::view::to_color(self.theme.palette.bg_base);
-        let diff_fg = crate::view::to_color(self.theme.palette.ctx_fg);
+        let diff_fg = crate::view::to_color(self.theme.palette.syntax_text);
         f.render_widget(
             Paragraph::new(paragraph_lines).style(Style::default().fg(diff_fg).bg(diff_bg)),
             diff_area,
@@ -882,6 +882,7 @@ impl AppState {
                             crate::render::styled_prefix(
                                 r.kind,
                                 r.mov_side,
+                                r.group,
                                 r.new_line,
                                 r.old_line,
                                 &r.runs,

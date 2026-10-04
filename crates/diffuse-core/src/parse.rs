@@ -38,11 +38,21 @@ impl RowKind {
     }
 }
 
+/// Identifies the expansion/collapse group role of a diff row.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(tag = "role", rename_all = "lowercase")]
+pub enum RowGroup {
+    Anchor,
+    Aux { anchor: u32 },
+}
+
 /// A line deletion: (`line_num`, text, moved).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DelLine {
     pub num: LineNum,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<RowGroup>,
 }
 
 impl DelLine {
@@ -51,7 +61,14 @@ impl DelLine {
         Self {
             num,
             text: text.into(),
+            group: None,
         }
+    }
+
+    #[inline]
+    pub fn with_group(mut self, group: Option<RowGroup>) -> Self {
+        self.group = group;
+        self
     }
 }
 
@@ -64,6 +81,8 @@ pub struct AddLine {
     pub del_text: Option<String>,
     #[serde(default, skip_serializing_if = "Spans::is_empty")]
     pub spans: Spans,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<RowGroup>,
     /// Merged runs from the same profiled tape as `spans` (render
     /// unification: render consumes these instead of rebuilding its own
     /// unprofiled tape, so runs can never contradict the spans' tape).
@@ -81,6 +100,7 @@ impl AddLine {
             text: text.into(),
             del_text: None,
             spans: Spans::default(),
+            group: None,
             cached_runs: Vec::new(),
         }
     }
@@ -92,6 +112,7 @@ impl AddLine {
             text: text.into(),
             del_text: None,
             spans,
+            group: None,
             cached_runs: Vec::new(),
         }
     }
@@ -108,8 +129,15 @@ impl AddLine {
             text: text.into(),
             del_text: Some(del_text.into()),
             spans,
+            group: None,
             cached_runs: Vec::new(),
         }
+    }
+
+    #[inline]
+    pub fn with_group(mut self, group: Option<RowGroup>) -> Self {
+        self.group = group;
+        self
     }
 
     /// Attach the profiled-tape merged runs (see `cached_runs`).
@@ -282,6 +310,18 @@ impl Row {
         }
     }
 
+    /// Group role (anchor or auxiliary) if this row belongs to an
+    /// expansion/collapse group.
+    #[inline]
+    pub fn group(&self) -> Option<RowGroup> {
+        match self {
+            Row::Add(add_line) | Row::MovTgt(add_line) => add_line.group,
+            Row::Mod { new_line, .. } => new_line.group,
+            Row::Del(del_line) | Row::MovSrc(del_line) => del_line.group,
+            Row::Ctx(_) | Row::Sep(_) => None,
+        }
+    }
+
     pub fn reverse(&self) -> Self {
         match self {
             Row::Ctx(ctx_line) => Row::Ctx(CtxLine {
@@ -289,32 +329,54 @@ impl Row {
                 new_pos: ctx_line.old_pos,
                 text: ctx_line.text.clone(),
             }),
-            Row::Del(del_line) => Row::Add(AddLine::new(del_line.num, del_line.text.clone())),
-            Row::Add(add_line) => Row::Del(DelLine::new(
-                add_line.num,
-                add_line
-                    .del_text
-                    .as_deref()
-                    .unwrap_or(&add_line.text)
-                    .to_string(),
-            )),
-            Row::Mod { old_line, new_line } => Row::Mod {
-                old_line: DelLine::new(new_line.num, new_line.text.clone()),
-                new_line: AddLine::with_spans(
+            Row::Del(del_line) => {
+                let mut add = AddLine::new(del_line.num, del_line.text.clone());
+                add.group = del_line.group;
+                Row::Add(add)
+            }
+            Row::Add(add_line) => {
+                let mut del = DelLine::new(
+                    add_line.num,
+                    add_line
+                        .del_text
+                        .as_deref()
+                        .unwrap_or(&add_line.text)
+                        .to_string(),
+                );
+                del.group = add_line.group;
+                Row::Del(del)
+            }
+            Row::Mod { old_line, new_line } => {
+                let mut old = DelLine::new(new_line.num, new_line.text.clone());
+                old.group = new_line.group;
+                let mut new = AddLine::with_spans(
                     old_line.num,
                     old_line.text.clone(),
                     new_line.spans.reverse(),
-                ),
-            },
-            Row::MovSrc(del_line) => Row::MovTgt(AddLine::new(del_line.num, del_line.text.clone())),
-            Row::MovTgt(add_line) => Row::MovSrc(DelLine::new(
-                add_line.num,
-                add_line
-                    .del_text
-                    .as_deref()
-                    .unwrap_or(&add_line.text)
-                    .to_string(),
-            )),
+                );
+                new.group = old_line.group;
+                Row::Mod {
+                    old_line: old,
+                    new_line: new,
+                }
+            }
+            Row::MovSrc(del_line) => {
+                let mut add = AddLine::new(del_line.num, del_line.text.clone());
+                add.group = del_line.group;
+                Row::MovTgt(add)
+            }
+            Row::MovTgt(add_line) => {
+                let mut del = DelLine::new(
+                    add_line.num,
+                    add_line
+                        .del_text
+                        .as_deref()
+                        .unwrap_or(&add_line.text)
+                        .to_string(),
+                );
+                del.group = add_line.group;
+                Row::MovSrc(del)
+            }
             Row::Sep(s) => Row::Sep(s.clone()),
         }
     }

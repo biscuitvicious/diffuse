@@ -138,10 +138,10 @@ pub fn render_file_diff(
     let render_row = |r: &OutputRow, out: &mut String| {
         let pfx = if styled_prefixes {
             styled_prefix(
-                r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, false, theme,
+                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, false, theme,
             )
         } else {
-            let plain = prefix_of(r.kind, r.mov_side, r.new_line, r.old_line, &r.runs);
+            let plain = prefix_of(r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs);
             format!("{plain} ")
         };
 
@@ -235,7 +235,7 @@ pub fn render_raw_file_diff(
 
         for r in &h.rows {
             let pfx = styled_prefix(
-                r.kind, r.mov_side, r.new_line, r.old_line, &r.runs, true, theme,
+                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
             );
             let _ = write_raw_row(&mut out, r.kind, &pfx, &r.text, false, false, true, theme);
             out.push('\n');
