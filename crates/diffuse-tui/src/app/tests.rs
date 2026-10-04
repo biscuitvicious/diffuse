@@ -968,19 +968,23 @@ index 6f6222d..4aa7a1d 100644
     );
 }
 
-#[test]
-fn test_separator_expand_by_enter_and_click_and_merge() {
+fn load_opt1_wire_output() -> PipelineOutput {
     let wire_path = Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.jsonl"
+        "/../../tests/golden/opt-1-cache-regex-window-slice/outputs/wire.jsonl"
     ));
     let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
     let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
-    let output = PipelineOutput {
+    PipelineOutput {
         files,
         branch: String::new(),
         untracked_skipped: vec![],
-    };
+    }
+}
+
+#[test]
+fn test_separator_expand_by_enter_and_click_and_merge() {
+    let output = load_opt1_wire_output();
 
     let mut state = AppState::new(
         output,
@@ -1073,17 +1077,7 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
 
 #[test]
 fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
-    let wire_path = Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.jsonl"
-    ));
-    let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
-    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
-    let output = PipelineOutput {
-        files,
-        branch: String::new(),
-        untracked_skipped: vec![],
-    };
+    let output = load_opt1_wire_output();
 
     let mut state = AppState::new(
         output,
@@ -3051,17 +3045,7 @@ fn test_note_modal_margins_with_scrollbar() {
 
 #[test]
 fn test_mov_target_and_source_render_in_tui() {
-    let wire_path = Path::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../tests/golden/opt-1-cache-regex-window-slice/wire.jsonl"
-    ));
-    let jsonl_str = fs::read_to_string(wire_path).expect("must read opt-1 wire.jsonl");
-    let files = crate::core::wire::jsonl::decode_jsonl_str(&jsonl_str).unwrap();
-    let output = PipelineOutput {
-        files,
-        branch: String::new(),
-        untracked_skipped: vec![],
-    };
+    let output = load_opt1_wire_output();
 
     let mut state = AppState::new(
         output,

@@ -25,7 +25,7 @@ The acceptance suite in [`tests/golden.rs`](tests/golden.rs) verifies the pipeli
 1. **Library leg**: Direct in-process invocation of the pipeline over frozen inputs.
 2. **Binary leg**: External invocation of the compiled `diffuse` CLI binary, parsing the emitted JSON stream.
 
-Both execution paths must match the recorded golden outputs (`.wire.jsonl`, `.render.txt`, `.markdown.md`) byte-for-byte.
+Both execution paths must match the recorded golden outputs (`.wire.jsonl`, `.render.dark.txt`, `.render.light.txt`, `.render.raw.txt`, `.markdown.md`) byte-for-byte.
 
 > [!IMPORTANT]
 > **Golden change policy**: Golden fixtures change only when engine behavior is intentionally modified and reviewed. A failing golden test signifies an unintended deviation; never regenerate fixtures merely to resolve test failures. Detailed fixture inventory and sign-off criteria are specified in [`tests/AGENTS.md`](tests/AGENTS.md).

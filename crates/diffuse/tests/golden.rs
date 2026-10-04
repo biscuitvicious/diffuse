@@ -40,7 +40,9 @@ use diffuse::{
         parse::{Row, RowKind},
         wire::{MovSide, OutputFile, PipelineOutput},
     },
-    render::{default_theme, encode_sgr, render_pipeline_output},
+    render::{
+        DiffuseTheme, default_theme, encode_sgr, render_pipeline_output, render_raw_pipeline_output,
+    },
     syntax::{profile::LangProfile, registry::lang_profile},
 };
 
@@ -109,7 +111,8 @@ fn write_gz(path: &Path, data: &[u8]) -> std::io::Result<()> {
 static FIXTURE_CACHE: LazyLock<Mutex<HashMap<String, Arc<Fixture>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-static EXPECTED_RENDER_CACHE: LazyLock<Mutex<HashMap<String, Arc<String>>>> =
+type RenderCacheMap = HashMap<(String, &'static str), Arc<String>>;
+static EXPECTED_RENDER_CACHE: LazyLock<Mutex<RenderCacheMap>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Deserialize, Serialize)]
@@ -187,43 +190,56 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     arc
 }
 
-fn expected_render_path(name: &str) -> PathBuf {
-    golden_dir().join(name).join("render.txt")
+fn expected_render_path(name: &str, flavor: &str) -> PathBuf {
+    golden_dir()
+        .join(name)
+        .join("outputs")
+        .join(format!("render.{flavor}.txt"))
 }
 
 fn expected_markdown_path(name: &str) -> PathBuf {
-    golden_dir().join(name).join("markdown.md")
+    golden_dir().join(name).join("outputs").join("markdown.md")
 }
 
-fn load_expected_render(name: &str) -> Arc<String> {
-    let mut cache = EXPECTED_RENDER_CACHE.lock().unwrap();
-    if let Some(r) = cache.get(name) {
-        return Arc::clone(r);
+fn load_expected_render(name: &str, flavor: &'static str) -> Arc<String> {
+    {
+        let cache = EXPECTED_RENDER_CACHE.lock().unwrap();
+        if let Some(r) = cache.get(&(name.to_string(), flavor)) {
+            return Arc::clone(r);
+        }
     }
-    let render_path = expected_render_path(name);
+    let render_path = expected_render_path(name, flavor);
     let expected = if render_path.exists() {
         fs::read_to_string(&render_path).unwrap_or_else(|e| {
             panic!(
-                "Failed to read expected render output for {name} from {}: {e}",
+                "Failed to read expected {flavor} render output for {name} from {}: {e}",
                 render_path.display()
             )
         })
     } else {
-        let gz_path = golden_dir().join(format!("{name}.render.txt.gz"));
-        let bytes = fs::read(&gz_path).unwrap_or_else(|e| {
+        let gz_path = golden_dir().join(format!("{name}.render.{flavor}.txt.gz"));
+        if gz_path.exists() {
+            let bytes = fs::read(&gz_path).unwrap_or_else(|e| {
+                panic!(
+                    "Failed to read expected {flavor} render output for {name} from {} or {}: {e}",
+                    render_path.display(),
+                    gz_path.display()
+                )
+            });
+            let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
+            s
+        } else {
             panic!(
-                "Failed to read expected render output for {name} from {} or {}: {e}",
-                render_path.display(),
-                gz_path.display()
-            )
-        });
-        let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
-        let mut s = String::new();
-        std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
-        s
+                "Failed to read expected {flavor} render output for {name} from {} (file not found). Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to create/update.",
+                render_path.display()
+            );
+        }
     };
     let arc = Arc::new(expected);
-    cache.insert(name.to_string(), Arc::clone(&arc));
+    let mut cache = EXPECTED_RENDER_CACHE.lock().unwrap();
+    cache.insert((name.to_string(), flavor), Arc::clone(&arc));
     arc
 }
 
@@ -771,7 +787,7 @@ fn wire_outputs_match(a: &PipelineOutput, b: &PipelineOutput) -> bool {
 }
 
 fn expected_wire_jsonl_path(name: &str) -> PathBuf {
-    golden_dir().join(name).join("wire.jsonl")
+    golden_dir().join(name).join("outputs").join("wire.jsonl")
 }
 
 fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
@@ -785,7 +801,7 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
                 .expect("emit_file_jsonl");
         }
 
-        if gz_wire_jsonl_path.exists() || name.contains("history") {
+        if gz_wire_jsonl_path.exists() {
             write_gz(&gz_wire_jsonl_path, &jsonl_buf).unwrap_or_else(|e| {
                 panic!("failed to write {}: {e}", gz_wire_jsonl_path.display())
             });
@@ -837,15 +853,15 @@ fn print_render_diff(name: &str, actual: &str, expected: &str) {
     eprintln!("----- END RENDER DIFF -----\n");
 }
 
-fn assert_render_matches(output: &PipelineOutput, name: &str) {
-    let theme = default_theme();
-    let actual_raw = render_pipeline_output(output, &theme, true);
-    let actual_encoded = encode_sgr(&actual_raw);
-    let render_path = expected_render_path(name);
-    let gz_render_path = golden_dir().join(format!("{name}.render.txt.gz"));
+fn assert_render_flavor_matches(actual_encoded: &str, name: &str, flavor: &'static str) {
+    let render_path = expected_render_path(name, flavor);
+    let gz_render_path = golden_dir().join(format!("{name}.render.{flavor}.txt.gz"));
 
-    if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_RENDER").is_ok() {
-        if gz_render_path.exists() || name.contains("history") {
+    if std::env::var("GEN_GOLDEN").is_ok()
+        || std::env::var("UPDATE_RENDER").is_ok()
+        || (flavor == "raw" && std::env::var("UPDATE_RAW").is_ok())
+    {
+        if gz_render_path.exists() {
             write_gz(&gz_render_path, actual_encoded.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_render_path.display()));
         } else {
@@ -855,14 +871,35 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
         return;
     }
 
-    let expected_encoded = load_expected_render(name);
+    let expected_encoded = load_expected_render(name, flavor);
     if actual_encoded != *expected_encoded.as_ref() {
-        print_render_diff(name, &actual_encoded, expected_encoded.as_ref());
+        print_render_diff(
+            &format!("{name}.render.{flavor}"),
+            actual_encoded,
+            expected_encoded.as_ref(),
+        );
         panic!(
-            "[{name}] terminal render output deviates from expected static golden ({}). See render diff above. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to update.",
+            "[{name}] {flavor} render output deviates from expected static golden ({}). See render diff above. Use GEN_GOLDEN=1 or UPDATE_RENDER=1 to update.",
             render_path.display()
         );
     }
+}
+
+fn assert_render_matches(output: &PipelineOutput, name: &str) {
+    let dark_theme = default_theme();
+    let actual_dark_raw = render_pipeline_output(output, &dark_theme, true);
+    let actual_dark_encoded = encode_sgr(&actual_dark_raw);
+    assert_render_flavor_matches(&actual_dark_encoded, name, "dark");
+
+    let light_theme = DiffuseTheme::LIGHT;
+    let actual_light_raw = render_pipeline_output(output, &light_theme, true);
+    let actual_light_encoded = encode_sgr(&actual_light_raw);
+    assert_render_flavor_matches(&actual_light_encoded, name, "light");
+
+    let raw_theme = DiffuseTheme::DEFAULT;
+    let actual_raw = render_raw_pipeline_output(output, &raw_theme);
+    let actual_raw_encoded = encode_sgr(&actual_raw);
+    assert_render_flavor_matches(&actual_raw_encoded, name, "raw");
 }
 
 fn print_markdown_diff(name: &str, actual: &str, expected: &str) {
@@ -898,7 +935,7 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
         || std::env::var("UPDATE_MARKDOWN").is_ok()
         || std::env::var("UPDATE_MD").is_ok()
     {
-        if gz_md_path.exists() || name.contains("history") {
+        if gz_md_path.exists() {
             write_gz(&gz_md_path, actual_md.as_bytes())
                 .unwrap_or_else(|e| panic!("failed to write {}: {e}", gz_md_path.display()));
         } else {
@@ -1000,6 +1037,57 @@ fn run_bin_markdown_leg(name: &str) {
         panic!(
             "[{name}] bin markdown output deviates from expected static golden ({}). See markdown diff above.",
             md_path.display()
+        );
+    }
+}
+
+fn run_bin_raw_leg(name: &str) {
+    if std::env::var("GEN_GOLDEN").is_ok()
+        || std::env::var("UPDATE_RENDER").is_ok()
+        || std::env::var("UPDATE_RAW").is_ok()
+    {
+        return;
+    }
+    let fixture = load_fixture(name);
+    let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--raw")
+        .arg("--color=always")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the diffuse binary in --raw mode");
+
+    let mut stdin = child.stdin.take().expect("stdin");
+    let writer_thread = std::thread::spawn(move || {
+        use std::io::Write;
+        let _ = stdin.write_all(&input);
+        let _ = stdin.flush();
+        drop(stdin);
+    });
+
+    let out = child.wait_with_output().expect("wait for the bin");
+    let _ = writer_thread.join();
+    assert!(
+        out.status.success(),
+        "[{name}] the bin exited non-zero in raw mode: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bin_raw = String::from_utf8_lossy(&out.stdout);
+    let actual_encoded = encode_sgr(&bin_raw);
+    let raw_path = expected_render_path(name, "raw");
+    let expected_encoded = load_expected_render(name, "raw");
+
+    if actual_encoded != *expected_encoded.as_ref() {
+        print_render_diff(
+            &format!("{name}.render.raw (bin)"),
+            &actual_encoded,
+            expected_encoded.as_ref(),
+        );
+        panic!(
+            "[{name}] bin raw output deviates from expected static golden ({}). See render diff above.",
+            raw_path.display()
         );
     }
 }
@@ -1296,6 +1384,7 @@ fn run_binary_test_impl(is_inited: bool, name: &str, min: usize, has_render: boo
     run_bin_leg(name, min);
     if has_render {
         run_bin_markdown_leg(name);
+        run_bin_raw_leg(name);
     }
     true
 }
@@ -1368,6 +1457,7 @@ corpus_tests!(
     true
 );
 corpus_tests!(theme_light_toggle, "theme-light-toggle", 40, true, true);
+corpus_tests!(row_groups_contrast, "row-groups-contrast", 20, true, true);
 
 #[test]
 fn test_golden_initialized_detection() {
