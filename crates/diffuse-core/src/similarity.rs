@@ -1,6 +1,8 @@
 //! One-for-one port of `review.ts`'s `lineSimilarity`/`lineSimilarityParts`
 //! (PLAN.md §3). The comments carry the *why* — ported verbatim.
 
+use std::mem;
+
 use crate::{
     algo::interner::SymbolTable,
     lcs::{
@@ -116,7 +118,7 @@ impl TokenInterner {
     }
 
     pub(crate) fn intern(&mut self, token: &str) -> u32 {
-        let static_token: &'static str = unsafe { std::mem::transmute(token) };
+        let static_token: &'static str = unsafe { mem::transmute(token) };
         if let Some(id) = self.symbols.get_id(&static_token) {
             return id.as_u32();
         }

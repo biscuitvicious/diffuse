@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fs};
+
+use diffuse_syntax::color::TokenColor;
 
 use super::*;
 use crate::{
@@ -22,11 +24,12 @@ fn test_fence_delimiter_line_preserves_comment_prefix_color() {
         "delimiter line produces 2 tokens (prefix + fence)"
     );
     assert_eq!(
-        tokens[0].color, "syntaxComment",
-        "comment prefix is syntaxComment"
+        tokens[0].color,
+        TokenColor::Comment,
+        "comment prefix is com"
     );
     assert_eq!(tokens[0].text, "/// ");
-    assert_eq!(tokens[1].color, "muted", "fence is muted");
+    assert_eq!(tokens[1].color, TokenColor::FenceBorder, "fence is fbo");
     assert_eq!(tokens[1].text, "```ignore");
 }
 
@@ -43,9 +46,9 @@ fn test_mod_comment_row_preserves_comment_color_after_subword_fill() {
     let common_after = row.runs.iter().find(|r| r.text.contains("layer the"));
     assert!(common_after.is_some(), "common run 'layer the' exists");
     assert_eq!(
-        common_after.unwrap().color.as_deref(),
-        Some("syntaxComment"),
-        "text after fill preserves syntaxComment color"
+        common_after.unwrap().color,
+        TokenColor::Comment,
+        "text after fill preserves com color"
     );
 }
 
@@ -66,7 +69,7 @@ fn test_comment_reflow_del_span_positioning() {
     let runs_1078 = crate::merge::merged_runs(&r_1078);
     let non_common_1078: Vec<(RunKind, &str)> = runs_1078
         .iter()
-        .filter(|r| r.kind != RunKind::Common)
+        .filter(|r| r.kind != RunKind::Ctx)
         .map(|r| (r.kind, r.text))
         .collect();
     assert_eq!(
@@ -94,7 +97,7 @@ fn test_comment_reflow_del_span_positioning() {
     let runs_1079 = crate::merge::merged_runs(&r_1079);
     let non_common_1079: Vec<(RunKind, &str)> = runs_1079
         .iter()
-        .filter(|r| r.kind != RunKind::Common)
+        .filter(|r| r.kind != RunKind::Ctx)
         .map(|r| (r.kind, r.text))
         .collect();
     assert_eq!(
@@ -206,7 +209,7 @@ index 759adaf..fbe3b20 100644
 +
 +[alias]
 +regen = "run -p linux --bin mirage-registry-gen --target x86_64-unknown-linux-gnu -- src/registry/generated.rs"
- 
+
  [build]
  target = [ "x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu" ]
 @@ -7,23 +11,30 @@ target = [ "x86_64-unknown-linux-musl", "x86_64-unknown-linux-gnu" ]
@@ -215,23 +218,23 @@ index 759adaf..fbe3b20 100644
  rustflags = [ "-C", "target-feature=+crt-static", "-C", "link-arg=-fuse-ld=mold" ]
 -runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then echo "Running on x86_64: $*"; "$@"; else echo "WARNING: Skipping runner on non-x86_64 arch (got $(uname -m))"; exit 1; fi', "--"]
 +runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then "$@"; fi', "--"]
- 
+
  [target.x86_64-unknown-linux-gnu]
  linker = "clang"
  rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 -runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then echo "Running on x86_64: $*"; "$@"; else echo "WARNING: Skipping runner on non-x86_64 arch (got $(uname -m))"; exit 1; fi', "--"]
 +runner = ["sh", "-c", 'if [ "$(uname -m)" = "x86_64" ]; then "$@"; fi', "--"]
- 
+
  [target.aarch64-unknown-linux-musl.env]
  RUST_TEST_THREADS = "1"
- 
+
  [target.aarch64-unknown-linux-musl]
  linker = "aarch64-linux-gnu-gcc"
 -rustflags = ["-C", "target-feature=+crt-static"]
 -runner = "qemu-aarch64-static"
 +rustflags = ["-C", "target-feature=+crt-static", "--cfg", 'remote_exec="adb"']
 +runner = ["sh", "-c", 'BIN=${1##*/}; if [ -n "$MIRAGE_REMOTE_HOST" ] && [ ! "${BIN#e2e-}" = "$BIN" ]; then $CARGO_WORKSPACE_DIR/scripts/android-test-runner "$@"; else qemu-aarch64-static "$@"; fi', "--"]
- 
+
  [target.aarch64-linux-android]
  # Linker is provided via CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER in the environment
  # to keep this file agnostic of the local build environment.
@@ -373,8 +376,8 @@ fn test_visible_context_rows_populate_text() {
         2,
         "must have visible context rows: 'fn foo() {{' and '}}'"
     );
-    assert_eq!(ctx_rows[0].text, "fn foo() {");
-    assert_eq!(ctx_rows[1].text, "}");
+    assert_eq!(ctx_rows[0].text(), "fn foo() {");
+    assert_eq!(ctx_rows[1].text(), "}");
 }
 
 #[test]
@@ -439,7 +442,7 @@ index 1111111..2222222 100644
                     .filter(|x| x.kind != RunKind::Del)
                     .map(|x| x.text.as_ref())
                     .collect();
-                assert_eq!(kept, r.text, "strike-removed runs must be the new line");
+                assert_eq!(kept, r.text(), "strike-removed runs must be the new line");
             }
         }
     }
@@ -479,7 +482,7 @@ fn test_moved_line_source_in_source_hunk_and_target_in_target_hunk() {
     let src_row = h0_mov_src.unwrap();
     assert_eq!(src_row.old_line, Some(11));
     assert_eq!(src_row.new_line, None);
-    assert_eq!(src_row.text, "    moved_statement();");
+    assert_eq!(src_row.text(), "    moved_statement();");
 
     // Hunk 0 must NOT contain MovSide::Tgt
     assert!(
@@ -501,7 +504,7 @@ fn test_moved_line_source_in_source_hunk_and_target_in_target_hunk() {
     );
     let tgt_row = h1_mov_tgt.unwrap();
     assert_eq!(tgt_row.new_line, Some(50));
-    assert_eq!(tgt_row.text, "    moved_statement();");
+    assert_eq!(tgt_row.text(), "    moved_statement();");
 
     // Hunk 1 must NOT contain MovSide::Src
     assert!(
@@ -557,13 +560,13 @@ fn test_pipeline_pure_rename_renders_entire_file_as_context() {
     assert_eq!(f.hunks.len(), 1);
     assert_eq!(f.hunks[0].rows.len(), 3);
     assert_eq!(f.hunks[0].rows[0].kind, RowKind::Ctx);
-    assert_eq!(f.hunks[0].rows[0].text, "fn alpha() {");
+    assert_eq!(f.hunks[0].rows[0].text(), "fn alpha() {");
     assert_eq!(f.hunks[0].rows[0].new_line, Some(1));
     assert_eq!(f.hunks[0].rows[0].old_line, Some(1));
     assert_eq!(f.hunks[0].rows[1].kind, RowKind::Ctx);
-    assert_eq!(f.hunks[0].rows[1].text, "    println!(\"hello\");");
+    assert_eq!(f.hunks[0].rows[1].text(), "    println!(\"hello\");");
     assert_eq!(f.hunks[0].rows[2].kind, RowKind::Ctx);
-    assert_eq!(f.hunks[0].rows[2].text, "}");
+    assert_eq!(f.hunks[0].rows[2].text(), "}");
     assert_eq!(f.rows.len(), 3);
 }
 
@@ -648,7 +651,7 @@ fn test_head_commit_hunk_render() {
 
     let r150 = rows
         .iter()
-        .find(|r| r.text.trim() == "if !run.is_empty() {")
+        .find(|r| r.text().trim() == "if !run.is_empty() {")
         .expect("line 150 row");
     assert_eq!(
         r150.kind,
@@ -656,30 +659,30 @@ fn test_head_commit_hunk_render() {
         "line 150 should pair with the old if statement as Mod"
     );
     assert_eq!(
-        r150.del_text.as_deref().map(str::trim),
+        r150.del_text().as_deref().map(str::trim),
         Some("if !run.is_empty() && !moved_dels.contains(&run[0]) {")
     );
     assert_eq!(
-        r150.spans.del,
+        r150.spans().del,
         vec![(35, 68)],
         "parentheses of !run.is_empty() must remain intact and not split"
     );
-    assert_eq!(r150.spans.add, vec![]);
+    assert_eq!(r150.spans().add, vec![]);
 
     let r156 = rows
         .iter()
-        .find(|r| r.text.trim() == "if run.len() > 1")
+        .find(|r| r.text().trim() == "if run.len() > 1")
         .expect("line 156 row");
     assert_eq!(
         r156.kind,
         crate::parse::RowKind::Add,
         "line 156 should be a clean pure Add"
     );
-    assert_eq!(r156.del_text, None);
+    assert_eq!(r156.del_text(), None);
 
     let r166 = rows
         .iter()
-        .find(|r| r.text.trim() == "unmark_positions.extend(moved_in_run);")
+        .find(|r| r.text().trim() == "unmark_positions.extend(moved_in_run);")
         .expect("line 166 row");
     assert_eq!(
         r166.kind,
@@ -687,17 +690,17 @@ fn test_head_commit_hunk_render() {
         "line 166 should pair with old receiver line 148 as Mod"
     );
     assert_eq!(
-        r166.del_text.as_deref().map(str::trim),
+        r166.del_text().as_deref().map(str::trim),
         Some("unmark_positions")
     );
 
     let r_filter = rows
         .iter()
-        .find(|r| r.text.trim() == ".filter(|pos| moved_dels.contains(pos)),")
+        .find(|r| r.text().trim() == ".filter(|pos| moved_dels.contains(pos)),")
         .expect("filter row");
     assert_eq!(r_filter.kind, crate::parse::RowKind::Mod);
     assert_eq!(
-        r_filter.del_text.as_deref().map(str::trim),
+        r_filter.del_text().as_deref().map(str::trim),
         Some(".extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));")
     );
 }
@@ -779,7 +782,7 @@ Binary files differ
 fn test_binary_file_falls_back_to_fs_metadata_for_size() {
     let dir = tempfile::tempdir().unwrap();
     let file_path = dir.path().join("image.bin");
-    std::fs::write(&file_path, vec![0u8; 8192]).unwrap();
+    fs::write(&file_path, vec![0u8; 8192]).unwrap();
 
     let diff = "diff --git a/image.bin b/image.bin\nBinary files differ\n";
     let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
@@ -1223,24 +1226,24 @@ fn test_markdown_file_rows_multiline_fences_and_syntax() {
     assert_eq!(rows.len(), 16);
 
     // Line 0: Test *Markdown* **formatting:**
-    assert_eq!(rows[0].text, "Test *Markdown* **formatting:**");
+    assert_eq!(rows[0].text(), "Test *Markdown* **formatting:**");
     assert!(
         rows[0]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("text") && r.text == "Test ")
+            .any(|r| r.color.is_default() && r.text == "Test ")
     );
     assert!(
         rows[0]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("mdItalic") && r.text == "Markdown")
+            .any(|r| r.color == TokenColor::Italic && r.text == "Markdown")
     );
     assert!(
         rows[0]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("mdBold") && r.text == "formatting:")
+            .any(|r| r.color == TokenColor::Bold && r.text == "formatting:")
     );
 
     // Line 1: empty line between paragraphs
@@ -1251,13 +1254,13 @@ fn test_markdown_file_rows_multiline_fences_and_syntax() {
         rows[2]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("syntaxString") && r.text == "this is a code span")
+            .any(|r| r.color == TokenColor::Code && r.text == "this is a code span")
     );
     assert!(
         rows[2]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("text") && r.text == " with a comment.")
+            .any(|r| r.color.is_default() && r.text == " with a comment.")
     );
 
     // Line 7: ## Header
@@ -1265,12 +1268,12 @@ fn test_markdown_file_rows_multiline_fences_and_syntax() {
         rows[7]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("accent") && r.text == "##")
+            .any(|r| r.color == TokenColor::Delimiter && r.text == "##")
     );
 
-    // Line 9: opening code fence ```bash -> muted
+    // Line 9: opening code fence ```bash -> fbo
     assert_eq!(rows[9].runs.len(), 1);
-    assert_eq!(rows[9].runs[0].color.as_deref(), Some("muted"));
+    assert_eq!(rows[9].runs[0].color, TokenColor::FenceBorder);
     assert_eq!(rows[9].runs[0].text, "```bash");
 
     // Line 10: bash syntax highlighted `if -f hello.txt`
@@ -1278,21 +1281,21 @@ fn test_markdown_file_rows_multiline_fences_and_syntax() {
         rows[10]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("syntaxKeyword") && r.text == "if")
+            .any(|r| r.color == TokenColor::Keyword && r.text == "if")
     );
 
-    // Line 13: closing code fence ``` -> muted
+    // Line 13: closing code fence ``` -> fbo
     assert_eq!(rows[13].runs.len(), 1);
-    assert_eq!(rows[13].runs[0].color.as_deref(), Some("muted"));
+    assert_eq!(rows[13].runs[0].color, TokenColor::FenceBorder);
     assert_eq!(rows[13].runs[0].text, "```");
 
     // Line 15: Done!
-    assert_eq!(rows[15].text, "Done!");
+    assert_eq!(rows[15].text(), "Done!");
     assert!(
         rows[15]
             .runs
             .iter()
-            .any(|r| r.color.as_deref() == Some("text") && r.text == "Done!")
+            .any(|r| r.color.is_default() && r.text == "Done!")
     );
 }
 
@@ -1309,9 +1312,9 @@ fn test_render_plain_common_context_super_function() {
 
     let rows = render_plain_common_context(&lines, md_profile);
     assert_eq!(rows.len(), 5);
-    assert_eq!(rows[0].runs[0].color.as_deref(), Some("text"));
-    assert_eq!(rows[1].runs[1].color.as_deref(), Some("mdBold"));
-    assert_eq!(rows[3].runs[0].color.as_deref(), Some("syntaxKeyword")); // "let"
+    assert_eq!(rows[0].runs[0].color, TokenColor::Default);
+    assert_eq!(rows[1].runs[1].color, TokenColor::Bold);
+    assert_eq!(rows[3].runs[0].color, TokenColor::Keyword); // "let"
 }
 
 #[test]
@@ -1343,7 +1346,7 @@ fn test_colored_runs_prefers_cached_profiled_runs() {
         old_line: DelLine::new(LineNum::new(1).unwrap(), del),
         new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, spans.clone()),
     };
-    let kinds = |runs: &[crate::wire::OutputRun]| {
+    let kinds = |runs: &[OutputRun]| {
         runs.iter()
             .map(|r| (format!("{:?}", r.kind), r.text.to_string()))
             .collect::<Vec<_>>()
@@ -1360,12 +1363,7 @@ fn test_colored_runs_prefers_cached_profiled_runs() {
         new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, spans).with_cached_runs(runs),
     };
     let rendered = kinds(&colored_runs(&stored, None, &[]));
-    for want in [
-        ("Del", "10"),
-        ("Add", "5"),
-        ("Common", "..="),
-        ("Del", "17"),
-    ] {
+    for want in [("Del", "10"), ("Add", "5"), ("Ctx", "..="), ("Del", "17")] {
         assert!(
             rendered.contains(&(want.0.to_string(), want.1.to_string())),
             "cached row must render the profiled split form, missing {want:?}"
@@ -1408,8 +1406,8 @@ fn test_markdown_and_doc_comment_table_pipeline() {
     let md_rows = &md_file.hunks[0].rows;
     assert_eq!(md_rows.len(), 3);
 
-    // Markdown Header row: pipes muted, header text mdItalic with SGR 14 (bold
-    // underline)
+    // Markdown Header row: pipes table borders, header text table_header with
+    // SGR 14 (bold underline)
     let header_runs = &md_rows[0].runs;
     let pipe_runs: Vec<_> = header_runs
         .iter()
@@ -1417,22 +1415,22 @@ fn test_markdown_and_doc_comment_table_pipeline() {
         .collect();
     assert_eq!(pipe_runs.len(), 3);
     for p in pipe_runs {
-        assert_eq!(p.color.as_deref(), Some("muted"));
+        assert_eq!(p.color, TokenColor::TableBorder);
     }
     let col_a = header_runs
         .iter()
         .find(|r| r.text.contains("Col A"))
         .unwrap();
-    assert_eq!(col_a.color.as_deref(), Some("mdItalic"));
+    assert_eq!(col_a.color, TokenColor::TableHeader);
     assert_eq!(col_a.sgr, Some(14));
 
-    // Markdown Alignment row: pipes and dashes muted
+    // Markdown Alignment row: pipes and dashes table borders
     let align_runs = &md_rows[1].runs;
     for r in align_runs {
-        assert_eq!(r.color.as_deref(), Some("muted"));
+        assert_eq!(r.color, TokenColor::TableBorder);
     }
 
-    // Markdown Body row: pipes muted
+    // Markdown Body row: pipes table borders
     let body_runs = &md_rows[2].runs;
     let body_pipes: Vec<_> = body_runs
         .iter()
@@ -1440,7 +1438,7 @@ fn test_markdown_and_doc_comment_table_pipeline() {
         .collect();
     assert_eq!(body_pipes.len(), 3);
     for p in body_pipes {
-        assert_eq!(p.color.as_deref(), Some("muted"));
+        assert_eq!(p.color, TokenColor::TableBorder);
     }
 
     // 2. Verify test.rs (Rust doc comment table)
@@ -1448,10 +1446,10 @@ fn test_markdown_and_doc_comment_table_pipeline() {
     let rs_rows = &rs_file.hunks[0].rows;
     assert_eq!(rs_rows.len(), 3);
 
-    // Doc comment Header row: /// is syntaxComment, pipes muted, headers
-    // mdItalic with SGR 14
+    // Doc comment Header row: /// is com, pipes table borders,
+    // headers table_header with SGR 14
     let rs_header_runs = &rs_rows[0].runs;
-    assert_eq!(rs_header_runs[0].color.as_deref(), Some("syntaxComment"));
+    assert_eq!(rs_header_runs[0].color, TokenColor::Comment);
     assert_eq!(rs_header_runs[0].text.as_ref(), "///");
     let rs_pipe_runs: Vec<_> = rs_header_runs
         .iter()
@@ -1459,35 +1457,35 @@ fn test_markdown_and_doc_comment_table_pipeline() {
         .collect();
     assert_eq!(rs_pipe_runs.len(), 3);
     for p in rs_pipe_runs {
-        assert_eq!(p.color.as_deref(), Some("muted"));
+        assert_eq!(p.color, TokenColor::TableBorder);
     }
     let hdr_a = rs_header_runs
         .iter()
         .find(|r| r.text.contains("Header A"))
         .unwrap();
-    assert_eq!(hdr_a.color.as_deref(), Some("mdItalic"));
+    assert_eq!(hdr_a.color, TokenColor::TableHeader);
     assert_eq!(hdr_a.sgr, Some(14));
 
-    // Doc comment Alignment row: /// and space are syntaxComment, pipes and
-    // dashes muted
+    // Doc comment Alignment row: /// and space are com, pipes and
+    // dashes table borders
     let rs_align_runs = &rs_rows[1].runs;
-    assert_eq!(rs_align_runs[0].color.as_deref(), Some("syntaxComment"));
+    assert_eq!(rs_align_runs[0].color, TokenColor::Comment);
     assert_eq!(rs_align_runs[0].text.as_ref(), "///");
-    assert_eq!(rs_align_runs[1].color.as_deref(), Some("syntaxComment"));
+    assert_eq!(rs_align_runs[1].color, TokenColor::Comment);
     for r in &rs_align_runs[2..] {
-        assert_eq!(r.color.as_deref(), Some("muted"));
+        assert_eq!(r.color, TokenColor::TableBorder);
     }
 
-    // Doc comment Body row: /// is syntaxComment, pipes muted
+    // Doc comment Body row: /// is com, pipes table borders
     let rs_body_runs = &rs_rows[2].runs;
-    assert_eq!(rs_body_runs[0].color.as_deref(), Some("syntaxComment"));
+    assert_eq!(rs_body_runs[0].color, TokenColor::Comment);
     let rs_body_pipes: Vec<_> = rs_body_runs
         .iter()
         .filter(|r| r.text.as_ref() == "|")
         .collect();
     assert_eq!(rs_body_pipes.len(), 3);
     for p in rs_body_pipes {
-        assert_eq!(p.color.as_deref(), Some("muted"));
+        assert_eq!(p.color, TokenColor::TableBorder);
     }
 }
 
@@ -1525,7 +1523,7 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
     // | Feature | Old Description | -> | Feature | New Description |
     let row0 = &rows[0];
     assert_eq!(row0.kind, RowKind::Mod);
-    // Unchanged pipes are Common and muted
+    // Unchanged pipes are Common and table borders
     let row0_pipes: Vec<_> = row0
         .runs
         .iter()
@@ -1533,37 +1531,37 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
         .collect();
     assert_eq!(row0_pipes.len(), 3);
     for p in row0_pipes {
-        assert_eq!(p.kind, RunKind::Common);
-        assert_eq!(p.color.as_deref(), Some("muted"));
+        assert_eq!(p.kind, RunKind::Ctx);
+        assert_eq!(p.color, TokenColor::TableBorder);
     }
-    // "Feature" is Common and mdItalic with SGR 14 (header)
+    // "Feature" is Ctx and table_header with SGR 14 (header)
     let feat = row0
         .runs
         .iter()
         .find(|r| r.text.contains("Feature"))
         .unwrap();
-    assert_eq!(feat.kind, RunKind::Common);
-    assert_eq!(feat.color.as_deref(), Some("mdItalic"));
+    assert_eq!(feat.kind, RunKind::Ctx);
+    assert_eq!(feat.color, TokenColor::TableHeader);
     assert_eq!(feat.sgr, Some(14));
 
     // "Old" is Del
     let old_run = row0.runs.iter().find(|r| r.text.contains("Old")).unwrap();
     assert_eq!(old_run.kind, RunKind::Del);
 
-    // "New" is Add, mdItalic with SGR 14 (header)
+    // "New" is Add, table_header with SGR 14 (header)
     let new_run = row0.runs.iter().find(|r| r.text.contains("New")).unwrap();
     assert_eq!(new_run.kind, RunKind::Add);
-    assert_eq!(new_run.color.as_deref(), Some("mdItalic"));
+    assert_eq!(new_run.color, TokenColor::TableHeader);
     assert_eq!(new_run.sgr, Some(14));
 
-    // "Description" is Common and mdItalic with SGR 14 (header)
+    // "Description" is Ctx and table_header with SGR 14 (header)
     let desc = row0
         .runs
         .iter()
         .find(|r| r.text.contains("Description"))
         .unwrap();
-    assert_eq!(desc.kind, RunKind::Common);
-    assert_eq!(desc.color.as_deref(), Some("mdItalic"));
+    assert_eq!(desc.kind, RunKind::Ctx);
+    assert_eq!(desc.color, TokenColor::TableHeader);
     assert_eq!(desc.sgr, Some(14));
 
     // Row 3: Modified Body Row with multiple adds and dels:
@@ -1572,7 +1570,7 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
     let row3 = &rows[3];
     assert_eq!(row3.kind, RowKind::Mod);
 
-    // Unchanged pipes are Common and muted
+    // Unchanged pipes are Ctx and table borders
     let row3_pipes: Vec<_> = row3
         .runs
         .iter()
@@ -1580,18 +1578,18 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
         .collect();
     assert_eq!(row3_pipes.len(), 3);
     for p in row3_pipes {
-        assert_eq!(p.kind, RunKind::Common);
-        assert_eq!(p.color.as_deref(), Some("muted"));
+        assert_eq!(p.kind, RunKind::Ctx);
+        assert_eq!(p.color, TokenColor::TableBorder);
     }
 
-    // Code span `--theme <NAME>` is Common and styled syntaxString
+    // Code span `--theme <NAME>` is Ctx and styled code
     let theme_code = row3
         .runs
         .iter()
         .find(|r| r.text.contains("--theme <NAME>"))
         .unwrap();
-    assert_eq!(theme_code.kind, RunKind::Common);
-    assert_eq!(theme_code.color.as_deref(), Some("syntaxString"));
+    assert_eq!(theme_code.kind, RunKind::Ctx);
+    assert_eq!(theme_code.color, TokenColor::Code);
 
     // Del runs: `magic` default, and etc.
     let magic_del = row3.runs.iter().find(|r| r.text.contains("magic")).unwrap();
@@ -1600,7 +1598,7 @@ fn test_mod_row_in_table_structure_with_adds_and_dels() {
     // Add runs: `dark`, `black`
     let dark_add = row3.runs.iter().find(|r| r.text.contains("dark")).unwrap();
     assert_eq!(dark_add.kind, RunKind::Add);
-    assert_eq!(dark_add.color.as_deref(), Some("syntaxString"));
+    assert_eq!(dark_add.color, TokenColor::Code);
 }
 
 #[test]

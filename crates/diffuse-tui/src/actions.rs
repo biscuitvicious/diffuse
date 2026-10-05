@@ -1,6 +1,6 @@
 //! Interactive Git Actions for Diffuse TUI (stage, unstage, discard, reload).
 
-use std::{path::Path, process::Command};
+use std::{io::Write, path::Path, process::Command};
 
 use crate::core::{
     ENGINE_CONTEXT, PipelineOptions, git::load_git_repo, pipeline::run_pipeline_full,
@@ -21,7 +21,7 @@ pub fn hunk_patch(state: &AppState, repo_root: &Path, base_args: &[String]) -> O
         let body: String = h
             .rows
             .iter()
-            .map(|r| format!("+{}", r.text))
+            .map(|r| format!("+{}", r.text()))
             .collect::<Vec<_>>()
             .join("\n");
         return Some(format!(
@@ -111,7 +111,6 @@ fn parse_hunk_header(line: &str) -> Option<(u32, u32)> {
 
 /// Apply a patch string via `git apply`.
 pub fn apply_patch(repo_root: &Path, patch: &str, flags: &[&str]) -> Result<(), String> {
-    use std::io::Write as _;
     let mut tmp = tempfile::Builder::new()
         .prefix("diffuse-patch-")
         .suffix(".patch")

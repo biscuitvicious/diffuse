@@ -1,6 +1,6 @@
 //! Notes — draft commit/delete and callout generation.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, process};
 
 use crate::render::ColorExt;
 
@@ -171,9 +171,9 @@ impl AppState {
                 .and_then(|fr| self.row_of(fr))
                 .map(|r| {
                     if sel.side_is_new {
-                        r.text.clone()
+                        r.new_text()
                     } else {
-                        r.del_text.as_deref().unwrap_or(&r.text).to_string()
+                        r.old_text()
                     }
                 });
             (
@@ -197,11 +197,7 @@ impl AppState {
                 return;
             };
             let is_new = r.new_line.is_some();
-            let text = if is_new {
-                r.text.clone()
-            } else {
-                r.del_text.as_deref().unwrap_or(&r.text).to_string()
-            };
+            let text = if is_new { r.new_text() } else { r.old_text() };
             (file.path.clone(), c, c, is_new, Some(text))
         };
         self.note_id_counter += 1;
@@ -212,7 +208,7 @@ impl AppState {
             id: format!(
                 "{:x}-{:x}-{:x}",
                 created_at,
-                std::process::id(),
+                process::id(),
                 self.note_id_counter
             ),
             file,
@@ -372,7 +368,7 @@ impl AppState {
             let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
                 let mut at: Option<usize> = None;
-                let mut anchor_line_content: Option<&str> = None;
+                let mut anchor_line_content: Option<String> = None;
                 for (i, item) in self.flat.iter().enumerate() {
                     if item.file_idx != file_idx {
                         continue;
@@ -381,8 +377,8 @@ impl AppState {
                         continue;
                     };
                     let (line_num, text) = match n.side {
-                        Side::New => (r.new_line, r.text.as_str()),
-                        Side::Old => (r.old_line, r.del_text.as_deref().unwrap_or(&r.text)),
+                        Side::New => (r.new_line, r.new_text()),
+                        Side::Old => (r.old_line, r.old_text()),
                     };
                     if let Some(c) = line_num {
                         if c == n.start {
@@ -395,7 +391,7 @@ impl AppState {
                 }
 
                 let target_row = if n.line_hash.is_some()
-                    && let Some(content) = anchor_line_content
+                    && let Some(ref content) = anchor_line_content
                     && note_anchors_cleanly(n, content)
                     && let Some(inline_idx) = at
                 {
@@ -444,7 +440,7 @@ impl AppState {
             let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
                 let mut at: Option<usize> = None;
-                let mut anchor_line_content: Option<&str> = None;
+                let mut anchor_line_content: Option<String> = None;
                 for (i, item) in self.flat.iter().enumerate() {
                     if item.file_idx != file_idx {
                         continue;
@@ -453,8 +449,8 @@ impl AppState {
                         continue;
                     };
                     let (line_num, text) = match n.side {
-                        Side::New => (r.new_line, r.text.as_str()),
-                        Side::Old => (r.old_line, r.del_text.as_deref().unwrap_or(&r.text)),
+                        Side::New => (r.new_line, r.new_text()),
+                        Side::Old => (r.old_line, r.old_text()),
                     };
                     if let Some(c) = line_num {
                         if c == n.start {
@@ -467,7 +463,7 @@ impl AppState {
                 }
 
                 let target_row = if n.line_hash.is_some()
-                    && let Some(content) = anchor_line_content
+                    && let Some(ref content) = anchor_line_content
                     && note_anchors_cleanly(n, content)
                     && let Some(inline_idx) = at
                 {

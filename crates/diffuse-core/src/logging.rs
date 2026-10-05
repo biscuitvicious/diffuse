@@ -6,8 +6,10 @@
 
 use std::{
     env,
+    fmt::{self, Debug},
     fs::{self, File},
     io,
+    net::TcpStream,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -55,7 +57,6 @@ pub fn init_tracing_subscriber() -> io::Result<()> {
 
     let writer = if let Ok(log_path) = log_target {
         if let Some(tcp_addr) = log_path.strip_prefix("tcp:") {
-            use std::net::TcpStream;
             let stream = TcpStream::connect(tcp_addr)?;
             BoxMakeWriter::new(Arc::new(stream))
         } else if let Some(socket_path) = log_path.strip_prefix("unix:") {
@@ -219,7 +220,7 @@ where
         ctx: &tracing_subscriber::fmt::FmtContext<'_, S, N>,
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
-    ) -> std::fmt::Result {
+    ) -> fmt::Result {
         let meta = event.metadata();
 
         if let Some(file) = meta.file() {
@@ -291,7 +292,7 @@ impl<'writer> tracing_subscriber::fmt::FormatFields<'writer> for LogFieldFormatt
         &self,
         writer: Writer<'writer>,
         fields: R,
-    ) -> std::fmt::Result {
+    ) -> fmt::Result {
         let mut visitor = LogFieldVisitor {
             writer,
             first: true,
@@ -327,7 +328,7 @@ impl<'writer> tracing::field::Visit for LogFieldVisitor<'writer> {
         }
     }
 
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn Debug) {
         if !self.first {
             let _ = write!(self.writer, ", ");
         }

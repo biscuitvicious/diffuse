@@ -13,6 +13,8 @@
 //! Reusable [`AffineGapWorkspace`] avoids heap allocations across repeated
 //! runs.
 
+use std::iter::FusedIterator;
+
 use crate::EditOp;
 
 /// Scoring parameters for Gotoh's affine gap penalty model.
@@ -388,7 +390,7 @@ impl<'a> DoubleEndedIterator for AffineAlignmentSteps<'a> {
     }
 }
 
-impl<'a> std::iter::FusedIterator for AffineAlignmentSteps<'a> {}
+impl<'a> FusedIterator for AffineAlignmentSteps<'a> {}
 
 /// Computes Gotoh affine gap alignment over generic sequences.
 pub fn align_affine<T: PartialEq>(a: &[T], b: &[T], penalties: &AffineGapPenalties) -> Vec<EditOp> {

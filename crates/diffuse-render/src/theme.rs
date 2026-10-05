@@ -3,6 +3,10 @@
 //! Provides the 256-color / RGB palette, row styles, background
 //! tints, cursor backgrounds, and SGR modifiers.
 
+use std::{env, fmt::Write};
+
+use diffuse_syntax::color::TokenColor;
+
 pub mod palette;
 pub use palette::*;
 
@@ -147,9 +151,9 @@ impl DiffuseTheme {
     }
 
     /// Render a syntax/markdown token directly into an output buffer.
-    pub fn write_token<W: std::fmt::Write>(
+    pub fn write_token<W: Write>(
         &self,
-        color: &str,
+        color: TokenColor,
         text: &str,
         row_kind: &str,
         tok_kind: Option<&str>,
@@ -167,7 +171,7 @@ impl DiffuseTheme {
             RowKind::Ctx
         };
 
-        let ansi_color = self.palette.syntax_token_color(color, rk);
+        let ansi_color = self.palette.token_color(color, rk);
 
         if let Some(s) = sgr {
             if let Some(on) = sgr_on_str(s) {
@@ -194,9 +198,9 @@ impl DiffuseTheme {
     /// (`\x1b[1;4m`), with per-modifier resets in reverse order. Styles
     /// like heading titles combine bold and underline, which a single SGR
     /// slot cannot express.
-    pub fn write_token_stacked<W: std::fmt::Write>(
+    pub fn write_token_stacked<W: Write>(
         &self,
-        color: &str,
+        color: TokenColor,
         text: &str,
         row_kind: &str,
         tok_kind: Option<&str>,
@@ -214,7 +218,7 @@ impl DiffuseTheme {
             RowKind::Ctx
         };
 
-        let ansi_color = self.palette.syntax_token_color(color, rk);
+        let ansi_color = self.palette.token_color(color, rk);
 
         if !sgrs.is_empty() {
             let _ = out.write_str("\x1b[");
@@ -244,7 +248,7 @@ impl DiffuseTheme {
     #[must_use]
     pub fn render_token(
         &self,
-        color: &str,
+        color: TokenColor,
         text: &str,
         row_kind: &str,
         tok_kind: Option<&str>,
@@ -253,11 +257,6 @@ impl DiffuseTheme {
         let mut out = String::with_capacity(text.len() + 32);
         self.write_token(color, text, row_kind, tok_kind, sgr, &mut out);
         out
-    }
-
-    #[must_use]
-    pub fn fallback_color(&self, name: &str) -> Option<Color> {
-        self.palette.named_color(name)
     }
 
     /// Automatically detect the theme based on the terminal's background mode.
@@ -287,7 +286,7 @@ impl DiffuseTheme {
     /// to `default` if invalid.
     #[must_use]
     pub fn from_env() -> Self {
-        if let Ok(val) = std::env::var("DIFFUSE_THEME") {
+        if let Ok(val) = env::var("DIFFUSE_THEME") {
             Self::from_name(&val).unwrap_or_else(Self::auto_detect)
         } else {
             Self::auto_detect()

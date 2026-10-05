@@ -4,7 +4,10 @@
 //! `FileFooter`) for low-latency line-by-line streaming, streaming
 //! verification, and progressive wire deserialization.
 
-use std::io::{BufRead, Write};
+use std::{
+    io::{self, BufRead, Write},
+    ops,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +17,12 @@ use crate::{
 };
 
 /// A single JSONL streaming record line.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(tag = "t", rename_all = "snake_case")]
+///
+/// In the JSONL stream, lines within hunks are serialized as compact array
+/// tuples (`OutputRow`s), while headers and footers are serialized as typed
+/// JSON objects containing `"t": "file_header" | "hunk_header" |
+/// "file_footer"`.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum WireRecord {
     /// Beginning of a file diff.
     FileHeader(FileHeader),
@@ -25,6 +32,57 @@ pub enum WireRecord {
     Line(OutputRow),
     /// End of a file diff with aggregate metrics and notes.
     FileFooter(FileFooter),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum TaggedRecordRef<'a> {
+    FileHeader(&'a FileHeader),
+    HunkHeader(&'a HunkHeader),
+    FileFooter(&'a FileFooter),
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+enum TaggedRecordDe {
+    FileHeader(FileHeader),
+    HunkHeader(HunkHeader),
+    FileFooter(FileFooter),
+}
+
+impl Serialize for WireRecord {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            WireRecord::Line(row) => row.serialize(serializer),
+            WireRecord::FileHeader(h) => TaggedRecordRef::FileHeader(h).serialize(serializer),
+            WireRecord::HunkHeader(h) => TaggedRecordRef::HunkHeader(h).serialize(serializer),
+            WireRecord::FileFooter(f) => TaggedRecordRef::FileFooter(f).serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WireRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WireRecordDe {
+            Line(OutputRow),
+            Tagged(TaggedRecordDe),
+        }
+
+        match WireRecordDe::deserialize(deserializer)? {
+            WireRecordDe::Line(row) => Ok(WireRecord::Line(row)),
+            WireRecordDe::Tagged(TaggedRecordDe::FileHeader(h)) => Ok(WireRecord::FileHeader(h)),
+            WireRecordDe::Tagged(TaggedRecordDe::HunkHeader(h)) => Ok(WireRecord::HunkHeader(h)),
+            WireRecordDe::Tagged(TaggedRecordDe::FileFooter(f)) => Ok(WireRecord::FileFooter(f)),
+        }
+    }
 }
 
 /// Metadata header for a file diff in the JSONL stream.
@@ -39,7 +97,7 @@ pub struct FileHeader {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_mode: Option<String>,
     pub status: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "ops::Not::not")]
     pub is_binary: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_bytes: Option<usize>,
@@ -78,7 +136,7 @@ pub struct FileFooter {
 }
 
 /// Emits a single `OutputFile` as a sequence of line-by-line JSONL records.
-pub fn emit_file_jsonl<W: Write>(file: &OutputFile, writer: &mut W) -> std::io::Result<()> {
+pub fn emit_file_jsonl<W: Write>(file: &OutputFile, writer: &mut W) -> io::Result<()> {
     let header = WireRecord::FileHeader(FileHeader {
         path: file.path.clone(),
         old_path: file.old_path.clone(),
@@ -217,7 +275,7 @@ pub fn decode_jsonl_records<I: IntoIterator<Item = WireRecord>>(
 }
 
 /// Decodes JSONL from any `BufRead` source into `Vec<OutputFile>`.
-pub fn decode_jsonl_reader<R: BufRead>(mut reader: R) -> std::io::Result<Vec<OutputFile>> {
+pub fn decode_jsonl_reader<R: BufRead>(mut reader: R) -> io::Result<Vec<OutputFile>> {
     let mut line_buf = String::new();
     let mut records = Vec::new();
 
@@ -225,18 +283,18 @@ pub fn decode_jsonl_reader<R: BufRead>(mut reader: R) -> std::io::Result<Vec<Out
         let trimmed = line_buf.trim();
         if !trimmed.is_empty() {
             let record: WireRecord = serde_json::from_str(trimmed)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             records.push(record);
         }
         line_buf.clear();
     }
 
     decode_jsonl_records(records)
-        .map_err(|err_msg| std::io::Error::new(std::io::ErrorKind::InvalidData, err_msg))
+        .map_err(|err_msg| io::Error::new(io::ErrorKind::InvalidData, err_msg))
 }
 
 /// Decodes a full JSONL string into `Vec<OutputFile>`.
-pub fn decode_jsonl_str(s: &str) -> std::io::Result<Vec<OutputFile>> {
+pub fn decode_jsonl_str(s: &str) -> io::Result<Vec<OutputFile>> {
     decode_jsonl_reader(s.as_bytes())
 }
 

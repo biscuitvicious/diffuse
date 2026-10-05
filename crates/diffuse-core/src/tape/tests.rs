@@ -17,13 +17,13 @@ fn test_alignment_tape_basic_invariants() {
 
     let runs = tape.to_merged_runs();
     assert_eq!(runs.len(), 4);
-    assert_eq!(runs[0].kind, RunKind::Common);
+    assert_eq!(runs[0].kind, RunKind::Ctx);
     assert_eq!(runs[0].text, "Hello ");
     assert_eq!(runs[1].kind, RunKind::Del);
     assert_eq!(runs[1].text, "brave ");
     assert_eq!(runs[2].kind, RunKind::Add);
     assert_eq!(runs[2].text, "wonderful ");
-    assert_eq!(runs[3].kind, RunKind::Common);
+    assert_eq!(runs[3].kind, RunKind::Ctx);
     assert_eq!(runs[3].text, "world!");
 
     let spans = tape.to_spans();
@@ -111,7 +111,7 @@ fn test_alignment_tape_whitespace_minimum() {
     assert_eq!(runs.len(), 2);
     assert_eq!(runs[0].kind, RunKind::Add);
     assert_eq!(runs[0].text, "    ");
-    assert_eq!(runs[1].kind, RunKind::Common);
+    assert_eq!(runs[1].kind, RunKind::Ctx);
     assert_eq!(runs[1].text, "    return true;");
 }
 
@@ -227,7 +227,7 @@ fn test_paths_with_different_roots_and_basenames_not_fragmented() {
     // across two paths whose root directory and filename both differ.
     let scripts_common = runs
         .iter()
-        .any(|r| r.kind == RunKind::Common && r.text.contains("scripts"));
+        .any(|r| r.kind == RunKind::Ctx && r.text.contains("scripts"));
     assert!(
         !scripts_common,
         "Intermediate scripts directory should not match across different paths: {:#?}",
@@ -243,17 +243,17 @@ fn test_theme_table_code_span_alignment() {
     let runs = tape.to_merged_runs();
 
     assert_eq!(runs.len(), 6);
-    assert_eq!(runs[0].kind, RunKind::Common);
+    assert_eq!(runs[0].kind, RunKind::Ctx);
     assert_eq!(runs[0].text, "| `--theme <NAME>` | Color theme (");
     assert_eq!(runs[1].kind, RunKind::Del);
     assert_eq!(runs[1].text, "`magic` default, ");
-    assert_eq!(runs[2].kind, RunKind::Common);
+    assert_eq!(runs[2].kind, RunKind::Ctx);
     assert_eq!(runs[2].text, "`default`, ");
     assert_eq!(runs[3].kind, RunKind::Del);
     assert_eq!(runs[3].text, "etc.");
     assert_eq!(runs[4].kind, RunKind::Add);
     assert_eq!(runs[4].text, "`dark`, `black`");
-    assert_eq!(runs[5].kind, RunKind::Common);
+    assert_eq!(runs[5].kind, RunKind::Ctx);
     assert_eq!(runs[5].text, ") |");
 }
 
@@ -290,7 +290,7 @@ fn test_ansi_and_digit_letter_boundary_subword_alignment() {
 
     assert!(
         runs.iter()
-            .any(|r| r.kind == RunKind::Common && r.text.contains("mstruct")),
+            .any(|r| r.kind == RunKind::Ctx && r.text.contains("mstruct")),
         "mstruct must be common context, got runs: {:#?}",
         runs
     );
@@ -307,7 +307,7 @@ fn test_ansi_and_digit_letter_boundary_subword_alignment() {
     assert!(
         runs2
             .iter()
-            .any(|r| r.kind == RunKind::Common && r.text.starts_with('m')),
+            .any(|r| r.kind == RunKind::Ctx && r.text.starts_with('m')),
         "m must be common context, got runs: {:#?}",
         runs2
     );
@@ -324,7 +324,7 @@ fn test_ansi_and_digit_letter_boundary_subword_alignment() {
     assert!(
         runs3
             .iter()
-            .any(|r| r.kind == RunKind::Common && r.text == "Config"),
+            .any(|r| r.kind == RunKind::Ctx && r.text == "Config"),
         "Config must be common context, got runs: {:#?}",
         runs3
     );
@@ -338,7 +338,7 @@ fn test_subword_cohesion_identifier_not_split_across_del() {
     let runs = tape.to_merged_runs();
     assert!(
         runs.iter()
-            .any(|r| r.kind == RunKind::Common && r.text.contains("existsSync")),
+            .any(|r| r.kind == RunKind::Ctx && r.text.contains("existsSync")),
         "existsSync must remain intact as common context, got runs: {:#?}",
         runs
     );
@@ -352,7 +352,7 @@ fn test_unindented_closing_delimiter_recognized_as_common() {
     let runs = tape.to_merged_runs();
     assert!(
         runs.iter()
-            .any(|r| r.kind == RunKind::Common && r.text.ends_with("},")),
+            .any(|r| r.kind == RunKind::Ctx && r.text.ends_with("},")),
         "bracket '}},' must be common context, got runs: {:#?}",
         runs
     );
@@ -372,7 +372,7 @@ fn test_unindented_closing_delimiter_recognized_as_common() {
     assert!(
         runs_brace
             .iter()
-            .any(|r| r.kind == RunKind::Common && r.text.ends_with('}')),
+            .any(|r| r.kind == RunKind::Ctx && r.text.ends_with('}')),
         "brace '}}' must be common context, got runs: {:#?}",
         runs_brace
     );
@@ -385,7 +385,7 @@ fn test_unindented_closing_delimiter_recognized_as_common() {
     assert!(
         runs_paren
             .iter()
-            .any(|r| r.kind == RunKind::Common && r.text.ends_with(')')),
+            .any(|r| r.kind == RunKind::Ctx && r.text.ends_with(')')),
         "paren ')' must be common context, got runs: {:#?}",
         runs_paren
     );
@@ -401,16 +401,16 @@ fn test_line_77_style_methods_no_fragmentation() {
     assert_eq!(
         run_tuples,
         vec![
-            (RunKind::Common, "    assert_eq!("),
+            (RunKind::Ctx, "    assert_eq!("),
             (RunKind::Del, "s_add"),
             (RunKind::Add, "add_style"),
-            (RunKind::Common, ".tint_"),
+            (RunKind::Ctx, ".tint_"),
             (RunKind::Del, "style()"),
             (RunKind::Add, "bg"),
-            (RunKind::Common, ", "),
+            (RunKind::Ctx, ", "),
             (RunKind::Del, "Style::new().bg(Color::Fixed(22))"),
             (RunKind::Add, "theme.palette.add_tint_bg"),
-            (RunKind::Common, ");"),
+            (RunKind::Ctx, ");"),
         ]
     );
 }
@@ -426,16 +426,16 @@ fn test_line_200_target_vis_no_chimera() {
         run_tuples,
         vec![
             (RunKind::Del, "    "),
-            (RunKind::Common, "                    let target_vis = "),
+            (RunKind::Ctx, "                    let target_vis = "),
             (RunKind::Del, "((row_in_vh as f64 / "),
             (RunKind::Add, "Self::scrollbar_scroll_for_row"),
-            (RunKind::Common, "(vh"),
+            (RunKind::Ctx, "(vh"),
             (RunKind::Del, " - 1) as f64) *"),
             (RunKind::Add, ","),
-            (RunKind::Common, " max_scroll"),
+            (RunKind::Ctx, " max_scroll"),
             (RunKind::Del, " as f64"),
             (RunKind::Add, ", row_relative"),
-            (RunKind::Common, ")"),
+            (RunKind::Ctx, ")"),
             (RunKind::Add, ";"),
         ]
     );
@@ -470,7 +470,7 @@ fn test_opposite_boundary_subword_inversion_not_matched() {
     assert_eq!(
         tuples3,
         vec![
-            (RunKind::Common, "row_"),
+            (RunKind::Ctx, "row_"),
             (RunKind::Del, "in_vh"),
             (RunKind::Add, "relative"),
         ]
@@ -486,7 +486,7 @@ fn test_opposite_boundary_subword_inversion_not_matched() {
         vec![
             (RunKind::Del, "old"),
             (RunKind::Add, "new"),
-            (RunKind::Common, "_row"),
+            (RunKind::Ctx, "_row"),
         ]
     );
 
@@ -496,17 +496,14 @@ fn test_opposite_boundary_subword_inversion_not_matched() {
     let tuples5: Vec<(RunKind, &str)> = runs5.iter().map(|r| (r.kind, r.text)).collect();
     assert_eq!(
         tuples5,
-        vec![(RunKind::Common, "row"), (RunKind::Add, "_relative")]
+        vec![(RunKind::Ctx, "row"), (RunKind::Add, "_relative")]
     );
 
     // Standalone vs Suffix: "row" vs "old_row" -> common "row" preserved
     let tape6 = AlignmentTape::from_texts("row", "old_row", None);
     let runs6 = tape6.to_merged_runs();
     let tuples6: Vec<(RunKind, &str)> = runs6.iter().map(|r| (r.kind, r.text)).collect();
-    assert_eq!(
-        tuples6,
-        vec![(RunKind::Add, "old_"), (RunKind::Common, "row")]
-    );
+    assert_eq!(tuples6, vec![(RunKind::Add, "old_"), (RunKind::Ctx, "row")]);
 }
 
 #[test]
@@ -533,12 +530,12 @@ fn test_prefix_suffix_peeling_equivalence() {
     let runs = tape.to_merged_runs();
     let old_extracted: String = runs
         .iter()
-        .filter(|r| r.kind == RunKind::Common || r.kind == RunKind::Del)
+        .filter(|r| r.kind == RunKind::Ctx || r.kind == RunKind::Del)
         .map(|r| r.text)
         .collect();
     let new_extracted: String = runs
         .iter()
-        .filter(|r| r.kind == RunKind::Common || r.kind == RunKind::Add)
+        .filter(|r| r.kind == RunKind::Ctx || r.kind == RunKind::Add)
         .map(|r| r.text)
         .collect();
     assert_eq!(old_extracted, old);

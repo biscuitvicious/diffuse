@@ -10,6 +10,8 @@
 //! parameterized by a [`BlockTransitionEvaluator`].
 //! Zero diffuse-domain dependencies (no ASTs, rows, colors, or hunks).
 
+use std::iter::FusedIterator;
+
 /// One transition step in the 2D block transformation lattice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum BlockTransition {
@@ -313,7 +315,7 @@ impl Iterator for BlockTransitionsIter {
 }
 
 impl ExactSizeIterator for BlockTransitionsIter {}
-impl std::iter::FusedIterator for BlockTransitionsIter {}
+impl FusedIterator for BlockTransitionsIter {}
 
 #[cfg(test)]
 mod tests {

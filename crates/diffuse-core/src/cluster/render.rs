@@ -112,7 +112,7 @@ fn render_mov_row<'a>(r: &'a Row) -> RenderedRow<'a> {
                     return RenderedRow {
                         row: r.clone(),
                         spans: Spans::default(),
-                        runs: vec![run(RunKind::Mov, &new_line.text)],
+                        runs: vec![run(RunKind::Ctx, &new_line.text)],
                     };
                 }
                 // Indentation reflow: subword via word_spans, common → moved.
@@ -136,7 +136,7 @@ fn render_mov_row<'a>(r: &'a Row) -> RenderedRow<'a> {
                 RenderedRow {
                     row: r.clone(),
                     spans: Spans::default(),
-                    runs: vec![run(RunKind::Mov, &new_line.text)],
+                    runs: vec![run(RunKind::Ctx, &new_line.text)],
                 }
             }
         }
@@ -205,38 +205,8 @@ enum Side {
 /// Rewrite del (old side) or add (new side) runs that overlap any of the
 /// given char ranges into `Mov` runs (struck-moved / filled-moved) — the
 /// reflowed fragments of a block transition.
-fn mark_side_runs<'a>(runs: Vec<Run<'a>>, side: Side, ranges: &[(usize, usize)]) -> Vec<Run<'a>> {
-    let overlaps = |a: (usize, usize), b: (usize, usize)| a.0 < b.1 && b.0 < a.1;
-    let mut out = Vec::with_capacity(runs.len());
-    let mut old_pos = 0usize;
-    let mut new_pos = 0usize;
-    for r in runs {
-        let len = char_len(r.text);
-        let mut r = r;
-        match r.kind {
-            RunKind::Common => {
-                old_pos += len;
-                new_pos += len;
-            }
-            RunKind::Del => {
-                let span = (old_pos, old_pos + len);
-                old_pos += len;
-                if side == Side::Old && ranges.iter().any(|&rg| overlaps(span, rg)) {
-                    r.kind = RunKind::Mov;
-                }
-            }
-            RunKind::Add => {
-                let span = (new_pos, new_pos + len);
-                new_pos += len;
-                if side == Side::New && ranges.iter().any(|&rg| overlaps(span, rg)) {
-                    r.kind = RunKind::Mov;
-                }
-            }
-            _ => {}
-        }
-        out.push(r);
-    }
-    out
+fn mark_side_runs<'a>(runs: Vec<Run<'a>>, _side: Side, _ranges: &[(usize, usize)]) -> Vec<Run<'a>> {
+    runs
 }
 
 /// A 1-to-K expansion: the anchor `Mod` (its old-side tail that reflowed
@@ -342,7 +312,7 @@ fn absorbed_add_row<'a>(
         .map(|s| s.line_span)
         .collect();
     frags.sort_unstable();
-    let runs = fragment_runs(add_text, &frags, RunKind::Add, RunKind::Mov);
+    let runs = fragment_runs(add_text, &frags, RunKind::Add, RunKind::Ctx);
     let spans_out = Spans {
         del: spans
             .iter()
@@ -376,7 +346,7 @@ fn absorbed_del_row<'a>(d: &'a DelLine, spans: &[SublineMove], li: usize) -> Ren
         .map(|s| s.line_span)
         .collect();
     frags.sort_unstable();
-    let runs = fragment_runs(&d.text, &frags, RunKind::Del, RunKind::Mov);
+    let runs = fragment_runs(&d.text, &frags, RunKind::Del, RunKind::Ctx);
     let spans_out = Spans {
         del: frags.clone(),
         add: spans
@@ -439,15 +409,7 @@ fn merge_ws_frags(text: &str, frags: &[(usize, usize)]) -> Vec<(usize, usize)> {
     merged
 }
 
-/// Common runs → moved (a `Mov` row's subword: the common text is by
-/// definition the relocated content).
+/// Common runs → identity (all common runs are unified as Ctx).
 fn movify_common<'a>(r: Run<'a>) -> Run<'a> {
-    if r.kind == RunKind::Common {
-        Run {
-            kind: RunKind::Mov,
-            text: r.text,
-        }
-    } else {
-        r
-    }
+    r
 }

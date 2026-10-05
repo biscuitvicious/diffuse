@@ -1,9 +1,11 @@
+use std::str;
+
 use super::*;
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{RowGroup, RowKind, Spans},
-    wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
+    parse::{RowGroup, RowKind},
+    wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput, TokenColor},
 };
 
 fn sample_output_file() -> OutputFile {
@@ -28,12 +30,9 @@ fn sample_output_file() -> OutputFile {
                     mov_side: None,
                     new_line: Some(1),
                     old_line: Some(1),
-                    text: "fn main() {".to_string(),
-                    del_text: None,
-                    spans: Spans::default(),
                     runs: vec![OutputRun {
                         kind: RunKind::Ctx,
-                        color: None,
+                        color: TokenColor::Default,
                         sgr: None,
                         text: "fn main() {".into(),
                     }],
@@ -45,15 +44,20 @@ fn sample_output_file() -> OutputFile {
                     mov_side: None,
                     new_line: Some(2),
                     old_line: Some(2),
-                    text: "    println!(\"hello\");".to_string(),
-                    del_text: Some("    println!(\"world\");".to_string()),
-                    spans: Spans::default(),
-                    runs: vec![OutputRun {
-                        kind: RunKind::Common,
-                        color: None,
-                        sgr: None,
-                        text: "    println!(\"hello\");".into(),
-                    }],
+                    runs: vec![
+                        OutputRun {
+                            kind: RunKind::Del,
+                            color: TokenColor::Default,
+                            sgr: None,
+                            text: "    println!(\"world\");".into(),
+                        },
+                        OutputRun {
+                            kind: RunKind::Add,
+                            color: TokenColor::Default,
+                            sgr: None,
+                            text: "    println!(\"hello\");".into(),
+                        },
+                    ],
                     wholesale: false,
                     group: None,
                 },
@@ -62,12 +66,9 @@ fn sample_output_file() -> OutputFile {
                     mov_side: None,
                     new_line: Some(3),
                     old_line: Some(3),
-                    text: "}".to_string(),
-                    del_text: None,
-                    spans: Spans::default(),
                     runs: vec![OutputRun {
                         kind: RunKind::Ctx,
-                        color: None,
+                        color: TokenColor::Default,
                         sgr: None,
                         text: "}".into(),
                     }],
@@ -101,7 +102,7 @@ fn test_jsonl_roundtrip_single_file() {
     let mut buffer = Vec::new();
     emit_file_jsonl(&original, &mut buffer).expect("emit jsonl");
 
-    let text = std::str::from_utf8(&buffer).expect("valid utf8");
+    let text = str::from_utf8(&buffer).expect("valid utf8");
     let lines: Vec<&str> = text.lines().collect();
 
     // 1 FileHeader + 1 HunkHeader + 3 Lines + 1 FileFooter = 6 lines
@@ -130,7 +131,7 @@ fn test_jsonl_roundtrip_empty_hunks() {
     let mut buffer = Vec::new();
     emit_file_jsonl(&file, &mut buffer).expect("emit jsonl");
 
-    let text = std::str::from_utf8(&buffer).expect("valid utf8");
+    let text = str::from_utf8(&buffer).expect("valid utf8");
     let lines: Vec<&str> = text.lines().collect();
     // 1 FileHeader + 1 FileFooter = 2 lines
     assert_eq!(lines.len(), 2);
@@ -150,7 +151,7 @@ fn test_jsonl_roundtrip_renamed_file() {
     let mut buffer = Vec::new();
     emit_file_jsonl(&file, &mut buffer).expect("emit jsonl");
 
-    let text = std::str::from_utf8(&buffer).expect("valid utf8");
+    let text = str::from_utf8(&buffer).expect("valid utf8");
     let decoded = decode_jsonl_str(text).expect("decode jsonl");
     assert_eq!(decoded.len(), 1);
     assert_eq!(decoded[0].path, "src/new.rs");
@@ -440,20 +441,22 @@ fn test_output_file_release_rendered_memory() {
     let mut file = sample_output_file();
     file.counts.adds = 5;
     file.counts.dels = 2;
-    file.rows.push(crate::wire::OutputRow {
-        kind: crate::parse::RowKind::Add,
+    file.rows.push(OutputRow {
+        kind: RowKind::Add,
         mov_side: None,
         new_line: Some(1),
         old_line: None,
-        text: "line".to_string(),
-        del_text: None,
-        spans: Default::default(),
-        runs: Vec::new(),
+        runs: vec![OutputRun {
+            kind: RunKind::Add,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "line".into(),
+        }],
         wholesale: false,
         group: None,
     });
     file.new_content = vec!["line".to_string()];
-    file.hunks = vec![crate::wire::OutputHunk {
+    file.hunks = vec![OutputHunk {
         old_start: 1,
         old_count: 0,
         new_start: 1,
@@ -525,9 +528,6 @@ fn test_output_hunk_counts() {
         mov_side,
         new_line: None,
         old_line: None,
-        text: String::new(),
-        del_text: None,
-        spans: Spans::default(),
         runs: vec![],
         wholesale: false,
         group: None,
@@ -575,10 +575,20 @@ fn test_row_group_wire_serialization() {
         mov_side: None,
         new_line: Some(141),
         old_line: Some(140),
-        text: "mod text".into(),
-        del_text: Some("old text".into()),
-        spans: Spans::default(),
-        runs: vec![],
+        runs: vec![
+            OutputRun {
+                kind: RunKind::Del,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "old text".into(),
+            },
+            OutputRun {
+                kind: RunKind::Add,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "mod text".into(),
+            },
+        ],
         wholesale: false,
         group: Some(RowGroup::Anchor),
     };
@@ -596,10 +606,12 @@ fn test_row_group_wire_serialization() {
         mov_side: None,
         new_line: Some(142),
         old_line: None,
-        text: "add text".into(),
-        del_text: None,
-        spans: Spans::default(),
-        runs: vec![],
+        runs: vec![OutputRun {
+            kind: RunKind::Add,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "add text".into(),
+        }],
         wholesale: false,
         group: Some(RowGroup::Aux { anchor: 141 }),
     };
@@ -617,10 +629,12 @@ fn test_row_group_wire_serialization() {
         mov_side: None,
         new_line: Some(1),
         old_line: None,
-        text: "add text".into(),
-        del_text: None,
-        spans: Spans::default(),
-        runs: vec![],
+        runs: vec![OutputRun {
+            kind: RunKind::Add,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "add text".into(),
+        }],
         wholesale: false,
         group: None,
     };
@@ -631,4 +645,112 @@ fn test_row_group_wire_serialization() {
     );
     let de_row_none: OutputRow = serde_json::from_str(&json_none).unwrap();
     assert_eq!(de_row_none.group, None);
+}
+
+#[test]
+fn test_compact_wire_run_and_row_serialization() {
+    // 1. Bare string scalar for run with no color or SGR
+    let run_ctx = OutputRun {
+        kind: RunKind::Ctx,
+        color: TokenColor::Default,
+        sgr: None,
+        text: "hello world".into(),
+    };
+    let json_ctx = serde_json::to_string(&run_ctx).unwrap();
+    assert_eq!(json_ctx, r#""_hello world""#);
+    let de_ctx: OutputRun = serde_json::from_str(&json_ctx).unwrap();
+    assert_eq!(de_ctx.kind, RunKind::Ctx);
+    assert_eq!(de_ctx.text, "hello world");
+    assert_eq!(de_ctx.color, TokenColor::Default);
+    assert_eq!(de_ctx.sgr, None);
+
+    // 2. 2-element array for run with color
+    let run_add = OutputRun {
+        kind: RunKind::Add,
+        color: TokenColor::Keyword,
+        sgr: None,
+        text: "fn".into(),
+    };
+    let json_add = serde_json::to_string(&run_add).unwrap();
+    assert_eq!(json_add, r#"["+fn","kwd"]"#);
+    let de_add: OutputRun = serde_json::from_str(&json_add).unwrap();
+    assert_eq!(de_add.kind, RunKind::Add);
+    assert_eq!(de_add.text, "fn");
+    assert_eq!(de_add.color, TokenColor::Keyword);
+    assert_eq!(de_add.sgr, None);
+
+    // 3. 3-element array for run with color and SGR
+    let run_del = OutputRun {
+        kind: RunKind::Del,
+        color: TokenColor::Italic,
+        sgr: Some(14),
+        text: "header".into(),
+    };
+    let json_del = serde_json::to_string(&run_del).unwrap();
+    assert_eq!(json_del, r#"["-header","ita",14]"#);
+    let de_del: OutputRun = serde_json::from_str(&json_del).unwrap();
+    assert_eq!(de_del.kind, RunKind::Del);
+    assert_eq!(de_del.text, "header");
+    assert_eq!(de_del.color, TokenColor::Italic);
+    assert_eq!(de_del.sgr, Some(14));
+
+    // 4. Run with SGR but default color serializes color position as null
+    let run_sgr_no_color = OutputRun {
+        kind: RunKind::Add,
+        color: TokenColor::Default,
+        sgr: Some(4),
+        text: "link".into(),
+    };
+    let json_sgr = serde_json::to_string(&run_sgr_no_color).unwrap();
+    assert_eq!(json_sgr, r#"["+link",null,4]"#);
+    let de_sgr: OutputRun = serde_json::from_str(&json_sgr).unwrap();
+    assert_eq!(de_sgr.color, TokenColor::Default);
+    assert_eq!(de_sgr.sgr, Some(4));
+
+    // 5. null normalizes to TokenColor::Default on deserialize
+    let de_null: OutputRun = serde_json::from_str(r#"["_foo",null]"#).unwrap();
+    assert_eq!(de_null.color, TokenColor::Default);
+
+    // 6. OutputRow serialization has no text, del_text, spans fields
+    let row = OutputRow {
+        kind: RowKind::Mod,
+        mov_side: None,
+        old_line: Some(10),
+        new_line: Some(12),
+        runs: vec![
+            OutputRun {
+                kind: RunKind::Del,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "old_call();".into(),
+            },
+            OutputRun {
+                kind: RunKind::Add,
+                color: TokenColor::Keyword,
+                sgr: None,
+                text: "new_call();".into(),
+            },
+        ],
+        wholesale: false,
+        group: None,
+    };
+    let row_json = serde_json::to_string(&row).unwrap();
+    assert_eq!(
+        row_json,
+        r#"["mod",10,12,["-old_call();",["+new_call();","kwd"]]]"#
+    );
+
+    // Dynamic reconstruction
+    let de_row: OutputRow = serde_json::from_str(&row_json).unwrap();
+    assert_eq!(de_row.old_text(), "old_call();");
+    assert_eq!(de_row.new_text(), "new_call();");
+    assert_eq!(de_row.text(), "new_call();");
+    assert_eq!(de_row.del_text().as_deref(), Some("old_call();"));
+
+    // WireRecord::Line serializes identically to OutputRow (as a tuple)
+    let line_rec = WireRecord::Line(row);
+    let line_json = serde_json::to_string(&line_rec).unwrap();
+    assert_eq!(line_json, row_json);
+    let de_line: WireRecord = serde_json::from_str(&line_json).unwrap();
+    assert_eq!(de_line, line_rec);
 }

@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    io::{self, Write},
+    sync::{Arc, Mutex, MutexGuard},
+};
 
 use tracing::{info, info_span};
 use tracing_subscriber::fmt::MakeWriter;
@@ -8,14 +12,14 @@ use super::*;
 #[derive(Clone)]
 struct SharedWriter(Arc<Mutex<Vec<u8>>>);
 
-struct SharedWriterGuard<'a>(std::sync::MutexGuard<'a, Vec<u8>>);
+struct SharedWriterGuard<'a>(MutexGuard<'a, Vec<u8>>);
 
-impl<'a> std::io::Write for SharedWriterGuard<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+impl<'a> Write for SharedWriterGuard<'a> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         self.0.flush()
     }
 }
@@ -354,7 +358,7 @@ fn test_init_tracing_subscriber_file_output() {
         info!("test event to file");
     });
 
-    let content = std::fs::read_to_string(&path).unwrap();
+    let content = fs::read_to_string(&path).unwrap();
     assert!(
         content.contains("test event to file"),
         "Got content: '{content}'"

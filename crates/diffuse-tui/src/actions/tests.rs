@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, path::PathBuf};
 
 use super::*;
 
@@ -12,7 +12,7 @@ fn test_parse_hunk_header() {
     assert_eq!(parse_hunk_header("invalid"), None);
 }
 
-fn setup_test_git_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+fn setup_test_git_repo() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
 
     let run = |args: &[&str]| {

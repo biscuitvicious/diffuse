@@ -8,7 +8,7 @@
 //! 4. `pass_sort_ordered_walk`: Keyed anchor sorting into the final visual row
 //!    stream.
 
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::atomic::AtomicU64, time::Instant};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -57,8 +57,7 @@ pub struct PairingContext<'a> {
 /// with its word-diff spans baked in.
 ///
 /// Composed of 4 pure passes over the diff AST.
-pub static T_COLLAPSE: [std::sync::atomic::AtomicU64; 6] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+pub static T_COLLAPSE: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
 #[tracing::instrument(
     level = "debug",
@@ -72,10 +71,10 @@ pub fn collapse_hunk_rows(
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> Vec<Row> {
-    let t0 = std::time::Instant::now();
+    let t0 = Instant::now();
     let h_norm = pass_shift_hunk(h, profile);
     let h = &h_norm;
-    let t1 = std::time::Instant::now();
+    let t1 = Instant::now();
     T_COLLAPSE[0].fetch_add(
         t1.duration_since(t0).as_micros() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -83,7 +82,7 @@ pub fn collapse_hunk_rows(
 
     // Pass 1: DP cluster pairing engine
     let p1 = crate::cluster::pairing::dp_pairing(h, old_content, new_content, profile);
-    let t2 = std::time::Instant::now();
+    let t2 = Instant::now();
     T_COLLAPSE[1].fetch_add(
         t2.duration_since(t1).as_micros() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -103,7 +102,7 @@ pub fn collapse_hunk_rows(
         expand_blocks: &p1.expand_blocks,
     };
     let p2 = pass_assemble_mods(h, &pairing_ctx, profile);
-    let t3 = std::time::Instant::now();
+    let t3 = Instant::now();
     T_COLLAPSE[2].fetch_add(
         t3.duration_since(t2).as_micros() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -118,7 +117,7 @@ pub fn collapse_hunk_rows(
         &pairing_ctx,
         profile,
     );
-    let t4 = std::time::Instant::now();
+    let t4 = Instant::now();
     T_COLLAPSE[3].fetch_add(
         t4.duration_since(t3).as_micros() as u64,
         std::sync::atomic::Ordering::Relaxed,
@@ -134,7 +133,7 @@ pub fn collapse_hunk_rows(
         &p2.add_groups,
         p3.reflow_ctx,
     );
-    let t5 = std::time::Instant::now();
+    let t5 = Instant::now();
     T_COLLAPSE[4].fetch_add(
         t5.duration_since(t4).as_micros() as u64,
         std::sync::atomic::Ordering::Relaxed,

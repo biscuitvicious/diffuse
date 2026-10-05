@@ -10,8 +10,8 @@ and the control chars are part of the diffable text.
 
 **Done**
 - `#`-headings: marker muted, title in the accent + SGR bold
-- `` `code` `` spans: syntax-string color (no SGR — the code color is
-  the distinction)
+- `` `code` `` spans: dedicated code color (`cde`/`code` palette key,
+  no SGR — the code color is the distinction)
 - `**bold**`: accent + SGR bold · `*italic*`: muted + SGR italic
 - `~~strikethrough~~`: muted + SGR strike
 - `[label](url)` links: label + url underlined (SGR 4)

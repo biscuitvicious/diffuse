@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::{merge::RunKind, wire::OutputRun};
+use diffuse_syntax::color::TokenColor;
 
 #[test]
 fn test_prefix_gutters() {
@@ -116,8 +117,8 @@ fn test_styled_prefix_group_and_non_group() {
 #[test]
 fn test_addition_row_with_all_common_runs_preserves_plus_gutter() {
     let runs = vec![OutputRun {
-        kind: RunKind::Common,
-        color: None,
+        kind: RunKind::Ctx,
+        color: TokenColor::Default,
         sgr: None,
         text: "    syntax::{".into(),
     }];
@@ -133,14 +134,14 @@ fn test_render_addition_row_with_subword_styling() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![
         OutputRun {
-            kind: RunKind::Common,
-            color: Some("syntaxKeyword".into()),
+            kind: RunKind::Ctx,
+            color: TokenColor::Keyword,
             sgr: None,
             text: "pub fn ".into(),
         },
         OutputRun {
             kind: RunKind::Add,
-            color: Some("syntaxFunction".into()),
+            color: TokenColor::Function,
             sgr: None,
             text: "render".into(),
         },
@@ -173,8 +174,8 @@ fn test_grapheme_clusters_never_split() {
     // "e" + combining acute accent = ONE grapheme cluster; "x" the second.
     let text = "e\u{301}x";
     let runs = vec![OutputRun {
-        kind: RunKind::Common,
-        color: None,
+        kind: RunKind::Ctx,
+        color: TokenColor::Default,
         sgr: None,
         text: text.into(),
     }];
@@ -230,8 +231,8 @@ fn test_grapheme_clusters_never_split() {
 fn test_syntax_on_toggle_disables_token_colors() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![OutputRun {
-        kind: RunKind::Common,
-        color: Some("syntaxKeyword".into()),
+        kind: RunKind::Ctx,
+        color: TokenColor::Keyword,
         sgr: Some(1),
         text: "fn".into(),
     }];
@@ -283,14 +284,14 @@ fn test_col_offset_applies_to_token_runs() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![
         OutputRun {
-            kind: RunKind::Common,
-            color: Some("syntaxKeyword".into()),
+            kind: RunKind::Ctx,
+            color: TokenColor::Keyword,
             sgr: None,
             text: "pub fn ".into(),
         },
         OutputRun {
             kind: RunKind::Add,
-            color: Some("syntaxFunction".into()),
+            color: TokenColor::Function,
             sgr: None,
             text: "render".into(),
         },
@@ -435,20 +436,20 @@ fn test_render_moved_row_with_indentation_subwords() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![
         OutputRun {
-            kind: RunKind::Common,
-            color: Some("text".into()),
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
             sgr: None,
             text: "    ".into(),
         },
         OutputRun {
             kind: RunKind::Add,
-            color: Some("text".into()),
+            color: TokenColor::Default,
             sgr: None,
             text: "    ".into(),
         },
         OutputRun {
-            kind: RunKind::Common,
-            color: Some("syntaxFunction".into()),
+            kind: RunKind::Ctx,
+            color: TokenColor::Function,
             sgr: None,
             text: "foo()".into(),
         },
@@ -488,20 +489,20 @@ fn test_render_mod_row_with_indentation_subwords() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![
         OutputRun {
-            kind: RunKind::Common,
-            color: Some("text".into()),
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
             sgr: None,
             text: "    ".into(),
         },
         OutputRun {
             kind: RunKind::Add,
-            color: Some("text".into()),
+            color: TokenColor::Default,
             sgr: None,
             text: "    ".into(),
         },
         OutputRun {
-            kind: RunKind::Common,
-            color: Some("syntaxFunction".into()),
+            kind: RunKind::Ctx,
+            color: TokenColor::Function,
             sgr: None,
             text: "bar()".into(),
         },
@@ -540,7 +541,7 @@ fn test_render_moved_source_del_row() {
     let s_del = theme.row_style(RowKind::Del);
     let runs = vec![OutputRun {
         kind: RunKind::Del,
-        color: None,
+        color: TokenColor::Default,
         sgr: None,
         text: "    foo()".into(),
     }];
@@ -572,8 +573,8 @@ fn test_render_moved_source_del_row() {
 fn test_write_row_segment_direct_buffer() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![OutputRun {
-        kind: RunKind::Common,
-        color: Some("syntaxKeyword".into()),
+        kind: RunKind::Ctx,
+        color: TokenColor::Keyword,
         sgr: None,
         text: "let x = 1;".into(),
     }];
@@ -627,14 +628,14 @@ fn test_expand_tabs_and_runs() {
 
     let runs = vec![
         OutputRun {
-            kind: RunKind::Common,
-            color: None,
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
             sgr: None,
             text: "\t".into(),
         },
         OutputRun {
             kind: RunKind::Add,
-            color: None,
+            color: TokenColor::Default,
             sgr: None,
             text: "x\ty".into(),
         },
@@ -648,8 +649,8 @@ fn test_expand_tabs_and_runs() {
 fn test_sliced_row_segment_expands_tabs_without_overflow() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![OutputRun {
-        kind: RunKind::Common,
-        color: None,
+        kind: RunKind::Ctx,
+        color: TokenColor::Default,
         sgr: None,
         text: "\t\tlet x = 1;".into(),
     }];
@@ -722,8 +723,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     );
 
     let runs = vec![OutputRun {
-        kind: RunKind::Common,
-        color: None,
+        kind: RunKind::Ctx,
+        color: TokenColor::Default,
         sgr: None,
         text: "ab✅cd".into(),
     }];
@@ -798,19 +799,19 @@ fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_st
     let runs = vec![
         OutputRun {
             kind: RunKind::Add,
-            color: Some("accent".into()),
+            color: TokenColor::Delimiter,
             sgr: None,
             text: "~~".into(),
         },
         OutputRun {
             kind: RunKind::Add,
-            color: Some("mdStrike".into()),
+            color: TokenColor::Strike,
             sgr: Some(9),
             text: "deprecated".into(),
         },
         OutputRun {
             kind: RunKind::Add,
-            color: Some("accent".into()),
+            color: TokenColor::Delimiter,
             sgr: None,
             text: "~~".into(),
         },

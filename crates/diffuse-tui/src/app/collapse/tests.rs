@@ -1,3 +1,10 @@
+use std::{
+    collections::HashMap,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
+
 use crate::{
     app::{AppState, temp_notes_path},
     command::TuiCommand,
@@ -325,12 +332,12 @@ fn test_async_on_demand_expansion_sets_streaming_indicator() {
     );
 
     // Wait up to 500ms for the background worker to finish
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(500) {
+        if start.elapsed() > Duration::from_millis(500) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     assert!(!state.loading_files.contains(&0));
@@ -347,11 +354,11 @@ fn create_multi_file_state(
     rows_per_file: usize,
 ) -> (
     AppState,
-    std::sync::mpsc::Sender<(usize, crate::core::wire::OutputFile)>,
+    mpsc::Sender<(usize, crate::core::wire::OutputFile)>,
 ) {
     let mut diff = String::new();
-    let mut new_map = std::collections::HashMap::new();
-    let mut old_map = std::collections::HashMap::new();
+    let mut new_map = HashMap::new();
+    let mut old_map = HashMap::new();
 
     for i in 0..file_count {
         let name = format!("file_{i:02}.rs");
@@ -390,7 +397,7 @@ fn create_multi_file_state(
     }
     state.rebuild_flat_preserving_cursor(0);
 
-    let (tx, rx) = std::sync::mpsc::channel();
+    let (tx, rx) = mpsc::channel();
     state.on_demand_tx = Some(tx.clone());
     state.on_demand_rx = Some(rx);
 
@@ -430,12 +437,12 @@ fn test_expand_last_file_at_bottom_scrolls_down_after_load() {
     );
 
     // Wait for the background worker to finish loading.
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(1000) {
+        if start.elapsed() > Duration::from_millis(1000) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     // AFTER load completes:
@@ -476,12 +483,12 @@ fn test_expand_middle_file_at_bottom_scrolls_down_after_load() {
 
     state.toggle_file_collapse(18);
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(1000) {
+        if start.elapsed() > Duration::from_millis(1000) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     assert!(state.is_file_loaded(18));
@@ -506,12 +513,12 @@ fn test_expand_first_file_not_at_bottom_does_not_scroll() {
     // File 0 is at row 0 (top of viewport).
     state.toggle_file_collapse(0);
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(1000) {
+        if start.elapsed() > Duration::from_millis(1000) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     assert!(state.is_file_loaded(0));
@@ -535,12 +542,12 @@ fn test_expand_file_with_fewer_lines_fills_up_to_file_content() {
 
     state.toggle_file_collapse(24);
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(1000) {
+        if start.elapsed() > Duration::from_millis(1000) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     assert!(state.is_file_loaded(24));
@@ -568,12 +575,12 @@ fn test_expand_file_cursor_clamped_if_scrolled_off_top() {
 
     state.toggle_file_collapse(24);
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(1000) {
+        if start.elapsed() > Duration::from_millis(1000) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     assert!(state.is_file_loaded(24));
@@ -641,12 +648,12 @@ fn test_expand_file_cursor_move_while_streaming_cancels_auto_scroll() {
     assert_eq!(state.row_idx, 23);
 
     // Wait for the background worker to finish loading
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(1000) {
+        if start.elapsed() > Duration::from_millis(1000) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     assert!(state.is_file_loaded(24));
@@ -674,12 +681,12 @@ fn test_expand_file_ui_change_while_streaming_cancels_auto_scroll() {
     state.execute(TuiCommand::ToggleRawDiff);
 
     // Wait for background worker to finish
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     while !state.poll_on_demand() {
-        if start.elapsed() > std::time::Duration::from_millis(1000) {
+        if start.elapsed() > Duration::from_millis(1000) {
             panic!("timed out waiting for async on-demand load");
         }
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        thread::sleep(Duration::from_millis(5));
     }
 
     assert!(state.is_file_loaded(24));

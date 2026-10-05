@@ -1,6 +1,11 @@
 use crate::{
     app::{AppState, temp_notes_path},
-    core::{PipelineOptions, pipeline::run_pipeline_full, wire::PipelineOutput},
+    core::{
+        PipelineOptions,
+        merge::RunKind,
+        pipeline::run_pipeline_full,
+        wire::{OutputRun, PipelineOutput},
+    },
 };
 
 fn sample_output() -> PipelineOutput {
@@ -10,9 +15,9 @@ index 1111111..2222222 100644
 +++ b/filesystem.rs
 @@ -1025,6 +1025,8 @@ fn test() {
       let x = 1;
- -    // old comment — em dash
- +    // new comment — em dash updated
- +    let y = 2;
+-    // old comment — em dash
++    // new comment — em dash updated
++    let y = 2;
  }
 "#;
     let new_content = [(
@@ -906,8 +911,9 @@ fn test_hunk_jump_from_banner_counts_as_inside_first_hunk() {
 fn test_hunk_jump_from_hunkless_banner_falls_back_to_row() {
     use crate::core::{
         counts::FileCounts,
+        merge::RunKind,
         parse::RowKind,
-        wire::{OutputFile, OutputHunk, OutputRow},
+        wire::{OutputFile, OutputHunk, OutputRow, OutputRun},
     };
 
     let diff = r#"diff --git a/tracked.rs b/tracked.rs
@@ -947,10 +953,7 @@ index 1111111..2222222 100644
                     mov_side: None,
                     new_line: Some(1),
                     old_line: None,
-                    text: "fn new_untracked() {}".to_string(),
-                    del_text: None,
-                    spans: Default::default(),
-                    runs: Vec::new(),
+                    runs: vec![OutputRun::new(RunKind::Add, "fn new_untracked() {}")],
                     wholesale: false,
                     group: None,
                 }],
@@ -1105,7 +1108,7 @@ fn test_viewport_scrolling_through_tall_content_without_min_vis_snap() {
 #[test]
 fn test_viewport_scrolling_through_tall_wrapped_diff_line_without_min_vis_snap() {
     let mut out = sample_output();
-    out.files[0].rows[0].text = "word ".repeat(300);
+    out.files[0].rows[0].runs = vec![OutputRun::new(RunKind::Ctx, "word ".repeat(300))];
     let mut state = AppState::new(
         out,
         "test_repo".into(),

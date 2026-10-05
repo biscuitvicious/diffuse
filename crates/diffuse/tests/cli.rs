@@ -3,8 +3,10 @@
 //! never try to open the interactive TUI.
 
 use std::{
-    fs,
+    fs::{self, File},
+    io::{self, BufRead, BufReader, Write},
     process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 /// `diffuse < /dev/null | cat` with no git args and no JSON payload must
@@ -70,9 +72,9 @@ fn non_git_directory_exits_with_stderr_error_without_tui() {
 fn non_git_directory_in_pty_terminal_exits_with_stderr_without_tui() {
     let pty = nix::pty::openpty(None, None).expect("openpty failed");
     // master and slave are OwnedFd; keep master alive so the slave end stays
-    // open, then convert slave to std::fs::File for use as stdin/stdout.
+    // open, then convert slave to File for use as stdin/stdout.
     let _master = pty.master;
-    let slave = std::fs::File::from(pty.slave);
+    let slave = File::from(pty.slave);
 
     let dir = tempfile::tempdir().unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
@@ -168,7 +170,7 @@ fn jsonl_streaming_emits_valid_json_lines() {
         .unwrap();
 
     let mut stdin = child.stdin.take().unwrap();
-    std::io::Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+    Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
     drop(stdin);
 
     let out = child.wait_with_output().unwrap();
@@ -187,7 +189,7 @@ fn jsonl_streaming_emits_valid_json_lines() {
             }
             diffuse::core::wire::jsonl::WireRecord::HunkHeader(_) => {}
             diffuse::core::wire::jsonl::WireRecord::Line(l) => {
-                assert!(!l.text.is_empty());
+                assert!(!l.text().is_empty());
             }
             diffuse::core::wire::jsonl::WireRecord::FileFooter(f) => {
                 assert!(!f.path.is_empty());
@@ -255,7 +257,7 @@ fn large_changeset_progressive_streaming_performance() {
         .unwrap();
     }
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("--no-tui")
         .current_dir(dir.path())
@@ -265,9 +267,9 @@ fn large_changeset_progressive_streaming_performance() {
         .spawn()
         .unwrap();
 
-    let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
     let mut first_line = String::new();
-    std::io::BufRead::read_line(&mut stdout, &mut first_line).unwrap();
+    BufRead::read_line(&mut stdout, &mut first_line).unwrap();
     let time_to_first_file = start.elapsed();
 
     assert!(
@@ -275,11 +277,11 @@ fn large_changeset_progressive_streaming_performance() {
         "must yield first file line progressively"
     );
     assert!(
-        time_to_first_file < std::time::Duration::from_millis(500),
+        time_to_first_file < Duration::from_millis(500),
         "time to first file ({time_to_first_file:?}) must be under 500ms"
     );
 
-    std::io::copy(&mut stdout, &mut std::io::sink()).unwrap();
+    io::copy(&mut stdout, &mut io::sink()).unwrap();
     let status = child.wait().unwrap();
     assert!(status.success());
 }
@@ -432,7 +434,6 @@ index 0000000..1111111 100644
         .spawn()
         .unwrap();
 
-    use std::io::Write as _;
     child
         .stdin
         .as_mut()
@@ -477,7 +478,6 @@ index 0000000..1111111 100644
         .spawn()
         .unwrap();
 
-    use std::io::Write as _;
     child
         .stdin
         .as_mut()
@@ -620,7 +620,6 @@ fn test_cli_markdown_piped_diff() {
         .spawn()
         .unwrap();
 
-    use std::io::Write;
     child
         .stdin
         .take()
@@ -720,7 +719,6 @@ index 0000000..1111111 100644\n\
         .spawn()
         .unwrap();
 
-    use std::io::Write;
     child
         .stdin
         .take()
@@ -809,7 +807,6 @@ fn test_json_payload_stdin_wire_contract() {
         .spawn()
         .unwrap();
 
-    use std::io::Write as _;
     child
         .stdin
         .as_mut()

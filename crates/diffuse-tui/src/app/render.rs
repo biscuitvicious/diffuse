@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant, vec::Vec};
 
 use ratatui::{
     Frame,
@@ -558,7 +558,7 @@ impl AppState {
             .map(|l| crate::view::ansi_to_ratatui_line(&l))
             .collect();
         let diff_bg = crate::view::to_color(self.theme.palette.bg_base);
-        let diff_fg = crate::view::to_color(self.theme.palette.syntax_text);
+        let diff_fg = crate::view::to_color(self.theme.palette.text);
         f.render_widget(
             Paragraph::new(paragraph_lines).style(Style::default().fg(diff_fg).bg(diff_bg)),
             diff_area,
@@ -672,7 +672,7 @@ impl AppState {
         vh: usize,
         track_h: usize,
     ) -> (Vec<String>, bool, usize, usize, usize) {
-        let frame_start = std::time::Instant::now();
+        let frame_start = Instant::now();
         let max_rows = vh.max(4);
         let mut lines = Vec::new();
         // Flat-row origin of each pushed grid line for width-invariant
@@ -892,11 +892,12 @@ impl AppState {
                         } else {
                             "\x1b[38;5;242m      \x1b[39m".to_string()
                         };
+                        let row_text = r.text();
                         let rendered_row = if self.raw_diff {
                             let prefix_str = pfx.as_str();
                             let text_cols = content_width.saturating_sub(6).max(1);
                             let start_col = s_idx * text_cols;
-                            let piece = slice_by_visual_width(&r.text, start_col, text_cols);
+                            let piece = slice_by_visual_width(&row_text, start_col, text_cols);
                             let is_last_seg = s_idx + 1 == seg_count;
                             render_raw_row(
                                 r.kind,
@@ -911,10 +912,12 @@ impl AppState {
                             let text_cols = content_width.saturating_sub(6).max(1);
                             let seg_start = s_idx * text_cols;
                             let seg_end = seg_start + text_cols;
+                            let del_text = r.del_text();
+                            let spans = r.spans();
                             render_row_segment(
-                                &r.text,
-                                r.del_text.as_deref(),
-                                &r.spans,
+                                &row_text,
+                                del_text.as_deref(),
+                                &spans,
                                 r.kind,
                                 &r.runs,
                                 seg_start,
@@ -984,7 +987,7 @@ impl AppState {
                 let bot_segs = self.bottom_gap_seg_count(item.file_idx, content_width);
                 let is_cur = item.file_idx == self.current_file_idx() && idx == self.row_idx;
                 let text_cols = content_width.max(1);
-                let note_count = callouts.get(&idx).map_or(0, std::vec::Vec::len);
+                let note_count = callouts.get(&idx).map_or(0, Vec::len);
                 let bottom_div_vis_start = div_segs + seg_counts[idx] + note_count;
                 for s_idx in 0..bot_segs {
                     if vis_i >= self.scroll && vis_i < self.scroll + max_rows {

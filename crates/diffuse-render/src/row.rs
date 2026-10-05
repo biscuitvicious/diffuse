@@ -2,6 +2,7 @@
 //! slicing.
 
 use std::{borrow::Cow, fmt::Write};
+use std::{fmt, str};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::width::{char_width, grapheme_width};
@@ -16,6 +17,7 @@ use crate::{
         wire::OutputRun,
     },
 };
+use diffuse_syntax::color::TokenColor;
 
 /// Check whether a row consists solely of common/context runs.
 /// Addition rows added in diffs are never treated as context rows.
@@ -57,7 +59,7 @@ pub fn pad4_bytes(num: Option<u32>, buf: &mut [u8; 4]) -> &str {
                 }
             }
             // SAFETY: buf contains only ASCII spaces and digits.
-            unsafe { std::str::from_utf8_unchecked(buf) }
+            unsafe { str::from_utf8_unchecked(buf) }
         }
     }
 }
@@ -293,7 +295,7 @@ pub fn expand_runs_tabs(runs: &[OutputRun], tab_width: usize) -> Vec<OutputRun> 
             }
             out.push(OutputRun {
                 kind: r.kind,
-                color: r.color.clone(),
+                color: r.color,
                 sgr: r.sgr,
                 text: exp.into(),
             });
@@ -321,7 +323,7 @@ pub fn write_row_segment<W: Write>(
     word_diff: bool,
     syntax_on: bool,
     theme: &DiffuseTheme,
-) -> std::fmt::Result {
+) -> fmt::Result {
     let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
     let is_del_row = kind == RowKind::Del;
     let is_mod_row = kind == RowKind::Mod;
@@ -512,9 +514,9 @@ pub fn write_row_segment<W: Write>(
                 write!(out, "{bg}\x1b[9m{del_fg}{}\x1b[39m\x1b[29m", tok.text)?;
             } else {
                 let color = if syntax_on {
-                    tok.color.as_deref().unwrap_or("text")
+                    tok.color
                 } else {
-                    "text"
+                    TokenColor::Default
                 };
                 let sgr = if syntax_on { tok.sgr } else { None };
                 write!(out, "{bg}")?;
@@ -586,9 +588,9 @@ pub fn write_row_segment<W: Write>(
         } else {
             // syntax off downgrades every run to plain text (no fg, no sgr)
             let color = if syntax_on {
-                tok.color.as_deref().unwrap_or("text")
+                tok.color
             } else {
-                "text"
+                TokenColor::Default
             };
             let sgr = if syntax_on { tok.sgr } else { None };
             write!(out, "{bg}")?;
@@ -645,7 +647,7 @@ pub fn write_note_segment<W: Write>(
     prefix: &str,
     syntax_on: bool,
     theme: &DiffuseTheme,
-) -> std::fmt::Result {
+) -> fmt::Result {
     let has_tab = text.contains('\t') || runs.iter().any(|r| r.text.contains('\t'));
     let exp_text = if has_tab {
         Some(expand_tabs(text, 4))
@@ -686,9 +688,9 @@ pub fn write_note_segment<W: Write>(
         }
 
         let color = if syntax_on {
-            tok.color.as_deref().unwrap_or("text")
+            tok.color
         } else {
-            "text"
+            TokenColor::Default
         };
         let sgr = if syntax_on { tok.sgr } else { None };
         theme.write_token(color, &sub_piece, "ctx", Some("ctx"), sgr, out);
@@ -750,7 +752,7 @@ pub fn write_raw_row<W: Write>(
     band: bool,
     highlight_trailing: bool,
     theme: &DiffuseTheme,
-) -> std::fmt::Result {
+) -> fmt::Result {
     let (fg_color, sub_bg_color, sub_fg_color) = match kind {
         RowKind::Add => (
             theme.palette.add_gutter_icon,

@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use crate::{
     collapse::collapse_hunk_rows,
+    merge::{RunKind, merged_runs},
     moves::mark_moves,
     parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind},
     syntax::registry::lang_profile,
@@ -1721,10 +1722,10 @@ fn test_multiline_to_single_line_collapse_reflow() {
 
     // Verify subword runs: crate::syntax::profile:: must be struck out,
     // profile: and -> bool common
-    let runs = crate::merge::merged_runs(&c[0]);
+    let runs = merged_runs(&c[0]);
     let struck: Vec<&str> = runs
         .iter()
-        .filter(|r| r.kind == crate::merge::RunKind::Del)
+        .filter(|r| r.kind == RunKind::Del)
         .map(|r| r.text)
         .collect();
     assert!(
@@ -1736,7 +1737,7 @@ fn test_multiline_to_single_line_collapse_reflow() {
     );
     let common: Vec<&str> = runs
         .iter()
-        .filter(|r| r.kind == crate::merge::RunKind::Common)
+        .filter(|r| r.kind == RunKind::Ctx)
         .map(|r| r.text)
         .collect();
     assert!(

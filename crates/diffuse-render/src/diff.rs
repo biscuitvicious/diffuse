@@ -3,7 +3,7 @@
 //! Formats full file diff summaries and colored hunks directly to terminal
 //! output.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 use crate::{
     Badge,
@@ -31,7 +31,7 @@ pub fn write_file_header_bar<W: Write>(
     file: &OutputFile,
     badge: Option<Badge>,
     theme: &DiffuseTheme,
-) -> std::fmt::Result {
+) -> fmt::Result {
     let counts = &file.counts;
     let path_display = file.display_path();
     let status_display = file.display_status();
@@ -145,11 +145,14 @@ pub fn render_file_diff(
             format!("{plain} ")
         };
 
+        let text = r.text();
+        let del_text = r.del_text();
+        let spans = r.spans();
         let _ = write_row_segment(
             out,
-            &r.text,
-            r.del_text.as_deref(),
-            &r.spans,
+            &text,
+            del_text.as_deref(),
+            &spans,
             r.kind,
             &r.runs,
             0,
@@ -237,7 +240,8 @@ pub fn render_raw_file_diff(
             let pfx = styled_prefix(
                 r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
             );
-            let _ = write_raw_row(&mut out, r.kind, &pfx, &r.text, false, false, true, theme);
+            let text = r.text();
+            let _ = write_raw_row(&mut out, r.kind, &pfx, &text, false, false, true, theme);
             out.push('\n');
         }
     }

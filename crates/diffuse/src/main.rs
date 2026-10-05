@@ -8,8 +8,9 @@
 use std::{
     collections::HashMap,
     env, fs,
-    io::{self, IsTerminal, Read},
-    path::Path,
+    io::{self, IsTerminal, Read, Write},
+    path::{Path, PathBuf},
+    process,
 };
 
 use clap::{Parser, Subcommand};
@@ -46,7 +47,7 @@ use diffuse::{
 struct Args {
     /// Change to DIR before doing anything (equivalent to git -C <DIR>).
     #[arg(short = 'C', value_name = "DIR", action = clap::ArgAction::Append, global = true)]
-    directory: Vec<std::path::PathBuf>,
+    directory: Vec<PathBuf>,
     /// Read the diff from this file instead of stdin.
     #[arg(long, global = true)]
     diff: Option<String>,
@@ -307,14 +308,6 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
 /// The extension pipes a JSON payload on stdin (a non-terminal stdin with
 /// content). A standalone run has git arguments, an interactive stdin, or
 /// an empty piped stdin (e.g. `diffuse < /dev/null | cat`). Routing on the
-use std::io::Write;
-
-/// Decide between the machine/extension JSON contract (`true`) and the
-/// standalone reviewer producing terminal output (`false`).
-///
-/// The extension pipes a JSON payload on stdin (a non-terminal stdin with
-/// content). A standalone run has git arguments, an interactive stdin, or
-/// an empty piped stdin (e.g. `diffuse < /dev/null | cat`). Routing on the
 /// *content* of a piped stdin keeps the extension contract intact while
 /// letting fully-piped invocations fall through to the full render — and
 /// the TUI is only ever entered when both ends are real terminals (see
@@ -348,7 +341,7 @@ pub fn resolve_theme(cli_theme: Option<&str>) -> DiffuseTheme {
 /// Configure global ANSI styling condition via `yansi` from CLI flags and
 /// environment.
 pub fn init_color_mode(color: &str, no_color: bool) -> bool {
-    let no_color_env = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+    let no_color_env = env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
     if no_color || color == "never" || (color == "auto" && no_color_env) {
         yansi::disable();
         false
@@ -368,7 +361,7 @@ fn main() -> io::Result<()> {
                 "diffuse: cannot change directory to '{}': {e}",
                 dir.display()
             );
-            std::process::exit(1);
+            process::exit(1);
         }
     }
 
@@ -476,7 +469,7 @@ fn main() -> io::Result<()> {
                 "diffuse: not a git repository (or any of the parent directories): {}",
                 repo_root.display()
             );
-            std::process::exit(2);
+            process::exit(2);
         }
         let notes_path = args
             .notes_file
@@ -545,7 +538,7 @@ fn main() -> io::Result<()> {
             );
             if let Ok(Err(e)) = meta_rx.recv() {
                 eprintln!("diffuse: {e}");
-                std::process::exit(2);
+                process::exit(2);
             }
             let files: Vec<_> = consumer.collect();
             let out = PipelineOutput {
@@ -588,7 +581,7 @@ fn main() -> io::Result<()> {
             );
             if let Ok(Err(e)) = meta_rx.recv() {
                 eprintln!("diffuse: {e}");
-                std::process::exit(2);
+                process::exit(2);
             }
             let mut stdout = io::stdout().lock();
             if is_raw {
@@ -633,7 +626,7 @@ fn main() -> io::Result<()> {
                 "diffuse: not a git repository (or any of the parent directories): {}",
                 repo_root.display()
             );
-            std::process::exit(2);
+            process::exit(2);
         }
         let notes_path = args
             .notes_file
@@ -667,7 +660,7 @@ fn main() -> io::Result<()> {
         );
         if let Ok(Err(e)) = meta_rx.recv() {
             eprintln!("diffuse: {e}");
-            std::process::exit(2);
+            process::exit(2);
         }
         if is_raw {
             let mut stdout = io::stdout().lock();

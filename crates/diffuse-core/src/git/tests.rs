@@ -1,3 +1,5 @@
+use std::{fs, process::Command, slice, sync::mpsc};
+
 use super::*;
 
 #[test]
@@ -40,7 +42,7 @@ fn test_fixed_commit_range_excludes_untracked_files() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -51,19 +53,19 @@ fn test_fixed_commit_range_excludes_untracked_files() {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit1"]);
 
-    std::fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
+    fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit2"]);
 
     // Untracked file — must NOT appear when diffing a fixed range
-    std::fs::write(dir.join("bogus_untracked.txt"), "I should not appear\n").unwrap();
+    fs::write(dir.join("bogus_untracked.txt"), "I should not appear\n").unwrap();
 
     let range = "HEAD~1..HEAD".to_string();
-    let res = load_git_repo(dir, std::slice::from_ref(&range), &[], false, 4).unwrap();
+    let res = load_git_repo(dir, slice::from_ref(&range), &[], false, 4).unwrap();
     assert!(
         !res.diff.contains("bogus_untracked.txt"),
         "fixed commit range must not include untracked files in diff"
@@ -78,7 +80,7 @@ fn test_fixed_commit_range_excludes_untracked_files() {
         Some(1),
         crate::pipeline::PipelineOptions::default(),
     );
-    let (meta_tx, _meta_rx) = std::sync::mpsc::channel();
+    let (meta_tx, _meta_rx) = mpsc::channel();
     stream_git_repo_to_producer(dir, &[range], &[], false, 4, producer, &meta_tx);
     let files: Vec<_> = consumer.collect();
     assert!(
@@ -87,7 +89,7 @@ fn test_fixed_commit_range_excludes_untracked_files() {
     );
 
     // Clean up
-    std::fs::remove_file(dir.join("bogus_untracked.txt")).unwrap();
+    fs::remove_file(dir.join("bogus_untracked.txt")).unwrap();
 }
 
 #[test]
@@ -96,7 +98,7 @@ fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -107,12 +109,12 @@ fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
+    fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "init"]);
 
     // Create untracked file
-    std::fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
+    fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
 
     let res = load_git_repo(dir, &[], &[], false, 6).unwrap();
     assert!(
@@ -138,7 +140,7 @@ fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
     assert_eq!(untracked_file.status, "untracked");
     assert!(!untracked_file.hunks.is_empty());
     assert_eq!(untracked_file.hunks[0].rows.len(), 1);
-    assert_eq!(untracked_file.hunks[0].rows[0].text, "fn untracked() {}");
+    assert_eq!(untracked_file.hunks[0].rows[0].text(), "fn untracked() {}");
 }
 
 #[test]
@@ -147,7 +149,7 @@ fn test_load_git_blobs_batch() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -158,12 +160,12 @@ fn test_load_git_blobs_batch() {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("f1.txt"), "content 1\n").unwrap();
-    std::fs::write(dir.join("f2.txt"), "content 2\n").unwrap();
+    fs::write(dir.join("f1.txt"), "content 1\n").unwrap();
+    fs::write(dir.join("f2.txt"), "content 2\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit1"]);
 
-    std::fs::write(dir.join("f1.txt"), "content 1 mod\n").unwrap();
+    fs::write(dir.join("f1.txt"), "content 1 mod\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit2"]);
 
@@ -196,7 +198,7 @@ fn test_load_git_blobs_native() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -207,12 +209,12 @@ fn test_load_git_blobs_native() {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("f1.txt"), "hello native\n").unwrap();
-    std::fs::write(dir.join("f2.txt"), "world native\n").unwrap();
+    fs::write(dir.join("f1.txt"), "hello native\n").unwrap();
+    fs::write(dir.join("f2.txt"), "world native\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "native1"]);
 
-    std::fs::write(dir.join("f1.txt"), "hello native mod\n").unwrap();
+    fs::write(dir.join("f1.txt"), "hello native mod\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "native2"]);
 
@@ -245,7 +247,7 @@ fn test_git_diff_additions_only_still_fetches_old_size() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -257,13 +259,13 @@ fn test_git_diff_additions_only_still_fetches_old_size() {
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
     let initial_content = "# Initial Title\nLine 1\nLine 2\n";
-    std::fs::write(dir.join("doc.md"), initial_content).unwrap();
+    fs::write(dir.join("doc.md"), initial_content).unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit1"]);
 
     // Append a line: only additions (+1), 0 deletions (-0)
     let appended_content = "# Initial Title\nLine 1\nLine 2\nLine 3 added\n";
-    std::fs::write(dir.join("doc.md"), appended_content).unwrap();
+    fs::write(dir.join("doc.md"), appended_content).unwrap();
 
     // 1. Test load_git_repo
     let res = load_git_repo(dir, &[], &[], false, 4).unwrap();
@@ -278,7 +280,7 @@ fn test_git_diff_additions_only_still_fetches_old_size() {
         Some(1),
         crate::pipeline::PipelineOptions::default(),
     );
-    let (meta_tx, _meta_rx) = std::sync::mpsc::channel();
+    let (meta_tx, _meta_rx) = mpsc::channel();
     stream_git_repo_to_producer(dir, &[], &[], false, 4, producer, &meta_tx);
     let files: Vec<_> = consumer.collect();
     assert_eq!(files.len(), 1);
@@ -298,7 +300,7 @@ fn test_resolve_commit_range_in_repo() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -309,20 +311,20 @@ fn test_resolve_commit_range_in_repo() {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "c1"]);
-    let c1 = std::process::Command::new("git")
+    let c1 = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .current_dir(dir)
         .output()
         .unwrap();
     let c1_hash = String::from_utf8_lossy(&c1.stdout).trim().to_string();
 
-    std::fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
+    fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "c2"]);
-    let c2 = std::process::Command::new("git")
+    let c2 = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
         .current_dir(dir)
         .output()
@@ -363,7 +365,7 @@ fn test_load_git_repo_staged_excludes_untracked_files() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -374,13 +376,13 @@ fn test_load_git_repo_staged_excludes_untracked_files() {
     run(&["init", "-q"]);
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
+    fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "init"]);
 
     // Create untracked file and stage a change to tracked.rs
-    std::fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
-    std::fs::write(dir.join("tracked.rs"), "fn tracked() { 42 }\n").unwrap();
+    fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
+    fs::write(dir.join("tracked.rs"), "fn tracked() { 42 }\n").unwrap();
     run(&["add", "tracked.rs"]);
 
     // 1. With staged param true: excludes untracked files

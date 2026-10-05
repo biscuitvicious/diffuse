@@ -1,5 +1,12 @@
 //! Dynamic terminal mode and background luminance detection subsystem.
 
+use std::{
+    env,
+    io::{self, IsTerminal, Read, Write},
+    str,
+    time::{Duration, Instant},
+};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalMode {
     Dark,
@@ -121,13 +128,12 @@ fn poll_stdin(timeout_ms: i32) -> bool {
 fn query_terminal_mode_osc11() -> Option<TerminalMode> {
     let _guard = RawModeGuard::acquire()?;
 
-    use std::io::{Read, Write};
-    let mut stdout = std::io::stdout().lock();
+    let mut stdout = io::stdout().lock();
     stdout.write_all(b"\x1b]11;?\x1b\\").ok()?;
     stdout.flush().ok()?;
 
-    let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_millis(30);
+    let start = Instant::now();
+    let timeout = Duration::from_millis(30);
     let mut buf = Vec::with_capacity(64);
     let mut byte = [0u8; 1];
 
@@ -136,7 +142,7 @@ fn query_terminal_mode_osc11() -> Option<TerminalMode> {
         if remaining_ms <= 0 || !poll_stdin(remaining_ms) {
             break;
         }
-        if std::io::stdin().read_exact(&mut byte).is_ok() {
+        if io::stdin().read_exact(&mut byte).is_ok() {
             buf.push(byte[0]);
             if byte[0] == 0x07
                 || (buf.len() >= 2 && buf[buf.len() - 2] == 0x1b && buf[buf.len() - 1] == b'\\')
@@ -148,7 +154,7 @@ fn query_terminal_mode_osc11() -> Option<TerminalMode> {
         }
     }
 
-    let text = std::str::from_utf8(&buf).ok()?;
+    let text = str::from_utf8(&buf).ok()?;
     let (r, g, b) = parse_osc11_response(text)?;
     Some(classify_luminance(r, g, b))
 }
@@ -165,7 +171,7 @@ fn query_terminal_mode_osc11() -> Option<TerminalMode> {
 /// 4. OSC 11 dynamic query sequence with non-blocking 30ms timeout
 #[must_use]
 pub fn detect_terminal_mode() -> Option<TerminalMode> {
-    if let Ok(val) = std::env::var("DIFFUSE_THEME") {
+    if let Ok(val) = env::var("DIFFUSE_THEME") {
         match val.trim().to_lowercase().as_str() {
             "light" | "white" => return Some(TerminalMode::Light),
             "dark" | "black" | "default" => return Some(TerminalMode::Dark),
@@ -174,20 +180,19 @@ pub fn detect_terminal_mode() -> Option<TerminalMode> {
         }
     }
 
-    use std::io::IsTerminal;
-    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return None;
     }
-    if std::env::var("TERM").as_deref() == Ok("dumb") {
+    if env::var("TERM").as_deref() == Ok("dumb") {
         return None;
     }
 
-    if let Ok(val) = std::env::var("TERM_BACKGROUND")
+    if let Ok(val) = env::var("TERM_BACKGROUND")
         && let Some(mode) = parse_term_background(&val)
     {
         return Some(mode);
     }
-    if let Ok(val) = std::env::var("COLORFGBG")
+    if let Ok(val) = env::var("COLORFGBG")
         && let Some(mode) = parse_colorfgbg(&val)
     {
         return Some(mode);

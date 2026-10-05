@@ -3,6 +3,7 @@
 use std::{
     fmt,
     path::{Path, PathBuf},
+    string::String,
 };
 
 use crate::{
@@ -155,7 +156,7 @@ impl RevisionRange {
     pub fn resolve(repo_root: &Path, git_args: &[String]) -> Option<Self> {
         let refs: Vec<&str> = git_args
             .iter()
-            .map(std::string::String::as_str)
+            .map(String::as_str)
             .filter(|t| !t.starts_with('-'))
             .collect();
 

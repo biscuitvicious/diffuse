@@ -1,5 +1,7 @@
 //! Flat model — construction and indexing of the visual flat list.
 
+use std::collections::HashSet;
+
 use crate::{
     core::{
         parse::RowKind,
@@ -13,7 +15,7 @@ use super::AppState;
 impl AppState {
     pub(crate) fn build_visual_flat(
         output: &PipelineOutput,
-        collapsed_files: &std::collections::HashSet<usize>,
+        collapsed_files: &HashSet<usize>,
     ) -> (Vec<FlatRow>, Vec<HunkStart>) {
         let flat = Self::build_flat(output, collapsed_files);
         let hunk_starts = Self::build_hunk_starts(output, &flat);
@@ -25,7 +27,7 @@ impl AppState {
     /// Hunk navigation jumps to the `@@` rows.
     pub(crate) fn build_raw_flat(
         output: &PipelineOutput,
-        collapsed_files: &std::collections::HashSet<usize>,
+        collapsed_files: &HashSet<usize>,
     ) -> (Vec<FlatRow>, Vec<HunkStart>) {
         let mut flat = Vec::new();
         let mut hunk_starts = Vec::new();
@@ -70,7 +72,7 @@ impl AppState {
     /// Build the flat row list (shared by the visual and raw representations).
     pub(crate) fn build_flat(
         output: &PipelineOutput,
-        collapsed_files: &std::collections::HashSet<usize>,
+        collapsed_files: &HashSet<usize>,
     ) -> Vec<FlatRow> {
         let mut flat = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {

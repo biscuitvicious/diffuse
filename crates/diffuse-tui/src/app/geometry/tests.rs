@@ -2,7 +2,13 @@ use std::collections::HashMap;
 
 use crate::{
     app::{AppState, temp_notes_path},
-    core::{PipelineOptions, parse::RowKind, pipeline::run_pipeline_full, wire::PipelineOutput},
+    core::{
+        PipelineOptions,
+        merge::RunKind,
+        parse::RowKind,
+        pipeline::run_pipeline_full,
+        wire::{OutputRun, PipelineOutput},
+    },
     view::{truncate_pad, visible_width},
 };
 
@@ -83,7 +89,7 @@ fn sample_output_two_hunks() -> PipelineOutput {
 fn test_word_wrap_and_visual_subline_navigation() {
     let mut out = sample_output();
     // Add a very long line to file 0 (row 1 in diff, not the hunk divider row)
-    out.files[0].rows[1].text = "A".repeat(150);
+    out.files[0].rows[1].runs = vec![OutputRun::new(RunKind::Ctx, "A".repeat(150))];
     let mut state = AppState::new(
         out,
         "test_repo".into(),

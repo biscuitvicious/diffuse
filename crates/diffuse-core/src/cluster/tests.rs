@@ -1,5 +1,11 @@
 //! Unit tests for syntax section classification and cluster partitioning.
 
+use std::{
+    io::Read,
+    path::PathBuf,
+    thread::{available_parallelism, spawn},
+};
+
 use super::*;
 use crate::{
     parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row},
@@ -392,7 +398,7 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
         diff: String,
     }
 
-    let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dir = if manifest.join("tests/golden").exists() {
         manifest.join("tests/golden")
     } else {
@@ -405,7 +411,6 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
         let legacy_gz = dir.join(format!("{name}.json.gz"));
         let legacy_plain = dir.join(format!("{name}.json"));
         if patch_gz.exists() {
-            use std::io::Read as _;
             let bytes = fs::read(&patch_gz)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", patch_gz.display()));
             let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
@@ -418,7 +423,6 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
             fs::read_to_string(&patch_plain)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", patch_plain.display()))
         } else if legacy_gz.exists() {
-            use std::io::Read as _;
             let bytes = fs::read(&legacy_gz)
                 .unwrap_or_else(|e| panic!("failed to read {}: {e}", legacy_gz.display()));
             let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
@@ -436,10 +440,7 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
         }
     };
     let files = Arc::new(parse_diff(&diff));
-    let num_threads = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4)
-        .min(8);
+    let num_threads = available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
     let counter = Arc::new(AtomicUsize::new(0));
 
     let mut handles = Vec::new();
@@ -447,7 +448,7 @@ fn run_dp_oracle_on_corpus(name: &str) -> usize {
         let files = Arc::clone(&files);
         let counter = Arc::clone(&counter);
         let name_str = name.to_string();
-        handles.push(std::thread::spawn(move || {
+        handles.push(spawn(move || {
             for (idx, f) in files.iter().enumerate() {
                 if idx % num_threads != thread_idx {
                     continue;

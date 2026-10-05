@@ -3,6 +3,8 @@
 //! Provides multiset bipartite matching, spatial neighborhood expansion,
 //! and cluster cohesion filtering decoupled from diff domain structures.
 
+use std::{hash::Hash, iter::FusedIterator};
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A keyed item associated with a spatial position.
@@ -181,7 +183,7 @@ impl<P: Copy> DoubleEndedIterator for RelocationMatches<P> {
     }
 }
 
-impl<P: Copy> std::iter::FusedIterator for RelocationMatches<P> {}
+impl<P: Copy> FusedIterator for RelocationMatches<P> {}
 
 /// Greedily matches source and target items by key equality into relocation
 /// matches.
@@ -190,8 +192,8 @@ pub fn greedy_multiset_match<K, P>(
     targets: &[PositionedItem<K, P>],
 ) -> Vec<RelocationMatch<P>>
 where
-    K: Eq + std::hash::Hash + Clone,
-    P: Copy + Eq + std::hash::Hash,
+    K: Eq + Hash + Clone,
+    P: Copy + Eq + Hash,
 {
     let mut counts: FxHashMap<&K, usize> = FxHashMap::default();
     let mut targets_by_key: FxHashMap<&K, Vec<P>> = FxHashMap::default();
@@ -245,7 +247,7 @@ pub fn expand_neighborhood_matches<P, N, Fs, Ft>(
     can_expand_source: Fs,
     can_expand_target: Ft,
 ) where
-    P: Copy + Eq + std::hash::Hash,
+    P: Copy + Eq + Hash,
     N: SpatialNeighborhood<P>,
     Fs: Fn(&P) -> bool,
     Ft: Fn(&P) -> bool,
@@ -301,7 +303,7 @@ pub fn filter_cohesion_runs<P, I, F>(
     runs: impl IntoIterator<Item = I>,
     is_trivial: F,
 ) where
-    P: Copy + Eq + std::hash::Hash,
+    P: Copy + Eq + Hash,
     I: IntoIterator<Item = P>,
     F: Fn(&P) -> bool,
 {
@@ -390,8 +392,8 @@ pub trait DiffuseBipartiteExt<K, P> {
 
 impl<K, P> DiffuseBipartiteExt<K, P> for [PositionedItem<K, P>]
 where
-    K: Eq + std::hash::Hash + Clone,
-    P: Copy + Eq + std::hash::Hash,
+    K: Eq + Hash + Clone,
+    P: Copy + Eq + Hash,
 {
     fn greedy_bipartite_match(&self, targets: &[PositionedItem<K, P>]) -> Vec<RelocationMatch<P>> {
         greedy_multiset_match(self, targets)
@@ -447,8 +449,8 @@ impl<K, P> BipartiteMatcher<K, P> {
 
 impl<K, P> BipartiteMatcher<K, P>
 where
-    K: Eq + std::hash::Hash + Clone,
-    P: Copy + Eq + std::hash::Hash,
+    K: Eq + Hash + Clone,
+    P: Copy + Eq + Hash,
 {
     /// Computes greedy multiset matches between sources and targets.
     pub fn match_multiset(&self) -> Vec<RelocationMatch<P>> {

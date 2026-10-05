@@ -2,7 +2,7 @@
 //!
 //! `classify_tokens` is the hot path: it splits a text fragment into tokens
 //! via the hand-rolled scanner and maps each token to a semantic color name
-//! (`syntaxKeyword`, `syntaxString`, …). The markdown classifiers
+//! (`skw`, `str`, …). The markdown classifiers
 //! (`markdown_tokens`, `md_inner_tokens`) handle doc-comment prose and the
 //! markdown default region.
 
@@ -11,18 +11,16 @@ use std::sync::OnceLock;
 use regex::Regex;
 
 use super::{
-    profile::{
-        LangProfile, MD_SGR_BOLD, MD_SGR_BOLD_UNDERLINE, MD_SGR_ITALIC, MD_SGR_STRIKE,
-        MD_SGR_UNDERLINE,
-    },
+    color::TokenColor,
+    profile::{LangProfile, SGR_BOLD, SGR_BOLD_UNDERLINE, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE},
     registry::for_each_syntax_token_span,
 };
 
 /// A classified token: the semantic color name + its text (+ an optional
 /// SGR attribute — the markdown emphasis: bold/italic/underline/strike).
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClassifiedToken<'a> {
-    pub color: &'static str,
+    pub color: TokenColor,
     pub sgr: Option<u32>,
     pub text: &'a str,
 }
@@ -53,7 +51,7 @@ fn for_each_classified_token_dyn<'a>(
 ) {
     let Some(profile) = profile else {
         f(ClassifiedToken {
-            color: "text",
+            color: TokenColor::Default,
             sgr: None,
             text,
         });
@@ -61,7 +59,7 @@ fn for_each_classified_token_dyn<'a>(
     };
     if text.is_empty() {
         f(ClassifiedToken {
-            color: "text",
+            color: TokenColor::Default,
             sgr: None,
             text,
         });
@@ -71,7 +69,7 @@ fn for_each_classified_token_dyn<'a>(
     for_each_syntax_token_span(text, profile, |start, end| {
         if start > last {
             f(ClassifiedToken {
-                color: "text",
+                color: TokenColor::Default,
                 sgr: None,
                 text: &text[last..start],
             });
@@ -92,32 +90,32 @@ fn for_each_classified_token_dyn<'a>(
             || tok.starts_with('`')
             || tok.starts_with("r\"")
         {
-            "syntaxString"
+            TokenColor::String
         } else if tok.starts_with("0x")
             || tok.starts_with("0X")
             || tok.chars().next().is_some_and(|c| c.is_ascii_digit())
         {
-            "syntaxNumber"
+            TokenColor::Number
         } else if tok
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         {
             if profile.is_keyword(tok) {
-                "syntaxKeyword"
+                TokenColor::Keyword
             } else if profile.types_by_case
                 && tok.chars().next().is_some_and(|c| c.is_ascii_uppercase())
             {
-                "syntaxType"
+                TokenColor::Type
             } else if next == Some('(') {
-                "syntaxFunction"
+                TokenColor::Function
             } else {
-                "text"
+                TokenColor::Default
             }
         } else if tok.chars().all(char::is_whitespace) {
-            "text"
+            TokenColor::Default
         } else {
-            "syntaxOperator"
+            TokenColor::Operator
         };
         f(ClassifiedToken {
             color,
@@ -128,7 +126,7 @@ fn for_each_classified_token_dyn<'a>(
     });
     if last < text.len() {
         f(ClassifiedToken {
-            color: "text",
+            color: TokenColor::Default,
             sgr: None,
             text: &text[last..],
         });
@@ -180,7 +178,7 @@ fn for_each_comment_with_backticks<'a>(
     let has_backtick = tok.contains('`');
     if !has_markdown && !has_backtick {
         f(ClassifiedToken {
-            color: "syntaxComment",
+            color: TokenColor::Comment,
             sgr: None,
             text: tok,
         });
@@ -200,7 +198,7 @@ fn for_each_comment_with_backticks<'a>(
 
     if prefix_len > 0 {
         f(ClassifiedToken {
-            color: "syntaxComment",
+            color: TokenColor::Comment,
             sgr: None,
             text: &tok[..prefix_len],
         });
@@ -211,9 +209,9 @@ fn for_each_comment_with_backticks<'a>(
         // Doc comments: full markdown (emphasis, links, code) — the text
         // gaps between markdown spans are comment-colored.
         for_each_markdown_token_dyn_with_header(body, is_header, &mut |mut t| {
-            if t.color == "text" {
-                t.color = "syntaxComment";
-            } else if t.color == "syntaxString" {
+            if t.color.is_default() {
+                t.color = TokenColor::Comment;
+            } else if t.color == TokenColor::Code {
                 let parent_sgr = t.sgr;
                 for_each_classified_token_dyn(t.text, Some(inner_prof), false, &mut |mut it| {
                     if it.sgr.is_none() {
@@ -243,20 +241,20 @@ fn for_each_backtick_token_dyn<'a>(
     for m in re.find_iter(body) {
         if m.start() > last {
             f(ClassifiedToken {
-                color: "syntaxComment",
+                color: TokenColor::Comment,
                 sgr: None,
                 text: &body[last..m.start()],
             });
         }
         f(ClassifiedToken {
-            color: "accent",
+            color: TokenColor::Delimiter,
             sgr: None,
             text: "`",
         });
         let inner = &m.as_str()[1..m.as_str().len() - 1];
         for_each_classified_token_dyn(inner, Some(profile), false, f);
         f(ClassifiedToken {
-            color: "accent",
+            color: TokenColor::Delimiter,
             sgr: None,
             text: "`",
         });
@@ -264,7 +262,7 @@ fn for_each_backtick_token_dyn<'a>(
     }
     if last < body.len() {
         f(ClassifiedToken {
-            color: "syntaxComment",
+            color: TokenColor::Comment,
             sgr: None,
             text: &body[last..],
         });
@@ -274,7 +272,7 @@ fn for_each_backtick_token_dyn<'a>(
 pub fn for_each_md_inner_token<'a>(
     inner: &'a str,
     parent_sgr: u32,
-    parent_color: &'static str,
+    parent_color: TokenColor,
     mut f: impl FnMut(ClassifiedToken<'a>),
 ) {
     static INNER_CODE: OnceLock<Regex> = OnceLock::new();
@@ -291,17 +289,17 @@ pub fn for_each_md_inner_token<'a>(
         let tok = m.as_str();
         // `code` inside bold/italic: code color wins, parent SGR stacks.
         f(ClassifiedToken {
-            color: "accent",
+            color: TokenColor::Delimiter,
             sgr: None,
             text: "`",
         });
         f(ClassifiedToken {
-            color: "syntaxString",
+            color: TokenColor::Code,
             sgr: Some(parent_sgr),
             text: &tok[1..tok.len() - 1],
         });
         f(ClassifiedToken {
-            color: "accent",
+            color: TokenColor::Delimiter,
             sgr: None,
             text: "`",
         });
@@ -319,7 +317,7 @@ pub fn for_each_md_inner_token<'a>(
 pub fn md_inner_tokens<'a>(
     inner: &'a str,
     parent_sgr: u32,
-    parent_color: &'static str,
+    parent_color: TokenColor,
 ) -> Vec<ClassifiedToken<'a>> {
     let mut out = Vec::new();
     for_each_md_inner_token(inner, parent_sgr, parent_color, |t| out.push(t));
@@ -352,7 +350,7 @@ enum LayerTag {
 
 #[derive(Clone, Copy, Debug)]
 struct StyleLayer {
-    color: &'static str,
+    color: TokenColor,
     sgr: Option<u32>,
     tag: LayerTag,
 }
@@ -366,13 +364,13 @@ impl StyleStack {
         let mut layers = Vec::with_capacity(8);
         if is_header {
             layers.push(StyleLayer {
-                color: "mdItalic",
-                sgr: Some(MD_SGR_BOLD_UNDERLINE),
+                color: TokenColor::TableHeader,
+                sgr: Some(SGR_BOLD_UNDERLINE),
                 tag: LayerTag::TableHead,
             });
         } else {
             layers.push(StyleLayer {
-                color: "text",
+                color: TokenColor::Default,
                 sgr: None,
                 tag: LayerTag::Base,
             });
@@ -380,7 +378,7 @@ impl StyleStack {
         Self { layers }
     }
 
-    fn push(&mut self, color: &'static str, sgr: Option<u32>, tag: LayerTag) {
+    fn push(&mut self, color: TokenColor, sgr: Option<u32>, tag: LayerTag) {
         self.layers.push(StyleLayer { color, sgr, tag });
     }
 
@@ -394,28 +392,31 @@ impl StyleStack {
         self.layers.iter().any(|l| l.tag == LayerTag::TableHead)
     }
 
-    fn current_color(&self) -> &'static str {
-        self.layers.last().map(|l| l.color).unwrap_or("text")
+    fn current_color(&self) -> TokenColor {
+        self.layers
+            .last()
+            .map(|l| l.color)
+            .unwrap_or(TokenColor::Default)
     }
 
     fn current_sgr(&self) -> Option<u32> {
         let has_bold = self
             .layers
             .iter()
-            .any(|l| matches!(l.sgr, Some(MD_SGR_BOLD | MD_SGR_BOLD_UNDERLINE)));
+            .any(|l| matches!(l.sgr, Some(SGR_BOLD | SGR_BOLD_UNDERLINE)));
         let has_underline = self
             .layers
             .iter()
-            .any(|l| matches!(l.sgr, Some(MD_SGR_UNDERLINE | MD_SGR_BOLD_UNDERLINE)));
+            .any(|l| matches!(l.sgr, Some(SGR_UNDERLINE | SGR_BOLD_UNDERLINE)));
 
         if has_bold && has_underline {
-            return Some(MD_SGR_BOLD_UNDERLINE);
+            return Some(SGR_BOLD_UNDERLINE);
         }
         if has_bold {
-            return Some(MD_SGR_BOLD);
+            return Some(SGR_BOLD);
         }
         if has_underline {
-            return Some(MD_SGR_UNDERLINE);
+            return Some(SGR_UNDERLINE);
         }
 
         for layer in self.layers.iter().rev() {
@@ -429,7 +430,7 @@ impl StyleStack {
 
 fn emit_styled_token<'a>(
     text: &'a str,
-    color: &'static str,
+    color: TokenColor,
     sgr: Option<u32>,
     in_table_head: bool,
     f: &mut dyn FnMut(ClassifiedToken<'a>),
@@ -439,7 +440,7 @@ fn emit_styled_token<'a>(
     }
     if text.chars().all(char::is_whitespace) {
         let (ws_color, ws_sgr) = if in_table_head {
-            ("text", None)
+            (TokenColor::Default, None)
         } else {
             (color, sgr)
         };
@@ -451,12 +452,12 @@ fn emit_styled_token<'a>(
         return;
     }
 
-    if in_table_head && matches!(sgr, Some(MD_SGR_UNDERLINE | MD_SGR_BOLD_UNDERLINE)) {
+    if in_table_head && matches!(sgr, Some(SGR_UNDERLINE | SGR_BOLD_UNDERLINE)) {
         let trimmed_start = text.trim_start();
         let leading_spaces_len = text.len() - trimmed_start.len();
         if leading_spaces_len > 0 {
             f(ClassifiedToken {
-                color: "text",
+                color: TokenColor::Default,
                 sgr: None,
                 text: &text[..leading_spaces_len],
             });
@@ -475,7 +476,7 @@ fn emit_styled_token<'a>(
 
         if trailing_spaces_len > 0 {
             f(ClassifiedToken {
-                color: "text",
+                color: TokenColor::Default,
                 sgr: None,
                 text: &text[text.len() - trailing_spaces_len..],
             });
@@ -487,14 +488,14 @@ fn emit_styled_token<'a>(
 
 fn emit_table_line_slice<'a>(
     slice: &'a str,
-    active_color: &'static str,
+    active_color: TokenColor,
     active_sgr: Option<u32>,
     in_table_head: bool,
     f: &mut dyn FnMut(ClassifiedToken<'a>),
 ) {
     if is_table_alignment_row(slice) {
         f(ClassifiedToken {
-            color: "muted",
+            color: TokenColor::TableBorder,
             sgr: None,
             text: slice,
         });
@@ -508,7 +509,7 @@ fn emit_table_line_slice<'a>(
                 let trimmed = cell_part.trim();
                 if !trimmed.is_empty() && trimmed.chars().all(|ch| ch == '-' || ch == ':') {
                     f(ClassifiedToken {
-                        color: "muted",
+                        color: TokenColor::TableBorder,
                         sgr: None,
                         text: cell_part,
                     });
@@ -517,7 +518,7 @@ fn emit_table_line_slice<'a>(
                 }
             }
             f(ClassifiedToken {
-                color: "muted",
+                color: TokenColor::TableBorder,
                 sgr: None,
                 text: &slice[i..i + 1],
             });
@@ -529,7 +530,7 @@ fn emit_table_line_slice<'a>(
         let trimmed = cell_part.trim();
         if !trimmed.is_empty() && trimmed.chars().all(|ch| ch == '-' || ch == ':') {
             f(ClassifiedToken {
-                color: "muted",
+                color: TokenColor::TableBorder,
                 sgr: None,
                 text: cell_part,
             });
@@ -541,7 +542,7 @@ fn emit_table_line_slice<'a>(
 
 fn emit_gap<'a>(
     gap: &'a str,
-    active_color: &'static str,
+    active_color: TokenColor,
     active_sgr: Option<u32>,
     in_table_head: bool,
     f: &mut dyn FnMut(ClassifiedToken<'a>),
@@ -551,7 +552,7 @@ fn emit_gap<'a>(
     }
     if is_table_alignment_row(gap) {
         f(ClassifiedToken {
-            color: "muted",
+            color: TokenColor::TableBorder,
             sgr: None,
             text: gap,
         });
@@ -565,7 +566,7 @@ fn emit_gap<'a>(
                     emit_gap(&gap[last..i], active_color, active_sgr, in_table_head, f);
                 }
                 f(ClassifiedToken {
-                    color: "text",
+                    color: TokenColor::Default,
                     sgr: None,
                     text: &gap[i..i + 1],
                 });
@@ -583,7 +584,13 @@ fn emit_gap<'a>(
         let trimmed_start = gap.trim_start();
         let leading_len = gap.len() - trimmed_start.len();
         if leading_len > 0 {
-            emit_styled_token(&gap[..leading_len], "text", None, in_table_head, f);
+            emit_styled_token(
+                &gap[..leading_len],
+                TokenColor::Default,
+                None,
+                in_table_head,
+                f,
+            );
         }
         let trimmed = trimmed_start.trim_end();
         let trailing_len = trimmed_start.len() - trimmed.len();
@@ -598,7 +605,7 @@ fn emit_gap<'a>(
                 || trimmed.starts_with('`')
                 || trimmed.starts_with('~')
             {
-                "accent"
+                TokenColor::Delimiter
             } else {
                 active_color
             };
@@ -607,7 +614,7 @@ fn emit_gap<'a>(
         if trailing_len > 0 {
             emit_styled_token(
                 &gap[gap.len() - trailing_len..],
-                "text",
+                TokenColor::Default,
                 None,
                 in_table_head,
                 f,
@@ -624,7 +631,7 @@ fn emit_gap<'a>(
             || gap.starts_with('`')
             || gap.starts_with('~')
         {
-            ("accent", None)
+            (TokenColor::Delimiter, None)
         } else {
             (active_color, active_sgr)
         };
@@ -675,14 +682,14 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                             let spaces = &text[cursor + hashes.len()..hash_end];
                             if !hashes.is_empty() {
                                 f(ClassifiedToken {
-                                    color: "accent",
+                                    color: TokenColor::Delimiter,
                                     sgr: None,
                                     text: hashes,
                                 });
                             }
                             if !spaces.is_empty() {
                                 f(ClassifiedToken {
-                                    color: "text",
+                                    color: TokenColor::Default,
                                     sgr: None,
                                     text: spaces,
                                 });
@@ -690,7 +697,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                             cursor = hash_end;
                         }
                     }
-                    stack.push("accent", Some(MD_SGR_BOLD), LayerTag::Heading);
+                    stack.push(TokenColor::Delimiter, Some(SGR_BOLD), LayerTag::Heading);
                 }
                 Tag::Strong => {
                     if cursor < r_start {
@@ -710,14 +717,14 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
                         }
                         cursor = r_start;
                     }
-                    stack.push("mdBold", Some(MD_SGR_BOLD), LayerTag::Strong);
+                    stack.push(TokenColor::Bold, Some(SGR_BOLD), LayerTag::Strong);
                 }
                 Tag::Emphasis => {
                     if cursor < r_start {
@@ -737,14 +744,14 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
                         }
                         cursor = r_start;
                     }
-                    stack.push("mdItalic", Some(MD_SGR_ITALIC), LayerTag::Emphasis);
+                    stack.push(TokenColor::Italic, Some(SGR_ITALIC), LayerTag::Emphasis);
                 }
                 Tag::Strikethrough => {
                     if cursor < r_start {
@@ -764,14 +771,18 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
                         }
                         cursor = r_start;
                     }
-                    stack.push("mdStrike", Some(MD_SGR_STRIKE), LayerTag::Strikethrough);
+                    stack.push(
+                        TokenColor::Strike,
+                        Some(SGR_STRIKE),
+                        LayerTag::Strikethrough,
+                    );
                 }
                 Tag::Link { .. } => {
                     if cursor < r_start {
@@ -791,17 +802,21 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
                         }
                         cursor = r_start;
                     }
-                    stack.push("mdLink", Some(MD_SGR_UNDERLINE), LayerTag::Link);
+                    stack.push(TokenColor::Link, Some(SGR_UNDERLINE), LayerTag::Link);
                 }
                 Tag::TableHead => {
-                    stack.push("mdItalic", Some(MD_SGR_BOLD_UNDERLINE), LayerTag::TableHead);
+                    stack.push(
+                        TokenColor::TableHeader,
+                        Some(SGR_BOLD_UNDERLINE),
+                        LayerTag::TableHead,
+                    );
                 }
                 Tag::BlockQuote(alert) => {
                     if cursor < r_start {
@@ -821,7 +836,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
@@ -830,13 +845,13 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                     }
                     let (alert_color, alert_sgr) = match alert {
                         Some(BlockQuoteKind::Note | BlockQuoteKind::Tip) => {
-                            ("syntaxFunction", Some(MD_SGR_BOLD))
+                            (TokenColor::Function, Some(SGR_BOLD))
                         }
                         Some(BlockQuoteKind::Important | BlockQuoteKind::Warning) => {
-                            ("syntaxKeyword", Some(MD_SGR_BOLD))
+                            (TokenColor::Keyword, Some(SGR_BOLD))
                         }
-                        Some(BlockQuoteKind::Caution) => ("syntaxType", Some(MD_SGR_BOLD)),
-                        None => ("text", None),
+                        Some(BlockQuoteKind::Caution) => (TokenColor::Type, Some(SGR_BOLD)),
+                        None => (TokenColor::Default, None),
                     };
                     stack.push(alert_color, alert_sgr, LayerTag::BlockQuote);
                 }
@@ -846,8 +861,8 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                 TagEnd::Heading(_) => {
                     if cursor < r_end {
                         f(ClassifiedToken {
-                            color: "accent",
-                            sgr: Some(MD_SGR_BOLD),
+                            color: TokenColor::Delimiter,
+                            sgr: Some(SGR_BOLD),
                             text: &text[cursor..r_end],
                         });
                         cursor = r_end;
@@ -873,7 +888,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
@@ -900,7 +915,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
@@ -927,7 +942,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                                 None
                             };
                             f(ClassifiedToken {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr,
                                 text: gap,
                             });
@@ -947,7 +962,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                         if let Some(close_bracket) = link_tail.find("](") {
                             emit_styled_token(
                                 &link_tail[..close_bracket + 2],
-                                "accent",
+                                TokenColor::Delimiter,
                                 delim_sgr,
                                 stack.is_in_table_head(),
                                 f,
@@ -956,14 +971,14 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                             if let Some(paren) = url_and_paren.rfind(')') {
                                 emit_styled_token(
                                     &url_and_paren[..paren],
-                                    "mdUrl",
-                                    Some(MD_SGR_UNDERLINE),
+                                    TokenColor::Url,
+                                    Some(SGR_UNDERLINE),
                                     stack.is_in_table_head(),
                                     f,
                                 );
                                 emit_styled_token(
                                     &url_and_paren[paren..],
-                                    "accent",
+                                    TokenColor::Delimiter,
                                     delim_sgr,
                                     stack.is_in_table_head(),
                                     f,
@@ -971,8 +986,8 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                             } else {
                                 emit_styled_token(
                                     url_and_paren,
-                                    "mdUrl",
-                                    Some(MD_SGR_UNDERLINE),
+                                    TokenColor::Url,
+                                    Some(SGR_UNDERLINE),
                                     stack.is_in_table_head(),
                                     f,
                                 );
@@ -980,7 +995,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                         } else {
                             emit_styled_token(
                                 link_tail,
-                                "accent",
+                                TokenColor::Delimiter,
                                 delim_sgr,
                                 stack.is_in_table_head(),
                                 f,
@@ -1040,21 +1055,21 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                 if num_ticks > 0 && code_slice.len() >= num_ticks * 2 {
                     emit_styled_token(
                         &code_slice[..num_ticks],
-                        "accent",
+                        TokenColor::Delimiter,
                         tick_sgr,
                         stack.is_in_table_head(),
                         f,
                     );
                     emit_styled_token(
                         &code_slice[num_ticks..code_slice.len() - num_ticks],
-                        "syntaxString",
+                        TokenColor::Code,
                         code_sgr,
                         stack.is_in_table_head(),
                         f,
                     );
                     emit_styled_token(
                         &code_slice[code_slice.len() - num_ticks..],
-                        "accent",
+                        TokenColor::Delimiter,
                         tick_sgr,
                         stack.is_in_table_head(),
                         f,
@@ -1062,7 +1077,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                 } else {
                     emit_styled_token(
                         code_slice,
-                        "syntaxString",
+                        TokenColor::Code,
                         code_sgr,
                         stack.is_in_table_head(),
                         f,
@@ -1083,7 +1098,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
                 let tok_slice = &text[r_start..r_end];
                 if is_table_alignment_row(text) || is_table_alignment_row(tok_slice) {
                     f(ClassifiedToken {
-                        color: "muted",
+                        color: TokenColor::TableBorder,
                         sgr: None,
                         text: tok_slice,
                     });
@@ -1109,14 +1124,14 @@ fn for_each_markdown_token_dyn_with_header<'a>(
             Event::TaskListMarker(_) => {
                 if cursor < r_start {
                     f(ClassifiedToken {
-                        color: "accent",
+                        color: TokenColor::Delimiter,
                         sgr: None,
                         text: &text[cursor..r_start],
                     });
                 }
                 f(ClassifiedToken {
-                    color: "accent",
-                    sgr: Some(MD_SGR_BOLD),
+                    color: TokenColor::Delimiter,
+                    sgr: Some(SGR_BOLD),
                     text: &text[r_start..r_end],
                 });
                 cursor = r_end;
@@ -1124,7 +1139,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
             Event::Html(_) | Event::InlineHtml(_) => {
                 if cursor < r_start {
                     f(ClassifiedToken {
-                        color: "accent",
+                        color: TokenColor::Delimiter,
                         sgr: None,
                         text: &text[cursor..r_start],
                     });
@@ -1135,14 +1150,14 @@ fn for_each_markdown_token_dyn_with_header<'a>(
             Event::Rule => {
                 if cursor < r_start {
                     f(ClassifiedToken {
-                        color: "accent",
+                        color: TokenColor::Delimiter,
                         sgr: None,
                         text: &text[cursor..r_start],
                     });
                 }
                 f(ClassifiedToken {
-                    color: "mdRule",
-                    sgr: Some(MD_SGR_BOLD),
+                    color: TokenColor::Rule,
+                    sgr: Some(SGR_BOLD),
                     text: &text[r_start..r_end],
                 });
                 cursor = r_end;
@@ -1155,7 +1170,7 @@ fn for_each_markdown_token_dyn_with_header<'a>(
         let remaining = &text[cursor..];
         if is_table_alignment_row(remaining) || is_table_alignment_row(text) {
             f(ClassifiedToken {
-                color: "muted",
+                color: TokenColor::TableBorder,
                 sgr: None,
                 text: remaining,
             });
@@ -1191,11 +1206,11 @@ fn for_each_html_token<'a>(html: &'a str, f: &mut dyn FnMut(ClassifiedToken<'a>)
         if m.start() > last {
             let inner_text = &html[last..m.start()];
             let (color, sgr) = if in_code {
-                ("syntaxString", None)
+                (TokenColor::Code, None)
             } else if in_bold {
-                ("mdBold", Some(MD_SGR_BOLD))
+                (TokenColor::Bold, Some(SGR_BOLD))
             } else {
-                ("text", None)
+                (TokenColor::Default, None)
             };
             f(ClassifiedToken {
                 color,
@@ -1216,7 +1231,7 @@ fn for_each_html_token<'a>(html: &'a str, f: &mut dyn FnMut(ClassifiedToken<'a>)
         }
 
         f(ClassifiedToken {
-            color: "syntaxKeyword",
+            color: TokenColor::Keyword,
             sgr: None,
             text: tag_str,
         });
@@ -1227,11 +1242,11 @@ fn for_each_html_token<'a>(html: &'a str, f: &mut dyn FnMut(ClassifiedToken<'a>)
     if last < html.len() {
         let remaining = &html[last..];
         let (color, sgr) = if in_code {
-            ("syntaxString", None)
+            (TokenColor::Code, None)
         } else if in_bold {
-            ("mdBold", Some(MD_SGR_BOLD))
+            (TokenColor::Bold, Some(SGR_BOLD))
         } else {
-            ("text", None)
+            (TokenColor::Default, None)
         };
         f(ClassifiedToken {
             color,
@@ -1278,7 +1293,7 @@ pub fn for_each_line_classified_token_with_next<'a>(
                         && m.end() > 0
                     {
                         f(ClassifiedToken {
-                            color: "syntaxComment",
+                            color: TokenColor::Comment,
                             sgr: None,
                             text: &text[..m.end()],
                         });
@@ -1393,13 +1408,13 @@ fn is_table_alignment_row(s: &str) -> bool {
 
 fn emit_table_row_text_tokens<'a>(
     tok_slice: &'a str,
-    active_color: &'static str,
+    active_color: TokenColor,
     active_sgr: Option<u32>,
     is_header: bool,
     f: &mut dyn FnMut(ClassifiedToken<'a>),
 ) {
     let (cell_color, cell_sgr) = if is_header {
-        ("mdItalic", Some(MD_SGR_BOLD_UNDERLINE))
+        (TokenColor::TableHeader, Some(SGR_BOLD_UNDERLINE))
     } else {
         (active_color, active_sgr)
     };

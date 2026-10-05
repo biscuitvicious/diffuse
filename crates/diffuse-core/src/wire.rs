@@ -4,7 +4,11 @@
 //! and consumed by external tooling, the CLI (`--json`), and the pi review
 //! extension. The schema is frozen per PLAN.md §2.
 
-use std::sync::Arc;
+use std::{
+    fmt::{self, Debug, Display},
+    ops::Not,
+    sync::Arc,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -119,14 +123,14 @@ impl PipelineOutput {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ByteSize(pub usize);
 
-impl std::fmt::Debug for ByteSize {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for ByteSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", format_byte_size(self.0))
     }
 }
 
-impl std::fmt::Display for ByteSize {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for ByteSize {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", format_byte_size(self.0))
     }
 }
@@ -175,7 +179,7 @@ pub struct OutputFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_mode: Option<String>,
     pub status: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "Not::not")]
     pub is_binary: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_bytes: Option<usize>,
@@ -712,27 +716,115 @@ impl OutputHunk {
     }
 }
 
-/// A row in the wire-contract output: the collapse row + its merged token runs.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+/// Optional trailing metadata flags on a serialized compact row tuple.
+#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OutputRow {
-    pub kind: RowKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
+pub struct RowFlags {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mov_side: Option<MovSide>,
-    pub new_line: Option<u32>,
-    pub old_line: Option<u32>,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub del_text: Option<String>,
-    pub spans: Spans,
-    pub runs: Vec<OutputRun>,
-    /// The mod is wholesale (the del block + the add block render as two
-    /// separate blocks, never merged) — the renderer's old isWholesaleMod
-    /// decision, baked by the engine so the TS merge machinery can go.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "Not::not")]
     pub wholesale: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<RowGroup>,
+}
+
+impl RowFlags {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.mov_side.is_none() && !self.wholesale && self.group.is_none()
+    }
+}
+
+/// A row in the wire-contract output: the collapse row + its merged token runs.
+///
+/// Serialized as a positional tuple: `[kind, old_line, new_line, runs,
+/// flags?]`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct OutputRow {
+    pub kind: RowKind,
+    pub mov_side: Option<MovSide>,
+    pub new_line: Option<u32>,
+    pub old_line: Option<u32>,
+    pub runs: Vec<OutputRun>,
+    pub wholesale: bool,
+    pub group: Option<RowGroup>,
+}
+
+impl Serialize for OutputRow {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let flags = RowFlags {
+            mov_side: self.mov_side,
+            wholesale: self.wholesale,
+            group: self.group,
+        };
+        let len = if flags.is_empty() { 4 } else { 5 };
+        let mut seq = serializer.serialize_seq(Some(len))?;
+        seq.serialize_element(&self.kind)?;
+        seq.serialize_element(&self.old_line)?;
+        seq.serialize_element(&self.new_line)?;
+        seq.serialize_element(&self.runs)?;
+        if !flags.is_empty() {
+            seq.serialize_element(&flags)?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for OutputRow {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct OutputRowVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for OutputRowVisitor {
+            type Value = OutputRow;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a compact row array [kind, old_line, new_line, runs, flags?]")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let kind: RowKind = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let old_line: Option<u32> = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let new_line: Option<u32> = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let runs: Vec<OutputRun> = seq
+                    .next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let flags: Option<RowFlags> = seq.next_element()?;
+
+                let (mov_side, wholesale, group) = match flags {
+                    Some(f) => (f.mov_side, f.wholesale, f.group),
+                    None => (None, false, None),
+                };
+
+                Ok(OutputRow {
+                    kind,
+                    mov_side,
+                    new_line,
+                    old_line,
+                    runs,
+                    wholesale,
+                    group,
+                })
+            }
+        }
+
+        deserializer.deserialize_seq(OutputRowVisitor)
+    }
 }
 
 impl From<&OutputRow> for Row {
@@ -741,20 +833,20 @@ impl From<&OutputRow> for Row {
             RowKind::Ctx => {
                 let old_pos = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
                 let new_pos = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                Row::Ctx(CtxLine::new(old_pos, new_pos, &r.text))
+                Row::Ctx(CtxLine::new(old_pos, new_pos, r.new_text()))
             }
             RowKind::Del => {
                 let num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let mut del = DelLine::new(num, &r.text);
+                let mut del = DelLine::new(num, r.old_text());
                 del.group = r.group;
                 Row::Del(del)
             }
             RowKind::Add => {
                 let num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let mut add = if let Some(ref dt) = r.del_text {
-                    AddLine::with_donor(num, &r.text, dt, r.spans.clone())
+                let mut add = if let Some(dt) = r.del_text() {
+                    AddLine::with_donor(num, r.new_text(), dt, r.spans())
                 } else {
-                    AddLine::with_spans(num, &r.text, r.spans.clone())
+                    AddLine::with_spans(num, r.new_text(), r.spans())
                 };
                 add.group = r.group;
                 Row::Add(add)
@@ -762,30 +854,30 @@ impl From<&OutputRow> for Row {
             RowKind::Mod => {
                 let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
                 let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let del_text = r.del_text.as_deref().unwrap_or(&r.text);
-                let mut old_line = DelLine::new(old_num, del_text);
+                let mut old_line = DelLine::new(old_num, r.old_text());
                 old_line.group = r.group;
-                let mut new_line = AddLine::with_spans(new_num, &r.text, r.spans.clone());
+                let mut new_line = AddLine::with_spans(new_num, r.new_text(), r.spans());
                 new_line.group = r.group;
                 Row::Mod { old_line, new_line }
             }
             RowKind::Mov => match r.mov_side {
                 Some(MovSide::Src) => {
                     let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                    let mut del = DelLine::new(old_num, &r.text);
+                    let mut del = DelLine::new(old_num, r.old_text());
                     del.group = r.group;
                     Row::MovSrc(del)
                 }
                 Some(MovSide::Tgt) | None => {
                     let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                    let del_text = r.del_text.as_deref().unwrap_or(&r.text);
-                    let mut add = AddLine::with_donor(new_num, &r.text, del_text, r.spans.clone());
+                    let del_text = r.del_text();
+                    let del_str = del_text.as_deref().unwrap_or("");
+                    let mut add = AddLine::with_donor(new_num, r.new_text(), del_str, r.spans());
                     add.group = r.group;
                     Row::MovTgt(add)
                 }
             },
             RowKind::File | RowKind::Sep => {
-                Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, r.text.clone()))
+                Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, r.new_text()))
             }
         }
     }
@@ -799,15 +891,8 @@ impl OutputRow {
                 MovSide::Src => MovSide::Tgt,
                 MovSide::Tgt => MovSide::Src,
             }),
-            text: self.del_text.clone().unwrap_or_else(|| self.text.clone()),
             new_line: self.old_line,
             old_line: self.new_line,
-            del_text: if self.kind == RowKind::Mod || self.del_text.is_some() {
-                Some(self.text.clone())
-            } else {
-                None
-            },
-            spans: self.spans.reverse(),
             runs: self.runs.iter().map(OutputRun::reverse).collect(),
             wholesale: self.wholesale,
             group: self.group,
@@ -818,34 +903,267 @@ impl OutputRow {
     pub fn reconstruct(&self) -> Row {
         self.into()
     }
+
+    /// Computes the new-side line text projected across this row's runs (Ctx +
+    /// Add).
+    #[inline]
+    pub fn new_text(&self) -> String {
+        runs_new_text(&self.runs)
+    }
+
+    /// Computes the old-side line text projected across this row's runs (Ctx +
+    /// Del).
+    #[inline]
+    pub fn old_text(&self) -> String {
+        runs_old_text(&self.runs)
+    }
+
+    /// Main line text for display: old text for Del / MovSrc, new text for Ctx
+    /// / Add / Mod / MovTgt.
+    #[inline]
+    pub fn text(&self) -> String {
+        match self.kind {
+            RowKind::Del => self.old_text(),
+            RowKind::Mov if self.mov_side == Some(MovSide::Src) => self.old_text(),
+            _ => self.new_text(),
+        }
+    }
+
+    /// Associated deletion text for modified, deleted, or relocated rows, if
+    /// any.
+    #[inline]
+    pub fn del_text(&self) -> Option<String> {
+        match self.kind {
+            RowKind::Mod | RowKind::Del => Some(self.old_text()),
+            RowKind::Mov if self.mov_side == Some(MovSide::Src) => Some(self.old_text()),
+            RowKind::Add | RowKind::Mov if self.runs.iter().any(|r| r.kind == RunKind::Del) => {
+                Some(self.old_text())
+            }
+            RowKind::Add if matches!(self.group, Some(RowGroup::Aux { .. })) => Some(String::new()),
+            _ => None,
+        }
+    }
+
+    /// Derives change spans on demand from runs.
+    #[inline]
+    pub fn spans(&self) -> Spans {
+        derive_spans_from_runs(&self.runs)
+    }
+}
+
+/// Derives [`Spans`] change intervals from a slice of [`OutputRun`]s.
+pub fn derive_spans_from_runs(runs: &[OutputRun]) -> Spans {
+    let mut add = Vec::new();
+    let mut del = Vec::new();
+    let mut new_offset = 0usize;
+    let mut old_offset = 0usize;
+
+    for r in runs {
+        let char_len = r.text.chars().count();
+        match r.kind {
+            RunKind::Ctx => {
+                new_offset += char_len;
+                old_offset += char_len;
+            }
+            RunKind::Add => {
+                let start = new_offset;
+                new_offset += char_len;
+                add.push((start, new_offset));
+            }
+            RunKind::Del => {
+                let start = old_offset;
+                old_offset += char_len;
+                del.push((start, old_offset));
+            }
+        }
+    }
+
+    let merge_spans = |spans: Vec<(usize, usize)>| -> Vec<(usize, usize)> {
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (s, e) in spans {
+            if let Some(last) = merged.last_mut()
+                && last.1 == s
+            {
+                last.1 = e;
+            } else {
+                merged.push((s, e));
+            }
+        }
+        merged
+    };
+
+    Spans {
+        del: merge_spans(del),
+        add: merge_spans(add),
+    }
 }
 
 use std::borrow::Cow;
 
 /// A classified token run in an [`OutputRow`]: kind, optional theme color key,
-/// SGR attribute modifier, and text.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+pub use diffuse_syntax::color::TokenColor;
+
+/// An individual colored text run within an [`OutputRow`].
+///
+/// Encodes syntax highlighting and intra-line diff highlights as a
+/// sequence of uniform character slices carrying run kind (add/del/ctx),
+/// color classification (syntax/theme token), optional markdown SGR attribute
+/// modifier, and text.
+///
+/// Serialized compactly on the wire:
+/// - 1 element: `"+text"` for unstyled runs (`TokenColor::Default`, no SGR).
+/// - 2 elements: `["+text", "kwd"]` for styled runs without SGR.
+/// - 3 elements: `["+text", null, 4]` or `["+text", "kwd", 1]` when SGR is
+///   present.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct OutputRun {
     pub kind: RunKind,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub color: Option<Cow<'static, str>>,
+    pub color: TokenColor,
     /// The SGR attribute (the markdown emphasis — bold/italic/strike/
     /// underline) the renderer applies with the color.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sgr: Option<u32>,
     pub text: Cow<'static, str>,
 }
 
+impl Serialize for OutputRun {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut baked = String::with_capacity(1 + self.text.len());
+        baked.push(self.kind.sign_char());
+        baked.push_str(&self.text);
+
+        if let Some(sgr) = self.sgr {
+            let mut seq = serializer.serialize_seq(Some(3))?;
+            seq.serialize_element(&baked)?;
+            seq.serialize_element(&self.color)?;
+            seq.serialize_element(&sgr)?;
+            seq.end()
+        } else if !self.color.is_default() {
+            let mut seq = serializer.serialize_seq(Some(2))?;
+            seq.serialize_element(&baked)?;
+            seq.serialize_element(&self.color)?;
+            seq.end()
+        } else {
+            serializer.serialize_str(&baked)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for OutputRun {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct OutputRunVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for OutputRunVisitor {
+            type Value = OutputRun;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a compact run string or an array [baked_text, color, sgr?]")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let mut chars = v.chars();
+                let sign = chars.next().ok_or_else(|| E::custom("empty run string"))?;
+                let kind = RunKind::from_sign_char(sign)
+                    .ok_or_else(|| E::custom(format!("invalid run sign char '{sign}'")))?;
+                let text = Cow::Owned(chars.as_str().to_string());
+                Ok(OutputRun {
+                    kind,
+                    color: TokenColor::Default,
+                    sgr: None,
+                    text,
+                })
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                use serde::de::Error;
+                let baked: String = seq
+                    .next_element()?
+                    .ok_or_else(|| Error::custom("missing baked run string"))?;
+                let mut chars = baked.chars();
+                let sign = chars
+                    .next()
+                    .ok_or_else(|| Error::custom("empty baked run string"))?;
+                let kind = RunKind::from_sign_char(sign)
+                    .ok_or_else(|| Error::custom(format!("invalid run sign char '{sign}'")))?;
+                let text = Cow::Owned(chars.as_str().to_string());
+
+                let color: TokenColor = seq.next_element()?.unwrap_or_default();
+                let sgr_opt: Option<Option<u32>> = seq.next_element()?;
+                let sgr = sgr_opt.flatten();
+
+                Ok(OutputRun {
+                    kind,
+                    color,
+                    sgr,
+                    text,
+                })
+            }
+        }
+
+        deserializer.deserialize_any(OutputRunVisitor)
+    }
+}
+
 impl OutputRun {
+    #[inline]
+    pub fn new(kind: RunKind, text: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            kind,
+            color: TokenColor::Default,
+            sgr: None,
+            text: text.into(),
+        }
+    }
+
+    #[inline]
+    pub fn sign_char(&self) -> char {
+        self.kind.sign_char()
+    }
+
     pub fn reverse(&self) -> Self {
         OutputRun {
             kind: self.kind.reverse(),
-            color: self.color.clone(),
+            color: self.color,
             sgr: self.sgr,
             text: self.text.clone(),
         }
     }
+}
+
+/// Project the forward/new text from an iterator of [`OutputRun`]s (Ctx + Add,
+/// non-Del).
+pub fn runs_new_text<'a, I>(runs: I) -> String
+where
+    I: IntoIterator<Item = &'a OutputRun>,
+{
+    runs.into_iter()
+        .filter(|r| r.kind != RunKind::Del)
+        .map(|r| r.text.as_ref())
+        .collect()
+}
+
+/// Project the reverse/old text from an iterator of [`OutputRun`]s (Ctx + Del,
+/// non-Add).
+pub fn runs_old_text<'a, I>(runs: I) -> String
+where
+    I: IntoIterator<Item = &'a OutputRun>,
+{
+    runs.into_iter()
+        .filter(|r| r.kind != RunKind::Add)
+        .map(|r| r.text.as_ref())
+        .collect()
 }
 
 /// A review note attached to a file location.

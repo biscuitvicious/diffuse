@@ -6,6 +6,8 @@
 //! absorbed.text`), the transformation is a pure mathematical identity on the
 //! reconstructed file.
 
+use std::mem;
+
 use crate::{
     parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row},
     syntax::profile::LangProfile,
@@ -227,7 +229,7 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                         text,
                     )));
                 }
-                leading.extend(std::mem::take(&mut h.rows));
+                leading.extend(mem::take(&mut h.rows));
                 h.rows = leading;
                 h.old_start -= needed as u32;
                 h.new_start -= needed as u32;

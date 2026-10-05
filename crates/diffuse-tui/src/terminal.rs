@@ -2,6 +2,8 @@
 
 use std::{
     io::{self, Stdout, Write, stdout},
+    panic,
+    sync::atomic::AtomicBool,
     time::Duration,
 };
 
@@ -27,8 +29,7 @@ pub struct TerminalGuard {
     enhanced_keyboard: bool,
 }
 
-static PANIC_HOOK_INSTALLED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static PANIC_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// Install a process-wide panic hook that restores the terminal (leaving
 /// alternate screen, disabling raw mode, and showing cursor) before printing
@@ -37,8 +38,8 @@ pub fn install_panic_hook() {
     if PANIC_HOOK_INSTALLED.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
+    let default_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
         // Reset terminal immediately before printing panic info
         let mut stdout = stdout();
         let _ = execute!(

@@ -7,6 +7,11 @@
 //! - Identity: `A ∘ ∅ == A == ∅ ∘ A`
 //! - Involution: `invert(invert(A)) == A`
 
+use std::{
+    iter::FusedIterator,
+    ops::{Add, AddAssign},
+};
+
 /// An atomic edit chunk along a tape.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TapeChunk<T> {
@@ -216,7 +221,7 @@ impl<T> Tape<T> {
     }
 }
 
-impl<T> std::ops::Add for Tape<T> {
+impl<T> Add for Tape<T> {
     type Output = Self;
 
     #[inline]
@@ -226,7 +231,7 @@ impl<T> std::ops::Add for Tape<T> {
     }
 }
 
-impl<T> std::ops::AddAssign for Tape<T> {
+impl<T> AddAssign for Tape<T> {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         self.compose(rhs);
@@ -302,7 +307,7 @@ where
     }
 }
 
-impl<'a, T, F> std::iter::FusedIterator for TapeProjection<'a, T, F> where
+impl<'a, T, F> FusedIterator for TapeProjection<'a, T, F> where
     F: Fn(&'a TapeChunk<T>) -> Option<&'a T>
 {
 }

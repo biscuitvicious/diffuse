@@ -5,6 +5,8 @@
 //! achieving $O(N \cdot \lceil M / W \rceil)$ throughput with zero heap
 //! allocations.
 
+use std::slice;
+
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -882,7 +884,7 @@ impl<'a, const K: usize> SuffixPatternFixed<'a, K> {
             scratch.resize(needed, 0);
         }
         let v_history: &mut [BitVector<K>] =
-            unsafe { std::slice::from_raw_parts_mut(scratch.as_mut_ptr() as *mut BitVector<K>, m) };
+            unsafe { slice::from_raw_parts_mut(scratch.as_mut_ptr() as *mut BitVector<K>, m) };
 
         bit_parallel_suffix_walk_fixed_inner(
             self.a,

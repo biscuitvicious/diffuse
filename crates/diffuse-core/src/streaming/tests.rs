@@ -1,3 +1,5 @@
+use std::{collections::HashMap, thread::available_parallelism};
+
 use super::*;
 use crate::{counts::FileCounts, parse::parse_diff, wire::PipelineOutput};
 
@@ -140,7 +142,7 @@ index 444..555 100644
 +fn c_mod() {}
 "#;
     let files = parse_diff(diff);
-    let new_content: std::collections::HashMap<String, String> = [
+    let new_content: HashMap<String, String> = [
         ("a.rs".to_string(), "fn a_mod() {}\n".to_string()),
         ("b.rs".to_string(), "fn b_mod() {}\n".to_string()),
         ("c.rs".to_string(), "fn c_mod() {}\n".to_string()),
@@ -194,7 +196,7 @@ index 444..555 100644
 #[test]
 fn test_stream_diff_pipeline_helper() {
     let diff = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1,1 +1,1 @@\n-const X: i32 = 1;\n+const X: i32 = 2;\n";
-    let mut new_content = std::collections::HashMap::new();
+    let mut new_content = HashMap::new();
     new_content.insert("x.rs".to_string(), "const X: i32 = 2;\n".to_string());
 
     let consumer = stream_diff_pipeline(
@@ -212,9 +214,7 @@ fn test_stream_diff_pipeline_helper() {
 
 #[test]
 fn test_default_worker_count() {
-    let cpus = std::thread::available_parallelism()
-        .map(|p| p.get())
-        .unwrap_or(4);
+    let cpus = available_parallelism().map(|p| p.get()).unwrap_or(4);
     let expected = (cpus * 3 / 4).max(1);
     assert_eq!(default_worker_count(), expected);
 }

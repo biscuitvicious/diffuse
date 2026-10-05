@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 use crate::{
     git::run_git,
@@ -12,7 +12,7 @@ fn init_test_git_repo(dir: &Path) -> (String, String, String, String) {
     run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
 
     let write_and_commit = |msg: &str, content: &str| -> String {
-        std::fs::write(dir.join("file.txt"), content).unwrap();
+        fs::write(dir.join("file.txt"), content).unwrap();
         run_git(dir, &["add", "file.txt"]).unwrap();
         run_git(dir, &["commit", "-m", msg]).unwrap();
         run_git(dir, &["rev-parse", "HEAD"])

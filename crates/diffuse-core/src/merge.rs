@@ -3,7 +3,7 @@
 //! `isWholesaleMod`, `isPureDeletionMod`. Comments ported verbatim; char
 //! offsets throughout (the lcs.rs convention).
 
-use serde::{Deserialize, Serialize};
+use std::{slice, str};
 
 use crate::{
     lcs::char_slice,
@@ -11,33 +11,44 @@ use crate::{
 };
 
 /// The semantic classification of a token run in a diff row.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RunKind {
-    Common,
+    Ctx,
     Del,
     Add,
-    Ctx,
-    /// Moved text: verbatim relocation (a whole `Mov` row) or a reflowed
-    /// fragment (struck-moved on the source side, filled-moved on the target).
-    /// Renders muted-connected rather than struck/filled.
-    Mov,
 }
 
 impl RunKind {
+    #[inline]
+    pub fn sign_char(self) -> char {
+        match self {
+            RunKind::Ctx => '_',
+            RunKind::Del => '-',
+            RunKind::Add => '+',
+        }
+    }
+
+    #[inline]
+    pub fn from_sign_char(c: char) -> Option<Self> {
+        match c {
+            '_' => Some(RunKind::Ctx),
+            '-' => Some(RunKind::Del),
+            '+' => Some(RunKind::Add),
+            _ => None,
+        }
+    }
+
     pub fn reverse(&self) -> Self {
         match self {
-            RunKind::Common => RunKind::Common,
+            RunKind::Ctx => RunKind::Ctx,
             RunKind::Del => RunKind::Add,
             RunKind::Add => RunKind::Del,
-            RunKind::Ctx => RunKind::Ctx,
-            RunKind::Mov => RunKind::Mov,
         }
     }
 }
 
 /// A merged run of a mod row's display.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Run<'a> {
     pub kind: RunKind,
     pub text: &'a str,
@@ -52,26 +63,36 @@ impl<'a> Run<'a> {
     }
 }
 
-/// Project the old side of a run sequence (Common + Del + Ctx).
+/// Project the old side of a run sequence (non-Add, i.e. Ctx + Del).
 pub fn project_old_runs(runs: &[Run]) -> String {
     let mut s = String::new();
     for r in runs {
-        if matches!(r.kind, RunKind::Common | RunKind::Del | RunKind::Ctx) {
+        if r.kind != RunKind::Add {
             s.push_str(r.text);
         }
     }
     s
 }
 
-/// Project the new side of a run sequence (Common + Add + Ctx).
+/// Project the new side of a run sequence (non-Del, i.e. Ctx + Add).
 pub fn project_new_runs(runs: &[Run]) -> String {
     let mut s = String::new();
     for r in runs {
-        if matches!(r.kind, RunKind::Common | RunKind::Add | RunKind::Ctx) {
+        if r.kind != RunKind::Del {
             s.push_str(r.text);
         }
     }
     s
+}
+
+#[inline]
+pub fn old_text_from_runs(runs: &[Run]) -> String {
+    project_old_runs(runs)
+}
+
+#[inline]
+pub fn new_text_from_runs(runs: &[Run]) -> String {
+    project_new_runs(runs)
 }
 
 /// True when a mod row renders as wholesale replacement.
@@ -89,9 +110,7 @@ pub fn is_wholesale_replacement_spans(del_text: &str, add_text: &str, spans: &Sp
     let add_chars: usize = spans.add.iter().map(|(s, e)| e.saturating_sub(*s)).sum();
     if del_chars == old_len && add_chars == new_len && (old_len > 0 || new_len > 0) {
         let runs = merged_runs_from_texts(del_text, add_text, spans);
-        !runs
-            .iter()
-            .any(|run| matches!(run.kind, RunKind::Common | RunKind::Mov))
+        !runs.iter().any(|run| run.kind == RunKind::Ctx)
     } else {
         false
     }
@@ -217,7 +236,7 @@ pub fn merged_runs_from_texts_with_profile<'a>(
         for &(start, end) in &spans.add {
             if start > pos {
                 runs.push(Run {
-                    kind: RunKind::Common,
+                    kind: RunKind::Ctx,
                     text: char_slice(add_text, pos, start),
                 });
             }
@@ -231,7 +250,7 @@ pub fn merged_runs_from_texts_with_profile<'a>(
         }
         if pos < char_len_of(add_text) {
             runs.push(Run {
-                kind: RunKind::Common,
+                kind: RunKind::Ctx,
                 text: char_slice(add_text, pos, char_len_of(add_text)),
             });
         }
@@ -243,7 +262,7 @@ pub fn merged_runs_from_texts_with_profile<'a>(
         for &(start, end) in &spans.del {
             if start > pos {
                 runs.push(Run {
-                    kind: RunKind::Common,
+                    kind: RunKind::Ctx,
                     text: char_slice(del_text, pos, start),
                 });
             }
@@ -257,7 +276,7 @@ pub fn merged_runs_from_texts_with_profile<'a>(
         }
         if pos < char_len_of(del_text) {
             runs.push(Run {
-                kind: RunKind::Common,
+                kind: RunKind::Ctx,
                 text: char_slice(del_text, pos, char_len_of(del_text)),
             });
         }
@@ -280,7 +299,7 @@ pub fn coalesce_runs<'a>(runs: Vec<Run<'a>>) -> Vec<Run<'a>> {
             && last.text.as_ptr().wrapping_add(last.text.len()) == run.text.as_ptr()
         {
             last.text = unsafe {
-                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                str::from_utf8_unchecked(slice::from_raw_parts(
                     last.text.as_ptr(),
                     last.text.len() + run.text.len(),
                 ))

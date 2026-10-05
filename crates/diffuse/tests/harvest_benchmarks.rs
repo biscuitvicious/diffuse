@@ -5,7 +5,7 @@
 //!    100, 1,000 files).
 //! 2. Multi-language streaming throughput (Rust, C, Python, Config, Markdown).
 //! 3. Correct in-order progressive emission across worker pool.
-//! 4. Fixture generation via diffuse-harvest matching golden schema and passing
+//! 4. Fixture generation via harvest matching golden schema and passing
 //!    apply_oracle.
 
 use std::{collections::HashMap, env, fs, process::Command, time::Instant};
@@ -277,7 +277,7 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
     // Dir output: diff.patch + files/ snapshots + meta.json with a pinned
     // absolute revision.
     let corpus_dir = dir.path().join("harvested_corpus");
-    let out = Command::new(env!("CARGO_BIN_EXE_diffuse-harvest"))
+    let out = Command::new(env!("CARGO_BIN_EXE_harvest"))
         .arg("HEAD")
         .arg("--repo")
         .arg(dir.path())
@@ -288,7 +288,7 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
 
     assert!(
         out.status.success(),
-        "diffuse-harvest failed: {}",
+        "harvest failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     let meta_text = fs::read_to_string(corpus_dir.join("meta.json")).unwrap();
@@ -320,7 +320,7 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
 
     // Flat JSON output: metadata only — no embedded diff/contents blobs.
     let fixture_path = dir.path().join("harvested_fixture.json");
-    let out = Command::new(env!("CARGO_BIN_EXE_diffuse-harvest"))
+    let out = Command::new(env!("CARGO_BIN_EXE_harvest"))
         .arg("HEAD")
         .arg("--repo")
         .arg(dir.path())
@@ -330,7 +330,7 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
         .unwrap();
     assert!(
         out.status.success(),
-        "diffuse-harvest failed: {}",
+        "harvest failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     let json_text = fs::read_to_string(&fixture_path).unwrap();

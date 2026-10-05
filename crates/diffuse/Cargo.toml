@@ -14,7 +14,7 @@ name = "diffuse"
 path = "src/main.rs"
 
 [[bin]]
-name = "diffuse-harvest"
+name = "harvest"
 path = "src/bin/harvest.rs"
 
 [dependencies]

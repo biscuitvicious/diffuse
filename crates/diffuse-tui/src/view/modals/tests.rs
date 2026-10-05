@@ -1,5 +1,9 @@
 use super::*;
-use crate::core::parse::RowKind;
+use crate::core::{
+    merge::RunKind,
+    parse::RowKind,
+    wire::{OutputRow, OutputRun},
+};
 use ratatui::{Terminal, backend::TestBackend};
 
 #[test]
@@ -111,16 +115,18 @@ fn test_ratatui_finder_modal_widget() {
     assert!(text.contains("No matching files in diff"));
 }
 
-fn dummy_row(kind: RowKind, line: u32, text: &str) -> crate::core::wire::OutputRow {
-    crate::core::wire::OutputRow {
+fn dummy_row(kind: RowKind, line: u32, text: &str) -> OutputRow {
+    let run_kind = match kind {
+        RowKind::Del => RunKind::Del,
+        RowKind::Add => RunKind::Add,
+        _ => RunKind::Ctx,
+    };
+    OutputRow {
         kind,
         mov_side: None,
         new_line: Some(line),
         old_line: Some(line),
-        text: text.to_string(),
-        del_text: None,
-        spans: crate::core::parse::Spans::default(),
-        runs: vec![],
+        runs: vec![OutputRun::new(run_kind, text.to_string())],
         wholesale: false,
         group: None,
     }

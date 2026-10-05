@@ -14,6 +14,7 @@ use crate::{
     syntax::classifier::for_each_markdown_token,
     theme::DiffuseTheme,
 };
+use diffuse_syntax::color::TokenColor;
 
 /// Formatting and layout options for Markdown diff export.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -56,7 +57,7 @@ pub fn file_raw_counts(file: &OutputFile) -> (usize, usize) {
                 RowKind::Del => dels += 1,
                 RowKind::Add => adds += 1,
                 RowKind::Mod => {
-                    if row.del_text.is_some() {
+                    if row.del_text().is_some() {
                         dels += 1;
                     }
                     adds += 1;
@@ -241,20 +242,24 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
             for row in &hunk.rows {
                 match row.kind {
                     RowKind::Ctx => {
-                        push_diff_row(&mut out, ' ', &row.text, &mut active_fence_profile, &ctx);
+                        let text = row.new_text();
+                        push_diff_row(&mut out, ' ', &text, &mut active_fence_profile, &ctx);
                     }
                     RowKind::Add => {
-                        push_diff_row(&mut out, '+', &row.text, &mut active_fence_profile, &ctx);
+                        let text = row.new_text();
+                        push_diff_row(&mut out, '+', &text, &mut active_fence_profile, &ctx);
                     }
                     RowKind::Del => {
-                        push_diff_row(&mut out, '-', &row.text, &mut active_fence_profile, &ctx);
+                        let text = row.old_text();
+                        push_diff_row(&mut out, '-', &text, &mut active_fence_profile, &ctx);
                     }
                     RowKind::Mod | RowKind::Mov => {
-                        if let Some(ref del_text) = row.del_text {
+                        if let Some(del_text) = row.del_text() {
                             let mut del_fence = active_fence_profile;
-                            push_diff_row(&mut out, '-', del_text, &mut del_fence, &ctx);
+                            push_diff_row(&mut out, '-', &del_text, &mut del_fence, &ctx);
                         }
-                        push_diff_row(&mut out, '+', &row.text, &mut active_fence_profile, &ctx);
+                        let text = row.new_text();
+                        push_diff_row(&mut out, '+', &text, &mut active_fence_profile, &ctx);
                     }
                     RowKind::File | RowKind::Sep => {}
                 }
@@ -373,7 +378,8 @@ fn push_diff_row<'a>(
                     .write_token(tok.color, tok.text, "ctx", None, tok.sgr, out);
             }
         } else {
-            ctx.theme.write_token("text", text, "ctx", None, None, out);
+            ctx.theme
+                .write_token(TokenColor::Default, text, "ctx", None, None, out);
         }
         out.push_str("\x1b[0m\n");
     } else {

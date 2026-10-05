@@ -55,15 +55,13 @@ fn trace_wobble() {
     let runs = merged_runs(&r);
     let non_common: Vec<(&str, &str)> = runs
         .iter()
-        .filter(|x| x.kind != RunKind::Common)
+        .filter(|x| x.kind != RunKind::Ctx)
         .map(|x| {
             (
                 match x.kind {
                     RunKind::Del => "del",
                     RunKind::Add => "add",
-                    RunKind::Common => "common",
                     RunKind::Ctx => "ctx",
-                    RunKind::Mov => "mov",
                 },
                 x.text,
             )
@@ -85,7 +83,7 @@ fn mount_1_to_1_mod_merge() {
     let r = mk(del, add);
     assert!(!is_wholesale_mod(&r), "the mount mod stays the subword mod");
     let runs = merged_runs(&r);
-    assert_eq!(runs[0].kind, RunKind::Common);
+    assert_eq!(runs[0].kind, RunKind::Ctx);
     assert_eq!(
         runs[0].text, "        self.mount_stack",
         "the shared prefix reads common"
@@ -107,11 +105,9 @@ fn whitespace_minimum() {
         .map(|x| {
             (
                 match x.kind {
-                    RunKind::Common => "common",
                     RunKind::Del => "del",
                     RunKind::Add => "add",
                     RunKind::Ctx => "ctx",
-                    RunKind::Mov => "mov",
                 },
                 x.text,
             )
@@ -121,7 +117,7 @@ fn whitespace_minimum() {
         parts,
         vec![
             ("add", "    "),
-            ("common", "        self.cache.borrow_mut().pop(key);"),
+            ("ctx", "        self.cache.borrow_mut().pop(key);"),
         ],
         "4 added at col 0 + 8 common, never the whole run on each side"
     );
@@ -222,7 +218,7 @@ fn unicode_whitespace_merged_runs() {
         );
         assert!(
             runs.iter()
-                .any(|x| x.kind == RunKind::Common && x.text.contains("self")),
+                .any(|x| x.kind == RunKind::Ctx && x.text.contains("self")),
             "the identifier survives as common"
         );
     }
@@ -409,7 +405,7 @@ fn test_leading_indent_shift_with_prefix_removal() {
 
     assert_eq!(runs[0].kind, RunKind::Add);
     assert_eq!(runs[0].text, "    ");
-    assert_eq!(runs[1].kind, RunKind::Common);
+    assert_eq!(runs[1].kind, RunKind::Ctx);
     assert_eq!(runs[1].text, "                        ");
     assert_eq!(runs[2].kind, RunKind::Del);
     assert_eq!(runs[2].text, "} else ");
@@ -435,7 +431,7 @@ fn test_leading_indent_unindent_with_prefix_removal() {
 
     assert_eq!(runs[0].kind, RunKind::Del);
     assert_eq!(runs[0].text, "    ");
-    assert_eq!(runs[1].kind, RunKind::Common);
+    assert_eq!(runs[1].kind, RunKind::Ctx);
     assert_eq!(runs[1].text, "                        ");
     assert_eq!(runs[2].kind, RunKind::Del);
     assert_eq!(runs[2].text, "} else ");
@@ -459,7 +455,7 @@ fn test_leading_indent_same_with_prefix_removal() {
         "add-removed runs must reconstruct the old line"
     );
 
-    assert_eq!(runs[0].kind, RunKind::Common);
+    assert_eq!(runs[0].kind, RunKind::Ctx);
     assert_eq!(runs[0].text, "                        ");
     assert_eq!(runs[1].kind, RunKind::Del);
     assert_eq!(runs[1].text, "} else ");
@@ -704,7 +700,7 @@ fn profiled_unprofiled_merged_runs_agree() {
 // surfaces immediately.
 #[test]
 fn profiled_unprofiled_merged_runs_diverge_on_comment_tail_numbers() {
-    use RunKind::{Add, Common, Del};
+    use RunKind::{Add, Ctx, Del};
 
     let profile = lang_profile("rs").expect("rs profile must exist");
     let del = "    assert_eq!(f.hunks[0].rows.len(), 8); // lines 10..=17";
@@ -719,10 +715,10 @@ fn profiled_unprofiled_merged_runs_diverge_on_comment_tail_numbers() {
     assert_eq!(
         runs(None),
         vec![
-            (Common, "    assert_eq!(f.hunks[0].rows.len(), "),
+            (Ctx, "    assert_eq!(f.hunks[0].rows.len(), "),
             (Del, "8"),
             (Add, "18"),
-            (Common, "); // lines "),
+            (Ctx, "); // lines "),
             (Del, "10..=17"),
             (
                 Add,
@@ -734,16 +730,53 @@ fn profiled_unprofiled_merged_runs_diverge_on_comment_tail_numbers() {
     assert_eq!(
         runs(Some(profile)),
         vec![
-            (Common, "    assert_eq!(f.hunks[0].rows.len(), "),
+            (Ctx, "    assert_eq!(f.hunks[0].rows.len(), "),
             (Del, "8"),
             (Add, "18"),
-            (Common, "); // lines "),
+            (Ctx, "); // lines "),
             (Del, "10"),
             (Add, "5"),
-            (Common, "..="),
+            (Ctx, "..="),
             (Del, "17"),
             (Add, "22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)"),
         ],
         "profiled assemble tape splits the comment tail numbers out"
     );
+}
+
+#[test]
+fn test_run_kind_sign_char_and_from_sign_char() {
+    assert_eq!(RunKind::Ctx.sign_char(), '_');
+    assert_eq!(RunKind::Del.sign_char(), '-');
+    assert_eq!(RunKind::Add.sign_char(), '+');
+
+    assert_eq!(RunKind::from_sign_char('_'), Some(RunKind::Ctx));
+    assert_eq!(RunKind::from_sign_char('-'), Some(RunKind::Del));
+    assert_eq!(RunKind::from_sign_char('+'), Some(RunKind::Add));
+    assert_eq!(RunKind::from_sign_char(' '), None);
+    assert_eq!(RunKind::from_sign_char('x'), None);
+}
+
+#[test]
+fn test_runs_new_text_and_old_text() {
+    let runs = [
+        Run {
+            kind: RunKind::Ctx,
+            text: "let ",
+        },
+        Run {
+            kind: RunKind::Del,
+            text: "old_val",
+        },
+        Run {
+            kind: RunKind::Add,
+            text: "new_val",
+        },
+        Run {
+            kind: RunKind::Ctx,
+            text: " = 42;",
+        },
+    ];
+    assert_eq!(new_text_from_runs(&runs), "let new_val = 42;");
+    assert_eq!(old_text_from_runs(&runs), "let old_val = 42;");
 }

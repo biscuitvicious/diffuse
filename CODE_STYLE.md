@@ -69,7 +69,7 @@ Import types, traits, and functions at the top of the file rather than writing l
   - **Don't**:
     ```rust
     // Root std:: and full inline paths in signatures/bodies
-    fn process_file(path: &std::path::Path) -> std::io::Result<std::collections::HashMap<String, crate::parse::Row>> {
+    fn process_file(path: &std::path::Path) -> std::io::Result<HashMap<String, crate::parse::Row>> {
         let content = std::fs::read_to_string(path)?;
         ...
     }

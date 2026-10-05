@@ -5,12 +5,15 @@
 //! or line-by-line CLI pagers.
 
 use std::{
-    collections::{BTreeMap, BinaryHeap},
+    cmp,
+    collections::{BTreeMap, BinaryHeap, HashMap},
+    path::PathBuf,
     sync::{
         Arc, Condvar, Mutex,
-        mpsc::{Receiver, channel},
+        mpsc::{self, Receiver, channel},
     },
     thread::{JoinHandle, available_parallelism, spawn},
+    time::Duration,
 };
 
 use crate::{
@@ -44,14 +47,14 @@ impl PartialEq for PrioritizedJob {
 impl Eq for PrioritizedJob {}
 
 impl Ord for PrioritizedJob {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         // Reverse order: smaller idx => Ordering::Greater
         other.0.idx.cmp(&self.0.idx)
     }
 }
 
 impl PartialOrd for PrioritizedJob {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
@@ -192,7 +195,7 @@ impl StreamingProducer {
 pub struct StreamingConsumer {
     rx: Receiver<OutputFile>,
     queue: Arc<PriorityJobQueue>,
-    processed_tx: Option<std::sync::mpsc::Sender<ProcessedFile>>,
+    processed_tx: Option<mpsc::Sender<ProcessedFile>>,
     opts: Arc<PipelineOptions>,
     _worker_handles: Vec<JoinHandle<()>>,
     _sequencer_handle: JoinHandle<()>,
@@ -216,8 +219,8 @@ impl Iterator for StreamingConsumer {
         loop {
             match self.rx.try_recv() {
                 Ok(file) => return Some(file),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => return None,
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                Err(mpsc::TryRecvError::Disconnected) => return None,
+                Err(mpsc::TryRecvError::Empty) => {
                     if let Some(job) = self.queue.try_pop() {
                         let out_file = process_single_diff_file(
                             job.file,
@@ -237,10 +240,10 @@ impl Iterator for StreamingConsumer {
                             self.processed_tx.take();
                             return self.rx.recv().ok();
                         }
-                        match self.rx.recv_timeout(std::time::Duration::from_millis(10)) {
+                        match self.rx.recv_timeout(Duration::from_millis(10)) {
                             Ok(file) => return Some(file),
-                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return None,
+                            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => return None,
                         }
                     }
                 }
@@ -343,8 +346,8 @@ pub fn spawn_streaming_pipeline(
 #[tracing::instrument(level = "trace", skip(diff, new_content, old_content, opts), fields(diff_bytes = diff.len(), visual_context = opts.visual_context, expand_lines = opts.expand_lines))]
 pub fn stream_diff_pipeline_arc(
     diff: Arc<String>,
-    mut new_content: Option<std::collections::HashMap<String, Arc<String>>>,
-    mut old_content: Option<std::collections::HashMap<String, Arc<String>>>,
+    mut new_content: Option<HashMap<String, Arc<String>>>,
+    mut old_content: Option<HashMap<String, Arc<String>>>,
     opts: PipelineOptions,
     worker_count: Option<usize>,
 ) -> StreamingConsumer {
@@ -375,8 +378,8 @@ pub fn stream_diff_pipeline_arc(
 /// pipeline.
 pub fn stream_diff_pipeline(
     diff: impl Into<String>,
-    new_content: Option<std::collections::HashMap<String, String>>,
-    old_content: Option<std::collections::HashMap<String, String>>,
+    new_content: Option<HashMap<String, String>>,
+    old_content: Option<HashMap<String, String>>,
     opts: PipelineOptions,
     worker_count: Option<usize>,
 ) -> StreamingConsumer {
@@ -402,7 +405,7 @@ pub struct GitRepoMeta {
 ///    receiver for `GitRepoMeta`.
 #[tracing::instrument(level = "trace", skip(paths, opts), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context, visual_context = opts.visual_context))]
 pub fn spawn_git_stream_pipeline(
-    repo_root: std::path::PathBuf,
+    repo_root: PathBuf,
     base_args: Vec<String>,
     paths: Vec<String>,
     staged: bool,
@@ -413,7 +416,7 @@ pub fn spawn_git_stream_pipeline(
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
     let (meta_tx, meta_rx) = channel::<Result<GitRepoMeta, String>>();
 
-    std::thread::spawn(move || {
+    spawn(move || {
         crate::git::stream_git_repo_to_producer(
             &repo_root, &base_args, &paths, staged, context, producer, &meta_tx,
         );

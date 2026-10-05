@@ -7,8 +7,13 @@
 //! substitution, and ANSI stylization through [`DiffuseTheme`]. No new
 //! dependencies.
 
-use std::{borrow::Cow, fmt::Write};
+use std::{
+    borrow::Cow,
+    cmp,
+    fmt::{self, Write},
+};
 
+use diffuse_syntax::color::TokenColor;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
@@ -16,7 +21,7 @@ use crate::{
     syntax::{
         classifier::for_each_line_classified_token,
         markdown::{Block, ColumnAlign, Inline, ListMarker, Span, TaskState, blocks},
-        profile::{MD_SGR_BOLD, MD_SGR_DIM, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE},
+        profile::{SGR_BOLD, SGR_DIM, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE},
         registry::lang_profile,
     },
     theme::DiffuseTheme,
@@ -35,7 +40,7 @@ pub struct MarkdownLine {
 /// single SGR slot cannot express. The writer combines them into one escape.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MarkdownRun {
-    pub color: Option<Cow<'static, str>>,
+    pub color: TokenColor,
     pub sgr: Option<u32>,
     pub underline: bool,
     pub strike: bool,
@@ -66,25 +71,25 @@ pub fn write_markdown_line<W: Write>(
     prefix: &str,
     syntax_on: bool,
     theme: &DiffuseTheme,
-) -> std::fmt::Result {
+) -> fmt::Result {
     out.write_str(prefix)?;
     for run in &line.runs {
         if !syntax_on {
             out.write_str(&run.text)?;
             continue;
         }
-        let color = run.color.as_deref().unwrap_or("text");
+        let color = run.color;
         // Stacked styles (heading titles, dim strikethrough) combine into one
         // escape; single styles keep the legacy single-code path
         // byte-identical.
         let mut codes = [0u32; 4];
         let mut count = 0usize;
-        if run.dim && !codes[..count].contains(&MD_SGR_DIM) {
-            codes[count] = MD_SGR_DIM;
+        if run.dim && !codes[..count].contains(&SGR_DIM) {
+            codes[count] = SGR_DIM;
             count += 1;
         }
-        if run.strike && !codes[..count].contains(&MD_SGR_STRIKE) {
-            codes[count] = MD_SGR_STRIKE;
+        if run.strike && !codes[..count].contains(&SGR_STRIKE) {
+            codes[count] = SGR_STRIKE;
             count += 1;
         }
         if let Some(s) = run.sgr
@@ -93,8 +98,8 @@ pub fn write_markdown_line<W: Write>(
             codes[count] = s;
             count += 1;
         }
-        if run.underline && !codes[..count].contains(&MD_SGR_UNDERLINE) {
-            codes[count] = MD_SGR_UNDERLINE;
+        if run.underline && !codes[..count].contains(&SGR_UNDERLINE) {
+            codes[count] = SGR_UNDERLINE;
             count += 1;
         }
         if count <= 1 {
@@ -137,7 +142,7 @@ static BARS: &str = "▎▎▎▎▎▎▎▎";
 /// them into one escape.
 #[derive(Clone)]
 struct Run {
-    color: &'static str,
+    color: TokenColor,
     sgr: Option<u32>,
     underline: bool,
     strike: bool,
@@ -161,7 +166,7 @@ struct VisualLine {
 /// emphasis.
 #[derive(Clone, Copy)]
 struct InlineStyle {
-    color: &'static str,
+    color: TokenColor,
     sgr: Option<u32>,
     underline: bool,
     strike: bool,
@@ -200,8 +205,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
             Span::Bold(inner) => inline_runs_into(
                 inner,
                 InlineStyle {
-                    color: "mdBold",
-                    sgr: Some(MD_SGR_BOLD),
+                    color: TokenColor::Bold,
+                    sgr: Some(SGR_BOLD),
                     underline: base.underline,
                     strike: base.strike,
                     dim: base.dim,
@@ -211,8 +216,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
             Span::Italic(inner) => inline_runs_into(
                 inner,
                 InlineStyle {
-                    color: "mdItalic",
-                    sgr: Some(MD_SGR_ITALIC),
+                    color: TokenColor::Italic,
+                    sgr: Some(SGR_ITALIC),
                     underline: base.underline,
                     strike: base.strike,
                     dim: base.dim,
@@ -232,7 +237,7 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
             ),
             // Surrounding SGR stacks; the color classifies as code.
             Span::Code(code) => runs.push(Run {
-                color: "syntaxString",
+                color: TokenColor::Code,
                 sgr: base.sgr,
                 underline: base.underline,
                 strike: base.strike,
@@ -243,8 +248,8 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                 inline_runs_into(
                     label,
                     InlineStyle {
-                        color: "mdLink",
-                        sgr: Some(MD_SGR_UNDERLINE),
+                        color: TokenColor::Link,
+                        sgr: Some(SGR_UNDERLINE),
                         underline: base.underline,
                         strike: base.strike,
                         dim: base.dim,
@@ -252,7 +257,7 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                     runs,
                 );
                 runs.push(Run {
-                    color: "border",
+                    color: TokenColor::LinkBorder,
                     sgr: None,
                     underline: false,
                     strike: base.strike,
@@ -260,15 +265,15 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                     text: Cow::Borrowed(" ("),
                 });
                 runs.push(Run {
-                    color: "mdLink",
-                    sgr: Some(MD_SGR_UNDERLINE),
+                    color: TokenColor::Link,
+                    sgr: Some(SGR_UNDERLINE),
                     underline: base.underline,
                     strike: base.strike,
                     dim: base.dim,
                     text: Cow::Owned(url.to_string()),
                 });
                 runs.push(Run {
-                    color: "border",
+                    color: TokenColor::LinkBorder,
                     sgr: None,
                     underline: false,
                     strike: base.strike,
@@ -281,7 +286,7 @@ fn inline_runs_into(inline: &Inline<'_>, base: InlineStyle, runs: &mut Vec<Run>)
                 glyph.push_str(task_glyph(*state));
                 glyph.push(' ');
                 runs.push(Run {
-                    color: "accent",
+                    color: TokenColor::Delimiter,
                     sgr: None,
                     underline: false,
                     strike: false,
@@ -392,7 +397,7 @@ impl Renderer {
                     let runs = inline_runs(
                         content,
                         InlineStyle {
-                            color: "text",
+                            color: TokenColor::Default,
                             sgr: None,
                             underline: false,
                             strike: false,
@@ -422,8 +427,8 @@ impl Renderer {
                     let title = inline_runs(
                         content,
                         InlineStyle {
-                            color: "text",
-                            sgr: Some(MD_SGR_BOLD),
+                            color: TokenColor::Default,
+                            sgr: Some(SGR_BOLD),
                             // Heading text — markers excluded — underlines
                             // on top of bold via stacked SGR emission.
                             underline: true,
@@ -437,7 +442,7 @@ impl Renderer {
                         let mut marker = Vec::new();
                         let line_indent = if first {
                             marker.push(Run {
-                                color: "accent",
+                                color: TokenColor::Delimiter,
                                 sgr: None,
                                 underline: false,
                                 strike: false,
@@ -445,7 +450,7 @@ impl Renderer {
                                 text: Cow::Owned(hashes.clone()),
                             });
                             marker.push(Run {
-                                color: "text",
+                                color: TokenColor::Default,
                                 sgr: None,
                                 underline: false,
                                 strike: false,
@@ -540,8 +545,8 @@ impl Renderer {
                         indent,
                         marker: Vec::new(),
                         content: vec![Run {
-                            color: "mdRule",
-                            sgr: Some(MD_SGR_BOLD),
+                            color: TokenColor::Rule,
+                            sgr: Some(SGR_BOLD),
                             underline: false,
                             strike: false,
                             dim: false,
@@ -609,7 +614,7 @@ impl Renderer {
                     marker.push(borrowed_spaces(widest - marker_width));
                 }
                 marker.push(Run {
-                    color: "accent",
+                    color: TokenColor::Delimiter,
                     sgr: None,
                     underline: false,
                     strike: false,
@@ -617,7 +622,7 @@ impl Renderer {
                     text: marker_text,
                 });
                 marker.push(Run {
-                    color: "text",
+                    color: TokenColor::Default,
                     sgr: None,
                     underline: false,
                     strike: false,
@@ -646,7 +651,7 @@ impl Renderer {
                 glyph.push_str(task_glyph(state));
                 glyph.push(' ');
                 marker.push(Run {
-                    color: "accent",
+                    color: TokenColor::Delimiter,
                     sgr: None,
                     underline: false,
                     strike: false,
@@ -710,15 +715,15 @@ impl Renderer {
         bars: usize,
     ) -> Vec<VisualLine> {
         let base = InlineStyle {
-            color: "text",
+            color: TokenColor::Default,
             sgr: None,
             underline: false,
             strike: false,
             dim: false,
         };
         let head_base = InlineStyle {
-            color: "mdItalic",
-            sgr: Some(MD_SGR_BOLD),
+            color: TokenColor::TableHeader,
+            sgr: Some(SGR_BOLD),
             underline: true,
             strike: false,
             dim: false,
@@ -760,7 +765,7 @@ impl Renderer {
         };
         let mut out = Vec::new();
         let border = |text: Cow<'static, str>| Run {
-            color: "border",
+            color: TokenColor::TableBorder,
             sgr: None,
             underline: false,
             strike: false,
@@ -799,7 +804,7 @@ impl Renderer {
                     };
                     if left > 0 {
                         content.push(Run {
-                            color: "text",
+                            color: TokenColor::Default,
                             sgr: None,
                             underline: false,
                             strike: false,
@@ -810,7 +815,7 @@ impl Renderer {
                     content.extend(cell_line.iter().cloned());
                     if right > 0 {
                         content.push(Run {
-                            color: "text",
+                            color: TokenColor::Default,
                             sgr: None,
                             underline: false,
                             strike: false,
@@ -898,7 +903,7 @@ fn squash_table_widths(natural_widths: &[usize], budget: usize) -> Vec<usize> {
 
     if current_sum < budget {
         let mut by_frac = float_widths.clone();
-        by_frac.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+        by_frac.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(cmp::Ordering::Equal));
         let diff = budget - current_sum;
         for item in by_frac.iter().take(diff) {
             widths[item.0] += 1;
@@ -1116,7 +1121,7 @@ fn marker_string(item: &crate::syntax::markdown::ListItem<'_>) -> Cow<'static, s
 fn borrowed_spaces(n: usize) -> Run {
     if n <= SPACES.len() {
         Run {
-            color: "text",
+            color: TokenColor::Default,
             sgr: None,
             underline: false,
             strike: false,
@@ -1125,7 +1130,7 @@ fn borrowed_spaces(n: usize) -> Run {
         }
     } else {
         Run {
-            color: "text",
+            color: TokenColor::Default,
             sgr: None,
             underline: false,
             strike: false,
@@ -1156,7 +1161,7 @@ fn flatten_line(line: VisualLine) -> MarkdownLine {
             Cow::Owned("▎".repeat(line.bars))
         };
         runs.push(MarkdownRun {
-            color: Some("border".into()),
+            color: TokenColor::QuoteBorder,
             sgr: None,
             underline: false,
             strike: false,
@@ -1168,7 +1173,7 @@ fn flatten_line(line: VisualLine) -> MarkdownLine {
     if has_content && line.indent > 0 {
         let text = owned_spaces(line.indent);
         runs.push(MarkdownRun {
-            color: Some("text".into()),
+            color: TokenColor::Default,
             sgr: None,
             underline: false,
             strike: false,
@@ -1178,7 +1183,7 @@ fn flatten_line(line: VisualLine) -> MarkdownLine {
     }
     for run in line.marker.into_iter().chain(line.content) {
         runs.push(MarkdownRun {
-            color: Some(run.color.into()),
+            color: run.color,
             sgr: run.sgr,
             underline: run.underline,
             strike: run.strike,

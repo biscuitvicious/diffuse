@@ -1,6 +1,8 @@
+use std::mem;
+
 use crate::core::{
     DEFAULT_CONTEXT_LINES,
-    parse::{RowKind, Spans},
+    parse::RowKind,
     wire::{OutputFile, OutputHunk, OutputRow},
 };
 
@@ -301,9 +303,6 @@ impl AppState {
                     mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     group: None,
@@ -311,7 +310,7 @@ impl AppState {
             }
 
             let mut new_h0_rows = down_rows.clone();
-            new_h0_rows.extend(std::mem::take(&mut f.hunks[0].rows));
+            new_h0_rows.extend(mem::take(&mut f.hunks[0].rows));
             f.hunks[0].rows = new_h0_rows;
             f.hunks[0].old_start -= down_count as u32;
             f.hunks[0].new_start -= down_count as u32;
@@ -374,9 +373,6 @@ impl AppState {
                     mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     group: None,
@@ -400,7 +396,7 @@ impl AppState {
                 }
             } else {
                 let mut new_h2_rows = down_rows.clone();
-                new_h2_rows.extend(std::mem::take(&mut f.hunks[next_hi].rows));
+                new_h2_rows.extend(mem::take(&mut f.hunks[next_hi].rows));
                 f.hunks[next_hi].rows = new_h2_rows;
                 f.hunks[next_hi].old_start -= down_count as u32;
                 f.hunks[next_hi].new_start -= down_count as u32;
@@ -503,9 +499,6 @@ impl AppState {
                     mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     group: None,
@@ -571,9 +564,6 @@ impl AppState {
                     mov_side: None,
                     new_line: Some(new_num),
                     old_line: Some(old_num),
-                    text,
-                    del_text: None,
-                    spans: Spans::default(),
                     runs,
                     wholesale: false,
                     group: None,
@@ -673,9 +663,6 @@ impl AppState {
                 mov_side: None,
                 new_line: Some(new_num),
                 old_line: Some(old_num),
-                text,
-                del_text: None,
-                spans: Spans::default(),
                 runs,
                 wholesale: false,
                 group: None,
@@ -706,7 +693,7 @@ impl AppState {
         f.hunks[hi].rows.extend(top_rows.clone());
         {
             let mut new_h2_rows = bottom_rows.clone();
-            new_h2_rows.extend(std::mem::take(&mut f.hunks[hi + 1].rows));
+            new_h2_rows.extend(mem::take(&mut f.hunks[hi + 1].rows));
             f.hunks[hi + 1].rows = new_h2_rows;
         }
 

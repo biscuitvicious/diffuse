@@ -17,6 +17,11 @@
 //! golden legs keep running legacy in the same process; the binary reads
 //! `DIFFUSE_ENGINE=dp`.
 
+use std::{
+    sync::atomic::{self, AtomicU64},
+    time::Instant,
+};
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
@@ -262,8 +267,7 @@ fn is_fragment_pair_rejected<'a>(
 /// (global add row index -> global del row index). 1-to-1 `Mod`/`Mov`
 /// transitions pair directly; block transitions contribute their anchor
 /// pair; guarded dels never pair.
-pub static T_DP: [std::sync::atomic::AtomicU64; 6] =
-    [const { std::sync::atomic::AtomicU64::new(0) }; 6];
+pub static T_DP: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
 pub fn dp_pairing(
     h: &Hunk,
@@ -271,20 +275,20 @@ pub fn dp_pairing(
     new_content: Option<&[&str]>,
     profile: Option<&LangProfile>,
 ) -> PairingResults {
-    let t0 = std::time::Instant::now();
+    let t0 = Instant::now();
     let (del_runs, run_of, del_ids) = legacy_index_maps(h);
-    let t1 = std::time::Instant::now();
+    let t1 = Instant::now();
     T_DP[0].fetch_add(
         t1.duration_since(t0).as_micros() as u64,
-        std::sync::atomic::Ordering::Relaxed,
+        atomic::Ordering::Relaxed,
     );
 
     let mut fn_cache: FnScopeCache = FxHashMap::default();
     let guards = guarded_dels(h, old_content, new_content, profile, &mut fn_cache);
-    let t2 = std::time::Instant::now();
+    let t2 = Instant::now();
     T_DP[1].fetch_add(
         t2.duration_since(t1).as_micros() as u64,
-        std::sync::atomic::Ordering::Relaxed,
+        atomic::Ordering::Relaxed,
     );
 
     // Global row indices by line number (unique per hunk side). Pre-sized:
@@ -305,10 +309,10 @@ pub fn dp_pairing(
         }));
         m
     };
-    let t3 = std::time::Instant::now();
+    let t3 = Instant::now();
     T_DP[2].fetch_add(
         t3.duration_since(t2).as_micros() as u64,
-        std::sync::atomic::Ordering::Relaxed,
+        atomic::Ordering::Relaxed,
     );
 
     let mut pair_of: FxHashMap<usize, usize> = FxHashMap::default();
@@ -316,10 +320,10 @@ pub fn dp_pairing(
     let mut expand_blocks: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
 
     let segments = partition_hunk_segments(h, old_content, new_content, profile);
-    let t4 = std::time::Instant::now();
+    let t4 = Instant::now();
     T_DP[3].fetch_add(
         t4.duration_since(t3).as_micros() as u64,
-        std::sync::atomic::Ordering::Relaxed,
+        atomic::Ordering::Relaxed,
     );
 
     // Reuse the thread-local scratch arena across hunks: every Vec (tokens,
@@ -331,17 +335,17 @@ pub fn dp_pairing(
                 HunkSegment::Cluster(c) => c,
                 HunkSegment::Context(_) => continue,
             };
-            let t_s0 = std::time::Instant::now();
+            let t_s0 = Instant::now();
             let sol = super::dp::solve_cluster_with_arena(
                 &cluster,
                 profile,
                 &super::dp::Weights::default(),
                 arena,
             );
-            let t_s1 = std::time::Instant::now();
+            let t_s1 = Instant::now();
             T_DP[4].fetch_add(
                 t_s1.duration_since(t_s0).as_micros() as u64,
-                std::sync::atomic::Ordering::Relaxed,
+                atomic::Ordering::Relaxed,
             );
 
             // Walk the DP's consumption of cluster sides, mapping transitions

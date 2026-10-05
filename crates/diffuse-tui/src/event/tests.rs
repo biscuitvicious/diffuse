@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+
 use super::*;
 use crate::core::{PipelineOptions, pipeline::run_pipeline_full, wire::PipelineOutput};
 
-fn unique_notes_path() -> std::path::PathBuf {
-    std::path::PathBuf::from("/nonexistent-diffuse-test-notes.json")
+fn unique_notes_path() -> PathBuf {
+    PathBuf::from("/nonexistent-diffuse-test-notes.json")
 }
 
 fn state_with_draft() -> AppState {

@@ -1,7 +1,8 @@
 //! Unit tests for note-agnostic Markdown classification.
 
+use std::{borrow::Cow, ops::Range};
+
 use super::*;
-use std::borrow::Cow;
 
 fn text_of<'a>(span: &'a Span<'a>) -> &'a str {
     match span {
@@ -356,7 +357,7 @@ fn test_pulldown_item_range_includes_trailing_blank() {
     use pulldown_cmark::{Options, Parser};
     let src = "- one\n\n- two";
     let opts = Options::ENABLE_TASKLISTS | Options::ENABLE_GFM;
-    let items: Vec<std::ops::Range<usize>> = Parser::new_ext(src, opts)
+    let items: Vec<Range<usize>> = Parser::new_ext(src, opts)
         .into_offset_iter()
         .filter_map(|(ev, range)| match ev {
             pulldown_cmark::Event::Start(pulldown_cmark::Tag::Item) => Some(range),

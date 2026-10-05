@@ -10,6 +10,8 @@
 //! - Invertibility: reverse of a tape is symmetric
 //! - No lossy coordinate guessing
 
+use std::{slice, str};
+
 use crate::{
     lcs::{
         char_len, char_slice, lcs_pairs_anchored, raw_lcs_pairs, token_is_ws, token_product_cap,
@@ -249,7 +251,7 @@ impl<'a> AlignmentTape<'a> {
                                 text: add_prefix,
                             });
                             runs.push(Run {
-                                kind: RunKind::Common,
+                                kind: RunKind::Ctx,
                                 text: &a_ws[add_prefix.len()..],
                             });
                             if d_ws_len < d.len() {
@@ -275,7 +277,7 @@ impl<'a> AlignmentTape<'a> {
                                 text: del_prefix,
                             });
                             runs.push(Run {
-                                kind: RunKind::Common,
+                                kind: RunKind::Ctx,
                                 text: a_ws,
                             });
                             if d_ws_len < d.len() {
@@ -295,7 +297,7 @@ impl<'a> AlignmentTape<'a> {
                             continue;
                         } else if d_ws == a_ws {
                             runs.push(Run {
-                                kind: RunKind::Common,
+                                kind: RunKind::Ctx,
                                 text: a_ws,
                             });
                             if d_ws_len < d.len() {
@@ -328,7 +330,7 @@ impl<'a> AlignmentTape<'a> {
                     }
                     if share > 0 {
                         runs.push(Run {
-                            kind: RunKind::Common,
+                            kind: RunKind::Ctx,
                             text: &d[..share],
                         });
                     }
@@ -356,7 +358,7 @@ impl<'a> AlignmentTape<'a> {
                         is_leading = false;
                     }
                     runs.push(Run {
-                        kind: RunKind::Common,
+                        kind: RunKind::Ctx,
                         text,
                     });
                 }
@@ -383,7 +385,7 @@ impl<'a> AlignmentTape<'a> {
                         is_leading = false;
                     }
                     runs.push(Run {
-                        kind: RunKind::Mov,
+                        kind: RunKind::Ctx,
                         text,
                     });
                 }
@@ -405,8 +407,8 @@ impl<'a> AlignmentTape<'a> {
                     // contiguous slices of the same parent string.
                     unsafe {
                         let combined_slice =
-                            std::slice::from_raw_parts(last.text.as_ptr(), combined_len);
-                        last.text = std::str::from_utf8_unchecked(combined_slice);
+                            slice::from_raw_parts(last.text.as_ptr(), combined_len);
+                        last.text = str::from_utf8_unchecked(combined_slice);
                     }
                     continue;
                 }

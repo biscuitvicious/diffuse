@@ -76,8 +76,8 @@ fn test_subline_relocation_tracks_relocated_tokens() {
 
     let runs = reflow.tape.to_merged_runs();
     assert!(
-        runs.iter().any(|r| r.kind == RunKind::Mov),
-        "Relocated subline tokens must produce RunKind::Mov in merged runs"
+        runs.iter().any(|r| r.kind == RunKind::Ctx),
+        "Relocated subline tokens must produce RunKind::Ctx in merged runs"
     );
 }
 

@@ -1,3 +1,8 @@
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
+
 use diffuse_tui::{
     AppState, TuiCommand,
     core::{
@@ -10,8 +15,8 @@ use diffuse_tui::{
     view::{diff_grid::FILE_HEADER_INDICATOR_COL, hunk_divider_text},
 };
 
-fn temp_notes_path() -> std::path::PathBuf {
-    std::path::PathBuf::from("/nonexistent-diffuse-test-notes.json")
+fn temp_notes_path() -> PathBuf {
+    PathBuf::from("/nonexistent-diffuse-test-notes.json")
 }
 
 fn sample_output() -> PipelineOutput {
@@ -808,11 +813,11 @@ fn test_perf_big_hunk_scrolled_frames() {
 
     for scroll in [0, 1000, 3000, 6000] {
         state.scroll = scroll;
-        let start = std::time::Instant::now();
+        let start = Instant::now();
         let frame = state.render_frame(200, 50);
         let elapsed = start.elapsed();
         assert!(
-            elapsed < std::time::Duration::from_secs(2),
+            elapsed < Duration::from_secs(2),
             "scrolled frame at {scroll} took {elapsed:?}"
         );
         assert!(!frame.is_empty());

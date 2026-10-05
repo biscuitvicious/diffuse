@@ -1,19 +1,22 @@
 //! Ports of the syntax-highlighting tests from test/review.test.ts.
 
-use std::ptr::addr_eq;
+use std::{
+    ptr::{self, addr_eq},
+    string::ToString,
+};
 
-use crate::prelude::*;
+use crate::{color::TokenColor, prelude::*};
 
 // The semantic colors, per the TS test's theme codes.
-fn color_of(tok: &str) -> &str {
-    match tok {
-        "syntaxKeyword" => "31",
-        "syntaxComment" => "32",
-        "syntaxString" => "33",
-        "syntaxNumber" => "34",
-        "syntaxType" => "35",
-        "syntaxFunction" => "36",
-        "syntaxOperator" => "37",
+fn color_of(c: TokenColor) -> &'static str {
+    match c {
+        TokenColor::Keyword => "31",
+        TokenColor::Comment => "32",
+        TokenColor::String => "33",
+        TokenColor::Number => "34",
+        TokenColor::Type => "35",
+        TokenColor::Function => "36",
+        TokenColor::Operator => "37",
         _ => "90",
     }
 }
@@ -48,31 +51,31 @@ fn syntax_classification() {
     assert!(
         mixed
             .iter()
-            .any(|t| t.color == "syntaxComment" && t.text == "// note"),
+            .any(|t| t.color == TokenColor::Comment && t.text == "// note"),
         "comment after code"
     );
     assert!(
         mixed
             .iter()
-            .any(|t| t.color == "syntaxKeyword" && t.text == "fn"),
+            .any(|t| t.color == TokenColor::Keyword && t.text == "fn"),
         "fn still a keyword"
     );
     // Hash comments only for hashComment languages (python vs rust attrs).
     let py = lang_profile("py").unwrap();
     let py_tokens = classify_tokens("# derive", Some(py));
     assert!(
-        py_tokens.iter().any(|t| t.color == "syntaxComment"),
+        py_tokens.iter().any(|t| t.color == TokenColor::Comment),
         "py hash comment"
     );
     let rust_attr = classify_tokens("#[derive]", rs);
     assert!(
-        !rust_attr.iter().any(|t| t.color == "syntaxComment"),
+        !rust_attr.iter().any(|t| t.color == TokenColor::Comment),
         "rust # is not a comment"
     );
     // Unknown language → plain text.
     let plain = classify_tokens("anything", None);
     assert_eq!(plain.len(), 1);
-    assert_eq!(plain[0].color, "text");
+    assert_eq!(plain[0].color, TokenColor::Default);
     assert_eq!(plain[0].text, "anything");
 
     // Backticks inside doc comments get accent backticks + Rust syntax tokens.
@@ -80,24 +83,28 @@ fn syntax_classification() {
     assert!(
         doc_bt
             .iter()
-            .any(|t| t.color == "syntaxComment" && t.text.contains("Uses"))
+            .any(|t| t.color == TokenColor::Comment && t.text.contains("Uses"))
     );
 
-    assert!(doc_bt.iter().any(|t| t.color == "accent" && t.text == "`"));
     assert!(
         doc_bt
             .iter()
-            .any(|t| t.color == "syntaxType" && t.text == "VFS")
+            .any(|t| t.color == TokenColor::Delimiter && t.text == "`")
     );
     assert!(
         doc_bt
             .iter()
-            .any(|t| t.color == "syntaxOperator" && t.text == ":")
+            .any(|t| t.color == TokenColor::Type && t.text == "VFS")
     );
     assert!(
         doc_bt
             .iter()
-            .any(|t| t.color == "syntaxComment" && t.text == " to read.")
+            .any(|t| t.color == TokenColor::Operator && t.text == ":")
+    );
+    assert!(
+        doc_bt
+            .iter()
+            .any(|t| t.color == TokenColor::Comment && t.text == " to read.")
     );
 }
 
@@ -110,7 +117,7 @@ fn syntax_classification() {
 // Rust inside a `.rs` doc). The region's `lang` carries the raw tag; the
 // profile is resolved per-row via `lang_profile(lang)`.
 fn lines(v: &[&str]) -> Vec<String> {
-    v.iter().map(std::string::ToString::to_string).collect()
+    v.iter().map(ToString::to_string).collect()
 }
 
 /// Assert the region's tag resolves to a target profile key.
@@ -193,7 +200,7 @@ fn md_fence_with_rust_modifier_opens_rust_region() {
 // `*italic*`, `~~strike~~`, `[link](url)`. Doc comments (`///`, `//!`) ARE
 // markdown — full emphasis. The split lives in
 // `tokenize_comment_with_backticks`.
-fn colors_of<'a>(text: &'a str, profile: Option<&LangProfile>) -> Vec<(&'static str, &'a str)> {
+fn colors_of<'a>(text: &'a str, profile: Option<&LangProfile>) -> Vec<(TokenColor, &'a str)> {
     classify_tokens(text, profile)
         .into_iter()
         .map(|t| (t.color, t.text))
@@ -210,32 +217,40 @@ fn plain_comment_backtick_renders_as_rust_no_markdown() {
         "// keep its `if`/`k`/`floor {` fragments; **not bold** *not italic* [not link](u)",
         Some(rs),
     );
-    // backtick delimiters are accent
+    // backtick delimiters are dlm
     assert!(
-        toks.iter().any(|&(c, t)| c == "accent" && t == "`"),
-        "backticks accent"
+        toks.iter()
+            .any(|&(c, t)| c == TokenColor::Delimiter && t == "`"),
+        "backticks delimiter"
     );
-    // inner `if` / `k` classify as Rust keyword (syntaxKeyword), not comment
+    // inner `if` / `k` classify as Rust keyword (kwd), not comment
     assert!(
-        toks.iter().any(|&(c, t)| c == "syntaxKeyword" && t == "if"),
+        toks.iter()
+            .any(|&(c, t)| c == TokenColor::Keyword && t == "if"),
         "`if` inside backticks renders as a Rust keyword"
     );
-    // the `**not bold**` text outside backticks stays syntaxComment — no mdBold
+    // the `**not bold**` text outside backticks stays com — no bld
     assert!(
         toks.iter()
-            .any(|&(c, t)| c == "syntaxComment" && t.contains("**not bold**")),
+            .any(|&(c, t)| c == TokenColor::Comment && t.contains("**not bold**")),
         "`**bold**` in a plain comment (outside backticks) stays comment-colored"
     );
-    // `[not link](u)` outside backticks stays syntaxComment — no mdUrl
+    // `[not link](u)` outside backticks stays com — no url
     assert!(
         toks.iter()
-            .any(|&(c, t)| c == "syntaxComment" && t.contains("[not link]")),
+            .any(|&(c, t)| c == TokenColor::Comment && t.contains("[not link]")),
         "`[link](url)` in a plain comment stays comment-colored"
     );
-    // no mdBold / mdItalic / mdStrike / mdLink / mdUrl tokens at all
+    // no bld / ita / stk / lnk / url tokens at all
     assert!(
-        toks.iter()
-            .all(|&(c, _)| !matches!(c, "mdBold" | "mdItalic" | "mdStrike" | "mdLink" | "mdUrl")),
+        toks.iter().all(|&(c, _)| !matches!(
+            c,
+            TokenColor::Bold
+                | TokenColor::Italic
+                | TokenColor::Strike
+                | TokenColor::Link
+                | TokenColor::Url
+        )),
         "no markdown emphasis tokens in a plain comment"
     );
 }
@@ -243,20 +258,22 @@ fn plain_comment_backtick_renders_as_rust_no_markdown() {
 #[test]
 fn doc_comment_full_markdown_renders() {
     let rs = lang_profile("rs").unwrap();
-    // A `///` doc comment: `**bold**` renders as accent `**` + mdBold body,
-    // and `` `code` `` renders as accent backticks + Rust inner.
+    // A `///` doc comment: `**bold**` renders as dlm `**` + bld body,
+    // and `` `code` `` renders as dlm backticks + Rust inner.
     let toks = colors_of("/// **bold** and `code`", Some(rs));
     assert!(
-        toks.iter().any(|&(c, t)| c == "mdBold" && t == "bold"),
+        toks.iter()
+            .any(|&(c, t)| c == TokenColor::Bold && t == "bold"),
         "doc bold renders"
     );
     assert!(
-        toks.iter().any(|&(c, t)| c == "accent" && t == "`"),
-        "doc backticks accent"
+        toks.iter()
+            .any(|&(c, t)| c == TokenColor::Delimiter && t == "`"),
+        "doc backticks delimiter"
     );
     assert!(
         toks.iter()
-            .any(|&(c, t)| c == "syntaxKeyword" || t == "code"),
+            .any(|&(c, t)| c == TokenColor::Keyword || t == "code"),
         "doc inner code classified"
     );
 }
@@ -267,21 +284,21 @@ fn test_doc_comment_table() {
     let toks = classify_line("/// | Col A | Col B |", Some(rs), None);
     assert!(
         toks.iter()
-            .any(|t| t.color == "muted" && t.text.contains('|')),
-        "pipes in doc comment table must be muted"
+            .any(|t| t.color == TokenColor::TableBorder && t.text.contains('|')),
+        "pipes in doc comment table must be table borders"
     );
     let align_toks = classify_line("/// |---|---|", Some(rs), None);
     assert!(
         align_toks
             .iter()
-            .any(|t| t.color == "muted" && t.text.contains('|')),
-        "pipes in doc comment alignment row must be muted"
+            .any(|t| t.color == TokenColor::TableBorder && t.text.contains('|')),
+        "pipes in doc comment alignment row must be table borders"
     );
     assert!(
         align_toks
             .iter()
-            .all(|t| t.color == "muted" || t.color == "syntaxComment"),
-        "alignment row must only contain muted or comment prefix tokens"
+            .all(|t| t.color == TokenColor::TableBorder || t.color == TokenColor::Comment),
+        "alignment row must only contain table_border or comment prefix tokens"
     );
 }
 
@@ -296,50 +313,50 @@ fn test_doc_comment_table_with_header_and_body() {
     assert!(
         h_toks
             .iter()
-            .any(|t| t.color == "muted" && t.text.contains('|')),
-        "header pipes must be muted"
+            .any(|t| t.color == TokenColor::TableBorder && t.text.contains('|')),
+        "header pipes must be table borders"
     );
     assert!(
-        h_toks.iter().any(|t| t.color == "mdItalic"
-            && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)
+        h_toks.iter().any(|t| t.color == TokenColor::TableHeader
+            && t.sgr == Some(SGR_BOLD_UNDERLINE)
             && t.text.contains("Col A")),
-        "header cells must be mdItalic with bold+underline"
+        "header cells must be table_header with bold+underline"
     );
 
     let a_toks = classify_line_with_next(align, Some(body), Some(rs), None);
     assert!(
         a_toks
             .iter()
-            .all(|t| t.color == "muted" || t.color == "syntaxComment"),
-        "alignment row must be muted"
+            .all(|t| t.color == TokenColor::TableBorder || t.color == TokenColor::Comment),
+        "alignment row must be table borders"
     );
 
     let b_toks = classify_line_with_next(body, None, Some(rs), None);
     assert!(
         b_toks
             .iter()
-            .any(|t| t.color == "muted" && t.text.contains('|')),
-        "body pipes must be muted"
+            .any(|t| t.color == TokenColor::TableBorder && t.text.contains('|')),
+        "body pipes must be table borders"
     );
     assert!(
         b_toks
             .iter()
-            .any(|t| t.color == "syntaxComment" && t.text.contains('1')),
-        "body cells must be syntaxComment"
+            .any(|t| t.color == TokenColor::Comment && t.text.contains('1')),
+        "body cells must be com"
     );
 }
 
 #[test]
 fn plain_comment_without_backtick_is_uniform_comment() {
     let rs = lang_profile("rs").unwrap();
-    // No backtick, no markdown triggers → the whole line is one syntaxComment
+    // No backtick, no markdown triggers → the whole line is one com
     // token.
     let toks = colors_of(
         "// a plain comment with **stars** and *italics* but no backticks",
         Some(rs),
     );
     assert_eq!(toks.len(), 1, "one token");
-    assert_eq!(toks[0].0, "syntaxComment");
+    assert_eq!(toks[0].0, TokenColor::Comment);
 }
 
 #[test]
@@ -397,16 +414,16 @@ fn test_markdown_tables_and_borders() {
     let toks = markdown_tokens(table);
     assert!(
         toks.iter()
-            .any(|t| t.color == "muted" && t.text.contains('|')),
-        "table pipes must be styled as muted"
+            .any(|t| t.color == TokenColor::TableBorder && t.text.contains('|')),
+        "table pipes must be styled as table borders"
     );
     assert!(
         toks.iter().any(|t| {
-            t.color == "mdItalic"
-                && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)
+            t.color == TokenColor::TableHeader
+                && t.sgr == Some(SGR_BOLD_UNDERLINE)
                 && t.text.contains("Col A")
         }),
-        "table head must be styled as mdItalic with bold+underline"
+        "table head must be styled as table_header with bold+underline"
     );
 }
 
@@ -416,35 +433,36 @@ fn test_markdown_table_alignment_and_inline_markup() {
         "| **Name** | `Type` | Description |\n| :--- | :---: | ---: |\n| foo | `u32` | A number |";
     let toks = markdown_tokens(table);
 
-    // Pipes and alignment row must be muted
-    let pipes_and_delims: Vec<_> = toks.iter().filter(|t| t.color == "muted").collect();
+    // Pipes and alignment row must be table borders
+    let pipes_and_delims: Vec<_> = toks
+        .iter()
+        .filter(|t| t.color == TokenColor::TableBorder)
+        .collect();
     assert!(
         !pipes_and_delims.is_empty(),
-        "must have muted table borders and alignment row"
+        "must have table_border borders and alignment row"
     );
     assert!(pipes_and_delims.iter().any(|t| t.text.contains("---")));
 
     // Header cells:
-    assert!(
-        toks.iter().any(|t| t.text == "Name"
-            && t.color == "mdBold"
-            && t.sgr == Some(MD_SGR_BOLD_UNDERLINE))
-    );
+    assert!(toks.iter().any(|t| t.text == "Name"
+        && t.color == TokenColor::Bold
+        && t.sgr == Some(SGR_BOLD_UNDERLINE)));
     assert!(toks.iter().any(|t| t.text == "Type"
-        && t.color == "syntaxString"
-        && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)));
+        && t.color == TokenColor::Code
+        && t.sgr == Some(SGR_BOLD_UNDERLINE)));
     assert!(toks.iter().any(|t| t.text == "Description"
-        && t.color == "mdItalic"
-        && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)));
+        && t.color == TokenColor::TableHeader
+        && t.sgr == Some(SGR_BOLD_UNDERLINE)));
 
     // Body cells:
     assert!(
         toks.iter()
-            .any(|t| t.text == "foo" && t.color == "text" && t.sgr.is_none())
+            .any(|t| t.text == "foo" && t.color.is_default() && t.sgr.is_none())
     );
     assert!(
         toks.iter()
-            .any(|t| t.text == "A number" && t.color == "text" && t.sgr.is_none())
+            .any(|t| t.text == "A number" && t.color.is_default() && t.sgr.is_none())
     );
 
     // Reconstruct byte-for-byte
@@ -457,8 +475,9 @@ fn test_markdown_single_line_table_row_and_alignment_row() {
     let row = "| Col A | Col B |";
     let toks = markdown_tokens(row);
     assert!(
-        toks.iter().any(|t| t.color == "muted" && t.text == "|"),
-        "single-line table row must classify pipes as muted"
+        toks.iter()
+            .any(|t| t.color == TokenColor::TableBorder && t.text == "|"),
+        "single-line table row must classify pipes as table borders"
     );
     let reconstructed: String = toks.iter().map(|t| t.text).collect();
     assert_eq!(reconstructed, row);
@@ -466,8 +485,10 @@ fn test_markdown_single_line_table_row_and_alignment_row() {
     let align = "| :--- | :---: | ---: |";
     let align_toks = markdown_tokens(align);
     assert!(
-        align_toks.iter().all(|t| t.color == "muted"),
-        "single-line table alignment row must be entirely muted"
+        align_toks
+            .iter()
+            .all(|t| t.color == TokenColor::TableBorder),
+        "single-line table alignment row must be entirely table borders"
     );
     let reconstructed_align: String = align_toks.iter().map(|t| t.text).collect();
     assert_eq!(reconstructed_align, align);
@@ -495,49 +516,49 @@ fn test_markdown_table_header_style_stacking_and_no_underlined_spaces() {
         }
     }
 
-    // `Name` must be mdBold with stacked bold+underline
+    // `Name` must be bld with stacked bold+underline
     let name_tok = single_toks
         .iter()
         .find(|t| t.text == "Name")
         .expect("Name token");
-    assert_eq!(name_tok.color, "mdBold");
-    assert_eq!(name_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    assert_eq!(name_tok.color, TokenColor::Bold);
+    assert_eq!(name_tok.sgr, Some(SGR_BOLD_UNDERLINE));
 
-    // `Type` must be syntaxString with stacked bold+underline
+    // `Type` must be code with stacked bold+underline
     let type_tok = single_toks
         .iter()
         .find(|t| t.text == "Type")
         .expect("Type token");
-    assert_eq!(type_tok.color, "syntaxString");
-    assert_eq!(type_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    assert_eq!(type_tok.color, TokenColor::Code);
+    assert_eq!(type_tok.sgr, Some(SGR_BOLD_UNDERLINE));
 
-    // `Description` must be mdItalic with bold+underline
+    // `Description` must be table_header with bold+underline
     let desc_tok = single_toks
         .iter()
         .find(|t| t.text == "Description")
         .expect("Description token");
-    assert_eq!(desc_tok.color, "mdItalic");
-    assert_eq!(desc_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    assert_eq!(desc_tok.color, TokenColor::TableHeader);
+    assert_eq!(desc_tok.sgr, Some(SGR_BOLD_UNDERLINE));
 
-    // All `|` must be muted
+    // All `|` must be table borders
     for t in single_toks.iter().filter(|t| t.text == "|") {
-        assert_eq!(t.color, "muted");
+        assert_eq!(t.color, TokenColor::TableBorder);
         assert_eq!(t.sgr, None);
     }
 
-    // Accents around `**Name**` and `` `Type` `` must be bold and underlined
+    // Delimiters around `**Name**` and `` `Type` `` must be bold and underlined
     let star_toks: Vec<_> = single_toks.iter().filter(|t| t.text == "**").collect();
     assert_eq!(star_toks.len(), 2, "must have 2 star tokens in single line");
     for t in star_toks {
-        assert_eq!(t.color, "accent");
-        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+        assert_eq!(t.color, TokenColor::Delimiter);
+        assert_eq!(t.sgr, Some(SGR_BOLD_UNDERLINE));
     }
 
     let tick_toks: Vec<_> = single_toks.iter().filter(|t| t.text == "`").collect();
     assert_eq!(tick_toks.len(), 2, "must have 2 tick tokens in single line");
     for t in tick_toks {
-        assert_eq!(t.color, "accent");
-        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+        assert_eq!(t.color, TokenColor::Delimiter);
+        assert_eq!(t.sgr, Some(SGR_BOLD_UNDERLINE));
     }
 
     // 2. Multi-line document classification (editor mode)
@@ -561,22 +582,22 @@ fn test_markdown_table_header_style_stacking_and_no_underlined_spaces() {
         .iter()
         .find(|t| t.text == "Name")
         .expect("Name token");
-    assert_eq!(doc_name_tok.color, "mdBold");
-    assert_eq!(doc_name_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    assert_eq!(doc_name_tok.color, TokenColor::Bold);
+    assert_eq!(doc_name_tok.sgr, Some(SGR_BOLD_UNDERLINE));
 
     let doc_type_tok = doc_header_toks
         .iter()
         .find(|t| t.text == "Type")
         .expect("Type token");
-    assert_eq!(doc_type_tok.color, "syntaxString");
-    assert_eq!(doc_type_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    assert_eq!(doc_type_tok.color, TokenColor::Code);
+    assert_eq!(doc_type_tok.sgr, Some(SGR_BOLD_UNDERLINE));
 
     let doc_desc_tok = doc_header_toks
         .iter()
         .find(|t| t.text == "Description")
         .expect("Description token");
-    assert_eq!(doc_desc_tok.color, "mdItalic");
-    assert_eq!(doc_desc_tok.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+    assert_eq!(doc_desc_tok.color, TokenColor::TableHeader);
+    assert_eq!(doc_desc_tok.sgr, Some(SGR_BOLD_UNDERLINE));
 
     let doc_star_toks: Vec<_> = doc_header_toks.iter().filter(|t| t.text == "**").collect();
     assert_eq!(
@@ -585,8 +606,8 @@ fn test_markdown_table_header_style_stacking_and_no_underlined_spaces() {
         "must have 2 star tokens in doc header"
     );
     for t in doc_star_toks {
-        assert_eq!(t.color, "accent");
-        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+        assert_eq!(t.color, TokenColor::Delimiter);
+        assert_eq!(t.sgr, Some(SGR_BOLD_UNDERLINE));
     }
 
     let doc_tick_toks: Vec<_> = doc_header_toks.iter().filter(|t| t.text == "`").collect();
@@ -596,8 +617,8 @@ fn test_markdown_table_header_style_stacking_and_no_underlined_spaces() {
         "must have 2 tick tokens in doc header"
     );
     for t in doc_tick_toks {
-        assert_eq!(t.color, "accent");
-        assert_eq!(t.sgr, Some(MD_SGR_BOLD_UNDERLINE));
+        assert_eq!(t.color, TokenColor::Delimiter);
+        assert_eq!(t.sgr, Some(SGR_BOLD_UNDERLINE));
     }
 }
 
@@ -610,37 +631,39 @@ fn test_markdown_document_tokens() {
     assert!(
         lines[0]
             .iter()
-            .any(|t| t.color == "accent" && t.text == "#")
+            .any(|t| t.color == TokenColor::Delimiter && t.text == "#")
     );
-    assert!(
-        lines[0]
-            .iter()
-            .any(|t| t.color == "accent" && t.sgr == Some(MD_SGR_BOLD) && t.text == "Header")
-    );
+    assert!(lines[0].iter().any(|t| t.color == TokenColor::Delimiter
+        && t.sgr == Some(SGR_BOLD)
+        && t.text == "Header"));
     // Line 1: Empty
     assert!(lines[1].is_empty());
     // Line 2: Table Head
     assert!(
         lines[2]
             .iter()
-            .any(|t| t.color == "muted" && t.text.contains('|'))
+            .any(|t| t.color == TokenColor::TableBorder && t.text.contains('|'))
     );
-    assert!(lines[2].iter().any(|t| t.color == "mdItalic"
-        && t.sgr == Some(MD_SGR_BOLD_UNDERLINE)
+    assert!(lines[2].iter().any(|t| t.color == TokenColor::TableHeader
+        && t.sgr == Some(SGR_BOLD_UNDERLINE)
         && t.text == "Col A"));
     // Line 3: Table Delimiter
-    assert!(lines[3].iter().all(|t| t.color == "muted"));
+    assert!(lines[3].iter().all(|t| t.color == TokenColor::TableBorder));
     // Line 4: Table Body
     assert!(
         lines[4]
             .iter()
-            .any(|t| t.color == "muted" && t.text.contains('|'))
+            .any(|t| t.color == TokenColor::TableBorder && t.text.contains('|'))
     );
-    assert!(lines[4].iter().any(|t| t.color == "text" && t.text == "1"));
     assert!(
         lines[4]
             .iter()
-            .all(|t| t.color == "muted" || t.color == "text")
+            .any(|t| t.color.is_default() && t.text == "1")
+    );
+    assert!(
+        lines[4]
+            .iter()
+            .all(|t| t.color == TokenColor::TableBorder || t.color.is_default())
     );
 }
 
@@ -664,13 +687,13 @@ fn test_markdown_github_alerts_and_blockquotes() {
     let toks = markdown_tokens(note);
     assert!(
         toks.iter()
-            .any(|t| t.color == "accent" && t.text.contains('>')),
-        "blockquote chevron must be accent"
+            .any(|t| t.color == TokenColor::Delimiter && t.text.contains('>')),
+        "blockquote chevron must be delimiter"
     );
     assert!(
         toks.iter()
-            .any(|t| t.color == "syntaxFunction" && t.sgr == Some(MD_SGR_BOLD)),
-        "note alert must have syntaxFunction bold styling"
+            .any(|t| t.color == TokenColor::Function && t.sgr == Some(SGR_BOLD)),
+        "note alert must have fun bold styling"
     );
 
     let warning = "> [!WARNING]\n> Be careful";
@@ -678,8 +701,8 @@ fn test_markdown_github_alerts_and_blockquotes() {
     assert!(
         w_toks
             .iter()
-            .any(|t| t.color == "syntaxKeyword" && t.sgr == Some(MD_SGR_BOLD)),
-        "warning alert must have syntaxKeyword bold styling"
+            .any(|t| t.color == TokenColor::Keyword && t.sgr == Some(SGR_BOLD)),
+        "warning alert must have kwd bold styling"
     );
 }
 
@@ -692,19 +715,19 @@ fn test_markdown_html_tags() {
 
     assert!(
         toks.iter()
-            .any(|t| t.color == "syntaxKeyword" && t.text == "<summary>")
+            .any(|t| t.color == TokenColor::Keyword && t.text == "<summary>")
     );
     assert!(
         toks.iter()
-            .any(|t| t.color == "syntaxKeyword" && t.text == "<b>")
+            .any(|t| t.color == TokenColor::Keyword && t.text == "<b>")
     );
     assert!(
         toks.iter()
-            .any(|t| t.color == "mdBold" && t.text == "plan/Markdown Output Format.md")
+            .any(|t| t.color == TokenColor::Bold && t.text == "plan/Markdown Output Format.md")
     );
     assert!(
         toks.iter()
-            .any(|t| t.color == "syntaxString" && t.text == "(deleted: -118 +0 ~0)")
+            .any(|t| t.color == TokenColor::Code && t.text == "(deleted: -118 +0 ~0)")
     );
 }
 
@@ -742,8 +765,8 @@ fn test_markdown_horizontal_rule_separator() {
     let toks = markdown_tokens(md);
     assert_eq!(toks.len(), 1);
     assert!(toks[0].text.starts_with("---"));
-    assert_eq!(toks[0].color, "mdRule");
-    assert_eq!(toks[0].sgr, Some(MD_SGR_BOLD));
+    assert_eq!(toks[0].color, TokenColor::Rule);
+    assert_eq!(toks[0].sgr, Some(SGR_BOLD));
 }
 
 #[test]
@@ -1050,7 +1073,7 @@ fn test_json_and_jsonl_syntax_profile() {
     let json_prof = lang_profile("json").expect("json profile");
     let jsonl_prof = lang_profile("jsonl").expect("jsonl profile");
     assert!(
-        std::ptr::eq(json_prof, jsonl_prof),
+        ptr::eq(json_prof, jsonl_prof),
         "json and jsonl must share the same canonical profile instance"
     );
 
@@ -1096,14 +1119,14 @@ fn test_json_and_jsonl_syntax_profile() {
     assert!(
         tokens
             .iter()
-            .any(|t| t.color == "syntaxString" && t.text == "\"enabled\""),
-        "property name must be syntaxString"
+            .any(|t| t.color == TokenColor::String && t.text == "\"enabled\""),
+        "property name must be str"
     );
     assert!(
         tokens
             .iter()
-            .any(|t| t.color == "syntaxKeyword" && t.text == "true"),
-        "boolean literal must be syntaxKeyword"
+            .any(|t| t.color == TokenColor::Keyword && t.text == "true"),
+        "boolean literal must be kwd"
     );
 
     // Token classification for JSONL row
@@ -1112,32 +1135,32 @@ fn test_json_and_jsonl_syntax_profile() {
     assert!(
         tokens_l
             .iter()
-            .any(|t| t.color == "syntaxNumber" && t.text == "42"),
-        "number must be syntaxNumber"
+            .any(|t| t.color == TokenColor::Number && t.text == "42"),
+        "number must be snb"
     );
     assert!(
         tokens_l
             .iter()
-            .any(|t| t.color == "syntaxKeyword" && t.text == "false"),
-        "false must be syntaxKeyword"
+            .any(|t| t.color == TokenColor::Keyword && t.text == "false"),
+        "false must be kwd"
     );
     assert!(
         tokens_l
             .iter()
-            .any(|t| t.color == "syntaxKeyword" && t.text == "null"),
-        "null must be syntaxKeyword"
+            .any(|t| t.color == TokenColor::Keyword && t.text == "null"),
+        "null must be kwd"
     );
     assert!(
         tokens_l
             .iter()
-            .any(|t| t.color == "syntaxString" && t.text == "\"diffuse\""),
-        "string must be syntaxString"
+            .any(|t| t.color == TokenColor::String && t.text == "\"diffuse\""),
+        "string must be str"
     );
     assert!(
         tokens_l
             .iter()
-            .any(|t| t.color == "syntaxOperator" && t.text == ":"),
-        "colon must be syntaxOperator"
+            .any(|t| t.color == TokenColor::Operator && t.text == ":"),
+        "colon must be opr"
     );
 }
 
@@ -1271,4 +1294,10 @@ fn test_language_syntax_attributes_and_bypasses() {
     assert!(rs.is_decl_break("#[derive(Debug)]"));
     assert!(py.is_decl_break("@dataclass"));
     assert!(py.is_decl_break("# A python comment"));
+}
+
+#[test]
+fn test_quote_and_fence_border_constants() {
+    assert_eq!(TokenColor::QuoteBorder.wire_code(), Some("qbo"));
+    assert_eq!(TokenColor::FenceBorder.wire_code(), Some("fbo"));
 }

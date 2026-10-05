@@ -1,6 +1,12 @@
 //! TUI App State Machine, Layout Engine & Flat Visual Row Navigation.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::{
     core::{
@@ -68,16 +74,16 @@ pub struct AppState {
     pub file_finder: Option<crate::finder::FileFinderState>,
     pub collapsed_files: HashSet<usize>,
     pub loading_files: HashSet<usize>,
-    pub on_demand_tx: Option<std::sync::mpsc::Sender<(usize, OutputFile)>>,
-    pub on_demand_rx: Option<std::sync::mpsc::Receiver<(usize, OutputFile)>>,
+    pub on_demand_tx: Option<mpsc::Sender<(usize, OutputFile)>>,
+    pub on_demand_rx: Option<mpsc::Receiver<(usize, OutputFile)>>,
     pub last_content_width: usize,
     pub terminal_width: usize,
     pub is_dragging_scrollbar: bool,
     pub last_viewport_start: usize,
     pub is_streaming: bool,
     pub commit_range: Option<String>,
-    pub last_stream_activity: Option<std::time::Instant>,
-    pub start_time: std::time::Instant,
+    pub last_stream_activity: Option<Instant>,
+    pub start_time: Instant,
     pub expand_lines: usize,
     /// Viewport pin set by programmatic view pivots (context expansion):
     /// `(scroll, row_idx_at_pin_time)`. Every `render_frame` applies it
@@ -100,7 +106,7 @@ impl AppState {
         notes_path: PathBuf,
         theme: DiffuseTheme,
     ) -> Self {
-        let mut collapsed_files = std::collections::HashSet::new();
+        let mut collapsed_files = HashSet::new();
         for (fi, f) in output.files.iter().enumerate() {
             let has_content_changes = f.counts.adds > 0 || f.counts.dels > 0 || f.counts.mods > 0;
             if f.is_binary
@@ -176,7 +182,7 @@ impl AppState {
             is_streaming: false,
             commit_range: None,
             last_stream_activity: None,
-            start_time: std::time::Instant::now(),
+            start_time: Instant::now(),
             expand_lines: DEFAULT_EXPAND_LINES,
             scroll_pin: None,
             auto_scroll_on_load: None,
@@ -240,25 +246,25 @@ impl AppState {
     }
 
     pub fn record_stream_activity(&mut self) {
-        self.last_stream_activity = Some(std::time::Instant::now());
+        self.last_stream_activity = Some(Instant::now());
     }
 
-    pub fn record_stream_activity_at(&mut self, now: std::time::Instant) {
+    pub fn record_stream_activity_at(&mut self, now: Instant) {
         self.last_stream_activity = Some(now);
     }
 
     pub fn streaming_dot(&self) -> &'static str {
-        self.streaming_dot_at(std::time::Instant::now())
+        self.streaming_dot_at(Instant::now())
     }
 
-    pub fn streaming_dot_at(&self, now: std::time::Instant) -> &'static str {
+    pub fn streaming_dot_at(&self, now: Instant) -> &'static str {
         if !self.is_streaming {
             return "●";
         }
         let Some(last_activity) = self.last_stream_activity else {
             return "●";
         };
-        const DELAY_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(500);
+        const DELAY_THRESHOLD: Duration = Duration::from_millis(500);
         const BLINK_INTERVAL_MS: u128 = 200;
 
         if now.duration_since(last_activity) < DELAY_THRESHOLD {
@@ -282,7 +288,7 @@ impl AppState {
     }
 
     pub fn enable_async_on_demand(&mut self) {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         self.on_demand_tx = Some(tx);
         self.on_demand_rx = Some(rx);
     }
@@ -351,7 +357,7 @@ impl AppState {
             let repo = self.notes_key.clone();
             let expand_lines = self.expand_lines;
 
-            std::thread::spawn(move || {
+            thread::spawn(move || {
                 let opts = diffuse_core::PipelineOptions::default()
                     .with_repo(repo_root.to_str().map(String::from))
                     .with_notes(Some(notes), Some(repo))

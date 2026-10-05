@@ -8,6 +8,8 @@
 //! independent subproblems. Guarantees complete L1 cache residency even for
 //! massive sequences.
 
+use std::mem;
+
 use super::{DiffEngine, EditOp, LcsEngine};
 
 /// Hirschberg's linear-space divide-and-conquer LCS engine.
@@ -113,7 +115,7 @@ impl HirschbergLcs {
                     curr[j + 1] = prev[j + 1].max(curr[j]);
                 }
             }
-            std::mem::swap(&mut prev, &mut curr);
+            mem::swap(&mut prev, &mut curr);
         }
 
         prev
@@ -133,7 +135,7 @@ impl HirschbergLcs {
                     curr[j + 1] = prev[j + 1].max(curr[j]);
                 }
             }
-            std::mem::swap(&mut prev, &mut curr);
+            mem::swap(&mut prev, &mut curr);
         }
 
         prev

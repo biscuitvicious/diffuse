@@ -1,6 +1,7 @@
 //! Unit tests for tokenization, LCS, and word-level diff spans.
 
 use super::*;
+use crate::merge::{RunKind, merged_runs};
 #[test]
 fn word_diff_highlighting() {
     // Underscores and operators are separate tokens, so
@@ -525,12 +526,12 @@ fn test_lcs_symmetric_tie_breaker_json_runs() {
             ws,
         ),
     };
-    let runs = crate::merge::merged_runs(&r);
+    let runs = merged_runs(&r);
     // Find the run that adds the new object: it must start cleanly with
     // {"kind":"common" rather than splitting "kind" from its value.
     let add_run = runs
         .iter()
-        .find(|run| matches!(run.kind, crate::merge::RunKind::Add))
+        .find(|run| matches!(run.kind, RunKind::Add))
         .expect("should have an add run");
     assert_eq!(
         add_run.text,
@@ -719,10 +720,9 @@ fn test_note_lines_addition_alignment() {
     let formatted: String = runs
         .iter()
         .map(|(kind, text)| match kind {
-            RunKind::Common | RunKind::Ctx => text.clone(),
+            RunKind::Ctx => text.clone(),
             RunKind::Del => format!("[-{text}-]"),
             RunKind::Add => format!("{{+{text}+}}"),
-            RunKind::Mov => format!("[~{text}~]"),
         })
         .collect();
     assert_eq!(
@@ -742,10 +742,9 @@ fn test_token_is_alnum_replacement() {
     let formatted: String = runs
         .iter()
         .map(|(kind, text)| match kind {
-            RunKind::Common | RunKind::Ctx => text.clone(),
+            RunKind::Ctx => text.clone(),
             RunKind::Del => format!("[-{text}-]"),
             RunKind::Add => format!("{{+{text}+}}"),
-            RunKind::Mov => format!("[~{text}~]"),
         })
         .collect();
     assert_eq!(
@@ -762,10 +761,9 @@ fn test_prefix_gutter_comment_alignment() {
     let formatted: String = runs
         .iter()
         .map(|(kind, text)| match kind {
-            RunKind::Common | RunKind::Ctx => text.clone(),
+            RunKind::Ctx => text.clone(),
             RunKind::Del => format!("[-{text}-]"),
             RunKind::Add => format!("{{+{text}+}}"),
-            RunKind::Mov => format!("[~{text}~]"),
         })
         .collect();
     assert_eq!(

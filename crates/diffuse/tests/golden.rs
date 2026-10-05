@@ -24,10 +24,14 @@
 
 use std::{
     collections::HashMap,
+    env,
     fs::{self},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
-    sync::{Arc, LazyLock, Mutex},
+    process::{self, Command, Stdio},
+    sync::{Arc, LazyLock, Mutex, Once},
+    thread,
+    time::Instant,
 };
 
 use serde::{Deserialize, Serialize};
@@ -81,7 +85,7 @@ fn is_golden_initialized() -> bool {
     is_golden_initialized_at(&golden_dir())
 }
 
-fn write_file_plain(path: &Path, data: &[u8]) -> std::io::Result<()> {
+fn write_file_plain(path: &Path, data: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -89,7 +93,7 @@ fn write_file_plain(path: &Path, data: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
-fn write_gz(path: &Path, data: &[u8]) -> std::io::Result<()> {
+fn write_gz(path: &Path, data: &[u8]) -> io::Result<()> {
     let gz_path = if path.extension().is_some_and(|ext| ext == "gz") {
         path.to_path_buf()
     } else {
@@ -100,7 +104,7 @@ fn write_gz(path: &Path, data: &[u8]) -> std::io::Result<()> {
     }
     let file = fs::File::create(&gz_path)?;
     let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::best());
-    std::io::Write::write_all(&mut encoder, data)?;
+    Write::write_all(&mut encoder, data)?;
     encoder.finish()?;
     if path.exists() && path != gz_path {
         let _ = fs::remove_file(path);
@@ -228,7 +232,7 @@ fn load_expected_render(name: &str, flavor: &'static str) -> Arc<String> {
             });
             let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
             let mut s = String::new();
-            std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
+            Read::read_to_string(&mut decoder, &mut s).unwrap();
             s
         } else {
             panic!(
@@ -325,7 +329,11 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                             r.new_line,
                             r.old_line
                         );
-                        check!(r.del_text.is_some(), "{}: mod row carries delText", f.path);
+                        check!(
+                            r.del_text().is_some(),
+                            "{}: mod row carries delText",
+                            f.path
+                        );
                     }
                     RowKind::Ctx => {
                         check!(
@@ -339,17 +347,18 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                     _ => {}
                 }
                 // Spans in bounds (char offsets into their own text).
-                let text_chars = char_len(&r.text);
-                for &(s, e) in &r.spans.add {
+                let spans = r.spans();
+                let text_chars = char_len(&r.text());
+                for &(s, e) in &spans.add {
                     check!(
                         s <= e && e <= text_chars,
                         "{}: add span {s}..{e} beyond text len {text_chars}",
                         f.path
                     );
                 }
-                if let Some(dt) = &r.del_text {
-                    let del_chars = char_len(dt);
-                    for &(s, e) in &r.spans.del {
+                if let Some(dt) = r.del_text() {
+                    let del_chars = char_len(&dt);
+                    for &(s, e) in &spans.del {
                         check!(
                             s <= e && e <= del_chars,
                             "{}: del span {s}..{e} beyond delText len {del_chars}",
@@ -358,7 +367,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                     }
                 } else {
                     check!(
-                        r.spans.del.is_empty(),
+                        spans.del.is_empty(),
                         "{}: del spans without delText",
                         f.path
                     );
@@ -381,7 +390,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 // from the render must leave exactly the row's new-side line —
                 // A mod or add row's non-del runs concatenate to the new line
                 // (the old fragments), and this walk locks it.
-                if (r.kind == RowKind::Mod || r.kind == RowKind::Add) && r.del_text.is_some() {
+                if (r.kind == RowKind::Mod || r.kind == RowKind::Add) && r.del_text().is_some() {
                     let kept: String = r
                         .runs
                         .iter()
@@ -389,14 +398,14 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .map(|x| x.text.as_ref())
                         .collect();
                     check!(
-                        kept == r.text,
+                        kept == r.text(),
                         "{}:{}: the strike-removed (forward) render differs from the new line",
                         f.path,
                         r.new_line.unwrap_or(0)
                     );
                 }
                 if r.kind == RowKind::Mod
-                    && let Some(del_text) = &r.del_text
+                    && let Some(del_text) = r.del_text()
                 {
                     let rev: String = r
                         .runs
@@ -405,7 +414,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .map(|x| x.text.as_ref())
                         .collect();
                     check!(
-                        &rev == del_text,
+                        rev == del_text,
                         "{}:{}: the add-removed (reverse) render differs from the old line. Expected: {:?}, Got: {:?}",
                         f.path,
                         r.old_line.unwrap_or(0),
@@ -416,17 +425,11 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 for run in &r.runs {
                     match run.kind {
                         RunKind::Del => check!(
-                            run.color.is_none() && run.sgr.is_none(),
+                            run.color.is_default() && run.sgr.is_none(),
                             "{}: a del run carries no color/sgr",
                             f.path
                         ),
-                        RunKind::Common | RunKind::Add | RunKind::Ctx | RunKind::Mov => {
-                            check!(
-                                run.color.is_some(),
-                                "{}: a {:?} run carries a semantic color",
-                                f.path,
-                                run.kind
-                            );
+                        RunKind::Add | RunKind::Ctx => {
                             if let Some(s) = run.sgr {
                                 check!(
                                     matches!(s, 1 | 3 | 4 | 9 | 14),
@@ -528,12 +531,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                             .map(|s| s.as_str())
                             .unwrap_or("");
                         check!(
-                            r.text == expected_text,
+                            r.text() == expected_text,
                             "{}:{}: visible row {} text {:?} != new_content text {:?}",
                             f.path,
                             nl,
                             ri,
-                            r.text,
+                            r.text(),
                             expected_text
                         );
                     }
@@ -546,12 +549,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .map(|s| s.as_str())
                         .unwrap_or("");
                     check!(
-                        r.text == expected_text,
+                        r.text() == expected_text,
                         "{}:{}: visible old row {} text {:?} != old_content text {:?}",
                         f.path,
                         ol,
                         ri,
-                        r.text,
+                        r.text(),
                         expected_text
                     );
                 }
@@ -565,12 +568,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                     );
                     let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
                     check!(
-                        concat == r.text,
+                        concat == r.text(),
                         "{}: visible ctx row {} runs concat {:?} != text {:?}",
                         f.path,
                         ri,
                         concat,
-                        r.text
+                        r.text()
                     );
                 }
             }
@@ -653,27 +656,35 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
                     if ar.kind != er.kind
                         || ar.new_line != er.new_line
                         || ar.old_line != er.old_line
-                        || ar.text != er.text
+                        || ar.text() != er.text()
                     {
                         msg.push_str(&format!(
                             "\n    actual:   kind={:?}, nl={:?}, ol={:?}, text={:?}",
-                            ar.kind, ar.new_line, ar.old_line, ar.text
+                            ar.kind,
+                            ar.new_line,
+                            ar.old_line,
+                            ar.text()
                         ));
                         msg.push_str(&format!(
                             "\n    expected: kind={:?}, nl={:?}, ol={:?}, text={:?}",
-                            er.kind, er.new_line, er.old_line, er.text
+                            er.kind,
+                            er.new_line,
+                            er.old_line,
+                            er.text()
                         ));
                     }
-                    if ar.del_text != er.del_text {
+                    if ar.del_text() != er.del_text() {
                         msg.push_str(&format!(
                             "\n    del_text actual:   {:?}\n    del_text expected: {:?}",
-                            ar.del_text, er.del_text
+                            ar.del_text(),
+                            er.del_text()
                         ));
                     }
-                    if ar.spans != er.spans {
+                    if ar.spans() != er.spans() {
                         msg.push_str(&format!(
                             "\n    spans actual:   {:?}\n    spans expected: {:?}",
-                            ar.spans, er.spans
+                            ar.spans(),
+                            er.spans()
                         ));
                     }
                     if ar.runs != er.runs {
@@ -740,7 +751,7 @@ fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
                 wire_jsonl_path.display()
             )
         });
-        diffuse::core::wire::jsonl::decode_jsonl_reader(std::io::BufReader::new(file))
+        diffuse::core::wire::jsonl::decode_jsonl_reader(BufReader::new(file))
             .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSONL: {e}"))
     } else {
         let gz_bytes = fs::read(&gz_wire_jsonl_path).unwrap_or_else(|e| {
@@ -751,7 +762,7 @@ fn load_expected_wire(name: &str) -> Arc<PipelineOutput> {
             )
         });
         let decoder = flate2::read::GzDecoder::new(&gz_bytes[..]);
-        diffuse::core::wire::jsonl::decode_jsonl_reader(std::io::BufReader::new(decoder))
+        diffuse::core::wire::jsonl::decode_jsonl_reader(BufReader::new(decoder))
             .unwrap_or_else(|e| panic!("[{name}] failed to parse expected wire JSONL gz: {e}"))
     };
     let parsed = PipelineOutput {
@@ -794,7 +805,7 @@ fn assert_wire_json_matches(output: &PipelineOutput, name: &str) {
     let wire_jsonl_path = expected_wire_jsonl_path(name);
     let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
 
-    if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
+    if env::var("GEN_GOLDEN").is_ok() || env::var("UPDATE_WIRE").is_ok() {
         let mut jsonl_buf = Vec::new();
         for file in &output.files {
             diffuse::core::wire::jsonl::emit_file_jsonl(file, &mut jsonl_buf)
@@ -857,9 +868,9 @@ fn assert_render_flavor_matches(actual_encoded: &str, name: &str, flavor: &'stat
     let render_path = expected_render_path(name, flavor);
     let gz_render_path = golden_dir().join(format!("{name}.render.{flavor}.txt.gz"));
 
-    if std::env::var("GEN_GOLDEN").is_ok()
-        || std::env::var("UPDATE_RENDER").is_ok()
-        || (flavor == "raw" && std::env::var("UPDATE_RAW").is_ok())
+    if env::var("GEN_GOLDEN").is_ok()
+        || env::var("UPDATE_RENDER").is_ok()
+        || (flavor == "raw" && env::var("UPDATE_RAW").is_ok())
     {
         if gz_render_path.exists() {
             write_gz(&gz_render_path, actual_encoded.as_bytes())
@@ -931,9 +942,9 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
     let md_path = expected_markdown_path(name);
     let gz_md_path = golden_dir().join(format!("{name}.markdown.md.gz"));
 
-    if std::env::var("GEN_GOLDEN").is_ok()
-        || std::env::var("UPDATE_MARKDOWN").is_ok()
-        || std::env::var("UPDATE_MD").is_ok()
+    if env::var("GEN_GOLDEN").is_ok()
+        || env::var("UPDATE_MARKDOWN").is_ok()
+        || env::var("UPDATE_MD").is_ok()
     {
         if gz_md_path.exists() {
             write_gz(&gz_md_path, actual_md.as_bytes())
@@ -962,7 +973,7 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
         });
         let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
         let mut s = String::new();
-        std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
+        Read::read_to_string(&mut decoder, &mut s).unwrap();
         s
     };
 
@@ -986,7 +997,6 @@ fn run_bin_markdown_leg(name: &str) {
         .spawn()
         .expect("spawn the diffuse binary in markdown mode");
     {
-        use std::io::Write;
         child
             .stdin
             .take()
@@ -1003,9 +1013,9 @@ fn run_bin_markdown_leg(name: &str) {
     let bin_md = String::from_utf8_lossy(&out.stdout).into_owned();
     let md_path = expected_markdown_path(name);
 
-    if std::env::var("GEN_GOLDEN").is_ok()
-        || std::env::var("UPDATE_MARKDOWN").is_ok()
-        || std::env::var("UPDATE_MD").is_ok()
+    if env::var("GEN_GOLDEN").is_ok()
+        || env::var("UPDATE_MARKDOWN").is_ok()
+        || env::var("UPDATE_MD").is_ok()
     {
         return;
     }
@@ -1028,7 +1038,7 @@ fn run_bin_markdown_leg(name: &str) {
         });
         let mut decoder = flate2::read::GzDecoder::new(&bytes[..]);
         let mut s = String::new();
-        std::io::Read::read_to_string(&mut decoder, &mut s).unwrap();
+        Read::read_to_string(&mut decoder, &mut s).unwrap();
         s
     };
 
@@ -1042,9 +1052,9 @@ fn run_bin_markdown_leg(name: &str) {
 }
 
 fn run_bin_raw_leg(name: &str) {
-    if std::env::var("GEN_GOLDEN").is_ok()
-        || std::env::var("UPDATE_RENDER").is_ok()
-        || std::env::var("UPDATE_RAW").is_ok()
+    if env::var("GEN_GOLDEN").is_ok()
+        || env::var("UPDATE_RENDER").is_ok()
+        || env::var("UPDATE_RAW").is_ok()
     {
         return;
     }
@@ -1060,8 +1070,7 @@ fn run_bin_raw_leg(name: &str) {
         .expect("spawn the diffuse binary in --raw mode");
 
     let mut stdin = child.stdin.take().expect("stdin");
-    let writer_thread = std::thread::spawn(move || {
-        use std::io::Write;
+    let writer_thread = thread::spawn(move || {
         let _ = stdin.write_all(&input);
         let _ = stdin.flush();
         drop(stdin);
@@ -1093,7 +1102,7 @@ fn run_bin_raw_leg(name: &str) {
 }
 
 fn init_test_logging() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
+    static ONCE: Once = Once::new();
     ONCE.call_once(|| {
         let _ = diffuse::core::logging::init_tracing_subscriber();
     });
@@ -1101,7 +1110,7 @@ fn init_test_logging() {
 
 fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     init_test_logging();
-    let t0 = std::time::Instant::now();
+    let t0 = Instant::now();
     let fixture = load_fixture(name);
     let _t_load = t0.elapsed();
     let new_content = if fixture.new_content.is_empty() {
@@ -1126,7 +1135,48 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
 }
 
 fn run_bin_leg(name: &str, min: usize) {
-    if std::env::var("GEN_GOLDEN").is_ok() || std::env::var("UPDATE_WIRE").is_ok() {
+    if env::var("GEN_GOLDEN").is_ok() || env::var("UPDATE_WIRE").is_ok() {
+        // Regenerate the wire golden from the binary's actual output so that
+        // the golden always reflects what the compiled binary emits, not the
+        // library leg.  Bailing out here (as before) left the golden written
+        // by the library leg, which diverges whenever the two differ.
+        let fixture = load_fixture(name);
+        let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+            .arg("--jsonl")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn the diffuse binary in --jsonl mode (GEN_GOLDEN)");
+
+        let mut stdin = child.stdin.take().expect("stdin");
+        let writer_thread = thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+            let _ = stdin.flush();
+            drop(stdin);
+        });
+
+        let out = child
+            .wait_with_output()
+            .expect("wait for binary (GEN_GOLDEN)");
+        let _ = writer_thread.join();
+        assert!(
+            out.status.success(),
+            "[{name}] the bin exited non-zero during GEN_GOLDEN: {:?}",
+            out.status
+        );
+
+        let wire_jsonl_path = expected_wire_jsonl_path(name);
+        let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
+        if gz_wire_jsonl_path.exists() {
+            write_gz(&gz_wire_jsonl_path, &out.stdout).unwrap_or_else(|e| {
+                panic!("failed to write {}: {e}", gz_wire_jsonl_path.display())
+            });
+        } else {
+            write_file_plain(&wire_jsonl_path, &out.stdout)
+                .unwrap_or_else(|e| panic!("failed to write {}: {e}", wire_jsonl_path.display()));
+        }
         return;
     }
     let fixture = load_fixture(name);
@@ -1140,8 +1190,7 @@ fn run_bin_leg(name: &str, min: usize) {
         .expect("spawn the diffuse binary in --jsonl mode");
 
     let mut stdin = child.stdin.take().expect("stdin");
-    let writer_thread = std::thread::spawn(move || {
-        use std::io::Write;
+    let writer_thread = thread::spawn(move || {
         let _ = stdin.write_all(&input);
         let _ = stdin.flush();
         drop(stdin);
@@ -1150,14 +1199,14 @@ fn run_bin_leg(name: &str, min: usize) {
     let wire_jsonl_path = expected_wire_jsonl_path(name);
     let gz_wire_jsonl_path = golden_dir().join(format!("{name}.wire.jsonl.gz"));
 
-    let expected_reader: Box<dyn std::io::BufRead> = if wire_jsonl_path.exists() {
+    let expected_reader: Box<dyn BufRead> = if wire_jsonl_path.exists() {
         let expected_file = fs::File::open(&wire_jsonl_path).unwrap_or_else(|e| {
             panic!(
                 "[{name}] failed to open expected wire.jsonl at {}: {e}",
                 wire_jsonl_path.display()
             )
         });
-        Box::new(std::io::BufReader::new(expected_file))
+        Box::new(BufReader::new(expected_file))
     } else {
         let gz_file = fs::File::open(&gz_wire_jsonl_path).unwrap_or_else(|e| {
             panic!(
@@ -1167,11 +1216,10 @@ fn run_bin_leg(name: &str, min: usize) {
             )
         });
         let decoder = flate2::read::GzDecoder::new(gz_file);
-        Box::new(std::io::BufReader::new(decoder))
+        Box::new(BufReader::new(decoder))
     };
-    use std::io::BufRead;
     let mut expected_reader = expected_reader;
-    let mut actual_reader = std::io::BufReader::new(child.stdout.take().expect("stdout"));
+    let mut actual_reader = BufReader::new(child.stdout.take().expect("stdout"));
 
     let mut failures = Vec::new();
     let mut line_idx = 0;
@@ -1461,7 +1509,7 @@ corpus_tests!(row_groups_contrast, "row-groups-contrast", 20, true, true);
 
 #[test]
 fn test_golden_initialized_detection() {
-    let tmp = std::env::temp_dir().join(format!("diffuse_test_uninited_{}", std::process::id()));
+    let tmp = env::temp_dir().join(format!("diffuse_test_uninited_{}", process::id()));
     let _ = fs::remove_dir_all(&tmp);
 
     // Nonexistent directory

@@ -1,7 +1,10 @@
 //! Unit tests for note persistence, markdown formatting, and querying.
 
+use std::{ffi::OsString, fs, mem, path::PathBuf, process::Command};
+
+use crate::syntax::color::TokenColor;
+
 use super::*;
-use std::{ffi::OsString, path::PathBuf};
 
 #[test]
 fn test_state_dir_prefers_xdg_state_home() {
@@ -248,7 +251,7 @@ fn test_head_commit_resolves_temp_repo() {
     assert_eq!(head_commit(dir), None);
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -261,7 +264,7 @@ fn test_head_commit_resolves_temp_repo() {
 
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
-    std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit1"]);
 
@@ -283,7 +286,7 @@ fn test_notes_commit_for_ranges() {
     let dir = tmp.path();
 
     let run = |args: &[&str]| {
-        let out = std::process::Command::new("git")
+        let out = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
@@ -298,22 +301,22 @@ fn test_notes_commit_for_ranges() {
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "test"]);
 
-    std::fs::write(dir.join("a.rs"), "1\n").unwrap();
+    fs::write(dir.join("a.rs"), "1\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit1"]);
     let c1 = head_commit(dir).unwrap();
 
-    std::fs::write(dir.join("a.rs"), "2\n").unwrap();
+    fs::write(dir.join("a.rs"), "2\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit2"]);
     let c2 = head_commit(dir).unwrap();
 
-    std::fs::write(dir.join("a.rs"), "3\n").unwrap();
+    fs::write(dir.join("a.rs"), "3\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit3"]);
     let c3 = head_commit(dir).unwrap();
 
-    std::fs::write(dir.join("a.rs"), "4\n").unwrap();
+    fs::write(dir.join("a.rs"), "4\n").unwrap();
     run(&["add", "."]);
     run(&["commit", "-qm", "commit4"]);
     let c4 = head_commit(dir).unwrap();
@@ -403,10 +406,10 @@ fn test_note_runs_inline() {
         ]
     );
 
-    let colors: Vec<Option<&str>> = runs.iter().map(|t| t.color.as_deref()).collect();
-    assert_eq!(colors[0], Some("text"));
-    assert_eq!(colors[2], Some("mdBold"));
-    assert_eq!(colors[6], Some("syntaxString"));
+    let colors: Vec<TokenColor> = runs.iter().map(|t| t.color).collect();
+    assert_eq!(colors[0], TokenColor::Default);
+    assert_eq!(colors[2], TokenColor::Bold);
+    assert_eq!(colors[6], TokenColor::Code);
 }
 
 #[test]
@@ -436,25 +439,25 @@ fn test_note_runs_underscores_and_asterisks() {
         ]
     );
 
-    let colors: Vec<Option<&str>> = runs.iter().map(|t| t.color.as_deref()).collect();
+    let colors: Vec<TokenColor> = runs.iter().map(|t| t.color).collect();
     assert_eq!(
         colors,
         vec![
-            Some("accent"),
-            Some("mdBold"),
-            Some("accent"),
-            Some("text"),
-            Some("accent"),
-            Some("mdBold"),
-            Some("accent"),
-            Some("text"),
-            Some("accent"),
-            Some("mdItalic"),
-            Some("accent"),
-            Some("text"),
-            Some("accent"),
-            Some("mdItalic"),
-            Some("accent")
+            TokenColor::Delimiter,
+            TokenColor::Bold,
+            TokenColor::Delimiter,
+            TokenColor::Default,
+            TokenColor::Delimiter,
+            TokenColor::Bold,
+            TokenColor::Delimiter,
+            TokenColor::Default,
+            TokenColor::Delimiter,
+            TokenColor::Italic,
+            TokenColor::Delimiter,
+            TokenColor::Default,
+            TokenColor::Delimiter,
+            TokenColor::Italic,
+            TokenColor::Delimiter,
         ]
     );
 }
@@ -530,9 +533,9 @@ fn test_hash_line_content() {
 fn test_line_hash_zero_cost_option_representation() {
     // Zero-cost representation: Option<LineHash> occupies 4 bytes with no
     // discriminant overhead
-    assert_eq!(std::mem::size_of::<LineHash>(), 4);
-    assert_eq!(std::mem::size_of::<Option<LineHash>>(), 4);
-    assert_eq!(std::mem::align_of::<Option<LineHash>>(), 4);
+    assert_eq!(mem::size_of::<LineHash>(), 4);
+    assert_eq!(mem::size_of::<Option<LineHash>>(), 4);
+    assert_eq!(mem::align_of::<Option<LineHash>>(), 4);
 }
 
 #[test]

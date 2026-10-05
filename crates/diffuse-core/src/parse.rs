@@ -271,12 +271,12 @@ impl Row {
 
     #[inline]
     pub fn old_line(&self) -> Option<u32> {
-        self.old_line_num().map(std::num::NonZero::get)
+        self.old_line_num().map(NonZero::get)
     }
 
     #[inline]
     pub fn new_line(&self) -> Option<u32> {
-        self.new_line_num().map(std::num::NonZero::get)
+        self.new_line_num().map(NonZero::get)
     }
 
     #[inline]
@@ -822,6 +822,17 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 let old_num = LineNum::new(oi).unwrap_or(LineNum::MIN);
                 let new_num = LineNum::new(ni).unwrap_or(LineNum::MIN);
                 let row = Row::Ctx(CtxLine::new(old_num, new_num, rest));
+                hunk.rows.push(row.clone());
+                raw_hunk.rows.push(row);
+                oi += 1;
+                ni += 1;
+            } else if line.is_empty()
+                && ni < hunk.new_start + hunk.new_count
+                && oi < hunk.old_start + hunk.old_count
+            {
+                let old_num = LineNum::new(oi).unwrap_or(LineNum::MIN);
+                let new_num = LineNum::new(ni).unwrap_or(LineNum::MIN);
+                let row = Row::Ctx(CtxLine::new(old_num, new_num, ""));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;

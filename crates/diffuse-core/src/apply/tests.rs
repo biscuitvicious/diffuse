@@ -1,8 +1,10 @@
+use std::string::ToString;
+
 use super::{apply_file_diff, apply_hunk_rows, apply_stream};
 use crate::parse::{AddLine, DelLine, Hunk, LineNum, Row};
 
 fn s(lines: &[&str]) -> Vec<String> {
-    lines.iter().map(std::string::ToString::to_string).collect()
+    lines.iter().map(ToString::to_string).collect()
 }
 
 #[test]

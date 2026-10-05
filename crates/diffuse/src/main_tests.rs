@@ -1,4 +1,4 @@
-use std::env;
+use std::{env, sync::Mutex};
 
 use clap::Parser;
 
@@ -93,7 +93,7 @@ fn test_init_color_mode_no_color_flag() {
     assert!(!yansi::is_enabled());
 }
 
-static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_init_color_mode_auto_default() {

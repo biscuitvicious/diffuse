@@ -1,6 +1,6 @@
 //! Geometry — pure width-dependent layout calculations.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, panic::Location, time::Instant, vec::Vec};
 
 use crate::render::{display_text, width::display_width};
 
@@ -32,7 +32,7 @@ impl AppState {
     pub(crate) fn bump_content(&mut self) {
         self.geo_cache.iter_mut().for_each(|slot| *slot = None);
         tracing::debug!(
-            caller = %std::panic::Location::caller(),
+            caller = %Location::caller(),
             "geometry cache invalidated (content)"
         );
     }
@@ -43,7 +43,7 @@ impl AppState {
     pub(crate) fn bump_notes(&mut self) {
         self.geo_cache.iter_mut().for_each(|slot| *slot = None);
         tracing::debug!(
-            caller = %std::panic::Location::caller(),
+            caller = %Location::caller(),
             "geometry cache invalidated (notes)"
         );
     }
@@ -102,16 +102,18 @@ impl AppState {
         let Some(r) = self.row_of(item) else {
             return 1;
         };
+        let text = r.text();
         if self.raw_diff {
             let text_cols = content_width.saturating_sub(6).max(1);
-            let exp = crate::render::expand_tabs(&r.text, 4);
+            let exp = crate::render::expand_tabs(&text, 4);
             let len = display_width(exp);
             if len == 0 { 1 } else { len.div_ceil(text_cols) }
         } else {
             let text_cols = content_width.saturating_sub(6).max(1);
+            let del_text = r.del_text();
             let disp = display_text(
-                &r.text,
-                r.del_text.as_deref(),
+                &text,
+                del_text.as_deref(),
                 r.kind,
                 &r.runs,
                 self.col_offset,
@@ -163,7 +165,7 @@ impl AppState {
         content_width: usize,
         starts: &[usize],
         seg_counts: &[usize],
-        callouts: &std::collections::HashMap<usize, Vec<String>>,
+        callouts: &HashMap<usize, Vec<String>>,
     ) -> Option<usize> {
         if self.raw_diff || self.hunk_trailing_gap(fi) == 0 {
             return None;
@@ -177,7 +179,7 @@ impl AppState {
             .map(|hs| self.hunk_div_seg_count(hs.file, hs.hunk, content_width))
             .unwrap_or(0);
         let row_segs = seg_counts.get(last_row).copied().unwrap_or(1);
-        let note_lines = callouts.get(&last_row).map_or(0, std::vec::Vec::len);
+        let note_lines = callouts.get(&last_row).map_or(0, Vec::len);
         Some(s + div_lines + row_segs + note_lines)
     }
 
@@ -329,7 +331,7 @@ impl AppState {
             tracing::trace!(content_width, rows = self.flat.len(), "geometry cache hit");
             return hit.clone();
         }
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let callouts = self.note_callouts(content_width);
         let (starts, counts, seg_counts, nav_counts, total_vis_lines) =
             self.compute_geometry(content_width, &callouts);
@@ -399,7 +401,7 @@ impl AppState {
                 0
             };
             let row_segs = self.row_seg_count(idx, content_width);
-            let note_lines = callouts.get(&idx).map_or(0, std::vec::Vec::len);
+            let note_lines = callouts.get(&idx).map_or(0, Vec::len);
             let trailing_gap_lines = if !self.raw_diff
                 && !item.is_file_header
                 && idx == self.last_row_of_file(item.file_idx)

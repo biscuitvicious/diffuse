@@ -1,5 +1,7 @@
 //! Navigation — viewport and cursor movement.
 
+use std::time::Instant;
+
 use super::AppState;
 
 impl AppState {
@@ -272,7 +274,7 @@ impl AppState {
         if self.flat.is_empty() {
             return;
         }
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let scroll_before = self.scroll;
         let geo = self.cached_geometry(self.last_content_width);
         let starts = geo.starts;
@@ -332,7 +334,7 @@ impl AppState {
         if self.flat.is_empty() {
             return;
         }
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let scroll_before = self.scroll;
         let geo = self.cached_geometry(self.last_content_width);
         let starts = geo.starts;

@@ -43,11 +43,15 @@
 //! The weights are named constants — the tuning surface for the visual
 //! quality gates (`tests/AGENTS.md`).
 
+use std::{
+    hash::{Hash, Hasher},
+    mem,
+};
+
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
-use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 use crate::{
     algo::skyline::{AdaptiveEnvelopeBuilder, SkylineMatrix},
     lcs::{
@@ -61,6 +65,8 @@ use crate::{
         profile::{LangProfile, PropertySyntax},
     },
 };
+
+use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
 pub const MAX_BLOCK_K: usize = 10;
@@ -820,7 +826,7 @@ fn precompute_valid_blocks(
                 &tokens[row_idx].token_multiset,
                 &mut merge_scratch,
             );
-            std::mem::swap(&mut block_multiset, &mut merge_scratch);
+            mem::swap(&mut block_multiset, &mut merge_scratch);
 
             row_blocks.blocks[row_blocks.len as usize] = PrecomputedBlock {
                 k,
@@ -1536,8 +1542,8 @@ struct AnchorTokenSlice<'a> {
     total_chars: usize,
 }
 
-impl std::hash::Hash for AnchorTokenSlice<'_> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl Hash for AnchorTokenSlice<'_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         self.ids.hash(state);
     }
 }

@@ -1,4 +1,4 @@
-//! diffuse-harvest: Automated fixture generator and dataset extractor.
+//! harvest: Automated fixture generator and dataset extractor.
 //!
 //! Harvests multi-file git diffs with old and new side snapshots from any
 //! repository into a golden corpus directory (`diff.patch`, `files/`,
@@ -10,6 +10,7 @@ use std::{
     collections::HashMap,
     env,
     fs::{self, File},
+    io::Write,
     path::{Path, PathBuf},
     process,
 };
@@ -23,10 +24,7 @@ use diffuse::core::{
 };
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "diffuse-harvest",
-    about = "Harvest git diffs into golden fixtures"
-)]
+#[command(name = "harvest", about = "Harvest git diffs into golden fixtures")]
 struct Args {
     /// Git revision or range (e.g. HEAD~1..HEAD, main..feature, HEAD).
     /// Use the literal `WORKTREE` to diff the working tree against HEAD
@@ -158,7 +156,7 @@ fn main() {
     for dir in &args.directory {
         if let Err(e) = env::set_current_dir(dir) {
             eprintln!(
-                "diffuse-harvest: cannot change directory to '{}': {e}",
+                "harvest: cannot change directory to '{}': {e}",
                 dir.display()
             );
             process::exit(1);
@@ -177,7 +175,7 @@ fn main() {
         args.revision.clone()
     } else {
         resolve_revision(&repo_root, &args.revision).unwrap_or_else(|e| {
-            eprintln!("diffuse-harvest: {e}");
+            eprintln!("harvest: {e}");
             process::exit(1);
         })
     };
@@ -196,7 +194,7 @@ fn main() {
     ) {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("diffuse-harvest: {e}");
+            eprintln!("harvest: {e}");
             process::exit(1);
         }
     };
@@ -228,7 +226,6 @@ fn main() {
         if is_json {
             let json = serde_json::to_string_pretty(&fixture).expect("serialize fixture");
             if out_path.extension().is_some_and(|ext| ext == "gz") {
-                use std::io::Write as _;
                 let file = File::create(&out_path).expect("create output file");
                 let mut encoder = flate2::write::GzEncoder::new(file, flate2::Compression::best());
                 encoder.write_all(json.as_bytes()).expect("write gzip data");
@@ -316,7 +313,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::Path, process::Command};
+    use std::{fs, path::Path, process::Command};
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
@@ -339,7 +336,7 @@ mod tests {
     fn resolves_revision_ranges_to_fixed_commit_ids() {
         let dir = tempfile::tempdir().expect("tempdir");
         git(dir.path(), &["init"]);
-        std::fs::write(dir.path().join("a.txt"), "one").expect("write");
+        fs::write(dir.path().join("a.txt"), "one").expect("write");
         git(dir.path(), &["add", "."]);
         git(
             dir.path(),
@@ -354,7 +351,7 @@ mod tests {
             ],
         );
         let base = git(dir.path(), &["rev-parse", "HEAD"]);
-        std::fs::write(dir.path().join("a.txt"), "two").expect("write");
+        fs::write(dir.path().join("a.txt"), "two").expect("write");
         git(dir.path(), &["add", "."]);
         git(
             dir.path(),

@@ -1,6 +1,6 @@
 //! One-for-one port of `review.ts`'s syntax classification (PLAN.md §3):
 //! `langProfile`, `tokenReFor`, `classifyTokens`. The output carries the
-//! SEMANTIC colors (`syntaxKeyword`, `syntaxString`, …) — the renderer
+//! SEMANTIC colors (`skw`, `str`, …) — the renderer
 //! maps them to theme colors.
 //!
 //! ## Module structure
@@ -19,6 +19,7 @@
 //! types that routinely appear together across the engine.
 
 pub mod classifier;
+pub mod color;
 pub mod fence;
 pub mod language;
 pub mod markdown;
@@ -36,10 +37,11 @@ pub mod prelude {
             for_each_markdown_token, for_each_markdown_token_with_header, is_line_alignment_row,
             markdown_document_tokens, markdown_tokens,
         },
+        color::*,
         fence::{FenceRegion, fence_regions, region_at},
         profile::{
-            BlockDelimStyle, CloseDelimiter, LangProfile, MD_SGR_BOLD, MD_SGR_BOLD_UNDERLINE,
-            MD_SGR_DIM, MD_SGR_ITALIC, MD_SGR_STRIKE, MD_SGR_UNDERLINE, PropertySyntax,
+            BlockDelimStyle, CloseDelimiter, LangProfile, PropertySyntax, SGR_BOLD,
+            SGR_BOLD_UNDERLINE, SGR_DIM, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE,
         },
         registry::{
             REGISTERED_EXTENSIONS, all_registered_profiles, ascii_word_prefix,
@@ -50,6 +52,7 @@ pub mod prelude {
 }
 
 pub use classifier::md_inner_tokens;
+pub use color::TokenColor;
 
 #[cfg(test)]
 mod tests;

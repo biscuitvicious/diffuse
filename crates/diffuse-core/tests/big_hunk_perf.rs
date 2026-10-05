@@ -2,7 +2,11 @@
 //! the golden render.txt (very long lines), exercising the narrow-band
 //! corridor and parallel candidate scoring end to end through the pipeline.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    fs,
+    time::{Duration, Instant},
+};
 
 use diffuse_core::{PipelineOptions, pipeline::run_pipeline_full};
 
@@ -11,7 +15,7 @@ fn load_render_txt() -> Vec<String> {
         env!("CARGO_MANIFEST_DIR"),
         "/../../tests/golden/diffuse-2026-08/outputs/render.dark.txt"
     );
-    std::fs::read_to_string(path)
+    fs::read_to_string(path)
         .unwrap()
         .lines()
         .map(|l| l.to_string())
@@ -55,7 +59,7 @@ fn pairing_time(num_lines: usize) -> Duration {
     let mut old_content = HashMap::new();
     old_content.insert("render.txt".to_string(), old_lines.join("\n") + "\n");
 
-    let t = std::time::Instant::now();
+    let t = Instant::now();
     let out = run_pipeline_full(
         &diff,
         Some(new_content),
@@ -117,7 +121,7 @@ fn wholesale_pairing_time(num_lines: usize) -> Duration {
     let mut old_content = HashMap::new();
     old_content.insert("render.txt".to_string(), old_lines.join("\n") + "\n");
 
-    let t = std::time::Instant::now();
+    let t = Instant::now();
     let out = run_pipeline_full(
         &diff,
         Some(new_content),

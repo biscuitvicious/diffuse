@@ -3,7 +3,7 @@
 //!
 //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
 
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 pub use yansi::{Color, Condition, Paint, Style};
 
@@ -90,7 +90,7 @@ impl AnsiColor {
 
     /// Write foreground escape code directly into a string buffer without
     /// intermediate allocations.
-    pub fn write_fg<W: Write>(&self, out: &mut W) -> std::fmt::Result {
+    pub fn write_fg<W: Write>(&self, out: &mut W) -> fmt::Result {
         match self {
             Self::Reset => write!(out, "{FG_RESET}"),
             Self::Index(idx) => write!(out, "\x1b[38;5;{idx}m"),
@@ -100,7 +100,7 @@ impl AnsiColor {
 
     /// Write background escape code directly into a string buffer without
     /// intermediate allocations.
-    pub fn write_bg<W: Write>(&self, out: &mut W) -> std::fmt::Result {
+    pub fn write_bg<W: Write>(&self, out: &mut W) -> fmt::Result {
         match self {
             Self::Reset => write!(out, "{BG_RESET}"),
             Self::Index(idx) => write!(out, "\x1b[48;5;{idx}m"),
@@ -130,11 +130,11 @@ pub trait ColorExt {
 
     /// Write foreground escape code directly into a string buffer without
     /// intermediate allocations.
-    fn write_fg<W: Write>(&self, out: &mut W) -> std::fmt::Result;
+    fn write_fg<W: Write>(&self, out: &mut W) -> fmt::Result;
 
     /// Write background escape code directly into a string buffer without
     /// intermediate allocations.
-    fn write_bg<W: Write>(&self, out: &mut W) -> std::fmt::Result;
+    fn write_bg<W: Write>(&self, out: &mut W) -> fmt::Result;
 }
 
 impl ColorExt for Color {
@@ -164,12 +164,12 @@ impl ColorExt for Color {
     }
 
     #[inline]
-    fn write_fg<W: Write>(&self, out: &mut W) -> std::fmt::Result {
+    fn write_fg<W: Write>(&self, out: &mut W) -> fmt::Result {
         write!(out, "{}", Style::new().fg(*self).prefix())
     }
 
     #[inline]
-    fn write_bg<W: Write>(&self, out: &mut W) -> std::fmt::Result {
+    fn write_bg<W: Write>(&self, out: &mut W) -> fmt::Result {
         write!(out, "{}", Style::new().bg(*self).prefix())
     }
 }
@@ -271,7 +271,7 @@ impl AnsiStyle {
     }
 
     /// Write the styling prefix into a string buffer.
-    pub fn write_prefix<W: Write>(&self, out: &mut W) -> std::fmt::Result {
+    pub fn write_prefix<W: Write>(&self, out: &mut W) -> fmt::Result {
         if self.bold {
             write!(out, "{}", sgr_on(1))?;
         }

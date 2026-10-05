@@ -7,7 +7,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use std::sync::Arc;
+use std::{
+    fmt::{self, Debug},
+    sync::Arc,
+};
 
 pub mod external;
 pub use external::*;
@@ -53,8 +56,8 @@ pub struct Editor {
     undo_stack: Vec<EditorSnapshot>,
 }
 
-impl std::fmt::Debug for Editor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for Editor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Editor")
             .field("lines", &self.lines)
             .field("cursor_row", &self.cursor_row)

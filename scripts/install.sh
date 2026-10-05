@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./scripts/install.sh            # release binary (default)
 #   PROFILE=dev ./scripts/install.sh  # debug binary (used by check.sh)
 #   TARGET=... ./scripts/install.sh   # override target triple (e.g. musl static)
-#   INSTALL_HARVEST=1 ./scripts/install.sh  # also install diffuse-harvest
+#   INSTALL_HARVEST=1 ./scripts/install.sh  # also install harvest
 #
 # Without an explicit TARGET (or DIFFUSE_TARGET), no --target flag is
 # passed to cargo, so the build shares the warm artifact cache with
@@ -33,10 +33,10 @@ if [ -n "$PINNED_TOOLCHAIN" ]; then
   CARGO=(cargo "+$PINNED_TOOLCHAIN")
 fi
 
-# diffuse-harvest is opt-in: the default install ships only the diffuse CLI.
+# harvest is opt-in: the default install ships only the diffuse CLI.
 BINS=(--bin diffuse)
 if [ "${INSTALL_HARVEST:-}" = "1" ]; then
-  BINS+=(--bin diffuse-harvest)
+  BINS+=(--bin harvest)
 fi
 
 PROFILE="${PROFILE:-release}"

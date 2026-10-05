@@ -26,7 +26,12 @@ pub use finder::FileFinderState;
 pub use terminal::TerminalGuard;
 pub use types::{FlatRow, HunkMeta, HunkStart, Selection};
 
-use std::{io, path::PathBuf, sync::mpsc::Receiver, time::Duration};
+use std::{
+    io,
+    path::PathBuf,
+    sync::mpsc::{Receiver, TryRecvError},
+    time::Duration,
+};
 
 use crate::core::{
     DEFAULT_EXPAND_LINES,
@@ -97,10 +102,10 @@ pub fn run_tui(
                         state.append_file(file);
                         dirty = true;
                     }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    Err(TryRecvError::Empty) => {
                         break;
                     }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err(TryRecvError::Disconnected) => {
                         streaming_active = false;
                         if state.loading_files.is_empty() {
                             state.is_streaming = false;

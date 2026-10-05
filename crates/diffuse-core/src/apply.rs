@@ -15,8 +15,9 @@
 //! Hunks apply in **reverse old-start order** so an earlier hunk's offset
 //! is unaffected by a later hunk's net line change.
 
-use crate::parse::{Hunk, Row};
 use std::cmp::Reverse;
+
+use crate::parse::{Hunk, Row};
 
 /// Apply a single file's unified-diff slice to its old contents.
 ///

@@ -3,6 +3,8 @@
 //! Provides bidirectional mapping between arbitrary keys `T` and compact
 //! 32-bit `SymbolId` integers.
 
+use std::{borrow::Borrow, hash::Hash};
+
 use rustc_hash::FxHashMap;
 
 /// A compact 32-bit symbol identifier.
@@ -61,7 +63,7 @@ impl<T> Default for SymbolTable<T> {
 
 impl<T> SymbolTable<T>
 where
-    T: Eq + std::hash::Hash,
+    T: Eq + Hash,
 {
     /// Creates an empty symbol table.
     pub fn new() -> Self {
@@ -105,8 +107,8 @@ where
     #[inline]
     pub fn get_id<Q>(&self, item: &Q) -> Option<SymbolId>
     where
-        T: std::borrow::Borrow<Q>,
-        Q: std::hash::Hash + Eq + ?Sized,
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
         self.item_to_id.get(item).copied()
     }
@@ -115,8 +117,8 @@ where
     #[inline]
     pub fn contains<Q>(&self, item: &Q) -> bool
     where
-        T: std::borrow::Borrow<Q>,
-        Q: std::hash::Hash + Eq + ?Sized,
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
     {
         self.item_to_id.contains_key(item)
     }
@@ -129,7 +131,7 @@ where
 
 impl<T> SymbolTable<T>
 where
-    T: Eq + std::hash::Hash + Clone,
+    T: Eq + Hash + Clone,
 {
     /// Interns an item, returning its unique `SymbolId`.
     pub fn intern(&mut self, item: T) -> SymbolId {
@@ -146,8 +148,8 @@ where
     /// item is novel.
     pub fn intern_borrowed<Q>(&mut self, item: &Q) -> SymbolId
     where
-        T: std::borrow::Borrow<Q>,
-        Q: std::hash::Hash + Eq + ?Sized + ToOwned<Owned = T>,
+        T: Borrow<Q>,
+        Q: Hash + Eq + ?Sized + ToOwned<Owned = T>,
     {
         if let Some(&id) = self.item_to_id.get(item) {
             return id;

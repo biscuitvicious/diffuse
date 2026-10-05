@@ -6,8 +6,9 @@ use std::{
     env,
     ffi::OsString,
     fmt, fs, io,
-    num::NonZero,
+    num::{NonZero, ParseIntError},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -87,8 +88,8 @@ pub fn default_state_path() -> PathBuf {
 
 /// Current Unix time in milliseconds, for note `created_at`.
 pub fn now_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
 }
@@ -204,7 +205,7 @@ impl LineHash {
     }
 
     /// Parse a line hash from a hexadecimal string (up to 8 hex chars).
-    pub fn from_hex(hex: &str) -> Result<Self, std::num::ParseIntError> {
+    pub fn from_hex(hex: &str) -> Result<Self, ParseIntError> {
         let val = u32::from_str_radix(hex.trim(), 16)?;
         let val = if val == 0 { 1 } else { val };
         // SAFETY: val is guaranteed non-zero.

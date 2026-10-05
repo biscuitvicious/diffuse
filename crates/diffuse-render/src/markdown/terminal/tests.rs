@@ -1,4 +1,4 @@
-//! Unit tests for terminal Markdown line assembly and reflow.
+use diffuse_syntax::color::TokenColor;
 
 use super::*;
 use crate::theme::DiffuseTheme;
@@ -132,6 +132,11 @@ fn test_fence_content_highlighted_without_markers() {
 fn test_blockquote_bars_and_nesting() {
     let lines = markdown_lines("> quote\n>> nested", 40);
     let texts: Vec<String> = lines.iter().map(plain).collect();
+    assert_eq!(
+        lines[0].runs[0].color,
+        TokenColor::QuoteBorder,
+        "quote bar must resolve to qbo color"
+    );
     assert!(
         texts[0].starts_with('▎') && !texts[0].starts_with("▎▎"),
         "{texts:?}"
@@ -173,6 +178,28 @@ fn test_links_render_label_and_url() {
     );
     assert!(!out.contains("[label]"), "{out:?}");
     assert!(out.contains("\x1b[4m"), "underline SGR in {out:?}");
+}
+
+#[test]
+fn test_link_delimiters_use_link_border_color() {
+    let lines = markdown_lines("[label](https://example.com)", 80);
+    assert_eq!(lines.len(), 1);
+    let colors: Vec<TokenColor> = lines[0].runs.iter().map(|r| r.color).collect();
+    // " (" opener and ")" closer delimiters resolve to link_border.
+    assert!(
+        lines[0]
+            .runs
+            .iter()
+            .any(|r| r.text == " (" && r.color == TokenColor::LinkBorder),
+        "link opener must be lbo: {colors:?}"
+    );
+    assert!(
+        lines[0]
+            .runs
+            .iter()
+            .any(|r| r.text == ")" && r.color == TokenColor::LinkBorder),
+        "link closer must be lbo: {colors:?}"
+    );
 }
 
 #[test]
@@ -480,11 +507,11 @@ fn test_table_aligned_renders_with_borders_and_padding() {
         .find(|r| r.text.contains("Name"))
         .unwrap();
     assert_eq!(
-        name_run.color.as_deref(),
-        Some("mdItalic"),
-        "header color must be yellow mdItalic"
+        name_run.color,
+        TokenColor::TableHeader,
+        "header color must be table_header thd"
     );
-    assert_eq!(name_run.sgr, Some(MD_SGR_BOLD), "header must be bold");
+    assert_eq!(name_run.sgr, Some(SGR_BOLD), "header must be bold");
     assert!(name_run.underline, "header runs must be underlined");
 
     // Verify border characters and width invariance across all lines

@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, mem};
 
 use ratatui::{
     Frame,
@@ -378,10 +378,13 @@ pub fn render_finder_modal(
                 let pfx = styled_prefix(
                     r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
                 );
+                let text = r.text();
+                let del_text = r.del_text();
+                let spans = r.spans();
                 let rendered_row = render_row_segment(
-                    &r.text,
-                    r.del_text.as_deref(),
-                    &r.spans,
+                    &text,
+                    del_text.as_deref(),
+                    &spans,
                     r.kind,
                     &r.runs,
                     0,
@@ -594,10 +597,13 @@ pub fn render_finder_modal_widget(
                 let pfx = styled_prefix(
                     r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
                 );
+                let text = r.text();
+                let del_text = r.del_text();
+                let spans = r.spans();
                 let rendered_row = render_row_segment(
-                    &r.text,
-                    r.del_text.as_deref(),
-                    &r.spans,
+                    &text,
+                    del_text.as_deref(),
+                    &spans,
                     r.kind,
                     &r.runs,
                     0,
@@ -708,7 +714,7 @@ pub fn ansi_to_ratatui_line(s: &str) -> Line<'static> {
                     let cmd = chars.next().unwrap();
                     if cmd == 'm' {
                         if !text_buf.is_empty() {
-                            spans.push(Span::styled(std::mem::take(&mut text_buf), cur_style));
+                            spans.push(Span::styled(mem::take(&mut text_buf), cur_style));
                         }
                         cur_style = parse_sgr_to_style(&code, cur_style);
                     }
@@ -937,7 +943,7 @@ fn highlight_path_matches_spans(
             } else {
                 default_style
             };
-            spans.push(Span::styled(std::mem::take(&mut cur_text), style));
+            spans.push(Span::styled(mem::take(&mut cur_text), style));
         }
         cur_matched = Some(is_m);
         cur_text.push(ch);

@@ -1,13 +1,14 @@
-use std::{fs, path::Path};
+use std::{collections::HashMap, fs, path::Path, process};
 
 use crate::{
     app::{AppState, temp_notes_path},
     core::{
         PipelineOptions,
         counts::FileCounts,
+        merge::RunKind,
         parse::RowKind,
         pipeline::run_pipeline_full,
-        wire::{OutputFile, OutputHunk, OutputRow, PipelineOutput},
+        wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
     },
     render::Badge,
     view::hunk_divider_text,
@@ -125,10 +126,7 @@ index 1111111..2222222 100644
                 mov_side: None,
                 new_line: Some(1),
                 old_line: None,
-                text: "fn new_untracked() {}".to_string(),
-                del_text: None,
-                spans: Default::default(),
-                runs: Vec::new(),
+                runs: vec![OutputRun::new(RunKind::Add, "fn new_untracked() {}")],
                 wholesale: false,
                 group: None,
             }],
@@ -211,7 +209,7 @@ similarity index 100%
 rename from src/old.rs
 rename to src/new.rs
 "#;
-    let mut new_content = std::collections::HashMap::new();
+    let mut new_content = HashMap::new();
     new_content.insert(
         "src/new.rs".to_string(),
         "fn alpha() {\n    println!(\"hello\");\n}\n".to_string(),
@@ -478,10 +476,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
             mov_side: None,
             new_line: Some(i),
             old_line: Some(i),
-            text: format!("ctx {i}"),
-            del_text: None,
-            spans: Default::default(),
-            runs: vec![],
+            runs: vec![OutputRun::new(RunKind::Ctx, format!("ctx {i}"))],
             wholesale: false,
             group: None,
         });
@@ -492,10 +487,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
             mov_side: None,
             new_line: None,
             old_line: Some(old),
-            text: format!("del {old}"),
-            del_text: None,
-            spans: Default::default(),
-            runs: vec![],
+            runs: vec![OutputRun::new(RunKind::Del, format!("del {old}"))],
             wholesale: false,
             group: None,
         });
@@ -516,10 +508,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
             mov_side: None,
             new_line: Some(111 + i),
             old_line: None,
-            text: format!("add {}", 111 + i),
-            del_text: None,
-            spans: Default::default(),
-            runs: vec![],
+            runs: vec![OutputRun::new(RunKind::Add, format!("add {}", 111 + i))],
             wholesale: false,
             group: None,
         });
@@ -598,7 +587,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
 
 #[test]
 fn test_palette_rs_commit_hunk_starts_not_interleaved() {
-    let output = std::process::Command::new("git")
+    let output = process::Command::new("git")
         .args([
             "diff",
             "7e0caab~..7e0caab",

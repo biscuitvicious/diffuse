@@ -6,7 +6,7 @@
 //! regex crate's NFA on the ~12-alternative token alternation took ~47µs/call;
 //! the hand-rolled scan is ~ns/char (~50× faster) and behavior-identical.
 
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use regex::Regex;
 
@@ -80,16 +80,16 @@ pub const REGISTERED_EXTENSIONS: &[&str] = &[
 
 /// Returns all distinct language profiles registered in the syntax system.
 pub fn all_registered_profiles() -> [&'static LangProfile; 10] {
-    static RS: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(rust::profile);
-    static WEB: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(web::profile);
-    static PY: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(python::profile);
-    static SH: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(shell::profile);
-    static C_FAM: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(c_family::profile);
-    static GO: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(go::profile);
-    static MD: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(markdown::profile);
-    static TOML: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::toml_profile);
-    static YAML: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::yaml_profile);
-    static JSON: std::sync::LazyLock<LangProfile> = std::sync::LazyLock::new(config::json_profile);
+    static RS: LazyLock<LangProfile> = LazyLock::new(rust::profile);
+    static WEB: LazyLock<LangProfile> = LazyLock::new(web::profile);
+    static PY: LazyLock<LangProfile> = LazyLock::new(python::profile);
+    static SH: LazyLock<LangProfile> = LazyLock::new(shell::profile);
+    static C_FAM: LazyLock<LangProfile> = LazyLock::new(c_family::profile);
+    static GO: LazyLock<LangProfile> = LazyLock::new(go::profile);
+    static MD: LazyLock<LangProfile> = LazyLock::new(markdown::profile);
+    static TOML: LazyLock<LangProfile> = LazyLock::new(config::toml_profile);
+    static YAML: LazyLock<LangProfile> = LazyLock::new(config::yaml_profile);
+    static JSON: LazyLock<LangProfile> = LazyLock::new(config::json_profile);
 
     [
         &*RS, &*WEB, &*PY, &*SH, &*C_FAM, &*GO, &*MD, &*TOML, &*YAML, &*JSON,

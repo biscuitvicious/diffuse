@@ -75,7 +75,7 @@ single canonical copy of the Rust acceptance.
   (e.g. `HEAD~100..HEAD`), never so large the fixture stops being useful
   (multi-MB JSON, minutes-long walks).
 
-Always harvest with **absolute ranges** (`diffuse-harvest` resolves any
+Always harvest with **absolute ranges** (`harvest` resolves any
 expression to full commit ids, so the recorded revision can never
 re-resolve to a different window) and exclude the golden tree itself
 (`--exclude tests/golden`) — a corpus must not ingest its own history.
@@ -83,7 +83,7 @@ re-resolve to a different window) and exclude the golden tree itself
 ### 2. Harvest the corpus
 
 ```sh
-diffuse-harvest --exclude tests/golden -o tests/golden/<name> <base>..<head>
+harvest --exclude tests/golden -o tests/golden/<name> <base>..<head>
 ```
 
 The harvester writes `diff.patch`, the old/new side snapshots under

@@ -1,7 +1,7 @@
 //! External Editor Invocation & Pattern Matching for diffuse TUI.
 
 use std::{
-    env,
+    env, io,
     path::Path,
     process::{Command, Stdio},
 };
@@ -128,7 +128,7 @@ pub fn open_editor(
     line: u32,
     range: Option<(u32, u32)>,
     repo_root: &Path,
-) -> std::io::Result<bool> {
+) -> io::Result<bool> {
     let bin = editor_binary();
     let abs_path = if Path::new(file).is_absolute() {
         file.to_string()

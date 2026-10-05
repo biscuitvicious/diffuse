@@ -3,6 +3,8 @@
 //! ported verbatim. The TS mutates rows via references; the port collects
 //! the decisions first (row positions), then applies them.
 
+use std::mem;
+
 use crate::{
     algo::bipartite_matching::{BipartiteMatcher, HunkGridNeighborhood},
     parse::{AddLine, DiffFile, Row},
@@ -71,7 +73,7 @@ pub fn mark_moves_with_profile(
                 }
                 run.push((hi, ri));
             } else if !run.is_empty() {
-                runs.push(std::mem::take(&mut run));
+                runs.push(mem::take(&mut run));
             }
         }
         if !run.is_empty() {

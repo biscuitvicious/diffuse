@@ -2,7 +2,9 @@
 //!
 //! Port of TypeScript's `resolveRefs`, `loadReview`, and `rustBackendLoad`.
 
-use std::{collections::HashMap, fs, path::Path, process::Command, sync::Arc};
+use std::{
+    collections::HashMap, fs, path::Path, process::Command, string::String, sync::Arc, thread,
+};
 
 /// Fixed unified-diff context width used when generating diffs from git (`-U`).
 ///
@@ -67,7 +69,7 @@ pub fn get_current_branch(cwd: &Path) -> String {
 pub fn resolve_refs(cwd: &Path, base_args: &[String], staged: bool) -> RefPair {
     let refs: Vec<&str> = base_args
         .iter()
-        .map(std::string::String::as_str)
+        .map(String::as_str)
         .filter(|t| !t.starts_with('-'))
         .collect();
 
@@ -147,7 +149,7 @@ fn rev_to_short_hash(cwd: &Path, rev: &str) -> Option<String> {
 pub fn resolve_commit_range(cwd: &Path, base_args: &[String]) -> Option<String> {
     let refs: Vec<&str> = base_args
         .iter()
-        .map(std::string::String::as_str)
+        .map(String::as_str)
         .filter(|t| !t.starts_with('-'))
         .collect();
 
@@ -237,7 +239,7 @@ pub fn load_git_blobs_batch(repo_root: &Path, specs: &[String]) -> HashMap<Strin
         input_data.push(b'\n');
     }
 
-    let writer = std::thread::spawn(move || {
+    let writer = thread::spawn(move || {
         let _ = stdin.write_all(&input_data);
         drop(stdin);
     });
@@ -400,8 +402,7 @@ pub fn stream_git_repo_to_producer(
     let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
 
     let repo_gix = gix::open(repo_root).ok();
-    let mut tree_cache: std::collections::HashMap<String, Option<gix::Tree<'_>>> =
-        std::collections::HashMap::new();
+    let mut tree_cache: HashMap<String, Option<gix::Tree<'_>>> = HashMap::new();
 
     let mut get_blob_data = |ref_str: &str, path: &str| -> (Option<String>, Option<usize>) {
         if let Some(ref repo) = repo_gix {
@@ -599,7 +600,7 @@ pub fn load_git_repo(
     diff_cmd.push("--".to_string());
     diff_cmd.extend(paths.iter().cloned());
 
-    let diff_args: Vec<&str> = diff_cmd.iter().map(std::string::String::as_str).collect();
+    let diff_args: Vec<&str> = diff_cmd.iter().map(String::as_str).collect();
     let mut diff = run_git(repo_root, &diff_args).unwrap_or_default();
 
     let mut name_cmd = vec![
@@ -613,7 +614,7 @@ pub fn load_git_repo(
     name_cmd.extend(base_args.iter().cloned());
     name_cmd.push("--".to_string());
     name_cmd.extend(paths.iter().cloned());
-    let name_args: Vec<&str> = name_cmd.iter().map(std::string::String::as_str).collect();
+    let name_args: Vec<&str> = name_cmd.iter().map(String::as_str).collect();
     let name_status = run_git(repo_root, &name_args).unwrap_or_default();
 
     let refs = resolve_refs(repo_root, base_args, staged);
