@@ -39,8 +39,8 @@ use crate::{
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs_with_profile},
     moves::mark_moves_with_profile,
-    notes::{NotesDB, query_notes_for_file},
-    parse::{DiffFile, Row, RowKind},
+    notes::{NotesDB, ReviewNote, Side, query_notes_for_file},
+    parse::{CtxLine, DiffFile, Hunk, LineNum, Row, RowKind},
     syntax::{
         classifier::{
             ClassifiedToken, for_each_classified_token, for_each_classified_token_with_header,
@@ -546,6 +546,11 @@ pub fn process_single_diff_file(
     // Final step: normalize the carried context to the requested visual width.
     crate::shift::normalize_context(&mut f, opts.visual_context);
 
+    let has_snapshots = new_content.is_some() || old_content.is_some();
+    if has_snapshots && let Some(db) = &opts.notes_db {
+        synthesize_note_context_hunks(&mut f, db, opts.repo.as_deref(), opts.visual_context);
+    }
+
     let is_plain_common_context = !f.is_binary
         && (f.status == crate::parse::FileStatus::Renamed
             || f.status == crate::parse::FileStatus::ModeChanged
@@ -727,7 +732,13 @@ pub fn process_single_diff_file(
         let total_rows_count: usize = hunks_out.iter().map(|h| h.rows.len()).sum();
         let mut rows: Vec<OutputRow> = Vec::with_capacity(total_rows_count);
         for (h, h_out) in f.hunks.iter().zip(&hunks_out) {
-            let side = if crate::visible::hunk_has_adds(h) {
+            let hunk_has_dels = h
+                .rows
+                .iter()
+                .any(|r| matches!(r, Row::Del(_) | Row::MovSrc(_)));
+            let hunk_has_adds = crate::visible::hunk_has_adds(h);
+            let is_pure_context = !hunk_has_adds && !hunk_has_dels;
+            let side = if hunk_has_adds || is_pure_context {
                 VisibleSide::New
             } else {
                 VisibleSide::Old
@@ -735,39 +746,41 @@ pub fn process_single_diff_file(
             for (i, (r, r_out)) in h.rows.iter().zip(&h_out.rows).enumerate() {
                 if matches!(r, Row::Ctx(_)) {
                     let mut row = r_out.clone();
-                    match side {
-                        VisibleSide::New => {
-                            row.old_line = None;
-                        }
-                        VisibleSide::Old => {
-                            row.new_line = None;
-                            let next_line = r
-                                .old_line()
-                                .and_then(|ol| old_lines.get(ol as usize).copied())
-                                .or_else(|| {
-                                    h.rows[i + 1..]
-                                        .iter()
-                                        .find(|nr| nr.old_line().is_some())
-                                        .map(|nr| nr.text())
-                                })
-                                .or_else(|| h.rows.get(i + 1).map(|nr| nr.text()));
-                            let mut runs = Vec::new();
-                            for_each_ctx_line_token(
-                                r.text(),
-                                None,
-                                next_line,
-                                profile,
-                                &regions,
-                                |tk| {
-                                    runs.push(OutputRun {
-                                        kind: RunKind::Ctx,
-                                        color: tk.color,
-                                        sgr: tk.sgr,
-                                        text: token_cow(tk.text),
-                                    });
-                                },
-                            );
-                            row.runs = runs;
+                    if !is_pure_context {
+                        match side {
+                            VisibleSide::New => {
+                                row.old_line = None;
+                            }
+                            VisibleSide::Old => {
+                                row.new_line = None;
+                                let next_line = r
+                                    .old_line()
+                                    .and_then(|ol| old_lines.get(ol as usize).copied())
+                                    .or_else(|| {
+                                        h.rows[i + 1..]
+                                            .iter()
+                                            .find(|nr| nr.old_line().is_some())
+                                            .map(|nr| nr.text())
+                                    })
+                                    .or_else(|| h.rows.get(i + 1).map(|nr| nr.text()));
+                                let mut runs = Vec::new();
+                                for_each_ctx_line_token(
+                                    r.text(),
+                                    None,
+                                    next_line,
+                                    profile,
+                                    &regions,
+                                    |tk| {
+                                        runs.push(OutputRun {
+                                            kind: RunKind::Ctx,
+                                            color: tk.color,
+                                            sgr: tk.sgr,
+                                            text: token_cow(tk.text),
+                                        });
+                                    },
+                                );
+                                row.runs = runs;
+                            }
                         }
                     }
                     rows.push(row);
@@ -1242,6 +1255,240 @@ fn build_hunk_output_row(
         runs: colored_runs_with_next(r, next_line, profile, regions),
         wholesale: matches!(r, Row::Mod { .. }) && is_wholesale_mod(r),
         group: r.group(),
+    }
+}
+
+/// Synthesizes context hunks around review notes that fall into gaps between
+/// diff hunks or outside existing diff hunks.
+pub fn synthesize_note_context_hunks(
+    f: &mut DiffFile,
+    notes_db: &NotesDB,
+    repo: Option<&str>,
+    visual_context: usize,
+) {
+    if f.is_binary || f.status == crate::parse::FileStatus::Deleted {
+        return;
+    }
+    let notes = query_notes_for_file(notes_db, repo, &f.path);
+    if notes.is_empty() {
+        return;
+    }
+
+    let n = visual_context as u32;
+
+    // 1. Identify notes whose target span [start..=end] is uncovered by existing
+    //    diff hunks.
+    let uncovered: Vec<&ReviewNote> = notes
+        .into_iter()
+        .filter(|note| {
+            !f.hunks.iter().any(|h| match note.side {
+                Side::New => {
+                    let h_start = h.new_start;
+                    let h_end = h.new_start + h.new_count.saturating_sub(1);
+                    h.new_count > 0 && note.start >= h_start && note.end <= h_end
+                }
+                Side::Old => {
+                    let h_start = h.old_start;
+                    let h_end = h.old_start + h.old_count.saturating_sub(1);
+                    h.old_count > 0 && note.start >= h_start && note.end <= h_end
+                }
+            })
+        })
+        .collect();
+
+    if uncovered.is_empty() {
+        return;
+    }
+
+    let m = f.hunks.len();
+
+    // Helper: cumulative line offset caused by all hunks preceding gap_idx.
+    let gap_delta = |gap_idx: usize| -> i64 {
+        if gap_idx == 0 || m == 0 {
+            0
+        } else {
+            let h = &f.hunks[gap_idx - 1];
+            (h.new_start + h.new_count) as i64 - (h.old_start + h.old_count) as i64
+        }
+    };
+
+    struct NoteSpan {
+        gap_idx: usize,
+        new_start: u32,
+        new_end: u32,
+    }
+
+    let mut spans: Vec<NoteSpan> = Vec::new();
+
+    for note in uncovered {
+        let (n_start, n_end) = (
+            note.start.min(note.end).max(1),
+            note.start.max(note.end).max(1),
+        );
+
+        let gap_idx = if m == 0 {
+            0
+        } else {
+            match note.side {
+                Side::New => {
+                    let mut found = m;
+                    for (i, h) in f.hunks.iter().enumerate() {
+                        if n_start < h.new_start {
+                            found = i;
+                            break;
+                        }
+                    }
+                    found
+                }
+                Side::Old => {
+                    let mut found = m;
+                    for (i, h) in f.hunks.iter().enumerate() {
+                        if n_start < h.old_start {
+                            found = i;
+                            break;
+                        }
+                    }
+                    found
+                }
+            }
+        };
+
+        let delta = gap_delta(gap_idx);
+
+        let (new_s, new_e) = match note.side {
+            Side::New => (n_start, n_end),
+            Side::Old => {
+                let ns = ((n_start as i64) + delta).max(1) as u32;
+                let ne = ((n_end as i64) + delta).max(1) as u32;
+                (ns, ne)
+            }
+        };
+
+        spans.push(NoteSpan {
+            gap_idx,
+            new_start: new_s,
+            new_end: new_e,
+        });
+    }
+
+    let mut by_gap: HashMap<usize, Vec<NoteSpan>> = HashMap::new();
+    for span in spans {
+        by_gap.entry(span.gap_idx).or_default().push(span);
+    }
+
+    let total_new_lines = if f.new_line_count > 0 {
+        f.new_line_count as u32
+    } else {
+        f.new_content.len() as u32
+    };
+
+    let mut synthetic_hunks: Vec<Hunk> = Vec::new();
+
+    for (gap_idx, mut gap_spans) in by_gap {
+        gap_spans.sort_by_key(|s| s.new_start);
+
+        let mut clusters: Vec<(u32, u32)> = Vec::new();
+        for span in gap_spans {
+            if let Some(last) = clusters.last_mut()
+                && span.new_start <= last.1 + 2 * n + 1
+            {
+                last.1 = last.1.max(span.new_end);
+                continue;
+            }
+            clusters.push((span.new_start, span.new_end));
+        }
+
+        let delta = gap_delta(gap_idx);
+
+        let (prev_end_new, prev_exists) = if gap_idx > 0 && m > 0 {
+            let hp = &f.hunks[gap_idx - 1];
+            (hp.new_start + hp.new_count - 1, true)
+        } else {
+            (0, false)
+        };
+
+        let (next_start_new, next_exists) = if gap_idx < m {
+            let hn = &f.hunks[gap_idx];
+            (hn.new_start, true)
+        } else {
+            (0, false)
+        };
+
+        for (c_start, c_end) in clusters {
+            let synth_new_start = if prev_exists {
+                let p_next = prev_end_new + 1;
+                let dist_to_prev = c_start.saturating_sub(p_next);
+                if dist_to_prev <= 2 * n {
+                    p_next
+                } else {
+                    c_start.saturating_sub(n).max(p_next)
+                }
+            } else {
+                c_start.saturating_sub(n).max(1)
+            };
+
+            let synth_new_end = if next_exists {
+                let s_prev = next_start_new.saturating_sub(1);
+                let dist_to_next = s_prev.saturating_sub(c_end);
+                if dist_to_next <= 2 * n {
+                    s_prev
+                } else {
+                    (c_end + n).min(s_prev)
+                }
+            } else {
+                let target = c_end + n;
+                if total_new_lines > 0 {
+                    target.min(total_new_lines)
+                } else {
+                    target
+                }
+            };
+
+            if synth_new_start > synth_new_end || synth_new_start == 0 {
+                continue;
+            }
+
+            let synth_old_start = ((synth_new_start as i64) - delta).max(1) as u32;
+            let count = synth_new_end - synth_new_start + 1;
+
+            let mut rows = Vec::with_capacity(count as usize);
+            for i in 0..count {
+                let nl = synth_new_start + i;
+                let ol = synth_old_start + i;
+                let text = if let Some(line) = f.new_content.get((nl as usize).saturating_sub(1)) {
+                    line.clone()
+                } else if let Some(line) = f.old_content.get((ol as usize).saturating_sub(1)) {
+                    line.clone()
+                } else {
+                    String::new()
+                };
+                let old_pos = LineNum::new(ol).unwrap_or(LineNum::MIN);
+                let new_pos = LineNum::new(nl).unwrap_or(LineNum::MIN);
+                rows.push(Row::Ctx(CtxLine::new(old_pos, new_pos, text)));
+            }
+
+            let hunk = Hunk {
+                old_start: synth_old_start,
+                old_count: count,
+                new_start: synth_new_start,
+                new_count: count,
+                section: String::new(),
+                rows,
+                above_ctx: count,
+                below_ctx: count,
+            };
+            synthetic_hunks.push(hunk);
+        }
+    }
+
+    if !synthetic_hunks.is_empty() {
+        f.hunks.extend(synthetic_hunks.clone());
+        f.hunks.sort_by_key(|h| (h.old_start, h.new_start));
+        crate::shift::merge_adjacent_hunks(f, visual_context);
+
+        f.raw_hunks.extend(synthetic_hunks);
+        f.raw_hunks.sort_by_key(|h| (h.old_start, h.new_start));
+        crate::shift::merge_adjacent_hunks_list(&mut f.raw_hunks);
     }
 }
 

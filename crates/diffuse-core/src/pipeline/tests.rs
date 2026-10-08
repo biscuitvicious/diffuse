@@ -1619,3 +1619,334 @@ new file mode 100644
     assert_eq!(file.fences.len(), 1);
     assert_eq!(file.fences[0].lang, "");
 }
+
+#[test]
+fn test_isolated_note_hunk_synthesis() {
+    use crate::notes::{ReviewNote, Side, add_note};
+
+    let mut lines = Vec::new();
+    for i in 1..=100 {
+        lines.push(format!("line {i}"));
+    }
+    let full_content = lines.join("\n");
+
+    let diff = "\
+diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,3 +10,3 @@
+ line 10
+-line 11
++line 11 modified
+ line 12
+";
+    let mut new_content = HashMap::new();
+    new_content.insert("test.rs".to_string(), full_content);
+
+    let mut db = HashMap::new();
+    let note = ReviewNote {
+        id: "note-isolated".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 80,
+        end: 80,
+        text: "isolated review note".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    add_note(&mut db, "repo", note);
+
+    let opts = PipelineOptions::default()
+        .with_notes(Some(db), Some("repo".to_string()))
+        .with_visual_context(4);
+
+    let output = PipelineInput::new(diff)
+        .with_new_content(new_content)
+        .with_options(opts)
+        .run();
+
+    assert_eq!(output.files.len(), 1);
+    let f = &output.files[0];
+    assert_eq!(f.counts.notes, 1);
+    assert_eq!(
+        f.hunks.len(),
+        2,
+        "Expected 2 hunks: 1 diff hunk and 1 synthetic note hunk"
+    );
+    let h2 = &f.hunks[1];
+    assert_eq!(h2.new_start, 76);
+    assert_eq!(h2.new_count, 9); // lines 76..=84 is 9 lines
+    assert!(h2.rows.iter().all(|r| r.kind == RowKind::Ctx));
+    assert!(f.rows.iter().any(|r| r.new_line == Some(80)));
+}
+
+#[test]
+fn test_boundary_adjacent_note_merging() {
+    use crate::notes::{ReviewNote, Side, add_note};
+
+    let mut lines = Vec::new();
+    for i in 1..=100 {
+        lines.push(format!("line {i}"));
+    }
+    let full_content = lines.join("\n");
+
+    let diff = "\
+diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,3 +10,3 @@
+ line 10
+-line 11
++line 11 modified
+ line 12
+";
+    let mut new_content = HashMap::new();
+    new_content.insert("test.rs".to_string(), full_content);
+
+    let mut db = HashMap::new();
+    // Diff hunk with visual_context=4 ends around line 12 + 4 = 16.
+    // Note at line 20 is distance 4 from hunk end (<= 2*N = 8), so it merges.
+    let note = ReviewNote {
+        id: "note-adjacent".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 20,
+        end: 20,
+        text: "boundary adjacent note".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    add_note(&mut db, "repo", note);
+
+    let opts = PipelineOptions::default()
+        .with_notes(Some(db), Some("repo".to_string()))
+        .with_visual_context(4);
+
+    let output = PipelineInput::new(diff)
+        .with_new_content(new_content)
+        .with_options(opts)
+        .run();
+
+    assert_eq!(output.files.len(), 1);
+    let f = &output.files[0];
+    assert_eq!(f.counts.notes, 1);
+    assert_eq!(
+        f.hunks.len(),
+        1,
+        "Expected single merged hunk for adjacent note"
+    );
+    let h = &f.hunks[0];
+    // Trailing context should extend to at least note.end + 4 = 24
+    let h_end = h.new_start + h.new_count - 1;
+    assert!(
+        h_end >= 24,
+        "Hunk end should be at least line 24, got {h_end}"
+    );
+    assert!(f.rows.iter().any(|r| r.new_line == Some(20)));
+}
+
+#[test]
+fn test_multi_note_clustering_in_gap() {
+    use crate::notes::{ReviewNote, Side, add_note};
+
+    let mut lines = Vec::new();
+    for i in 1..=100 {
+        lines.push(format!("line {i}"));
+    }
+    let full_content = lines.join("\n");
+
+    let diff = "\
+diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,3 +10,3 @@
+ line 10
+-line 11
++line 11 modified
+ line 12
+";
+    let mut new_content = HashMap::new();
+    new_content.insert("test.rs".to_string(), full_content);
+
+    let mut db = HashMap::new();
+    // Note 1 at line 60, Note 2 at line 65. Distance is 5 <= 2*N = 8, so cluster
+    // together.
+    let note1 = ReviewNote {
+        id: "note-cluster-1".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 60,
+        end: 60,
+        text: "cluster 1".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    let note2 = ReviewNote {
+        id: "note-cluster-2".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 65,
+        end: 65,
+        text: "cluster 2".into(),
+        created_at: 1001,
+        line_hash: None,
+    };
+    add_note(&mut db, "repo", note1);
+    add_note(&mut db, "repo", note2);
+
+    let opts = PipelineOptions::default()
+        .with_notes(Some(db), Some("repo".to_string()))
+        .with_visual_context(4);
+
+    let output = PipelineInput::new(diff)
+        .with_new_content(new_content)
+        .with_options(opts)
+        .run();
+
+    assert_eq!(output.files.len(), 1);
+    let f = &output.files[0];
+    assert_eq!(f.counts.notes, 2);
+    assert_eq!(
+        f.hunks.len(),
+        2,
+        "Expected 2 hunks: 1 diff hunk and 1 clustered note hunk"
+    );
+    let h2 = &f.hunks[1];
+    // Span is [60-4 .. 65+4] = [56 .. 69]
+    assert_eq!(h2.new_start, 56);
+    assert_eq!(h2.new_count, 14); // lines 56..=69 is 14 lines
+    assert!(f.rows.iter().any(|r| r.new_line == Some(60)));
+    assert!(f.rows.iter().any(|r| r.new_line == Some(65)));
+}
+
+#[test]
+fn test_missing_snapshot_content_fallback() {
+    use crate::notes::{ReviewNote, Side, add_note};
+
+    let diff = "\
+diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,3 +10,3 @@
+ line 10
+-line 11
++line 11 modified
+ line 12
+";
+    let mut db = HashMap::new();
+    let note = ReviewNote {
+        id: "note-no-snap".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 80,
+        end: 80,
+        text: "note without snapshot".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    add_note(&mut db, "repo", note);
+
+    let opts = PipelineOptions::default()
+        .with_notes(Some(db), Some("repo".to_string()))
+        .with_visual_context(4);
+
+    // No snapshot provided
+    let output = PipelineInput::new(diff).with_options(opts).run();
+
+    assert_eq!(output.files.len(), 1);
+    let f = &output.files[0];
+    assert_eq!(f.counts.notes, 1);
+    // Without snapshot, cannot synthesize context hunk in gap
+    assert_eq!(f.hunks.len(), 1);
+}
+
+#[test]
+fn test_note_on_old_side_gap_line_mapping() {
+    use crate::notes::{ReviewNote, Side, add_note};
+
+    // Old file: 100 lines
+    let mut old_lines = Vec::new();
+    for i in 1..=100 {
+        old_lines.push(format!("old line {i}"));
+    }
+    let old_content = old_lines.join("\n");
+
+    // New file: lines 1..9 unchanged, line 10 replaced with 4 lines (+3 net lines),
+    // lines 11..100 shifted by +3
+    let mut new_lines = Vec::new();
+    for i in 1..=9 {
+        new_lines.push(format!("old line {i}"));
+    }
+    new_lines.push("inserted a".to_string());
+    new_lines.push("inserted b".to_string());
+    new_lines.push("inserted c".to_string());
+    new_lines.push("inserted d".to_string());
+    for i in 11..=100 {
+        new_lines.push(format!("old line {i}"));
+    }
+    let new_content = new_lines.join("\n");
+
+    let diff = "\
+diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,1 +10,4 @@
+-old line 10
++inserted a
++inserted b
++inserted c
++inserted d
+";
+    let mut new_map = HashMap::new();
+    new_map.insert("test.rs".to_string(), new_content);
+    let mut old_map = HashMap::new();
+    old_map.insert("test.rs".to_string(), old_content);
+
+    let mut db = HashMap::new();
+    // Note on Old side at line 50. Delta is +3, so new line is 53.
+    let note = ReviewNote {
+        id: "note-old-side".into(),
+        file: "test.rs".into(),
+        side: Side::Old,
+        start: 50,
+        end: 50,
+        text: "old side note".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    add_note(&mut db, "repo", note);
+
+    let opts = PipelineOptions::default()
+        .with_notes(Some(db), Some("repo".to_string()))
+        .with_visual_context(4);
+
+    let output = PipelineInput::new(diff)
+        .with_new_content(new_map)
+        .with_old_content(old_map)
+        .with_options(opts)
+        .run();
+
+    assert_eq!(output.files.len(), 1);
+    let f = &output.files[0];
+    assert_eq!(f.counts.notes, 1);
+    assert_eq!(
+        f.hunks.len(),
+        2,
+        "Expected 2 hunks: 1 diff hunk and 1 synthetic note hunk"
+    );
+    let h2 = &f.hunks[1];
+    // New span is 53 - 4 = 49 to 53 + 4 = 57 (9 lines)
+    assert_eq!(h2.new_start, 49);
+    assert_eq!(h2.new_count, 9);
+    // Old span is 50 - 4 = 46 to 50 + 4 = 54 (9 lines)
+    assert_eq!(h2.old_start, 46);
+    assert_eq!(h2.old_count, 9);
+
+    // Context row for note must carry both new_line (53) and old_line (50)
+    let matching_row = f.rows.iter().find(|r| r.old_line == Some(50));
+    assert!(
+        matching_row.is_some(),
+        "Context row for old line 50 must exist"
+    );
+    assert_eq!(matching_row.unwrap().new_line, Some(53));
+}

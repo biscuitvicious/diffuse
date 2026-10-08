@@ -146,14 +146,20 @@ fn trim_context(file: &mut DiffFile, visual: usize) {
 /// Merges adjacent hunks within a `DiffFile` if their context windows touch or
 /// overlap (`next_old_start <= cur_old_end + 1`).
 pub fn merge_adjacent_hunks(file: &mut DiffFile, _context_budget: usize) {
-    if file.hunks.len() <= 1 {
+    merge_adjacent_hunks_list(&mut file.hunks);
+}
+
+/// Merges adjacent hunks in a hunk list if their context windows touch or
+/// overlap (`next_old_start <= cur_old_end + 1`).
+pub fn merge_adjacent_hunks_list(hunks: &mut Vec<Hunk>) {
+    if hunks.len() <= 1 {
         return;
     }
 
-    let mut merged: Vec<Hunk> = Vec::with_capacity(file.hunks.len());
-    let mut cur = file.hunks[0].clone();
+    let mut merged: Vec<Hunk> = Vec::with_capacity(hunks.len());
+    let mut cur = hunks[0].clone();
 
-    for next in file.hunks.iter().skip(1) {
+    for next in hunks.iter().skip(1) {
         let cur_old_end = cur.old_start + cur.old_count.saturating_sub(1);
         let next_old_start = next.old_start;
 
@@ -190,7 +196,7 @@ pub fn merge_adjacent_hunks(file: &mut DiffFile, _context_budget: usize) {
         }
     }
     merged.push(cur);
-    file.hunks = merged;
+    *hunks = merged;
 }
 
 /// Normalizes leading and trailing context lines for all hunks in a `DiffFile`

@@ -6,16 +6,16 @@
     - [x] When `--notes-file <path>` is provided in standalone/piped mode, load notes from `<path>`, bypass git commit scoping (`repo@<commit>`), and match notes by file path
     - [x] In git repo mode, retain commit-scoped note lookup (`repo@<commit>`) with fallback to `$XDG_STATE_HOME/diffuse/notes.json`
     - [x] Add unit tests verifying note inactivity for piped diffs without `--notes-file` and path-scoped activation when `--notes-file` is passed
-  - [·] **Phase 2 — Synthetic Note Hunk Generation & Context Merging**
-    - [ ] In `diffuse-core` hunk normalization, identify notes whose target span `[start..=end]` is uncovered by existing diff hunks
-    - [ ] Cluster uncovered notes within $2N$ lines of each other (where $N = \text{visual\_context}$)
-    - [ ] For each uncovered note cluster, compute deterministic pre- and post-image line numbers using gap line offset formulas
-    - [ ] If an uncovered note cluster is within $2N$ lines of an existing diff hunk, extend context and merge with the existing hunk
-    - [ ] If an uncovered note cluster is isolated in a gap or outside all hunks, synthesize a new `Hunk` containing `Row::Ctx` lines spanning $[\max(1, \text{start} - N) \dots \text{end} + N]$
-    - [ ] Pull line text from `file.new_content` and `file.old_content`
-    - [ ] Allow `shift::normalize_context` to merge touching or overlapping hunks
-    - [ ] Add unit tests in `diffuse-core` covering isolated note hunks, boundary-adjacent merging, multi-note clustering, and missing snapshot fallback
-  - [ ] **Phase 3 — Unmodified Note-Carrying Files (`FileStatus::Unmodified`)**
+  - [x] **Phase 2 — Synthetic Note Hunk Generation & Context Merging**
+    - [x] In `diffuse-core` hunk normalization, identify notes whose target span `[start..=end]` is uncovered by existing diff hunks
+    - [x] Cluster uncovered notes within $2N$ lines of each other (where $N = \text{visual\_context}$)
+    - [x] For each uncovered note cluster, compute deterministic pre- and post-image line numbers using gap line offset formulas
+    - [x] If an uncovered note cluster is within $2N$ lines of an existing diff hunk, extend context and merge with the existing hunk
+    - [x] If an uncovered note cluster is isolated in a gap or outside all hunks, synthesize a new `Hunk` containing `Row::Ctx` lines spanning $[\max(1, \text{start} - N) \dots \text{end} + N]$
+    - [x] Pull line text from `file.new_content` and `file.old_content`
+    - [x] Allow `shift::normalize_context` to merge touching or overlapping hunks
+    - [x] Add unit tests in `diffuse-core` covering isolated note hunks, boundary-adjacent merging, multi-note clustering, and missing snapshot fallback
+  - [·] **Phase 3 — Unmodified Note-Carrying Files (`FileStatus::Unmodified`)**
     - [ ] Add `FileStatus::Unmodified` (wire code `"unmodified"`) to `crates/diffuse-core/src/parse.rs` and `crates/diffuse-core/src/wire.rs`
     - [ ] In git repo mode, scan the active `NotesDB` for files in the repository that have notes but zero changes in `git diff`
     - [ ] For each unmodified file with notes, load content from the repository and synthesize a `DiffFile` with `FileStatus::Unmodified`
