@@ -697,14 +697,34 @@ pub fn pass_sort_ordered_walk(
     }
     for &di in meaningful_dels {
         let d = &h.rows[di];
-        let key = match anchor_of.get(&di) {
-            None => (0, d.old_line().unwrap_or(0) as f64),
+        let (key, anchor_group) = match anchor_of.get(&di) {
+            None => ((0, d.old_line().unwrap_or(0) as f64), None),
             Some(&mi) => {
                 let base = keyed[mi].1.0;
-                (base, 1.5)
+                let grp = if keyed[mi].0.group() == Some(RowGroup::Anchor) {
+                    keyed[mi]
+                        .0
+                        .new_line()
+                        .map(|nl| RowGroup::Aux { anchor: nl })
+                } else {
+                    None
+                };
+                ((base, 1.5), grp)
             }
         };
-        keyed.push((h.rows[di].clone(), key));
+        let row = match d {
+            Row::Del(del_line) => {
+                let mut line = del_line.clone();
+                if line.group.is_none()
+                    && let Some(grp) = anchor_group
+                {
+                    line.group = Some(grp);
+                }
+                Row::Del(line)
+            }
+            other => other.clone(),
+        };
+        keyed.push((row, key));
     }
     for &ai in kept_adds {
         let a = match &h.rows[ai] {

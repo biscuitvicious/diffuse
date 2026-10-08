@@ -1843,3 +1843,67 @@ fn test_expansion_group_anchor_and_aux_tagging() {
         );
     }
 }
+
+#[test]
+fn test_auxiliary_deletion_in_expansion_block_receives_row_group_aux() {
+    use crate::parse::RowGroup;
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "    /// movs, notes). At most five segments exist, stored inline. Empty when",
+            None,
+            Some(53),
+        ),
+        row(
+            RowKind::Del,
+            "    /// [`FileCounts::is_empty`].",
+            None,
+            Some(54),
+        ),
+        row(
+            RowKind::Del,
+            "    pub fn segments(&self) -> SmallVec<[CountSegment; 5]> {",
+            None,
+            Some(55),
+        ),
+        row(
+            RowKind::Add,
+            "    /// movs, notes, in_progress, resolved). At most seven segments exist,",
+            Some(67),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "    /// stored inline. Empty when [`FileCounts::is_empty`].",
+            Some(68),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "    pub fn segments(&self) -> SmallVec<[CountSegment; 7]> {",
+            Some(69),
+            None,
+        ),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    assert_eq!(c[0].kind(), RowKind::Mod);
+    assert_eq!(
+        c[0].group(),
+        Some(RowGroup::Anchor),
+        "First row must be expansion anchor"
+    );
+
+    // The deletion row for old line 54 should be tagged as an aux del of anchor 67
+    let del_54 = c
+        .iter()
+        .find(|r| r.old_line() == Some(54))
+        .expect("old line 54 must be present");
+    assert_eq!(del_54.kind(), RowKind::Del);
+    assert_eq!(
+        del_54.group(),
+        Some(RowGroup::Aux { anchor: 67 }),
+        "Deletion inside expansion block must have RowGroup::Aux with anchor 67"
+    );
+}
