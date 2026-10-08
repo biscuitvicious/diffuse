@@ -25,7 +25,7 @@
   - [x] **Phase 5 — Full Verification & Benchmark Review**
     - [x] Execute `scripts/check.sh` with zero warnings
     - [x] Measure exact payload reduction across golden corpus (target >60% reduction, achieved 70.8%)
-    - [ ] Commit and sync submodules (pending user instruction)
+    - [x] Commit and sync submodules (completed in commit a11d526)
 
 ---
 
