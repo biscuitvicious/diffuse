@@ -74,8 +74,6 @@ pub fn render_solution<'a>(sol: &'a DpSolution) -> Vec<RenderedRow<'a>> {
                     new_line,
                     &old_line.text,
                     &new_line.text,
-                    Side::Old,
-                    &[],
                 ));
             }
             DpOp::Expand {
@@ -146,15 +144,11 @@ fn render_mov_row<'a>(r: &'a Row) -> RenderedRow<'a> {
 
 /// A plain 1-to-1 `Mod` row: word spans + the standard merged runs (with
 /// whitespace contraction and delimiter snapping — the legacy machinery).
-/// `moved` ranges (when present) mark reflowed fragments of a block
-/// transition on the given side — those runs become `Mov`.
 fn render_mod_row<'a>(
     old_line: &DelLine,
     new_line: &AddLine,
     old_text: &'a str,
     new_text: &'a str,
-    side: Side,
-    moved: &[(usize, usize)],
 ) -> RenderedRow<'a> {
     let ws = word_spans(old_text, new_text);
     let spans = Spans {
@@ -164,11 +158,6 @@ fn render_mod_row<'a>(
     let mut nl = new_line.clone();
     nl.spans = spans.clone();
     let runs = subword_runs_texts(old_text, new_text, &spans);
-    let runs = if moved.is_empty() {
-        runs
-    } else {
-        mark_side_runs(runs, side, moved)
-    };
     RenderedRow {
         row: Row::Mod {
             old_line: old_line.clone(),
@@ -195,20 +184,6 @@ fn subword_runs_texts<'a>(del_text: &'a str, add_text: &'a str, spans: &Spans) -
     merged_runs_from_texts(del_text, add_text, spans)
 }
 
-/// Which side of a mod's run stream a conversion applies to.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Side {
-    Old,
-    New,
-}
-
-/// Rewrite del (old side) or add (new side) runs that overlap any of the
-/// given char ranges into `Mov` runs (struck-moved / filled-moved) — the
-/// reflowed fragments of a block transition.
-fn mark_side_runs<'a>(runs: Vec<Run<'a>>, _side: Side, _ranges: &[(usize, usize)]) -> Vec<Run<'a>> {
-    runs
-}
-
 /// A 1-to-K expansion: the anchor `Mod` (its old-side tail that reflowed
 /// onto later lines struck-moved) + the absorbed `Add` rows (reflowed
 /// fragments filled-moved, delText connecting them to the source line).
@@ -226,20 +201,7 @@ fn render_expand<'a>(
             _ => None,
         })
         .expect("expand block carries an anchor Mod");
-    // Old-side char ranges that reflowed onto other lines.
-    let moved_old: Vec<(usize, usize)> = spans
-        .iter()
-        .filter(|s| s.line != anchor)
-        .map(|s| s.anchor_span)
-        .collect();
-    out.push(render_mod_row(
-        a_old,
-        a_new,
-        &a_old.text,
-        &a_new.text,
-        Side::Old,
-        &moved_old,
-    ));
+    out.push(render_mod_row(a_old, a_new, &a_old.text, &a_new.text));
 
     for (li, r) in block.iter().enumerate() {
         if li == anchor {
@@ -269,20 +231,7 @@ fn render_collapse<'a>(
             _ => None,
         })
         .expect("collapse block carries an anchor Mod");
-    // New-side char ranges absorbed from other old lines.
-    let moved_new: Vec<(usize, usize)> = spans
-        .iter()
-        .filter(|s| s.line != anchor)
-        .map(|s| s.anchor_span)
-        .collect();
-    out.push(render_mod_row(
-        a_old,
-        a_new,
-        &a_old.text,
-        &a_new.text,
-        Side::New,
-        &moved_new,
-    ));
+    out.push(render_mod_row(a_old, a_new, &a_old.text, &a_new.text));
 
     for (li, r) in block.iter().enumerate() {
         if li == anchor {
