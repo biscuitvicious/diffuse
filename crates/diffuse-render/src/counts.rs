@@ -20,6 +20,8 @@ pub fn count_color(kind: CountKind, palette: &ThemePalette) -> Color {
         CountKind::Mods => palette.count_mods,
         CountKind::Movs => palette.count_movs,
         CountKind::Notes => palette.count_notes,
+        CountKind::InProgressNotes => Color::Rgb(60, 180, 240),
+        CountKind::ResolvedNotes => palette.count_adds,
     }
 }
 
@@ -34,7 +36,7 @@ pub struct CountCell {
 
 /// Shared count cells: same segments, order, and colors everywhere counts
 /// render (status bars, file banners, pretty printer).
-pub fn count_cells(counts: &FileCounts, palette: &ThemePalette) -> SmallVec<[CountCell; 5]> {
+pub fn count_cells(counts: &FileCounts, palette: &ThemePalette) -> SmallVec<[CountCell; 7]> {
     counts
         .segments()
         .iter()
@@ -60,6 +62,8 @@ mod tests {
                 mods: 1,
                 movs: 2,
                 notes: 4,
+                in_progress_notes: 1,
+                resolved_notes: 2,
             },
             &palette,
         );
@@ -67,7 +71,7 @@ mod tests {
             .iter()
             .map(|c| format!("{}{}", c.marker, c.value))
             .collect();
-        assert_eq!(texts, vec!["−7", "+3", "~1", "≈2", "💬4"]);
+        assert_eq!(texts, vec!["−7", "+3", "~1", "≈2", "💬4", "🔄1", "✅2"]);
         let colors: Vec<Color> = cells.iter().map(|c| c.color).collect();
         assert_eq!(
             colors,
@@ -77,6 +81,8 @@ mod tests {
                 palette.count_mods,
                 palette.count_movs,
                 palette.count_notes,
+                Color::Rgb(60, 180, 240),
+                palette.count_adds,
             ]
         );
     }
@@ -91,6 +97,8 @@ mod tests {
                 mods: 0,
                 movs: 0,
                 notes: 0,
+                in_progress_notes: 0,
+                resolved_notes: 0,
             },
             &palette,
         );

@@ -1,6 +1,10 @@
 use super::*;
 use crate::{
-    core::{counts::FileCounts, notes::Side as NoteSide, wire::OutputNote},
+    core::{
+        counts::FileCounts,
+        notes::{NoteStatus, Side as NoteSide},
+        wire::OutputNote,
+    },
     render::DiffuseTheme,
 };
 use ratatui::style::Color;
@@ -85,6 +89,7 @@ fn test_ratatui_header_and_status_lines() {
             mods: 1,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -360,6 +365,7 @@ fn test_header_bar_nonzero_notes_shown() {
             mods: 0,
             movs: 0,
             notes: 2,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![
@@ -373,6 +379,8 @@ fn test_header_bar_nonzero_notes_shown() {
                 created_at: 0,
                 runs: vec![],
                 line_hash: None,
+                status: NoteStatus::Open,
+                source_lines: None,
             },
             OutputNote {
                 id: "n2".to_string(),
@@ -384,6 +392,8 @@ fn test_header_bar_nonzero_notes_shown() {
                 created_at: 0,
                 runs: vec![],
                 line_hash: None,
+                status: NoteStatus::Open,
+                source_lines: None,
             },
         ],
         content_runs: vec![],
@@ -428,6 +438,7 @@ fn test_header_bar_nonzero_notes_shown() {
         mods: 0,
         movs: 0,
         notes: 2,
+        ..Default::default()
     };
     let header_ansi = render_header_bar(
         "repo",
@@ -583,6 +594,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
             mods: 1,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -800,6 +812,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
             mods: 6,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -817,6 +830,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
         mods: 6,
         movs: 0,
         notes: 0,
+        ..Default::default()
     };
 
     let header_line = header_bar_line(
@@ -866,6 +880,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
         mods: 6,
         movs: 2,
         notes: 0,
+        ..Default::default()
     };
     let mov_header_line = header_bar_line(
         "diffuse",
@@ -940,6 +955,7 @@ fn test_header_bar_global_mod_counts_ansi() {
             mods: 6,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -957,6 +973,7 @@ fn test_header_bar_global_mod_counts_ansi() {
         mods: 6,
         movs: 2,
         notes: 0,
+        ..Default::default()
     };
 
     let ansi_lines = render_header_bar(
@@ -1012,6 +1029,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         mods: 3,
         movs: 0,
         notes: 0,
+        ..Default::default()
     };
 
     // No file in the top header: repo, global counts, prefix only.
@@ -1045,6 +1063,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
             mods: 1,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -1110,6 +1129,7 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
         mods: 6,
         movs: 2,
         notes: 0,
+        ..Default::default()
     };
 
     assert_eq!(format_counts_plain(&counts), "−7 +15 ~6 ≈2");
@@ -1136,6 +1156,7 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
         mods: 0,
         movs: 0,
         notes: 0,
+        ..Default::default()
     };
     assert_eq!(format_counts_plain(&del_only), "−4");
     assert_eq!(
@@ -1159,6 +1180,7 @@ fn test_format_counts_omit_zero_dels() {
         mods: 1,
         movs: 0,
         notes: 0,
+        ..Default::default()
     };
     assert_eq!(format_counts_plain(&adds_only), "+3 ~1");
     assert_eq!(
@@ -1179,6 +1201,7 @@ fn test_format_counts_omit_zero_dels() {
         mods: 0,
         movs: 0,
         notes: 2,
+        ..Default::default()
     };
     assert_eq!(format_counts_plain(&notes_only), "💬2");
 }
@@ -1329,6 +1352,7 @@ fn test_top_header_drops_file_section_and_counts_dot() {
         mods: 6,
         movs: 0,
         notes: 2,
+        ..Default::default()
     };
     // ANSI header: repo, glyph, branch, then global counts with no dot and
     // no file section.
@@ -1412,6 +1436,7 @@ fn test_status_bar_shows_file_and_hunk_stats() {
             mods: 6,
             movs: 0,
             notes: 1,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![OutputNote {
@@ -1424,6 +1449,8 @@ fn test_status_bar_shows_file_and_hunk_stats() {
             created_at: 0,
             runs: vec![],
             line_hash: None,
+            status: NoteStatus::Open,
+            source_lines: None,
         }],
         content_runs: vec![],
         rows: vec![],
@@ -1485,6 +1512,7 @@ fn status_test_file(path: &str) -> OutputFile {
             mods: 0,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],

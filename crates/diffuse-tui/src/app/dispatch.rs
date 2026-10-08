@@ -211,6 +211,11 @@ impl AppState {
                 self.editing_note_id = None;
             }
             TuiCommand::DeleteNote => self.delete_note(),
+            TuiCommand::CycleNoteStatus => {
+                let _ = self.cycle_note_status();
+            }
+            TuiCommand::ToggleShowResolvedNotes => self.toggle_show_resolved_notes(),
+            TuiCommand::ToggleShowSourceLines => self.toggle_show_source_lines(),
             TuiCommand::MouseClick { row, col, shift } => {
                 let header_offset = self.last_viewport_start;
                 let vh = self.viewport_height;

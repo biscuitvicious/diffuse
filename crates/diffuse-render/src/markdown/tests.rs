@@ -4,7 +4,7 @@ use super::*;
 use crate::core::{
     counts::FileCounts,
     merge::RunKind,
-    notes::Side,
+    notes::{NoteStatus, Side},
     wire::{OutputHunk, OutputNote, OutputRow, OutputRun},
 };
 
@@ -91,6 +91,7 @@ fn sample_output() -> PipelineOutput {
                     mods: 1,
                     movs: 0,
                     notes: 0,
+                    ..Default::default()
                 },
                 fences: vec![],
                 notes: vec![OutputNote {
@@ -103,6 +104,8 @@ fn sample_output() -> PipelineOutput {
                     created_at: 123456789,
                     runs: vec![],
                     line_hash: None,
+                    status: NoteStatus::Open,
+                    source_lines: None,
                 }],
                 content_runs: vec![],
                 rows: vec![],
@@ -164,6 +167,7 @@ fn sample_output() -> PipelineOutput {
                     mods: 0,
                     movs: 0,
                     notes: 0,
+                    ..Default::default()
                 },
                 fences: vec![],
                 notes: vec![],
@@ -263,6 +267,8 @@ fn test_render_markdown_options_variations() {
         collapsible: false,
         default_open: false,
         include_notes: false,
+        show_resolved_notes: false,
+        show_source_lines: false,
         colorize: false,
         theme: DiffuseTheme::DEFAULT,
     };
@@ -278,6 +284,8 @@ fn test_render_markdown_options_variations() {
         collapsible: true,
         default_open: false,
         include_notes: true,
+        show_resolved_notes: false,
+        show_source_lines: false,
         colorize: false,
         theme: DiffuseTheme::DEFAULT,
     };
@@ -347,6 +355,7 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                     mods: 0,
                     movs: 0,
                     notes: 0,
+                    ..Default::default()
                 },
                 fences: vec![],
                 notes: vec![OutputNote {
@@ -359,6 +368,8 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                     created_at: 987654321,
                     runs: vec![],
                     line_hash: None,
+                    status: NoteStatus::Open,
+                    source_lines: None,
                 }],
                 content_runs: vec![],
                 rows: vec![],
@@ -467,6 +478,7 @@ fn test_render_markdown_language_profile_syntax_highlighting() {
                 mods: 1,
                 movs: 0,
                 notes: 0,
+                ..Default::default()
             },
             fences: vec![],
             notes: vec![],
@@ -983,4 +995,133 @@ fn test_render_markdown_paths_preserve_spaces_and_indicate_tabs() {
     assert!(md.contains("<summary><b>file with space </b>"));
     assert!(md.contains("`file⇥with⇥tab`"));
     assert!(md.contains("<summary><b>file⇥with⇥tab</b>"));
+}
+
+#[test]
+fn test_render_markdown_note_statuses() {
+    let mut output = sample_output();
+    output.files[0].notes = vec![
+        OutputNote {
+            id: "n_open".to_string(),
+            file: "src/main.rs".to_string(),
+            side: Side::New,
+            start: 2,
+            end: 2,
+            text: "Open comment".to_string(),
+            created_at: 100,
+            runs: vec![],
+            line_hash: None,
+            status: NoteStatus::Open,
+            source_lines: None,
+        },
+        OutputNote {
+            id: "n_in_progress".to_string(),
+            file: "src/main.rs".to_string(),
+            side: Side::New,
+            start: 5,
+            end: 5,
+            text: "In progress comment".to_string(),
+            created_at: 200,
+            runs: vec![],
+            line_hash: None,
+            status: NoteStatus::InProgress,
+            source_lines: None,
+        },
+        OutputNote {
+            id: "n_resolved".to_string(),
+            file: "src/main.rs".to_string(),
+            side: Side::New,
+            start: 8,
+            end: 8,
+            text: "Resolved comment".to_string(),
+            created_at: 300,
+            runs: vec![],
+            line_hash: None,
+            status: NoteStatus::Resolved,
+            source_lines: None,
+        },
+    ];
+
+    // Default: active only (Open and InProgress)
+    let opts = MarkdownOptions::default();
+    let md = render_markdown_output(&output, &opts);
+    assert!(md.contains("> 💬 **Line 2**: Open comment"));
+    assert!(md.contains("> 🔄 **Line 5**: In progress comment"));
+    assert!(!md.contains("> ✅ **Line 8**: Resolved comment"));
+
+    // With show_resolved_notes: true
+    let opts_all = MarkdownOptions {
+        show_resolved_notes: true,
+        ..MarkdownOptions::default()
+    };
+    let md_all = render_markdown_output(&output, &opts_all);
+    assert!(md_all.contains("> 💬 **Line 2**: Open comment"));
+    assert!(md_all.contains("> 🔄 **Line 5**: In progress comment"));
+    assert!(md_all.contains("> ✅ **Line 8**: Resolved comment"));
+}
+
+#[test]
+fn test_render_markdown_resolved_notes_omitted_summary() {
+    let mut output = sample_output();
+    output.files[0].counts.resolved_notes = 2;
+    output.files[0].notes = vec![OutputNote {
+        id: "n_open".to_string(),
+        file: "src/main.rs".to_string(),
+        side: Side::New,
+        start: 2,
+        end: 2,
+        text: "Open comment".to_string(),
+        created_at: 100,
+        runs: vec![],
+        line_hash: None,
+        status: NoteStatus::Open,
+        source_lines: None,
+    }];
+
+    let opts = MarkdownOptions::default();
+    let md = render_markdown_output(&output, &opts);
+    assert!(md.contains("> 💬 **Line 2**: Open comment"));
+    assert!(md.contains("*✅ 2 resolved notes omitted (use --resolved or --all to show)*"));
+
+    let opts_all = MarkdownOptions {
+        show_resolved_notes: true,
+        ..MarkdownOptions::default()
+    };
+    let md_all = render_markdown_output(&output, &opts_all);
+    assert!(!md_all.contains("omitted"));
+}
+
+#[test]
+fn test_render_markdown_source_lines_code_block() {
+    let mut output = sample_output();
+    output.files[0].notes = vec![OutputNote {
+        id: "n_src".to_string(),
+        file: "src/main.rs".to_string(),
+        side: Side::New,
+        start: 2,
+        end: 3,
+        text: "Quoted review note".to_string(),
+        created_at: 100,
+        runs: vec![],
+        line_hash: None,
+        status: NoteStatus::Open,
+        source_lines: Some("println!(\"Hello diffuse!\");\n}".to_string()),
+    }];
+
+    let opts = MarkdownOptions {
+        show_source_lines: true,
+        ..MarkdownOptions::default()
+    };
+    let md = render_markdown_output(&output, &opts);
+    assert!(md.contains("> 💬 **Lines 2-3**:"));
+    assert!(md.contains("> ```rs\n> println!(\"Hello diffuse!\");\n> }\n> ```"));
+    assert!(md.contains("> Quoted review note"));
+
+    let opts_no_src = MarkdownOptions {
+        show_source_lines: false,
+        ..MarkdownOptions::default()
+    };
+    let md_no_src = render_markdown_output(&output, &opts_no_src);
+    assert!(!md_no_src.contains("> ```rs"));
+    assert!(md_no_src.contains("> 💬 **Lines 2-3**: Quoted review note"));
 }

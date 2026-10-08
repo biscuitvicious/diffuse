@@ -25,6 +25,7 @@ fn test_file_sequencer_in_order_reassembly() {
             movs: 0,
             mods: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: Vec::new(),
         notes: Vec::new(),

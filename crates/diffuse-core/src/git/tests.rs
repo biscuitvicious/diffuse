@@ -453,6 +453,7 @@ fn test_load_git_repo_unmodified_files_with_notes() {
         text: "note on untouched file".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     crate::notes::add_note(&mut db, &format!("myrepo@{head}"), note);
 

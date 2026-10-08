@@ -53,6 +53,8 @@ pub fn run_tui(
     staged: bool,
     expand_lines: usize,
     theme: crate::render::DiffuseTheme,
+    show_resolved: bool,
+    show_source: bool,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
     let target = diffuse_core::ReviewTarget::from_repo_args(
@@ -62,7 +64,9 @@ pub fn run_tui(
     );
     let mut state = AppState::new(initial_output, repo, notes_path, theme)
         .with_target(target)
-        .with_expand_lines(expand_lines);
+        .with_expand_lines(expand_lines)
+        .with_show_resolved_notes(show_resolved)
+        .with_show_source_lines(show_source);
     state.enable_async_on_demand();
     if streaming_rx.is_some() {
         state.is_streaming = true;
@@ -186,5 +190,7 @@ pub fn run_interactive_tui(
         staged,
         DEFAULT_EXPAND_LINES,
         theme,
+        false,
+        false,
     )
 }

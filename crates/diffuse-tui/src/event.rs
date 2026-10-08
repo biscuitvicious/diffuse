@@ -39,7 +39,7 @@ fn handle_paste_event(state: &mut AppState, text: &str) {
 }
 
 #[tracing::instrument(level = "trace", skip(state), fields(code = ?key.code, modifiers = ?key.modifiers))]
-fn handle_key_event(state: &mut AppState, key: KeyEvent) {
+pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
     // Help Modal Mode (swallows all background keys, closes on
     // Esc/?/q/Enter/Space)
     if state.show_help {
@@ -233,11 +233,14 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         | (KeyModifiers::SHIFT, KeyCode::Char('E')) => {
             state.execute(TuiCommand::ExpandAllHidden);
         }
-        (KeyModifiers::NONE, KeyCode::Char('c')) | (KeyModifiers::NONE, KeyCode::Char('z')) => {
+        (KeyModifiers::NONE, KeyCode::Char('c')) => {
             state.execute(TuiCommand::ResetCurrentHunkContext);
         }
         (KeyModifiers::SHIFT, KeyCode::Char('C')) | (KeyModifiers::SHIFT, KeyCode::Char('Z')) => {
             state.execute(TuiCommand::ResetAllContext);
+        }
+        (KeyModifiers::NONE, KeyCode::Char('z')) => {
+            state.execute(TuiCommand::ToggleShowResolvedNotes);
         }
         (KeyModifiers::NONE, KeyCode::Char('y')) => {
             state.execute(TuiCommand::ToggleSyntax);
@@ -276,15 +279,7 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         }
 
         (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
-            let repo_root = state.repo_root.clone();
-            let git_args = state.git_args.clone();
-            match super::actions::stage_action(state, &repo_root, &git_args, true) {
-                Ok(()) => {
-                    state.status_message = Some(("staged file".into(), true));
-                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
-                }
-                Err(e) => state.status_message = Some((e, false)),
-            }
+            state.execute(TuiCommand::ToggleShowSourceLines);
         }
         (KeyModifiers::NONE, KeyCode::Char('u')) => {
             state.execute(TuiCommand::Unstage);
@@ -301,7 +296,9 @@ fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('x')) => {
-            state.execute(TuiCommand::Discard);
+            if !state.cycle_note_status() {
+                state.execute(TuiCommand::Discard);
+            }
         }
         (KeyModifiers::SHIFT, KeyCode::Char('X')) => {
             let repo_root = state.repo_root.clone();

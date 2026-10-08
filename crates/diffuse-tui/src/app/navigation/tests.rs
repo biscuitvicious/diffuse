@@ -965,6 +965,7 @@ index 1111111..2222222 100644
                 mods: 0,
                 movs: 0,
                 notes: 0,
+                ..Default::default()
             },
             fences: Vec::new(),
             notes: Vec::new(),

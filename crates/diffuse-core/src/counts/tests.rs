@@ -69,10 +69,9 @@ fn counts_after_modified_pair_collapse() {
         counts,
         FileCounts {
             adds: 3,
-            dels: 0,
             mods: 1,
             movs: 1,
-            notes: 0,
+            ..Default::default()
         },
         "counts +3 ~1 ~1 — the mod pair, the moved pair, and the tail lines count as adds"
     );
@@ -106,11 +105,8 @@ fn counts_moved_pair_is_neither_add_nor_del() {
     assert_eq!(
         counts,
         FileCounts {
-            adds: 0,
-            dels: 0,
-            mods: 0,
             movs: 1,
-            notes: 0,
+            ..Default::default()
         },
         "a moved pair counts as one mov"
     );
@@ -124,6 +120,8 @@ fn segments_collect_nonzero_counts_in_display_order() {
         mods: 6,
         movs: 2,
         notes: 1,
+        in_progress_notes: 2,
+        resolved_notes: 3,
     };
     let segments = counts.segments();
     let kinds: Vec<CountKind> = segments.iter().map(|s| s.kind).collect();
@@ -133,7 +131,9 @@ fn segments_collect_nonzero_counts_in_display_order() {
             CountKind::Adds,
             CountKind::Mods,
             CountKind::Movs,
-            CountKind::Notes
+            CountKind::Notes,
+            CountKind::InProgressNotes,
+            CountKind::ResolvedNotes,
         ],
         "zero dels must be skipped, order must be stable"
     );
@@ -141,7 +141,7 @@ fn segments_collect_nonzero_counts_in_display_order() {
         .iter()
         .map(|s| format!("{}{}", s.marker, s.value))
         .collect();
-    assert_eq!(texts, vec!["+15", "~6", "≈2", "💬1"]);
+    assert_eq!(texts, vec!["+15", "~6", "≈2", "💬1", "🔄2", "✅3"]);
 
     let empty = FileCounts::default().segments();
     assert!(empty.is_empty(), "all-zero counts yield no segments");

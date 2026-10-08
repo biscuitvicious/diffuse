@@ -262,6 +262,7 @@ mod tests {
                 mods: 0,
                 movs: 0,
                 notes: 0,
+                ..Default::default()
             },
             fences: vec![],
             notes: vec![],

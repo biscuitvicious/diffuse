@@ -157,6 +157,8 @@ fn test_nonzero_notes_still_rendered() {
             created_at: 0,
             runs: vec![],
             line_hash: None,
+            status: diffuse_core::notes::NoteStatus::Open,
+            source_lines: None,
         }],
         content_runs: vec![],
         rows: vec![],
@@ -197,6 +199,7 @@ fn test_write_file_header_bar_direct_buffer() {
             mods: 3,
             movs: 1,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],

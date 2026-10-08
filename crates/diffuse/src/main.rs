@@ -23,8 +23,9 @@ use diffuse::{
         DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions, Repo, ReviewTarget,
         git::{is_inside_work_tree, load_git_repo_with_notes},
         notes::{
-            NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
-            save_notes,
+            NoteStatus, NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes,
+            remove_notes, reply_to_note_text, save_notes, set_note_status_in_repo,
+            update_note_in_db,
         },
         pipeline::run_pipeline_full,
         streaming::{spawn_git_stream_pipeline, stream_diff_pipeline},
@@ -36,6 +37,8 @@ use diffuse::{
     },
     tui::run_tui,
 };
+
+mod notes_cli;
 
 /// The diffuse diff-engine CLI.
 #[derive(Parser, Debug)]
@@ -121,6 +124,17 @@ struct Args {
     /// View staged (cached) index changes against HEAD.
     #[arg(short = 's', long, alias = "cached", global = true)]
     staged: bool,
+    /// Include resolved notes in diff, JSON, or Markdown output.
+    #[arg(long, global = true)]
+    resolved: bool,
+    /// Include all notes (including resolved notes) in diff, JSON, or Markdown
+    /// output.
+    #[arg(short = 'a', long = "all", alias = "all-notes", global = true)]
+    all: bool,
+    /// Show original source lines captured when creating notes in diff, JSON,
+    /// or Markdown output.
+    #[arg(long, global = true)]
+    show_source: bool,
 
     #[command(subcommand)]
     command: Option<SubCommand>,
@@ -157,10 +171,195 @@ enum SubCommand {
         /// Emit raw colorized diff (flat green/red, no subword highlighting).
         #[arg(long)]
         raw: bool,
+        /// Include resolved notes in output.
+        #[arg(long)]
+        resolved: bool,
+        /// Include all notes (including resolved notes) in output.
+        #[arg(short = 'a', long)]
+        all: bool,
+        /// Show original source lines captured when creating notes.
+        #[arg(long)]
+        show_source: bool,
+    },
+    /// Manage, view, reply to, and resolve code review notes.
+    Notes(Box<NotesArgs>),
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct NotesArgs {
+    #[command(subcommand)]
+    pub action: Option<NotesAction>,
+
+    /// Show resolved notes only (shorthand for `list --resolved`)
+    #[arg(long)]
+    pub resolved: bool,
+
+    /// Show in-progress notes only (shorthand for `list --in-progress`)
+    #[arg(long)]
+    pub in_progress: bool,
+
+    /// Show all notes (open, in-progress, resolved) (shorthand for `list
+    /// --all`)
+    #[arg(short = 'a', long)]
+    pub all: bool,
+
+    /// Show original source lines captured when creating the notes
+    #[arg(long)]
+    pub show_source: bool,
+
+    /// Emit notes as JSON
+    #[arg(long)]
+    pub json: bool,
+
+    /// Emit notes as GitHub-Flavored Markdown
+    #[arg(short = 'm', long)]
+    pub markdown: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum NotesAction {
+    /// List review notes (default)
+    List {
+        /// Show resolved notes only
+        #[arg(long)]
+        resolved: bool,
+        /// Show in-progress notes only
+        #[arg(long)]
+        in_progress: bool,
+        /// Show all notes (open, in-progress, resolved)
+        #[arg(short = 'a', long)]
+        all: bool,
+        /// Show original source lines captured when creating the notes
+        #[arg(long)]
+        show_source: bool,
+        /// Emit notes as JSON
+        #[arg(long)]
+        json: bool,
+        /// Emit notes as Markdown
+        #[arg(short = 'm', long)]
+        markdown: bool,
+    },
+    /// Create a new review note
+    #[command(alias = "create", alias = "new")]
+    Add {
+        /// Target file path, optionally with line range (e.g. `src/lib.rs`,
+        /// `src/lib.rs:42`, `src/lib.rs:42-45`)
+        target: Option<String>,
+
+        /// Starting line number (if not given in target, e.g. `diffuse notes
+        /// add file.rs 42`)
+        #[arg(short = 'l', long = "line", alias = "start")]
+        line: Option<u32>,
+
+        /// Ending line number (defaults to starting line number)
+        #[arg(short = 'e', long = "end")]
+        end: Option<u32>,
+
+        /// Optional second positional argument: starting line number or note
+        /// message
+        pos2: Option<String>,
+
+        /// Optional third positional argument: ending line number or note
+        /// message
+        pos3: Option<String>,
+
+        /// Target file path via flag
+        #[arg(short = 'f', long = "file")]
+        file: Option<String>,
+
+        /// Side of the diff: 'new' (default, post-image) or 'old' (pre-image)
+        #[arg(long, default_value = "new")]
+        side: String,
+
+        /// Shorthand for `--side old`
+        #[arg(long)]
+        old: bool,
+
+        /// Note text message (if omitted, reads from stdin)
+        #[arg(short = 'm', long = "message")]
+        message: Option<String>,
+
+        /// Trailing note text message argument
+        text: Option<String>,
+
+        /// Explicitly provide the original source lines
+        #[arg(long = "source", alias = "source-lines")]
+        source: Option<String>,
+
+        /// Do not capture or synthesize original source lines
+        #[arg(long)]
+        no_source: bool,
+
+        /// Initial status of the note: 'open' (default), 'in-progress', or
+        /// 'resolved'
+        #[arg(long, default_value = "open")]
+        status: String,
+
+        /// Emit created note as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show details for a specific note
+    Show {
+        /// Note ID or unique ID prefix
+        id: String,
+        /// Show original source lines
+        #[arg(long)]
+        show_source: bool,
+        /// Emit as JSON
+        #[arg(long)]
+        json: bool,
+        /// Emit as Markdown
+        #[arg(short = 'm', long)]
+        markdown: bool,
+    },
+    /// Reply to a note, prepending reply text and quoting previous content
+    Reply {
+        /// Note ID or unique ID prefix
+        id: String,
+        /// Reply message text (if omitted or '-', reads from stdin)
+        #[arg(short = 'm', long = "message")]
+        message: Option<String>,
+        /// Optional reply message text as trailing positional argument
+        text: Option<String>,
+        /// Transition note status on reply: open, in-progress, resolved
+        #[arg(long)]
+        status: Option<String>,
+        /// Mark the note as resolved after replying (shorthand for --status
+        /// resolved)
+        #[arg(long)]
+        resolve: bool,
+    },
+    /// Mark a note as in-progress (🔄)
+    Progress {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
+    /// Mark a note as resolved (✅)
+    Resolve {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
+    /// Reopen a note back to open status (💬)
+    Open {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
+    /// Alias for `open`: reopen a note back to open status (💬)
+    Reopen {
+        /// Note ID or unique ID prefix
+        id: String,
+    },
+    /// Explicitly set the status of a note (open, in-progress, resolved)
+    Status {
+        /// Note ID or unique ID prefix
+        id: String,
+        /// New status: open, in-progress, resolved
+        status: String,
     },
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 struct Input {
     #[serde(default)]
@@ -206,6 +405,17 @@ struct Input {
     cluster_bandwidth_min: Option<usize>,
     #[serde(default)]
     cluster_bandwidth_slack: Option<usize>,
+    #[serde(default)]
+    note_id: Option<String>,
+    #[serde(default)]
+    status: Option<NoteStatus>,
+    #[serde(default)]
+    reply_text: Option<String>,
+    #[serde(default)]
+    show_resolved: Option<bool>,
+    #[allow(dead_code)]
+    #[serde(default)]
+    show_source: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -255,6 +465,55 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
             remove_notes(&mut db, &notes_key_for_input(&input, r), f, s, st, en);
             let _ = save_notes(path, &db);
         }
+
+        if let Some("setNoteStatus") = input.action.as_deref()
+            && let (Some(r), Some(id), Some(st)) = (
+                input.repo.as_deref(),
+                input.note_id.as_deref(),
+                input.status,
+            )
+        {
+            let mut db = load_notes(path);
+            let key = notes_key_for_input(&input, r);
+            let _ = set_note_status_in_repo(&mut db, &key, id, st);
+            let _ = save_notes(path, &db);
+        }
+
+        if let Some("resolveNote") = input.action.as_deref()
+            && let (Some(r), Some(id)) = (input.repo.as_deref(), input.note_id.as_deref())
+        {
+            let mut db = load_notes(path);
+            let key = notes_key_for_input(&input, r);
+            let _ = set_note_status_in_repo(&mut db, &key, id, NoteStatus::Resolved);
+            let _ = save_notes(path, &db);
+        }
+
+        if let Some("reopenNote") = input.action.as_deref()
+            && let (Some(r), Some(id)) = (input.repo.as_deref(), input.note_id.as_deref())
+        {
+            let mut db = load_notes(path);
+            let key = notes_key_for_input(&input, r);
+            let _ = set_note_status_in_repo(&mut db, &key, id, NoteStatus::Open);
+            let _ = save_notes(path, &db);
+        }
+
+        if let Some("replyNote") = input.action.as_deref()
+            && let (Some(r), Some(id), Some(reply)) = (
+                input.repo.as_deref(),
+                input.note_id.as_deref(),
+                input.reply_text.as_deref(),
+            )
+        {
+            let mut db = load_notes(path);
+            let key = notes_key_for_input(&input, r);
+            let _ = update_note_in_db(&mut db, Some(&key), id, |n| {
+                n.text = reply_to_note_text(&n.text, reply);
+                if let Some(s) = input.status {
+                    n.status = s;
+                }
+            });
+            let _ = save_notes(path, &db);
+        }
     }
 
     let loaded_db = notes_path.as_ref().map(|p| load_notes(p));
@@ -275,8 +534,10 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
     let bw_slack = input
         .cluster_bandwidth_slack
         .unwrap_or(args.cluster_bandwidth_slack);
+    let show_resolved = input.show_resolved.unwrap_or(args.resolved || args.all);
     let opts = PipelineOptions::default()
         .with_notes(loaded_db.clone(), repo_str.clone())
+        .with_show_resolved(show_resolved)
         .with_visual_context(visual)
         .with_expand_lines(args.expand_lines)
         .with_token_product_cap(cap)
@@ -372,6 +633,10 @@ fn main() -> io::Result<()> {
         }
     }
 
+    if let Some(SubCommand::Notes(ref notes_args)) = args.command {
+        return notes_cli::run_notes_command(notes_args, &args);
+    }
+
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();
     let colorize = init_color_mode(&args.color, args.no_color);
@@ -406,6 +671,9 @@ fn main() -> io::Result<()> {
                 jsonl,
                 markdown,
                 raw,
+                resolved: _,
+                all: _,
+                show_source: _,
             }) => {
                 let md = *markdown || args.markdown;
                 let rw = *raw || args.raw;
@@ -434,7 +702,19 @@ fn main() -> io::Result<()> {
                 args.raw,
                 args.diff.clone(),
             ),
+            Some(SubCommand::Notes(_)) => unreachable!(),
         };
+
+    let show_resolved = match &args.command {
+        Some(SubCommand::Parse { resolved, all, .. }) => {
+            *resolved || *all || args.resolved || args.all
+        }
+        _ => args.resolved || args.all,
+    };
+    let show_source = match &args.command {
+        Some(SubCommand::Parse { show_source, .. }) => *show_source || args.show_source,
+        _ => args.show_source,
+    };
 
     let no_tui = args.no_tui || args.pager || is_markdown || is_raw;
 
@@ -494,6 +774,7 @@ fn main() -> io::Result<()> {
 
         let pipeline_opts = PipelineOptions::default()
             .with_notes(Some(loaded_db.clone()), Some(target.notes_key()))
+            .with_show_resolved(show_resolved)
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
             .with_token_product_cap(args.token_product_cap)
@@ -513,7 +794,9 @@ fn main() -> io::Result<()> {
                 Vec::new(),
                 staged,
                 ENGINE_CONTEXT,
-                pipeline_opts.with_lazy_collapsed(true),
+                pipeline_opts
+                    .with_lazy_collapsed(true)
+                    .with_show_resolved(true),
                 args.jobs,
             );
             let initial_out = PipelineOutput {
@@ -532,6 +815,8 @@ fn main() -> io::Result<()> {
                 args.staged,
                 args.expand_lines,
                 theme,
+                show_resolved,
+                show_source,
             )?;
         } else if is_markdown {
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
@@ -565,6 +850,8 @@ fn main() -> io::Result<()> {
             let md_opts = MarkdownOptions {
                 colorize: md_colorize,
                 theme,
+                show_resolved_notes: show_resolved,
+                show_source_lines: show_source,
                 ..MarkdownOptions::default()
             };
             let md = render_markdown_output(&out, &md_opts);
@@ -649,6 +936,7 @@ fn main() -> io::Result<()> {
         );
         let pipeline_opts = PipelineOptions::default()
             .with_notes(Some(loaded_db), Some(target.notes_key()))
+            .with_show_resolved(show_resolved)
             .with_visual_context(args.context)
             .with_expand_lines(args.expand_lines)
             .with_token_product_cap(args.token_product_cap)
@@ -720,27 +1008,8 @@ fn main() -> io::Result<()> {
 
     let payload: InputPayload = serde_json::from_str(&raw).unwrap_or_else(|_| {
         InputPayload::Single(Box::new(Input {
-            action: None,
-            note: None,
-            file: None,
-            side: None,
-            start: None,
-            end: None,
             diff: raw,
-            new_content: None,
-            old_content: None,
-            repo_root: None,
-            base_args: Vec::new(),
-            paths: Vec::new(),
-            staged: false,
-            context: None,
-            notes: None,
-            notes_file: None,
-            repo: None,
-            token_product_cap: None,
-            cluster_budget: None,
-            cluster_bandwidth_min: None,
-            cluster_bandwidth_slack: None,
+            ..Default::default()
         }))
     });
 
@@ -756,6 +1025,8 @@ fn main() -> io::Result<()> {
     let md_opts = MarkdownOptions {
         colorize: md_colorize,
         theme,
+        show_resolved_notes: show_resolved,
+        show_source_lines: show_source,
         ..MarkdownOptions::default()
     };
 
@@ -863,6 +1134,7 @@ fn main() -> io::Result<()> {
                     .unwrap_or(args.cluster_bandwidth_slack);
                 let opts = PipelineOptions::default()
                     .with_notes(loaded_db, repo_str)
+                    .with_show_resolved(show_resolved)
                     .with_visual_context(input.context.unwrap_or(args.context))
                     .with_expand_lines(args.expand_lines)
                     .with_token_product_cap(cap)

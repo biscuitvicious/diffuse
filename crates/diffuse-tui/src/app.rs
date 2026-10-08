@@ -63,6 +63,8 @@ pub struct AppState {
     pub status_message: Option<(String, bool)>, // (message, is_error)
     pub viewport_height: usize,
     pub screen_height: usize,
+    pub show_resolved_notes: bool,
+    pub show_source_lines: bool,
     pub notes: NotesDB,
     pub notes_path: PathBuf,
     pub hunk_starts: Vec<HunkStart>,
@@ -162,6 +164,8 @@ impl AppState {
             status_message: None,
             viewport_height: 20,
             screen_height: 24,
+            show_resolved_notes: false,
+            show_source_lines: false,
             notes: loaded_notes,
             notes_path,
             hunk_starts,
@@ -204,6 +208,16 @@ impl AppState {
 
     pub fn with_commit_range(mut self, commit_range: Option<String>) -> Self {
         self.commit_range = commit_range;
+        self
+    }
+
+    pub fn with_show_resolved_notes(mut self, show_resolved: bool) -> Self {
+        self.show_resolved_notes = show_resolved;
+        self
+    }
+
+    pub fn with_show_source_lines(mut self, show_source: bool) -> Self {
+        self.show_source_lines = show_source;
         self
     }
 

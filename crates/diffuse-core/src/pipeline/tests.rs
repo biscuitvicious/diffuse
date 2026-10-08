@@ -1089,6 +1089,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
                 text: text.to_string(),
                 created_at: 0,
                 line_hash: None,
+                ..Default::default()
             },
         );
     }
@@ -1105,6 +1106,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
             text: "other".to_string(),
             created_at: 0,
             line_hash: None,
+            ..Default::default()
         },
     );
 
@@ -1132,6 +1134,95 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
 }
 
 #[test]
+fn test_pipeline_note_status_filtering_and_counts() {
+    use crate::notes::{NoteStatus, ReviewNote, Side, add_note};
+
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
+    let mut db = crate::notes::NotesDB::new();
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "n_open".to_string(),
+            file: "a.txt".to_string(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            text: "open note".to_string(),
+            status: NoteStatus::Open,
+            source_lines: Some("new one".to_string()),
+            ..Default::default()
+        },
+    );
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "n_in_progress".to_string(),
+            file: "a.txt".to_string(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            text: "in progress note".to_string(),
+            status: NoteStatus::InProgress,
+            ..Default::default()
+        },
+    );
+    add_note(
+        &mut db,
+        "myrepo",
+        ReviewNote {
+            id: "n_resolved".to_string(),
+            file: "a.txt".to_string(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            text: "resolved note".to_string(),
+            status: NoteStatus::Resolved,
+            ..Default::default()
+        },
+    );
+
+    // Default: show_resolved = false. Only active (Open + InProgress) notes
+    // returned.
+    let opts = PipelineOptions::default().with_notes(Some(db.clone()), Some("myrepo".to_string()));
+    let out = run_pipeline_full(diff, None, None, opts);
+    assert_eq!(out.files.len(), 1);
+    let counts = out.files[0].counts;
+    assert_eq!(counts.notes, 1, "open notes count");
+    assert_eq!(counts.in_progress_notes, 1, "in-progress notes count");
+    assert_eq!(counts.resolved_notes, 1, "resolved notes count");
+    assert_eq!(
+        out.files[0].notes.len(),
+        2,
+        "only active notes in default output"
+    );
+    assert_eq!(out.files[0].notes[0].status, NoteStatus::Open);
+    assert_eq!(
+        out.files[0].notes[0].source_lines.as_deref(),
+        Some("new one")
+    );
+    assert_eq!(out.files[0].notes[1].status, NoteStatus::InProgress);
+
+    let total = out.total_counts();
+    assert_eq!(total.notes, 1);
+    assert_eq!(total.in_progress_notes, 1);
+    assert_eq!(total.resolved_notes, 1);
+
+    // With show_resolved = true: all notes returned.
+    let opts_all = PipelineOptions::default()
+        .with_notes(Some(db), Some("myrepo".to_string()))
+        .with_show_resolved(true);
+    let out_all = run_pipeline_full(diff, None, None, opts_all);
+    assert_eq!(
+        out_all.files[0].notes.len(),
+        3,
+        "all notes including resolved"
+    );
+    assert_eq!(out_all.files[0].notes[2].status, NoteStatus::Resolved);
+}
+
+#[test]
 fn test_pipeline_preserves_all_notes_in_counts() {
     use crate::notes::{LineHash, ReviewNote, Side, add_note, hash_line_content};
 
@@ -1151,6 +1242,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
             text: "clean note".into(),
             created_at: 0,
             line_hash: Some(hash_line_content("new one")),
+            ..Default::default()
         },
     );
 
@@ -1167,6 +1259,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
             text: "mismatched note".into(),
             created_at: 0,
             line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
+            ..Default::default()
         },
     );
 
@@ -1183,6 +1276,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
             text: "orphan note".into(),
             created_at: 0,
             line_hash: Some(hash_line_content("some content")),
+            ..Default::default()
         },
     );
 
@@ -1200,6 +1294,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
             text: "legacy note".into(),
             created_at: 0,
             line_hash: None,
+            ..Default::default()
         },
     );
 
@@ -1653,6 +1748,7 @@ diff --git a/test.rs b/test.rs
         text: "isolated review note".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "repo", note);
 
@@ -1715,6 +1811,7 @@ diff --git a/test.rs b/test.rs
         text: "boundary adjacent note".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "repo", note);
 
@@ -1780,6 +1877,7 @@ diff --git a/test.rs b/test.rs
         text: "cluster 1".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     let note2 = ReviewNote {
         id: "note-cluster-2".into(),
@@ -1790,6 +1888,7 @@ diff --git a/test.rs b/test.rs
         text: "cluster 2".into(),
         created_at: 1001,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "repo", note1);
     add_note(&mut db, "repo", note2);
@@ -1843,6 +1942,7 @@ diff --git a/test.rs b/test.rs
         text: "note without snapshot".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "repo", note);
 
@@ -1913,6 +2013,7 @@ diff --git a/test.rs b/test.rs
         text: "old side note".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "repo", note);
 

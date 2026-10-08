@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    notes::{LineHash, Side as NoteSide},
+    notes::{LineHash, NoteStatus, Side as NoteSide},
     parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind, Spans},
 };
 
@@ -67,6 +67,8 @@ impl PipelineOutput {
             total.mods += f.counts.mods;
             total.movs += f.counts.movs;
             total.notes += f.counts.notes;
+            total.in_progress_notes += f.counts.in_progress_notes;
+            total.resolved_notes += f.counts.resolved_notes;
         }
         total
     }
@@ -1207,6 +1209,10 @@ pub struct OutputNote {
     pub runs: Vec<OutputRun>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_hash: Option<LineHash>,
+    #[serde(default, skip_serializing_if = "NoteStatus::is_open")]
+    pub status: NoteStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_lines: Option<String>,
 }
 
 impl OutputNote {
@@ -1221,6 +1227,8 @@ impl OutputNote {
             created_at: self.created_at,
             runs: self.runs.iter().map(OutputRun::reverse).collect(),
             line_hash: self.line_hash,
+            status: self.status,
+            source_lines: self.source_lines.clone(),
         }
     }
 }

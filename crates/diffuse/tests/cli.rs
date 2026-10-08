@@ -934,3 +934,398 @@ fn diffuse_staged_flag_excludes_untracked_files() {
         "diffuse review -p --staged stdout must NOT contain untracked files, got: {stdout_review_staged}"
     );
 }
+
+#[test]
+fn test_cli_notes_subcommand_suite() {
+    use diffuse::core::notes::{
+        NoteStatus, NotesDB, ReviewNote, Side, add_note, load_notes, save_notes,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let notes_path = dir.path().join("notes.json");
+    let mut db = NotesDB::new();
+
+    let note_open = ReviewNote {
+        id: "note-open".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "Fix this issue".into(),
+        created_at: 1000,
+        line_hash: None,
+        status: NoteStatus::Open,
+        source_lines: Some("fn original() {}".into()),
+    };
+    let note_prog = ReviewNote {
+        id: "note-prog".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 20,
+        end: 20,
+        text: "Working on refactor".into(),
+        created_at: 1001,
+        line_hash: None,
+        status: NoteStatus::InProgress,
+        source_lines: None,
+    };
+    let note_res = ReviewNote {
+        id: "note-res".into(),
+        file: "src/main.rs".into(),
+        side: Side::New,
+        start: 30,
+        end: 30,
+        text: "Already resolved".into(),
+        created_at: 1002,
+        line_hash: None,
+        status: NoteStatus::Resolved,
+        source_lines: None,
+    };
+
+    add_note(&mut db, "repo1", note_open);
+    add_note(&mut db, "repo1", note_prog);
+    add_note(&mut db, "repo1", note_res);
+    save_notes(&notes_path, &db).unwrap();
+
+    let notes_file_arg = notes_path.to_str().unwrap();
+
+    // 1. Default notes list: shows Open and InProgress, with resolved summary count
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Fix this issue"));
+    assert!(stdout.contains("Working on refactor"));
+    assert!(!stdout.contains("Already resolved"));
+    assert!(stdout.contains("1 resolved"));
+
+    // 2. List --resolved: shows only resolved notes
+    let out_res = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("list")
+        .arg("--resolved")
+        .output()
+        .unwrap();
+    assert_eq!(out_res.status.code(), Some(0));
+    let stdout_res = String::from_utf8_lossy(&out_res.stdout);
+    assert!(!stdout_res.contains("Fix this issue"));
+    assert!(stdout_res.contains("Already resolved"));
+
+    // 3. List --in-progress: shows only in-progress notes
+    let out_prog = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("list")
+        .arg("--in-progress")
+        .output()
+        .unwrap();
+    assert_eq!(out_prog.status.code(), Some(0));
+    let stdout_prog = String::from_utf8_lossy(&out_prog.stdout);
+    assert!(stdout_prog.contains("Working on refactor"));
+    assert!(!stdout_prog.contains("Fix this issue"));
+    assert!(!stdout_prog.contains("Already resolved"));
+
+    // 4. List --all: shows all notes
+    let out_all = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("list")
+        .arg("--all")
+        .output()
+        .unwrap();
+    assert_eq!(out_all.status.code(), Some(0));
+    let stdout_all = String::from_utf8_lossy(&out_all.stdout);
+    assert!(stdout_all.contains("Fix this issue"));
+    assert!(stdout_all.contains("Working on refactor"));
+    assert!(stdout_all.contains("Already resolved"));
+
+    // 5. List --json: JSON payload with notes array and resolvedCount
+    let out_json = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("list")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert_eq!(out_json.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_slice(&out_json.stdout).unwrap();
+    assert_eq!(v["resolvedCount"], 1);
+    assert_eq!(v["notes"].as_array().unwrap().len(), 2);
+
+    // 6. Show with --show-source
+    let out_show = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("show")
+        .arg("note-open")
+        .arg("--show-source")
+        .output()
+        .unwrap();
+    assert_eq!(out_show.status.code(), Some(0));
+    let stdout_show = String::from_utf8_lossy(&out_show.stdout);
+    assert!(stdout_show.contains("Note:     note-open"));
+    assert!(stdout_show.contains("fn original() {}"));
+    assert!(stdout_show.contains("Fix this issue"));
+
+    // 7. Reply with --resolve
+    let out_reply = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("reply")
+        .arg("note-open")
+        .arg("-m")
+        .arg("I have addressed it")
+        .arg("--resolve")
+        .output()
+        .unwrap();
+    assert_eq!(out_reply.status.code(), Some(0));
+    let db = load_notes(&notes_path);
+    let note = db
+        .get("repo1")
+        .unwrap()
+        .get("src/lib.rs")
+        .unwrap()
+        .iter()
+        .find(|n| n.id == "note-open")
+        .unwrap();
+    assert_eq!(note.status, NoteStatus::Resolved);
+    assert_eq!(note.text, "I have addressed it\n\n> Fix this issue");
+
+    // 8. Progress
+    let out_mark_prog = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("progress")
+        .arg("note-open")
+        .output()
+        .unwrap();
+    assert_eq!(out_mark_prog.status.code(), Some(0));
+    let db = load_notes(&notes_path);
+    let note = db
+        .get("repo1")
+        .unwrap()
+        .get("src/lib.rs")
+        .unwrap()
+        .iter()
+        .find(|n| n.id == "note-open")
+        .unwrap();
+    assert_eq!(note.status, NoteStatus::InProgress);
+
+    // 9. Open / Reopen
+    let out_open = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("open")
+        .arg("note-open")
+        .output()
+        .unwrap();
+    assert_eq!(out_open.status.code(), Some(0));
+    let db = load_notes(&notes_path);
+    let note = db
+        .get("repo1")
+        .unwrap()
+        .get("src/lib.rs")
+        .unwrap()
+        .iter()
+        .find(|n| n.id == "note-open")
+        .unwrap();
+    assert_eq!(note.status, NoteStatus::Open);
+
+    // 10. Status explicit
+    let out_status = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("repo1")
+        .arg("notes")
+        .arg("status")
+        .arg("note-open")
+        .arg("resolved")
+        .output()
+        .unwrap();
+    assert_eq!(out_status.status.code(), Some(0));
+    let db = load_notes(&notes_path);
+    let note = db
+        .get("repo1")
+        .unwrap()
+        .get("src/lib.rs")
+        .unwrap()
+        .iter()
+        .find(|n| n.id == "note-open")
+        .unwrap();
+    assert_eq!(note.status, NoteStatus::Resolved);
+}
+
+#[test]
+fn test_cli_notes_add_subcommand() {
+    use diffuse::core::notes::{NoteStatus, load_notes};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let notes_path = tmp.path().join("notes.json");
+    let notes_file_arg = notes_path.to_str().unwrap();
+
+    let foo_path = tmp.path().join("foo.rs");
+    fs::write(
+        &foo_path,
+        "fn first() {}\nfn second() {}\nfn third() {}\nfn fourth() {}\n",
+    )
+    .unwrap();
+
+    // 1. Add note with coordinates in target string and synthesized source lines
+    let out1 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("add")
+        .arg("foo.rs:1-2")
+        .arg("-m")
+        .arg("First two functions")
+        .output()
+        .unwrap();
+    assert_eq!(
+        out1.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    let db = load_notes(&notes_path);
+    let notes = db.get("test-repo").unwrap().get("foo.rs").unwrap();
+    assert_eq!(notes.len(), 1);
+    let n1 = &notes[0];
+    assert_eq!(n1.file, "foo.rs");
+    assert_eq!(n1.start, 1);
+    assert_eq!(n1.end, 2);
+    assert_eq!(n1.status, NoteStatus::Open);
+    assert_eq!(n1.text, "First two functions");
+    assert_eq!(
+        n1.source_lines,
+        Some("fn first() {}\nfn second() {}".to_string())
+    );
+
+    // 2. Add note with positional start/end and explicit source lines
+    let out2 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("add")
+        .arg("foo.rs")
+        .arg("3")
+        .arg("4")
+        .arg("-m")
+        .arg("Explicit source lines")
+        .arg("--source")
+        .arg("custom source lines")
+        .arg("--status")
+        .arg("in-progress")
+        .output()
+        .unwrap();
+    assert_eq!(out2.status.code(), Some(0));
+    let db = load_notes(&notes_path);
+    let notes = db.get("test-repo").unwrap().get("foo.rs").unwrap();
+    assert_eq!(notes.len(), 2);
+    let n2 = &notes[1];
+    assert_eq!(n2.start, 3);
+    assert_eq!(n2.end, 4);
+    assert_eq!(n2.status, NoteStatus::InProgress);
+    assert_eq!(n2.source_lines, Some("custom source lines".to_string()));
+
+    // 3. Add note with --no-source
+    let out3 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("add")
+        .arg("foo.rs:2")
+        .arg("-m")
+        .arg("Without source")
+        .arg("--no-source")
+        .output()
+        .unwrap();
+    assert_eq!(out3.status.code(), Some(0));
+    let db = load_notes(&notes_path);
+    let notes = db.get("test-repo").unwrap().get("foo.rs").unwrap();
+    assert_eq!(notes.len(), 3);
+    let n3 = &notes[2];
+    assert_eq!(n3.source_lines, None);
+
+    // 4. Add note on missing file (source lines not possible -> None)
+    let out4 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("add")
+        .arg("missing.rs:10")
+        .arg("-m")
+        .arg("Missing file note")
+        .output()
+        .unwrap();
+    assert_eq!(out4.status.code(), Some(0));
+    let db = load_notes(&notes_path);
+    let notes_missing = db.get("test-repo").unwrap().get("missing.rs").unwrap();
+    assert_eq!(notes_missing.len(), 1);
+    assert_eq!(notes_missing[0].source_lines, None);
+
+    // 5. Using alias 'create' and --json
+    let out5 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("create")
+        .arg("foo.rs:1")
+        .arg("-m")
+        .arg("JSON create")
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert_eq!(out5.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_slice(&out5.stdout).unwrap();
+    assert_eq!(v["file"], "foo.rs");
+    assert_eq!(v["start"], 1);
+    assert_eq!(v["text"], "JSON create");
+}

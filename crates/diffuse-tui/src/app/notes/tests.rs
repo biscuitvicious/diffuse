@@ -3,7 +3,8 @@ use crate::{
     core::{
         PipelineOptions,
         notes::{
-            LineHash, ReviewNote, Side, add_note, hash_line_content, load_notes, notes_for_file,
+            LineHash, NoteStatus, ReviewNote, Side, add_note, hash_line_content, load_notes,
+            notes_for_file,
         },
         pipeline::run_pipeline_full,
         wire::PipelineOutput,
@@ -200,6 +201,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         text: "valid note".into(),
         created_at: 100,
         line_hash: Some(matching_hash),
+        ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, valid_note);
     let callouts = state.note_callouts(80);
@@ -224,6 +226,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         text: "mismatch note".into(),
         created_at: 101,
         line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
+        ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, mismatch_note);
     let callouts_mismatch = state.note_callouts(80);
@@ -248,6 +251,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         text: "orphan note".into(),
         created_at: 102,
         line_hash: Some(LineHash::from_hex("87654321").unwrap()),
+        ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, nonexistent_line_note);
     let callouts_orphan = state.note_callouts(80);
@@ -272,6 +276,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         text: "legacy note".into(),
         created_at: 103,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, legacy_note);
     let callouts_legacy = state.note_callouts(80);
@@ -283,6 +288,67 @@ fn test_note_callout_anchoring_and_banner_placement() {
     assert!(
         callouts_legacy.contains_key(&banner_idx),
         "legacy note without hash must display attached to the file banner"
+    );
+}
+
+#[test]
+fn test_multiline_note_anchors_to_last_line() {
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    let file = state.current_file().unwrap().path.clone();
+    let banner_idx = state.first_row_of_file(state.current_file_idx());
+
+    // Multi-line range 1025..=1027: last line is 1027 ("    let y = 2;")
+    let last_line_hash = hash_line_content("    let y = 2;");
+    let valid_multiline = ReviewNote {
+        id: "multi-valid".into(),
+        file: file.clone(),
+        side: Side::New,
+        start: 1025,
+        end: 1027,
+        text: "multiline note".into(),
+        created_at: 100,
+        line_hash: Some(last_line_hash),
+        ..Default::default()
+    };
+    add_note(&mut state.notes, &state.notes_key, valid_multiline);
+    let callouts = state.note_callouts(80);
+    assert_eq!(
+        callouts.len(),
+        1,
+        "cleanly anchored multiline note must produce a callout"
+    );
+    assert!(
+        !callouts.contains_key(&banner_idx),
+        "multiline note anchored to last line must anchor inline, not on file banner"
+    );
+
+    // If line_hash was for first line ("    let x = 1;"), it should NOT match when
+    // anchoring against last line
+    state.notes.clear();
+    let first_line_hash = hash_line_content("    let x = 1;");
+    let mismatch_multiline = ReviewNote {
+        id: "multi-mismatch".into(),
+        file,
+        side: Side::New,
+        start: 1025,
+        end: 1027,
+        text: "first line hash note".into(),
+        created_at: 101,
+        line_hash: Some(first_line_hash),
+        ..Default::default()
+    };
+    add_note(&mut state.notes, &state.notes_key, mismatch_multiline);
+    let callouts_mismatch = state.note_callouts(80);
+    assert!(
+        callouts_mismatch.contains_key(&banner_idx),
+        "note with first-line hash must fail anchor against last line and be placed on file banner"
     );
 }
 
@@ -324,6 +390,7 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
             text: "unanchored note".into(),
             created_at: 104,
             line_hash: None,
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -377,6 +444,7 @@ fn test_note_callouts_render_across_all_files_and_banners() {
             text: "second file banner note".into(),
             created_at: 200,
             line_hash: None,
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -424,6 +492,7 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
             text: "inline note on second.rs".into(),
             created_at: 201,
             line_hash: Some(matching_hash),
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -479,6 +548,7 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
             text: note_text.into(),
             created_at: 300,
             line_hash: None,
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -587,6 +657,7 @@ fn test_note_callout_gutter_band_and_terminal_line() {
             text: "This is\na 4-line\nnote:\n`let a = 17;`".into(),
             created_at: 301,
             line_hash: None,
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -657,6 +728,7 @@ fn test_note_callout_empty_text_renders_one_line() {
             text: String::new(),
             created_at: 302,
             line_hash: None,
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -697,6 +769,7 @@ fn test_note_callout_long_line_wrapping() {
             text: note_text,
             created_at: 400,
             line_hash: None,
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -752,6 +825,7 @@ fn test_table_note_width_at_narrow_content_width() {
             text: table.to_string(),
             created_at: 0,
             line_hash: None,
+            ..Default::default()
         },
     );
     state.sync_all_notes();
@@ -962,4 +1036,233 @@ fn test_multiline_note_stripe_entirely_cyan_when_cursor_on_any_line() {
         frame.contains("\x1b[48;5;237m"),
         "current line of note must receive cursor background 237"
     );
+}
+
+#[test]
+fn test_note_status_cycling_open_progress_resolved() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.row_idx = 1;
+    state.note_draft = Some("Cycle me".into());
+    state.commit_note_draft();
+
+    let file_notes: Vec<_> =
+        notes_for_file(&state.notes, &state.notes_key, "filesystem.rs").collect();
+    assert_eq!(file_notes.len(), 1);
+    assert_eq!(file_notes[0].status, NoteStatus::Open);
+    assert_eq!(state.output.files[0].counts.notes, 1);
+    assert_eq!(state.output.files[0].counts.in_progress_notes, 0);
+    assert_eq!(state.output.files[0].counts.resolved_notes, 0);
+
+    // Position cursor on the note
+    state.vis_line = 2;
+
+    // Cycle 1: Open -> InProgress
+    let cycled = state.cycle_note_status();
+    assert!(cycled);
+    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+        .next()
+        .unwrap();
+    assert_eq!(n.status, NoteStatus::InProgress);
+    assert_eq!(state.output.files[0].counts.notes, 0);
+    assert_eq!(state.output.files[0].counts.in_progress_notes, 1);
+    assert_eq!(state.output.files[0].counts.resolved_notes, 0);
+    assert!(
+        state
+            .status_message
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("in progress")
+    );
+
+    // Callouts reflect InProgress glyph
+    let callouts = state.note_callouts(80);
+    let note_rendered = &callouts.values().next().unwrap()[0];
+    assert!(note_rendered.contains('🔄'));
+
+    // Cycle 2: InProgress -> Resolved
+    let cycled2 = state.cycle_note_status();
+    assert!(cycled2);
+    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+        .next()
+        .unwrap();
+    assert_eq!(n.status, NoteStatus::Resolved);
+    assert_eq!(state.output.files[0].counts.notes, 0);
+    assert_eq!(state.output.files[0].counts.in_progress_notes, 0);
+    assert_eq!(state.output.files[0].counts.resolved_notes, 1);
+    assert!(
+        state
+            .status_message
+            .as_ref()
+            .unwrap()
+            .0
+            .contains("resolved")
+    );
+
+    // Callouts hide resolved note by default
+    let callouts_hidden = state.note_callouts(80);
+    assert!(
+        callouts_hidden.is_empty(),
+        "resolved note must be hidden by default"
+    );
+
+    // Cycle 3: Resolved -> Open
+    // Even when hidden in callouts, cycling while on coordinate still works
+    let cycled3 = state.cycle_note_status();
+    assert!(cycled3);
+    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+        .next()
+        .unwrap();
+    assert_eq!(n.status, NoteStatus::Open);
+    assert_eq!(state.output.files[0].counts.notes, 1);
+    assert_eq!(state.output.files[0].counts.in_progress_notes, 0);
+    assert_eq!(state.output.files[0].counts.resolved_notes, 0);
+    assert!(state.status_message.as_ref().unwrap().0.contains("open"));
+
+    let callouts_reopened = state.note_callouts(80);
+    assert_eq!(callouts_reopened.len(), 1);
+    assert!(callouts_reopened.values().next().unwrap()[0].contains('💬'));
+}
+
+#[test]
+fn test_toggle_show_resolved_notes() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.row_idx = 1;
+    state.note_draft = Some("Resolved note test".into());
+    state.commit_note_draft();
+
+    // Mark resolved
+    state.vis_line = 2;
+    state.cycle_note_status(); // InProgress
+    state.cycle_note_status(); // Resolved
+
+    assert!(!state.show_resolved_notes);
+    assert!(state.note_callouts(80).is_empty());
+
+    // Toggle on
+    state.toggle_show_resolved_notes();
+    assert!(state.show_resolved_notes);
+    let callouts = state.note_callouts(80);
+    assert_eq!(callouts.len(), 1);
+    assert!(callouts.values().next().unwrap()[0].contains('✅'));
+
+    // Toggle off
+    state.toggle_show_resolved_notes();
+    assert!(!state.show_resolved_notes);
+    assert!(state.note_callouts(80).is_empty());
+}
+
+#[test]
+fn test_toggle_show_source_lines() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    // Find first flat row that is an actual diff content row with non-empty text
+    let content_row = state
+        .flat
+        .iter()
+        .position(|r| {
+            state
+                .row_of(r)
+                .is_some_and(|row| !row.new_text().trim().is_empty())
+        })
+        .unwrap();
+    state.row_idx = content_row;
+    state.note_draft = Some("Feedback on snippet".into());
+    state.commit_note_draft();
+
+    let src = {
+        let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+            .next()
+            .unwrap();
+        assert!(
+            n.source_lines.is_some(),
+            "source_lines must be captured on note creation"
+        );
+        n.source_lines.clone().unwrap()
+    };
+    assert!(!src.is_empty(), "captured source line must not be empty");
+
+    assert!(!state.show_source_lines);
+    let callouts_no_src = state.note_callouts(80);
+    let lines_no_src = &callouts_no_src.values().next().unwrap();
+    assert!(!lines_no_src.iter().any(|l| l.contains(src.trim())));
+    assert!(
+        lines_no_src
+            .iter()
+            .any(|l| l.contains("Feedback on snippet"))
+    );
+
+    // Toggle on
+    state.toggle_show_source_lines();
+    assert!(state.show_source_lines);
+    let callouts_src = state.note_callouts(80);
+    let lines_src = &callouts_src.values().next().unwrap();
+    assert!(lines_src.iter().any(|l| l.contains(src.trim())));
+    assert!(lines_src.iter().any(|l| l.contains("Feedback on snippet")));
+
+    // Toggle off
+    state.toggle_show_source_lines();
+    assert!(!state.show_source_lines);
+    let callouts_off = state.note_callouts(80);
+    let lines_off = &callouts_off.values().next().unwrap();
+    assert!(!lines_off.iter().any(|l| l.contains(src.trim())));
+    assert!(lines_off.iter().any(|l| l.contains("Feedback on snippet")));
+}
+
+#[test]
+fn test_event_keybindings_x_z_and_shift_s() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.row_idx = 1;
+    state.note_draft = Some("Keybinding test".into());
+    state.commit_note_draft();
+
+    // Position on note
+    state.vis_line = 2;
+
+    // Press 'x': cycle note status
+    crate::event::handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+    );
+    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+        .next()
+        .unwrap();
+    assert_eq!(n.status, NoteStatus::InProgress);
+
+    // Press 'z': toggle show resolved notes
+    assert!(!state.show_resolved_notes);
+    crate::event::handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE),
+    );
+    assert!(state.show_resolved_notes);
+
+    // Press 'S' (Shift+S): toggle show source lines
+    assert!(!state.show_source_lines);
+    crate::event::handle_key_event(
+        &mut state,
+        KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT),
+    );
+    assert!(state.show_source_lines);
 }

@@ -84,6 +84,7 @@ fn sample_output_file() -> OutputFile {
             mods: 1,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -536,6 +537,7 @@ fn test_pipeline_output_total_counts() {
         mods: 2,
         movs: 1,
         notes: 0,
+        ..Default::default()
     };
 
     let mut file2 = sample_output_file();
@@ -545,6 +547,7 @@ fn test_pipeline_output_total_counts() {
         mods: 4,
         movs: 1,
         notes: 0,
+        ..Default::default()
     };
 
     let output = PipelineOutput {

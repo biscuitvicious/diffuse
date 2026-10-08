@@ -20,6 +20,7 @@ fn sample_file(path: &str) -> OutputFile {
             mods: 0,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: Vec::new(),
         notes: Vec::new(),

@@ -152,6 +152,7 @@ fn sample_finder_output() -> PipelineOutput {
             mods: 0,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -183,6 +184,7 @@ fn sample_finder_output() -> PipelineOutput {
             mods: 2,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -362,6 +364,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
             mods: 0,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: vec![],
         notes: vec![],
@@ -458,6 +461,7 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
                 mods: *mods,
                 movs: 0,
                 notes: 0,
+                ..Default::default()
             },
             fences: vec![],
             notes: vec![],

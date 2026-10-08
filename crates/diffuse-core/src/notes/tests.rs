@@ -49,6 +49,7 @@ fn test_notes_add_and_query() {
         text: "Check `this` out".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
 
     add_note(&mut db, "myrepo", note.clone());
@@ -73,6 +74,7 @@ fn test_notes_remove() {
         text: "First".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
@@ -83,6 +85,7 @@ fn test_notes_remove() {
         text: "Second".into(),
         created_at: 1001,
         line_hash: None,
+        ..Default::default()
     };
 
     add_note(&mut db, "myrepo", note1);
@@ -108,6 +111,7 @@ fn test_remove_note_by_id_targeted() {
         text: "First".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
@@ -118,6 +122,7 @@ fn test_remove_note_by_id_targeted() {
         text: "Second (same line)".into(),
         created_at: 1001,
         line_hash: None,
+        ..Default::default()
     };
 
     add_note(&mut db, "myrepo", note1);
@@ -168,6 +173,7 @@ fn test_update_note_text_targeted() {
         text: "Initial text".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "myrepo", note);
 
@@ -230,6 +236,7 @@ fn test_notes_isolated_across_heads() {
         text: "head-scoped".into(),
         created_at: 1,
         line_hash: None,
+        ..Default::default()
     };
     let key = notes_key("myrepo", Some("h1"));
     add_note(&mut db, &key, note);
@@ -381,6 +388,7 @@ fn test_notes_persistence() {
             text: "**important**".into(),
             created_at: 500,
             line_hash: None,
+            ..Default::default()
         },
     );
 
@@ -568,6 +576,7 @@ fn test_note_anchors_cleanly_predicate() {
         text: "my note".into(),
         created_at: 1000,
         line_hash: Some(hash),
+        ..Default::default()
     };
 
     // Clean match on line content
@@ -587,6 +596,7 @@ fn test_note_anchors_cleanly_predicate() {
         text: "legacy note".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     assert!(note_anchors_cleanly(&legacy_note, "any changed content"));
 }
@@ -603,6 +613,7 @@ fn test_note_serialization_with_line_hash() {
         text: "my note".into(),
         created_at: 1000,
         line_hash: Some(hash),
+        ..Default::default()
     };
     let json = serde_json::to_string(&note).unwrap();
     assert!(json.contains("\"lineHash\":\"12345678\""));
@@ -630,6 +641,7 @@ fn test_query_notes_for_file_scoping_and_standalone() {
         text: "note on scoped commit".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
@@ -640,6 +652,7 @@ fn test_query_notes_for_file_scoping_and_standalone() {
         text: "note on other file".into(),
         created_at: 1001,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "myrepo@commit123", note1.clone());
     add_note(&mut db, "standalone_repo", note2.clone());
@@ -681,6 +694,7 @@ fn test_note_files_for_repo() {
         text: "note on lib".into(),
         created_at: 1000,
         line_hash: None,
+        ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
@@ -691,6 +705,7 @@ fn test_note_files_for_repo() {
         text: "note on untouched".into(),
         created_at: 1001,
         line_hash: None,
+        ..Default::default()
     };
     add_note(&mut db, "myrepo@commit123", note1);
     add_note(&mut db, "myrepo@commit123", note2);
@@ -720,4 +735,269 @@ fn test_note_files_for_repo() {
     let empty_db = NotesDB::new();
     let files = note_files_for_repo(&empty_db, Some("other"));
     assert!(files.is_empty());
+}
+
+#[test]
+fn test_note_status_lifecycle_and_serialization() {
+    assert_eq!(NoteStatus::default(), NoteStatus::Open);
+    assert!(NoteStatus::Open.is_open());
+    assert!(!NoteStatus::Open.is_in_progress());
+    assert!(!NoteStatus::Open.is_resolved());
+    assert!(NoteStatus::Open.counts_as_open());
+    assert_eq!(NoteStatus::Open.glyph(), "💬");
+    assert_eq!(NoteStatus::Open.cycle(), NoteStatus::InProgress);
+
+    assert!(!NoteStatus::InProgress.is_open());
+    assert!(NoteStatus::InProgress.is_in_progress());
+    assert!(!NoteStatus::InProgress.is_resolved());
+    assert!(NoteStatus::InProgress.counts_as_open());
+    assert_eq!(NoteStatus::InProgress.glyph(), "🔄");
+    assert_eq!(NoteStatus::InProgress.cycle(), NoteStatus::Resolved);
+
+    assert!(!NoteStatus::Resolved.is_open());
+    assert!(!NoteStatus::Resolved.is_in_progress());
+    assert!(NoteStatus::Resolved.is_resolved());
+    assert!(!NoteStatus::Resolved.counts_as_open());
+    assert_eq!(NoteStatus::Resolved.glyph(), "✅");
+    assert_eq!(NoteStatus::Resolved.cycle(), NoteStatus::Open);
+
+    // Serialization & backward compatibility
+    let note_open = ReviewNote {
+        id: "1".into(),
+        file: "a.rs".into(),
+        side: Side::New,
+        start: 1,
+        end: 1,
+        text: "hello".into(),
+        created_at: 100,
+        line_hash: None,
+        status: NoteStatus::Open,
+        source_lines: None,
+    };
+    let json_open = serde_json::to_string(&note_open).unwrap();
+    assert!(!json_open.contains("\"status\""));
+    assert!(!json_open.contains("\"sourceLines\""));
+
+    let note_in_progress = ReviewNote {
+        status: NoteStatus::InProgress,
+        source_lines: Some("fn foo() {}".into()),
+        ..note_open.clone()
+    };
+    let json_ip = serde_json::to_string(&note_in_progress).unwrap();
+    assert!(json_ip.contains("\"status\":\"inProgress\""));
+    assert!(json_ip.contains("\"sourceLines\":\"fn foo() {}\""));
+
+    let note_resolved = ReviewNote {
+        status: NoteStatus::Resolved,
+        ..note_open.clone()
+    };
+    let json_res = serde_json::to_string(&note_resolved).unwrap();
+    assert!(json_res.contains("\"status\":\"resolved\""));
+
+    // Deserialization without status or sourceLines defaults properly
+    let raw_legacy = r#"{"id":"2","file":"b.rs","side":"new","start":5,"end":5,"text":"legacy","createdAt":200}"#;
+    let parsed: ReviewNote = serde_json::from_str(raw_legacy).unwrap();
+    assert_eq!(parsed.status, NoteStatus::Open);
+    assert_eq!(parsed.source_lines, None);
+}
+
+#[test]
+fn test_reply_to_note_text() {
+    let original = "Single line comment";
+    let reply = "Done in commit 123";
+    let formatted = reply_to_note_text(original, reply);
+    assert_eq!(formatted, "Done in commit 123\n\n> Single line comment");
+
+    let multiline = "Line 1\nLine 2\nLine 3";
+    let reply2 = "Fixed";
+    let formatted2 = reply_to_note_text(multiline, reply2);
+    assert_eq!(formatted2, "Fixed\n\n> Line 1\n> Line 2\n> Line 3");
+}
+
+#[test]
+fn test_notes_db_status_and_reply_operations() {
+    let mut db = NotesDB::new();
+    let note = ReviewNote {
+        id: "n1".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "initial comment".into(),
+        created_at: 1000,
+        line_hash: None,
+        status: NoteStatus::Open,
+        source_lines: Some("let x = 1;".into()),
+    };
+    add_note(&mut db, "repo1", note);
+
+    // set_note_status_by_id
+    assert!(set_note_status_by_id(
+        &mut db,
+        "repo1",
+        "src/lib.rs",
+        "n1",
+        NoteStatus::InProgress
+    ));
+    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    assert_eq!(n.status, NoteStatus::InProgress);
+
+    // resolve_note_by_id
+    assert!(resolve_note_by_id(&mut db, "repo1", "src/lib.rs", "n1"));
+    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    assert_eq!(n.status, NoteStatus::Resolved);
+
+    // reopen_note_by_id
+    assert!(reopen_note_by_id(&mut db, "repo1", "src/lib.rs", "n1"));
+    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    assert_eq!(n.status, NoteStatus::Open);
+
+    // reply_to_note_by_id with status update
+    assert!(reply_to_note_by_id(
+        &mut db,
+        "repo1",
+        "src/lib.rs",
+        "n1",
+        "Addressed!",
+        Some(NoteStatus::Resolved)
+    ));
+    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    assert_eq!(n.status, NoteStatus::Resolved);
+    assert_eq!(n.text, "Addressed!\n\n> initial comment");
+
+    // Missing notes return false
+    assert!(!set_note_status_by_id(
+        &mut db,
+        "repo1",
+        "src/lib.rs",
+        "missing",
+        NoteStatus::Open
+    ));
+    assert!(!set_note_status_by_id(
+        &mut db,
+        "missing_repo",
+        "src/lib.rs",
+        "n1",
+        NoteStatus::Open
+    ));
+    assert!(!reply_to_note_by_id(
+        &mut db,
+        "repo1",
+        "src/lib.rs",
+        "missing",
+        "hi",
+        None
+    ));
+}
+
+#[test]
+fn test_find_and_update_note_in_db() {
+    let mut db = NotesDB::new();
+    let note1 = ReviewNote {
+        id: "abc-123".into(),
+        file: "src/main.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "first note".into(),
+        created_at: 100,
+        line_hash: None,
+        status: NoteStatus::Open,
+        source_lines: Some("println!();".into()),
+    };
+    let note2 = ReviewNote {
+        id: "def-456".into(),
+        file: "src/util.rs".into(),
+        side: Side::Old,
+        start: 20,
+        end: 20,
+        text: "second note".into(),
+        created_at: 200,
+        line_hash: None,
+        status: NoteStatus::InProgress,
+        source_lines: None,
+    };
+    add_note(&mut db, "myrepo@commit1", note1);
+    add_note(&mut db, "other@commit2", note2);
+
+    // Exact match by id with repo
+    let (key, file, n) = find_note_in_db(&db, Some("myrepo"), "abc-123").expect("found");
+    assert_eq!(key, "myrepo@commit1");
+    assert_eq!(file, "src/main.rs");
+    assert_eq!(n.id, "abc-123");
+
+    // Prefix match
+    let (key, file, n) = find_note_in_db(&db, None, "def").expect("found prefix");
+    assert_eq!(key, "other@commit2");
+    assert_eq!(file, "src/util.rs");
+    assert_eq!(n.id, "def-456");
+
+    // Not found
+    assert!(find_note_in_db(&db, None, "xyz").is_none());
+
+    // Update note in db
+    let updated = update_note_in_db(&mut db, None, "abc", |n| {
+        n.status = NoteStatus::Resolved;
+    });
+    assert!(updated);
+    let (_, _, n) = find_note_in_db(&db, None, "abc-123").unwrap();
+    assert_eq!(n.status, NoteStatus::Resolved);
+}
+
+#[test]
+fn test_generate_note_id_is_unique_and_non_empty() {
+    let id1 = generate_note_id();
+    let id2 = generate_note_id();
+    assert!(!id1.is_empty());
+    assert!(!id2.is_empty());
+    assert_ne!(id1, id2);
+    assert_eq!(id1.split('-').count(), 3);
+}
+
+#[test]
+fn test_extract_source_lines() {
+    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
+    // Single line
+    assert_eq!(extract_source_lines(content, 1, 1), Some("line 1".into()));
+    assert_eq!(extract_source_lines(content, 3, 3), Some("line 3".into()));
+    // Multi-line range
+    assert_eq!(
+        extract_source_lines(content, 2, 4),
+        Some("line 2\nline 3\nline 4".into())
+    );
+    // Full content
+    assert_eq!(extract_source_lines(content, 1, 5), Some(content.into()));
+    // End clamped to EOF
+    assert_eq!(
+        extract_source_lines(content, 4, 10),
+        Some("line 4\nline 5".into())
+    );
+    // Out of bounds
+    assert_eq!(extract_source_lines(content, 0, 1), None);
+    assert_eq!(extract_source_lines(content, 4, 2), None);
+    assert_eq!(extract_source_lines(content, 6, 10), None);
+    // Empty content
+    assert_eq!(extract_source_lines("", 1, 1), None);
+}
+
+#[test]
+fn test_synthesize_source_lines_from_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file_path = tmp.path().join("foo.rs");
+    fs::write(&file_path, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+
+    // From direct path
+    let lines = synthesize_source_lines(None, file_path.to_str().unwrap(), Side::New, 2, 2);
+    assert_eq!(lines, Some("    println!(\"hello\");".into()));
+
+    // From repo relative path
+    let rel_lines = synthesize_source_lines(Some(tmp.path()), "foo.rs", Side::New, 1, 2);
+    assert_eq!(
+        rel_lines,
+        Some("fn main() {\n    println!(\"hello\");".into())
+    );
+
+    // Non-existent file
+    let missing = synthesize_source_lines(Some(tmp.path()), "nonexistent.rs", Side::New, 1, 1);
+    assert_eq!(missing, None);
 }

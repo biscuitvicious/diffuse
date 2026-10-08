@@ -8,7 +8,7 @@ pub use diffuse_algo as algo;
 pub use diffuse_syntax as syntax;
 pub use git::{DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, ENGINE_CONTEXT};
 pub use lcs::DEFAULT_TOKEN_PRODUCT_CAP;
-pub use notes::LineHash;
+pub use notes::{LineHash, NoteStatus, ReviewNote};
 pub use parse::RowGroup;
 pub use pipeline::{PipelineInput, PipelineOptions};
 pub use repo::{Repo, ReviewTarget, RevisionRange};

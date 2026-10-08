@@ -39,7 +39,7 @@ use crate::{
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs_with_profile},
     moves::mark_moves_with_profile,
-    notes::{NotesDB, ReviewNote, Side, query_notes_for_file},
+    notes::{NoteStatus, NotesDB, ReviewNote, Side, query_notes_for_file},
     parse::{CtxLine, DiffFile, Hunk, LineNum, Row, RowKind},
     syntax::{
         classifier::{
@@ -71,6 +71,7 @@ pub struct PipelineOptions {
     pub cluster_bandwidth_min: usize,
     pub cluster_bandwidth_slack: usize,
     pub lazy_collapsed: bool,
+    pub show_resolved: bool,
 }
 
 impl Default for PipelineOptions {
@@ -85,6 +86,7 @@ impl Default for PipelineOptions {
             cluster_bandwidth_min: crate::cluster::dp::DEFAULT_CLUSTER_BANDWIDTH_MIN,
             cluster_bandwidth_slack: crate::cluster::dp::DEFAULT_CLUSTER_BANDWIDTH_SLACK,
             lazy_collapsed: false,
+            show_resolved: false,
         }
     }
 }
@@ -137,6 +139,11 @@ impl PipelineOptions {
 
     pub fn with_lazy_collapsed(mut self, lazy_collapsed: bool) -> Self {
         self.lazy_collapsed = lazy_collapsed;
+        self
+    }
+
+    pub fn with_show_resolved(mut self, show_resolved: bool) -> Self {
+        self.show_resolved = show_resolved;
         self
     }
 }
@@ -365,10 +372,7 @@ pub fn process_single_diff_file(
             };
             crate::counts::FileCounts {
                 adds: line_count,
-                dels: 0,
-                mods: 0,
-                movs: 0,
-                notes: 0,
+                ..Default::default()
             }
         } else if f.status == crate::parse::FileStatus::Deleted {
             let line_count = if f.old_line_count > 0 {
@@ -379,11 +383,8 @@ pub fn process_single_diff_file(
                 crate::counts::file_counts(&f).dels
             };
             crate::counts::FileCounts {
-                adds: 0,
                 dels: line_count,
-                mods: 0,
-                movs: 0,
-                notes: 0,
+                ..Default::default()
             }
         } else if f.is_binary {
             crate::counts::FileCounts::default()
@@ -693,23 +694,39 @@ pub fn process_single_diff_file(
         });
     }
 
-    let notes_out = match &opts.notes_db {
-        Some(db) => query_notes_for_file(db, opts.repo.as_deref(), &f.path)
-            .into_iter()
-            .map(|n| OutputNote {
-                id: n.id.clone(),
-                file: n.file.clone(),
-                side: n.side,
-                start: n.start,
-                end: n.end,
-                text: n.text.clone(),
-                created_at: n.created_at,
-                runs: note_runs(&n.text),
-                line_hash: n.line_hash,
-            })
-            .collect(),
+    let raw_notes = match &opts.notes_db {
+        Some(db) => query_notes_for_file(db, opts.repo.as_deref(), &f.path),
         None => Vec::new(),
     };
+
+    let mut open_notes = 0;
+    let mut in_progress_notes = 0;
+    let mut resolved_notes = 0;
+    for n in &raw_notes {
+        match n.status {
+            NoteStatus::Open => open_notes += 1,
+            NoteStatus::InProgress => in_progress_notes += 1,
+            NoteStatus::Resolved => resolved_notes += 1,
+        }
+    }
+
+    let notes_out: Vec<OutputNote> = raw_notes
+        .into_iter()
+        .filter(|n| opts.show_resolved || !n.status.is_resolved())
+        .map(|n| OutputNote {
+            id: n.id.clone(),
+            file: n.file.clone(),
+            side: n.side,
+            start: n.start,
+            end: n.end,
+            text: n.text.clone(),
+            created_at: n.created_at,
+            runs: note_runs(&n.text),
+            line_hash: n.line_hash,
+            status: n.status,
+            source_lines: n.source_lines.clone(),
+        })
+        .collect();
 
     let status = match f.status {
         crate::parse::FileStatus::Added => "added".to_string(),
@@ -800,7 +817,9 @@ pub fn process_single_diff_file(
         "Finished processing diff file"
     );
 
-    counts.notes = notes_out.len();
+    counts.notes = open_notes;
+    counts.in_progress_notes = in_progress_notes;
+    counts.resolved_notes = resolved_notes;
 
     let res = OutputFile {
         path: f.path.clone(),

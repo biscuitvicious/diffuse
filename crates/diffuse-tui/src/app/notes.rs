@@ -155,51 +155,89 @@ impl AppState {
             }
             return;
         }
-        let (file, start, end, is_new, line_content) = if let Some(sel) = self.compute_selection() {
-            let file = self
-                .output
-                .files
-                .get(sel.file_idx)
-                .expect("selection file_idx out of bounds in output.files");
-            let pos = if sel.side_is_new {
-                self.flat_pos_of_coord(sel.file_idx, Some(sel.start), None)
-            } else {
-                self.flat_pos_of_coord(sel.file_idx, None, Some(sel.start))
-            };
-            let content = pos
-                .and_then(|p| self.flat.get(p))
-                .and_then(|fr| self.row_of(fr))
-                .map(|r| {
-                    if sel.side_is_new {
-                        r.new_text()
-                    } else {
-                        r.old_text()
+        let (file, start, end, is_new, line_content, source_lines) =
+            if let Some(sel) = self.compute_selection() {
+                let file = self
+                    .output
+                    .files
+                    .get(sel.file_idx)
+                    .expect("selection file_idx out of bounds in output.files");
+                let pos = if sel.side_is_new {
+                    self.flat_pos_of_coord(sel.file_idx, Some(sel.end), None)
+                } else {
+                    self.flat_pos_of_coord(sel.file_idx, None, Some(sel.end))
+                };
+                let content = pos
+                    .and_then(|p| self.flat.get(p))
+                    .and_then(|fr| self.row_of(fr))
+                    .map(|r| {
+                        if sel.side_is_new {
+                            r.new_text()
+                        } else {
+                            r.old_text()
+                        }
+                    });
+                let mut selected_lines = Vec::new();
+                for fr in &self.flat {
+                    if fr.file_idx != sel.file_idx {
+                        continue;
                     }
-                });
-            (
-                file.path.clone(),
-                sel.start,
-                sel.end,
-                sel.side_is_new,
-                content,
-            )
-        } else {
-            let Some(file) = self.current_file() else {
-                return;
+                    if let Some(r) = self.row_of(fr) {
+                        let coord = if sel.side_is_new {
+                            r.new_line
+                        } else {
+                            r.old_line
+                        };
+                        if let Some(c) = coord
+                            && c >= sel.start
+                            && c <= sel.end
+                        {
+                            let text = if sel.side_is_new {
+                                r.new_text()
+                            } else {
+                                r.old_text()
+                            };
+                            selected_lines.push(text);
+                        }
+                    }
+                }
+                let source = if selected_lines.is_empty() {
+                    content.clone()
+                } else {
+                    Some(selected_lines.join("\n"))
+                };
+                (
+                    file.path.clone(),
+                    sel.start,
+                    sel.end,
+                    sel.side_is_new,
+                    content,
+                    source,
+                )
+            } else {
+                let Some(file) = self.current_file() else {
+                    return;
+                };
+                let Some(row) = self.current_flat_row() else {
+                    return;
+                };
+                let Some(r) = self.row_of(row) else {
+                    return;
+                };
+                let Some(c) = Self::row_coord(r) else {
+                    return;
+                };
+                let is_new = r.new_line.is_some();
+                let text = if is_new { r.new_text() } else { r.old_text() };
+                (
+                    file.path.clone(),
+                    c,
+                    c,
+                    is_new,
+                    Some(text.clone()),
+                    Some(text),
+                )
             };
-            let Some(row) = self.current_flat_row() else {
-                return;
-            };
-            let Some(r) = self.row_of(row) else {
-                return;
-            };
-            let Some(c) = Self::row_coord(r) else {
-                return;
-            };
-            let is_new = r.new_line.is_some();
-            let text = if is_new { r.new_text() } else { r.old_text() };
-            (file.path.clone(), c, c, is_new, Some(text))
-        };
         self.note_id_counter += 1;
         let created_at = now_millis();
         let line_hash = line_content.as_deref().map(hash_line_content);
@@ -218,6 +256,8 @@ impl AppState {
             text,
             created_at,
             line_hash,
+            status: diffuse_core::notes::NoteStatus::Open,
+            source_lines,
         };
         add_note(&mut self.notes, &self.notes_key, note);
         let _ = save_notes(&self.notes_path, &self.notes);
@@ -307,6 +347,106 @@ impl AppState {
         self.anchor = None;
     }
 
+    /// Cycle the status of the focused review note: Open -> InProgress ->
+    /// Resolved -> Open. Returns true if a note status was cycled, false if
+    /// no note was focused.
+    pub fn cycle_note_status(&mut self) -> bool {
+        let focused_note = if let Some(target) = self.visual_target_at(self.row_idx, self.vis_line)
+        {
+            match target {
+                VisualTarget::Note { note, .. } => Some((note.file.clone(), note.id.clone())),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let (file_path, note_id) = if let Some(info) = focused_note {
+            info
+        } else if let Some(sel) = self.compute_selection() {
+            let file = &self.output.files[sel.file_idx];
+            if let Some(n) = notes_for_file(&self.notes, &self.notes_key, &file.path)
+                .find(|n| n.start <= sel.end && n.end >= sel.start)
+            {
+                (n.file.clone(), n.id.clone())
+            } else {
+                return false;
+            }
+        } else if let Some(file) = self.current_file()
+            && let Some(row) = self.current_flat_row()
+            && let Some(c) = self.flat_row_coord(row)
+        {
+            if let Some(n) = notes_for_file(&self.notes, &self.notes_key, &file.path)
+                .find(|n| n.start <= c && n.end >= c)
+            {
+                (n.file.clone(), n.id.clone())
+            } else {
+                return false;
+            }
+        } else {
+            return false;
+        };
+
+        let next_status = {
+            let existing =
+                notes_for_file(&self.notes, &self.notes_key, &file_path).find(|n| n.id == note_id);
+            match existing {
+                Some(n) => n.status.cycle(),
+                None => return false,
+            }
+        };
+
+        let updated = crate::core::notes::set_note_status_by_id(
+            &mut self.notes,
+            &self.notes_key,
+            &file_path,
+            &note_id,
+            next_status,
+        );
+
+        if updated {
+            let _ = save_notes(&self.notes_path, &self.notes);
+            if let Some(fi) = self.output.files.iter().position(|f| f.path == file_path) {
+                self.sync_file_notes(fi);
+            }
+            self.bump_notes();
+            let label = match next_status {
+                diffuse_core::notes::NoteStatus::Open => "open",
+                diffuse_core::notes::NoteStatus::InProgress => "in progress",
+                diffuse_core::notes::NoteStatus::Resolved => "resolved",
+            };
+            self.status_message =
+                Some((format!("note marked {label} {}", next_status.glyph()), true));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Toggle displaying resolved notes in the diff view.
+    pub fn toggle_show_resolved_notes(&mut self) {
+        self.show_resolved_notes = !self.show_resolved_notes;
+        self.bump_notes();
+        let msg = if self.show_resolved_notes {
+            "showing resolved notes"
+        } else {
+            "hiding resolved notes"
+        };
+        self.status_message = Some((msg.to_string(), true));
+    }
+
+    /// Toggle displaying original source lines in note callouts.
+    pub fn toggle_show_source_lines(&mut self) {
+        self.show_source_lines = !self.show_source_lines;
+        self.bump_notes();
+        let msg = if self.show_source_lines {
+            "showing note source lines"
+        } else {
+            "hiding note source lines"
+        };
+        self.status_message = Some((msg.to_string(), true));
+    }
+
     /// Synchronize review notes and counts on an [`OutputFile`] in
     /// `self.output.files` with the active state in `self.notes`.
     pub(crate) fn sync_file_notes(&mut self, file_idx: usize) {
@@ -323,9 +463,23 @@ impl AppState {
                         created_at: n.created_at,
                         runs: note_runs(&n.text),
                         line_hash: n.line_hash,
+                        status: n.status,
+                        source_lines: n.source_lines.clone(),
                     })
                     .collect();
-            f.counts.notes = notes.len();
+            let mut open_notes = 0;
+            let mut in_progress_notes = 0;
+            let mut resolved_notes = 0;
+            for n in &notes {
+                match n.status {
+                    diffuse_core::notes::NoteStatus::Open => open_notes += 1,
+                    diffuse_core::notes::NoteStatus::InProgress => in_progress_notes += 1,
+                    diffuse_core::notes::NoteStatus::Resolved => resolved_notes += 1,
+                }
+            }
+            f.counts.notes = open_notes;
+            f.counts.in_progress_notes = in_progress_notes;
+            f.counts.resolved_notes = resolved_notes;
             f.notes = notes;
         }
     }
@@ -347,26 +501,17 @@ impl AppState {
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
         let gutter_fg = crate::render::Color::Rgb(220, 220, 20).fg_code();
         let glyph_fg = crate::render::Color::Fixed(255).fg_code();
-        let amber_fg = crate::render::Color::Rgb(250, 75, 40).fg_code();
         let note_bg = crate::render::Color::Fixed(234).bg_code();
         let fg_reset = crate::render::FG_RESET;
         const STRIPE_LEFT: &str = "\u{258C}";
         const BAND_BLOCK: &str = "\u{2588}";
-        // Note background spans the full line; left‑edge amber stripe and
-        // filled yellow band use foreground color, then white glyph.
-        let first_prefix = format!(
-            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}💬 {fg_reset}"
-        );
-        let line_prefix = format!(
-            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
-        );
-        let final_prefix = format!(
-            "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
-        );
         let text_cols = content_width.saturating_sub(8).max(1);
         for (file_idx, f) in self.output.files.iter().enumerate() {
             let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
+                if !self.show_resolved_notes && n.status.is_resolved() {
+                    continue;
+                }
                 let mut at: Option<usize> = None;
                 let mut anchor_line_content: Option<String> = None;
                 for (i, item) in self.flat.iter().enumerate() {
@@ -381,7 +526,7 @@ impl AppState {
                         Side::Old => (r.old_line, r.old_text()),
                     };
                     if let Some(c) = line_num {
-                        if c == n.start {
+                        if c == n.end {
                             anchor_line_content = Some(text);
                         }
                         if c >= n.start && c <= n.end {
@@ -400,7 +545,45 @@ impl AppState {
                     banner_idx
                 };
 
-                let lines = crate::render::markdown_lines(&n.text, text_cols);
+                let (stripe_color, glyph) = match n.status {
+                    diffuse_core::notes::NoteStatus::Open => {
+                        (crate::render::Color::Rgb(250, 75, 40), "💬")
+                    }
+                    diffuse_core::notes::NoteStatus::InProgress => {
+                        (crate::render::Color::Rgb(60, 180, 240), "🔄")
+                    }
+                    diffuse_core::notes::NoteStatus::Resolved => {
+                        (crate::render::Color::Rgb(40, 140, 60), "✅")
+                    }
+                };
+                let stripe_fg = stripe_color.fg_code();
+                let first_prefix = format!(
+                    "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}{glyph} {fg_reset}"
+                );
+                let line_prefix = format!(
+                    "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
+                );
+                let final_prefix = format!(
+                    "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
+                );
+
+                let full_text = if self.show_source_lines
+                    && let Some(ref src) = n.source_lines
+                {
+                    let mut s = String::new();
+                    s.push_str("```\n");
+                    s.push_str(src);
+                    if !src.ends_with('\n') {
+                        s.push('\n');
+                    }
+                    s.push_str("```\n\n");
+                    s.push_str(&n.text);
+                    s
+                } else {
+                    n.text.clone()
+                };
+
+                let lines = crate::render::markdown_lines(&full_text, text_cols);
                 // An empty note still occupies its single gutter line.
                 let lines = if lines.is_empty() {
                     vec![crate::render::MarkdownLine { runs: Vec::new() }]
@@ -439,6 +622,9 @@ impl AppState {
         for (file_idx, f) in self.output.files.iter().enumerate() {
             let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
+                if !self.show_resolved_notes && n.status.is_resolved() {
+                    continue;
+                }
                 let mut at: Option<usize> = None;
                 let mut anchor_line_content: Option<String> = None;
                 for (i, item) in self.flat.iter().enumerate() {
@@ -453,7 +639,7 @@ impl AppState {
                         Side::Old => (r.old_line, r.old_text()),
                     };
                     if let Some(c) = line_num {
-                        if c == n.start {
+                        if c == n.end {
                             anchor_line_content = Some(text);
                         }
                         if c >= n.start && c <= n.end {
@@ -473,7 +659,22 @@ impl AppState {
                 };
 
                 if target_row == row_idx {
-                    let lines = crate::render::markdown_lines(&n.text, text_cols);
+                    let full_text = if self.show_source_lines
+                        && let Some(ref src) = n.source_lines
+                    {
+                        let mut s = String::new();
+                        s.push_str("```\n");
+                        s.push_str(src);
+                        if !src.ends_with('\n') {
+                            s.push('\n');
+                        }
+                        s.push_str("```\n\n");
+                        s.push_str(&n.text);
+                        s
+                    } else {
+                        n.text.clone()
+                    };
+                    let lines = crate::render::markdown_lines(&full_text, text_cols);
                     let line_count = if lines.is_empty() { 1 } else { lines.len() };
                     results.push((n, line_count));
                 }

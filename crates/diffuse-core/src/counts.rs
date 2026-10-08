@@ -13,9 +13,15 @@ pub struct FileCounts {
     pub dels: usize,
     pub mods: usize,
     pub movs: usize,
-    /// Number of review notes attached to this file.
+    /// Number of active open review notes attached to this file (Open).
     #[serde(default, skip_serializing_if = "usize_is_zero")]
     pub notes: usize,
+    /// Number of in-progress review notes attached to this file.
+    #[serde(default, skip_serializing_if = "usize_is_zero")]
+    pub in_progress_notes: usize,
+    /// Number of resolved review notes attached to this file.
+    #[serde(default, skip_serializing_if = "usize_is_zero")]
+    pub resolved_notes: usize,
 }
 
 fn usize_is_zero(v: &usize) -> bool {
@@ -32,6 +38,8 @@ pub enum CountKind {
     Mods,
     Movs,
     Notes,
+    InProgressNotes,
+    ResolvedNotes,
 }
 
 /// One non-zero mod-count segment for display: its bucket, marker glyph, and
@@ -46,13 +54,19 @@ pub struct CountSegment {
 impl FileCounts {
     /// Returns `true` when all counts are zero (no changes and no notes).
     pub fn is_empty(&self) -> bool {
-        self.adds == 0 && self.dels == 0 && self.mods == 0 && self.movs == 0 && self.notes == 0
+        self.adds == 0
+            && self.dels == 0
+            && self.mods == 0
+            && self.movs == 0
+            && self.notes == 0
+            && self.in_progress_notes == 0
+            && self.resolved_notes == 0
     }
 
     /// Non-zero count segments in stable display order (dels, adds, mods,
-    /// movs, notes). At most five segments exist, stored inline. Empty when
-    /// [`FileCounts::is_empty`].
-    pub fn segments(&self) -> SmallVec<[CountSegment; 5]> {
+    /// movs, notes, in_progress, resolved). At most seven segments exist,
+    /// stored inline. Empty when [`FileCounts::is_empty`].
+    pub fn segments(&self) -> SmallVec<[CountSegment; 7]> {
         let mut out = SmallVec::new();
         if self.dels > 0 {
             out.push(CountSegment {
@@ -89,6 +103,20 @@ impl FileCounts {
                 value: self.notes,
             });
         }
+        if self.in_progress_notes > 0 {
+            out.push(CountSegment {
+                kind: CountKind::InProgressNotes,
+                marker: "🔄",
+                value: self.in_progress_notes,
+            });
+        }
+        if self.resolved_notes > 0 {
+            out.push(CountSegment {
+                kind: CountKind::ResolvedNotes,
+                marker: "✅",
+                value: self.resolved_notes,
+            });
+        }
         out
     }
 
@@ -99,6 +127,8 @@ impl FileCounts {
             mods: self.mods,
             movs: self.movs,
             notes: self.notes,
+            in_progress_notes: self.in_progress_notes,
+            resolved_notes: self.resolved_notes,
         };
 
         crate::ensure!(
@@ -106,7 +136,9 @@ impl FileCounts {
                 && rev.dels == self.adds
                 && rev.mods == self.mods
                 && rev.movs == self.movs
-                && rev.notes == self.notes,
+                && rev.notes == self.notes
+                && rev.in_progress_notes == self.in_progress_notes
+                && rev.resolved_notes == self.resolved_notes,
             "FileCounts::reverse must swap adds and dels while preserving mods, movs, and notes"
         );
 
@@ -148,6 +180,8 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
         mods,
         movs,
         notes: 0,
+        in_progress_notes: 0,
+        resolved_notes: 0,
     };
 
     crate::ensure!(

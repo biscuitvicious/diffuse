@@ -138,6 +138,7 @@ index 1111111..2222222 100644
             mods: 0,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         fences: Vec::new(),
         notes: Vec::new(),
@@ -534,6 +535,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
             mods: 0,
             movs: 0,
             notes: 0,
+            ..Default::default()
         },
         hunks: vec![h0, h1],
         raw_hunks: vec![],

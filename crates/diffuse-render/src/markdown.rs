@@ -28,6 +28,11 @@ pub struct MarkdownOptions {
     /// Render attached review notes as GitHub blockquote callouts (`>
     /// [!NOTE]`).
     pub include_notes: bool,
+    /// Include resolved review notes in the markdown output (default: show
+    /// active only).
+    pub show_resolved_notes: bool,
+    /// Render original source lines captured when review notes were created.
+    pub show_source_lines: bool,
     /// Whether to colorize the Markdown output with ANSI escape sequences.
     pub colorize: bool,
     /// Theme used for token colors when `colorize` is enabled.
@@ -41,6 +46,8 @@ impl Default for MarkdownOptions {
             collapsible: true,
             default_open: true,
             include_notes: true,
+            show_resolved_notes: false,
+            show_source_lines: false,
             colorize: false,
             theme: DiffuseTheme::DEFAULT,
         }
@@ -269,22 +276,102 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
     }
 
     // 3. Render Review Notes callouts if present
-    if options.include_notes && !file.notes.is_empty() {
-        out.push('\n');
+    if options.include_notes && (!file.notes.is_empty() || file.counts.resolved_notes > 0) {
+        let mut rendered_notes = 0;
         for note in &file.notes {
+            if !options.show_resolved_notes && note.status.is_resolved() {
+                continue;
+            }
+            if rendered_notes == 0 {
+                out.push('\n');
+            }
+            rendered_notes += 1;
             let line_info = if note.start == note.end {
                 format!("**Line {}**", note.start)
             } else {
                 format!("**Lines {}-{}**", note.start, note.end)
             };
+            let glyph = note.status.glyph();
             push_md_line(&mut out, "> [!NOTE]", options.colorize, &theme);
+            if options.show_source_lines
+                && let Some(ref src) = note.source_lines
+            {
+                push_md_line(
+                    &mut out,
+                    &format!("> {glyph} {line_info}:"),
+                    options.colorize,
+                    &theme,
+                );
+                push_md_line(&mut out, &format!("> ```{ext}"), options.colorize, &theme);
+                for src_line in src.lines() {
+                    push_md_line(&mut out, &format!("> {src_line}"), options.colorize, &theme);
+                }
+                push_md_line(&mut out, "> ```", options.colorize, &theme);
+                push_md_line(&mut out, ">", options.colorize, &theme);
+                for text_line in note.text.lines() {
+                    if text_line.is_empty() {
+                        push_md_line(&mut out, ">", options.colorize, &theme);
+                    } else {
+                        push_md_line(
+                            &mut out,
+                            &format!("> {text_line}"),
+                            options.colorize,
+                            &theme,
+                        );
+                    }
+                }
+            } else {
+                let mut lines = note.text.lines();
+                if let Some(first_line) = lines.next() {
+                    push_md_line(
+                        &mut out,
+                        &format!("> {glyph} {line_info}: {first_line}"),
+                        options.colorize,
+                        &theme,
+                    );
+                    for text_line in lines {
+                        if text_line.is_empty() {
+                            push_md_line(&mut out, ">", options.colorize, &theme);
+                        } else {
+                            push_md_line(
+                                &mut out,
+                                &format!("> {text_line}"),
+                                options.colorize,
+                                &theme,
+                            );
+                        }
+                    }
+                } else {
+                    push_md_line(
+                        &mut out,
+                        &format!("> {glyph} {line_info}"),
+                        options.colorize,
+                        &theme,
+                    );
+                }
+            }
+            push_md_line(&mut out, ">", options.colorize, &theme);
+        }
+
+        // Summary count of resolved notes omitted
+        if !options.show_resolved_notes && file.counts.resolved_notes > 0 {
+            if rendered_notes == 0 {
+                out.push('\n');
+            }
+            let resolved_word = if file.counts.resolved_notes == 1 {
+                "note"
+            } else {
+                "notes"
+            };
             push_md_line(
                 &mut out,
-                &format!("> 💬 {}: {}", line_info, note.text),
+                &format!(
+                    "*✅ {} resolved {} omitted (use --resolved or --all to show)*",
+                    file.counts.resolved_notes, resolved_word
+                ),
                 options.colorize,
                 &theme,
             );
-            push_md_line(&mut out, ">", options.colorize, &theme);
         }
     }
 

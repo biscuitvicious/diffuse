@@ -8,6 +8,7 @@ use std::{
     fmt, fs, io,
     num::{NonZero, ParseIntError},
     path::{Path, PathBuf},
+    process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -31,6 +32,63 @@ impl Side {
     }
 }
 
+/// Lifecycle status of a review note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum NoteStatus {
+    /// Active open feedback (default).
+    #[default]
+    Open,
+    /// Note is actively being addressed.
+    InProgress,
+    /// Note has been resolved / completed.
+    Resolved,
+}
+
+impl NoteStatus {
+    #[inline]
+    pub const fn is_open(&self) -> bool {
+        matches!(self, Self::Open)
+    }
+
+    #[inline]
+    pub const fn is_in_progress(&self) -> bool {
+        matches!(self, Self::InProgress)
+    }
+
+    #[inline]
+    pub const fn is_resolved(&self) -> bool {
+        matches!(self, Self::Resolved)
+    }
+
+    /// Whether this status counts as active/open (Open or InProgress).
+    #[inline]
+    pub const fn counts_as_open(&self) -> bool {
+        matches!(self, Self::Open | Self::InProgress)
+    }
+
+    /// Next status in the cyclic toggle: Open -> InProgress -> Resolved ->
+    /// Open.
+    #[inline]
+    pub const fn cycle(&self) -> Self {
+        match self {
+            Self::Open => Self::InProgress,
+            Self::InProgress => Self::Resolved,
+            Self::Resolved => Self::Open,
+        }
+    }
+
+    /// Display glyph corresponding to the status.
+    #[inline]
+    pub const fn glyph(&self) -> &'static str {
+        match self {
+            Self::Open => "💬",
+            Self::InProgress => "🔄",
+            Self::Resolved => "✅",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewNote {
@@ -43,6 +101,29 @@ pub struct ReviewNote {
     pub created_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_hash: Option<LineHash>,
+    /// Note lifecycle status: Open (default), InProgress, or Resolved.
+    #[serde(default, skip_serializing_if = "NoteStatus::is_open")]
+    pub status: NoteStatus,
+    /// Exact original source lines selected when the note was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_lines: Option<String>,
+}
+
+impl Default for ReviewNote {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            file: String::new(),
+            side: Side::New,
+            start: 1,
+            end: 1,
+            text: String::new(),
+            created_at: 0,
+            line_hash: None,
+            status: NoteStatus::Open,
+            source_lines: None,
+        }
+    }
 }
 
 /// The notes database: repo -> (`file_path` -> list of notes).
@@ -92,6 +173,74 @@ pub fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Generate a unique review note ID with millisecond timestamp, process ID,
+/// and monotonic sequence counter.
+pub fn generate_note_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{:x}-{:x}-{:x}", now_millis(), process::id(), count)
+}
+
+/// Extract a 1-indexed line range `[start, end]` from text content.
+/// Returns `None` if `start == 0`, `start > end`, or the range is out of
+/// bounds.
+pub fn extract_source_lines(content: &str, start: u32, end: u32) -> Option<String> {
+    if start == 0 || end < start {
+        return None;
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    let s = (start as usize).saturating_sub(1);
+    let e = (end as usize).min(lines.len());
+    if s >= lines.len() || s >= e {
+        return None;
+    }
+    Some(lines[s..e].join("\n"))
+}
+
+/// Synthesize source lines for a given file and coordinate range.
+///
+/// For [`Side::New`], attempts to read the file directly on disk (or relative
+/// to `repo_root`). For [`Side::Old`], queries git for `HEAD:<file_path>` if
+/// inside a repository, falling back to disk. Returns `None` if the file cannot
+/// be accessed or the range is invalid.
+pub fn synthesize_source_lines(
+    repo_root: Option<&Path>,
+    file_path: &str,
+    side: Side,
+    start: u32,
+    end: u32,
+) -> Option<String> {
+    match side {
+        Side::New => {
+            let path = Path::new(file_path);
+            let content = if path.is_file() {
+                fs::read_to_string(path).ok()
+            } else if let Some(root) = repo_root {
+                let candidate = root.join(file_path);
+                if candidate.is_file() {
+                    fs::read_to_string(candidate).ok()
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            content.and_then(|c| extract_source_lines(&c, start, end))
+        }
+        Side::Old => {
+            if let Some(root) = repo_root
+                && let Some(git_out) =
+                    crate::git::run_git(root, &["show", &format!("HEAD:{file_path}")])
+            {
+                extract_source_lines(&git_out, start, end)
+            } else {
+                synthesize_source_lines(repo_root, file_path, Side::New, start, end)
+            }
+        }
+    }
 }
 
 /// Resolve the HEAD commit hash of the repository containing `repo_root`.
@@ -499,6 +648,197 @@ pub fn update_note_text(
     } else {
         false
     }
+}
+
+/// Prepend a reply text to an existing note, blockquoting the previous note
+/// text.
+pub fn reply_to_note_text(original: &str, reply: &str) -> String {
+    let quoted = original
+        .lines()
+        .map(|l| format!("> {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{reply}\n\n{quoted}")
+}
+
+/// Set the lifecycle status of a specific note matching repo, file, and
+/// `note_id`.
+pub fn set_note_status_by_id(
+    db: &mut NotesDB,
+    repo: &str,
+    file: &str,
+    note_id: &str,
+    status: NoteStatus,
+) -> bool {
+    let Some(repo_map) = db.get_mut(repo) else {
+        return false;
+    };
+    let Some(list) = repo_map.get_mut(file) else {
+        return false;
+    };
+    if let Some(note) = list.iter_mut().find(|n| n.id == note_id) {
+        note.status = status;
+        true
+    } else {
+        false
+    }
+}
+
+/// Mark a specific note as resolved (`NoteStatus::Resolved`).
+#[inline]
+pub fn resolve_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
+    set_note_status_by_id(db, repo, file, note_id, NoteStatus::Resolved)
+}
+
+/// Reopen a specific note back to open status (`NoteStatus::Open`).
+#[inline]
+pub fn reopen_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
+    set_note_status_by_id(db, repo, file, note_id, NoteStatus::Open)
+}
+
+/// Alias for [`reopen_note_by_id`]: reset note back to open.
+#[inline]
+pub fn open_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
+    reopen_note_by_id(db, repo, file, note_id)
+}
+
+/// Reply to a specific note by prepending reply text and blockquoting original
+/// text. Optionally updates the note's status.
+pub fn reply_to_note_by_id(
+    db: &mut NotesDB,
+    repo: &str,
+    file: &str,
+    note_id: &str,
+    reply: &str,
+    status: Option<NoteStatus>,
+) -> bool {
+    let Some(repo_map) = db.get_mut(repo) else {
+        return false;
+    };
+    let Some(list) = repo_map.get_mut(file) else {
+        return false;
+    };
+    if let Some(note) = list.iter_mut().find(|n| n.id == note_id) {
+        note.text = reply_to_note_text(&note.text, reply);
+        if let Some(s) = status {
+            note.status = s;
+        }
+        true
+    } else {
+        false
+    }
+}
+
+/// Find a note and its file path by note ID within `repo`.
+pub fn find_note_by_id<'a>(
+    db: &'a NotesDB,
+    repo: &str,
+    note_id: &str,
+) -> Option<(&'a str, &'a ReviewNote)> {
+    let repo_map = db.get(repo)?;
+    for (file, notes) in repo_map {
+        if let Some(note) = notes.iter().find(|n| n.id == note_id) {
+            return Some((file.as_str(), note));
+        }
+    }
+    None
+}
+
+/// Set a note's lifecycle status searching across all files in `repo`.
+pub fn set_note_status_in_repo(
+    db: &mut NotesDB,
+    repo: &str,
+    note_id: &str,
+    status: NoteStatus,
+) -> bool {
+    let Some(repo_map) = db.get_mut(repo) else {
+        return false;
+    };
+    for notes in repo_map.values_mut() {
+        if let Some(note) = notes.iter_mut().find(|n| n.id == note_id) {
+            note.status = status;
+            return true;
+        }
+    }
+    false
+}
+
+/// Find a note by ID (or ID prefix) across buckets in `db`.
+/// If `repo` is provided, searches that bucket first, then commit-scoped
+/// buckets matching `{repo}@`, and finally falls back to all buckets in the
+/// database. Matches exact note ID first; if none match, matches note ID
+/// prefix.
+pub fn find_note_in_db<'a>(
+    db: &'a NotesDB,
+    repo: Option<&str>,
+    id_or_prefix: &str,
+) -> Option<(&'a str, &'a str, &'a ReviewNote)> {
+    let mut candidate_keys: Vec<&'a str> = Vec::new();
+    if let Some(r) = repo {
+        if let Some((k, _)) = db.get_key_value(r) {
+            candidate_keys.push(k.as_str());
+        }
+        let pfx = format!("{r}@");
+        for k in db.keys() {
+            if k.starts_with(&pfx) && !candidate_keys.contains(&k.as_str()) {
+                candidate_keys.push(k.as_str());
+            }
+        }
+    }
+    for k in db.keys() {
+        if !candidate_keys.contains(&k.as_str()) {
+            candidate_keys.push(k.as_str());
+        }
+    }
+
+    // 1. Exact ID match pass
+    for key in &candidate_keys {
+        if let Some(repo_map) = db.get(*key) {
+            for (file, notes) in repo_map {
+                if let Some(note) = notes.iter().find(|n| n.id == id_or_prefix) {
+                    return Some((*key, file.as_str(), note));
+                }
+            }
+        }
+    }
+
+    // 2. Prefix match pass
+    for key in &candidate_keys {
+        if let Some(repo_map) = db.get(*key) {
+            for (file, notes) in repo_map {
+                if let Some(note) = notes.iter().find(|n| n.id.starts_with(id_or_prefix)) {
+                    return Some((*key, file.as_str(), note));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Mutate a note found by ID (or prefix) across buckets in `db`.
+pub fn update_note_in_db<F>(
+    db: &mut NotesDB,
+    repo: Option<&str>,
+    id_or_prefix: &str,
+    mut f: F,
+) -> bool
+where
+    F: FnMut(&mut ReviewNote),
+{
+    // First find where the note is located
+    let found = find_note_in_db(db, repo, id_or_prefix)
+        .map(|(k, file, note)| (k.to_string(), file.to_string(), note.id.clone()));
+
+    if let Some((bucket, file, note_id)) = found
+        && let Some(repo_map) = db.get_mut(&bucket)
+        && let Some(notes) = repo_map.get_mut(&file)
+        && let Some(note) = notes.iter_mut().find(|n| n.id == note_id)
+    {
+        f(note);
+        return true;
+    }
+    false
 }
 
 /// Normalize non-fenced note text for inline callout rendering:

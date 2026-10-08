@@ -58,6 +58,9 @@ pub fn render_help_modal(width: usize, height: usize, theme: &DiffuseTheme) -> V
         ("c / C", "reset hunk / all context"),
         ("m", "new note"),
         ("d", "delete note"),
+        ("x", "cycle note status / discard"),
+        ("z", "toggle resolved notes"),
+        ("S", "toggle note source lines"),
         ("?", "toggle help"),
         ("q · Ctrl+c", "quit"),
     ];
