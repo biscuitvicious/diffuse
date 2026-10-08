@@ -285,3 +285,16 @@ fn test_render_file_diff_light_theme() {
     assert!(rendered_light.contains("48;2;"));
     assert!(rendered_light.contains("235;238;242"));
 }
+
+#[test]
+fn test_status_suffix_unmodified_unadorned() {
+    let file = diffuse_core::wire::OutputFile {
+        path: "src/untouched.rs".to_string(),
+        status: "unmodified".to_string(),
+        ..Default::default()
+    };
+
+    let mut buf = String::new();
+    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::DEFAULT).unwrap();
+    assert!(!buf.contains("(unmodified)"));
+}

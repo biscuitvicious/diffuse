@@ -98,11 +98,12 @@ fn file_header_parts(
     let (indicator_prefix, collapse_tag) = file_header_indicator(file, badge, is_collapsed);
     let path_display = file.display_path_with_prefix(common_prefix);
     let status_str = file.display_status();
-    let status_tag = if status_str.is_empty() || status_str == "modified" {
-        String::new()
-    } else {
-        format!(" ({status_str})")
-    };
+    let status_tag =
+        if status_str.is_empty() || status_str == "modified" || status_str == "unmodified" {
+            String::new()
+        } else {
+            format!(" ({status_str})")
+        };
     FileHeaderParts {
         indicator: indicator_prefix,
         path: path_display,

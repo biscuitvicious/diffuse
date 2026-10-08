@@ -238,6 +238,33 @@ pub enum RawFileSource {
     },
 }
 
+impl Default for OutputFile {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
+            status: "modified".to_string(),
+            is_binary: false,
+            old_bytes: None,
+            new_bytes: None,
+            new_line_count: 0,
+            old_line_count: 0,
+            new_content: Vec::new(),
+            old_content: Vec::new(),
+            hunks: Vec::new(),
+            raw_hunks: Vec::new(),
+            counts: FileCounts::default(),
+            fences: Vec::new(),
+            notes: Vec::new(),
+            content_runs: Vec::new(),
+            rows: Vec::new(),
+            raw_source: None,
+        }
+    }
+}
+
 impl OutputFile {
     /// Create a lightweight collapsed stub that skips pipeline execution.
     pub fn collapsed_stub(
@@ -252,7 +279,7 @@ impl OutputFile {
             FileStatus::Renamed => "renamed".to_string(),
             FileStatus::Untracked => "untracked".to_string(),
             FileStatus::ModeChanged => "mode changed".to_string(),
-            FileStatus::Note => "note".to_string(),
+            FileStatus::Unmodified => "unmodified".to_string(),
         };
         Self {
             path: f.path.clone(),
@@ -352,7 +379,7 @@ impl OutputFile {
             "renamed" => FileStatus::Renamed,
             "untracked" => FileStatus::Untracked,
             "mode changed" => FileStatus::ModeChanged,
-            "note" => FileStatus::Note,
+            "unmodified" | "note" => FileStatus::Unmodified,
             _ => FileStatus::Modified,
         };
         DiffFile {
@@ -460,9 +487,9 @@ impl OutputFile {
                     format!("{prefix}, {size_str}")
                 }
             }
-            ("modified", None) => {
+            ("modified" | "unmodified", None) => {
                 if size_str.is_empty() {
-                    "modified".to_string()
+                    self.status.clone()
                 } else {
                     size_str
                 }

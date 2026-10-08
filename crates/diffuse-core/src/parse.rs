@@ -451,7 +451,7 @@ pub enum FileStatus {
     Renamed,
     Untracked,
     ModeChanged,
-    Note,
+    Unmodified,
 }
 
 impl FileStatus {
@@ -463,7 +463,7 @@ impl FileStatus {
             FileStatus::Renamed => FileStatus::Renamed,
             FileStatus::Untracked => FileStatus::Untracked,
             FileStatus::ModeChanged => FileStatus::ModeChanged,
-            FileStatus::Note => FileStatus::Note,
+            FileStatus::Unmodified => FileStatus::Unmodified,
         }
     }
 }
@@ -493,6 +493,26 @@ pub struct DiffFile {
 }
 
 impl DiffFile {
+    pub fn new(path: impl Into<String>) -> Self {
+        DiffFile {
+            path: path.into(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
+            status: FileStatus::Modified,
+            is_binary: false,
+            old_bytes: None,
+            new_bytes: None,
+            new_line_count: 0,
+            old_line_count: 0,
+            new_content: Vec::new(),
+            old_content: Vec::new(),
+            hunks: Vec::new(),
+            raw_hunks: Vec::new(),
+            no_content: false,
+        }
+    }
+
     pub fn reverse(&self) -> Self {
         DiffFile {
             path: self.old_path.clone().unwrap_or_else(|| self.path.clone()),
@@ -649,7 +669,7 @@ pub fn is_valid_diff_file(f: &DiffFile) -> bool {
             || f.status == FileStatus::Renamed
             || f.status == FileStatus::Untracked
             || f.status == FileStatus::ModeChanged
-            || f.status == FileStatus::Note
+            || f.status == FileStatus::Unmodified
             || f.is_binary)
 }
 
@@ -724,6 +744,10 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
         } else if line.starts_with("untracked file mode") {
             if let Some(c) = cur.as_mut() {
                 c.status = FileStatus::Untracked;
+            }
+        } else if line.starts_with("unmodified file mode") || line == "unmodified file" {
+            if let Some(c) = cur.as_mut() {
+                c.status = FileStatus::Unmodified;
             }
         } else if let Some(rest) = line.strip_prefix("rename from ") {
             if let Some(c) = cur.as_mut() {

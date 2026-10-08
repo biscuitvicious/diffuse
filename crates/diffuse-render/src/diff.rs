@@ -39,7 +39,10 @@ pub fn write_file_header_bar<W: Write>(
     let fg_code = theme.palette.header_bar_fg.fg_code();
     let path_white = theme.palette.file_header_path_current.fg_code();
 
-    let status_suffix = if status_display.is_empty() || status_display == "modified" {
+    let status_suffix = if status_display.is_empty()
+        || status_display == "modified"
+        || status_display == "unmodified"
+    {
         String::new()
     } else {
         format!(" ({status_display})")

@@ -240,3 +240,14 @@ Binary files a/old.bin and b/new.bin differ
     assert_eq!(files[1].status, FileStatus::Renamed);
     assert!(files[1].hunks.is_empty());
 }
+
+#[test]
+fn test_parse_diff_unmodified_file() {
+    let diff = "diff --git a/src/untouched.rs b/src/untouched.rs\nunmodified file mode 100644\n--- a/src/untouched.rs\n+++ b/src/untouched.rs\n";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "src/untouched.rs");
+    assert_eq!(files[0].status, FileStatus::Unmodified);
+    assert!(is_valid_diff_file(&files[0]));
+    assert_eq!(files[0].status.reverse(), FileStatus::Unmodified);
+}

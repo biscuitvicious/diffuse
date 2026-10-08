@@ -1,6 +1,6 @@
 # Note Anchoring Context Hunks & Unmodified Review Files
 
-- [ ] Global TODO
+- [x] Global TODO
   - [x] **Phase 1 — Note Inactivity & Scoping for Standalone Diffs**
     - [x] In standalone/piped diff mode (`diffuse` without repo target), disable notes loading, saving, and synthesis unless `--notes-file` is explicitly specified
     - [x] When `--notes-file <path>` is provided in standalone/piped mode, load notes from `<path>`, bypass git commit scoping (`repo@<commit>`), and match notes by file path
@@ -15,22 +15,22 @@
     - [x] Pull line text from `file.new_content` and `file.old_content`
     - [x] Allow `shift::normalize_context` to merge touching or overlapping hunks
     - [x] Add unit tests in `diffuse-core` covering isolated note hunks, boundary-adjacent merging, multi-note clustering, and missing snapshot fallback
-  - [·] **Phase 3 — Unmodified Note-Carrying Files (`FileStatus::Unmodified`)**
-    - [ ] Add `FileStatus::Unmodified` (wire code `"unmodified"`) to `crates/diffuse-core/src/parse.rs` and `crates/diffuse-core/src/wire.rs`
-    - [ ] In git repo mode, scan the active `NotesDB` for files in the repository that have notes but zero changes in `git diff`
-    - [ ] For each unmodified file with notes, load content from the repository and synthesize a `DiffFile` with `FileStatus::Unmodified`
-    - [ ] Apply Phase 2 note hunk synthesis to generate context hunks around all notes in unmodified files
-    - [ ] Ensure `display_status()` and `file_status_tag()` keep `"unmodified"` unadorned in banners, allowing the zero change cells and speech-bubble badge (`💬K`) to indicate note-only presence
-    - [ ] Add unit tests for `FileStatus::Unmodified` parsing, serialization, and header formatting
-  - [ ] **Phase 4 — TUI & Renderer Verification**
-    - [ ] Verify TUI `note_callouts` anchors cleanly inline on the synthesized rows instead of falling back to the file banner
-    - [ ] Verify TUI gap navigation and context expansion (`▲`, `▼`, `↕↕`, Enter) operate seamlessly around synthetic note hunks
-    - [ ] Verify Markdown (`-m`) renders synthetic code context around note quotes
-    - [ ] Verify CLI pagers (`-p`, `--raw`) render synthetic note context
-    - [ ] Add integration tests in `crates/diffuse-tui` and `crates/diffuse-render`
-  - [ ] **Phase 5 — Full Verification & Golden Invariance**
-    - [ ] Execute `scripts/check.sh` with zero warnings (nightly fmt, clippy, cargo test, dev binary install)
-    - [ ] Verify golden test suite invariance (no unintended deviations across existing golden fixtures)
+  - [x] **Phase 3 — Unmodified Note-Carrying Files (`FileStatus::Unmodified`)**
+    - [x] Add `FileStatus::Unmodified` (wire code `"unmodified"`) to `crates/diffuse-core/src/parse.rs` and `crates/diffuse-core/src/wire.rs`
+    - [x] In git repo mode, scan the active `NotesDB` for files in the repository that have notes but zero changes in `git diff`
+    - [x] For each unmodified file with notes, load content from the repository and synthesize a `DiffFile` with `FileStatus::Unmodified`
+    - [x] Apply Phase 2 note hunk synthesis to generate context hunks around all notes in unmodified files
+    - [x] Ensure `display_status()` and `file_status_tag()` keep `"unmodified"` unadorned in banners, allowing the zero change cells and speech-bubble badge (`💬K`) to indicate note-only presence
+    - [x] Add unit tests for `FileStatus::Unmodified` parsing, serialization, and header formatting
+  - [x] **Phase 4 — TUI & Renderer Verification**
+    - [x] Verify TUI `note_callouts` anchors cleanly inline on the synthesized rows instead of falling back to the file banner
+    - [x] Verify TUI gap navigation and context expansion (`▲`, `▼`, `↕↕`, Enter) operate seamlessly around synthetic note hunks
+    - [x] Verify Markdown (`-m`) renders synthetic code context around note quotes
+    - [x] Verify CLI pagers (`-p`, `--raw`) render synthetic note context
+    - [x] Add integration tests in `crates/diffuse-tui` and `crates/diffuse-render`
+  - [x] **Phase 5 — Full Verification & Golden Invariance**
+    - [x] Execute `scripts/check.sh` with zero warnings (nightly fmt, clippy, cargo test, dev binary install)
+    - [x] Verify golden test suite invariance (no unintended deviations across existing golden fixtures)
 
 ---
 

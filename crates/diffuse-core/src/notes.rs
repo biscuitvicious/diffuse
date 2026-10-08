@@ -368,6 +368,56 @@ pub fn query_notes_for_file<'a>(
         .collect()
 }
 
+/// Query all distinct file paths that have notes for the given repo bucket (or
+/// across all buckets if `repo` is None).
+pub fn note_files_for_repo(db: &NotesDB, repo: Option<&str>) -> Vec<String> {
+    let mut files = std::collections::HashSet::new();
+    if let Some(r) = repo {
+        if let Some(repo_map) = db.get(r) {
+            for (f, notes) in repo_map {
+                if !notes.is_empty() {
+                    files.insert(f.clone());
+                }
+            }
+        }
+        let prefix = format!("{r}@");
+        for (k, repo_map) in db {
+            if k.starts_with(&prefix) {
+                for (f, notes) in repo_map {
+                    if !notes.is_empty() {
+                        files.insert(f.clone());
+                    }
+                }
+            }
+        }
+        if files.is_empty() {
+            let base_r = r.split('@').next().unwrap_or(r);
+            let base_prefix = format!("{base_r}@");
+            for (k, repo_map) in db {
+                if k == base_r || k.starts_with(&base_prefix) {
+                    for (f, notes) in repo_map {
+                        if !notes.is_empty() {
+                            files.insert(f.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if files.is_empty() {
+        for repo_map in db.values() {
+            for (f, notes) in repo_map {
+                if !notes.is_empty() {
+                    files.insert(f.clone());
+                }
+            }
+        }
+    }
+    let mut sorted: Vec<String> = files.into_iter().collect();
+    sorted.sort();
+    sorted
+}
+
 /// Get all notes for a specific repo.
 pub fn all_notes<'a>(db: &'a NotesDB, repo: &str) -> impl Iterator<Item = &'a ReviewNote> {
     db.get(repo)

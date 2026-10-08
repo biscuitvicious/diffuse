@@ -1700,3 +1700,21 @@ fn test_status_bar_background_styled() {
         "ANSI status bar must include light status_bar_bg"
     );
 }
+
+#[test]
+fn test_file_status_tag_unmodified_is_empty() {
+    let mut file = OutputFile {
+        status: "unmodified".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(file_status_tag(&file), "");
+
+    file.status = "modified".to_string();
+    assert_eq!(file_status_tag(&file), "");
+
+    file.status = "renamed".to_string();
+    assert_eq!(file_status_tag(&file), "");
+
+    file.status = "deleted".to_string();
+    assert_eq!(file_status_tag(&file), " (deleted)");
+}

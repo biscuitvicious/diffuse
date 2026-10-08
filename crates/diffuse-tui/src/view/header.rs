@@ -381,9 +381,10 @@ pub(crate) fn stripped_file_path(file: &OutputFile, common_prefix: Option<&str>)
     }
 }
 
-/// File status tag; routine `modified`/`renamed` states stay unadorned.
+/// File status tag; routine `modified`/`renamed`/`unmodified` states stay
+/// unadorned.
 pub(crate) fn file_status_tag(file: &OutputFile) -> String {
-    if file.status == "renamed" || file.status == "modified" {
+    if file.status == "renamed" || file.status == "modified" || file.status == "unmodified" {
         String::new()
     } else {
         format!(" ({})", file.status)

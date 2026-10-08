@@ -405,6 +405,46 @@ fn test_display_status_mode_change_and_renames() {
 }
 
 #[test]
+fn test_display_status_unmodified() {
+    let mut file = OutputFile {
+        status: "unmodified".to_string(),
+        ..Default::default()
+    };
+    assert_eq!(file.display_status(), "unmodified");
+
+    file.new_bytes = Some(1024);
+    file.old_bytes = Some(1024);
+    assert_eq!(file.display_status(), "1kB");
+
+    let stub = OutputFile::collapsed_stub(
+        &crate::parse::DiffFile {
+            path: "src/untouched.rs".into(),
+            status: crate::parse::FileStatus::Unmodified,
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
+            is_binary: false,
+            old_bytes: None,
+            new_bytes: None,
+            new_line_count: 0,
+            old_line_count: 0,
+            new_content: Vec::new(),
+            old_content: Vec::new(),
+            hunks: Vec::new(),
+            raw_hunks: Vec::new(),
+            no_content: false,
+        },
+        FileCounts::default(),
+        None,
+    );
+    assert_eq!(stub.status, "unmodified");
+    assert_eq!(
+        stub.reconstruct().status,
+        crate::parse::FileStatus::Unmodified
+    );
+}
+
+#[test]
 fn test_format_byte_size() {
     use crate::wire::format_byte_size;
 

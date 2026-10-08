@@ -3,7 +3,13 @@
 //! Port of TypeScript's `resolveRefs`, `loadReview`, and `rustBackendLoad`.
 
 use std::{
-    collections::HashMap, fs, path::Path, process::Command, string::String, sync::Arc, thread,
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+    process::Command,
+    string::String,
+    sync::Arc,
+    thread,
 };
 
 /// Fixed unified-diff context width used when generating diffs from git (`-U`).
@@ -342,7 +348,8 @@ pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<Stri
 ///// Progressive streaming producer for git diff and blob retrieval.
 /// Directly emits `FileJob`s to `StreamingProducer` as each file's diff chunk
 /// is encountered.
-#[tracing::instrument(level = "trace", skip(paths, producer, meta_tx), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context))]
+#[expect(clippy::too_many_arguments)]
+#[tracing::instrument(level = "trace", skip(paths, producer, meta_tx, notes_db), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context))]
 pub fn stream_git_repo_to_producer(
     repo_root: &Path,
     base_args: &[String],
@@ -351,6 +358,8 @@ pub fn stream_git_repo_to_producer(
     context: usize,
     producer: crate::streaming::StreamingProducer,
     meta_tx: &std::sync::mpsc::Sender<Result<crate::streaming::GitRepoMeta, String>>,
+    notes_db: Option<&crate::notes::NotesDB>,
+    repo: Option<&str>,
 ) {
     if !is_inside_work_tree(repo_root) {
         let _ = meta_tx.send(Err(format!(
@@ -365,6 +374,7 @@ pub fn stream_git_repo_to_producer(
     tracing::info!(branch = %branch, "Streaming git repository diff");
 
     let mut untracked_skipped = Vec::new();
+    let mut seen_paths: HashSet<String> = HashSet::new();
     let refs = resolve_refs(repo_root, base_args, staged);
 
     let mut diff_cmd = vec![
@@ -439,6 +449,10 @@ pub fn stream_git_repo_to_producer(
         }
         let parsed_files = crate::parse::parse_diff(chunk);
         for mut f in parsed_files {
+            seen_paths.insert(f.path.clone());
+            if let Some(ref op) = f.old_path {
+                seen_paths.insert(op.clone());
+            }
             let mut new_c = None;
             let mut old_c = None;
 
@@ -547,6 +561,7 @@ pub fn stream_git_repo_to_producer(
                 let parsed_files = crate::parse::parse_diff(&synthetic_diff);
                 let synthetic_arc = Arc::new(synthetic_diff);
                 for mut f in parsed_files {
+                    seen_paths.insert(f.path.clone());
                     f.status = crate::parse::FileStatus::Untracked;
                     producer.push(crate::streaming::FileJob {
                         idx: file_idx,
@@ -561,6 +576,55 @@ pub fn stream_git_repo_to_producer(
         }
     }
 
+    // Unmodified files carrying review notes.
+    if let Some(db) = notes_db {
+        let note_files = crate::notes::note_files_for_repo(db, repo);
+        for file_path in note_files {
+            if seen_paths.contains(&file_path) {
+                continue;
+            }
+            if !paths.is_empty()
+                && !paths.iter().any(|p| {
+                    let clean = p.strip_suffix('/').unwrap_or(p);
+                    file_path == clean || file_path.starts_with(&format!("{clean}/"))
+                })
+            {
+                continue;
+            }
+
+            let (content, size) = if refs.worktree_new {
+                let abs = repo_root.join(&file_path);
+                if let Ok(c) = fs::read_to_string(&abs) {
+                    let len = c.len();
+                    (Some(c), Some(len))
+                } else {
+                    (None, None)
+                }
+            } else if let Some(ref new_ref) = refs.new_ref {
+                get_blob_data(new_ref, &file_path)
+            } else {
+                get_blob_data(old_tree_ref, &file_path)
+            };
+
+            if let Some(c) = content {
+                let mut f = crate::parse::DiffFile::new(&file_path);
+                f.status = crate::parse::FileStatus::Unmodified;
+                f.new_bytes = size;
+                f.old_bytes = size;
+                let c_arc = Arc::new(c);
+                producer.push(crate::streaming::FileJob {
+                    idx: file_idx,
+                    file: f,
+                    new_content: Some(Arc::clone(&c_arc)),
+                    old_content: Some(c_arc),
+                    diff_fallback: None,
+                });
+                seen_paths.insert(file_path);
+                file_idx += 1;
+            }
+        }
+    }
+
     let commit_range = resolve_commit_range(repo_root, base_args);
     let _ = meta_tx.send(Ok(crate::streaming::GitRepoMeta {
         branch,
@@ -570,13 +634,15 @@ pub fn stream_git_repo_to_producer(
     producer.finish();
 }
 
-#[tracing::instrument(level = "trace", ret, err, skip(paths), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context))]
-pub fn load_git_repo(
+#[tracing::instrument(level = "trace", ret, err, skip(paths, notes_db), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context))]
+pub fn load_git_repo_with_notes(
     repo_root: &Path,
     base_args: &[String],
     paths: &[String],
     staged: bool,
     context: usize,
+    notes_db: Option<&crate::notes::NotesDB>,
+    repo: Option<&str>,
 ) -> Result<LoadGitResult, String> {
     if !is_inside_work_tree(repo_root) {
         return Err(format!(
@@ -694,10 +760,58 @@ pub fn load_git_repo(
         }
     }
 
+    let mut seen_paths: HashSet<String> = files.iter().map(|f| f.path.clone()).collect();
+
+    // Unmodified files carrying review notes.
+    if let Some(db) = notes_db {
+        let note_files = crate::notes::note_files_for_repo(db, repo);
+        for file_path in note_files {
+            if seen_paths.contains(&file_path) {
+                continue;
+            }
+            if !paths.is_empty()
+                && !paths.iter().any(|p| {
+                    let clean = p.strip_suffix('/').unwrap_or(p);
+                    file_path == clean || file_path.starts_with(&format!("{clean}/"))
+                })
+            {
+                continue;
+            }
+
+            let content = if refs.worktree_new {
+                let abs = repo_root.join(&file_path);
+                fs::read_to_string(&abs).ok()
+            } else if let Some(ref new_ref) = refs.new_ref {
+                load_git_blob(repo_root, new_ref, &file_path).0
+            } else {
+                let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
+                load_git_blob(repo_root, old_tree_ref, &file_path).0
+            };
+
+            if let Some(c) = content {
+                if !diff.is_empty() && !diff.ends_with('\n') {
+                    diff.push('\n');
+                }
+                diff.push_str(&format!(
+                    "diff --git a/{file_path} b/{file_path}\nunmodified file mode 100644\n--- a/{file_path}\n+++ b/{file_path}\n"
+                ));
+                files.push(GitFileItem {
+                    path: file_path.clone(),
+                    status: "unmodified".to_string(),
+                    old_path: None,
+                    new_content: Some(c.clone()),
+                    old_content: Some(c),
+                    no_content: false,
+                });
+                seen_paths.insert(file_path);
+            }
+        }
+    }
+
     let mut specs_to_fetch = Vec::new();
 
     for f in &mut files {
-        if f.status == "deleted" || f.status == "untracked" {
+        if f.status == "deleted" || f.status == "untracked" || f.status == "unmodified" {
             continue;
         }
         if refs.worktree_new {
@@ -712,7 +826,7 @@ pub fn load_git_repo(
 
     let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
     for f in &files {
-        if f.status == "untracked" || f.status == "added" {
+        if f.status == "untracked" || f.status == "added" || f.status == "unmodified" {
             continue;
         }
         let old_lookup_path = f.old_path.as_deref().unwrap_or(&f.path);
@@ -729,7 +843,7 @@ pub fn load_git_repo(
             f.new_content = batch_blobs.remove(&spec);
         }
 
-        if f.status == "untracked" || f.status == "added" {
+        if f.status == "untracked" || f.status == "added" || f.status == "unmodified" {
             f.no_content = f.new_content.is_none() && f.old_content.is_none();
             continue;
         }
@@ -768,6 +882,17 @@ pub fn load_git_repo(
         untracked_skipped,
         commit_range,
     })
+}
+
+#[inline]
+pub fn load_git_repo(
+    repo_root: &Path,
+    base_args: &[String],
+    paths: &[String],
+    staged: bool,
+    context: usize,
+) -> Result<LoadGitResult, String> {
+    load_git_repo_with_notes(repo_root, base_args, paths, staged, context, None, None)
 }
 
 /// Load a git blob text and byte size.
@@ -857,6 +982,7 @@ pub fn load_single_file_diff(
             "mode changed" => crate::parse::FileStatus::ModeChanged,
             "deleted" => crate::parse::FileStatus::Deleted,
             "added" => crate::parse::FileStatus::Added,
+            "unmodified" => crate::parse::FileStatus::Unmodified,
             _ => crate::parse::FileStatus::Modified,
         };
         crate::parse::DiffFile {

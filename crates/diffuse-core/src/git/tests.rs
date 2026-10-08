@@ -81,7 +81,7 @@ fn test_fixed_commit_range_excludes_untracked_files() {
         crate::pipeline::PipelineOptions::default(),
     );
     let (meta_tx, _meta_rx) = mpsc::channel();
-    stream_git_repo_to_producer(dir, &[range], &[], false, 4, producer, &meta_tx);
+    stream_git_repo_to_producer(dir, &[range], &[], false, 4, producer, &meta_tx, None, None);
     let files: Vec<_> = consumer.collect();
     assert!(
         files.iter().all(|f| f.path != "bogus_untracked.txt"),
@@ -281,7 +281,7 @@ fn test_git_diff_additions_only_still_fetches_old_size() {
         crate::pipeline::PipelineOptions::default(),
     );
     let (meta_tx, _meta_rx) = mpsc::channel();
-    stream_git_repo_to_producer(dir, &[], &[], false, 4, producer, &meta_tx);
+    stream_git_repo_to_producer(dir, &[], &[], false, 4, producer, &meta_tx, None, None);
     let files: Vec<_> = consumer.collect();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].old_bytes, Some(initial_content.len()));
@@ -409,5 +409,83 @@ fn test_load_git_repo_staged_excludes_untracked_files() {
     assert!(
         res_unstaged.new_content.contains_key("untracked.rs"),
         "unstaged new_content must contain untracked.rs"
+    );
+}
+
+#[test]
+fn test_load_git_repo_unmodified_files_with_notes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    fs::write(dir.join("modified.rs"), "fn modified() { 1 }\n").unwrap();
+    fs::write(
+        dir.join("untouched.rs"),
+        "fn untouched() {\n    println!(\"hello\");\n}\n",
+    )
+    .unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init"]);
+
+    // Modify one file
+    fs::write(dir.join("modified.rs"), "fn modified() { 2 }\n").unwrap();
+
+    // Prepare NotesDB with a note on untouched.rs
+    let mut db = crate::notes::NotesDB::new();
+    let head = crate::notes::head_commit(dir).unwrap();
+    let note = crate::notes::ReviewNote {
+        id: "n1".into(),
+        file: "untouched.rs".into(),
+        side: crate::notes::Side::New,
+        start: 2,
+        end: 2,
+        text: "note on untouched file".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    crate::notes::add_note(&mut db, &format!("myrepo@{head}"), note);
+
+    let res = load_git_repo_with_notes(dir, &[], &[], false, 4, Some(&db), Some("myrepo")).unwrap();
+    assert!(
+        res.diff.contains("untouched.rs"),
+        "diff must contain unmodified untouched.rs"
+    );
+    assert!(
+        res.new_content.contains_key("untouched.rs"),
+        "new_content must contain untouched.rs"
+    );
+
+    let out = crate::pipeline::run_pipeline_full(
+        &res.diff,
+        Some(res.new_content),
+        Some(res.old_content),
+        crate::pipeline::PipelineOptions::default()
+            .with_notes(Some(db.clone()), Some(format!("myrepo@{head}"))),
+    );
+    assert_eq!(out.files.len(), 2, "expected modified.rs and untouched.rs");
+    let untouched = out
+        .files
+        .iter()
+        .find(|f| f.path == "untouched.rs")
+        .expect("untouched.rs present");
+    assert_eq!(untouched.status, "unmodified");
+    assert_eq!(untouched.counts.adds, 0);
+    assert_eq!(untouched.counts.dels, 0);
+    assert_eq!(untouched.counts.mods, 0);
+    assert_eq!(untouched.counts.notes, 1);
+    assert!(
+        !untouched.hunks.is_empty(),
+        "synthetic context hunk must be generated around note"
     );
 }

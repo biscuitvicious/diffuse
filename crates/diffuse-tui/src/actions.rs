@@ -3,7 +3,7 @@
 use std::{io::Write, path::Path, process::Command};
 
 use crate::core::{
-    ENGINE_CONTEXT, PipelineOptions, git::load_git_repo, pipeline::run_pipeline_full,
+    ENGINE_CONTEXT, PipelineOptions, git::load_git_repo_with_notes, pipeline::run_pipeline_full,
 };
 
 use super::app::AppState;
@@ -284,8 +284,16 @@ pub fn reload_diff(
     git_args: &[String],
 ) -> Result<(), String> {
     let staged = state.target.is_staged();
-    let git_res = load_git_repo(repo_root, git_args, &[], staged, ENGINE_CONTEXT)
-        .map_err(|e| format!("failed to reload git repo: {e}"))?;
+    let git_res = load_git_repo_with_notes(
+        repo_root,
+        git_args,
+        &[],
+        staged,
+        ENGINE_CONTEXT,
+        Some(&state.notes),
+        Some(&state.notes_key),
+    )
+    .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
         .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
@@ -321,8 +329,16 @@ pub fn toggle_staged_action(
 
     let target_staged = !state.target.is_staged();
 
-    let git_res = load_git_repo(repo_root, git_args, &[], target_staged, ENGINE_CONTEXT)
-        .map_err(|e| format!("failed to reload git repo: {e}"))?;
+    let git_res = load_git_repo_with_notes(
+        repo_root,
+        git_args,
+        &[],
+        target_staged,
+        ENGINE_CONTEXT,
+        Some(&state.notes),
+        Some(&state.notes_key),
+    )
+    .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
         .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))

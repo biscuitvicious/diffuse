@@ -1,6 +1,7 @@
 use std::{fs, path::PathBuf};
 
 use super::*;
+use crate::core::git::load_git_repo;
 
 #[test]
 fn test_parse_hunk_header() {

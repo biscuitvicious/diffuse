@@ -413,12 +413,22 @@ pub fn spawn_git_stream_pipeline(
     opts: PipelineOptions,
     worker_count: Option<usize>,
 ) -> (StreamingConsumer, Receiver<Result<GitRepoMeta, String>>) {
+    let notes_db = opts.notes_db.clone();
+    let notes_repo = opts.repo.clone();
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
     let (meta_tx, meta_rx) = channel::<Result<GitRepoMeta, String>>();
 
     spawn(move || {
         crate::git::stream_git_repo_to_producer(
-            &repo_root, &base_args, &paths, staged, context, producer, &meta_tx,
+            &repo_root,
+            &base_args,
+            &paths,
+            staged,
+            context,
+            producer,
+            &meta_tx,
+            notes_db.as_ref(),
+            notes_repo.as_deref(),
         );
     });
 

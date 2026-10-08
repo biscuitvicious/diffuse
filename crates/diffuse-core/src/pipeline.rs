@@ -345,7 +345,7 @@ pub fn process_single_diff_file(
             crate::parse::FileStatus::Renamed => "renamed".to_string(),
             crate::parse::FileStatus::Untracked => "untracked".to_string(),
             crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
-            crate::parse::FileStatus::Note => "note".to_string(),
+            crate::parse::FileStatus::Unmodified => "unmodified".to_string(),
         };
         Some(crate::wire::RawFileSource::Git {
             path: f.path.clone(),
@@ -398,12 +398,8 @@ pub fn process_single_diff_file(
     crate::cluster::dp::set_cluster_bandwidth_min(opts.cluster_bandwidth_min);
     crate::cluster::dp::set_cluster_bandwidth_slack(opts.cluster_bandwidth_slack);
     let t_start = Instant::now();
-    let profile = if f.status == crate::parse::FileStatus::Note {
-        lang_profile("md")
-    } else {
-        let ext = f.path.rsplit('.').next().unwrap_or("");
-        lang_profile(ext)
-    };
+    let ext = f.path.rsplit('.').next().unwrap_or("");
+    let profile = lang_profile(ext);
     let new_lines_fallback: Vec<String>;
     let new_lines: Vec<&str> = if let Some(c) = new_content
         && !c.is_empty()
@@ -554,7 +550,7 @@ pub fn process_single_diff_file(
     let is_plain_common_context = !f.is_binary
         && (f.status == crate::parse::FileStatus::Renamed
             || f.status == crate::parse::FileStatus::ModeChanged
-            || f.status == crate::parse::FileStatus::Note)
+            || f.status == crate::parse::FileStatus::Unmodified)
         && f.hunks.is_empty()
         && !new_lines.is_empty();
 
@@ -722,7 +718,7 @@ pub fn process_single_diff_file(
         crate::parse::FileStatus::Renamed => "renamed".to_string(),
         crate::parse::FileStatus::Untracked => "untracked".to_string(),
         crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
-        crate::parse::FileStatus::Note => "note".to_string(),
+        crate::parse::FileStatus::Unmodified => "unmodified".to_string(),
     };
 
     let t_rows_start = Instant::now();
@@ -857,9 +853,9 @@ pub fn process_single_diff_file(
             || res.status == "untracked"
             || res.status == "deleted"
             || res.status == "mode changed"
-            || res.status == "note"
+            || res.status == "unmodified"
             || res.is_binary,
-        "OutputFile must contain raw hunks or be renamed/untracked/deleted/mode changed/note/binary"
+        "OutputFile must contain raw hunks or be renamed/untracked/deleted/mode changed/unmodified/binary"
     );
     crate::ensure!(
         f.hunks.iter().all(|h| h
@@ -1550,7 +1546,7 @@ pub fn markdown_file_rows(text: &str) -> Vec<OutputRow> {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: crate::parse::FileStatus::Note,
+        status: crate::parse::FileStatus::Unmodified,
         is_binary: false,
         hunks: vec![],
         raw_hunks: vec![],

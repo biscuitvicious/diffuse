@@ -668,3 +668,56 @@ fn test_query_notes_for_file_scoping_and_standalone() {
     let missing = query_notes_for_file(&db, None, "src/nonexistent.rs");
     assert!(missing.is_empty());
 }
+
+#[test]
+fn test_note_files_for_repo() {
+    let mut db = NotesDB::new();
+    let note1 = ReviewNote {
+        id: "n1".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "note on lib".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    let note2 = ReviewNote {
+        id: "n2".into(),
+        file: "src/untouched.rs".into(),
+        side: Side::New,
+        start: 20,
+        end: 20,
+        text: "note on untouched".into(),
+        created_at: 1001,
+        line_hash: None,
+    };
+    add_note(&mut db, "myrepo@commit123", note1);
+    add_note(&mut db, "myrepo@commit123", note2);
+
+    // Exact repo match
+    let files = note_files_for_repo(&db, Some("myrepo@commit123"));
+    assert_eq!(
+        files,
+        vec!["src/lib.rs".to_string(), "src/untouched.rs".to_string()]
+    );
+
+    // Prefix match
+    let files = note_files_for_repo(&db, Some("myrepo"));
+    assert_eq!(
+        files,
+        vec!["src/lib.rs".to_string(), "src/untouched.rs".to_string()]
+    );
+
+    // Fallback across all buckets
+    let files = note_files_for_repo(&db, None);
+    assert_eq!(
+        files,
+        vec!["src/lib.rs".to_string(), "src/untouched.rs".to_string()]
+    );
+
+    // Non-existent repo without matches in other buckets
+    let empty_db = NotesDB::new();
+    let files = note_files_for_repo(&empty_db, Some("other"));
+    assert!(files.is_empty());
+}

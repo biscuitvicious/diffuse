@@ -21,7 +21,7 @@ use diffuse::{
     DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP,
     core::{
         DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions, Repo, ReviewTarget,
-        git::{is_inside_work_tree, load_git_repo},
+        git::{is_inside_work_tree, load_git_repo_with_notes},
         notes::{
             NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes, remove_notes,
             save_notes,
@@ -276,7 +276,7 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
         .cluster_bandwidth_slack
         .unwrap_or(args.cluster_bandwidth_slack);
     let opts = PipelineOptions::default()
-        .with_notes(loaded_db, repo_str)
+        .with_notes(loaded_db.clone(), repo_str.clone())
         .with_visual_context(visual)
         .with_expand_lines(args.expand_lines)
         .with_token_product_cap(cap)
@@ -285,12 +285,14 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
         .with_cluster_bandwidth_slack(bw_slack);
 
     if let Some(ref repo_root) = input.repo_root
-        && let Ok(git_res) = load_git_repo(
+        && let Ok(git_res) = load_git_repo_with_notes(
             Path::new(repo_root),
             &input.base_args,
             &input.paths,
             input.staged,
             ENGINE_CONTEXT,
+            loaded_db.as_ref(),
+            repo_str.as_deref(),
         )
     {
         let mut out = run_pipeline_full(
