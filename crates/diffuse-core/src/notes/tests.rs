@@ -617,3 +617,54 @@ fn test_note_serialization_with_line_hash() {
     let legacy_note: ReviewNote = serde_json::from_str(legacy_json).unwrap();
     assert_eq!(legacy_note.line_hash, None);
 }
+
+#[test]
+fn test_query_notes_for_file_scoping_and_standalone() {
+    let mut db = NotesDB::new();
+    let note1 = ReviewNote {
+        id: "n1".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "note on scoped commit".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    let note2 = ReviewNote {
+        id: "n2".into(),
+        file: "src/other.rs".into(),
+        side: Side::New,
+        start: 20,
+        end: 20,
+        text: "note on other file".into(),
+        created_at: 1001,
+        line_hash: None,
+    };
+    add_note(&mut db, "myrepo@commit123", note1.clone());
+    add_note(&mut db, "standalone_repo", note2.clone());
+
+    // 1. Exact match
+    let exact = query_notes_for_file(&db, Some("myrepo@commit123"), "src/lib.rs");
+    assert_eq!(exact.len(), 1);
+    assert_eq!(exact[0].id, "n1");
+
+    // 2. Prefix match (repo without commit)
+    let prefix_match = query_notes_for_file(&db, Some("myrepo"), "src/lib.rs");
+    assert_eq!(prefix_match.len(), 1);
+    assert_eq!(prefix_match[0].id, "n1");
+
+    // 3. Standalone match (repo is None) finds notes by file path across all
+    //    buckets
+    let standalone = query_notes_for_file(&db, None, "src/lib.rs");
+    assert_eq!(standalone.len(), 1);
+    assert_eq!(standalone[0].id, "n1");
+
+    let standalone_other = query_notes_for_file(&db, None, "src/other.rs");
+    assert_eq!(standalone_other.len(), 1);
+    assert_eq!(standalone_other[0].id, "n2");
+
+    // 4. Missing file returns empty vec
+    let missing = query_notes_for_file(&db, None, "src/nonexistent.rs");
+    assert!(missing.is_empty());
+}

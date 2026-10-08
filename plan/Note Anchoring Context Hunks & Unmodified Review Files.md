@@ -1,12 +1,12 @@
 # Note Anchoring Context Hunks & Unmodified Review Files
 
 - [ ] Global TODO
-  - [ ] **Phase 1 — Note Inactivity & Scoping for Standalone Diffs**
-    - [ ] In standalone/piped diff mode (`diffuse` without repo target), disable notes loading, saving, and synthesis unless `--notes-file` is explicitly specified
-    - [ ] When `--notes-file <path>` is provided in standalone/piped mode, load notes from `<path>`, bypass git commit scoping (`repo@<commit>`), and match notes by file path
-    - [ ] In git repo mode, retain commit-scoped note lookup (`repo@<commit>`) with fallback to `$XDG_STATE_HOME/diffuse/notes.json`
-    - [ ] Add unit tests verifying note inactivity for piped diffs without `--notes-file` and path-scoped activation when `--notes-file` is passed
-  - [ ] **Phase 2 — Synthetic Note Hunk Generation & Context Merging**
+  - [x] **Phase 1 — Note Inactivity & Scoping for Standalone Diffs**
+    - [x] In standalone/piped diff mode (`diffuse` without repo target), disable notes loading, saving, and synthesis unless `--notes-file` is explicitly specified
+    - [x] When `--notes-file <path>` is provided in standalone/piped mode, load notes from `<path>`, bypass git commit scoping (`repo@<commit>`), and match notes by file path
+    - [x] In git repo mode, retain commit-scoped note lookup (`repo@<commit>`) with fallback to `$XDG_STATE_HOME/diffuse/notes.json`
+    - [x] Add unit tests verifying note inactivity for piped diffs without `--notes-file` and path-scoped activation when `--notes-file` is passed
+  - [·] **Phase 2 — Synthetic Note Hunk Generation & Context Merging**
     - [ ] In `diffuse-core` hunk normalization, identify notes whose target span `[start..=end]` is uncovered by existing diff hunks
     - [ ] Cluster uncovered notes within $2N$ lines of each other (where $N = \text{visual\_context}$)
     - [ ] For each uncovered note cluster, compute deterministic pre- and post-image line numbers using gap line offset formulas

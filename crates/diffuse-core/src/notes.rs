@@ -331,6 +331,43 @@ pub fn notes_for_file<'a>(
         .flatten()
 }
 
+/// Query notes for a file from `db`.
+///
+/// If `repo` is provided:
+/// - First checks an exact match on `repo`.
+/// - If not found or empty, checks commit-scoped keys matching `{repo}@`.
+///
+/// If still not found or `repo` is `None`:
+/// - Searches all buckets in `db` for notes matching `file`.
+pub fn query_notes_for_file<'a>(
+    db: &'a NotesDB,
+    repo: Option<&str>,
+    file: &str,
+) -> Vec<&'a ReviewNote> {
+    if let Some(r) = repo {
+        if let Some(repo_map) = db.get(r)
+            && let Some(notes) = repo_map.get(file)
+            && !notes.is_empty()
+        {
+            return notes.iter().collect();
+        }
+        let prefix = format!("{r}@");
+        let matching: Vec<&'a ReviewNote> = db
+            .iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .filter_map(|(_, repo_map)| repo_map.get(file))
+            .flatten()
+            .collect();
+        if !matching.is_empty() {
+            return matching;
+        }
+    }
+    db.values()
+        .filter_map(|repo_map| repo_map.get(file))
+        .flatten()
+        .collect()
+}
+
 /// Get all notes for a specific repo.
 pub fn all_notes<'a>(db: &'a NotesDB, repo: &str) -> impl Iterator<Item = &'a ReviewNote> {
     db.get(repo)

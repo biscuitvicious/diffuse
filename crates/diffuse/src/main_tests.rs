@@ -165,3 +165,152 @@ fn test_cli_args_jobs_flags() {
     let args_default = Args::try_parse_from(["diffuse"]).unwrap();
     assert_eq!(args_default.jobs, None);
 }
+
+#[test]
+fn test_standalone_piped_notes_inactivity_and_explicit_file() {
+    use diffuse::core::notes::{ReviewNote, Side, add_note, save_notes};
+
+    let diff = "\
+diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -1,3 +1,3 @@
+ line 1
+-line 2
++line 2 modified
+ line 3
+";
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = tmp.path().to_path_buf();
+
+    let mut db = std::collections::HashMap::new();
+    let note = ReviewNote {
+        id: "note-1".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 2,
+        end: 2,
+        text: "piped note".into(),
+        created_at: 1000,
+        line_hash: None,
+    };
+    add_note(&mut db, "some_repo@commit", note);
+    save_notes(&notes_path, &db).unwrap();
+
+    let base_args = Args::try_parse_from(["diffuse"]).unwrap();
+
+    // 1. Standalone piped diff with NO notes_file -> notes are inactive (0 notes)
+    let input_no_notes = super::Input {
+        action: None,
+        note: None,
+        file: None,
+        side: None,
+        start: None,
+        end: None,
+        diff: diff.to_string(),
+        new_content: None,
+        old_content: None,
+        repo_root: None,
+        base_args: Vec::new(),
+        paths: Vec::new(),
+        staged: false,
+        context: None,
+        notes: None,
+        notes_file: None,
+        repo: None,
+        token_product_cap: None,
+        cluster_budget: None,
+        cluster_bandwidth_min: None,
+        cluster_bandwidth_slack: None,
+    };
+    let out_no_notes = super::process_input(input_no_notes.clone(), &base_args);
+    assert_eq!(out_no_notes.files.len(), 1);
+    assert_eq!(out_no_notes.files[0].counts.notes, 0);
+    assert!(out_no_notes.files[0].notes.is_empty());
+
+    // 2. Standalone piped diff WITH explicit notes_file -> notes are active and
+    //    matched by path
+    let input_with_notes = super::Input {
+        notes_file: Some(notes_path.to_str().unwrap().to_string()),
+        ..super::Input {
+            action: None,
+            note: None,
+            file: None,
+            side: None,
+            start: None,
+            end: None,
+            diff: diff.to_string(),
+            new_content: None,
+            old_content: None,
+            repo_root: None,
+            base_args: Vec::new(),
+            paths: Vec::new(),
+            staged: false,
+            context: None,
+            notes: None,
+            notes_file: None,
+            repo: None,
+            token_product_cap: None,
+            cluster_budget: None,
+            cluster_bandwidth_min: None,
+            cluster_bandwidth_slack: None,
+        }
+    };
+    let out_with_notes = super::process_input(input_with_notes, &base_args);
+    assert_eq!(out_with_notes.files.len(), 1);
+    assert_eq!(out_with_notes.files[0].counts.notes, 1);
+    assert_eq!(out_with_notes.files[0].notes.len(), 1);
+    assert_eq!(out_with_notes.files[0].notes[0].id, "note-1");
+
+    // 3. addNote in standalone mode without notes_file is a no-op
+    let new_note = ReviewNote {
+        id: "note-2".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 3,
+        end: 3,
+        text: "another note".into(),
+        created_at: 1002,
+        line_hash: None,
+    };
+    let input_add_no_file = super::Input {
+        action: Some("addNote".into()),
+        note: Some(new_note.clone()),
+        repo: Some("standalone_repo".into()),
+        notes_file: None,
+        ..input_no_notes.clone()
+    };
+    let _ = super::process_input(input_add_no_file, &base_args);
+    // db on disk was NOT modified
+    let reloaded = diffuse::core::notes::load_notes(&notes_path);
+    assert_eq!(
+        reloaded
+            .get("some_repo@commit")
+            .unwrap()
+            .get("test.rs")
+            .unwrap()
+            .len(),
+        1
+    );
+
+    // 4. addNote in standalone mode WITH notes_file saves to that file
+    let input_add_with_file = super::Input {
+        action: Some("addNote".into()),
+        note: Some(new_note),
+        repo: Some("standalone_repo".into()),
+        notes_file: Some(notes_path.to_str().unwrap().to_string()),
+        ..input_no_notes
+    };
+    let _ = super::process_input(input_add_with_file, &base_args);
+    let reloaded_after = diffuse::core::notes::load_notes(&notes_path);
+    assert!(reloaded_after.contains_key("standalone_repo"));
+    assert_eq!(
+        reloaded_after
+            .get("standalone_repo")
+            .unwrap()
+            .get("test.rs")
+            .unwrap()
+            .len(),
+        1
+    );
+}

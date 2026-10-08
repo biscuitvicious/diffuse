@@ -39,7 +39,7 @@ use crate::{
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs_with_profile},
     moves::mark_moves_with_profile,
-    notes::{NotesDB, notes_for_file},
+    notes::{NotesDB, query_notes_for_file},
     parse::{DiffFile, Row, RowKind},
     syntax::{
         classifier::{
@@ -692,8 +692,9 @@ pub fn process_single_diff_file(
         });
     }
 
-    let notes_out = match (&opts.notes_db, &opts.repo) {
-        (Some(db), Some(r)) => notes_for_file(db, r, &f.path)
+    let notes_out = match &opts.notes_db {
+        Some(db) => query_notes_for_file(db, opts.repo.as_deref(), &f.path)
+            .into_iter()
             .map(|n| OutputNote {
                 id: n.id.clone(),
                 file: n.file.clone(),
@@ -706,7 +707,7 @@ pub fn process_single_diff_file(
                 line_hash: n.line_hash,
             })
             .collect(),
-        _ => Vec::new(),
+        None => Vec::new(),
     };
 
     let status = match f.status {

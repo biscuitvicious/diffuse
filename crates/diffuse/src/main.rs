@@ -160,7 +160,7 @@ enum SubCommand {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Input {
     #[serde(default)]
@@ -226,41 +226,46 @@ fn notes_key_for_input(input: &Input, repo: &str) -> String {
 }
 
 fn process_input(input: Input, args: &Args) -> PipelineOutput {
-    let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
-    let notes_path = notes_file_path
-        .as_ref()
-        .map(Path::new)
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(default_notes_path);
+    let explicit_notes_path = args.notes_file.as_ref().or(input.notes_file.as_ref());
+    let notes_path = match (explicit_notes_path, input.repo_root.as_deref()) {
+        (Some(p), _) => Some(PathBuf::from(p)),
+        (None, Some(_)) => Some(default_notes_path()),
+        (None, None) => None,
+    };
 
-    if let Some("addNote") = input.action.as_deref()
-        && let (Some(n), Some(r)) = (input.note.clone(), input.repo.as_deref())
-    {
-        let mut db = load_notes(&notes_path);
-        add_note(&mut db, &notes_key_for_input(&input, r), n);
-        let _ = save_notes(&notes_path, &db);
+    if let Some(ref path) = notes_path {
+        if let Some("addNote") = input.action.as_deref()
+            && let (Some(n), Some(r)) = (input.note.clone(), input.repo.as_deref())
+        {
+            let mut db = load_notes(path);
+            add_note(&mut db, &notes_key_for_input(&input, r), n);
+            let _ = save_notes(path, &db);
+        }
+
+        if let Some("removeNotes") = input.action.as_deref()
+            && let (Some(r), Some(f), Some(s), Some(st), Some(en)) = (
+                input.repo.as_deref(),
+                input.file.as_deref(),
+                input.side,
+                input.start,
+                input.end,
+            )
+        {
+            let mut db = load_notes(path);
+            remove_notes(&mut db, &notes_key_for_input(&input, r), f, s, st, en);
+            let _ = save_notes(path, &db);
+        }
     }
 
-    if let Some("removeNotes") = input.action.as_deref()
-        && let (Some(r), Some(f), Some(s), Some(st), Some(en)) = (
-            input.repo.as_deref(),
-            input.file.as_deref(),
-            input.side,
-            input.start,
-            input.end,
-        )
-    {
-        let mut db = load_notes(&notes_path);
-        remove_notes(&mut db, &notes_key_for_input(&input, r), f, s, st, en);
-        let _ = save_notes(&notes_path, &db);
-    }
-
-    let loaded_db = load_notes(&notes_path);
-    let repo_str = args
-        .repo
-        .clone()
-        .or_else(|| input.repo.clone())
-        .map(|r| notes_key_for_input(&input, &r));
+    let loaded_db = notes_path.as_ref().map(|p| load_notes(p));
+    let repo_str = if input.repo_root.is_some() {
+        args.repo
+            .clone()
+            .or_else(|| input.repo.clone())
+            .map(|r| notes_key_for_input(&input, &r))
+    } else {
+        args.repo.clone().or_else(|| input.repo.clone())
+    };
     let visual = input.context.unwrap_or(args.context);
     let cap = input.token_product_cap.unwrap_or(args.token_product_cap);
     let budget = input.cluster_budget.unwrap_or(args.cluster_budget);
@@ -271,7 +276,7 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
         .cluster_bandwidth_slack
         .unwrap_or(args.cluster_bandwidth_slack);
     let opts = PipelineOptions::default()
-        .with_notes(Some(loaded_db.clone()), repo_str.clone())
+        .with_notes(loaded_db, repo_str)
         .with_visual_context(visual)
         .with_expand_lines(args.expand_lines)
         .with_token_product_cap(cap)
@@ -831,13 +836,21 @@ fn main() -> io::Result<()> {
                 }
                 let _ = stdout.flush();
             } else if is_jsonl {
-                let notes_file_path = args.notes_file.clone().or_else(|| input.notes_file.clone());
-                let notes_path = notes_file_path
-                    .as_ref()
-                    .map(Path::new)
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(default_notes_path);
-                let loaded_db = load_notes(&notes_path);
+                let explicit_notes_path = args.notes_file.as_ref().or(input.notes_file.as_ref());
+                let notes_path = match (explicit_notes_path, input.repo_root.as_deref()) {
+                    (Some(p), _) => Some(PathBuf::from(p)),
+                    (None, Some(_)) => Some(default_notes_path()),
+                    (None, None) => None,
+                };
+                let loaded_db = notes_path.as_ref().map(|p| load_notes(p));
+                let repo_str = if input.repo_root.is_some() {
+                    args.repo
+                        .clone()
+                        .or_else(|| input.repo.clone())
+                        .map(|r| notes_key_for_input(&input, &r))
+                } else {
+                    args.repo.clone().or_else(|| input.repo.clone())
+                };
                 let cap = input.token_product_cap.unwrap_or(args.token_product_cap);
                 let budget = input.cluster_budget.unwrap_or(args.cluster_budget);
                 let bw_min = input
@@ -847,13 +860,7 @@ fn main() -> io::Result<()> {
                     .cluster_bandwidth_slack
                     .unwrap_or(args.cluster_bandwidth_slack);
                 let opts = PipelineOptions::default()
-                    .with_notes(
-                        Some(loaded_db),
-                        args.repo
-                            .clone()
-                            .or(input.repo.clone())
-                            .map(|r| notes_key_for_input(&input, &r)),
-                    )
+                    .with_notes(loaded_db, repo_str)
                     .with_visual_context(input.context.unwrap_or(args.context))
                     .with_expand_lines(args.expand_lines)
                     .with_token_product_cap(cap)
