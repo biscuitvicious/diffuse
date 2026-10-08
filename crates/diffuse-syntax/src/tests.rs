@@ -1301,3 +1301,104 @@ fn test_quote_and_fence_border_constants() {
     assert_eq!(TokenColor::QuoteBorder.wire_code(), Some("qbo"));
     assert_eq!(TokenColor::FenceBorder.wire_code(), Some("fbo"));
 }
+
+#[test]
+fn test_rust_lifetimes_and_char_literals() {
+    let rs = lang_profile("rs").unwrap();
+
+    // 1. Rust lifetimes must NOT parse as string or char literal!
+    // The `'` should be operator/dlm and `a` should be identifier.
+    let toks = colors_of("&'a str", Some(rs));
+    assert!(
+        toks.iter()
+            .all(|&(c, _)| c != TokenColor::String && c != TokenColor::CharLiteral),
+        "lifetime &'a must not parse as string or char literal: got {toks:?}"
+    );
+    assert!(
+        toks.iter()
+            .any(|&(c, t)| c == TokenColor::Default && t == "a"),
+        "lifetime identifier 'a' should be classified as identifier/default: got {toks:?}"
+    );
+
+    let toks_static = colors_of("&'static str", Some(rs));
+    assert!(
+        toks_static
+            .iter()
+            .all(|&(c, _)| c != TokenColor::String && c != TokenColor::CharLiteral),
+        "lifetime &'static must not parse as string or char literal: got {toks_static:?}"
+    );
+    assert!(
+        toks_static
+            .iter()
+            .any(|&(c, t)| c == TokenColor::Keyword && t == "static"),
+        "lifetime 'static' should classify 'static' as keyword: got {toks_static:?}"
+    );
+
+    // 2. Valid Rust char literals
+    for valid in &[
+        "'a'",
+        r"'\''",
+        r"'\\'",
+        r"'\n'",
+        r"'\t'",
+        r"'\0'",
+        r"'\x7f'",
+        r"'\u{1F980}'",
+        "'🦀'",
+    ] {
+        let toks_char = colors_of(valid, Some(rs));
+        assert_eq!(
+            toks_char,
+            vec![(TokenColor::CharLiteral, *valid)],
+            "char literal {valid} should parse as TokenColor::CharLiteral"
+        );
+    }
+
+    // 3. Invalid Rust char literals: multi-char strings or invalid escapes
+    for invalid in &["'abc'", "''", r"'\x80'", r"'\u{110000}'"] {
+        let toks_inv = colors_of(invalid, Some(rs));
+        assert!(
+            toks_inv
+                .iter()
+                .all(|&(c, _)| c != TokenColor::CharLiteral && c != TokenColor::String),
+            "invalid char literal {invalid} should not parse as TokenColor::CharLiteral or String: got {toks_inv:?}"
+        );
+    }
+
+    // 4. Languages with single-quote strings (e.g. Python, JS) must still parse
+    //    'abc' as String
+    let py = lang_profile("py").unwrap();
+    let toks_py = colors_of("'hello'", Some(py));
+    assert_eq!(
+        toks_py,
+        vec![(TokenColor::String, "'hello'")],
+        "python single-quoted string should remain TokenColor::String"
+    );
+
+    // 5. C-family char literals (e.g. octal \177, \xFF)
+    let c = lang_profile("c").unwrap();
+    let toks_c = colors_of(r"'\xFF'", Some(c));
+    assert_eq!(toks_c, vec![(TokenColor::CharLiteral, r"'\xFF'")]);
+    let toks_c_inv = colors_of("'hello'", Some(c));
+    assert!(
+        toks_c_inv
+            .iter()
+            .all(|&(col, _)| col != TokenColor::CharLiteral && col != TokenColor::String),
+        "multi-char 'hello' in C should not parse as CharLiteral or String"
+    );
+
+    // 6. Go rune literals
+    let go = lang_profile("go").unwrap();
+    let toks_go = colors_of(r"'\u0041'", Some(go));
+    assert_eq!(toks_go, vec![(TokenColor::CharLiteral, r"'\u0041'")]);
+
+    // 7. JSON does not support single quotes at all
+    let json = lang_profile("json").unwrap();
+    let toks_json = colors_of("'hello'", Some(json));
+    assert!(
+        toks_json
+            .iter()
+            .all(|&(col, _)| col != TokenColor::String && col != TokenColor::CharLiteral),
+        "JSON should not parse single quotes as String or CharLiteral"
+    );
+}

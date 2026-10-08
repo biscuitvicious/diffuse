@@ -118,5 +118,6 @@ pub fn profile() -> LangProfile {
         continuation_prefixes: &["&&", "||", ".", "?."],
         import_prefixes: &["import ", "export {"],
         section_headers: false,
+        single_quote: crate::profile::SingleQuoteKind::String,
     }
 }

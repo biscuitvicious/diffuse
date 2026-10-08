@@ -328,8 +328,8 @@ fn test_notes_commit_for_ranges() {
         format!("myrepo@{c4}")
     );
 
-    // 2. Single-commit range c1..c2 -> next newest in range is c1 (commit
-    //    before c2)
+    // 2. Single-commit range c1..c2 -> next newest in range is c1 (commit before
+    //    c2)
     let r_1_2 = vec![format!("{c1}..{c2}")];
     assert_eq!(notes_commit(dir, &r_1_2), Some(c1.clone()));
     assert_eq!(
@@ -337,8 +337,8 @@ fn test_notes_commit_for_ranges() {
         format!("myrepo@{c1}")
     );
 
-    // 3. Multi-commit range c1..c4 (commits: c2, c3, c4) -> second to last
-    //    commit in range (next newest) is c3
+    // 3. Multi-commit range c1..c4 (commits: c2, c3, c4) -> second to last commit
+    //    in range (next newest) is c3
     let r_1_4 = vec![format!("{c1}..{c4}")];
     assert_eq!(notes_commit(dir, &r_1_4), Some(c3.clone()));
     assert_eq!(

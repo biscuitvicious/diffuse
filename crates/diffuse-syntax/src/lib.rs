@@ -40,8 +40,9 @@ pub mod prelude {
         color::*,
         fence::{FenceRegion, fence_regions, region_at},
         profile::{
-            BlockDelimStyle, CloseDelimiter, LangProfile, PropertySyntax, SGR_BOLD,
-            SGR_BOLD_UNDERLINE, SGR_DIM, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE,
+            BlockDelimStyle, CharLiteralProfile, CloseDelimiter, LangProfile, PropertySyntax,
+            SGR_BOLD, SGR_BOLD_UNDERLINE, SGR_DIM, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE,
+            SingleQuoteKind, UnicodeEscapeStyle,
         },
         registry::{
             REGISTERED_EXTENSIONS, all_registered_profiles, ascii_word_prefix,

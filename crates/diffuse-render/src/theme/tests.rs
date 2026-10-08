@@ -712,3 +712,22 @@ fn test_theme_auto_resolution() {
     let auto_theme = DiffuseTheme::auto_detect();
     assert!(auto_theme == DiffuseTheme::DEFAULT || auto_theme == DiffuseTheme::LIGHT);
 }
+
+#[test]
+fn test_theme_char_literal_rendering() {
+    let dark = DiffuseTheme::DEFAULT;
+    let chr_dark_add = dark.render_token(TokenColor::CharLiteral, "'x'", "add", None, None);
+    let chr_dark_del = dark.render_token(TokenColor::CharLiteral, "'x'", "del", None, None);
+    let chr_dark_ctx = dark.render_token(TokenColor::CharLiteral, "'x'", "ctx", None, None);
+    assert_eq!(chr_dark_add, "\x1b[38;5;158m'x'\x1b[39m");
+    assert_eq!(chr_dark_del, "\x1b[38;5;210m'x'\x1b[39m");
+    assert_eq!(chr_dark_ctx, "\x1b[38;5;158m'x'\x1b[39m");
+
+    let light = DiffuseTheme::LIGHT;
+    let chr_light_add = light.render_token(TokenColor::CharLiteral, "'x'", "add", None, None);
+    let chr_light_del = light.render_token(TokenColor::CharLiteral, "'x'", "del", None, None);
+    let chr_light_ctx = light.render_token(TokenColor::CharLiteral, "'x'", "ctx", None, None);
+    assert_eq!(chr_light_add, "\x1b[38;2;16;128;67m'x'\x1b[39m");
+    assert_eq!(chr_light_del, "\x1b[38;2;190;45;55m'x'\x1b[39m");
+    assert_eq!(chr_light_ctx, "\x1b[38;2;16;128;67m'x'\x1b[39m");
+}

@@ -30,6 +30,7 @@ discipline for any change in golden output.
 | `theme-scrollbar-palette` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline; strict hard gate |
 | `theme-light-toggle` | ✅ | ✅ | Provisional | Light theme, terminal luminance, and import alignment fixture (pending full review) |
 | `row-groups-contrast` | ✅ | ✅ | Provisional | Row groups, dark theme context contrast & goto buffer navigation (pending full review) |
+| `rust-lifetime-char` | ✅ | ✅ | Provisional | Rust lifetimes distinction and language-specific char literal parsing (pending full review) |
 | `diffuse-2026-08` | ✅ | ✅ | Provisional | The engine diffing its own repo (pending full review) |
 | `opt-1-cache-regex-window-slice` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
 | `opt-2-cache-markdown-regex` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |

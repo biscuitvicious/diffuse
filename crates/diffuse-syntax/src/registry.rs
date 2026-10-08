@@ -12,7 +12,7 @@ use regex::Regex;
 
 use super::{
     language::{c_family, config, go, markdown, python, rust, shell, web},
-    profile::LangProfile,
+    profile::{CharLiteralProfile, LangProfile, SingleQuoteKind},
 };
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ pub(super) fn for_each_syntax_token_span(
             } else if b == b'"' {
                 scan_dstr_bytes(bytes, i)
             } else if b == b'\'' {
-                scan_sstr_bytes(bytes, i)
+                scan_single_quote_bytes(bytes, i, profile)
             } else if b == b'`' {
                 scan_bt_bytes(bytes, i)
             } else if b == b'0' && i + 1 < n && bytes[i + 1] == b'x' {
@@ -259,7 +259,7 @@ pub(super) fn for_each_syntax_token_span(
             } else if c == '"' {
                 scan_dstr(&chars, i)
             } else if c == '\'' {
-                scan_sstr(&chars, i)
+                scan_single_quote(text, &chars, i, profile)
             } else if c == '`' {
                 scan_bt(&chars, i)
             } else if c == '0' && i + 1 < n && chars[i + 1].1 == 'x' {
@@ -360,6 +360,40 @@ fn scan_dstr_bytes(bytes: &[u8], i: usize) -> usize {
 #[inline(always)]
 fn scan_sstr_bytes(bytes: &[u8], i: usize) -> usize {
     scan_quoted_bytes(bytes, i, b'\'').unwrap_or(i + 1)
+}
+
+#[inline(always)]
+fn scan_char_literal_bytes(bytes: &[u8], i: usize, rules: &CharLiteralProfile) -> Option<usize> {
+    let n = bytes.len();
+    let mut j = i + 1;
+    while j < n {
+        let b = bytes[j];
+        if b == b'\\' {
+            j += 2;
+        } else if b == b'\'' {
+            let inner_bytes = &bytes[i + 1..j];
+            if let Ok(inner) = std::str::from_utf8(inner_bytes)
+                && rules.validate_inner(inner)
+            {
+                return Some(j + 1);
+            }
+            return None;
+        } else if b == b'\n' || b == b'\r' {
+            return None;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+#[inline(always)]
+fn scan_single_quote_bytes(bytes: &[u8], i: usize, profile: &LangProfile) -> usize {
+    match profile.single_quote {
+        SingleQuoteKind::String => scan_sstr_bytes(bytes, i),
+        SingleQuoteKind::Char(rules) => scan_char_literal_bytes(bytes, i, &rules).unwrap_or(i + 1),
+        SingleQuoteKind::None => i + 1,
+    }
 }
 
 #[inline(always)]
@@ -535,6 +569,49 @@ fn scan_dstr(chars: &[(usize, char)], i: usize) -> usize {
 fn scan_sstr(chars: &[(usize, char)], i: usize) -> usize {
     scan_quoted(chars, i, '\'').unwrap_or(i + 1)
 }
+
+fn scan_char_literal(
+    text: &str,
+    chars: &[(usize, char)],
+    i: usize,
+    rules: &CharLiteralProfile,
+) -> Option<usize> {
+    let n = chars.len();
+    let mut j = i + 1;
+    while j < n {
+        let c = chars[j].1;
+        if c == '\\' {
+            j += 2;
+        } else if c == '\'' {
+            let start_byte = chars[i + 1].0;
+            let end_byte = chars[j].0;
+            let inner = &text[start_byte..end_byte];
+            if rules.validate_inner(inner) {
+                return Some(j + 1);
+            }
+            return None;
+        } else if c == '\n' || c == '\r' {
+            return None;
+        } else {
+            j += 1;
+        }
+    }
+    None
+}
+
+fn scan_single_quote(
+    text: &str,
+    chars: &[(usize, char)],
+    i: usize,
+    profile: &LangProfile,
+) -> usize {
+    match profile.single_quote {
+        SingleQuoteKind::String => scan_sstr(chars, i),
+        SingleQuoteKind::Char(rules) => scan_char_literal(text, chars, i, &rules).unwrap_or(i + 1),
+        SingleQuoteKind::None => i + 1,
+    }
+}
+
 fn scan_bt(chars: &[(usize, char)], i: usize) -> usize {
     scan_quoted(chars, i, '`').unwrap_or(i + 1)
 }

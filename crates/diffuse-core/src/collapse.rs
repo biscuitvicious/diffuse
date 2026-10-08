@@ -550,8 +550,7 @@ pub fn pass_filter_reflows(
         }
     }
 
-    // 2. Candidate unabsorbed dels that could pair with verbatim standalone
-    //    adds.
+    // 2. Candidate unabsorbed dels that could pair with verbatim standalone adds.
     let candidate_dels: Vec<usize> = kept_dels
         .iter()
         .copied()
@@ -610,8 +609,8 @@ pub fn pass_filter_reflows(
         }
     }
 
-    // 4. Meaningful dels: candidate dels that were NOT converted to Ctx, plus
-    //    moved dels that were not absorbed.
+    // 4. Meaningful dels: candidate dels that were NOT converted to Ctx, plus moved
+    //    dels that were not absorbed.
     let meaningful: Vec<usize> = kept_dels
         .iter()
         .copied()

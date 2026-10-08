@@ -55,5 +55,8 @@ pub fn profile() -> LangProfile {
         continuation_prefixes: &["&&", "||", ".", "->"],
         import_prefixes: &["#include ", "import "],
         section_headers: false,
+        single_quote: crate::profile::SingleQuoteKind::Char(
+            crate::profile::CharLiteralProfile::C_FAMILY,
+        ),
     }
 }

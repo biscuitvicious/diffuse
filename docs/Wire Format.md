@@ -147,7 +147,8 @@ The engine uses canonical 3-letter semantic color identifiers. Renderers map the
 | **`kwd`** | Syntax | Control flow and language keywords (`fn`, `pub`, `match`, `return`). |
 | **`fun`** | Syntax | Function, method, and macro identifiers. |
 | **`typ`** | Syntax | Type names, structs, traits, and primitive types. |
-| **`str`** | Syntax | String literals and character escapes. |
+| **`str`** | Syntax | String literals. |
+| **`chr`** | Syntax | Single-character literals (e.g. `'c'`, `'\n'`). |
 | **`num`** | Syntax | Numeric literals (integers, floats, hex values). |
 | **`com`** | Syntax | Source comments and unstyled doc-comment prose. |
 | **`bld`** | Markdown | Bold / strong emphasis text spans. |

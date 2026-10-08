@@ -1,8 +1,7 @@
 //! Row & Segment Renderer with subword styling, background tinting, and column
 //! slicing.
 
-use std::{borrow::Cow, fmt::Write};
-use std::{fmt, str};
+use std::{borrow::Cow, fmt, fmt::Write, str};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::width::{char_width, grapheme_width};

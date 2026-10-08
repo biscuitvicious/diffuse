@@ -43,5 +43,6 @@ pub fn profile() -> LangProfile {
         continuation_prefixes: &["and ", "or ", ".", "\\"],
         import_prefixes: &["import ", "from "],
         section_headers: false,
+        single_quote: crate::profile::SingleQuoteKind::String,
     }
 }

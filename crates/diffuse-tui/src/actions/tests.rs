@@ -151,8 +151,8 @@ fn test_toggle_staged_action_flow() {
     )
     .with_repo_context(repo_root.clone(), Vec::new(), false);
 
-    // 1. Initially unstaged: toggle when staged has NO changes -> Err("no
-    //    staged changes")
+    // 1. Initially unstaged: toggle when staged has NO changes -> Err("no staged
+    //    changes")
     let git_args = state.git_args.clone();
     let err = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
     assert_eq!(err, "no staged changes");

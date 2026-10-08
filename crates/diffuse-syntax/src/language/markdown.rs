@@ -34,5 +34,6 @@ pub fn profile() -> LangProfile {
         continuation_prefixes: &[],
         import_prefixes: &[],
         section_headers: false,
+        single_quote: crate::profile::SingleQuoteKind::String,
     }
 }

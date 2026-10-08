@@ -490,10 +490,9 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             let _ = &fence.lang;
         }
 
-        // 1. Verify reconstructed content completeness (only when present —
-        //    lib_leg populates these in-memory; bin_leg decodes from wire JSON
-        //    which omits them as of the slim format, so we skip these checks
-        //    when the vecs are empty).
+        // 1. Verify reconstructed content completeness (only when present — lib_leg
+        //    populates these in-memory; bin_leg decodes from wire JSON which omits them
+        //    as of the slim format, so we skip these checks when the vecs are empty).
         if !f.new_content.is_empty() && f.status != "deleted" && f.new_line_count > 0 {
             check!(
                 f.new_content.len() == f.new_line_count,
@@ -1506,6 +1505,7 @@ corpus_tests!(
 );
 corpus_tests!(theme_light_toggle, "theme-light-toggle", 40, true, true);
 corpus_tests!(row_groups_contrast, "row-groups-contrast", 20, true, true);
+corpus_tests!(rust_lifetime_char, "rust-lifetime-char", 90, true, true);
 
 #[test]
 fn test_golden_initialized_detection() {

@@ -35,6 +35,7 @@ pub fn toml_profile() -> LangProfile {
         continuation_prefixes: &[],
         import_prefixes: &[],
         section_headers: true,
+        single_quote: crate::profile::SingleQuoteKind::String,
     }
 }
 
@@ -66,6 +67,7 @@ pub fn yaml_profile() -> LangProfile {
         continuation_prefixes: &[],
         import_prefixes: &[],
         section_headers: false,
+        single_quote: crate::profile::SingleQuoteKind::String,
     }
 }
 
@@ -104,5 +106,6 @@ pub fn json_profile() -> LangProfile {
         continuation_prefixes: &[],
         import_prefixes: &[],
         section_headers: false,
+        single_quote: crate::profile::SingleQuoteKind::None,
     }
 }

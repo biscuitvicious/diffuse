@@ -12,7 +12,10 @@ use regex::Regex;
 
 use super::{
     color::TokenColor,
-    profile::{LangProfile, SGR_BOLD, SGR_BOLD_UNDERLINE, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE},
+    profile::{
+        LangProfile, SGR_BOLD, SGR_BOLD_UNDERLINE, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE,
+        SingleQuoteKind,
+    },
     registry::for_each_syntax_token_span,
 };
 
@@ -85,11 +88,28 @@ fn for_each_classified_token_dyn<'a>(
             return;
         }
 
-        let color = if tok.starts_with('"')
-            || tok.starts_with('\'')
-            || tok.starts_with('`')
-            || tok.starts_with("r\"")
-        {
+        let color = if tok.starts_with('\'') {
+            match profile.single_quote {
+                SingleQuoteKind::Char(rules) => {
+                    if tok.len() >= 2
+                        && tok.ends_with('\'')
+                        && rules.validate_inner(&tok[1..tok.len() - 1])
+                    {
+                        TokenColor::CharLiteral
+                    } else {
+                        TokenColor::Operator
+                    }
+                }
+                SingleQuoteKind::String => {
+                    if tok.len() >= 2 && tok.ends_with('\'') {
+                        TokenColor::String
+                    } else {
+                        TokenColor::Operator
+                    }
+                }
+                SingleQuoteKind::None => TokenColor::Operator,
+            }
+        } else if tok.starts_with('"') || tok.starts_with('`') || tok.starts_with("r\"") {
             TokenColor::String
         } else if tok.starts_with("0x")
             || tok.starts_with("0X")

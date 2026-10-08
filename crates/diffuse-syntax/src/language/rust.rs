@@ -117,5 +117,8 @@ pub fn profile() -> LangProfile {
         continuation_prefixes: &["&&", "||", "."],
         import_prefixes: &["use ", "pub use "],
         section_headers: false,
+        single_quote: crate::profile::SingleQuoteKind::Char(
+            crate::profile::CharLiteralProfile::RUST,
+        ),
     }
 }

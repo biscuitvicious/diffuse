@@ -189,8 +189,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
 
-    // 1. Note with matching line_hash anchors cleanly -> inline callout
-    //    produced
+    // 1. Note with matching line_hash anchors cleanly -> inline callout produced
     let matching_hash = hash_line_content("    let x = 1;");
     let valid_note = ReviewNote {
         id: "valid".into(),
