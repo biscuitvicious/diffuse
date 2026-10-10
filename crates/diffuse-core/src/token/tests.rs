@@ -37,6 +37,17 @@ fn test_token_classification() {
         TokenClass::Identifier
     );
     assert_eq!(classify_token("MyStruct", None), TokenClass::Identifier);
+    assert_eq!(classify_token("résumé_count", None), TokenClass::Identifier);
+    assert_eq!(
+        classify_token("über_funktion", None),
+        TokenClass::Identifier
+    );
+    assert_eq!(classify_token("αριθμός_1", None), TokenClass::Identifier);
+    assert_eq!(classify_token("СчетчикСтрок", None), TokenClass::Identifier);
+    assert_eq!(classify_token("ユーザー_id", None), TokenClass::Identifier);
+
+    assert_eq!(classify_token("\u{00a0}", None), TokenClass::Whitespace);
+    assert_eq!(classify_token("\u{200b}", None), TokenClass::Whitespace);
 
     assert_eq!(classify_token("123", None), TokenClass::Literal);
     assert_eq!(classify_token("0x42", None), TokenClass::Literal);

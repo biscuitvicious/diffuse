@@ -54,7 +54,7 @@ use smallvec::SmallVec;
 
 use diffuse_algo::skyline::{AdaptiveEnvelopeBuilder, SkylineMatrix};
 use diffuse_syntax::{
-    prelude::{CloseDelimiter, first_ascii_word},
+    prelude::{CloseDelimiter, first_word},
     profile::{LangProfile, PropertySyntax},
 };
 
@@ -400,7 +400,7 @@ pub(crate) fn mod_pair_needs_scoring(
 
     let total = ot.chars.max(nt.chars);
     let max_matched = char_bound;
-    let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word) {
+    let statement_head_match = match (om.first_word, nm.first_word) {
         (Some(a), Some(b)) => a == b,
         _ => false,
     };
@@ -1355,7 +1355,7 @@ pub(crate) struct DpRowMeta {
     pub trimmed_id: u32,
     pub comment: bool,
     pub kind: SyntaxSectionKind,
-    pub first_ascii_word: Option<u32>,
+    pub first_word: Option<u32>,
     pub indent: usize,
     pub stripped_len: usize,
     pub close_dist: usize,
@@ -1937,13 +1937,13 @@ pub(crate) fn solve_cluster_matrix(
         let dt = dp_tokens(&mut arena.interner, text);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
-        let first_ascii_word = if comment {
+        let first_word = if comment {
             let comment_body = trimmed
                 .trim_start_matches(|c: char| !c.is_alphanumeric() && !c.is_whitespace())
                 .trim_start();
-            first_ascii_word(comment_body).map(|w| arena.interner.intern(w))
+            first_word(comment_body).map(|w| arena.interner.intern(w))
         } else {
-            first_ascii_word(text).map(|w| arena.interner.intern(w))
+            first_word(text).map(|w| arena.interner.intern(w))
         };
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.old_close_dist[i];
@@ -1982,7 +1982,7 @@ pub(crate) fn solve_cluster_matrix(
             trimmed_id,
             comment,
             kind,
-            first_ascii_word,
+            first_word,
             indent,
             stripped_len,
             close_dist,
@@ -2005,13 +2005,13 @@ pub(crate) fn solve_cluster_matrix(
         let dt = dp_tokens(&mut arena.interner, text);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
-        let first_ascii_word = if comment {
+        let first_word = if comment {
             let comment_body = trimmed
                 .trim_start_matches(|c: char| !c.is_alphanumeric() && !c.is_whitespace())
                 .trim_start();
-            first_ascii_word(comment_body).map(|w| arena.interner.intern(w))
+            first_word(comment_body).map(|w| arena.interner.intern(w))
         } else {
-            first_ascii_word(text).map(|w| arena.interner.intern(w))
+            first_word(text).map(|w| arena.interner.intern(w))
         };
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.new_close_dist[j];
@@ -2050,7 +2050,7 @@ pub(crate) fn solve_cluster_matrix(
             trimmed_id,
             comment,
             kind,
-            first_ascii_word,
+            first_word,
             indent,
             stripped_len,
             close_dist,
@@ -2312,8 +2312,7 @@ pub(crate) fn solve_cluster_matrix(
                             continue;
                         };
 
-                        let statement_head_match = match (om.first_ascii_word, nm.first_ascii_word)
-                        {
+                        let statement_head_match = match (om.first_word, nm.first_word) {
                             (Some(a), Some(b)) => a == b,
                             _ => false,
                         };
@@ -2647,7 +2646,7 @@ pub(crate) fn solve_cluster_matrix(
                         if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
                             continue;
                         }
-                        let max_syntax = if om.first_ascii_word.is_some() {
+                        let max_syntax = if om.first_word.is_some() {
                             w.delta
                         } else {
                             0.0
@@ -2683,9 +2682,9 @@ pub(crate) fn solve_cluster_matrix(
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
                             continue;
                         }
-                        let syntax = if om.first_ascii_word.is_some()
-                            && (om.first_ascii_word == nm.first_ascii_word
-                                || om.first_ascii_word == new_meta[j + anchor].first_ascii_word)
+                        let syntax = if om.first_word.is_some()
+                            && (om.first_word == nm.first_word
+                                || om.first_word == new_meta[j + anchor].first_word)
                         {
                             w.delta
                         } else {
@@ -2752,7 +2751,7 @@ pub(crate) fn solve_cluster_matrix(
                         if char_bound < 8 || (char_bound as f64 / total as f64) < 0.35 {
                             continue;
                         }
-                        let max_syntax = if nm.first_ascii_word.is_some() {
+                        let max_syntax = if nm.first_word.is_some() {
                             w.delta
                         } else {
                             0.0
@@ -2788,9 +2787,9 @@ pub(crate) fn solve_cluster_matrix(
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
                             continue;
                         }
-                        let syntax = if nm.first_ascii_word.is_some()
-                            && (nm.first_ascii_word == om.first_ascii_word
-                                || nm.first_ascii_word == old_meta[i + anchor].first_ascii_word)
+                        let syntax = if nm.first_word.is_some()
+                            && (nm.first_word == om.first_word
+                                || nm.first_word == old_meta[i + anchor].first_word)
                         {
                             w.delta
                         } else {

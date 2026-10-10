@@ -259,16 +259,33 @@ fn is_identifier_like(t: &str) -> bool {
     if t.is_empty() {
         return false;
     }
-    let b = t.as_bytes();
-    let starts_valid = b[0].is_ascii_alphabetic() || b[0] == b'_';
-    if !starts_valid {
-        return false;
+    if t.is_ascii() {
+        let b = t.as_bytes();
+        let starts_valid = b[0].is_ascii_alphabetic() || b[0] == b'_';
+        if !starts_valid {
+            return false;
+        }
+        let all_alphanumeric_or_underscore =
+            t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !all_alphanumeric_or_underscore {
+            return false;
+        }
+        t.contains('_') || t.chars().any(|c| c.is_ascii_uppercase())
+    } else {
+        let mut chars = t.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        let starts_valid = first.is_alphabetic() || first == '_';
+        if !starts_valid {
+            return false;
+        }
+        let all_alphanumeric_or_underscore = t.chars().all(|c| c.is_alphanumeric() || c == '_');
+        if !all_alphanumeric_or_underscore {
+            return false;
+        }
+        t.contains('_') || t.chars().any(char::is_uppercase)
     }
-    let all_alphanumeric_or_underscore = t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    if !all_alphanumeric_or_underscore {
-        return false;
-    }
-    t.contains('_') || t.chars().any(|c| c.is_ascii_uppercase())
 }
 
 /// Classifies a token into its syntactic/semantic role.

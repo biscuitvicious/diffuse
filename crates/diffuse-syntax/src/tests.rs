@@ -807,14 +807,83 @@ fn test_registered_extensions_resolve() {
 }
 
 #[test]
-fn test_first_ascii_word() {
-    assert_eq!(first_ascii_word("let x = 1;"), Some("let"));
-    assert_eq!(first_ascii_word("    fn main()"), Some("fn"));
-    assert_eq!(first_ascii_word("//! comment"), None);
-    assert_eq!(first_ascii_word(".map()"), None);
-    assert_eq!(first_ascii_word("+ x"), None);
-    assert_eq!(first_ascii_word("   "), None);
-    assert_eq!(first_ascii_word("!!!"), None);
+fn test_first_word() {
+    assert_eq!(first_word("let x = 1;"), Some("let"));
+    assert_eq!(first_word("    fn main()"), Some("fn"));
+    assert_eq!(first_word("//! comment"), None);
+    assert_eq!(first_word(".map()"), None);
+    assert_eq!(first_word("+ x"), None);
+    assert_eq!(first_word("   "), None);
+    assert_eq!(first_word("!!!"), None);
+}
+
+#[test]
+fn test_unicode_word_primitives_and_classification() {
+    // 1. Unicode word character recognition
+    assert!(is_word_char('a'));
+    assert!(is_word_char('_'));
+    assert!(is_word_char('1'));
+    assert!(is_word_char('é'));
+    assert!(is_word_char('α'));
+    assert!(is_word_char('Ж'));
+    assert!(is_word_char('日'));
+    assert!(!is_word_char(' '));
+    assert!(!is_word_char(';'));
+    assert!(!is_word_char('+'));
+
+    // 2. Unicode word prefix and first_word extraction
+    assert_eq!(word_prefix("résumé_count + 1"), "résumé_count");
+    assert_eq!(word_prefix("über_42;"), "über_42");
+    assert_eq!(word_prefix("αριθμός_1()"), "αριθμός_1");
+    assert_eq!(word_prefix("пользователь_id"), "пользователь_id");
+    assert_eq!(word_prefix("ユーザー名 = val"), "ユーザー名");
+    assert_eq!(first_word("   const résumé = 10;"), Some("const"));
+    assert_eq!(first_word("   résumé_total"), Some("résumé_total"));
+    assert_eq!(first_word("   // comment"), None);
+    assert_eq!(first_word("   "), None);
+
+    // 3. Hand-rolled token scanner preserves full multi-byte identifiers
+    let rs = lang_profile("rs");
+    let tokens = classify_tokens("let résumé = 42;", rs);
+    assert!(
+        tokens
+            .iter()
+            .any(|t| t.text == "résumé" && t.color == TokenColor::Default),
+        "résumé should be scanned as single identifier token: {tokens:?}"
+    );
+
+    let tokens_greek = classify_tokens("let μέγιστο = 100;", rs);
+    assert!(
+        tokens_greek
+            .iter()
+            .any(|t| t.text == "μέγιστο" && t.color == TokenColor::Default),
+        "μέγιστο should be scanned as single identifier token: {tokens_greek:?}"
+    );
+
+    let tokens_cjk = classify_tokens("let ユーザー_id = 1;", rs);
+    assert!(
+        tokens_cjk
+            .iter()
+            .any(|t| t.text == "ユーザー_id" && t.color == TokenColor::Default),
+        "ユーザー_id should be scanned as single identifier token: {tokens_cjk:?}"
+    );
+
+    // 4. PascalCase types across Unicode uppercase
+    let tokens_type = classify_tokens("let x: RésuméType = val;", rs);
+    assert!(
+        tokens_type
+            .iter()
+            .any(|t| t.text == "RésuméType" && t.color == TokenColor::Type),
+        "RésuméType should be classified as TokenColor::Type: {tokens_type:?}"
+    );
+
+    let tokens_cyrillic_type = classify_tokens("let s: Счетчик = val;", rs);
+    assert!(
+        tokens_cyrillic_type
+            .iter()
+            .any(|t| t.text == "Счетчик" && t.color == TokenColor::Type),
+        "Счетчик should be classified as TokenColor::Type: {tokens_cyrillic_type:?}"
+    );
 }
 
 #[test]

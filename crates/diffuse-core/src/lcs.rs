@@ -378,12 +378,18 @@ impl<'a> Iterator for LineTokenizer<'a> {
             } else {
                 let mut advance = c_len;
                 let mut prev_c = c;
-                for next_c in chars {
+                while let Some(next_c) = chars.next() {
                     if is_ws_char(next_c)
                         || is_delim_char(next_c)
                         || is_op_char(next_c)
                         || next_c.is_ascii_digit()
                         || (prev_c.is_lowercase() && next_c.is_uppercase())
+                        || (prev_c.is_uppercase()
+                            && next_c.is_uppercase()
+                            && chars
+                                .clone()
+                                .next()
+                                .is_some_and(|after| after.is_lowercase()))
                     {
                         break;
                     }
@@ -410,11 +416,10 @@ pub fn tokenize_line<'a>(text: &'a str) -> LineTokenizer<'a> {
     }
 }
 
-/// The TS `/\s/` test — ASCII whitespace (JS `\s` without the `u` flag),
-/// NOT Unicode whitespace. Tokens from `tokenize_line` are single-class, so
-/// `any` over the token is equivalent to the JS regex test.
+/// Checks whether `t` contains whitespace (ASCII or Unicode whitespace
+/// characters).
 pub fn token_is_ws(t: &str) -> bool {
-    t.chars().any(|c| c.is_ascii_whitespace())
+    t.chars().any(is_ws_char)
 }
 
 /// The alphanumeric test — any Unicode alphanumeric char.

@@ -45,9 +45,8 @@ pub mod prelude {
             SingleQuoteKind, UnicodeEscapeStyle,
         },
         registry::{
-            REGISTERED_EXTENSIONS, all_registered_profiles, ascii_word_prefix,
-            ascii_word_prefix_len, fence_lang_ext, first_ascii_word, is_ascii_word_char,
-            lang_profile,
+            REGISTERED_EXTENSIONS, all_registered_profiles, fence_lang_ext, first_word,
+            is_word_char, lang_profile, word_prefix, word_prefix_len,
         },
     };
 }

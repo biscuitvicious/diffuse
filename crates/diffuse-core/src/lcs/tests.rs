@@ -810,3 +810,34 @@ fn test_pi_review_path_alignment() {
         "   TypeScript. It lives at `[-~/lab-]{+extension+}/pi[--review-]/review.ts` {+in this workspace +}(the[- functions-]"
     );
 }
+
+#[test]
+fn test_unicode_camel_case_tokenization() {
+    let tokens: Vec<&str> = tokenize_line("мояФункция").collect();
+    assert_eq!(tokens, vec!["моя", "Функция"]);
+
+    let tokens: Vec<&str> = tokenize_line("ПРКлиент").collect();
+    assert_eq!(tokens, vec!["ПР", "Клиент"]);
+
+    let tokens: Vec<&str> = tokenize_line("monÉlément").collect();
+    assert_eq!(tokens, vec!["mon", "Élément"]);
+}
+
+#[test]
+fn test_unicode_subline_alignment() {
+    let old = "    let résultat_ancien = calculer_total(valeur);";
+    let new = "    let résultat_nouveau = calculer_total(valeur);";
+    let (_, runs) = word_spans_and_runs_with_profile(old, new, None);
+    let formatted: String = runs
+        .iter()
+        .map(|(kind, text)| match kind {
+            RunKind::Ctx => text.clone(),
+            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Add => format!("{{+{text}+}}"),
+        })
+        .collect();
+    assert_eq!(
+        formatted,
+        "    let résultat_[-ancien-]{+nouveau+} = calculer_total(valeur);"
+    );
+}

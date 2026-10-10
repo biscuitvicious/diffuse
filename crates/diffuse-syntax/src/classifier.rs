@@ -119,12 +119,11 @@ fn for_each_classified_token_dyn<'a>(
         } else if tok
             .chars()
             .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            .is_some_and(|c| c.is_alphabetic() || c == '_')
         {
             if profile.is_keyword(tok) {
                 TokenColor::Keyword
-            } else if profile.types_by_case
-                && tok.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+            } else if profile.types_by_case && tok.chars().next().is_some_and(|c| c.is_uppercase())
             {
                 TokenColor::Type
             } else if next == Some('(') {

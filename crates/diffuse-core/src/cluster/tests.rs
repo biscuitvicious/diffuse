@@ -2494,3 +2494,37 @@ fn test_mod_pair_precomputed_invariants_and_prefix_containment() {
         },
     ));
 }
+
+#[test]
+fn test_unicode_statement_head_alignment() {
+    let old_rows = vec![
+        del_row(1, "    функция вычисление_1() {"),
+        del_row(2, "    процедура печать() {"),
+    ];
+    let new_rows = vec![
+        add_row(1, "    функция вычисление_2() {"),
+        add_row(2, "    процедура вывод() {"),
+    ];
+
+    let cluster = code_cluster(old_rows, new_rows);
+    let sol = dp::solve_cluster(&cluster, None);
+    assert_eq!(signature(&sol), ["mod", "mod"]);
+    match (&sol.rows[0], &sol.rows[1]) {
+        (
+            Row::Mod {
+                old_line: d1,
+                new_line: a1,
+            },
+            Row::Mod {
+                old_line: d2,
+                new_line: a2,
+            },
+        ) => {
+            assert!(d1.text.contains("вычисление_1"));
+            assert!(a1.text.contains("вычисление_2"));
+            assert!(d2.text.contains("печать"));
+            assert!(a2.text.contains("вывод"));
+        }
+        other => panic!("expected 2 paired mod rows, got: {other:?}"),
+    }
+}
