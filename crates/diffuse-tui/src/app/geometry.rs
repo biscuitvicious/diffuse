@@ -2,7 +2,10 @@
 
 use std::{collections::HashMap, panic::Location, time::Instant, vec::Vec};
 
-use crate::render::{display_text, width::display_width};
+use crate::{
+    render::{display_text, width::display_width},
+    types::FlatRowKind,
+};
 
 use super::AppState;
 
@@ -68,60 +71,67 @@ impl AppState {
         let Some(item) = self.flat.get(idx) else {
             return 1;
         };
-        if item.is_file_header {
-            let file_obj = &self.output.files[item.file_idx];
-            let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-            let txt = crate::view::diff_grid::file_header_text_with_prefix(
-                file_obj,
-                crate::render::Badge {
-                    idx: item.file_idx,
-                    total: self.output.files.len(),
-                },
-                is_collapsed,
-                self.output.common_directory_prefix().as_deref(),
-            );
-            let len = display_width(txt);
-            let text_cols = content_width.max(1);
-            return if len == 0 { 1 } else { len.div_ceil(text_cols) };
-        }
-        if item.is_hunk_divider {
-            let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
-                &self.output.files[item.file_idx].raw_hunks
-            } else {
-                &self.output.files[item.file_idx].hunks
-            };
-            let h = &hunks[item.hunk_idx];
-            let sep_text = format!(
-                "@@ -{},{} +{},{} @@",
-                h.old_start, h.old_count, h.new_start, h.new_count
-            );
-            let len = display_width(sep_text);
-            let text_cols = content_width.max(1);
-            return if len == 0 { 1 } else { len.div_ceil(text_cols) };
-        }
-        let Some(r) = self.row_of(item) else {
-            return 1;
-        };
-        let text = r.text();
-        if self.raw_diff {
-            let text_cols = content_width.saturating_sub(6).max(1);
-            let exp = crate::render::expand_tabs(&text, 4);
-            let len = display_width(exp);
-            if len == 0 { 1 } else { len.div_ceil(text_cols) }
-        } else {
-            let text_cols = content_width.saturating_sub(6).max(1);
-            let del_text = r.del_text();
-            let disp = display_text(
-                &text,
-                del_text.as_deref(),
-                r.kind,
-                &r.runs,
-                self.col_offset,
-                self.word_diff,
-            );
-            let exp = crate::render::expand_tabs(&disp, 4);
-            let len = display_width(exp);
-            if len == 0 { 1 } else { len.div_ceil(text_cols) }
+        match item.kind {
+            FlatRowKind::FileHeader => {
+                let file_obj = &self.output.files[item.file_idx];
+                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
+                let txt = crate::view::diff_grid::file_header_text_with_prefix(
+                    file_obj,
+                    crate::render::Badge {
+                        idx: item.file_idx,
+                        total: self.output.files.len(),
+                    },
+                    is_collapsed,
+                    self.output.common_directory_prefix().as_deref(),
+                );
+                let len = display_width(txt);
+                let text_cols = content_width.max(1);
+                if len == 0 { 1 } else { len.div_ceil(text_cols) }
+            }
+            FlatRowKind::HunkDivider { hunk_idx } => {
+                let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
+                    &self.output.files[item.file_idx].raw_hunks
+                } else {
+                    &self.output.files[item.file_idx].hunks
+                };
+                let h = &hunks[hunk_idx];
+                let sep_text = format!(
+                    "@@ -{},{} +{},{} @@",
+                    h.old_start, h.old_count, h.new_start, h.new_count
+                );
+                let len = display_width(sep_text);
+                let text_cols = content_width.max(1);
+                if len == 0 { 1 } else { len.div_ceil(text_cols) }
+            }
+            FlatRowKind::BottomGapDivider { .. } => {
+                self.bottom_gap_seg_count(item.file_idx, content_width)
+            }
+            FlatRowKind::DiffRow { .. } => {
+                let Some(r) = self.row_of(item) else {
+                    return 1;
+                };
+                let text = r.text();
+                if self.raw_diff {
+                    let text_cols = content_width.saturating_sub(6).max(1);
+                    let exp = crate::render::expand_tabs(&text, 4);
+                    let len = display_width(exp);
+                    if len == 0 { 1 } else { len.div_ceil(text_cols) }
+                } else {
+                    let text_cols = content_width.saturating_sub(6).max(1);
+                    let del_text = r.del_text();
+                    let disp = display_text(
+                        &text,
+                        del_text.as_deref(),
+                        r.kind,
+                        &r.runs,
+                        self.col_offset,
+                        self.word_diff,
+                    );
+                    let exp = crate::render::expand_tabs(&disp, 4);
+                    let len = display_width(exp);
+                    if len == 0 { 1 } else { len.div_ceil(text_cols) }
+                }
+            }
         }
     }
 
@@ -162,25 +172,16 @@ impl AppState {
     pub(crate) fn bottom_divider_vis_line_from_layout(
         &self,
         fi: usize,
-        content_width: usize,
         starts: &[usize],
-        seg_counts: &[usize],
-        callouts: &HashMap<usize, Vec<String>>,
     ) -> Option<usize> {
         if self.raw_diff || self.hunk_trailing_gap(fi) == 0 {
             return None;
         }
-        let last_row = self.last_row_of_file(fi);
-        let s = starts.get(last_row).copied()?;
-        let div_lines = self
-            .hunk_starts
+        let bot_row = self
+            .flat
             .iter()
-            .find(|hs| hs.flat == last_row)
-            .map(|hs| self.hunk_div_seg_count(hs.file, hs.hunk, content_width))
-            .unwrap_or(0);
-        let row_segs = seg_counts.get(last_row).copied().unwrap_or(1);
-        let note_lines = callouts.get(&last_row).map_or(0, Vec::len);
-        Some(s + div_lines + row_segs + note_lines)
+            .position(|r| r.file_idx == fi && r.is_bottom_gap_divider())?;
+        starts.get(bot_row).copied()
     }
 
     /// Visual line offset where the bottom (trailing gap) divider of `file[fi]`
@@ -188,8 +189,8 @@ impl AppState {
     /// active.
     pub fn bottom_divider_vis_line(&self, fi: usize, content_width: usize) -> Option<usize> {
         let callouts = self.note_callouts(content_width);
-        let (starts, _, seg_counts, _, _) = self.compute_geometry(content_width, &callouts);
-        self.bottom_divider_vis_line_from_layout(fi, content_width, &starts, &seg_counts, &callouts)
+        let (starts, _, _, _, _) = self.compute_geometry(content_width, &callouts);
+        self.bottom_divider_vis_line_from_layout(fi, &starts)
     }
 
     /// Visual line offset where hunk divider `hi` of `file[fi]` starts.
@@ -393,7 +394,7 @@ impl AppState {
         let mut nav_counts = Vec::with_capacity(self.flat.len());
         let mut total_vis_lines = 0;
 
-        for (idx, item) in self.flat.iter().enumerate() {
+        for (idx, _item) in self.flat.iter().enumerate() {
             starts.push(total_vis_lines);
             let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
                 self.hunk_div_seg_count(div_fi, div_hi, content_width)
@@ -402,18 +403,10 @@ impl AppState {
             };
             let row_segs = self.row_seg_count(idx, content_width);
             let note_lines = callouts.get(&idx).map_or(0, Vec::len);
-            let trailing_gap_lines = if !self.raw_diff
-                && !item.is_file_header
-                && idx == self.last_row_of_file(item.file_idx)
-            {
-                self.bottom_gap_seg_count(item.file_idx, content_width)
-            } else {
-                0
-            };
-            let item_total = div_lines + row_segs + note_lines + trailing_gap_lines;
+            let item_total = div_lines + row_segs + note_lines;
             counts.push(item_total);
             seg_counts.push(row_segs.max(1));
-            nav_counts.push((div_lines + row_segs + note_lines + trailing_gap_lines).max(1));
+            nav_counts.push(item_total.max(1));
             total_vis_lines += item_total;
         }
 
@@ -443,7 +436,7 @@ impl AppState {
         let new_hi = h.new_start + h.new_count;
 
         for (i, item) in self.flat.iter().enumerate() {
-            if item.file_idx != fi || item.is_file_header {
+            if item.file_idx != fi || !item.is_diff_row() {
                 continue;
             }
             let Some(r) = self.row_of(item) else {
@@ -520,48 +513,10 @@ impl AppState {
     /// Return the number of hidden trailing lines after the last hunk in file
     /// `fi`.
     pub fn hunk_trailing_gap(&self, fi: usize) -> usize {
-        let Some(f) = self.output.files.get(fi) else {
-            return 0;
-        };
-        let Some(last_hunk) = f.hunks.last() else {
-            return 0;
-        };
-        if f.new_line_count == 0 || f.old_line_count == 0 {
-            return 0;
-        }
-        let last_new = last_hunk
-            .rows
-            .iter()
-            .rev()
-            .find_map(|r| r.new_line)
-            .unwrap_or_else(|| {
-                if last_hunk.new_count > 0 {
-                    last_hunk
-                        .new_start
-                        .saturating_add(last_hunk.new_count)
-                        .saturating_sub(1)
-                } else {
-                    last_hunk.new_start
-                }
-            });
-        let last_old = last_hunk
-            .rows
-            .iter()
-            .rev()
-            .find_map(|r| r.old_line)
-            .unwrap_or_else(|| {
-                if last_hunk.old_count > 0 {
-                    last_hunk
-                        .old_start
-                        .saturating_add(last_hunk.old_count)
-                        .saturating_sub(1)
-                } else {
-                    last_hunk.old_start
-                }
-            });
-        let new_gap = (f.new_line_count as u32).saturating_sub(last_new) as usize;
-        let old_gap = (f.old_line_count as u32).saturating_sub(last_old) as usize;
-        new_gap.min(old_gap)
+        self.output
+            .files
+            .get(fi)
+            .map_or(0, crate::app::flat::file_trailing_gap)
     }
 }
 

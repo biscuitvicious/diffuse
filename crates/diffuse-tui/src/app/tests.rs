@@ -369,7 +369,7 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
     });
     assert!(add.is_some(), "the mod pair must un-collapse into a + line");
 
-    let sep = state.flat.iter().find(|fr| fr.is_hunk_divider);
+    let sep = state.flat.iter().find(|fr| fr.is_hunk_divider());
     assert!(sep.is_some());
 
     let frame = state.render_frame(120, 40);
@@ -453,7 +453,7 @@ fn test_raw_diff_exact_input_reproduction() {
     let kinds: Vec<RowKind> = state
         .flat
         .iter()
-        .filter(|r| !r.is_file_header && !r.is_hunk_divider)
+        .filter(|r| !r.is_file_header() && !r.is_hunk_divider())
         .map(|r| state.row_of(r).unwrap().kind)
         .collect();
 
@@ -659,7 +659,7 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
 
     let current_row = &state.flat[state.row_idx];
     assert!(
-        !current_row.is_file_header,
+        !current_row.is_file_header(),
         "must not jump to file header row"
     );
     let current_out = state.row_of(current_row).unwrap();
@@ -1261,7 +1261,7 @@ index 111..222 100644
     let cache_file_row = state
         .flat
         .iter()
-        .position(|fr| fr.file_idx == fi && !fr.is_file_header)
+        .position(|fr| fr.file_idx == fi && !fr.is_file_header())
         .expect("row in cache.rs");
     state.jump_to_row(cache_file_row, false);
     state.execute(TuiCommand::ResetCurrentHunkContext);
@@ -2413,8 +2413,8 @@ index 1111111..2222222 100644
         .iter()
         .position(|fr| {
             fr.file_idx == fi
-                && !fr.is_file_header
-                && !fr.is_hunk_divider
+                && !fr.is_file_header()
+                && !fr.is_hunk_divider()
                 && state.row_of(fr).is_some_and(|r| r.new_line == Some(1))
         })
         .expect("first content row must exist");
@@ -3703,13 +3703,7 @@ fn test_viewport_line_origin_describes_file_and_row() {
     // Padding filler lines carry no source.
     assert_eq!(state.viewport_line_origin(None), "viewport padding");
     // Flat row pointing at a missing file.
-    state.flat.push(FlatRow {
-        file_idx: 999,
-        hunk_idx: 0,
-        row_idx: 0,
-        is_file_header: false,
-        is_hunk_divider: false,
-    });
+    state.flat.push(FlatRow::diff_row(999, 0, 0));
     let ghost = state.flat.len() - 1;
     let desc = state.viewport_line_origin(Some(ghost));
     assert!(
@@ -3830,16 +3824,8 @@ fn test_mouse_click_end_of_hunks_divider_selects() {
     assert!(gap > 0, "must have trailing gap");
 
     let last_row = state.last_row_of_file(fi);
-    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
-    let cw = state.last_content_width;
-    let div_lines = if state.hunk_starts.iter().any(|hs| hs.flat == last_row) {
-        state.hunk_div_seg_count(fi, 0, cw)
-    } else {
-        0
-    };
-    let row_segs = seg_counts[last_row];
-    let note_lines = state.note_callouts(cw).get(&last_row).map_or(0, Vec::len);
-    let bottom_vis = starts[last_row] + div_lines + row_segs + note_lines;
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let bottom_vis = starts[last_row];
     let click_row = state.last_viewport_start + bottom_vis.saturating_sub(state.scroll);
 
     // Initial cursor is at top
@@ -3858,8 +3844,7 @@ fn test_mouse_click_end_of_hunks_divider_selects() {
         "cursor row must be last row of file"
     );
     assert_eq!(
-        state.vis_line,
-        div_lines + row_segs + note_lines,
+        state.vis_line, 0,
         "vis_line must target the end of hunks divider"
     );
     assert!(
@@ -3887,16 +3872,8 @@ fn test_mouse_click_end_of_hunks_divider_arrow_expands() {
     assert!(gap_before > 0);
 
     let last_row = state.last_row_of_file(fi);
-    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
-    let cw = state.last_content_width;
-    let div_lines = if state.hunk_starts.iter().any(|hs| hs.flat == last_row) {
-        state.hunk_div_seg_count(fi, 0, cw)
-    } else {
-        0
-    };
-    let row_segs = seg_counts[last_row];
-    let note_lines = state.note_callouts(cw).get(&last_row).map_or(0, Vec::len);
-    let bottom_vis = starts[last_row] + div_lines + row_segs + note_lines;
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let bottom_vis = starts[last_row];
     let click_row = state.last_viewport_start + bottom_vis.saturating_sub(state.scroll);
 
     let txt = crate::view::diff_grid::bottom_gap_divider_text(gap_before);
@@ -4031,20 +4008,19 @@ fn test_is_cursor_on_bottom_divider_and_enter_key() {
     state.vis_line = 0;
     assert_eq!(state.is_cursor_on_bottom_divider(), None);
 
-    // Last row of file
+    // Content row before bottom divider: not on bottom divider
+    let last_diff = state.last_row_of_file(fi) - 1;
+    state.row_idx = last_diff;
+    state.vis_line = 0;
+    assert_eq!(state.is_cursor_on_bottom_divider(), None);
+
+    // Bottom divider row itself
     let last_row = state.last_row_of_file(fi);
     state.row_idx = last_row;
     state.vis_line = 0;
-    // Row segment itself is not on bottom divider
-    assert_eq!(state.is_cursor_on_bottom_divider(), None);
-
-    // Position vis_line onto the bottom divider
-    let cw = state.effective_content_width();
-    let row_segs = state.row_seg_count(last_row, cw);
-    state.vis_line = row_segs;
     assert_eq!(state.is_cursor_on_bottom_divider(), Some(fi));
 
-    // Raw diff mode returns None even if vis_line is set
+    // Raw diff mode returns None
     state.raw_diff = true;
     assert_eq!(state.is_cursor_on_bottom_divider(), None);
     state.raw_diff = false;
@@ -4246,32 +4222,25 @@ fn test_bottom_divider_click_pivots_and_retains_cursor_visual_position() {
         crate::render::DiffuseTheme::DEFAULT,
     )
     .with_expand_lines(4);
-    state.render_frame(120, 8);
-    state.scroll = 1;
+    state.render_frame(120, 12);
+    state.scroll = 2;
 
     let fi = 0;
     let gap_before = state.hunk_trailing_gap(fi);
     assert!(gap_before > 0);
 
     let last_row = state.last_row_of_file(fi);
-    let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
-    let cw = state.last_content_width;
-    let div_lines = if state.hunk_starts.iter().any(|hs| hs.flat == last_row) {
-        state.hunk_div_seg_count(fi, 0, cw)
-    } else {
-        0
-    };
-    let row_segs = seg_counts[last_row];
-    let note_lines = state.note_callouts(cw).get(&last_row).map_or(0, Vec::len);
-    let bottom_vis = starts[last_row] + div_lines + row_segs + note_lines;
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let bottom_vis = starts[last_row];
     let bottom_screen_y = bottom_vis.saturating_sub(state.scroll);
     let click_row = state.last_viewport_start + bottom_screen_y;
 
     let txt = crate::view::diff_grid::bottom_gap_divider_text(gap_before);
     let arrow_col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
 
-    // 1. Cursor before bottom divider (e.g. line 2)
-    state.row_idx = 1;
+    // 1. Cursor before bottom divider, visible in the viewport (visual line 5,
+    //    screen y 3)
+    state.row_idx = 3;
     state.vis_line = 0;
     let cursor_screen_before = state.cursor_visual_line().saturating_sub(state.scroll);
 
@@ -4281,15 +4250,12 @@ fn test_bottom_divider_click_pivots_and_retains_cursor_visual_position() {
         shift: false,
     });
 
+    let gap_after = state.hunk_trailing_gap(fi);
+    assert!(gap_after < gap_before, "clicking ▲ must expand context");
+
     let last_row_after = state.last_row_of_file(fi);
-    let (starts_after, _, seg_counts_after, _) = state.visual_geometry(state.last_content_width);
-    let div_lines_after = if state.hunk_starts.iter().any(|hs| hs.flat == last_row_after) {
-        state.hunk_div_seg_count(fi, 0, cw)
-    } else {
-        0
-    };
-    let bottom_vis_after =
-        starts_after[last_row_after] + div_lines_after + seg_counts_after[last_row_after];
+    let (starts_after, _, _, _) = state.visual_geometry(state.last_content_width);
+    let bottom_vis_after = starts_after[last_row_after];
     let bottom_screen_after = bottom_vis_after.saturating_sub(state.scroll);
     assert_eq!(
         bottom_screen_after, bottom_screen_y,
@@ -4704,16 +4670,9 @@ fn test_expand_below_cursor_above_divider() {
             let cursor_vis_before = state.cursor_visual_line();
             let cursor_rel_before = (cursor_vis_before as isize) - (state.scroll as isize);
 
-            let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
-            let callouts = state.note_callouts(state.last_content_width);
+            let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
             let div_vis = state
-                .bottom_divider_vis_line_from_layout(
-                    fi,
-                    state.last_content_width,
-                    &starts,
-                    &seg_counts,
-                    &callouts,
-                )
+                .bottom_divider_vis_line_from_layout(fi, &starts)
                 .unwrap();
             let div_screen_y = (div_vis as isize) - (state.scroll as isize);
             let click_row = (state.last_viewport_start as isize + div_screen_y) as usize;

@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, process};
 
-use crate::render::ColorExt;
+use crate::{render::ColorExt, types::FlatRowKind};
 
 use crate::core::notes::{
     ReviewNote, Side, add_note, hash_line_content, note_anchors_cleanly, note_runs, notes_for_file,
@@ -708,23 +708,35 @@ impl AppState {
             });
         }
 
-        if item.is_file_header {
-            let segs = self.row_seg_count(row_idx, cw);
-            if vis_line < div_segs + segs {
-                return Some(VisualTarget::FileHeader);
+        match item.kind {
+            FlatRowKind::FileHeader => {
+                let segs = self.row_seg_count(row_idx, cw);
+                if vis_line < div_segs + segs {
+                    return Some(VisualTarget::FileHeader);
+                }
             }
-        } else if item.is_hunk_divider {
-            return Some(VisualTarget::HunkDivider {
-                file_idx: item.file_idx,
-                hunk_idx: item.hunk_idx,
-            });
-        } else if self.row_of(item).is_some() {
-            let segs = self.row_seg_count(row_idx, cw);
-            if vis_line < div_segs + segs {
-                return Some(VisualTarget::DiffRow {
-                    seg_idx: vis_line.saturating_sub(div_segs),
-                    total_segs: segs,
+            FlatRowKind::HunkDivider { hunk_idx } => {
+                return Some(VisualTarget::HunkDivider {
+                    file_idx: item.file_idx,
+                    hunk_idx,
                 });
+            }
+            FlatRowKind::BottomGapDivider { .. } => {
+                let segs = self.row_seg_count(row_idx, cw);
+                if vis_line < div_segs + segs {
+                    return Some(VisualTarget::BottomGapDivider {
+                        file_idx: item.file_idx,
+                    });
+                }
+            }
+            FlatRowKind::DiffRow { .. } => {
+                let segs = self.row_seg_count(row_idx, cw);
+                if vis_line < div_segs + segs {
+                    return Some(VisualTarget::DiffRow {
+                        seg_idx: vis_line.saturating_sub(div_segs),
+                        total_segs: segs,
+                    });
+                }
             }
         }
 
@@ -743,17 +755,6 @@ impl AppState {
                     });
                 }
                 note_rel -= note_total_lines;
-            }
-            if !self.raw_diff
-                && row_idx == self.last_row_of_file(item.file_idx)
-                && self.hunk_trailing_gap(item.file_idx) > 0
-            {
-                let bot_segs = self.bottom_gap_seg_count(item.file_idx, cw);
-                if note_rel < bot_segs {
-                    return Some(VisualTarget::BottomGapDivider {
-                        file_idx: item.file_idx,
-                    });
-                }
             }
         }
 

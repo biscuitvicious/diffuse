@@ -174,7 +174,7 @@ index 1111111..2222222 100644
         1,
         "collapsed file only has 1 flat row (header)"
     );
-    assert!(file_1_rows[0].is_file_header);
+    assert!(file_1_rows[0].is_file_header());
 
     let frame = state.render_frame(100, 30);
     let plain_frame = crate::render::strip_ansi(&frame);
@@ -458,7 +458,7 @@ fn test_diffuse_golden_plan_md_hunk_divider() {
     let plan_file_row = state
         .flat
         .iter()
-        .position(|fr| fr.file_idx == fi && fr.is_file_header)
+        .position(|fr| fr.file_idx == fi && fr.is_file_header())
         .expect("file header row for PLAN.md");
     state.jump_to_row(plan_file_row, false);
 

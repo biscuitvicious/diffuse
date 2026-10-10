@@ -1,9 +1,12 @@
 use std::mem;
 
-use crate::core::{
-    DEFAULT_CONTEXT_LINES,
-    parse::RowKind,
-    wire::{OutputFile, OutputHunk, OutputRow},
+use crate::{
+    core::{
+        DEFAULT_CONTEXT_LINES,
+        parse::RowKind,
+        wire::{OutputFile, OutputHunk, OutputRow},
+    },
+    types::FlatRowKind,
 };
 
 use super::{
@@ -197,9 +200,9 @@ impl AppState {
     pub fn is_cursor_on_hunk_divider(&self) -> Option<(usize, usize)> {
         if self.raw_diff {
             if let Some(item) = self.flat.get(self.row_idx)
-                && item.is_hunk_divider
+                && let FlatRowKind::HunkDivider { hunk_idx } = item.kind
             {
-                return Some((item.file_idx, item.hunk_idx));
+                return Some((item.file_idx, hunk_idx));
             }
             return None;
         }
@@ -224,29 +227,10 @@ impl AppState {
         if self.raw_diff {
             return None;
         }
-        let item = self.flat.get(self.row_idx)?;
-        if item.is_file_header {
-            return None;
-        }
-        let fi = item.file_idx;
-        if self.row_idx != self.last_row_of_file(fi) {
-            return None;
-        }
-        if self.hunk_trailing_gap(fi) == 0 {
-            return None;
-        }
-        let cw = self.effective_content_width();
-        let callouts = self.note_callouts(cw);
-        let (starts, _, seg_counts, _, _) = self.compute_geometry(cw, &callouts);
-        let bot_vis =
-            self.bottom_divider_vis_line_from_layout(fi, cw, &starts, &seg_counts, &callouts)?;
-        let bot_segs = self.bottom_gap_seg_count(fi, cw);
-        let cur_vis = self.cursor_visual_line();
-        if cur_vis >= bot_vis && cur_vis < bot_vis + bot_segs {
-            Some(fi)
-        } else {
-            None
-        }
+        self.flat
+            .get(self.row_idx)
+            .filter(|item| item.is_bottom_gap_divider())
+            .map(|item| item.file_idx)
     }
 
     /// Expand context lines above hunk `hi` in `file[fi]` by

@@ -33,7 +33,7 @@ impl AppState {
         let mut hunk_starts = Vec::new();
 
         for (fi, f) in output.files.iter().enumerate() {
-            flat.push(Self::file_header_row(fi));
+            flat.push(FlatRow::file_header(fi));
             if collapsed_files.contains(&fi) {
                 continue;
             }
@@ -43,26 +43,14 @@ impl AppState {
                 &f.hunks
             };
             for (hi, h) in hunks.iter().enumerate() {
-                flat.push(FlatRow {
-                    file_idx: fi,
-                    hunk_idx: hi,
-                    row_idx: 0,
-                    is_file_header: false,
-                    is_hunk_divider: true,
-                });
+                flat.push(FlatRow::hunk_divider(fi, hi));
                 hunk_starts.push(HunkStart {
                     flat: flat.len() - 1,
                     file: fi,
                     hunk: hi,
                 });
                 for ri in 0..h.rows.len() {
-                    flat.push(FlatRow {
-                        file_idx: fi,
-                        hunk_idx: hi,
-                        row_idx: ri,
-                        is_file_header: false,
-                        is_hunk_divider: false,
-                    });
+                    flat.push(FlatRow::diff_row(fi, hi, ri));
                 }
             }
         }
@@ -76,7 +64,7 @@ impl AppState {
     ) -> Vec<FlatRow> {
         let mut flat = Vec::new();
         for (fi, f) in output.files.iter().enumerate() {
-            flat.push(Self::file_header_row(fi));
+            flat.push(FlatRow::file_header(fi));
             if collapsed_files.contains(&fi) {
                 continue;
             }
@@ -86,52 +74,27 @@ impl AppState {
                 for (hi, h) in f.hunks.iter().enumerate() {
                     for _ in 0..h.rows.len() {
                         if ri < f.rows.len() {
-                            flat.push(FlatRow {
-                                file_idx: fi,
-                                hunk_idx: hi,
-                                row_idx: ri,
-                                is_file_header: false,
-                                is_hunk_divider: false,
-                            });
+                            flat.push(FlatRow::diff_row(fi, hi, ri));
                             ri += 1;
                         }
                     }
                 }
                 while ri < f.rows.len() {
-                    flat.push(FlatRow {
-                        file_idx: fi,
-                        hunk_idx: hunk_count.saturating_sub(1),
-                        row_idx: ri,
-                        is_file_header: false,
-                        is_hunk_divider: false,
-                    });
+                    flat.push(FlatRow::diff_row(fi, hunk_count.saturating_sub(1), ri));
                     ri += 1;
                 }
             } else {
                 for (hi, h) in f.hunks.iter().enumerate() {
                     for ri in 0..h.rows.len() {
-                        flat.push(FlatRow {
-                            file_idx: fi,
-                            hunk_idx: hi,
-                            row_idx: ri,
-                            is_file_header: false,
-                            is_hunk_divider: false,
-                        });
+                        flat.push(FlatRow::diff_row(fi, hi, ri));
                     }
                 }
             }
+            if file_trailing_gap(f) > 0 {
+                flat.push(FlatRow::bottom_gap(fi, f.hunks.len().saturating_sub(1)));
+            }
         }
         flat
-    }
-
-    pub(crate) fn file_header_row(fi: usize) -> FlatRow {
-        FlatRow {
-            file_idx: fi,
-            hunk_idx: 0,
-            row_idx: 0,
-            is_file_header: true,
-            is_hunk_divider: false,
-        }
     }
 
     /// Locate each hunk's first content row in the flat sequence by file index
@@ -170,7 +133,7 @@ impl AppState {
         for (fi, f) in output.files.iter().enumerate() {
             let file_header_idx = flat
                 .iter()
-                .position(|fr| fr.file_idx == fi && fr.is_file_header)
+                .position(|fr| fr.file_idx == fi && fr.is_file_header())
                 .unwrap_or(0);
             starts.extend(Self::build_file_hunk_starts_for_file(
                 flat,
@@ -220,7 +183,7 @@ impl AppState {
     pub fn file_header_row_idx(&self, fi: usize) -> Option<usize> {
         self.flat
             .iter()
-            .position(|r| r.file_idx == fi && r.is_file_header)
+            .position(|r| r.file_idx == fi && r.is_file_header())
     }
 
     pub fn first_row_of_file(&self, fi: usize) -> usize {
@@ -233,6 +196,49 @@ impl AppState {
             None => self.flat.len().saturating_sub(1),
         }
     }
+}
+
+/// Return the number of hidden trailing lines after the last hunk in `f`.
+pub fn file_trailing_gap(f: &OutputFile) -> usize {
+    let Some(last_hunk) = f.hunks.last() else {
+        return 0;
+    };
+    if f.new_line_count == 0 || f.old_line_count == 0 {
+        return 0;
+    }
+    let last_new = last_hunk
+        .rows
+        .iter()
+        .rev()
+        .find_map(|r| r.new_line)
+        .unwrap_or_else(|| {
+            if last_hunk.new_count > 0 {
+                last_hunk
+                    .new_start
+                    .saturating_add(last_hunk.new_count)
+                    .saturating_sub(1)
+            } else {
+                last_hunk.new_start
+            }
+        });
+    let last_old = last_hunk
+        .rows
+        .iter()
+        .rev()
+        .find_map(|r| r.old_line)
+        .unwrap_or_else(|| {
+            if last_hunk.old_count > 0 {
+                last_hunk
+                    .old_start
+                    .saturating_add(last_hunk.old_count)
+                    .saturating_sub(1)
+            } else {
+                last_hunk.old_start
+            }
+        });
+    let new_gap = (f.new_line_count as u32).saturating_sub(last_new) as usize;
+    let old_gap = (f.old_line_count as u32).saturating_sub(last_old) as usize;
+    new_gap.min(old_gap)
 }
 
 #[cfg(test)]

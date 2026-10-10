@@ -384,7 +384,7 @@ fn test_raw_diff_toggle_and_cursor_preserved() {
     assert!(coord_before.is_some());
     state.execute(TuiCommand::ToggleRawDiff);
     assert!(state.raw_diff);
-    assert!(state.flat.iter().any(|fr| fr.is_hunk_divider));
+    assert!(state.flat.iter().any(|fr| fr.is_hunk_divider()));
     let frame = state.render_frame(120, 40);
     assert!(frame.contains("@@ -"));
     state.execute(TuiCommand::ToggleRawDiff);
@@ -500,7 +500,7 @@ fn test_expand_all_merges_and_reset_restores() {
     let row_in_file = state
         .flat
         .iter()
-        .position(|fr| fr.file_idx == fi && !fr.is_file_header)
+        .position(|fr| fr.file_idx == fi && !fr.is_file_header())
         .unwrap();
     state.jump_to_row(row_in_file, false);
     state.reset_current_hunk();

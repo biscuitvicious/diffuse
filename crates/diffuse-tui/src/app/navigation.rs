@@ -49,7 +49,7 @@ impl AppState {
         let cur_fi = self.current_file_idx();
         let mut best: Option<(usize, u32)> = None;
         for (i, item) in self.flat.iter().enumerate() {
-            if item.file_idx != cur_fi || item.is_file_header {
+            if item.file_idx != cur_fi || !item.is_diff_row() {
                 continue;
             }
             if let Some(c) = self.flat_row_coord(item) {
@@ -276,7 +276,7 @@ impl AppState {
         if self
             .flat
             .get(self.row_idx)
-            .is_some_and(|r| r.is_file_header)
+            .is_some_and(|r| r.is_file_header())
             && let Some(h) = self.hunk_starts.iter().find(|h| h.file == cur_fi)
         {
             return h.flat;

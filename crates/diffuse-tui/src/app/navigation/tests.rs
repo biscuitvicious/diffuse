@@ -231,7 +231,7 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
         "goto_file_idx must land directly on the file banner row"
     );
     assert!(
-        state.flat[state.row_idx].is_file_header,
+        state.flat[state.row_idx].is_file_header(),
         "row must be the file header banner"
     );
 
@@ -510,7 +510,7 @@ fn test_next_and_prev_file_land_banner_at_row_zero() {
     assert_eq!(state.current_file_idx(), 1, "navigates to file 1 (b.rs)");
     let b_banner = state.first_row_of_file(1);
     assert_eq!(state.row_idx, b_banner, "lands on b.rs banner");
-    assert!(state.flat[state.row_idx].is_file_header);
+    assert!(state.flat[state.row_idx].is_file_header());
     let (starts, _, _, total_vis_lines) = state.visual_geometry(state.last_content_width);
     let max_rows = state.viewport_height.max(4);
     let max_scroll = total_vis_lines.saturating_sub(max_rows);
@@ -1011,7 +1011,7 @@ fn test_hunk_jump_from_banner_counts_as_inside_first_hunk() {
 
     // Cursor on the file banner counts as inside hunk #1: J skips to H2.
     state.row_idx = 0;
-    assert!(state.flat[state.row_idx].is_file_header);
+    assert!(state.flat[state.row_idx].is_file_header());
     state.next_hunk();
     assert_eq!(
         state.row_idx, state.hunk_starts[1].flat,
@@ -1114,7 +1114,7 @@ index 1111111..2222222 100644
 
     // J from the hunkless banner falls back to plain row order.
     state.row_idx = 0;
-    assert!(state.flat[state.row_idx].is_file_header);
+    assert!(state.flat[state.row_idx].is_file_header());
     state.next_hunk();
     let tracked_hunk = state
         .hunk_starts
@@ -1273,7 +1273,7 @@ fn test_hunk_divider_selectable_navigation() {
         crate::render::DiffuseTheme::DEFAULT,
     );
     state.last_content_width = 80;
-    assert!(state.flat[0].is_file_header);
+    assert!(state.flat[0].is_file_header());
     state.row_idx = 0;
     state.vis_line = 0;
 
@@ -1355,5 +1355,38 @@ index 000..111 100644
     assert!(
         state.is_cursor_on_bottom_divider().is_some(),
         "move_bottom (G) must position cursor on bottom gap divider"
+    );
+
+    let last = state.flat.last().unwrap();
+    assert!(
+        last.is_bottom_gap_divider(),
+        "last flat row must be bottom gap divider"
+    );
+    assert!(
+        !last.is_diff_row(),
+        "bottom gap divider must not be a diff row"
+    );
+    assert_eq!(
+        state.vis_line, 0,
+        "vis_line must be 0 on first-class divider row"
+    );
+
+    // Move up with k -> moves to last diff row (row_idx = last - 1)
+    state.move_up();
+    assert_eq!(state.row_idx, state.flat.len() - 2);
+    assert_eq!(state.is_cursor_on_bottom_divider(), None);
+
+    // Move down with j -> moves back to bottom gap divider (row_idx = last)
+    state.move_down();
+    assert_eq!(state.row_idx, state.flat.len() - 1);
+    assert_eq!(state.is_cursor_on_bottom_divider(), Some(0));
+
+    // Pressing Enter expands context below
+    let gap_before = state.hunk_trailing_gap(0);
+    state.execute(crate::TuiCommand::ToggleCollapseFile(None));
+    let gap_after = state.hunk_trailing_gap(0);
+    assert!(
+        gap_after < gap_before,
+        "Enter on bottom divider expands context below"
     );
 }

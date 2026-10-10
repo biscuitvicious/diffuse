@@ -112,7 +112,7 @@ impl AppState {
                 if self
                     .flat
                     .get(self.row_idx)
-                    .is_some_and(|fr| fr.is_file_header)
+                    .is_some_and(|fr| fr.is_file_header())
                 {
                     self.toggle_current_file_collapse();
                 } else if let Some((fi, hi)) = self.is_cursor_on_hunk_divider() {
@@ -255,7 +255,6 @@ impl AppState {
                     let starts = &geo.starts;
                     let counts = &geo.counts;
                     let nav_counts = &geo.nav_counts;
-                    let seg_counts = &geo.seg_counts;
                     let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
                         HashMap::new()
                     } else {
@@ -320,7 +319,7 @@ impl AppState {
                             // header toggles the file — the click is swallowed
                             // and does not select the row.
                             if let Some(item) = self.flat.get(i)
-                                && item.is_file_header
+                                && item.is_file_header()
                             {
                                 let is_binary = self
                                     .output
@@ -343,24 +342,15 @@ impl AppState {
 
                             if let Some(item) = self.flat.get(i)
                                 && !self.raw_diff
-                                && i == self.last_row_of_file(item.file_idx)
-                                && self.hunk_trailing_gap(item.file_idx) > 0
+                                && item.is_bottom_gap_divider()
                             {
-                                let row_segs = seg_counts[i];
-                                let note_lines = geo.callouts.get(&i).map_or(0, Vec::len);
-                                let bottom_start = s + div_lines + row_segs + note_lines;
-                                if target_vis >= bottom_start {
-                                    let seg_off = target_vis - bottom_start;
-                                    let gap = self.hunk_trailing_gap(item.file_idx);
-                                    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
-                                    if wrapped_glyph_hit(&txt, "▲", seg_off, col, cw) {
-                                        let last_hi = self.output.files[item.file_idx]
-                                            .hunks
-                                            .len()
-                                            .saturating_sub(1);
-                                        self.expand_hunk_below(item.file_idx, last_hi);
-                                        break;
-                                    }
+                                let seg_off = target_vis - s;
+                                let gap = self.hunk_trailing_gap(item.file_idx);
+                                let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
+                                if wrapped_glyph_hit(&txt, "▲", seg_off, col, cw) {
+                                    let last_hi = item.hunk_idx().unwrap_or(0);
+                                    self.expand_hunk_below(item.file_idx, last_hi);
+                                    break;
                                 }
                             }
 

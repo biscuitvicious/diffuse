@@ -656,7 +656,7 @@ index 3333333..4444444 100644
         "stays on banana.rs after confirmation"
     );
     assert!(
-        s.flat[s.row_idx].is_file_header,
+        s.flat[s.row_idx].is_file_header(),
         "stays on the file banner row after confirmation"
     );
 }

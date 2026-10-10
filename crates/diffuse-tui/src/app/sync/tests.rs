@@ -106,7 +106,7 @@ fn test_streaming_append_file_multi_hunk_with_gap() {
     let plan_file_row = state
         .flat
         .iter()
-        .position(|fr| fr.file_idx == fi && fr.is_file_header)
+        .position(|fr| fr.file_idx == fi && fr.is_file_header())
         .expect("file header row for PLAN.md");
     state.jump_to_row(plan_file_row, false);
 

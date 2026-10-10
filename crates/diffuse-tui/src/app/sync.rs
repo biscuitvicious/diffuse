@@ -26,7 +26,7 @@ impl AppState {
         self.hunk_meta.push(meta);
 
         let file_header_idx = self.flat.len();
-        self.flat.push(Self::file_header_row(fi));
+        self.flat.push(FlatRow::file_header(fi));
 
         if !is_collapsed {
             if self.raw_diff {
@@ -36,26 +36,14 @@ impl AppState {
                     &file.hunks
                 };
                 for (hi, h) in hunks.iter().enumerate() {
-                    self.flat.push(FlatRow {
-                        file_idx: fi,
-                        hunk_idx: hi,
-                        row_idx: 0,
-                        is_file_header: false,
-                        is_hunk_divider: true,
-                    });
+                    self.flat.push(FlatRow::hunk_divider(fi, hi));
                     self.hunk_starts.push(HunkStart {
                         flat: self.flat.len() - 1,
                         file: fi,
                         hunk: hi,
                     });
                     for ri in 0..h.rows.len() {
-                        self.flat.push(FlatRow {
-                            file_idx: fi,
-                            hunk_idx: hi,
-                            row_idx: ri,
-                            is_file_header: false,
-                            is_hunk_divider: false,
-                        });
+                        self.flat.push(FlatRow::diff_row(fi, hi, ri));
                     }
                 }
             } else if !file.rows.is_empty() {
@@ -64,25 +52,14 @@ impl AppState {
                 for (hi, h) in file.hunks.iter().enumerate() {
                     for _ in 0..h.rows.len() {
                         if ri < file.rows.len() {
-                            self.flat.push(FlatRow {
-                                file_idx: fi,
-                                hunk_idx: hi,
-                                row_idx: ri,
-                                is_file_header: false,
-                                is_hunk_divider: false,
-                            });
+                            self.flat.push(FlatRow::diff_row(fi, hi, ri));
                             ri += 1;
                         }
                     }
                 }
                 while ri < file.rows.len() {
-                    self.flat.push(FlatRow {
-                        file_idx: fi,
-                        hunk_idx: hunk_count.saturating_sub(1),
-                        row_idx: ri,
-                        is_file_header: false,
-                        is_hunk_divider: false,
-                    });
+                    self.flat
+                        .push(FlatRow::diff_row(fi, hunk_count.saturating_sub(1), ri));
                     ri += 1;
                 }
                 self.hunk_starts
@@ -101,15 +78,13 @@ impl AppState {
                         hunk: hi,
                     });
                     for ri in 0..h.rows.len() {
-                        self.flat.push(FlatRow {
-                            file_idx: fi,
-                            hunk_idx: hi,
-                            row_idx: ri,
-                            is_file_header: false,
-                            is_hunk_divider: false,
-                        });
+                        self.flat.push(FlatRow::diff_row(fi, hi, ri));
                     }
                 }
+            }
+            if !self.raw_diff && crate::app::flat::file_trailing_gap(&file) > 0 {
+                let last_hi = file.hunks.len().saturating_sub(1);
+                self.flat.push(FlatRow::bottom_gap(fi, last_hi));
             }
         }
 
@@ -117,7 +92,7 @@ impl AppState {
         self.sync_file_notes(fi);
 
         if self.flat.len() == 1
-            && self.flat[0].is_file_header
+            && self.flat[0].is_file_header()
             && self.row_idx == 0
             && self.output.files.len() == 1
             && let Some(pos) = self
@@ -151,11 +126,11 @@ impl AppState {
         }
 
         if let Some(item) = prev_item
-            && item.is_file_header
+            && item.is_file_header()
             && self
                 .flat
                 .get(self.row_idx)
-                .is_some_and(|r| r.is_file_header && r.file_idx == item.file_idx)
+                .is_some_and(|r| r.is_file_header() && r.file_idx == item.file_idx)
         {
             let cw = self.effective_content_width();
             let max_vis = self.row_seg_count(self.row_idx, cw).saturating_sub(1);

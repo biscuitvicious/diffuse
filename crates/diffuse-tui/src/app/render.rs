@@ -10,7 +10,7 @@ use ratatui::{
 use crate::{
     core::parse::RowKind,
     render::{ColorExt, render_raw_row, render_row_segment, slice_by_visual_width},
-    types::StickyHeaderInfo,
+    types::{FlatRowKind, StickyHeaderInfo},
     view::{
         bottom_ribbon_lines, clamp_or_pad_ansi,
         header::{render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line},
@@ -194,7 +194,9 @@ impl AppState {
         let screen_y = old_vis.saturating_sub(self.scroll);
 
         let cur_hunk_hi = self.current_hunk();
-        let is_sep_row = self.current_flat_row().is_some_and(|fr| fr.is_hunk_divider);
+        let is_sep_row = self
+            .current_flat_row()
+            .is_some_and(|fr| fr.is_hunk_divider());
 
         let (file, target_new, target_old) = {
             let Some(row) = self.current_flat_row() else {
@@ -256,7 +258,7 @@ impl AppState {
                     && self
                         .flat
                         .get(hs.flat - 1)
-                        .is_some_and(|fr| fr.is_hunk_divider)
+                        .is_some_and(|fr| fr.is_hunk_divider())
                 {
                     idx = Some(hs.flat - 1);
                 } else {
@@ -330,7 +332,7 @@ impl AppState {
             let mut best = None;
             let mut best_diff = u32::MAX;
             for (i, item) in self.flat.iter().enumerate() {
-                if item.file_idx != file || item.is_file_header {
+                if item.file_idx != file || !item.is_diff_row() {
                     continue;
                 }
                 if let Some(c) = self.flat_row_coord(item) {
@@ -928,130 +930,162 @@ impl AppState {
                 0
             };
 
-            if item.is_file_header {
-                let file_obj = &self.output.files[item.file_idx];
-                let is_collapsed = self.collapsed_files.contains(&item.file_idx);
-                let seg_count = seg_counts[idx];
-                let common_prefix = self.output.common_directory_prefix();
-                for s_idx in 0..seg_count {
-                    if vis_i >= content_start_vis && vis_i < content_end_vis {
-                        let is_selected = idx == self.row_idx && self.vis_line == s_idx;
-                        let is_current = item.file_idx == self.current_file_idx();
-                        let text_cols = content_width.max(1);
-                        let seg_start = s_idx * text_cols;
-                        line_src.push(Some(idx));
-                        lines.push(crate::view::diff_grid::render_file_header_segment(
-                            file_obj,
-                            crate::render::Badge {
-                                idx: item.file_idx,
-                                total: self.output.files.len(),
-                            },
-                            is_collapsed,
-                            is_selected,
-                            is_current,
-                            in_band,
-                            seg_start,
-                            text_cols,
-                            &self.theme,
-                            common_prefix.as_deref(),
-                        ));
-                    }
-                    vis_i += 1;
-                }
-            } else if item.is_hunk_divider {
-                let seg_count = seg_counts[idx];
-                let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
-                    &self.output.files[item.file_idx].raw_hunks
-                } else {
-                    &self.output.files[item.file_idx].hunks
-                };
-                let h = &hunks[item.hunk_idx];
-                let sep_text = format!(
-                    "@@ -{},{} +{},{} @@",
-                    h.old_start, h.old_count, h.new_start, h.new_count
-                );
-                for s_idx in 0..seg_count {
-                    if vis_i >= content_start_vis && vis_i < content_end_vis {
-                        let is_selected = idx == self.row_idx && self.vis_line == s_idx;
-                        let text_cols = content_width.max(1);
-                        let start_col = s_idx * text_cols;
-                        let piece = slice_by_visual_width(&sep_text, start_col, text_cols);
-                        let is_last_seg = s_idx + 1 == seg_count;
-                        line_src.push(Some(idx));
-                        lines.push(render_raw_row(
-                            RowKind::Ctx,
-                            "",
-                            &piece,
-                            is_selected,
-                            in_band && !is_selected,
-                            is_last_seg,
-                            &self.theme,
-                        ));
-                    }
-                    vis_i += 1;
-                }
-            } else if let Some(r) = self.row_of(item) {
-                let seg_count = seg_counts[idx];
-                for s_idx in 0..seg_count {
-                    if vis_i >= content_start_vis && vis_i < content_end_vis {
-                        let is_selected = idx == self.row_idx && self.vis_line == div_segs + s_idx;
-                        let pfx = if s_idx == 0 {
-                            crate::render::styled_prefix(
-                                r.kind,
-                                r.mov_side,
-                                r.group,
-                                r.new_line,
-                                r.old_line,
-                                &r.runs,
-                                in_hunk_extent,
+            match item.kind {
+                FlatRowKind::FileHeader => {
+                    let file_obj = &self.output.files[item.file_idx];
+                    let is_collapsed = self.collapsed_files.contains(&item.file_idx);
+                    let seg_count = seg_counts[idx];
+                    let common_prefix = self.output.common_directory_prefix();
+                    for s_idx in 0..seg_count {
+                        if vis_i >= content_start_vis && vis_i < content_end_vis {
+                            let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                            let is_current = item.file_idx == self.current_file_idx();
+                            let text_cols = content_width.max(1);
+                            let seg_start = s_idx * text_cols;
+                            line_src.push(Some(idx));
+                            lines.push(crate::view::diff_grid::render_file_header_segment(
+                                file_obj,
+                                crate::render::Badge {
+                                    idx: item.file_idx,
+                                    total: self.output.files.len(),
+                                },
+                                is_collapsed,
+                                is_selected,
+                                is_current,
+                                in_band,
+                                seg_start,
+                                text_cols,
                                 &self.theme,
-                            )
-                        } else {
-                            "\x1b[38;5;242m      \x1b[39m".to_string()
-                        };
-                        let row_text = r.text();
-                        let rendered_row = if self.raw_diff {
-                            let prefix_str = pfx.as_str();
-                            let text_cols = content_width.saturating_sub(6).max(1);
+                                common_prefix.as_deref(),
+                            ));
+                        }
+                        vis_i += 1;
+                    }
+                }
+                FlatRowKind::HunkDivider { hunk_idx } => {
+                    let seg_count = seg_counts[idx];
+                    let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
+                        &self.output.files[item.file_idx].raw_hunks
+                    } else {
+                        &self.output.files[item.file_idx].hunks
+                    };
+                    let h = &hunks[hunk_idx];
+                    let sep_text = format!(
+                        "@@ -{},{} +{},{} @@",
+                        h.old_start, h.old_count, h.new_start, h.new_count
+                    );
+                    for s_idx in 0..seg_count {
+                        if vis_i >= content_start_vis && vis_i < content_end_vis {
+                            let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                            let text_cols = content_width.max(1);
                             let start_col = s_idx * text_cols;
-                            let piece = slice_by_visual_width(&row_text, start_col, text_cols);
+                            let piece = slice_by_visual_width(&sep_text, start_col, text_cols);
                             let is_last_seg = s_idx + 1 == seg_count;
-                            render_raw_row(
-                                r.kind,
-                                prefix_str,
+                            line_src.push(Some(idx));
+                            lines.push(render_raw_row(
+                                RowKind::Ctx,
+                                "",
                                 &piece,
                                 is_selected,
                                 in_band && !is_selected,
                                 is_last_seg,
                                 &self.theme,
-                            )
-                        } else {
-                            let text_cols = content_width.saturating_sub(6).max(1);
-                            let seg_start = s_idx * text_cols;
-                            let seg_end = seg_start + text_cols;
-                            let del_text = r.del_text();
-                            let spans = r.spans();
-                            render_row_segment(
-                                &row_text,
-                                del_text.as_deref(),
-                                &spans,
-                                r.kind,
-                                &r.runs,
-                                seg_start,
-                                seg_end,
-                                &pfx,
-                                is_selected,
-                                in_band && !is_selected,
-                                self.col_offset,
-                                self.word_diff,
-                                self.syntax_on,
-                                &self.theme,
-                            )
-                        };
-                        line_src.push(Some(idx));
-                        lines.push(rendered_row);
+                            ));
+                        }
+                        vis_i += 1;
                     }
-                    vis_i += 1;
+                }
+                FlatRowKind::BottomGapDivider { .. } => {
+                    let gap = self.hunk_trailing_gap(item.file_idx);
+                    let bot_segs = seg_counts[idx];
+                    let is_cur = item.file_idx == self.current_file_idx() && idx == self.row_idx;
+                    let text_cols = content_width.max(1);
+                    for s_idx in 0..bot_segs {
+                        if vis_i >= content_start_vis && vis_i < content_end_vis {
+                            let is_selected = idx == self.row_idx && self.vis_line == s_idx;
+                            let seg_start = s_idx * text_cols;
+                            let bottom_div =
+                                crate::view::diff_grid::render_bottom_gap_divider_segment(
+                                    gap,
+                                    is_cur,
+                                    is_selected,
+                                    seg_start,
+                                    content_width,
+                                    &self.theme,
+                                );
+                            line_src.push(Some(idx));
+                            lines.push(bottom_div);
+                        }
+                        vis_i += 1;
+                    }
+                }
+                FlatRowKind::DiffRow { .. } => {
+                    let Some(r) = self.row_of(item) else {
+                        continue;
+                    };
+                    let seg_count = seg_counts[idx];
+                    for s_idx in 0..seg_count {
+                        if vis_i >= content_start_vis && vis_i < content_end_vis {
+                            let is_selected =
+                                idx == self.row_idx && self.vis_line == div_segs + s_idx;
+                            let pfx = if s_idx == 0 {
+                                crate::render::styled_prefix(
+                                    r.kind,
+                                    r.mov_side,
+                                    r.group,
+                                    r.new_line,
+                                    r.old_line,
+                                    &r.runs,
+                                    in_hunk_extent,
+                                    &self.theme,
+                                )
+                            } else {
+                                "\x1b[38;5;242m      \x1b[39m".to_string()
+                            };
+                            let row_text = r.text();
+                            let rendered_row = if self.raw_diff {
+                                let prefix_str = pfx.as_str();
+                                let text_cols = content_width.saturating_sub(6).max(1);
+                                let start_col = s_idx * text_cols;
+                                let piece = slice_by_visual_width(&row_text, start_col, text_cols);
+                                let is_last_seg = s_idx + 1 == seg_count;
+                                render_raw_row(
+                                    r.kind,
+                                    prefix_str,
+                                    &piece,
+                                    is_selected,
+                                    in_band && !is_selected,
+                                    is_last_seg,
+                                    &self.theme,
+                                )
+                            } else {
+                                let text_cols = content_width.saturating_sub(6).max(1);
+                                let seg_start = s_idx * text_cols;
+                                let seg_end = seg_start + text_cols;
+                                let del_text = r.del_text();
+                                let spans = r.spans();
+                                render_row_segment(
+                                    &row_text,
+                                    del_text.as_deref(),
+                                    &spans,
+                                    r.kind,
+                                    &r.runs,
+                                    seg_start,
+                                    seg_end,
+                                    &pfx,
+                                    is_selected,
+                                    in_band && !is_selected,
+                                    self.col_offset,
+                                    self.word_diff,
+                                    self.syntax_on,
+                                    &self.theme,
+                                )
+                            };
+                            line_src.push(Some(idx));
+                            lines.push(rendered_row);
+                        }
+                        vis_i += 1;
+                    }
                 }
             }
 
@@ -1091,36 +1125,6 @@ impl AppState {
                             nline.clone()
                         };
                         lines.push(clamp_or_pad_ansi(&line_str, content_width));
-                    }
-                    vis_i += 1;
-                }
-            }
-
-            if !self.raw_diff
-                && idx == self.last_row_of_file(item.file_idx)
-                && self.hunk_trailing_gap(item.file_idx) > 0
-            {
-                let gap = self.hunk_trailing_gap(item.file_idx);
-                let bot_segs = self.bottom_gap_seg_count(item.file_idx, content_width);
-                let is_cur = item.file_idx == self.current_file_idx() && idx == self.row_idx;
-                let text_cols = content_width.max(1);
-                let note_count = callouts.get(&idx).map_or(0, Vec::len);
-                let bottom_div_vis_start = div_segs + seg_counts[idx] + note_count;
-                for s_idx in 0..bot_segs {
-                    if vis_i >= content_start_vis && vis_i < content_end_vis {
-                        let is_selected =
-                            idx == self.row_idx && self.vis_line == bottom_div_vis_start + s_idx;
-                        let seg_start = s_idx * text_cols;
-                        let bottom_div = crate::view::diff_grid::render_bottom_gap_divider_segment(
-                            gap,
-                            is_cur,
-                            is_selected,
-                            seg_start,
-                            content_width,
-                            &self.theme,
-                        );
-                        line_src.push(Some(idx));
-                        lines.push(bottom_div);
                     }
                     vis_i += 1;
                 }

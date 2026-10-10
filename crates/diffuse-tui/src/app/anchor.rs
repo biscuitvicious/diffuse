@@ -56,7 +56,7 @@ impl AppState {
         };
         let coord_of = |pos: usize| -> Option<CursorAnchor> {
             let fr = self.flat.get(pos)?;
-            if fr.is_file_header || fr.is_hunk_divider {
+            if !fr.is_diff_row() {
                 return None;
             }
             let r = self.row_of(fr)?;
@@ -75,13 +75,19 @@ impl AppState {
 
         let (div_vis, below, below_text_screen_y, above, above_text_screen_y) = if is_bottom {
             let div_vis = self
-                .bottom_divider_vis_line_from_layout(fi, cw, &starts, &seg_counts, &callouts)
+                .bottom_divider_vis_line_from_layout(fi, &starts)
                 .unwrap_or_else(|| self.cursor_visual_line());
-            let last_row = self.last_row_of_file(fi);
-            let above = coord_of(last_row);
+            let bot_row = self
+                .flat
+                .iter()
+                .rposition(|r| r.file_idx == fi && r.is_bottom_gap_divider());
+            let last_diff = bot_row
+                .and_then(|r| r.checked_sub(1))
+                .unwrap_or_else(|| self.last_row_of_file(fi));
+            let above = coord_of(last_diff);
             let above_text_screen_y = starts
-                .get(last_row)
-                .map(|s| s + text_off(last_row))
+                .get(last_diff)
+                .map(|s| s + text_off(last_diff))
                 .map(|vis| (vis as isize) - (self.scroll as isize));
             (div_vis, None, None, above, above_text_screen_y)
         } else {
@@ -179,7 +185,7 @@ impl AppState {
             starts[pos] + off
         };
         let div_vis = if is_bottom {
-            self.bottom_divider_vis_line_from_layout(fi, cw, &starts, &seg_counts, &callouts)
+            self.bottom_divider_vis_line_from_layout(fi, &starts)
         } else {
             self.hunk_starts
                 .iter()

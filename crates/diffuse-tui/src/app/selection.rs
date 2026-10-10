@@ -77,7 +77,7 @@ impl AppState {
             let fs = self.first_row_of_file(c_file);
             let fe = self.last_row_of_file(c_file);
             for i in fs.max(lo)..=fe.min(hi) {
-                if i < set.len() {
+                if i < set.len() && !self.flat[i].is_bottom_gap_divider() {
                     set[i] = true;
                 }
             }

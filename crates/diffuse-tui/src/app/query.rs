@@ -5,7 +5,7 @@ use crate::{
         pipeline::context_line_runs,
         wire::{OutputFile, OutputRow, OutputRun, PipelineOutput},
     },
-    types::FlatRow,
+    types::{FlatRow, FlatRowKind},
 };
 
 use super::AppState;
@@ -20,9 +20,9 @@ impl AppState {
         raw_diff: bool,
         fr: &FlatRow,
     ) -> Option<&'a OutputRow> {
-        if fr.is_file_header || fr.is_hunk_divider {
+        let FlatRowKind::DiffRow { hunk_idx, row_idx } = fr.kind else {
             return None;
-        }
+        };
         let file = output.files.get(fr.file_idx).unwrap_or_else(|| {
             panic!(
                 "FlatRow file_idx {} out of bounds (output has {} files)",
@@ -36,47 +36,47 @@ impl AppState {
             } else {
                 &file.hunks
             };
-            let hunk = hunks.get(fr.hunk_idx).unwrap_or_else(|| {
+            let hunk = hunks.get(hunk_idx).unwrap_or_else(|| {
                 panic!(
                     "FlatRow hunk_idx {} out of bounds for '{}' (has {} hunks)",
-                    fr.hunk_idx,
+                    hunk_idx,
                     file.path,
                     hunks.len()
                 )
             });
-            Some(hunk.rows.get(fr.row_idx).unwrap_or_else(|| {
+            Some(hunk.rows.get(row_idx).unwrap_or_else(|| {
                 panic!(
                     "FlatRow row_idx {} out of bounds for '{}' hunk {} (has {} rows)",
-                    fr.row_idx,
+                    row_idx,
                     file.path,
-                    fr.hunk_idx,
+                    hunk_idx,
                     hunk.rows.len()
                 )
             }))
         } else if !file.rows.is_empty() {
-            Some(file.rows.get(fr.row_idx).unwrap_or_else(|| {
+            Some(file.rows.get(row_idx).unwrap_or_else(|| {
                 panic!(
                     "FlatRow row_idx {} out of bounds for '{}' (has {} visible rows)",
-                    fr.row_idx,
+                    row_idx,
                     file.path,
                     file.rows.len()
                 )
             }))
         } else {
-            let hunk = file.hunks.get(fr.hunk_idx).unwrap_or_else(|| {
+            let hunk = file.hunks.get(hunk_idx).unwrap_or_else(|| {
                 panic!(
                     "FlatRow hunk_idx {} out of bounds for '{}' (has {} hunks)",
-                    fr.hunk_idx,
+                    hunk_idx,
                     file.path,
                     file.hunks.len()
                 )
             });
-            Some(hunk.rows.get(fr.row_idx).unwrap_or_else(|| {
+            Some(hunk.rows.get(row_idx).unwrap_or_else(|| {
                 panic!(
                     "FlatRow row_idx {} out of bounds for '{}' hunk {} (has {} rows)",
-                    fr.row_idx,
+                    row_idx,
                     file.path,
-                    fr.hunk_idx,
+                    hunk_idx,
                     hunk.rows.len()
                 )
             }))
@@ -114,8 +114,7 @@ impl AppState {
     ) -> Option<usize> {
         self.flat.iter().position(|fr| {
             fr.file_idx == file_idx
-                && !fr.is_file_header
-                && !fr.is_hunk_divider
+                && fr.is_diff_row()
                 && self.row_of(fr).is_some_and(|r| {
                     if let Some(nl) = new_line {
                         r.new_line == Some(nl)

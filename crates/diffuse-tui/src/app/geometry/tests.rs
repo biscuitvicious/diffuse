@@ -287,7 +287,7 @@ fn test_file_header_wrapping_seg_count() {
         crate::render::DiffuseTheme::DEFAULT,
     );
     let header_idx = 0;
-    assert!(state.flat[header_idx].is_file_header);
+    assert!(state.flat[header_idx].is_file_header());
 
     // At 120 width, fits in 1 visual line
     let seg120 = state.row_seg_count(header_idx, 120);
