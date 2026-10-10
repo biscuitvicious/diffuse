@@ -454,6 +454,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "difflib",
+ "diffuse-algo",
  "diffuse-core",
  "diffuse-render",
  "diffuse-syntax",

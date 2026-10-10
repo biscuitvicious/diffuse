@@ -6,6 +6,8 @@
 //! This crate re-exports the workspace subcrates under a unified `diffuse::*`
 //! namespace:
 //!
+//! - [`diffuse::algo`](algo): Language-agnostic algorithms, DP solvers,
+//!   pushdown automata, and foundational data structures.
 //! - [`diffuse::core`](core): Core AST diff parsing, DP clustering, sequence
 //!   alignment, token classification, and wire formats.
 //! - [`diffuse::render`](render): Terminal ANSI SGR styling, diff color themes,
@@ -35,41 +37,61 @@
 //! assert!(!rendered.is_empty());
 //! ```
 
+pub use diffuse_algo as algo;
 pub use diffuse_core as core;
 pub use diffuse_render as render;
 pub use diffuse_syntax as syntax;
 pub use diffuse_tui as tui;
 
+// First-class architectural modules lifted to the diffuse:: root
+pub use diffuse_core::{git, logging, notes, streaming, wire};
+pub use diffuse_render::{ansi, theme};
+
+/// Initialize diffuse tracing and logging subscriber.
+pub use diffuse_core::logging::init_tracing_subscriber as init_logging;
+
 // Top-level direct re-exports for high-frequency engine primitives
+pub use diffuse_algo::{DiffEngine, LcsEngine, MyersOnD, PrefixMatcher};
 pub use diffuse_core::{
     DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
     DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
-    DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, PipelineInput, PipelineOptions, Repo,
-    ReviewTarget, RevisionRange,
+    DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB, PipelineInput,
+    PipelineOptions, Repo, ReviewNote, ReviewTarget, RevisionRange, Side,
+    notes::{add_note, default_notes_path, load_notes, save_notes},
+    parse::{Hunk, Row, RowKind},
     pipeline::{run_pipeline, run_pipeline_full},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
 };
 pub use diffuse_render::{
-    DiffuseTheme, MarkdownOptions, default_theme, render_file_diff, render_file_markdown,
-    render_markdown_output, render_pipeline_output,
+    DiffuseTheme, MarkdownOptions,
+    ansi::{SGR_RESET, strip_ansi},
+    default_theme, render_file_diff, render_file_markdown, render_markdown_output,
+    render_pipeline_output, render_raw_file_diff, render_raw_pipeline_output,
 };
+pub use diffuse_syntax::{TokenColor, profile::LangProfile, registry::lang_profile};
 pub use diffuse_tui::{run_interactive_tui, run_tui};
 
 /// Common imports and prelude traits for diffuse consumers.
 pub mod prelude {
+    pub use diffuse_algo::{DiffEngine, LcsEngine, MyersOnD, PrefixMatcher};
     pub use diffuse_core::{
-        DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT,
-        LineHash, PipelineInput, PipelineOptions, Repo, ReviewTarget, RevisionRange,
+        DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
+        DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
+        DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB, PipelineInput,
+        PipelineOptions, Repo, ReviewNote, ReviewTarget, RevisionRange, Side,
         merge::RunKind,
-        parse::{Row, RowKind},
+        notes::{add_note, default_notes_path, load_notes, save_notes},
+        parse::{Hunk, Row, RowKind},
         pipeline::{run_pipeline, run_pipeline_full},
         wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
     };
     pub use diffuse_render::{
-        DiffuseTheme, MarkdownOptions, default_theme, render_file_diff, render_file_markdown,
-        render_markdown_output, render_pipeline_output,
+        DiffuseTheme, MarkdownOptions,
+        ansi::{SGR_RESET, strip_ansi},
+        default_theme, render_file_diff, render_file_markdown, render_markdown_output,
+        render_pipeline_output, render_raw_file_diff, render_raw_pipeline_output,
     };
-    pub use diffuse_syntax::registry::lang_profile;
+    pub use diffuse_syntax::{TokenColor, profile::LangProfile, registry::lang_profile};
     pub use diffuse_tui::{run_interactive_tui, run_tui};
 }
 

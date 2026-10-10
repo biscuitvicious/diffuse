@@ -18,9 +18,9 @@ use std::{
 use clap::Parser;
 use serde::Serialize;
 
-use diffuse::core::{
-    DEFAULT_CONTEXT_LINES,
+use diffuse::{
     git::{load_git_repo, run_git},
+    prelude::*,
 };
 
 #[derive(Parser, Debug)]

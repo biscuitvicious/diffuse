@@ -7,15 +7,13 @@ use std::{
     process,
 };
 
-use diffuse::core::{
-    ReviewTarget,
+use diffuse::{
     git::is_inside_work_tree,
     notes::{
-        NoteStatus, ReviewNote, Side, add_note, default_notes_path, find_note_in_db,
-        generate_note_id, hash_line_content, load_notes, now_millis, reply_to_note_text,
-        save_notes, synthesize_source_lines, update_note_in_db,
+        find_note_in_db, generate_note_id, hash_line_content, now_millis, reply_to_note_text,
+        synthesize_source_lines, update_note_in_db,
     },
-    repo::Repo,
+    prelude::*,
 };
 
 use crate::{Args, NotesAction, NotesArgs, RevisionArgs, init_color_mode};

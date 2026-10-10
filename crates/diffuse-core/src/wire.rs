@@ -22,6 +22,7 @@ use crate::{
 pub use crate::parse::RowGroup;
 
 pub mod jsonl;
+pub use jsonl::{WireRecord, decode_jsonl_records, emit_file_jsonl};
 
 /// Identifies which side of a moved line an `OutputRow` represents.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]

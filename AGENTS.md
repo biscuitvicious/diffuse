@@ -18,7 +18,7 @@ $$\text{diffuse-algo} + \text{diffuse-syntax} \longrightarrow \text{diffuse-core
 
 | Crate | Directory | Purpose & Key Canonical Modules |
 | :--- | :--- | :--- |
-| **`diffuse`** | [`crates/diffuse/`](crates/diffuse/) | CLI binary entry point ([`src/main.rs`](crates/diffuse/src/main.rs)). |
+| **`diffuse`** | [`crates/diffuse/`](crates/diffuse/) | CLI binary entry point ([`src/main.rs`](crates/diffuse/src/main.rs)) and unified workspace library facade ([`src/lib.rs`](crates/diffuse/src/lib.rs)). |
 | **`diffuse-algo`** | [`crates/diffuse-algo/`](crates/diffuse-algo/) | Language-agnostic algorithms: Dyck language container pushdown automata ([`src/dyck.rs`](crates/diffuse-algo/src/dyck.rs)), `SmallStack`, Myers/affine-gap primitives. |
 | **`diffuse-syntax`** | [`crates/diffuse-syntax/`](crates/diffuse-syntax/) | Syntactic classifications, Markdown parser ([`src/markdown.rs`](crates/diffuse-syntax/src/markdown.rs)), language profiles & operator tables ([`src/profile.rs`](crates/diffuse-syntax/src/profile.rs), [`src/language/`](crates/diffuse-syntax/src/language/)). |
 | **`diffuse-core`** | [`crates/diffuse-core/`](crates/diffuse-core/) | Core diff analysis pipeline: LCS dynamic programming ([`src/lcs.rs`](crates/diffuse-core/src/lcs.rs)), token classification & entropy ([`src/token.rs`](crates/diffuse-core/src/token.rs)), alignment tape ([`src/tape.rs`](crates/diffuse-core/src/tape.rs)), clustering, git access ([`src/repo.rs`](crates/diffuse-core/src/repo.rs)), and the public wire contract ([`src/wire.rs`](crates/diffuse-core/src/wire.rs)). |

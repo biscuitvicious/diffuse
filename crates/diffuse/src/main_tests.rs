@@ -2,7 +2,7 @@ use std::{env, sync::Mutex};
 
 use clap::Parser;
 
-use diffuse::DiffuseTheme;
+use diffuse::prelude::*;
 
 use super::{Args, SubCommand, route_mode};
 
@@ -168,8 +168,6 @@ fn test_cli_args_jobs_flags() {
 
 #[test]
 fn test_standalone_piped_notes_inactivity_and_explicit_file() {
-    use diffuse::core::notes::{ReviewNote, Side, add_note, save_notes};
-
     let diff = "\
 diff --git a/test.rs b/test.rs
 --- a/test.rs
@@ -243,7 +241,7 @@ diff --git a/test.rs b/test.rs
     };
     let _ = super::process_input(input_add_no_file, &base_args);
     // db on disk was NOT modified
-    let reloaded = diffuse::core::notes::load_notes(&notes_path);
+    let reloaded = load_notes(&notes_path);
     assert_eq!(
         reloaded
             .get("some_repo@commit")

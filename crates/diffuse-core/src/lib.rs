@@ -6,7 +6,7 @@ pub use cluster::dp::{
 };
 pub use git::{DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, ENGINE_CONTEXT};
 pub use lcs::DEFAULT_TOKEN_PRODUCT_CAP;
-pub use notes::{LineHash, NoteStatus, ReviewNote};
+pub use notes::{LineHash, NoteStatus, NotesDB, ReviewNote, Side};
 pub use parse::RowGroup;
 pub use pipeline::{PipelineInput, PipelineOptions};
 pub use repo::{Repo, ReviewTarget, RevisionRange, parse_git_rev_and_pathspecs};

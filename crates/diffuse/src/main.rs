@@ -17,25 +17,12 @@ use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 use diffuse::{
-    DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
-    DEFAULT_EXPAND_LINES, DEFAULT_TOKEN_PRODUCT_CAP,
-    core::{
-        DEFAULT_CONTEXT_LINES, ENGINE_CONTEXT, PipelineOptions, Repo, ReviewTarget,
-        git::{is_inside_work_tree, load_git_repo_with_notes},
-        notes::{
-            NoteStatus, NotesDB, ReviewNote, Side, add_note, default_notes_path, load_notes,
-            remove_notes, reply_to_note_text, save_notes, set_note_status_in_repo,
-            update_note_in_db,
-        },
-        pipeline::run_pipeline_full,
-        streaming::{spawn_git_stream_pipeline, stream_diff_pipeline},
-        wire::PipelineOutput,
-    },
-    render::{
-        DiffuseTheme, MarkdownOptions, render_file_diff, render_markdown_output,
-        render_raw_file_diff, render_raw_pipeline_output,
-    },
-    tui::run_tui,
+    git::{is_inside_work_tree, load_git_repo_with_notes},
+    init_logging,
+    notes::{remove_notes, reply_to_note_text, set_note_status_in_repo, update_note_in_db},
+    prelude::*,
+    streaming::{self, spawn_git_stream_pipeline, stream_diff_pipeline},
+    wire::emit_file_jsonl,
 };
 
 mod notes_cli;
@@ -1328,7 +1315,7 @@ pub fn init_color_mode(color: &str, no_color: bool) -> bool {
 }
 
 fn main() -> io::Result<()> {
-    let _ = diffuse::core::logging::init_tracing_subscriber();
+    let _ = init_logging();
     let args = Args::parse();
 
     for dir in &args.directory {
@@ -1352,9 +1339,9 @@ fn main() -> io::Result<()> {
 
     let workers = args
         .jobs
-        .unwrap_or_else(diffuse::core::streaming::default_worker_count)
+        .unwrap_or_else(streaming::default_worker_count)
         .max(1);
-    diffuse::core::streaming::init_thread_pool(workers);
+    streaming::init_thread_pool(workers);
 
     let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
         match &args.command {
@@ -1590,7 +1577,7 @@ fn main() -> io::Result<()> {
                 for file in consumer {
                     let mut rendered = render_raw_file_diff(&file, None, &theme);
                     if !colorize {
-                        rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                        rendered = strip_ansi(&rendered).to_string();
                     }
                     if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                         if e.kind() == io::ErrorKind::BrokenPipe {
@@ -1603,7 +1590,7 @@ fn main() -> io::Result<()> {
                 for file in consumer {
                     let mut rendered = render_file_diff(&file, None, &theme, true);
                     if !colorize {
-                        rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                        rendered = strip_ansi(&rendered).to_string();
                     }
                     if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                         if e.kind() == io::ErrorKind::BrokenPipe {
@@ -1614,7 +1601,7 @@ fn main() -> io::Result<()> {
                 }
             }
             if colorize {
-                let _ = stdout.write_all(diffuse::render::ansi::SGR_RESET.as_bytes());
+                let _ = stdout.write_all(SGR_RESET.as_bytes());
             }
             let _ = stdout.flush();
         }
@@ -1676,12 +1663,12 @@ fn main() -> io::Result<()> {
                     return Err(e);
                 }
             }
-            let _ = stdout.write_all(diffuse::render::ansi::SGR_RESET.as_bytes());
+            let _ = stdout.write_all(SGR_RESET.as_bytes());
             let _ = stdout.flush();
         } else if is_jsonl {
             let mut stdout = io::stdout().lock();
             for file in consumer {
-                if let Err(e) = diffuse::core::wire::jsonl::emit_file_jsonl(&file, &mut stdout) {
+                if let Err(e) = emit_file_jsonl(&file, &mut stdout) {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         return Ok(());
                     }
@@ -1761,7 +1748,7 @@ fn main() -> io::Result<()> {
                 for out in &outputs {
                     let mut rendered = render_raw_pipeline_output(out, &theme);
                     if !colorize {
-                        rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                        rendered = strip_ansi(&rendered).to_string();
                     }
                     if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                         if e.kind() == io::ErrorKind::BrokenPipe {
@@ -1775,9 +1762,7 @@ fn main() -> io::Result<()> {
                 let mut stdout = io::stdout().lock();
                 for out in &outputs {
                     for file in &out.files {
-                        if let Err(e) =
-                            diffuse::core::wire::jsonl::emit_file_jsonl(file, &mut stdout)
-                        {
+                        if let Err(e) = emit_file_jsonl(file, &mut stdout) {
                             if e.kind() == io::ErrorKind::BrokenPipe {
                                 return Ok(());
                             }
@@ -1806,7 +1791,7 @@ fn main() -> io::Result<()> {
                 let output = process_input(*input, &args);
                 let mut rendered = render_raw_pipeline_output(&output, &theme);
                 if !colorize {
-                    rendered = diffuse::render::ansi::strip_ansi(&rendered).to_string();
+                    rendered = strip_ansi(&rendered).to_string();
                 }
                 let mut stdout = io::stdout().lock();
                 if let Err(e) = stdout.write_all(rendered.as_bytes()) {
@@ -1858,8 +1843,7 @@ fn main() -> io::Result<()> {
                 );
                 let mut stdout = io::stdout().lock();
                 for file in consumer {
-                    if let Err(e) = diffuse::core::wire::jsonl::emit_file_jsonl(&file, &mut stdout)
-                    {
+                    if let Err(e) = emit_file_jsonl(&file, &mut stdout) {
                         if e.kind() == io::ErrorKind::BrokenPipe {
                             return Ok(());
                         }
