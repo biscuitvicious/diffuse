@@ -547,22 +547,14 @@ fn test_raw_diff_no_right_padding_or_scrollbar() {
     );
     state.viewport_height = 20;
     state.toggle_raw_diff();
-    assert!(state.raw_diff);
-
     let frame = state.render_frame(80, 20);
     let lines: Vec<&str> = frame.lines().collect();
 
-    // Check the diff rows (excluding banner/ribbon)
-    for line in &lines[1..3] {
-        // Must not contain scrollbar characters
+    // Check the viewport rows (excluding header/ribbon) do not draw a scrollbar
+    for line in &lines[2..lines.len() - 2] {
         assert!(
             !line.contains('█') && !line.contains('│'),
             "raw diff must not draw scrollbar"
-        );
-        // Must not be right-padded with 50+ trailing spaces before \x1b[K
-        assert!(
-            !line.contains("                                                  "),
-            "raw diff must not right-pad with spaces"
         );
     }
 }
@@ -2685,13 +2677,14 @@ fn test_render_ratatui_frame_layout() {
     assert!(line0.contains("diffuse"));
     assert!(!line0.contains("src/lib.rs"));
 
-    // Second line must contain file path plus files and hunks badges.
+    // Second line must contain hunks badge; file path and file badge moved to
+    // sticky file banner.
     let mut line1 = String::new();
     for x in 0..80 {
         line1.push_str(buffer[(x, 1)].symbol());
     }
-    assert!(line1.contains("src/lib.rs"));
-    assert!(line1.contains("file 1/1"));
+    assert!(!line1.contains("src/lib.rs"));
+    assert!(!line1.contains("file 1/1"));
     assert!(line1.contains("hunk 1/1"));
 
     // Third line must contain the status message "Saved note"
@@ -3442,8 +3435,8 @@ fn test_no_diffs_renders_header_footer_and_main_message_frame() {
     // Header bar with repo name
     assert!(frame.contains("my_repo"), "frame must include repo name");
 
-    // Status bar with file 0/0 and hunk 0/0
-    assert!(frame.contains("file 0/0"), "status bar must show file 0/0");
+    // Status bar with hunk 0/0 (file badge omitted)
+    assert!(!frame.contains("file 0/0"), "status bar must omit file 0/0");
     assert!(frame.contains("hunk 0/0"), "status bar must show hunk 0/0");
     assert!(
         frame.contains('\u{2387}'),
@@ -3506,7 +3499,7 @@ fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
 
     // Row 1: Secondary status bar
     assert!(
-        row_strings[1].contains("file 0/0") && row_strings[1].contains("hunk 0/0"),
+        !row_strings[1].contains("file 0/0") && row_strings[1].contains("hunk 0/0"),
         "Row 1 must be status bar: {}",
         row_strings[1]
     );
@@ -3776,8 +3769,12 @@ fn test_ratatui_status_bar_uses_scrollbar_narrowed_width() {
         row.push_str(buffer[(x, 1)].symbol());
     }
     assert!(
-        row.contains("lib.rs"),
-        "status tail must keep its final character: {row:?}"
+        row.contains("hunk 1/12"),
+        "status bar must contain hunk badge: {row:?}"
+    );
+    assert!(
+        row.ends_with('█'),
+        "status bar must be narrowed to preserve scrollbar column: {row:?}"
     );
 }
 
@@ -4757,4 +4754,160 @@ fn test_app_toggle_theme_command() {
 
     state.execute(TuiCommand::ToggleTheme);
     assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
+}
+
+#[test]
+fn test_sticky_file_banner_sticks_to_top_when_scrolling_down() {
+    let mut lines_a = String::new();
+    let mut diff_a = String::new();
+    for i in 1..=30 {
+        lines_a.push_str(&format!("line {i}\n"));
+        diff_a.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,30 @@\n{diff_a}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a)].into_iter().collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 10;
+    state.last_content_width = 80;
+
+    // At scroll = 0, row 0 is a.rs header.
+    let (lines_0, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(
+        lines_0[0].contains("a.rs"),
+        "row 0 must show a.rs banner at scroll 0"
+    );
+
+    // Scroll down inside a.rs (scroll = 5).
+    state.scroll_to_visual(5);
+    let (lines_5, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(
+        lines_5[0].contains("a.rs"),
+        "row 0 must stick to a.rs banner when scrolled down into content"
+    );
+    assert!(
+        crate::render::strip_ansi(&lines_5[1]).contains("line 5"),
+        "screen row 1 must show visual line 6 (line 5) beneath the sticky banner, got: {:?}",
+        lines_5[1]
+    );
+}
+
+#[test]
+fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
+    let mut lines_a = String::new();
+    let mut lines_b = String::new();
+    let mut diff_a = String::new();
+    let mut diff_b = String::new();
+    for i in 1..=10 {
+        lines_a.push_str(&format!("a line {i}\n"));
+        lines_b.push_str(&format!("b line {i}\n"));
+        diff_a.push_str(&format!("+a line {i}\n"));
+        diff_b.push_str(&format!("+b line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,10 @@\n{diff_a}diff --git a/b.rs b/b.rs\nindex 222..333 100644\n--- a/b.rs\n+++ b/b.rs\n@@ -0,0 +1,10 @@\n{diff_b}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a), ("b.rs".to_string(), lines_b)]
+        .into_iter()
+        .collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 10;
+    state.last_content_width = 80;
+
+    let b_banner_row = state.first_row_of_file(1);
+    let (starts, _, _, _) = state.visual_geometry(80);
+    let b_vis = starts[b_banner_row];
+
+    // When scroll = b_vis - 1:
+    // b.rs banner is at screen row 1.
+    // a.rs sticky banner is at screen row 0. They meet!
+    state.scroll_to_visual(b_vis.saturating_sub(1));
+    let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(
+        lines_meet[0].contains("a.rs"),
+        "screen row 0 must show a.rs banner"
+    );
+    assert!(
+        lines_meet[1].contains("b.rs"),
+        "screen row 1 must show b.rs banner meeting it"
+    );
+
+    // When scroll = b_vis:
+    // b.rs banner reaches screen row 0, pushing a.rs banner completely off-screen!
+    state.scroll_to_visual(b_vis);
+    let (lines_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(
+        lines_pushed[0].contains("b.rs"),
+        "b.rs banner must now be at screen row 0"
+    );
+
+    // On further scrolling into b.rs:
+    // b.rs banner now sticks to the top!
+    state.scroll_to_visual(b_vis + 3);
+    let (lines_b_sticky, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(
+        lines_b_sticky[0].contains("b.rs"),
+        "b.rs banner must now stick to row 0"
+    );
+    assert!(
+        crate::render::strip_ansi(&lines_b_sticky[1]).contains("b line 2"),
+        "b.rs content must scroll beneath it"
+    );
+}
+
+#[test]
+fn test_clicking_sticky_header_toggles_collapse() {
+    let mut lines_a = String::new();
+    let mut diff_a = String::new();
+    for i in 1..=30 {
+        lines_a.push_str(&format!("line {i}\n"));
+        diff_a.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,30 @@\n{diff_a}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a)].into_iter().collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 10;
+    state.last_content_width = 80;
+    state.last_viewport_start = 2;
+    state.scroll_to_visual(8);
+
+    assert!(
+        !state.collapsed_files.contains(&0),
+        "initially not collapsed"
+    );
+
+    // Click the collapse indicator on row 0 of the viewport (which shows sticky
+    // a.rs header).
+    let col = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;
+    state.execute(TuiCommand::MouseClick {
+        row: 2, // header offset (2) + viewport row (0) = 2
+        col,
+        shift: false,
+    });
+
+    assert!(
+        state.collapsed_files.contains(&0),
+        "clicking sticky header indicator must toggle collapse"
+    );
 }

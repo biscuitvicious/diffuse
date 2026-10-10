@@ -36,3 +36,14 @@ pub struct FlatRow {
     pub is_file_header: bool,
     pub is_hunk_divider: bool,
 }
+
+/// Sticky file header layout metadata for viewport rendering and hit-testing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StickyHeaderInfo {
+    pub file_idx: usize,
+    pub banner_row: usize,
+    pub banner_vis: usize,
+    pub banner_len: usize,
+    pub sticky_lines_count: usize,
+    pub sticky_start_seg: usize,
+}

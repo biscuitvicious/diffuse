@@ -249,7 +249,8 @@ impl AppState {
                     self.scroll_to_visual(target_vis);
                 } else if in_viewport {
                     self.is_dragging_scrollbar = false;
-                    let target_vis = self.scroll + (row - header_offset);
+                    let row_in_viewport = row - header_offset;
+                    let target_vis = self.viewport_row_to_visual(row_in_viewport);
                     let geo = self.cached_geometry(self.last_content_width);
                     let starts = &geo.starts;
                     let counts = &geo.counts;
@@ -419,7 +420,8 @@ impl AppState {
                         self.sel_pivot = Some(pivot);
                         self.confirmed_sel = None;
                     }
-                    let target_vis = self.scroll + (row - header_offset);
+                    let row_in_viewport = row.saturating_sub(header_offset);
+                    let target_vis = self.viewport_row_to_visual(row_in_viewport);
                     let (starts, counts, _seg_counts, _total_vis) =
                         self.cached_geometry_tuple(self.last_content_width);
                     for (i, &s) in starts.iter().enumerate() {

@@ -29,12 +29,12 @@ fn test_render_status_bar_styling() {
     };
     let rendered = render_status_bar(ctx).join("\n");
     assert!(
-        rendered.contains("file 1/11"),
-        "status bar must show file 1/11"
+        rendered.contains("hunk 1/3"),
+        "status bar must show hunk 1/3"
     );
     assert!(
-        rendered.contains("38;5;220m"),
-        "file stats in status bar must match in-file file header gold tint 220"
+        !rendered.contains("file 1/11"),
+        "status bar must omit file count badge"
     );
     assert!(
         rendered.contains("38;5;213m"),
@@ -182,36 +182,40 @@ fn test_ratatui_header_and_status_lines() {
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let status_line = status_bar_line(ctx);
-    assert!(status_line.to_string().contains("file 1/2"));
+    assert!(status_line.to_string().contains("hunk 1/1"));
+    assert!(!status_line.to_string().contains("file 1/2"));
     assert!(status_line.to_string().contains("streaming..."));
     assert!(status_line.to_string().contains("col 4+"));
     assert!(status_line.to_string().contains("go 12"));
     assert!(!status_line.to_string().contains("prefix:"));
-    assert!(status_line.to_string().contains("main.rs"));
-    assert!(status_line.to_string().contains("−2 +5 ~1"));
-
-    // Streaming indicator sits between the file badge and the filename.
-    let text = status_line.to_string();
-    let badge = text.find("file 1/2").expect("must show file badge");
-    let stream = text.find("streaming...").expect("must show streaming");
-    let path = text.find("main.rs").expect("must show file path");
     assert!(
-        badge < stream && stream < path,
-        "streaming must come after the file badge and before the filename: {text}"
+        !status_line.to_string().contains("main.rs"),
+        "secondary status bar must omit current file path"
+    );
+    assert!(
+        !status_line.to_string().contains("−2 +5 ~1"),
+        "secondary status bar must omit file change counts"
+    );
+
+    // Hunk badge leads, streaming indicator follows.
+    let text = status_line.to_string();
+    let hunk = text.find("hunk 1/1").expect("must show hunk badge");
+    let stream = text.find("streaming...").expect("must show streaming");
+    assert!(
+        hunk < stream,
+        "streaming must come after the hunk badge: {text}"
     );
     let ansi = render_status_bar(ctx).join("\n");
-    let (a_badge, a_stream, a_path) = (
-        ansi.find("file 1/2").expect("ansi file badge"),
+    let (a_hunk, a_stream) = (
+        ansi.find("hunk 1/1").expect("ansi hunk badge"),
         ansi.find("streaming...").expect("ansi streaming"),
-        ansi.find("main.rs").expect("ansi file path"),
     );
     assert!(
-        a_badge < a_stream && a_stream < a_path,
-        "ANSI streaming must come after the file badge and before the filename"
+        a_hunk < a_stream,
+        "ANSI streaming must come after the hunk badge"
     );
 
-    // Renamed files render the stripped old -> new path in the status bar,
-    // truncated with an ellipsis when the bar overflows.
+    // Renamed files do not show path in the secondary status bar.
     let rename_ctx = StatusBarContext {
         common_prefix: Some("crates/"),
         file: Some(&rename_file),
@@ -219,23 +223,8 @@ fn test_ratatui_header_and_status_lines() {
     };
     let rename_text = status_bar_line(rename_ctx).to_string();
     assert!(
-        rename_text.contains("…rs -> diffuse-core/src/algo.rs"),
-        "long rename must truncate tail-kept with ellipsis: {rename_text}"
-    );
-    assert!(
-        !rename_text.contains("mod.rs"),
-        "truncated head must be cut: {rename_text}"
-    );
-
-    let file_span = status_line
-        .spans
-        .iter()
-        .find(|s| s.content.contains("file 1/2"))
-        .expect("must have file span");
-    assert_eq!(
-        file_span.style.fg,
-        Some(Color::Indexed(220)),
-        "file span must use color 220"
+        !rename_text.contains("algo.rs"),
+        "secondary status bar must not contain file path: {rename_text}"
     );
 
     let hunk_span = status_line
@@ -417,7 +406,7 @@ fn test_header_bar_nonzero_notes_shown() {
         is_streaming: false,
         streaming_dot: "●",
         file: Some(&file),
-        hunk_counts: None,
+        hunk_counts: Some(file.counts),
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let ansi = render_status_bar(ctx).join("\n");
@@ -672,8 +661,8 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
     })
     .join("\n");
     assert!(
-        ansi_add.contains("(added)"),
-        "ANSI status bar must show '(added)', got: {ansi_add}"
+        !ansi_add.contains("(added)"),
+        "ANSI status bar must omit '(added)', got: {ansi_add}"
     );
     let line_add = status_bar_line(StatusBarContext {
         cur_fi: 0,
@@ -693,8 +682,8 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
     })
     .to_string();
     assert!(
-        line_add.contains("(added)"),
-        "TUI status line must show '(added)', got: {line_add}"
+        !line_add.contains("(added)"),
+        "TUI status line must omit '(added)', got: {line_add}"
     );
 
     // Test with deleted status
@@ -717,8 +706,8 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
     })
     .join("\n");
     assert!(
-        ansi_del.contains("(deleted)"),
-        "ANSI status bar must show '(deleted)', got: {ansi_del}"
+        !ansi_del.contains("(deleted)"),
+        "ANSI status bar must omit '(deleted)', got: {ansi_del}"
     );
     let line_del = status_bar_line(StatusBarContext {
         cur_fi: 0,
@@ -738,8 +727,8 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
     })
     .to_string();
     assert!(
-        line_del.contains("(deleted)"),
-        "TUI status line must show '(deleted)', got: {line_del}"
+        !line_del.contains("(deleted)"),
+        "TUI status line must omit '(deleted)', got: {line_del}"
     );
 }
 
@@ -905,7 +894,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
     assert_eq!(mov_span.style.fg, Some(Color::Indexed(147)));
     assert!(mov_span.style.add_modifier.contains(Modifier::BOLD));
 
-    // Per-file counts with moved lines render in the status bar.
+    // Hunk counts with moved lines render in the status bar.
     let mut file_with_movs = file.clone();
     file_with_movs.counts.movs = 3;
     let status_ctx = StatusBarContext {
@@ -921,17 +910,17 @@ fn test_header_bar_global_mod_counts_ratatui() {
         is_streaming: false,
         streaming_dot: "●",
         file: Some(&file_with_movs),
-        hunk_counts: None,
+        hunk_counts: Some(file_with_movs.counts),
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let local_mov_text = status_bar_line(status_ctx).to_string();
     assert!(
-        local_mov_text.contains("AGENTS.md"),
-        "status line must show the file path"
+        !local_mov_text.contains("AGENTS.md"),
+        "status line must not show the file path"
     );
     assert!(
         local_mov_text.contains("−7 +15 ~6 ≈3"),
-        "status line must format file counts with ≈3 (without 'moved')"
+        "status line must format hunk counts with ≈3 (without 'moved')"
     );
 }
 
@@ -1017,8 +1006,12 @@ fn test_header_bar_global_mod_counts_ansi() {
         theme: &crate::render::DiffuseTheme::DEFAULT,
     })
     .join("\n");
-    assert!(status_ansi.contains("AGENTS.md"));
-    assert!(status_ansi.contains("file 1/1"));
+    assert!(
+        !status_ansi.contains("AGENTS.md"),
+        "status bar must omit file path"
+    );
+    assert!(status_ansi.contains("hunk 1/1"));
+    assert!(!status_ansi.contains("file 1/1"));
 }
 
 #[test]
@@ -1089,7 +1082,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         " diffuse −5 +20 ~3 · crates/diffuse-tui/src/"
     );
 
-    // The prefixed file path renders stripped in the status bar.
+    // The status bar does not show the file path.
     let pfx_status = status_bar_line(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -1108,12 +1101,16 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
     })
     .to_string();
     assert!(
-        pfx_status.contains("main.rs"),
-        "status line must show the stripped file path"
+        !pfx_status.contains("main.rs"),
+        "status line must omit file path"
     );
     assert!(
-        !pfx_status.contains("crates/diffuse-tui/src/main.rs"),
-        "status line must strip the common prefix from the file path"
+        pfx_status.contains("hunk 1/1"),
+        "status line must show hunk badge"
+    );
+    assert!(
+        !pfx_status.contains("file 1/1"),
+        "status line must omit file badge"
     );
 }
 
@@ -1481,14 +1478,14 @@ fn test_status_bar_shows_file_and_hunk_stats() {
     let visible = crate::render::ansi::strip_ansi(&ansi);
     assert_eq!(
         visible.trim_end(),
-        " file 1/41 −7 +15 ~6 💬1 · hunk 1/3 −2 +1 · AGENTS.md",
+        " hunk 1/3 −2 +1",
         "unexpected status bar visible text"
     );
 
     let line = status_bar_line(ctx);
     assert_eq!(
         line.to_string().trim_end(),
-        " file 1/41 −7 +15 ~6 💬1 · hunk 1/3 −2 +1 · AGENTS.md",
+        " hunk 1/3 −2 +1",
         "unexpected status bar text"
     );
 }
@@ -1545,71 +1542,37 @@ fn status_ctx<'a>(file: Option<&'a OutputFile>, width: usize) -> StatusBarContex
 }
 
 #[test]
-fn test_status_bar_truncates_long_filename_to_single_line() {
+fn test_status_bar_full_badges() {
     let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let lines = render_status_bar(status_ctx(Some(&file), 40));
-    assert_eq!(lines.len(), 1, "must stay one line: {lines:?}");
+    let lines = render_status_bar(status_ctx(Some(&file), 80));
+    assert_eq!(lines.len(), 1);
     let plain = crate::render::strip_ansi(&lines[0]);
-    assert!(
-        plain.contains('…'),
-        "cut point must show ellipsis: {plain:?}"
-    );
-    assert!(
-        plain.starts_with(" F2/25 +3 · H1/1 · …fuse-core/src/lib.rs"),
-        "counts lead, path trails truncated: {plain:?}"
-    );
-    assert_eq!(visible_width(&lines[0]), 40);
+    assert_eq!(plain.trim_end(), " hunk 1/1");
 }
 
 #[test]
-fn test_status_bar_short_filename_still_truncates() {
-    // No minimum floor: even a 15-wide filename cuts to the budget.
-    let file = status_test_file("123456789012345");
-    let lines = render_status_bar(status_ctx(Some(&file), 30));
+fn test_status_bar_abbreviates_badges_on_overflow() {
+    let file = status_test_file("1234567890");
+    let lines = render_status_bar(status_ctx(Some(&file), 6));
     assert_eq!(lines.len(), 1, "must stay one line: {lines:?}");
     let plain = crate::render::strip_ansi(&lines[0]);
-    assert!(
-        plain.contains("…6789012345"),
-        "tail kept with ellipsis: {plain:?}"
-    );
+    assert_eq!(plain.trim_end(), " H1/1");
 }
 
 #[test]
-fn test_status_bar_zero_budget_falls_back_to_wrap() {
-    // Width so tight the filename budget is zero: nothing to cut to, so the
-    // bar wraps as before with no ellipsis.
+fn test_status_bar_tight_width_falls_back_to_wrap() {
     let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let lines = render_status_bar(status_ctx(Some(&file), 15));
+    let lines = render_status_bar(status_ctx(Some(&file), 4));
     assert!(lines.len() > 1, "must wrap: {lines:?}");
-    assert!(
-        !lines.join("\n").contains('…'),
-        "zero budget must not cut the path: {lines:?}"
-    );
 }
 
 #[test]
-fn test_status_bar_truncation_respects_wide_glyphs() {
-    let file = status_test_file("src/日本語/long-filename-here.rs");
-    let lines = render_status_bar(status_ctx(Some(&file), 50));
-    assert_eq!(lines.len(), 1, "must stay one line: {lines:?}");
-    assert_eq!(visible_width(&lines[0]), 50);
-    let plain = crate::render::strip_ansi(&lines[0]);
-    assert!(plain.contains('…'), "{plain:?}");
-    assert!(plain.contains("日本語"), "{plain:?}");
-}
-
-#[test]
-fn test_status_bar_line_truncates_path_with_ellipsis() {
-    let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let line = status_bar_line(status_ctx(Some(&file), 40));
-    assert!(
-        line.width() <= 40,
-        "ratatui line must fit: {}",
-        line.width()
-    );
+fn test_status_bar_line_abbreviates() {
+    let file = status_test_file("1234567890");
+    let line = status_bar_line(status_ctx(Some(&file), 6));
+    assert!(line.width() <= 6, "must fit: {}", line.width());
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(text.contains('…'), "cut point must show ellipsis: {text:?}");
-    assert!(text.contains("F2/25"), "{text:?}");
+    assert_eq!(text.trim_end(), " H1/1");
 }
 
 #[test]
@@ -1634,52 +1597,19 @@ fn test_truncate_status_path_unit_cases() {
 }
 
 #[test]
-fn test_status_bar_counts_lead_path_trails() {
-    let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let lines = render_status_bar(status_ctx(Some(&file), 80));
-    assert_eq!(lines.len(), 1);
-    let plain = crate::render::strip_ansi(&lines[0]);
+fn test_stripped_file_path_rename_and_prefix() {
+    let file = OutputFile {
+        path: "crates/diffuse-core/src/algo.rs".to_string(),
+        old_path: Some("crates/diffuse-core/src/algo/mod.rs".to_string()),
+        ..Default::default()
+    };
     assert_eq!(
-        plain.trim_end(),
-        " file 2/25 +3 · hunk 1/1 · crates/diffuse-core/src/lib.rs"
+        stripped_file_path(&file, Some("crates/")),
+        "diffuse-core/src/algo/mod.rs -> diffuse-core/src/algo.rs"
     );
-}
-
-#[test]
-fn test_status_bar_abbreviates_badges_on_overflow() {
-    // Full badges overflow at width 45, abbreviated badges fit with the
-    // path intact and no ellipsis.
-    let file = status_test_file("12345678901234567890");
-    let lines = render_status_bar(status_ctx(Some(&file), 45));
-    assert_eq!(lines.len(), 1, "must stay one line: {lines:?}");
-    let plain = crate::render::strip_ansi(&lines[0]);
-    assert!(
-        plain.starts_with(" F2/25 +3 · H1/1 · 12345678901234567890"),
-        "badges abbreviate, path intact: {plain:?}"
-    );
-    assert!(!plain.contains('…'), "{plain:?}");
-}
-
-#[test]
-fn test_status_bar_abbreviate_then_truncate_cascade() {
-    // Abbreviation alone still overflows: badges shorten and the path
-    // truncates to the recovered budget.
-    let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let lines = render_status_bar(status_ctx(Some(&file), 36));
-    assert_eq!(lines.len(), 1, "must stay one line: {lines:?}");
-    let plain = crate::render::strip_ansi(&lines[0]);
-    assert_eq!(plain, " F2/25 +3 · H1/1 · …-core/src/lib.rs");
-}
-
-#[test]
-fn test_status_bar_line_abbreviates_and_reorders() {
-    let file = status_test_file("12345678901234567890");
-    let line = status_bar_line(status_ctx(Some(&file), 45));
-    assert!(line.width() <= 45, "must fit: {}", line.width());
-    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(
-        text.starts_with(" F2/25 +3 · H1/1 · 12345678901234567890"),
-        "ratatui bar matches the ANSI order: {text:?}"
+    assert_eq!(
+        stripped_file_path(&file, None),
+        "crates/diffuse-core/src/algo/mod.rs -> crates/diffuse-core/src/algo.rs"
     );
 }
 

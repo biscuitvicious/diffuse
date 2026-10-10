@@ -1,13 +1,11 @@
 //! Shared status-bar layout model: one ordered segment list and one overflow
-//! cascade (full badges → abbreviated badges → path truncation) consumed by
+//! cascade (full badges → abbreviated badges → wrapping) consumed by
 //! both renderers — the ANSI string path and the ratatui span path — so
 //! their decisions can never drift apart.
 
 use crate::{core::counts::FileCounts, render::Color};
 
-use super::header::{
-    StatusBarContext, count_color, file_status_tag, stripped_file_path, truncate_status_path,
-};
+use super::header::{StatusBarContext, count_color};
 use crate::render::width::display_width;
 
 /// One logical status-bar segment. Text is plain (no ANSI); `color` and
@@ -25,30 +23,20 @@ impl StatusSegment {
     }
 }
 
-/// Badge texts for one variant of the overflow cascade.
+/// Badge text for one variant of the overflow cascade.
 #[derive(Clone)]
 struct Badges {
-    files: String,
     hunk: String,
 }
 
 fn badges_for(ctx: &StatusBarContext<'_>, abbrev: bool) -> Badges {
-    let (file_tag, hunk_tag) = if abbrev {
-        ("F", "H")
-    } else {
-        ("file ", "hunk ")
-    };
-    let files = if ctx.total_files == 0 {
-        format!("{file_tag}0/0")
-    } else {
-        format!("{file_tag}{}/{}", ctx.cur_fi + 1, ctx.total_files)
-    };
+    let hunk_tag = if abbrev { "H" } else { "hunk " };
     let hunk = if ctx.total_files == 0 || ctx.total_hunks == 0 {
         format!("{hunk_tag}0/0")
     } else {
         format!("{hunk_tag}{}/{}", ctx.cur_hunk + 1, ctx.total_hunks)
     };
-    Badges { files, hunk }
+    Badges { hunk }
 }
 
 fn counts_segments(
@@ -78,18 +66,19 @@ fn counts_segments(
 }
 
 /// Build the ordered segment list for one cascade variant.
-fn segments_for(
-    ctx: &StatusBarContext<'_>,
-    badges: &Badges,
-    path: Option<&str>,
-) -> Vec<StatusSegment> {
+fn segments_for(ctx: &StatusBarContext<'_>, badges: &Badges) -> Vec<StatusSegment> {
     let p = &ctx.theme.palette;
     let mut segs = Vec::new();
     segs.push(StatusSegment {
-        text: format!(" {}", badges.files),
-        color: p.status_bar_accent,
+        text: format!(" {}", badges.hunk),
+        color: p.hunk_divider_fg,
         bold: true,
     });
+    if let Some(c) = ctx.hunk_counts
+        && !c.is_empty()
+    {
+        segs.extend(counts_segments(&c, true, p));
+    }
     if ctx.is_streaming {
         let dot = if ctx.streaming_dot.is_empty() {
             "●"
@@ -106,26 +95,6 @@ fn segments_for(
             color: p.accent,
             bold: true,
         });
-    }
-    if let Some(f) = ctx.file
-        && !f.counts.is_empty()
-    {
-        segs.extend(counts_segments(&f.counts, true, p));
-    }
-    segs.push(StatusSegment {
-        text: " \u{00b7} ".to_string(),
-        color: p.status_bar_dim,
-        bold: false,
-    });
-    segs.push(StatusSegment {
-        text: badges.hunk.clone(),
-        color: p.hunk_divider_fg,
-        bold: true,
-    });
-    if let Some(c) = ctx.hunk_counts
-        && !c.is_empty()
-    {
-        segs.extend(counts_segments(&c, true, p));
     }
     if ctx.raw_diff {
         segs.push(StatusSegment {
@@ -163,26 +132,6 @@ fn segments_for(
             bold: true,
         });
     }
-    if let (Some(f), Some(path)) = (ctx.file, path) {
-        segs.push(StatusSegment {
-            text: " \u{00b7} ".to_string(),
-            color: p.status_bar_dim,
-            bold: false,
-        });
-        segs.push(StatusSegment {
-            text: path.to_string(),
-            color: p.status_bar_fg,
-            bold: true,
-        });
-        let status = file_status_tag(f);
-        if !status.is_empty() {
-            segs.push(StatusSegment {
-                text: status,
-                color: p.status_bar_dim,
-                bold: false,
-            });
-        }
-    }
     segs
 }
 
@@ -194,14 +143,13 @@ pub struct StatusLayout {
 }
 
 /// Resolve the shared overflow cascade: full badges, then abbreviated
-/// `F`/`H` badges, then path truncation, then wrapping.
+/// `F`/`H` badges, then wrapping.
 pub fn status_layout(ctx: &StatusBarContext<'_>) -> StatusLayout {
-    let path_full: Option<String> = ctx.file.map(|f| stripped_file_path(f, ctx.common_prefix));
     let width = ctx.width;
     let seg_width = |segs: &[StatusSegment]| segs.iter().map(StatusSegment::width).sum::<usize>();
 
     let badges_full = badges_for(ctx, false);
-    let segs = segments_for(ctx, &badges_full, path_full.as_deref());
+    let segs = segments_for(ctx, &badges_full);
     if seg_width(&segs) <= width {
         return StatusLayout {
             segments: segs,
@@ -210,7 +158,7 @@ pub fn status_layout(ctx: &StatusBarContext<'_>) -> StatusLayout {
     }
 
     let badges_short = badges_for(ctx, true);
-    let segs = segments_for(ctx, &badges_short, path_full.as_deref());
+    let segs = segments_for(ctx, &badges_short);
     if seg_width(&segs) <= width {
         return StatusLayout {
             segments: segs,
@@ -218,20 +166,8 @@ pub fn status_layout(ctx: &StatusBarContext<'_>) -> StatusLayout {
         };
     }
 
-    if let Some(path) = path_full.as_deref() {
-        let path_w = display_width(path);
-        let budget = width.saturating_sub(seg_width(&segs).saturating_sub(path_w));
-        if let Some(short) = truncate_status_path(path, budget) {
-            let segs = segments_for(ctx, &badges_short, Some(&short));
-            return StatusLayout {
-                segments: segs,
-                wraps: false,
-            };
-        }
-    }
-
     // Nothing fits: wrap the full-badges variant.
-    let segs = segments_for(ctx, &badges_full, path_full.as_deref());
+    let segs = segments_for(ctx, &badges_full);
     StatusLayout {
         segments: segs,
         wraps: true,
@@ -310,38 +246,40 @@ mod tests {
         c.file = Some(&file);
         let layout = status_layout(&c);
         assert!(!layout.wraps);
-        assert_eq!(plain(&layout), "file 1/25 +3 · hunk 1/1 · short.rs");
+        assert_eq!(plain(&layout), "hunk 1/1");
     }
 
     #[test]
-    fn test_layout_cascade_abbreviates_then_truncates() {
-        let (mut c, file) = ctx(45, "crates/diffuse-core/src/lib.rs");
+    fn test_layout_cascade_abbreviates_on_overflow() {
+        let (mut c, file) = ctx(6, "crates/diffuse-core/src/lib.rs");
         c.file = Some(&file);
         let layout = status_layout(&c);
         assert!(!layout.wraps);
-        // Width 45: the abbreviated badges still cannot carry the full path,
-        // so the cascade truncates it tail-kept in the same step.
-        assert_eq!(
-            plain(&layout),
-            "F1/25 +3 · H1/1 · …s/diffuse-core/src/lib.rs"
-        );
-
-        // Tighter still: the truncation recedes further, never wrapping.
-        c.width = 36;
-        let layout = status_layout(&c);
-        assert!(!layout.wraps);
-        assert!(
-            plain(&layout).starts_with("F1/25 +3 · H1/1 · …"),
-            "{}",
-            plain(&layout)
-        );
+        // Width 6: " hunk 1/1" is 9 cols, so badge abbreviates to " H1/1" (5 cols)
+        // which fits.
+        assert_eq!(plain(&layout), "H1/1");
     }
 
     #[test]
     fn test_layout_wraps_when_nothing_fits() {
-        let (mut c, file) = ctx(15, "crates/diffuse-core/src/lib.rs");
+        let (mut c, file) = ctx(4, "crates/diffuse-core/src/lib.rs");
         c.file = Some(&file);
         let layout = status_layout(&c);
         assert!(layout.wraps, "must wrap: {}", plain(&layout));
+        assert_eq!(plain(&layout), "hunk 1/1");
+    }
+
+    #[test]
+    fn test_layout_shows_hunk_counts() {
+        let (mut c, file) = ctx(80, "short.rs");
+        c.file = Some(&file);
+        c.hunk_counts = Some(FileCounts {
+            adds: 2,
+            dels: 1,
+            ..Default::default()
+        });
+        let layout = status_layout(&c);
+        assert!(!layout.wraps);
+        assert_eq!(plain(&layout), "hunk 1/1 −1 +2");
     }
 }

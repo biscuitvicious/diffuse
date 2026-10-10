@@ -24,7 +24,7 @@ pub use editor::{Editor, open_editor, resolve_editor_args};
 pub use event::handle_event;
 pub use finder::FileFinderState;
 pub use terminal::TerminalGuard;
-pub use types::{FlatRow, HunkMeta, HunkStart, Selection};
+pub use types::{FlatRow, HunkMeta, HunkStart, Selection, StickyHeaderInfo};
 
 use std::{
     io,

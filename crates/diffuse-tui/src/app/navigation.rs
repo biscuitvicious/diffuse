@@ -16,13 +16,23 @@ impl AppState {
     pub fn jump_to_row(&mut self, target_row: usize, is_bottom: bool) {
         self.scroll_pin = None;
         self.row_idx = target_row.min(self.flat.len().saturating_sub(1));
-        self.vis_line = 0;
+        let cw = if self.last_content_width > 0 {
+            self.last_content_width
+        } else {
+            80
+        };
+        if is_bottom {
+            let nav_count = self.row_nav_vis_count(self.row_idx, cw);
+            self.vis_line = nav_count.saturating_sub(1);
+        } else {
+            self.vis_line = 0;
+        }
 
         let margin = self.viewport_margin();
         let max_rows = self.viewport_height.max(4);
-        let (starts, _, _, total_vis_lines) = self.cached_geometry_tuple(self.last_content_width);
+        let (starts, _, _, total_vis_lines) = self.cached_geometry_tuple(cw);
 
-        let target_vis = starts.get(self.row_idx).copied().unwrap_or(0);
+        let target_vis = starts.get(self.row_idx).copied().unwrap_or(0) + self.vis_line;
 
         if is_bottom {
             self.scroll = target_vis.saturating_sub(max_rows.saturating_sub(1 + margin));
@@ -52,7 +62,41 @@ impl AppState {
             }
         }
         if let Some((idx, _)) = best {
-            self.jump_to_row(idx, false);
+            self.jump_to_row_centered(idx);
+        }
+    }
+
+    /// Position cursor at `target_row`. If the target row is within 20% to 80%
+    /// of the viewport height, jump without scrolling. Otherwise, center the
+    /// row at the middle of the screen.
+    pub fn jump_to_row_centered(&mut self, target_row: usize) {
+        self.scroll_pin = None;
+        self.row_idx = target_row.min(self.flat.len().saturating_sub(1));
+        self.vis_line = 0;
+
+        let max_rows = self.viewport_height.max(4);
+        let cw = if self.last_content_width > 0 {
+            self.last_content_width
+        } else {
+            80
+        };
+        let (starts, _, _, total_vis_lines) = self.cached_geometry_tuple(cw);
+        let target_vis = starts.get(self.row_idx).copied().unwrap_or(0);
+        let max_scroll = total_vis_lines.saturating_sub(max_rows);
+
+        let min_band = (max_rows * 20) / 100;
+        let max_band = (max_rows * 80) / 100;
+
+        let in_band = if let Some(screen_y) = target_vis.checked_sub(self.scroll) {
+            screen_y >= min_band && screen_y <= max_band
+        } else {
+            false
+        };
+
+        if !in_band {
+            self.scroll = target_vis.saturating_sub(max_rows / 2).min(max_scroll);
+        } else {
+            self.scroll = self.scroll.min(max_scroll);
         }
     }
 
@@ -182,11 +226,14 @@ impl AppState {
         let cursor_flat = self.row_idx;
         let cursor_vis = starts.get(cursor_flat).copied().unwrap_or(0) + self.vis_line;
 
-        if cursor_vis < self.scroll {
+        let sticky = self.sticky_header_info_from_layout(&starts, &geo.seg_counts);
+        let sticky_count = sticky.map_or(0, |s| s.sticky_lines_count);
+        let content_start = self.scroll + sticky_count;
+        if cursor_vis < content_start {
             for (i, &s) in starts.iter().enumerate() {
-                if s + counts[i] > self.scroll {
+                if s + counts[i] > content_start {
                     self.row_idx = i;
-                    let offset = self.scroll.saturating_sub(s);
+                    let offset = content_start.saturating_sub(s);
                     self.vis_line = offset.min(nav_counts[i].saturating_sub(1));
                     break;
                 }

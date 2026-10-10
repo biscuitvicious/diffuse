@@ -10,6 +10,7 @@ use ratatui::{
 use crate::{
     core::parse::RowKind,
     render::{ColorExt, render_raw_row, render_row_segment, slice_by_visual_width},
+    types::StickyHeaderInfo,
     view::{
         bottom_ribbon_lines, clamp_or_pad_ansi,
         header::{render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line},
@@ -666,6 +667,76 @@ impl AppState {
         format!("{} flat row {i}", file.path)
     }
 
+    /// Calculate sticky file header metadata for the current scroll position
+    /// and content width.
+    pub(crate) fn sticky_header_info_from_layout(
+        &self,
+        starts: &[usize],
+        seg_counts: &[usize],
+    ) -> Option<StickyHeaderInfo> {
+        if self.raw_diff || self.flat.is_empty() || self.output.files.is_empty() {
+            return None;
+        }
+        let (active_fi, banner_row) = (0..self.output.files.len())
+            .rfind(|&fi| {
+                if let Some(r) = self.file_header_row_idx(fi) {
+                    starts.get(r).is_some_and(|&s| s <= self.scroll)
+                } else {
+                    false
+                }
+            })
+            .and_then(|fi| {
+                let r = self.file_header_row_idx(fi)?;
+                Some((fi, r))
+            })?;
+
+        let banner_vis = *starts.get(banner_row)?;
+        let banner_len = *seg_counts.get(banner_row).unwrap_or(&1);
+
+        if self.scroll <= banner_vis {
+            return None;
+        }
+
+        let next_banner_vis = (active_fi + 1..self.output.files.len()).find_map(|fi| {
+            let r = self.file_header_row_idx(fi)?;
+            starts.get(r).copied()
+        });
+
+        let next_screen_row =
+            next_banner_vis.map_or(usize::MAX, |next_vis| next_vis.saturating_sub(self.scroll));
+        let sticky_lines_count = banner_len.min(next_screen_row);
+        if sticky_lines_count == 0 {
+            return None;
+        }
+        let sticky_start_seg = banner_len.saturating_sub(sticky_lines_count);
+
+        Some(StickyHeaderInfo {
+            file_idx: active_fi,
+            banner_row,
+            banner_vis,
+            banner_len,
+            sticky_lines_count,
+            sticky_start_seg,
+        })
+    }
+
+    pub fn sticky_header_info(&self, cw: usize) -> Option<StickyHeaderInfo> {
+        let (starts, _, seg_counts, _) = self.visual_geometry(cw);
+        self.sticky_header_info_from_layout(&starts, &seg_counts)
+    }
+
+    /// Translate a viewport-relative screen row (0..vh) to its corresponding
+    /// visual line offset, taking into account pinned sticky file headers.
+    pub fn viewport_row_to_visual(&self, row_in_viewport: usize) -> usize {
+        if let Some(s) = self.sticky_header_info(self.last_content_width)
+            && row_in_viewport < s.sticky_lines_count
+        {
+            s.banner_vis + s.sticky_start_seg + row_in_viewport
+        } else {
+            self.scroll + row_in_viewport
+        }
+    }
+
     pub fn render_diff_viewport_lines(
         &mut self,
         width: usize,
@@ -738,13 +809,21 @@ impl AppState {
             pin_applied = true;
         }
         if !pin_applied {
+            let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts);
+            let sticky_count = sticky.map_or(0, |s| {
+                if self.row_idx == s.banner_row {
+                    0
+                } else {
+                    s.sticky_lines_count
+                }
+            });
             let top_vis = if self.vis_line == 0 {
                 min_vis
             } else {
                 cursor_vis
             };
-            if top_vis < self.scroll {
-                self.scroll = top_vis;
+            if top_vis < self.scroll + sticky_count {
+                self.scroll = top_vis.saturating_sub(sticky_count);
             }
             if cursor_vis >= self.scroll + max_rows {
                 self.scroll = cursor_vis.saturating_sub(max_rows.saturating_sub(1));
@@ -752,6 +831,40 @@ impl AppState {
         }
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = self.scroll.min(max_scroll);
+
+        let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts);
+        let sticky_count = sticky.map_or(0, |s| s.sticky_lines_count);
+        let content_start_vis = self.scroll + sticky_count;
+        let content_end_vis = self.scroll + max_rows;
+
+        if let Some(s) = sticky {
+            let file_obj = &self.output.files[s.file_idx];
+            let is_collapsed = self.collapsed_files.contains(&s.file_idx);
+            let is_current = s.file_idx == self.current_file_idx();
+            let in_band = band[s.banner_row];
+            let common_prefix = self.output.common_directory_prefix();
+            let text_cols = content_width.max(1);
+            for s_idx in s.sticky_start_seg..s.banner_len {
+                let is_selected = s.banner_row == self.row_idx && self.vis_line == s_idx;
+                let seg_start = s_idx * text_cols;
+                line_src.push(Some(s.banner_row));
+                lines.push(crate::view::diff_grid::render_file_header_segment(
+                    file_obj,
+                    crate::render::Badge {
+                        idx: s.file_idx,
+                        total: self.output.files.len(),
+                    },
+                    is_collapsed,
+                    is_selected,
+                    is_current,
+                    in_band,
+                    seg_start,
+                    text_cols,
+                    &self.theme,
+                    common_prefix.as_deref(),
+                ));
+            }
+        }
 
         // Viewport iteration, seeking the first visible row by binary
         // search over visual prefix sums instead of scanning from the top
@@ -762,18 +875,22 @@ impl AppState {
             0
         } else {
             starts
-                .partition_point(|&s| s <= self.scroll)
+                .partition_point(|&s| s <= content_start_vis)
                 .saturating_sub(1)
         };
         let mut vis_i = starts.get(first_idx).copied().unwrap_or(0);
         for (idx, item) in self.flat.iter().enumerate().skip(first_idx) {
             let count = counts[idx];
-            if vis_i + count <= self.scroll {
+            if vis_i + count <= content_start_vis {
                 vis_i += count;
                 continue;
             }
-            if vis_i >= self.scroll + max_rows {
+            if vis_i >= content_end_vis {
                 break;
+            }
+            if sticky.is_some_and(|s| s.banner_row == idx) {
+                vis_i += count;
+                continue;
             }
 
             let in_band = band[idx];
@@ -786,7 +903,7 @@ impl AppState {
                 let d_segs = self.hunk_div_seg_count(div_fi, div_hi, content_width);
                 let text_cols = content_width.max(1);
                 for s_idx in 0..d_segs {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    if vis_i >= content_start_vis && vis_i < content_end_vis {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let seg_start = s_idx * text_cols;
                         line_src.push(Some(idx));
@@ -817,7 +934,7 @@ impl AppState {
                 let seg_count = seg_counts[idx];
                 let common_prefix = self.output.common_directory_prefix();
                 for s_idx in 0..seg_count {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    if vis_i >= content_start_vis && vis_i < content_end_vis {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let is_current = item.file_idx == self.current_file_idx();
                         let text_cols = content_width.max(1);
@@ -854,7 +971,7 @@ impl AppState {
                     h.old_start, h.old_count, h.new_start, h.new_count
                 );
                 for s_idx in 0..seg_count {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    if vis_i >= content_start_vis && vis_i < content_end_vis {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let text_cols = content_width.max(1);
                         let start_col = s_idx * text_cols;
@@ -876,7 +993,7 @@ impl AppState {
             } else if let Some(r) = self.row_of(item) {
                 let seg_count = seg_counts[idx];
                 for s_idx in 0..seg_count {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    if vis_i >= content_start_vis && vis_i < content_end_vis {
                         let is_selected = idx == self.row_idx && self.vis_line == div_segs + s_idx;
                         let pfx = if s_idx == 0 {
                             crate::render::styled_prefix(
@@ -961,7 +1078,7 @@ impl AppState {
                 };
 
                 for (nl_idx, nline) in note_lines.iter().enumerate() {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    if vis_i >= content_start_vis && vis_i < content_end_vis {
                         let is_focused = focused_note_range
                             .as_ref()
                             .is_some_and(|r| r.contains(&nl_idx));
@@ -990,7 +1107,7 @@ impl AppState {
                 let note_count = callouts.get(&idx).map_or(0, Vec::len);
                 let bottom_div_vis_start = div_segs + seg_counts[idx] + note_count;
                 for s_idx in 0..bot_segs {
-                    if vis_i >= self.scroll && vis_i < self.scroll + max_rows {
+                    if vis_i >= content_start_vis && vis_i < content_end_vis {
                         let is_selected =
                             idx == self.row_idx && self.vis_line == bottom_div_vis_start + s_idx;
                         let seg_start = s_idx * text_cols;

@@ -246,13 +246,53 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
 }
 
 #[test]
-fn test_goto_line_preserves_viewport_margin_above() {
+fn test_goto_line_centers_when_outside_20_80_percent() {
     let mut lines = String::new();
+    let mut diff_lines = String::new();
     for i in 1..=50 {
         lines.push_str(&format!("line {i}\n"));
+        diff_lines.push_str(&format!("+line {i}\n"));
     }
     let diff = format!(
-        "diff --git a/big.rs b/big.rs\nindex 000..111 100644\n--- a/big.rs\n+++ b/big.rs\n@@ -1,50 +1,50 @@\n{lines}"
+        "diff --git a/big.rs b/big.rs\nindex 000..111 100644\n--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,50 @@\n{diff_lines}"
+    );
+    let new_content = [("big.rs".to_string(), lines)].into_iter().collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 20;
+    // Initial scroll is 0. Target line 30 has target_vis = 30.
+    // Relative to scroll 0, screen row is 30, which is outside 20%..80% (4..16).
+    // It must center line 30 at viewport_height / 2 = 10.
+    state.goto_line(30);
+    let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
+    let target_vis = starts[state.row_idx];
+    assert_eq!(
+        state.scroll,
+        target_vis.saturating_sub(state.viewport_height / 2),
+        "goto_line outside 20-80% must center target line at middle of screen"
+    );
+    assert_eq!(
+        target_vis - state.scroll,
+        state.viewport_height / 2,
+        "screen row must be exactly middle of screen"
+    );
+}
+
+#[test]
+fn test_goto_line_preserves_scroll_when_within_20_80_percent() {
+    let mut lines = String::new();
+    let mut diff_lines = String::new();
+    for i in 1..=50 {
+        lines.push_str(&format!("line {i}\n"));
+        diff_lines.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/big.rs b/big.rs\nindex 000..111 100644\n--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,50 @@\n{diff_lines}"
     );
     let new_content = [("big.rs".to_string(), lines)].into_iter().collect();
 
@@ -264,14 +304,96 @@ fn test_goto_line_preserves_viewport_margin_above() {
     );
     state.viewport_height = 20;
 
+    // First jump to line 30 (target_vis = 31) -> centers at scroll = 31 - 10 = 21
+    // (screen row 10).
     state.goto_line(30);
+    assert_eq!(state.scroll, 21);
+
+    // Now jump to line 25 (target_vis 26).
+    // Screen row is 26 - 21 = 5.
+    // 20% of 20 = 4, 80% of 20 = 16. 5 is within 4..=16.
+    // Scroll must NOT change!
+    state.goto_line(25);
+    assert_eq!(
+        state.scroll, 21,
+        "goto_line within 20-80% must not change scroll"
+    );
     let (starts, _, _, _) = state.visual_geometry(state.last_content_width);
-    let target_vis = starts[state.row_idx];
-    let margin = state.viewport_margin();
+    assert_eq!(starts[state.row_idx], 26);
+
+    // Boundary: line 24 (target_vis 25, screen row 25 - 21 = 4, exactly 20%).
+    state.goto_line(24);
+    assert_eq!(
+        state.scroll, 21,
+        "goto_line at exactly 20% boundary must not change scroll"
+    );
+
+    // Boundary: line 36 (target_vis 37, screen row 37 - 21 = 16, exactly 80%).
+    state.goto_line(36);
+    assert_eq!(
+        state.scroll, 21,
+        "goto_line at exactly 80% boundary must not change scroll"
+    );
+
+    // Outside lower boundary: line 23 (target_vis 24, screen row would be 24 - 21 =
+    // 3 < 4). Must center line 23 at scroll = 24 - 10 = 14.
+    state.goto_line(23);
+    assert_eq!(
+        state.scroll, 14,
+        "goto_line below 20% must center target line"
+    );
+
+    // Outside upper boundary: line 37 (target_vis 38, screen row 38 - 14 = 24 >
+    // 16). Must center line 37 at scroll = 38 - 10 = 28.
+    state.goto_line(37);
+    assert_eq!(
+        state.scroll, 28,
+        "goto_line above 80% must center target line"
+    );
+}
+
+#[test]
+fn test_jump_to_row_centered_edge_cases() {
+    let mut lines = String::new();
+    let mut diff_lines = String::new();
+    for i in 1..=50 {
+        lines.push_str(&format!("line {i}\n"));
+        diff_lines.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/big.rs b/big.rs\nindex 000..111 100644\n--- a/big.rs\n+++ b/big.rs\n@@ -0,0 +1,50 @@\n{diff_lines}"
+    );
+    let new_content = [("big.rs".to_string(), lines)].into_iter().collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 20;
+    state.last_content_width = 0; // exercises fallback to 80
+
+    // Jump to row 0 (top of document, target_vis = 0 < vh / 2)
+    state.scroll = 20;
+    state.jump_to_row_centered(0);
+    assert_eq!(state.row_idx, 0);
+    assert_eq!(state.scroll, 0, "target_vis < vh / 2 saturates to 0");
+
+    // Jump to row beyond flat length (clamped to flat.len() - 1)
+    let last_row = state.flat.len() - 1;
+    state.jump_to_row_centered(9999);
+    assert_eq!(state.row_idx, last_row);
+
+    // Target above scroll window (target_vis < self.scroll)
+    state.scroll = 30;
+    state.jump_to_row_centered(5);
+    let (starts, _, _, _) = state.visual_geometry(80);
+    let vis_5 = starts[5];
     assert_eq!(
         state.scroll,
-        target_vis.saturating_sub(margin),
-        "goto_line must precede target line by 1/10 viewport margin"
+        vis_5.saturating_sub(state.viewport_height / 2),
+        "target above scroll window centers"
     );
 }
 
@@ -1184,4 +1306,54 @@ fn test_hunk_divider_selectable_navigation() {
     state.move_up();
     assert_eq!(state.row_idx, 0);
     assert_eq!(state.vis_line, 0);
+}
+
+#[test]
+fn test_move_bottom_lands_on_bottom_gap_divider() {
+    let diff = r#"diff --git a/trailing.rs b/trailing.rs
+index 000..111 100644
+--- a/trailing.rs
++++ b/trailing.rs
+@@ -1,3 +1,3 @@
+ line 1
+-line 2
++line 2 mod
+ line 3
+"#;
+    let old_content = (1..=20).map(|i| format!("line {i}\n")).collect::<String>();
+    let new_content = (1..=20)
+        .map(|i| {
+            if i == 2 {
+                "line 2 mod\n".to_string()
+            } else {
+                format!("line {i}\n")
+            }
+        })
+        .collect::<String>();
+
+    let mut state = AppState::new(
+        diffuse_core::pipeline::PipelineInput::new(diff)
+            .with_new_content([("trailing.rs".to_string(), new_content)].into())
+            .with_old_content([("trailing.rs".to_string(), old_content)].into())
+            .run(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.last_content_width = 80;
+    state.viewport_height = 20;
+
+    assert!(
+        state.hunk_trailing_gap(0) > 0,
+        "file must have a trailing gap"
+    );
+
+    // Press G (MoveToBottom)
+    state.move_bottom();
+
+    assert_eq!(state.row_idx, state.flat.len() - 1);
+    assert!(
+        state.is_cursor_on_bottom_divider().is_some(),
+        "move_bottom (G) must position cursor on bottom gap divider"
+    );
 }

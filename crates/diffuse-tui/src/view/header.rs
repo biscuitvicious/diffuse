@@ -245,8 +245,7 @@ pub fn format_counts_spans(
 }
 
 /// Render the top review header bar: repo name, branch/commit-range glyph,
-/// global counts, and common directory prefix. Per-file path and counts live
-/// in the secondary status bar.
+/// global counts, and common directory prefix.
 #[expect(clippy::too_many_arguments)]
 pub fn render_header_bar(
     repo: &str,
@@ -346,7 +345,8 @@ pub struct StatusBarContext<'a> {
     pub width: usize,
     pub is_streaming: bool,
     pub streaming_dot: &'a str,
-    /// Current file whose sub-path and counts lead the status bar.
+    /// Current file (optional; file path and stats render in sticky file
+    /// banners).
     pub file: Option<&'a OutputFile>,
     /// Change counts of the current hunk, shown after the hunk badge.
     pub hunk_counts: Option<FileCounts>,
@@ -356,6 +356,7 @@ pub struct StatusBarContext<'a> {
 
 /// Current file path stripped of the shared directory prefix, rendering
 /// renames as `old -> new`.
+#[cfg(test)]
 pub(crate) fn stripped_file_path(file: &OutputFile, common_prefix: Option<&str>) -> String {
     let stripped_old = file.old_path.as_deref().map(|old| {
         if let Some(pfx) = common_prefix {
@@ -383,6 +384,7 @@ pub(crate) fn stripped_file_path(file: &OutputFile, common_prefix: Option<&str>)
 
 /// File status tag; routine `modified`/`renamed`/`unmodified` states stay
 /// unadorned.
+#[cfg(test)]
 pub(crate) fn file_status_tag(file: &OutputFile) -> String {
     if file.status == "renamed" || file.status == "modified" || file.status == "unmodified" {
         String::new()
@@ -393,7 +395,7 @@ pub(crate) fn file_status_tag(file: &OutputFile) -> String {
 
 /// Render the secondary status bar as ANSI strings: the shared
 /// [`status_layout`](super::status_layout) cascade (full badges →
-/// abbreviated badges → path truncation → wrap) emitted as escape runs.
+/// abbreviated badges → wrap) emitted as escape runs.
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     use super::status_layout::{StatusSegment, status_layout};
 

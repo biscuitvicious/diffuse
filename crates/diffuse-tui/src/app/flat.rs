@@ -217,11 +217,14 @@ impl AppState {
             .collect()
     }
 
-    pub fn first_row_of_file(&self, fi: usize) -> usize {
+    pub fn file_header_row_idx(&self, fi: usize) -> Option<usize> {
         self.flat
             .iter()
             .position(|r| r.file_idx == fi && r.is_file_header)
-            .unwrap_or(0)
+    }
+
+    pub fn first_row_of_file(&self, fi: usize) -> usize {
+        self.file_header_row_idx(fi).unwrap_or(0)
     }
 
     pub fn last_row_of_file(&self, fi: usize) -> usize {
