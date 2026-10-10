@@ -361,18 +361,44 @@ Overrides the DIFFUSE_THEME environment variable."
     #[command(subcommand)]
     command: Option<SubCommand>,
 
-    /// Git diff arguments (e.g. `diffuse HEAD~1`, `diffuse --staged`, `diffuse
-    /// path/to/file`).
+    #[command(flatten)]
+    revision: RevisionArgs,
+}
+
+/// Reusable git diff arguments (revisions, commit ranges, or file pathspecs).
+#[derive(clap::Args, Debug, Clone, Default, PartialEq, Eq)]
+pub struct RevisionArgs {
+    /// Git diff arguments (revisions, commit ranges, or file pathspecs)
     #[arg(
         value_name = "GIT_ARG",
         trailing_var_arg = true,
         allow_hyphen_values = true,
-        help = "Git diff arguments (revisions, commit ranges, or pathspecs)",
-        long_help = "Arguments forwarded directly to git diff to specify commits \
-(e.g. HEAD~1), ranges (e.g. main..feat), flags (e.g. --staged), or pathspecs \
-(e.g. src/lib.rs)."
+        help_heading = "Revision & Path Controls",
+        help = "Git diff arguments (revisions, commit ranges, or file pathspecs)",
+        long_help = "Arguments specifying commits (e.g. HEAD~1), ranges (e.g. main..feat), \
+or file pathspecs (e.g. src/lib.rs)."
     )]
-    git_args: Vec<String>,
+    pub git_args: Vec<String>,
+}
+
+impl RevisionArgs {
+    pub fn new(git_args: Vec<String>) -> Self {
+        Self { git_args }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.git_args.is_empty()
+    }
+
+    pub fn extend(&mut self, other: &RevisionArgs) {
+        self.git_args.extend(other.git_args.iter().cloned());
+    }
+
+    pub fn combined(&self, other: &RevisionArgs) -> Self {
+        let mut res = self.clone();
+        res.extend(other);
+        res
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -397,15 +423,8 @@ enum SubCommand {
     diffuse review src/crates/      Scope review to specific path"
     )]
     Review {
-        /// Git diff arguments (e.g. `HEAD~1`, `--staged`, `src/`).
-        #[arg(
-            value_name = "GIT_ARG",
-            trailing_var_arg = true,
-            allow_hyphen_values = true,
-            help = "Git diff arguments (revisions, ranges, or pathspecs)",
-            long_help = "Arguments forwarded to git diff to specify commits, ranges, or pathspecs."
-        )]
-        git_args: Vec<String>,
+        #[command(flatten)]
+        revision: RevisionArgs,
     },
 
     /// Parse a diff and emit structured token-stream JSON, JSON Lines, or
@@ -550,6 +569,9 @@ pub struct NotesArgs {
     #[command(subcommand)]
     pub action: Option<NotesAction>,
 
+    #[command(flatten)]
+    pub revision: RevisionArgs,
+
     /// Show resolved notes only (shorthand for `list --resolved`)
     #[arg(
         long,
@@ -615,9 +637,13 @@ pub enum NotesAction {
         about = "List review notes (default action)",
         long_about = "List review notes for the current repository. By default, displays active \
 notes (💬 open and 🔄 in-progress) with a summary count footer of resolved notes. \
-Can filter by status or export to JSON and Markdown.",
+Can filter by status, revision, or pathspecs, or export to JSON and Markdown.",
         after_help = "EXAMPLES:
     diffuse notes list
+    diffuse notes list HEAD~1
+    diffuse notes list --staged
+    diffuse notes list src/lib.rs
+    diffuse notes list HEAD~1 src/lib.rs
     diffuse notes list --all
     diffuse notes list --resolved
     diffuse notes list --in-progress
@@ -626,6 +652,9 @@ Can filter by status or export to JSON and Markdown.",
     diffuse notes list -m"
     )]
     List {
+        #[command(flatten)]
+        revision: RevisionArgs,
+
         /// Show resolved notes only
         #[arg(
             long,
@@ -1329,10 +1358,10 @@ fn main() -> io::Result<()> {
     let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
         match &args.command {
             Some(SubCommand::Review {
-                git_args: sub_git_args,
+                revision: sub_revision,
             }) => {
-                let mut ga = args.git_args.clone();
-                ga.extend(sub_git_args.iter().cloned());
+                let mut ga = args.revision.git_args.clone();
+                ga.extend(sub_revision.git_args.iter().cloned());
                 (
                     Some("review"),
                     ga,
@@ -1373,7 +1402,7 @@ fn main() -> io::Result<()> {
             }
             None => (
                 None,
-                args.git_args.clone(),
+                args.revision.git_args.clone(),
                 args.json,
                 args.jsonl,
                 args.markdown,

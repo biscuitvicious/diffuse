@@ -198,3 +198,79 @@ fn test_repo_edge_cases_and_branches() {
     // Single branch name without range (working tree comparison against branch)
     assert_eq!(RevisionRange::resolve(dir, &["HEAD".into()]), None);
 }
+
+#[test]
+fn test_review_target_revisions_and_pathspecs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (c1, _c2, _c3, c4) = init_test_git_repo(dir);
+    let repo = Repo::from_root(dir).with_name("myrepo");
+
+    // 1. Single commit argument `c1`:
+    //    - rev_args = [c1], pathspecs = []
+    //    - notes_commit = c1, notes_key = myrepo@c1
+    let target_c1 = ReviewTarget::from_repo_args(repo.clone(), vec![c1.clone()], false);
+    assert_eq!(target_c1.rev_args, vec![c1.clone()]);
+    assert!(target_c1.pathspecs.is_empty());
+    assert_eq!(target_c1.single_commit(), Some(c1.clone()));
+    assert_eq!(target_c1.notes_commit(), Some(c1.clone()));
+    assert_eq!(target_c1.notes_key(), format!("myrepo@{c1}"));
+
+    // 2. Pathspec argument `file.txt` only:
+    //    - rev_args = [], pathspecs = [file.txt]
+    //    - notes_commit = c4 (live HEAD), notes_key = myrepo@c4
+    let target_path = ReviewTarget::from_repo_args(repo.clone(), vec!["file.txt".into()], false);
+    assert!(target_path.rev_args.is_empty());
+    assert_eq!(target_path.pathspecs, vec!["file.txt"]);
+    assert_eq!(target_path.notes_commit(), Some(c4.clone()));
+    assert_eq!(target_path.notes_key(), format!("myrepo@{c4}"));
+    assert!(target_path.matches_path("file.txt", dir));
+    assert!(!target_path.matches_path("other.rs", dir));
+
+    // 3. Commit + pathspec `c1 file.txt`:
+    let target_both =
+        ReviewTarget::from_repo_args(repo.clone(), vec![c1.clone(), "file.txt".into()], false);
+    assert_eq!(target_both.rev_args, vec![c1.clone()]);
+    assert_eq!(target_both.pathspecs, vec!["file.txt"]);
+    assert_eq!(target_both.notes_commit(), Some(c1.clone()));
+    assert!(target_both.matches_path("file.txt", dir));
+
+    // 4. Using `--` separator syntax:
+    let target_sep = ReviewTarget::from_repo_args(
+        repo.clone(),
+        vec![c1.clone(), "--".into(), "file.txt".into()],
+        false,
+    );
+    assert_eq!(target_sep.rev_args, vec![c1.clone()]);
+    assert_eq!(target_sep.pathspecs, vec!["file.txt"]);
+
+    // 5. Database keys matching:
+    let mut db = crate::notes::NotesDB::new();
+    let note = crate::notes::ReviewNote {
+        id: "n1".into(),
+        file: "file.txt".into(),
+        side: crate::notes::Side::New,
+        start: 1,
+        end: 1,
+        text: "Note".into(),
+        ..Default::default()
+    };
+    crate::notes::add_note(&mut db, &format!("myrepo@{c1}"), note.clone());
+    crate::notes::add_note(&mut db, &format!("myrepo@{c4}"), note.clone());
+    crate::notes::add_note(&mut db, "myrepo", note);
+
+    let keys_c1 = target_c1.matched_notes_db_keys(&db);
+    assert_eq!(keys_c1, vec![format!("myrepo@{c1}")]);
+
+    let keys_head = target_path.matched_notes_db_keys(&db);
+    assert_eq!(keys_head, vec![format!("myrepo@{c4}")]);
+
+    // Target with no notes on its commit returns empty keys (no fallback to bare
+    // repo)
+    let target_empty = ReviewTarget::from_repo_args(repo.clone(), vec![_c2.clone()], false);
+    assert!(target_empty.matched_notes_db_keys(&db).is_empty());
+
+    // Unrooted target matches bare repo
+    let unrooted_target = ReviewTarget::from_repo(Repo::from_name("myrepo"));
+    assert_eq!(unrooted_target.matched_notes_db_keys(&db), vec!["myrepo"]);
+}

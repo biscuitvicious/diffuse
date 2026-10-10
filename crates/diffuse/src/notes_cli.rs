@@ -18,7 +18,7 @@ use diffuse::core::{
     repo::Repo,
 };
 
-use crate::{Args, NotesAction, NotesArgs, init_color_mode};
+use crate::{Args, NotesAction, NotesArgs, RevisionArgs, init_color_mode};
 
 pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> {
     let notes_path = args
@@ -29,18 +29,19 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
     let mut db = load_notes(&notes_path);
 
     let current_dir = env::current_dir()?;
-    let (repo_name, notes_key) = if is_inside_work_tree(&current_dir) {
-        let repo = Repo::from_root(&current_dir).with_name_opt(args.repo.clone());
-        let r_name = repo.name.clone();
-        let target = ReviewTarget::from_repo_args(repo, args.git_args.clone(), args.staged);
-        (r_name, Some(target.notes_key()))
+    let repo = if is_inside_work_tree(&current_dir) {
+        Repo::from_root(&current_dir).with_name_opt(args.repo.clone())
     } else {
-        (args.repo.clone(), args.repo.clone())
+        Repo::from_name(args.repo.clone().unwrap_or_else(|| "diffuse".to_string()))
     };
+    let target =
+        ReviewTarget::from_repo_args(repo.clone(), args.revision.git_args.clone(), args.staged);
+    let repo_name = Some(target.repo_name().to_string());
+    let notes_key = target.notes_key();
 
     match &notes_args.action {
         None | Some(NotesAction::List { .. }) => {
-            let (resolved, in_progress, all, show_source, json, markdown) =
+            let (resolved, in_progress, all, show_source, json, markdown, sub_revision) =
                 if let Some(NotesAction::List {
                     resolved,
                     in_progress,
@@ -48,6 +49,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                     show_source,
                     json,
                     markdown,
+                    ref revision,
                 }) = notes_args.action
                 {
                     (
@@ -57,6 +59,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                         show_source || notes_args.show_source,
                         json || notes_args.json,
                         markdown || notes_args.markdown,
+                        revision.clone(),
                     )
                 } else {
                     (
@@ -66,33 +69,25 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                         notes_args.show_source,
                         notes_args.json,
                         notes_args.markdown,
+                        RevisionArgs::default(),
                     )
                 };
 
-            let keys: Vec<&str> = if let Some(ref k) = notes_key
-                && db.contains_key(k)
-            {
-                vec![k.as_str()]
-            } else if let Some(ref r) = repo_name {
-                let prefix = format!("{r}@");
-                let matched: Vec<&str> = db
-                    .keys()
-                    .filter(|k| k.as_str() == r || k.starts_with(&prefix))
-                    .map(|s| s.as_str())
-                    .collect();
-                if matched.is_empty() {
-                    db.keys().map(|s| s.as_str()).collect()
-                } else {
-                    matched
-                }
-            } else {
-                db.keys().map(|s| s.as_str()).collect()
-            };
+            let mut combined_revision = args.revision.clone();
+            combined_revision.extend(&notes_args.revision);
+            combined_revision.extend(&sub_revision);
+
+            let list_target =
+                ReviewTarget::from_repo_args(repo, combined_revision.git_args, args.staged);
+            let keys = list_target.matched_notes_db_keys(&db);
 
             let mut all_notes: Vec<(&str, &ReviewNote)> = Vec::new();
             for k in &keys {
                 if let Some(repo_map) = db.get(*k) {
                     for (file, notes) in repo_map {
+                        if !list_target.matches_path(file, &current_dir) {
+                            continue;
+                        }
                         for note in notes {
                             all_notes.push((file.as_str(), note));
                         }
@@ -416,9 +411,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 source_lines: source_lines_val,
             };
 
-            let save_bucket =
-                notes_key.unwrap_or_else(|| repo_name.unwrap_or_else(|| "default".to_string()));
-            add_note(&mut db, &save_bucket, note.clone());
+            add_note(&mut db, &notes_key, note.clone());
             save_notes(&notes_path, &db)?;
 
             // 9. Output

@@ -116,12 +116,7 @@ impl Repo {
         git_args: Vec<String>,
         staged: bool,
     ) -> ReviewTarget {
-        ReviewTarget {
-            repo: self,
-            range,
-            git_args,
-            staged,
-        }
+        ReviewTarget::new(self, range, git_args, staged)
     }
 }
 
@@ -217,6 +212,8 @@ pub struct ReviewTarget {
     pub repo: Repo,
     pub range: Option<RevisionRange>,
     pub git_args: Vec<String>,
+    pub rev_args: Vec<String>,
+    pub pathspecs: Vec<String>,
     pub staged: bool,
 }
 
@@ -229,10 +226,13 @@ impl ReviewTarget {
         git_args: Vec<String>,
         staged: bool,
     ) -> Self {
+        let (rev_args, pathspecs) = parse_git_rev_and_pathspecs(repo.root(), &git_args);
         Self {
             repo,
             range,
             git_args,
+            rev_args,
+            pathspecs,
             staged,
         }
     }
@@ -241,13 +241,16 @@ impl ReviewTarget {
     /// automatically resolving whether it represents a commit range or
     /// working tree review.
     pub fn from_repo_args(repo: Repo, git_args: Vec<String>, staged: bool) -> Self {
+        let (rev_args, pathspecs) = parse_git_rev_and_pathspecs(repo.root(), &git_args);
         let range = repo
             .root()
-            .and_then(|root| RevisionRange::resolve(root, &git_args));
+            .and_then(|root| RevisionRange::resolve(root, &rev_args));
         Self {
             repo,
             range,
             git_args,
+            rev_args,
+            pathspecs,
             staged,
         }
     }
@@ -259,6 +262,8 @@ impl ReviewTarget {
             repo,
             range: None,
             git_args: Vec::new(),
+            rev_args: Vec::new(),
+            pathspecs: Vec::new(),
             staged: false,
         }
     }
@@ -293,27 +298,121 @@ impl ReviewTarget {
     /// working tree.
     pub fn commit_range(&self) -> Option<String> {
         if let Some(root) = self.repo.root()
-            && let Some(r) = crate::git::resolve_commit_range(root, &self.git_args)
+            && let Some(r) = crate::git::resolve_commit_range(root, &self.rev_args)
         {
             return Some(r);
         }
         self.range.as_ref().map(ToString::to_string)
     }
 
+    /// Resolves the single commit hash if `rev_args` targets a single commit
+    /// rather than a range or working tree.
+    pub fn single_commit(&self) -> Option<String> {
+        if self.rev_args.len() == 1 {
+            let r = &self.rev_args[0];
+            if !r.contains("..")
+                && !r.contains("...")
+                && !r.ends_with("^!")
+                && let Some(root) = self.repo.root()
+            {
+                return crate::git::run_git(
+                    root,
+                    &[
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        &format!("{r}^{{commit}}"),
+                    ],
+                )
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            }
+        }
+        None
+    }
+
     /// Target commit hash to scope review notes to:
     /// - Range: second-to-last commit in range.
+    /// - Single commit: that commit hash.
     /// - Working tree: live HEAD commit.
     /// - Unrooted: None.
     pub fn notes_commit(&self) -> Option<String> {
-        self.repo
-            .root()
-            .and_then(|root| notes_commit(root, &self.git_args))
+        let root = self.repo.root()?;
+        if !self.rev_args.is_empty() {
+            if let Some(single) = self.single_commit() {
+                return Some(single);
+            }
+            notes_commit(root, &self.rev_args)
+        } else {
+            self.repo.head_commit()
+        }
     }
 
     /// Scoped notes database key: `{repo_name}@{notes_commit}` or bare
     /// `{repo_name}`.
     pub fn notes_key(&self) -> String {
         notes_key(self.repo_name(), self.notes_commit().as_deref())
+    }
+
+    /// Identify database keys in `db` matching this review target.
+    pub fn matched_notes_db_keys<'a>(&self, db: &'a crate::notes::NotesDB) -> Vec<&'a str> {
+        let r = self.repo_name();
+        let mut matched = Vec::new();
+
+        if let Some(ref target_commit) = self.notes_commit() {
+            let prefix = format!("{r}@");
+            for k in db.keys() {
+                if let Some(hash) = k.strip_prefix(&prefix)
+                    && (target_commit.starts_with(hash) || hash.starts_with(target_commit))
+                {
+                    matched.push(k.as_str());
+                }
+            }
+        } else if let Some((k, _)) = db.get_key_value(r) {
+            matched.push(k.as_str());
+        }
+
+        matched.sort_unstable();
+        matched.dedup();
+        matched
+    }
+
+    /// Check whether a file path matches this target's pathspecs (or true if no
+    /// pathspecs specified).
+    pub fn matches_path(&self, file_path: &str, current_dir: &Path) -> bool {
+        if self.pathspecs.is_empty() {
+            return true;
+        }
+
+        let file_clean = file_path.trim_start_matches("./");
+
+        self.pathspecs.iter().any(|spec| {
+            let spec_clean = spec.trim_start_matches("./").trim_end_matches('/');
+
+            if file_clean == spec_clean {
+                return true;
+            }
+
+            if file_clean.starts_with(&format!("{spec_clean}/")) {
+                return true;
+            }
+
+            if let Some(root) = self.repo.root()
+                && let Ok(rel) = current_dir.join(spec).strip_prefix(root)
+            {
+                let rel_str = rel.to_string_lossy();
+                let rel_clean = rel_str.trim_start_matches("./").trim_end_matches('/');
+                if file_clean == rel_clean || file_clean.starts_with(&format!("{rel_clean}/")) {
+                    return true;
+                }
+            }
+
+            if file_clean.ends_with(&format!("/{spec_clean}")) {
+                return true;
+            }
+
+            false
+        })
     }
 
     /// Active branch name.
@@ -336,4 +435,55 @@ impl ReviewTarget {
     pub fn is_cached(&self) -> bool {
         self.is_staged()
     }
+}
+
+/// Separate git CLI arguments into revisions and pathspecs.
+pub fn parse_git_rev_and_pathspecs(
+    repo_root: Option<&Path>,
+    git_args: &[String],
+) -> (Vec<String>, Vec<String>) {
+    if let Some(pos) = git_args.iter().position(|a| a == "--") {
+        let revs = git_args[..pos]
+            .iter()
+            .filter(|a| !a.starts_with('-'))
+            .cloned()
+            .collect();
+        let paths = git_args[pos + 1..].to_vec();
+        return (revs, paths);
+    }
+
+    let mut revs = Vec::new();
+    let mut paths = Vec::new();
+
+    for arg in git_args {
+        if arg.starts_with('-') {
+            continue;
+        }
+        if arg.contains("..") || arg.contains("...") || arg.ends_with("^!") {
+            revs.push(arg.clone());
+            continue;
+        }
+        if let Some(root) = repo_root {
+            let is_commit = crate::git::run_git(
+                root,
+                &[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{arg}^{{commit}}"),
+                ],
+            )
+            .is_some();
+
+            if is_commit && revs.len() < 2 && !root.join(arg).exists() {
+                revs.push(arg.clone());
+            } else {
+                paths.push(arg.clone());
+            }
+        } else {
+            paths.push(arg.clone());
+        }
+    }
+
+    (revs, paths)
 }

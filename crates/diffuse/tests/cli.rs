@@ -991,6 +991,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 1. Default notes list: shows Open and InProgress, with resolved summary count
     let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1007,6 +1008,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 2. List --resolved: shows only resolved notes
     let out_res = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1023,6 +1025,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 3. List --in-progress: shows only in-progress notes
     let out_prog = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1040,6 +1043,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 4. List --all: shows all notes
     let out_all = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1057,6 +1061,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 5. List --json: JSON payload with notes array and resolvedCount
     let out_json = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1073,6 +1078,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 6. Show with --show-source
     let out_show = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1091,6 +1097,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 7. Reply with --resolve
     let out_reply = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1118,6 +1125,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 8. Progress
     let out_mark_prog = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1141,6 +1149,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 9. Open / Reopen
     let out_open = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1164,6 +1173,7 @@ fn test_cli_notes_subcommand_suite() {
 
     // 10. Status explicit
     let out_status = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
         .arg("--repo")
@@ -1328,4 +1338,253 @@ fn test_cli_notes_add_subcommand() {
     assert_eq!(v["file"], "foo.rs");
     assert_eq!(v["start"], 1);
     assert_eq!(v["text"], "JSON create");
+}
+
+#[test]
+fn test_notes_list_revisions_and_pathspecs() {
+    use diffuse::core::notes::{NoteStatus, ReviewNote, Side, add_note, load_notes, save_notes};
+
+    let dir = tempfile::tempdir().unwrap();
+
+    let run_git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+
+    run_git(&["init", "-q"]);
+    run_git(&["config", "user.email", "test@example.com"]);
+    run_git(&["config", "user.name", "test"]);
+
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::create_dir_all(dir.path().join("doc")).unwrap();
+
+    // Commit 1 (c1)
+    fs::write(dir.path().join("src/a.txt"), "hello\nworld\n").unwrap();
+    fs::write(dir.path().join("src/b.txt"), "foo\nbar\n").unwrap();
+    run_git(&["add", "."]);
+    run_git(&["commit", "-qm", "commit 1"]);
+    let c1 = run_git(&["rev-parse", "HEAD"]);
+
+    // Commit 2 (c2)
+    fs::write(dir.path().join("src/a.txt"), "hello\nworld\nextra\n").unwrap();
+    fs::write(dir.path().join("doc/readme.txt"), "documentation\n").unwrap();
+    run_git(&["add", "."]);
+    run_git(&["commit", "-qm", "commit 2"]);
+    let c2 = run_git(&["rev-parse", "HEAD"]);
+
+    let notes_file = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = notes_file.path().to_path_buf();
+    let mut db = load_notes(&notes_path);
+
+    // Notes on c1
+    let note_c1_a = ReviewNote {
+        id: "c1-a".into(),
+        file: "src/a.txt".into(),
+        side: Side::New,
+        start: 1,
+        end: 1,
+        text: "Note on c1 file a".into(),
+        created_at: 100,
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    let note_c1_b = ReviewNote {
+        id: "c1-b".into(),
+        file: "src/b.txt".into(),
+        side: Side::New,
+        start: 1,
+        end: 1,
+        text: "Note on c1 file b".into(),
+        created_at: 101,
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut db, &format!("test-repo@{c1}"), note_c1_a);
+    add_note(&mut db, &format!("test-repo@{c1}"), note_c1_b);
+
+    // Notes on c2
+    let note_c2_a = ReviewNote {
+        id: "c2-a".into(),
+        file: "src/a.txt".into(),
+        side: Side::New,
+        start: 1,
+        end: 1,
+        text: "Note on c2 file a".into(),
+        created_at: 200,
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    let note_c2_doc = ReviewNote {
+        id: "c2-doc".into(),
+        file: "doc/readme.txt".into(),
+        side: Side::New,
+        start: 1,
+        end: 1,
+        text: "Note on c2 doc".into(),
+        created_at: 201,
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut db, &format!("test-repo@{c2}"), note_c2_a);
+    add_note(&mut db, &format!("test-repo@{c2}"), note_c2_doc);
+    save_notes(&notes_path, &db).unwrap();
+
+    let notes_file_arg = notes_path.to_str().unwrap();
+
+    // 1. Default `diffuse notes list`: scoped to working tree HEAD (c2)
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("list")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Note on c2 file a"));
+    assert!(stdout.contains("Note on c2 doc"));
+    assert!(!stdout.contains("Note on c1 file a"));
+    assert!(!stdout.contains("Note on c1 file b"));
+
+    // 2. `diffuse notes list HEAD~1`: scoped to c1
+    let out_c1 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("list")
+        .arg("HEAD~1")
+        .output()
+        .unwrap();
+    assert_eq!(out_c1.status.code(), Some(0));
+    let stdout_c1 = String::from_utf8_lossy(&out_c1.stdout);
+    assert!(stdout_c1.contains("Note on c1 file a"));
+    assert!(stdout_c1.contains("Note on c1 file b"));
+    assert!(!stdout_c1.contains("Note on c2 file a"));
+    assert!(!stdout_c1.contains("Note on c2 doc"));
+
+    // 3. `diffuse notes list src/a.txt`: scoped to working tree HEAD (c2), filtered
+    //    to src/a.txt
+    let out_file = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("list")
+        .arg("src/a.txt")
+        .output()
+        .unwrap();
+    assert_eq!(out_file.status.code(), Some(0));
+    let stdout_file = String::from_utf8_lossy(&out_file.stdout);
+    assert!(stdout_file.contains("Note on c2 file a"));
+    assert!(!stdout_file.contains("Note on c2 doc"));
+    assert!(!stdout_file.contains("Note on c1 file a"));
+
+    // 4. `diffuse notes list HEAD~1 src/b.txt`: scoped to c1 and filtered to
+    //    src/b.txt
+    let out_c1_b = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("list")
+        .arg("HEAD~1")
+        .arg("src/b.txt")
+        .output()
+        .unwrap();
+    assert_eq!(out_c1_b.status.code(), Some(0));
+    let stdout_c1_b = String::from_utf8_lossy(&out_c1_b.stdout);
+    assert!(stdout_c1_b.contains("Note on c1 file b"));
+    assert!(!stdout_c1_b.contains("Note on c1 file a"));
+    assert!(!stdout_c1_b.contains("Note on c2 file a"));
+
+    // 5. `diffuse notes list HEAD~1 -- src/a.txt`: using -- separator syntax
+    let out_dash = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("list")
+        .arg("HEAD~1")
+        .arg("--")
+        .arg("src/a.txt")
+        .output()
+        .unwrap();
+    assert_eq!(out_dash.status.code(), Some(0));
+    let stdout_dash = String::from_utf8_lossy(&out_dash.stdout);
+    assert!(stdout_dash.contains("Note on c1 file a"));
+    assert!(!stdout_dash.contains("Note on c1 file b"));
+
+    // 6. Shorthand `diffuse notes HEAD~1`: defaults to list action
+    let out_short_rev = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("HEAD~1")
+        .output()
+        .unwrap();
+    assert_eq!(out_short_rev.status.code(), Some(0));
+    let stdout_short_rev = String::from_utf8_lossy(&out_short_rev.stdout);
+    assert!(stdout_short_rev.contains("Note on c1 file a"));
+    assert!(stdout_short_rev.contains("Note on c1 file b"));
+    assert!(!stdout_short_rev.contains("Note on c2 file a"));
+
+    // 7. Shorthand `diffuse notes doc/readme.txt`: defaults to list with path
+    //    filter
+    let out_short_path = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("doc/readme.txt")
+        .output()
+        .unwrap();
+    assert_eq!(out_short_path.status.code(), Some(0));
+    let stdout_short_path = String::from_utf8_lossy(&out_short_path.stdout);
+    assert!(stdout_short_path.contains("Note on c2 doc"));
+    assert!(!stdout_short_path.contains("Note on c2 file a"));
+    assert!(!stdout_short_path.contains("Note on c1"));
+
+    // 8. `diffuse notes list --staged`: scopes to working tree HEAD (c2)
+    let out_staged = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("list")
+        .arg("--staged")
+        .output()
+        .unwrap();
+    assert_eq!(out_staged.status.code(), Some(0));
+    let stdout_staged = String::from_utf8_lossy(&out_staged.stdout);
+    assert!(stdout_staged.contains("Note on c2 file a"));
+    assert!(stdout_staged.contains("Note on c2 doc"));
+    assert!(!stdout_staged.contains("Note on c1"));
 }

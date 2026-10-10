@@ -653,3 +653,74 @@ fn test_clap_subcommands_help() {
     assert!(reply_help.contains("Reply Content:"));
     assert!(reply_help.contains("Status Transitions:"));
 }
+
+#[test]
+fn test_notes_cli_args_revisions_and_staged() {
+    use super::{NotesAction, RevisionArgs};
+
+    // 1. `diffuse notes list HEAD~1`
+    let args = Args::try_parse_from(["diffuse", "notes", "list", "HEAD~1"]).unwrap();
+    if let Some(SubCommand::Notes(notes)) = args.command {
+        assert!(matches!(
+            notes.action,
+            Some(NotesAction::List { ref revision, .. }) if revision.git_args == ["HEAD~1"]
+        ));
+    } else {
+        panic!("expected Notes");
+    }
+
+    // 2. `diffuse notes list HEAD~1 src/lib.rs`
+    let args = Args::try_parse_from(["diffuse", "notes", "list", "HEAD~1", "src/lib.rs"]).unwrap();
+    if let Some(SubCommand::Notes(notes)) = args.command {
+        assert!(matches!(
+            notes.action,
+            Some(NotesAction::List { ref revision, .. }) if revision.git_args == ["HEAD~1", "src/lib.rs"]
+        ));
+    } else {
+        panic!("expected Notes");
+    }
+
+    // 3. `diffuse notes HEAD~1`
+    let args = Args::try_parse_from(["diffuse", "notes", "HEAD~1"]).unwrap();
+    if let Some(SubCommand::Notes(notes)) = args.command {
+        assert!(notes.action.is_none());
+        assert_eq!(notes.revision.git_args, vec!["HEAD~1"]);
+    } else {
+        panic!("expected Notes");
+    }
+
+    // 4. `diffuse notes src/lib.rs`
+    let args = Args::try_parse_from(["diffuse", "notes", "src/lib.rs"]).unwrap();
+    if let Some(SubCommand::Notes(notes)) = args.command {
+        assert!(notes.action.is_none());
+        assert_eq!(notes.revision.git_args, vec!["src/lib.rs"]);
+    } else {
+        panic!("expected Notes");
+    }
+
+    // 5. `diffuse notes list --staged`
+    let args = Args::try_parse_from(["diffuse", "notes", "list", "--staged"]).unwrap();
+    assert!(args.staged);
+
+    // 6. `diffuse notes list --cached`
+    let args = Args::try_parse_from(["diffuse", "notes", "list", "--cached"]).unwrap();
+    assert!(args.staged);
+
+    // 7. `diffuse HEAD~1` and `diffuse review HEAD~1` sharing RevisionArgs
+    let args_root = Args::try_parse_from(["diffuse", "HEAD~1"]).unwrap();
+    assert_eq!(args_root.revision.git_args, vec!["HEAD~1"]);
+
+    let args_review = Args::try_parse_from(["diffuse", "review", "HEAD~1"]).unwrap();
+    if let Some(SubCommand::Review { revision }) = args_review.command {
+        assert_eq!(revision.git_args, vec!["HEAD~1"]);
+    } else {
+        panic!("expected Review");
+    }
+
+    // 8. RevisionArgs helper methods
+    let r1 = RevisionArgs::new(vec!["HEAD~1".into()]);
+    assert!(!r1.is_empty());
+    let r2 = RevisionArgs::new(vec!["src/main.rs".into()]);
+    let combined = r1.combined(&r2);
+    assert_eq!(combined.git_args, vec!["HEAD~1", "src/main.rs"]);
+}
