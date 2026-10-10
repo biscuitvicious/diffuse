@@ -2,9 +2,9 @@ use super::*;
 use crate::{
     cluster::dp::Weights,
     merge::RunKind,
-    syntax::registry::lang_profile,
     tape::{AlignmentTape, TapeChunk},
 };
+use diffuse_syntax::registry::lang_profile;
 
 #[test]
 fn test_block_reflow_involution() {

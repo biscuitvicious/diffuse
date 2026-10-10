@@ -7,10 +7,9 @@ use std::{
 };
 
 use super::*;
-use crate::{
-    parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row},
-    syntax::registry::lang_profile,
-};
+use diffuse_syntax::registry::lang_profile;
+
+use crate::parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row};
 
 #[test]
 fn test_classify_syntax_section() {
@@ -124,7 +123,7 @@ use super::dp::{
     dp_tokens, mod_pair_needs_scoring, score_lcs_candidates_par, score_lcs_candidates_seq,
     solve_cluster, verify_projection,
 };
-use crate::syntax::prelude::CloseDelimiter;
+use diffuse_syntax::prelude::CloseDelimiter;
 // (Row, DelLine, AddLine, LineNum already imported at the top of this file)
 
 fn del_row(n: u32, text: &str) -> Row {

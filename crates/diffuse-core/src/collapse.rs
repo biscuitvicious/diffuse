@@ -12,12 +12,13 @@ use std::{cmp::Ordering, sync::atomic::AtomicU64, time::Instant};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use diffuse_syntax::profile::LangProfile;
+
 use crate::{
     lcs::{tokenize_line, word_spans_and_runs_with_profile, word_spans_with_profile},
     merge::RunKind,
     parse::{AddLine, DelLine, Hunk, Row, RowGroup, Spans},
     shift::pass_shift_hunk,
-    syntax::profile::LangProfile,
 };
 
 /// Results of the initial pairing pass.
@@ -417,8 +418,9 @@ pub fn pass_assemble_mods(
                     let is_closing_row = profile.is_some_and(|p| {
                         p.is_expression_close(nxt_trim) || p.is_block_close(nxt_trim)
                     })
-                        || crate::syntax::profile::CloseDelimiter::default_classify_exact(nxt_trim)
-                            != crate::syntax::profile::CloseDelimiter::None;
+                        || diffuse_syntax::profile::CloseDelimiter::default_classify_exact(
+                            nxt_trim,
+                        ) != diffuse_syntax::profile::CloseDelimiter::None;
                     let is_opening_row = profile.is_some_and(|p| p.is_expression_open(nxt_trim))
                         || nxt_trim == "{"
                         || nxt_trim == "("

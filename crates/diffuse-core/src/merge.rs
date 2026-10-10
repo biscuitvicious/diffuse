@@ -170,7 +170,7 @@ pub fn merged_runs<'a>(r: &'a Row) -> Vec<Run<'a>> {
 /// matches the spans' tape — see `display_text_with_profile`).
 pub fn merged_runs_with_profile<'a>(
     r: &'a Row,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) -> Vec<Run<'a>> {
     let cached = r.cached_runs();
     if !cached.is_empty() {
@@ -228,7 +228,7 @@ pub fn merged_runs_from_texts_with_profile<'a>(
     del_text: &'a str,
     add_text: &'a str,
     spans: &Spans,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) -> Vec<Run<'a>> {
     if spans.del.is_empty() {
         let mut runs = Vec::new();
@@ -324,7 +324,7 @@ pub fn display_text(r: &Row) -> String {
 /// Profile-aware `display_text` (see `merged_runs_with_profile`).
 pub fn display_text_with_profile(
     r: &Row,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) -> String {
     let use_merged = (matches!(r, Row::Mod { .. })
         || r.is_moved()

@@ -3,12 +3,11 @@
 
 use std::mem;
 
-use crate::{
-    algo::interner::SymbolTable,
-    lcs::{
-        char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
-        tokenize_line,
-    },
+use diffuse_algo::interner::SymbolTable;
+
+use crate::lcs::{
+    char_len, lcs_matched_chars_ids, lcs_pairs, lcs_pairs_ids, token_is_alnum, token_is_ws,
+    tokenize_line,
 };
 
 /// The similarity score plus the add-side fractions.

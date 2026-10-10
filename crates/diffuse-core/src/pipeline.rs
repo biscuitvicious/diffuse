@@ -33,6 +33,18 @@ use std::{
     time::Instant,
 };
 
+use diffuse_syntax::{
+    classifier::{
+        ClassifiedToken, for_each_classified_token, for_each_classified_token_with_header,
+        for_each_line_classified_token_with_next, for_each_markdown_token_with_header,
+        is_line_alignment_row,
+    },
+    color::TokenColor,
+    fence::{FenceRegion, fence_regions, region_at},
+    profile::LangProfile,
+    registry::{fence_lang_ext, lang_profile},
+};
+
 use crate::{
     collapse::collapse_hunk_rows,
     counts::file_counts,
@@ -41,17 +53,6 @@ use crate::{
     moves::mark_moves_with_profile,
     notes::{NoteStatus, NotesDB, ReviewNote, Side, query_notes_for_file},
     parse::{CtxLine, DiffFile, Hunk, LineNum, Row, RowKind},
-    syntax::{
-        classifier::{
-            ClassifiedToken, for_each_classified_token, for_each_classified_token_with_header,
-            for_each_line_classified_token_with_next, for_each_markdown_token_with_header,
-            is_line_alignment_row,
-        },
-        color::TokenColor,
-        fence::{FenceRegion, fence_regions, region_at},
-        profile::LangProfile,
-        registry::{fence_lang_ext, lang_profile},
-    },
     visible::Side as VisibleSide,
     wire::{
         MovSide, OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun,

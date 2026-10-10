@@ -376,7 +376,7 @@ fn test_standalone_unique_statement_move() {
 
 #[test]
 fn test_shell_closing_delimiter_move_is_trivial() {
-    let sh = crate::syntax::registry::lang_profile("sh");
+    let sh = diffuse_syntax::registry::lang_profile("sh");
     let mut f = file(vec![hunk(vec![del(10, "fi")]), hunk(vec![add(90, "fi")])]);
     mark_moves_with_profile(&mut f, sh);
 

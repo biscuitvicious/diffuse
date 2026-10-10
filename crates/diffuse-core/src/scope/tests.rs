@@ -1,10 +1,8 @@
 //! Tests for scope and brace-anchor helpers: `is_tail_before_closing` and
 //! `fn_of`.
 
-use crate::{
-    scope::{fn_of, is_tail_before_closing},
-    syntax::registry::lang_profile,
-};
+use crate::scope::{fn_of, is_tail_before_closing};
+use diffuse_syntax::registry::lang_profile;
 
 #[test]
 fn tail_before_closing_brace() {

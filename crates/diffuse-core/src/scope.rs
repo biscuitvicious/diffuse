@@ -1,6 +1,6 @@
 //! Function scope and block-ending delimiter anchor helpers for diff pairing.
 
-use crate::syntax::profile::{BlockDelimStyle, LangProfile};
+use diffuse_syntax::profile::{BlockDelimStyle, LangProfile};
 
 /// True when the row is the last expression of its block: the next line
 /// on its side is a closing delimiter at a LOWER indent (the fn's `}` after the

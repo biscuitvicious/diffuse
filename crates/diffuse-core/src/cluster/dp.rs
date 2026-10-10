@@ -52,18 +52,19 @@ use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
+use diffuse_algo::skyline::{AdaptiveEnvelopeBuilder, SkylineMatrix};
+use diffuse_syntax::{
+    prelude::{CloseDelimiter, first_ascii_word},
+    profile::{LangProfile, PropertySyntax},
+};
+
 use crate::{
-    algo::skyline::{AdaptiveEnvelopeBuilder, SkylineMatrix},
     lcs::{
         bit_parallel::{BitVector, SuffixPattern},
         lcs_matched_chars_ids, lcs_pairs_ids,
     },
     parse::Row,
     similarity::TokenInterner,
-    syntax::{
-        prelude::{CloseDelimiter, first_ascii_word},
-        profile::{LangProfile, PropertySyntax},
-    },
 };
 
 use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
@@ -1610,7 +1611,7 @@ pub(crate) fn solve_cluster_with_anchors(
     };
 
     let raw_anchors =
-        crate::algo::find_unique_anchors(&old_trimmed, &new_trimmed, |s| s.len() >= 4);
+        diffuse_algo::find_unique_anchors(&old_trimmed, &new_trimmed, |s| s.len() >= 4);
     let mut anchors = filter_anchors(raw_anchors);
 
     if anchors.is_empty() {
@@ -1650,7 +1651,7 @@ pub(crate) fn solve_cluster_with_anchors(
             .collect();
 
         let raw_skeleton_anchors =
-            crate::algo::find_unique_anchors(&old_slices, &new_slices, |ts| ts.total_chars >= 16);
+            diffuse_algo::find_unique_anchors(&old_slices, &new_slices, |ts| ts.total_chars >= 16);
         anchors = filter_anchors(raw_skeleton_anchors);
     }
 

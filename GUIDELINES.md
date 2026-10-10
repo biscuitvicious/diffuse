@@ -10,7 +10,7 @@ The codebase is organized into discrete subcrates with strictly unidirectional d
 
 - **Language syntax and profile independence**: Declaration matching, function signature patterns, comment syntax, block delimiters, and syntactic section boundaries belong exclusively to the language profile subsystem ([`crates/diffuse-syntax/src/profile.rs`](crates/diffuse-syntax/src/profile.rs) and [`crates/diffuse-syntax/src/language/`](crates/diffuse-syntax/src/language/)).
 - **Engine agnosticism**: The diff engine core ([`crates/diffuse-core/`](crates/diffuse-core/)) must never hardcode language-specific keywords, regular expressions, or syntax rules. Query all syntactic classification dynamically via [`LangProfile`](crates/diffuse-syntax/src/profile.rs).
-- **Generic algorithm isolation**: Primitives under [`crates/diffuse-core/src/algo/`](crates/diffuse-core/src/algo/) (for example, Myers O(ND), Hirschberg, Hunt–Szymanski, bit-parallel Myers, affine-gap alignment, bipartite matching) operate over generic sequences and abstractions, decoupled from diff-domain types.
+- **Generic algorithm isolation**: Primitives under [`crates/diffuse-algo/`](crates/diffuse-algo/) (for example, Dyck language pushdown automata, small stacks, Myers O(ND), Hirschberg, Hunt–Szymanski, bit-parallel Myers, affine-gap alignment, bipartite matching) operate over generic sequences and abstractions, decoupled from diff-domain types.
 
 ---
 

@@ -10,6 +10,23 @@
 
 The engine is renderer-agnostic and performs no direct terminal I/O. Renderers (the interactive TUI reviewer, CLI pretty-printers, Markdown generators, or external extensions such as `extension/pi/`) consume a structured token stream over a frozen JSON wire contract specified in [`crates/diffuse-core/src/wire.rs`](crates/diffuse-core/src/wire.rs).
 
+## Workspace architecture and crate layout
+
+The repository is organized into discrete Cargo workspace member crates under `crates/`, with strictly unidirectional dependencies:
+
+$$\text{diffuse-algo} + \text{diffuse-syntax} \longrightarrow \text{diffuse-core} \longrightarrow \text{diffuse-render} \longrightarrow \text{diffuse-tui} \longrightarrow \text{diffuse (CLI)}$$
+
+| Crate | Directory | Purpose & Key Canonical Modules |
+| :--- | :--- | :--- |
+| **`diffuse`** | [`crates/diffuse/`](crates/diffuse/) | CLI binary entry point ([`src/main.rs`](crates/diffuse/src/main.rs)). |
+| **`diffuse-algo`** | [`crates/diffuse-algo/`](crates/diffuse-algo/) | Language-agnostic algorithms: Dyck language container pushdown automata ([`src/dyck.rs`](crates/diffuse-algo/src/dyck.rs)), `SmallStack`, Myers/affine-gap primitives. |
+| **`diffuse-syntax`** | [`crates/diffuse-syntax/`](crates/diffuse-syntax/) | Syntactic classifications, Markdown parser ([`src/markdown.rs`](crates/diffuse-syntax/src/markdown.rs)), language profiles & operator tables ([`src/profile.rs`](crates/diffuse-syntax/src/profile.rs), [`src/language/`](crates/diffuse-syntax/src/language/)). |
+| **`diffuse-core`** | [`crates/diffuse-core/`](crates/diffuse-core/) | Core diff analysis pipeline: LCS dynamic programming ([`src/lcs.rs`](crates/diffuse-core/src/lcs.rs)), token classification & entropy ([`src/token.rs`](crates/diffuse-core/src/token.rs)), alignment tape ([`src/tape.rs`](crates/diffuse-core/src/tape.rs)), clustering, git access ([`src/repo.rs`](crates/diffuse-core/src/repo.rs)), and the public wire contract ([`src/wire.rs`](crates/diffuse-core/src/wire.rs)). |
+| **`diffuse-render`** | [`crates/diffuse-render/`](crates/diffuse-render/) | Terminal styling, color palettes, yansi rendering, Markdown diff emitters. |
+| **`diffuse-tui`** | [`crates/diffuse-tui/`](crates/diffuse-tui/) | Interactive terminal reviewer (`Ratatui`, `crossterm`). |
+| **`tests/golden`** | [`tests/golden/`](tests/golden/) | 23 frozen golden acceptance corpora guarding regression baselines. |
+| **`extension/pi`** | [`extension/pi/`](extension/pi/) | TypeScript / Pi IDE review extension. |
+
 ## Canonical reference and specification
 
 - **Rust codebase as ground truth**: The native Rust implementation (`crates/`) is the primary engine and the canonical specification for all algorithmic, rendering, and interaction behaviors.

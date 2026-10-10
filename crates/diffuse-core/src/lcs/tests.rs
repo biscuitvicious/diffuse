@@ -368,7 +368,7 @@ fn test_char_slice_and_char_len() {
 fn test_subword_token_length_weighting_preserves_operators() {
     let old_line = "            if h.rows[di].text().trim() == at {";
     let new_line = "            if h.rows[di].text() == a.text() {";
-    let profile = crate::syntax::registry::lang_profile("rs");
+    let profile = diffuse_syntax::registry::lang_profile("rs");
     let ws = word_spans_with_profile(old_line, new_line, profile);
 
     assert_eq!(ws.del.len(), 2, "deleted .trim() and at");

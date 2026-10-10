@@ -9,8 +9,8 @@ use crate::{
     merge::{RunKind, merged_runs},
     moves::mark_moves,
     parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind},
-    syntax::registry::lang_profile,
 };
+use diffuse_syntax::registry::lang_profile;
 
 fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
     match kind {
@@ -1530,7 +1530,7 @@ fn wrap_tail_reflow_keeps_source_strike() {
     // line.  The mod row must still strike the tail that left it — the add
     // row below materializes the wrapped line, but the source strike is
     // what tells the reviewer the content moved from here to there.
-    let rs = crate::syntax::registry::lang_profile("rs");
+    let rs = diffuse_syntax::registry::lang_profile("rs");
     let h = hunk(vec![
         row(
             RowKind::Del,

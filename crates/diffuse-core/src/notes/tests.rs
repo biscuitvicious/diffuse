@@ -2,7 +2,7 @@
 
 use std::{ffi::OsString, fs, mem, path::PathBuf, process::Command};
 
-use crate::syntax::color::TokenColor;
+use diffuse_syntax::color::TokenColor;
 
 use super::*;
 

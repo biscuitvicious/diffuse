@@ -4,10 +4,9 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::{
-    lcs::{char_len, token_is_ws},
-    syntax::profile::LangProfile,
-};
+use diffuse_syntax::profile::LangProfile;
+
+use crate::lcs::{char_len, token_is_ws};
 
 #[cfg(test)]
 mod tests;
@@ -390,7 +389,7 @@ pub fn compute_parenthesis_depth(
 
 #[inline]
 fn trim_to_balanced_boundaries(tokens: &[&str]) -> (usize, usize) {
-    crate::algo::trim_balanced_boundaries(tokens, &crate::algo::AsciiDelimiterClassifier)
+    diffuse_algo::trim_balanced_boundaries(tokens, &diffuse_algo::AsciiDelimiterClassifier)
 }
 
 #[inline]
@@ -622,9 +621,9 @@ pub fn multi_token_phrase_anchors(
         }
     }
 
-    let selected = crate::algo::find_monotonic_chain(
+    let selected = diffuse_algo::find_monotonic_chain(
         &candidates,
-        |c| crate::algo::MatchInterval::new(c.a_start, c.b_start, c.len),
+        |c| diffuse_algo::MatchInterval::new(c.a_start, c.b_start, c.len),
         |c| c.entropy,
     );
 
@@ -654,7 +653,7 @@ pub enum ContainerKind {
 /// sequence.
 pub fn compute_token_containers(tokens: &[&str]) -> Vec<Option<ContainerKind>> {
     let mut result = Vec::with_capacity(tokens.len());
-    let mut stack: crate::algo::SmallStack<ContainerKind, 8> = crate::algo::SmallStack::new();
+    let mut stack: diffuse_algo::SmallStack<ContainerKind, 8> = diffuse_algo::SmallStack::new();
 
     for &t in tokens {
         match t {

@@ -1402,7 +1402,7 @@ fn test_render_plain_common_context_super_function() {
         "let x = 42;",
         "```",
     ];
-    let md_profile = crate::syntax::registry::lang_profile("md");
+    let md_profile = diffuse_syntax::registry::lang_profile("md");
 
     let rows = render_plain_common_context(&lines, md_profile);
     assert_eq!(rows.len(), 5);
@@ -1432,7 +1432,7 @@ fn test_synthesize_plain_common_context_hunk() {
 fn test_colored_runs_prefers_cached_profiled_runs() {
     use crate::lcs::{word_spans_and_runs_with_profile, word_spans_with_profile};
 
-    let profile = crate::syntax::registry::lang_profile("rs");
+    let profile = diffuse_syntax::registry::lang_profile("rs");
     let del = "    assert_eq!(f.hunks[0].rows.len(), 8); // lines 10..=17";
     let add = "    assert_eq!(f.hunks[0].rows.len(), 18); // lines 5..=22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)";
     let spans = word_spans_with_profile(del, add, profile);

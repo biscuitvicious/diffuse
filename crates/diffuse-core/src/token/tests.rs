@@ -1,12 +1,12 @@
 use crate::{
     lcs::tokenize_line,
-    syntax::registry::lang_profile,
     token::{
         MIN_SINGLE_TOKEN_ENTROPY, TokenClass, WhitespaceKind, classify_token,
         classify_token_whitespace, classify_whitespace, entropy_anchors,
         multi_token_phrase_anchors, token_self_information,
     },
 };
+use diffuse_syntax::registry::lang_profile;
 
 #[test]
 fn test_token_classification() {

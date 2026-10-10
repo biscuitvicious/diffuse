@@ -8,10 +8,9 @@
 
 use std::mem;
 
-use crate::{
-    parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row},
-    syntax::profile::LangProfile,
-};
+use diffuse_syntax::profile::LangProfile;
+
+use crate::parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row};
 
 /// Evaluates the semantic quality of a boundary between `prev_line` and
 /// `next_line`.
@@ -319,7 +318,7 @@ pub fn calculate_needed_shift_down(
     start_idx: usize,
     end_idx: usize,
     split_idx: usize,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) -> usize {
     let Some(p) = profile else {
         return 0;
@@ -330,7 +329,7 @@ pub fn calculate_needed_shift_down(
 
     let text = hunk.rows[split_idx].text().trim();
     let is_closing_delim = p.classify_exact_close(text)
-        != crate::syntax::profile::CloseDelimiter::None
+        != diffuse_syntax::profile::CloseDelimiter::None
         || p.is_expression_close(text)
         || p.is_block_close(text);
     if !is_closing_delim {
@@ -412,7 +411,7 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
 /// Scans addition blocks for interior delimiters/blank lines preceding
 /// declarations, checks the available identity-shift capacity against the
 /// carried context, and executes the shift.
-pub fn pass_shift_hunk(h: &Hunk, profile: Option<&crate::syntax::profile::LangProfile>) -> Hunk {
+pub fn pass_shift_hunk(h: &Hunk, profile: Option<&diffuse_syntax::profile::LangProfile>) -> Hunk {
     let mut new_hunk = h.clone();
     let mut i = 0;
     while i < new_hunk.rows.len() {

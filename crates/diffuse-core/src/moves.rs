@@ -5,10 +5,9 @@
 
 use std::mem;
 
-use crate::{
-    algo::bipartite_matching::{BipartiteMatcher, HunkGridNeighborhood},
-    parse::{AddLine, DiffFile, Row},
-};
+use diffuse_algo::bipartite_matching::{BipartiteMatcher, HunkGridNeighborhood};
+
+use crate::parse::{AddLine, DiffFile, Row};
 
 /// Mark exact-content del/add pairs as *moved*: the same line at a new
 /// position (e.g. renumbered sections) — rendered muted and excluded from
@@ -31,7 +30,7 @@ pub fn mark_moves(f: &mut DiffFile) {
 )]
 pub fn mark_moves_with_profile(
     f: &mut DiffFile,
-    profile: Option<&crate::syntax::profile::LangProfile>,
+    profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) {
     // Leading-indent-insensitive: a line reflowed to a different indentation
     // is still a move, not a change. Trailing whitespace is NOT stripped —
@@ -91,12 +90,12 @@ pub fn mark_moves_with_profile(
             return true;
         }
         if let Some(p) = profile {
-            p.classify_exact_close(s) != crate::syntax::profile::CloseDelimiter::None
+            p.classify_exact_close(s) != diffuse_syntax::profile::CloseDelimiter::None
                 || p.is_expression_open(s)
                 || p.is_block_close(s)
         } else {
-            crate::syntax::profile::CloseDelimiter::default_classify_exact(s)
-                != crate::syntax::profile::CloseDelimiter::None
+            diffuse_syntax::profile::CloseDelimiter::default_classify_exact(s)
+                != diffuse_syntax::profile::CloseDelimiter::None
                 || s == "{"
                 || s == "("
                 || s == "["

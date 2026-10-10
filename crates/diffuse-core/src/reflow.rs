@@ -3,11 +3,12 @@
 
 use std::ops::Range;
 
+use diffuse_syntax::profile::LangProfile;
+
 use crate::{
     cluster::dp::Weights,
     lcs::char_len,
     require,
-    syntax::profile::LangProfile,
     tape::{AlignmentTape, TapeChunk},
 };
 

@@ -5,10 +5,9 @@ pub mod dp;
 pub mod pairing;
 pub mod render;
 
-use crate::{
-    parse::{Hunk, Row},
-    syntax::profile::LangProfile,
-};
+use diffuse_syntax::profile::LangProfile;
+
+use crate::parse::{Hunk, Row};
 
 /// Classification of syntactic construct for change runs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Default)]

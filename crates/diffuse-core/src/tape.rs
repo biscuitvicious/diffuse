@@ -12,6 +12,8 @@
 
 use std::{slice, str};
 
+use diffuse_syntax::profile::LangProfile;
+
 use crate::{
     lcs::{
         char_len, char_slice, lcs_pairs_anchored, raw_lcs_pairs, token_is_ws, token_product_cap,
@@ -19,7 +21,6 @@ use crate::{
     },
     merge::{Run, RunKind},
     parse::Spans,
-    syntax::profile::LangProfile,
     token::classify_whitespace,
 };
 
@@ -181,18 +182,18 @@ impl<'a> AlignmentTape<'a> {
     }
 
     /// Converts this alignment tape into an algebraic `Tape<&'a str>`.
-    pub fn to_algebraic_tape(&self) -> crate::algo::tape::Tape<&'a str> {
+    pub fn to_algebraic_tape(&self) -> diffuse_algo::tape::Tape<&'a str> {
         self.chunks
             .iter()
             .map(|c| match c {
-                TapeChunk::Keep(s) => crate::algo::tape::TapeChunk::Keep(*s),
-                TapeChunk::Strike(s) => crate::algo::tape::TapeChunk::Strike(*s),
-                TapeChunk::Fill(s) => crate::algo::tape::TapeChunk::Fill(*s),
+                TapeChunk::Keep(s) => diffuse_algo::tape::TapeChunk::Keep(*s),
+                TapeChunk::Strike(s) => diffuse_algo::tape::TapeChunk::Strike(*s),
+                TapeChunk::Fill(s) => diffuse_algo::tape::TapeChunk::Fill(*s),
                 TapeChunk::Relocate {
                     from_span,
                     to_span,
                     text,
-                } => crate::algo::tape::TapeChunk::Relocate {
+                } => diffuse_algo::tape::TapeChunk::Relocate {
                     from_span: *from_span,
                     to_span: *to_span,
                     item: *text,
@@ -202,15 +203,15 @@ impl<'a> AlignmentTape<'a> {
     }
 
     /// Creates an `AlignmentTape` from an algebraic `Tape<&'a str>`.
-    pub fn from_algebraic_tape(tape: crate::algo::tape::Tape<&'a str>) -> Self {
+    pub fn from_algebraic_tape(tape: diffuse_algo::tape::Tape<&'a str>) -> Self {
         let chunks = tape
             .into_chunks()
             .into_iter()
             .map(|c| match c {
-                crate::algo::tape::TapeChunk::Keep(s) => TapeChunk::Keep(s),
-                crate::algo::tape::TapeChunk::Strike(s) => TapeChunk::Strike(s),
-                crate::algo::tape::TapeChunk::Fill(s) => TapeChunk::Fill(s),
-                crate::algo::tape::TapeChunk::Relocate {
+                diffuse_algo::tape::TapeChunk::Keep(s) => TapeChunk::Keep(s),
+                diffuse_algo::tape::TapeChunk::Strike(s) => TapeChunk::Strike(s),
+                diffuse_algo::tape::TapeChunk::Fill(s) => TapeChunk::Fill(s),
+                diffuse_algo::tape::TapeChunk::Relocate {
                     from_span,
                     to_span,
                     item,

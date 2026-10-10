@@ -1,10 +1,8 @@
 //! Unit tests for diff identity shift transformations.
 
 use super::*;
-use crate::{
-    parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row},
-    syntax::registry::lang_profile,
-};
+use crate::parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row};
+use diffuse_syntax::registry::lang_profile;
 
 fn hunk(rows: Vec<Row>) -> Hunk {
     Hunk {

@@ -24,11 +24,12 @@ use std::{
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use diffuse_syntax::profile::LangProfile;
+
 use crate::{
     collapse::PairingResults,
     parse::{Hunk, Row},
     scope::{fn_of_exists, is_tail_before_closing},
-    syntax::profile::LangProfile,
 };
 
 use super::{HunkSegment, dp, partition_hunk_segments};

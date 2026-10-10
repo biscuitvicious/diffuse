@@ -14,7 +14,9 @@ use std::cell::RefCell;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{merge::RunKind, parse::Spans, syntax::profile::LangProfile, token::WhitespaceKind};
+use diffuse_syntax::profile::LangProfile;
+
+use crate::{merge::RunKind, parse::Spans, token::WhitespaceKind};
 
 /// Slice `s` by char offsets (the port's span convention). The JS
 /// `String.slice(start, end)` clamps out-of-range indices and returns an

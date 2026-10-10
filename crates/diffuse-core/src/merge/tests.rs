@@ -4,9 +4,9 @@ use crate::{
     lcs::{char_slice, word_spans, word_spans_with_profile},
     merge::*,
     parse::{AddLine, DelLine, LineNum, Row},
-    syntax::registry::lang_profile,
     tape::AlignmentTape,
 };
+use diffuse_syntax::registry::lang_profile;
 
 fn mk(del: &str, add: &str) -> Row {
     Row::Mod {
@@ -541,7 +541,7 @@ fn test_box_drawing_spacing_reconstruction() {
     let old = "│   ├── package.json        builds the extension bundle";
     let new =
         "│        ├── package.json   builds the extension bundle (native diffuse TUI wrapper)";
-    let profile = crate::syntax::registry::lang_profile("md");
+    let profile = diffuse_syntax::registry::lang_profile("md");
     let ws = crate::lcs::word_spans_with_profile(old, new, profile);
     let r = Row::Mod {
         old_line: DelLine::new(LineNum::new(1).unwrap(), old),

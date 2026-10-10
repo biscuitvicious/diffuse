@@ -2,10 +2,8 @@
 //! pairing metric). The TS suite exercises these through `collapseHunkRows`;
 //! these are direct sanity checks of the scoring functions themselves.
 
-use crate::{
-    similarity::{line_similarity, line_similarity_parts},
-    syntax::registry::lang_profile,
-};
+use crate::similarity::{line_similarity, line_similarity_parts};
+use diffuse_syntax::registry::lang_profile;
 
 // Identical content → sim 1; the add is fully matched.
 #[test]
