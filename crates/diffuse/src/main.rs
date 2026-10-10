@@ -97,16 +97,17 @@ spawning git or reading standard input."
     diff: Option<String>,
 
     // Review Notes
-    /// Path to notes database file (e.g. ~/.pi/review/notes.json).
+    /// Path to notes database file (default:
+    /// ~/.local/state/diffuse/notes.json).
     #[arg(
         long,
         value_name = "PATH",
         value_hint = clap::ValueHint::FilePath,
         global = true,
         help_heading = "Review Notes",
-        help = "Path to notes database file (default: ~/.pi/review/notes.json)",
+        help = "Path to notes database file (default: ~/.local/state/diffuse/notes.json)",
         long_help = "Path to the JSON review notes database file. \
-Defaults to ~/.pi/review/notes.json."
+Defaults to $XDG_STATE_HOME/diffuse/notes.json (or ~/.local/state/diffuse/notes.json)."
     )]
     notes_file: Option<String>,
 

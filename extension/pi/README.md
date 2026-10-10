@@ -42,7 +42,7 @@ Then `/reload` in pi and run `/review` in any git work tree.
   inline at their position. Infinite scroll across all files — selection is
   bounded to one file.
 - **Notes**: attach a note to any line range (crossing hunks); they persist
-  in `~/.pi/review/notes.json` (keyed by repo) and render inline on every
+  in `~/.local/state/diffuse/notes.json` (keyed by repo) and render inline on every
   launch. The cursor resumes at the same file/line when the content still
   matches.
 - **Deep git**: stage / unstage / discard the current hunk or whole file

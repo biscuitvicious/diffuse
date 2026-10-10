@@ -137,7 +137,7 @@ pub type NotesDB = HashMap<String, HashMap<String, Vec<ReviewNote>>>;
 /// else `~/.local/state/diffuse`, else `.diffuse` relative to the cwd.
 ///
 /// The engine is consumer-agnostic (see the root AGENTS.md) — its default
-/// state never lives under a consumer's directory (e.g. `~/.pi/review/`). A
+/// state never lives under an external consumer's private directory. A
 /// consumer may point diffuse anywhere it likes via `--notes-file`; the
 /// binary's own default stays its own.
 pub fn default_state_dir() -> PathBuf {

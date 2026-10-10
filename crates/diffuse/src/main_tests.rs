@@ -575,6 +575,8 @@ fn test_clap_root_help_sections_and_options() {
     assert!(help.contains("-m, --markdown"));
     assert!(help.contains("--theme"));
     assert!(help.contains("--notes-file"));
+    assert!(!help.contains(".pi"));
+    assert!(help.contains("~/.local/state/diffuse/notes.json"));
 
     // Verify "Given..." text is removed from root long_about
     assert!(!help.contains("Given a unified diff"));

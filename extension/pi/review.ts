@@ -3,12 +3,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { diffuseBinPath, parseReviewArgs } from "./src/backend.ts";
-
-const NOTES_FILE = join(homedir(), ".pi", "review", "notes.json");
 
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("review", {
@@ -35,8 +31,6 @@ export default function (pi: ExtensionAPI) {
 			const argv: string[] = [
 				"--repo",
 				repoName,
-				"--notes-file",
-				NOTES_FILE,
 				...parsed.baseArgs,
 				...(parsed.paths.length > 0 ? ["--", ...parsed.paths] : []),
 			];
