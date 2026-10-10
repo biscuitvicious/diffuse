@@ -546,3 +546,110 @@ fn test_cli_args_resolved_all_show_source() {
         panic!("expected Parse subcommand");
     }
 }
+
+#[test]
+fn test_clap_debug_assert() {
+    use clap::CommandFactory;
+    Args::command().debug_assert();
+}
+
+#[test]
+fn test_clap_root_help_sections_and_options() {
+    use clap::CommandFactory;
+    let mut cmd = Args::command();
+    let help = cmd.render_help().to_string();
+
+    assert!(help.contains("Execution Modes:"));
+    assert!(help.contains("Output Formats:"));
+    assert!(help.contains("Theme & Styling:"));
+    assert!(help.contains("Review Notes:"));
+    assert!(help.contains("Diff & Performance Tuning:"));
+    assert!(help.contains("Repository & Input:"));
+    assert!(help.contains("TYPICAL USAGE & EXAMPLES:"));
+    assert!(help.contains("ENVIRONMENT VARIABLES:"));
+
+    assert!(help.contains("--pager"));
+    assert!(help.contains("--no-tui"));
+    assert!(help.contains("--json"));
+    assert!(help.contains("--jsonl"));
+    assert!(help.contains("-m, --markdown"));
+    assert!(help.contains("--theme"));
+    assert!(help.contains("--notes-file"));
+
+    // Verify "Given..." text is removed from root long_about
+    assert!(!help.contains("Given a unified diff"));
+
+    // Verify tuning options are hidden from help output
+    assert!(!help.contains("--token-product-cap"));
+    assert!(!help.contains("--cluster-budget"));
+    assert!(!help.contains("--cluster-bandwidth-min"));
+    assert!(!help.contains("--cluster-bandwidth-slack"));
+
+    // Verify hidden options still parse correctly from CLI
+    let parsed = Args::try_parse_from([
+        "diffuse",
+        "--token-product-cap",
+        "99999",
+        "--cluster-budget",
+        "12345",
+        "--cluster-bandwidth-min",
+        "42",
+        "--cluster-bandwidth-slack",
+        "16",
+    ])
+    .unwrap();
+    assert_eq!(parsed.token_product_cap, 99999);
+    assert_eq!(parsed.cluster_budget, 12345);
+    assert_eq!(parsed.cluster_bandwidth_min, 42);
+    assert_eq!(parsed.cluster_bandwidth_slack, 16);
+}
+
+#[test]
+fn test_clap_subcommands_help() {
+    use clap::CommandFactory;
+    let cmd = Args::command();
+
+    let subcommands = ["review", "parse", "notes"];
+    for sub in subcommands {
+        let sub_cmd = cmd
+            .find_subcommand(sub)
+            .unwrap_or_else(|| panic!("missing subcommand {sub}"));
+        let help = sub_cmd.clone().render_help().to_string();
+        assert!(!help.is_empty(), "empty help for {sub}");
+    }
+
+    let notes_cmd = cmd.find_subcommand("notes").unwrap();
+    let notes_subcommands = [
+        "list", "add", "show", "reply", "progress", "resolve", "open", "reopen", "status",
+    ];
+    for sub in notes_subcommands {
+        let sub_cmd = notes_cmd
+            .find_subcommand(sub)
+            .unwrap_or_else(|| panic!("missing notes subcommand {sub}"));
+        let help = sub_cmd.clone().render_help().to_string();
+        assert!(!help.is_empty(), "empty help for notes {sub}");
+        assert!(
+            help.contains("EXAMPLES:"),
+            "missing EXAMPLES section in notes {sub}"
+        );
+    }
+
+    let add_help = notes_cmd
+        .find_subcommand("add")
+        .unwrap()
+        .clone()
+        .render_help()
+        .to_string();
+    assert!(add_help.contains("Target & Coordinates:"));
+    assert!(add_help.contains("Message Content:"));
+    assert!(add_help.contains("Status & Output:"));
+
+    let reply_help = notes_cmd
+        .find_subcommand("reply")
+        .unwrap()
+        .clone()
+        .render_help()
+        .to_string();
+    assert!(reply_help.contains("Reply Content:"));
+    assert!(reply_help.contains("Status Transitions:"));
+}

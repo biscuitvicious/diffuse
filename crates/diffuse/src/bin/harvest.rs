@@ -24,34 +24,83 @@ use diffuse::core::{
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "harvest", about = "Harvest git diffs into golden fixtures")]
+#[command(
+    name = "harvest",
+    version,
+    about = "Harvest git diffs into golden fixtures conforming to tests/AGENTS.md",
+    long_about = "harvest captures multi-file git diffs with old- and new-side snapshots from any \
+git repository into frozen golden corpus directories conforming to tests/AGENTS.md.\n\n\
+The recorded revision is resolved and pinned to absolute full commit IDs, ensuring \
+deterministic, byte-identical acceptance testing across engine changes.",
+    after_help = "TYPICAL USAGE & EXAMPLES:
+    harvest HEAD~1..HEAD -o tests/golden/my-fixture
+    harvest WORKTREE -o tests/golden/my-worktree
+    harvest --exclude tests/golden -o tests/golden/my-fixture main..feature"
+)]
 struct Args {
     /// Git revision or range (e.g. HEAD~1..HEAD, main..feature, HEAD).
     /// Use the literal `WORKTREE` to diff the working tree against HEAD
     /// (for uncommitted-change fixtures).
-    #[arg(default_value = "HEAD~1..HEAD")]
+    #[arg(
+        value_name = "REVISION",
+        default_value = "HEAD~1..HEAD",
+        help = "Git revision or range (e.g. HEAD~1..HEAD, main..feature, WORKTREE)"
+    )]
     revision: String,
 
     /// Change to DIR before doing anything (equivalent to git -C <DIR>).
-    #[arg(short = 'C', value_name = "DIR", action = clap::ArgAction::Append)]
+    #[arg(
+        short = 'C',
+        value_name = "DIR",
+        value_hint = clap::ValueHint::DirPath,
+        action = clap::ArgAction::Append,
+        help_heading = "Repository & Input",
+        help = "Change to DIR before doing anything (equivalent to git -C <DIR>)"
+    )]
     directory: Vec<PathBuf>,
 
     /// Target repository path (defaults to current directory)
-    #[arg(short, long)]
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        value_hint = clap::ValueHint::DirPath,
+        help_heading = "Repository & Input",
+        help = "Target repository path (defaults to current directory)"
+    )]
     repo: Option<PathBuf>,
 
     /// Output fixture path (defaults to stdout)
-    #[arg(short, long)]
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        value_hint = clap::ValueHint::DirPath,
+        help_heading = "Output",
+        help = "Output fixture directory path (e.g. tests/golden/<name>)"
+    )]
     output: Option<PathBuf>,
 
     /// Lines of context around changes
-    #[arg(short, long, default_value_t = DEFAULT_CONTEXT_LINES)]
+    #[arg(
+        short,
+        long,
+        value_name = "LINES",
+        default_value_t = DEFAULT_CONTEXT_LINES,
+        help_heading = "Diff Options",
+        help = "Lines of context around changes"
+    )]
     context: usize,
 
     /// Glob pathspecs to exclude from the harvested diff (git pathspec
     /// syntax, e.g. `tests/golden` — passed as `:(exclude)<pattern>` so a
     /// corpus never diffs the golden tree itself).
-    #[arg(long, value_name = "PATTERN")]
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        help_heading = "Diff Options",
+        help = "Pathspec patterns to exclude from harvested diff"
+    )]
     exclude: Vec<String>,
 }
 
@@ -469,5 +518,17 @@ mod tests {
             snapshot_filename(&tgz, "new").ends_with(".new.gz"),
             "compound extension survives truncation"
         );
+    }
+
+    #[test]
+    fn test_harvest_clap_debug_assert_and_help() {
+        use clap::CommandFactory;
+        Args::command().debug_assert();
+        let mut cmd = Args::command();
+        let help = cmd.render_help().to_string();
+        assert!(help.contains("Repository & Input:"));
+        assert!(help.contains("Output:"));
+        assert!(help.contains("Diff Options:"));
+        assert!(help.contains("TYPICAL USAGE & EXAMPLES:"));
     }
 }
