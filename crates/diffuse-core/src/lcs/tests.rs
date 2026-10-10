@@ -771,3 +771,24 @@ fn test_prefix_gutter_comment_alignment() {
         "/// Generate plain 6-character prefix gutter (` 123 +[- -]`, ` 123[-≈+-]{+ -+}`, ` 123[-≈--]{+ ~`, +}`[-).-]"
     );
 }
+
+#[test]
+#[ignore = "Awaiting Phase 2: operator boundary trimming requires entropy-weighted DP"]
+fn test_path_change_local_to_parenthetical_addition() {
+    let old = "Defaults to ~/.pi/review/notes.json.\"";
+    let new =
+        "Defaults to $XDG_STATE_HOME/diffuse/notes.json (or ~/.local/state/diffuse/notes.json).\"";
+    let (_, runs) = word_spans_and_runs_with_profile(old, new, None);
+    let formatted: String = runs
+        .iter()
+        .map(|(kind, text)| match kind {
+            RunKind::Ctx => text.clone(),
+            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Add => format!("{{+{text}+}}"),
+        })
+        .collect();
+    assert_eq!(
+        formatted,
+        "Defaults to [-~/.pi/review/-]{+$XDG_STATE_HOME/diffuse/+}notes.json{+ (or ~/.local/state/diffuse/notes.json)+}.\""
+    );
+}

@@ -354,3 +354,27 @@ fn test_multi_token_phrase_anchors_indexed_matching() {
         assert_eq!(a[ai], b[bi], "anchored tokens must match verbatim");
     }
 }
+
+#[test]
+fn test_compute_parenthesis_depth() {
+    use crate::token::{compute_parenthesis_depth, compute_token_containers};
+
+    let tokens = vec!["a", "(", "b", "(", "c", ")", "d", ")", "e"];
+    let containers = compute_token_containers(&tokens);
+    let depths = compute_parenthesis_depth(&tokens, &containers);
+    assert_eq!(depths, vec![0, 0, 1, 1, 2, 1, 1, 0, 0]);
+
+    // Parentheses inside string literals must not increment depth
+    let quoted_tokens = vec![
+        "let", " ", "x", " ", "=", " ", "\"", "(", "foo", ")", "\"", ";",
+    ];
+    let quoted_containers = compute_token_containers(&quoted_tokens);
+    let quoted_depths = compute_parenthesis_depth(&quoted_tokens, &quoted_containers);
+    assert!(quoted_depths.iter().all(|&d| d == 0));
+
+    // Unmatched closing parentheses saturate at 0
+    let unmatched = vec![")", "x", ")", "("];
+    let unmatched_containers = compute_token_containers(&unmatched);
+    let unmatched_depths = compute_parenthesis_depth(&unmatched, &unmatched_containers);
+    assert_eq!(unmatched_depths, vec![0, 0, 0, 0]);
+}

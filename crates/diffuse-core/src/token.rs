@@ -362,6 +362,32 @@ pub fn is_anchor_content_token(t: &str, profile: Option<&LangProfile>) -> bool {
     is_alnum || is_op
 }
 
+/// Computes parenthesis nesting depth for tokens, ignoring parentheses that
+/// occur inside string literals or backtick code spans.
+pub fn compute_parenthesis_depth(
+    tokens: &[&str],
+    containers: &[Option<ContainerKind>],
+) -> Vec<usize> {
+    let mut result = Vec::with_capacity(tokens.len());
+    let mut depth = 0usize;
+    for (idx, &t) in tokens.iter().enumerate() {
+        if containers[idx].is_none() {
+            if t == ")" {
+                depth = depth.saturating_sub(1);
+                result.push(depth);
+            } else if t == "(" {
+                result.push(depth);
+                depth += 1;
+            } else {
+                result.push(depth);
+            }
+        } else {
+            result.push(depth);
+        }
+    }
+    result
+}
+
 #[inline]
 fn trim_to_balanced_boundaries(tokens: &[&str]) -> (usize, usize) {
     crate::algo::trim_balanced_boundaries(tokens, &crate::algo::AsciiDelimiterClassifier)
@@ -381,6 +407,8 @@ pub fn multi_token_phrase_anchors(
 
     let a_containers = compute_token_containers(a);
     let b_containers = compute_token_containers(b);
+    let a_depths = compute_parenthesis_depth(a, &a_containers);
+    let b_depths = compute_parenthesis_depth(b, &b_containers);
 
     #[derive(Clone, Copy, Debug)]
     struct PhraseCandidate {
@@ -554,28 +582,28 @@ pub fn multi_token_phrase_anchors(
             let min_b_idx = (0..trimmed_len)
                 .min_by_key(|&idx| b_pos.get(phrase_slice[idx]).map_or(0, |p| p.len()))
                 .unwrap_or(0);
-            let count_b = {
+            let (total_b, depth_b) = {
                 let tok = phrase_slice[min_b_idx];
                 let positions = &b_pos[tok];
-                if positions.len() == 1 {
-                    1
-                } else {
-                    let mut c = 0;
-                    for &pos in positions {
-                        if pos >= min_b_idx && pos + trimmed_len - min_b_idx <= b.len() {
-                            let start = pos - min_b_idx;
-                            if &b[start..start + trimmed_len] == phrase_slice {
-                                c += 1;
-                                if c > 1 {
-                                    break;
-                                }
+                let mut total = 0;
+                let mut depth_count = 0;
+                for &pos in positions {
+                    if pos >= min_b_idx && pos + trimmed_len - min_b_idx <= b.len() {
+                        let start = pos - min_b_idx;
+                        if &b[start..start + trimmed_len] == phrase_slice {
+                            total += 1;
+                            if b_depths[start] == a_depths[a_start] {
+                                depth_count += 1;
                             }
                         }
                     }
-                    c
                 }
+                (total, depth_count)
             };
-            if count_b != 1 {
+
+            let is_unique =
+                total_b == 1 || (a_depths[a_start] == b_depths[b_start] && depth_b == 1);
+            if !is_unique {
                 continue;
             }
 
