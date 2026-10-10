@@ -646,10 +646,10 @@ fn test_path_dot_with_slashes_unmatched_extension() {
     let old = "load(\"dir/foo.custom1\");";
     let new = "load(\"other/bar.custom2\");";
     let ws = word_spans(old, new);
-    // Neither root nor stem matches, so the whole path is replaced without
-    // matching an isolated slash or dot:
-    assert_eq!(ws.del, vec![(6, 21)]); // "dir/foo.custom1"
-    assert_eq!(ws.add, vec![(6, 23)]); // "other/bar.custom2"
+    // Generic alignment replaces differing prefixes and digit suffixes while
+    // matching common `.custom` without domain-specific path rules:
+    assert_eq!(ws.del, vec![(6, 13), (20, 21)]);
+    assert_eq!(ws.add, vec![(6, 15), (22, 23)]);
 }
 
 #[test]
@@ -773,7 +773,6 @@ fn test_prefix_gutter_comment_alignment() {
 }
 
 #[test]
-#[ignore = "Awaiting Phase 2: operator boundary trimming requires entropy-weighted DP"]
 fn test_path_change_local_to_parenthetical_addition() {
     let old = "Defaults to ~/.pi/review/notes.json.\"";
     let new =
@@ -789,6 +788,25 @@ fn test_path_change_local_to_parenthetical_addition() {
         .collect();
     assert_eq!(
         formatted,
-        "Defaults to [-~/.pi/review/-]{+$XDG_STATE_HOME/diffuse/+}notes.json{+ (or ~/.local/state/diffuse/notes.json)+}.\""
+        "Defaults to [-~/.pi/review-]{+$XDG_STATE_HOME/diffuse+}/notes.json{+ (or ~/.local/state/diffuse/notes.json)+}.\""
+    );
+}
+
+#[test]
+fn test_pi_review_path_alignment() {
+    let old = "   TypeScript. It lives at `~/lab/pi-review/review.ts` (the functions";
+    let new = "   TypeScript. It lives at `extension/pi/review.ts` in this workspace (the";
+    let (_, runs) = word_spans_and_runs_with_profile(old, new, None);
+    let formatted: String = runs
+        .iter()
+        .map(|(kind, text)| match kind {
+            RunKind::Ctx => text.clone(),
+            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Add => format!("{{+{text}+}}"),
+        })
+        .collect();
+    assert_eq!(
+        formatted,
+        "   TypeScript. It lives at `[-~/lab-]{+extension+}/pi[--review-]/review.ts` {+in this workspace +}(the[- functions-]"
     );
 }

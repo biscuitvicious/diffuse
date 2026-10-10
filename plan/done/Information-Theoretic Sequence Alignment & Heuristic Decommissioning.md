@@ -1,9 +1,9 @@
 # Information-Theoretic Sequence Alignment & Heuristic Decommissioning
 
 - [x] **Phase 1: Dyck Stratum Depth Tracking & Anchor Disambiguation**
-- [ ] **Phase 2: Information-Theoretic Gotoh Dynamic Programming (Entropy-Weighted Scoring)**
-- [ ] **Phase 3: Decommissioning of Path-Matching Heuristics & Ad-Hoc Rules**
-- [ ] **Phase 4: Golden Corpus Verification & Full Pipeline Sign-Off**
+- [x] **Phase 2: Information-Theoretic Gotoh Dynamic Programming (Entropy-Weighted Scoring)**
+- [x] **Phase 3: Decommissioning of Path-Matching Heuristics & Ad-Hoc Rules**
+- [x] **Phase 4: Golden Corpus Verification & Full Pipeline Sign-Off**
 
 ---
 

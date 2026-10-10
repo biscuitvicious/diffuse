@@ -415,9 +415,9 @@ pub fn token_is_ws(t: &str) -> bool {
     t.chars().any(|c| c.is_ascii_whitespace())
 }
 
-/// The TS `/[A-Za-z0-9]/` test — any ASCII alphanumeric char.
+/// The alphanumeric test — any Unicode alphanumeric char.
 pub fn token_is_alnum(t: &str) -> bool {
-    t.chars().any(|c| c.is_ascii_alphanumeric())
+    t.chars().any(|c| c.is_alphanumeric())
 }
 
 /// Computes unambiguous unique token anchors (Patience diff pre-pass).
@@ -441,72 +441,6 @@ pub(crate) fn are_contiguous_subwords(t1: &str, t2: &str) -> bool {
         && !token_is_ws(t2)
         && is_subword_token(t1)
         && is_subword_token(t2)
-}
-
-#[inline]
-fn is_path_boundary_delim(tok: &str) -> bool {
-    matches!(
-        tok,
-        "`" | "\"" | "'" | "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">" | "," | ";"
-    )
-}
-
-fn path_root_and_stem<'a>(slice: &[&'a str], idx: usize) -> Option<(&'a str, &'a str)> {
-    if idx >= slice.len() || token_is_ws(slice[idx]) || is_path_boundary_delim(slice[idx]) {
-        return None;
-    }
-    let mut start = idx;
-    while start > 0 {
-        let prev = slice[start - 1];
-        if token_is_ws(prev) || is_path_boundary_delim(prev) {
-            break;
-        }
-        start -= 1;
-    }
-    let mut end = idx + 1;
-    while end < slice.len() {
-        let next = slice[end];
-        if token_is_ws(next) || is_path_boundary_delim(next) {
-            break;
-        }
-        end += 1;
-    }
-
-    let word_slice = &slice[start..end];
-    let has_sep = word_slice
-        .iter()
-        .any(|&tok| tok.contains('/') || tok.contains('\\'));
-
-    if !has_sep {
-        return None;
-    }
-
-    let root = word_slice[0];
-    let last_sep_idx = word_slice
-        .iter()
-        .rposition(|&tok| tok.contains('/') || tok.contains('\\'))
-        .unwrap();
-
-    let after_sep = &word_slice[last_sep_idx + 1..];
-    let stem = if after_sep.is_empty() {
-        if last_sep_idx > 0 {
-            word_slice[last_sep_idx - 1]
-        } else {
-            root
-        }
-    } else {
-        let dot_pos = after_sep.iter().position(|&tok| tok == ".");
-        if let Some(dp) = dot_pos {
-            if dp > 0 {
-                after_sep[dp - 1]
-            } else {
-                after_sep[0]
-            }
-        } else {
-            after_sep[0]
-        }
-    };
-    Some((root, stem))
 }
 
 fn compound_identifier_root_and_stem<'a>(
@@ -614,15 +548,6 @@ pub(crate) fn tokens_can_match(
         }
     }
 
-    let a_path = path_root_and_stem(a, i);
-    let b_path = path_root_and_stem(b, j);
-    if let (Some((ra, sa)), Some((rb, sb))) = (a_path, b_path)
-        && ra != rb
-        && sa != sb
-    {
-        return false;
-    }
-
     let a_ident = compound_identifier_root_and_stem(a, i);
     let b_ident = compound_identifier_root_and_stem(b, j);
     if let (Some((ra, sa)), Some((rb, sb))) = (a_ident, b_ident)
@@ -665,11 +590,14 @@ fn token_match_reward(t: &str) -> i32 {
         2
     } else if is_container_delim(t) {
         20
-    } else if matches!(t, "." | "," | ";" | ":" | "/" | "\\" | "-" | "_") {
-        4
     } else if token_is_alnum(t) {
         let len = char_len(t) as i32;
         if len <= 2 { 10 } else { 14 + len.min(10) * 2 }
+    } else if char_len(t) <= 1 {
+        // Low-entropy isolated punctuation and single-character operators
+        // are weighted strictly below affine gap opening + extension (20),
+        // preventing isolated punctuation matches across disjoint semantic units.
+        4
     } else {
         10
     }

@@ -393,6 +393,28 @@ fn trim_to_balanced_boundaries(tokens: &[&str]) -> (usize, usize) {
     crate::algo::trim_balanced_boundaries(tokens, &crate::algo::AsciiDelimiterClassifier)
 }
 
+#[inline]
+fn is_dangling_prefix_token(t: &str, profile: Option<&LangProfile>) -> bool {
+    if token_is_ws(t) {
+        return true;
+    }
+    if matches!(t, ")" | "]" | "}") {
+        return true;
+    }
+    !is_anchor_content_token(t, profile) && !matches!(t, "(" | "[" | "{" | "\"" | "'" | "`")
+}
+
+#[inline]
+fn is_dangling_suffix_token(t: &str, profile: Option<&LangProfile>) -> bool {
+    if token_is_ws(t) {
+        return true;
+    }
+    if matches!(t, "(" | "[" | "{") {
+        return true;
+    }
+    !is_anchor_content_token(t, profile) && !matches!(t, ")" | "]" | "}" | "\"" | "'" | "`")
+}
+
 /// Identifies maximal multi-token phrase landmarks ($k \ge 2$) shared between
 /// token slices `a` and `b`. Returns pairs of matching token indices `(a_idx,
 /// b_idx)`.
@@ -464,51 +486,26 @@ pub fn multi_token_phrase_anchors(
                 continue;
             }
 
-            let a_start = i + start;
-            let b_start = j + start;
-            let a_end = a_start + trimmed_len;
-            let b_end = b_start + trimmed_len;
+            let mut a_start = i + start;
+            let mut b_start = j + start;
+            let mut a_end = a_start + trimmed_len;
+            let mut b_end = b_start + trimmed_len;
 
-            // Invariant 1: A phrase cannot start or end on a dangling operator
-            // or separator.
-            if matches!(
-                a[a_start],
-                "+" | "-"
-                    | "*"
-                    | "/"
-                    | "%"
-                    | "^"
-                    | "&"
-                    | "|"
-                    | "="
-                    | "≈"
-                    | "~"
-                    | ","
-                    | ";"
-                    | ":"
-                    | "."
-                    | ")"
-                    | "]"
-                    | "}"
-            ) || matches!(
-                a[a_end - 1],
-                "+" | "-"
-                    | "*"
-                    | "/"
-                    | "%"
-                    | "^"
-                    | "&"
-                    | "|"
-                    | "="
-                    | "≈"
-                    | "~"
-                    | ","
-                    | ";"
-                    | ":"
-                    | "("
-                    | "["
-                    | "{"
-            ) {
+            // Landmark boundary invariant: A phrase landmark must begin and end on
+            // valid syntactic phrase boundaries (alphanumerics, balanced container
+            // delimiters, or quotes), trimming dangling operators, separators, or
+            // whitespace.
+            while a_start < a_end && is_dangling_prefix_token(a[a_start], profile) {
+                a_start += 1;
+                b_start += 1;
+            }
+            while a_end > a_start && is_dangling_suffix_token(a[a_end - 1], profile) {
+                a_end -= 1;
+                b_end -= 1;
+            }
+
+            let trimmed_len = a_end - a_start;
+            if trimmed_len < 2 {
                 continue;
             }
 

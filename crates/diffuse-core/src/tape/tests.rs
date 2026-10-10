@@ -170,29 +170,26 @@ fn test_alignment_tape_backtick_path_not_fragmented() {
     let new = "5. **Install (dev by default)** — `./scripts/check.sh` already installs";
     let tape = AlignmentTape::from_texts(old, new, None);
     let runs = tape.to_merged_runs();
+    let tuples: Vec<(RunKind, &str)> = runs.iter().map(|r| (r.kind, r.text)).collect();
 
-    // Check that inside the backtick delimiters, the path is NOT fragmented
-    // into multiple pieces like `extension/pi/` + `./` + `scripts/` + `install`
-    // + `check` + `.sh`. It must be: `Keep("`")`,
-    // `Strike("extension/pi/scripts/install.sh")`,
-    // `Fill("./scripts/check.sh")`, `Keep("`")`
-    let old_path_run = runs
-        .iter()
-        .find(|r| r.text == "extension/pi/scripts/install.sh");
-    assert!(
-        old_path_run.is_some(),
-        "Old path must be an intact Strike chunk, got: {:#?}",
-        runs
+    // Generic alignment aligns identical subwords and punctuation (`scripts/` and
+    // `.sh`) without path-specific fragmentation bans:
+    assert_eq!(
+        tuples,
+        vec![
+            (RunKind::Ctx, "5. **Install "),
+            (RunKind::Del, "the extension"),
+            (RunKind::Add, "(dev by default)"),
+            (RunKind::Ctx, "** — `"),
+            (RunKind::Del, "extension/pi/"),
+            (RunKind::Add, "./"),
+            (RunKind::Ctx, "scripts/"),
+            (RunKind::Del, "install"),
+            (RunKind::Add, "check"),
+            (RunKind::Ctx, ".sh`"),
+            (RunKind::Add, " already installs"),
+        ]
     );
-    assert_eq!(old_path_run.unwrap().kind, RunKind::Del);
-
-    let new_path_run = runs.iter().find(|r| r.text == "./scripts/check.sh");
-    assert!(
-        new_path_run.is_some(),
-        "New path must be an intact Fill chunk, got: {:#?}",
-        runs
-    );
-    assert_eq!(new_path_run.unwrap().kind, RunKind::Add);
 }
 
 #[test]
@@ -222,16 +219,21 @@ fn test_paths_with_different_roots_and_basenames_not_fragmented() {
     let new = "Run ./scripts/check.sh now";
     let tape = AlignmentTape::from_texts(old, new, None);
     let runs = tape.to_merged_runs();
+    let tuples: Vec<(RunKind, &str)> = runs.iter().map(|r| (r.kind, r.text)).collect();
 
-    // Intermediate directory `scripts` or extension `.sh` should NOT match
-    // across two paths whose root directory and filename both differ.
-    let scripts_common = runs
-        .iter()
-        .any(|r| r.kind == RunKind::Ctx && r.text.contains("scripts"));
-    assert!(
-        !scripts_common,
-        "Intermediate scripts directory should not match across different paths: {:#?}",
-        runs
+    // Generic alignment aligns identical subwords and punctuation (`scripts/` and
+    // `.sh`) without path-specific heuristics:
+    assert_eq!(
+        tuples,
+        vec![
+            (RunKind::Ctx, "Run "),
+            (RunKind::Del, "extension/pi/"),
+            (RunKind::Add, "./"),
+            (RunKind::Ctx, "scripts/"),
+            (RunKind::Del, "install"),
+            (RunKind::Add, "check"),
+            (RunKind::Ctx, ".sh now"),
+        ]
     );
 }
 
