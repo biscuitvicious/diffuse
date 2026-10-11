@@ -31,16 +31,18 @@ index 1111111..2222222 100644
 +    let y = 2;
  }
 "#;
+    let prefix: String = (1..1025).map(|i| format!("line {i}\n")).collect();
     let new_content = [(
         "filesystem.rs".to_string(),
-        "fn test() {\n    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}\n"
-            .to_string(),
+        format!(
+            "{prefix}    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}}\n"
+        ),
     )]
     .into_iter()
     .collect();
     let old_content = [(
         "filesystem.rs".to_string(),
-        "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),
+        format!("{prefix}    let x = 1;\n    // old comment — em dash\n}}\n"),
     )]
     .into_iter()
     .collect();

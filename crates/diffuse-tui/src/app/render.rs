@@ -890,11 +890,6 @@ impl AppState {
             if vis_i >= content_end_vis {
                 break;
             }
-            if sticky.is_some_and(|s| s.banner_row == idx) {
-                vis_i += count;
-                continue;
-            }
-
             let in_band = band[idx];
             let in_hunk_extent = !in_band && hunk_extent[idx];
 
@@ -936,8 +931,9 @@ impl AppState {
                     let is_collapsed = self.collapsed_files.contains(&item.file_idx);
                     let seg_count = seg_counts[idx];
                     let common_prefix = self.output.common_directory_prefix();
+                    let is_sticky = sticky.is_some_and(|s| s.banner_row == idx);
                     for s_idx in 0..seg_count {
-                        if vis_i >= content_start_vis && vis_i < content_end_vis {
+                        if !is_sticky && vis_i >= content_start_vis && vis_i < content_end_vis {
                             let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                             let is_current = item.file_idx == self.current_file_idx();
                             let text_cols = content_width.max(1);

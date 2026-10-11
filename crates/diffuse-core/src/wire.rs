@@ -694,6 +694,7 @@ pub fn format_rename_path_markdown(old_path: &str, new_path: &str) -> String {
 /// A hunk in the wire contract: change coordinates and its collapsed rows.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct OutputHunk {
     pub old_start: u32,
     pub old_count: u32,

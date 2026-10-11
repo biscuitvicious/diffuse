@@ -607,6 +607,14 @@ pub fn stream_git_repo_to_producer(
             };
 
             if let Some(c) = content {
+                let file_lines = crate::pipeline::split_content_lines(&c);
+                let file_notes = crate::notes::query_notes_for_file(db, repo, &file_path);
+                if !file_notes
+                    .iter()
+                    .any(|n| crate::notes::note_anchors_in_file(n, &file_lines))
+                {
+                    continue;
+                }
                 let mut f = crate::parse::DiffFile::new(&file_path);
                 f.status = crate::parse::FileStatus::Unmodified;
                 f.new_bytes = size;

@@ -336,7 +336,8 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::DEFAULT,
     );
-    assert!(contiguous.contains("H2/2 · 0 lines ────"));
+    assert!(contiguous.contains("H2/2 ────"));
+    assert!(!contiguous.contains("0 lines"));
     assert!(!contiguous.contains("hidden"));
 
     // With content: 2 ctx, 1 del, 4 adds, 1 mod → 6 modified lines (2 context
@@ -371,6 +372,37 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         &DiffuseTheme::DEFAULT,
     );
     assert!(expanded.contains("H2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────"));
+
+    // Zero-change hunk (e.g. synthetic note hunk) -> count badge is omitted
+    let zero_hunk = OutputHunk {
+        old_start: 10,
+        old_count: 5,
+        new_start: 10,
+        new_count: 5,
+        rows: vec![mk(RowKind::Ctx)],
+    };
+    let zero_div = render_hunk_divider(
+        Badge { idx: 0, total: 1 },
+        &zero_hunk,
+        0,
+        false,
+        80,
+        &DiffuseTheme::DEFAULT,
+    );
+    assert!(zero_div.contains("H1/1 ────"));
+    assert!(!zero_div.contains("0 lines"));
+
+    // Zero-change hunk with hidden gap -> shows gap without count badge
+    let zero_gap_div = render_hunk_divider(
+        Badge { idx: 0, total: 1 },
+        &zero_hunk,
+        30,
+        false,
+        80,
+        &DiffuseTheme::DEFAULT,
+    );
+    assert!(zero_gap_div.contains("H1/1 · 30 more lines: ▼ ────"));
+    assert!(!zero_gap_div.contains("0 lines"));
 
     // With movs (both source and target count towards modified lines)
     h.rows.push(mk(RowKind::Mov));

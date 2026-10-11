@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     app::{AppState, temp_notes_path},
     core::{
@@ -24,16 +26,18 @@ index 1111111..2222222 100644
 +    let y = 2;
  }
 "#;
+    let prefix: String = (1..1025).map(|i| format!("line {i}\n")).collect();
     let new_content = [(
         "filesystem.rs".to_string(),
-        "fn test() {\n    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}\n"
-            .to_string(),
+        format!(
+            "{prefix}    let x = 1;\n    // new comment — em dash updated\n    let y = 2;\n}}\n"
+        ),
     )]
     .into_iter()
     .collect();
     let old_content = [(
         "filesystem.rs".to_string(),
-        "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),
+        format!("{prefix}    let x = 1;\n    // old comment — em dash\n}}\n"),
     )]
     .into_iter()
     .collect();
@@ -304,8 +308,12 @@ fn test_multiline_note_anchors_to_last_line() {
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
 
-    // Multi-line range 1025..=1027: last line is 1027 ("    let y = 2;")
-    let last_line_hash = hash_line_content("    let y = 2;");
+    // Multi-line range 1025..=1027: compound hash across all selected lines
+    let compound_hash = LineHash::from_lines([
+        "    let x = 1;",
+        "    // new comment — em dash updated",
+        "    let y = 2;",
+    ]);
     let valid_multiline = ReviewNote {
         id: "multi-valid".into(),
         file: file.clone(),
@@ -314,7 +322,7 @@ fn test_multiline_note_anchors_to_last_line() {
         end: 1027,
         text: "multiline note".into(),
         created_at: 100,
-        line_hash: Some(last_line_hash),
+        line_hash: Some(compound_hash),
         ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, valid_multiline);
@@ -329,8 +337,8 @@ fn test_multiline_note_anchors_to_last_line() {
         "multiline note anchored to last line must anchor inline, not on file banner"
     );
 
-    // If line_hash was for first line ("    let x = 1;"), it should NOT match when
-    // anchoring against last line
+    // If line_hash was for first line only ("    let x = 1;"), it should NOT match
+    // when compound-anchoring across the 3-line range
     state.notes.clear();
     let first_line_hash = hash_line_content("    let x = 1;");
     let mismatch_multiline = ReviewNote {
@@ -348,7 +356,7 @@ fn test_multiline_note_anchors_to_last_line() {
     let callouts_mismatch = state.note_callouts(80);
     assert!(
         callouts_mismatch.contains_key(&banner_idx),
-        "note with first-line hash must fail anchor against last line and be placed on file banner"
+        "note with single-line hash must fail compound anchor across 3 lines and be placed on file banner"
     );
 }
 
@@ -1265,4 +1273,182 @@ fn test_event_keybindings_x_z_and_shift_s() {
         KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT),
     );
     assert!(state.show_source_lines);
+}
+
+#[test]
+fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    let banner_idx = state.first_row_of_file(state.current_file_idx());
+    let file = state.output.files[state.current_file_idx()].path.clone();
+
+    // Add a multi-line note on the banner (unanchored)
+    let note = ReviewNote {
+        id: "banner-multi".into(),
+        file: file.clone(),
+        side: Side::New,
+        start: 9999, // out of range -> unanchored, on file banner
+        end: 9999,
+        text: "Ambiguity guard test: line content matches but chunk is not unique across the file. The uniqueness check prevents false re-anchoring and safely places the note onto the file header banner.".into(),
+        created_at: 100,
+        ..Default::default()
+    };
+    add_note(&mut state.notes, &state.notes_key, note);
+    state.bump_notes();
+
+    let callouts = state.note_callouts(80);
+    assert!(callouts.contains_key(&banner_idx));
+    let note_lines = callouts.get(&banner_idx).unwrap();
+    assert!(
+        note_lines.len() >= 3,
+        "must render into multiple callout lines: got {}",
+        note_lines.len()
+    );
+
+    // At scroll = 0, screen row 0 is the file banner.
+    // Screen row 1 is line 0 of the note ("Ambiguity guard test").
+    // Screen row 2 is line 1 of the note ("uniqueness check").
+    state.scroll = 0;
+    let (lines_0, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_0[0].contains("════"), "row 0 must be file banner");
+    assert!(
+        lines_0[1].contains("Ambiguity guard test"),
+        "row 1 must be note line 0, got: {:?}",
+        lines_0[1]
+    );
+    assert!(
+        lines_0[2].contains("uniqueness check"),
+        "row 2 must be note line 1, got: {:?}",
+        lines_0[2]
+    );
+
+    // Now scroll down by 1 line (scroll = 1):
+    // Sticky banner activates on row 0.
+    // Note line 0 scrolls under the sticky banner.
+    // Screen row 1 must smoothly show note line 1 ("uniqueness check")!
+    state.scroll = 1;
+    let (lines_1, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_1[0].contains("════"), "row 0 must be sticky banner");
+    assert!(
+        lines_1[1].contains("uniqueness check"),
+        "row 1 must smoothly show note line 1 beneath the sticky header, got: {:?}",
+        lines_1[1]
+    );
+
+    // Scroll down by 2 lines (scroll = 2):
+    // Screen row 1 must smoothly show note line 2 ("places the note")!
+    state.scroll = 2;
+    let (lines_2, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_2[0].contains("════"), "row 0 must be sticky banner");
+    assert!(
+        lines_2[1].contains("places the note"),
+        "row 1 must smoothly show note line 2 beneath the sticky header, got: {:?}",
+        lines_2[1]
+    );
+}
+
+#[test]
+fn test_cross_hunk_selection_bridges_and_merges_hunks() {
+    let diff = "\
+diff --git a/test.rs b/test.rs
+--- a/test.rs
++++ b/test.rs
+@@ -10,3 +10,3 @@
+ line 10
+-line 11 old
++line 11 new
+ line 12
+@@ -30,3 +30,3 @@
+ line 30
+-line 31 old
++line 31 new
+ line 32
+";
+    let file_lines: Vec<String> = (1..=50)
+        .map(|i| {
+            if i == 11 {
+                "line 11 new".to_string()
+            } else if i == 31 {
+                "line 31 new".to_string()
+            } else {
+                format!("line {i}")
+            }
+        })
+        .collect();
+    let content = file_lines.join("\n") + "\n";
+    let mut new_map = HashMap::new();
+    new_map.insert("test.rs".to_string(), content.clone());
+
+    // Without notes, pipeline produces 2 hunks: @@ -10,3 @@ and @@ -30,3 @@
+    let base_out = run_pipeline_full(
+        diff,
+        Some(new_map.clone()),
+        None,
+        PipelineOptions::default(),
+    );
+    assert_eq!(
+        base_out.files[0].hunks.len(),
+        2,
+        "must initially have 2 hunks"
+    );
+
+    // Add note spanning lines 11 to 31 (spans both hunks and the gap between them!)
+    let sel_lines: Vec<&str> = file_lines[10..=30].iter().map(|s| s.as_str()).collect();
+    let hash = LineHash::from_lines(sel_lines);
+    let note = ReviewNote {
+        id: "cross-hunk".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 11,
+        end: 31,
+        text: "Spans across hunk 1 and hunk 2".into(),
+        line_hash: Some(hash),
+        ..Default::default()
+    };
+
+    let mut db = HashMap::new();
+    add_note(&mut db, "test_repo", note);
+
+    let opts = PipelineOptions::default()
+        .with_notes(Some(db.clone()), Some("test_repo".to_string()))
+        .with_visual_context(4);
+
+    let out = run_pipeline_full(diff, Some(new_map), None, opts);
+    // The synthetic context bridges the gap, causing merge_adjacent_hunks to merge
+    // them into 1!
+    assert_eq!(
+        out.files[0].hunks.len(),
+        1,
+        "bridged hunks must merge into a single hunk"
+    );
+
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.notes = db;
+
+    // The note must anchor inline to line 31, not on the file banner!
+    let banner_idx = state.first_row_of_file(0);
+    let callouts = state.note_callouts(80);
+    assert!(
+        !callouts.contains_key(&banner_idx),
+        "must not be on file banner"
+    );
+
+    let target_row = state.note_target_row(0, &state.notes["test_repo"]["test.rs"][0]);
+    assert_ne!(
+        target_row, banner_idx,
+        "target row must be inside the merged hunk"
+    );
+    assert!(
+        callouts.contains_key(&target_row),
+        "callout must be placed at target row"
+    );
 }

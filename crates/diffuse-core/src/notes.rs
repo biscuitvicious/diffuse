@@ -339,14 +339,32 @@ pub struct LineHash(pub NonZero<u32>);
 
 impl LineHash {
     /// Compute a deterministic line hash from trimmed line content.
-    ///
-    /// Uses FNV-1a 32-bit over `content.trim().as_bytes()`. If the hash
-    /// evaluates to 0, wraps to 1 to maintain the non-zero niche invariant.
     pub fn from_content(content: &str) -> Self {
+        Self::from_lines([content])
+    }
+
+    /// Compute a deterministic compound hash across all lines in an iterator.
+    ///
+    /// Trims each line individually before hashing with FNV-1a. Between lines,
+    /// a newline byte delimiter is mixed in so distinct line boundaries cannot
+    /// accidentally collide. If the hash evaluates to 0, wraps to 1 to maintain
+    /// the non-zero niche invariant.
+    pub fn from_lines<'a, I>(lines: I) -> Self
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
         let mut hash: u32 = 0x811c9dc5;
-        for byte in content.trim().as_bytes() {
-            hash ^= *byte as u32;
-            hash = hash.wrapping_mul(0x01000193);
+        let mut first = true;
+        for line in lines {
+            if !first {
+                hash ^= b'\n' as u32;
+                hash = hash.wrapping_mul(0x01000193);
+            }
+            first = false;
+            for byte in line.trim().as_bytes() {
+                hash ^= *byte as u32;
+                hash = hash.wrapping_mul(0x01000193);
+            }
         }
         let val = if hash == 0 { 1 } else { hash };
         // SAFETY: val is guaranteed non-zero.
@@ -438,16 +456,66 @@ pub fn hash_line_content(content: &str) -> LineHash {
     LineHash::from_content(content)
 }
 
-/// Check whether a note anchors cleanly against the content of its target line.
+/// Check whether a note anchors cleanly against a single line of content.
 ///
-/// If the note has a recorded `line_hash`, returns `true` only if the hash
-/// of `line_content` matches. Notes without a hash (legacy) always anchor
-/// by line number.
+/// If the note has a recorded `line_hash` or `source_lines`, verifies that the
+/// line matches. Notes without a hash or source lines always return true.
 pub fn note_anchors_cleanly(note: &ReviewNote, line_content: &str) -> bool {
-    match note.line_hash {
-        Some(expected) => expected.matches_content(line_content),
-        None => true,
+    note_anchors_cleanly_lines(note, [line_content])
+}
+
+/// Check whether a note anchors cleanly against all selected lines.
+pub fn note_anchors_cleanly_lines<'a, I>(note: &ReviewNote, lines: I) -> bool
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    if let Some(expected) = note.line_hash {
+        LineHash::from_lines(lines) == expected
+    } else if let Some(ref src) = note.source_lines {
+        LineHash::from_lines(lines) == LineHash::from_lines(src.lines())
+    } else {
+        true
     }
+}
+
+/// Check whether a note anchors cleanly in a file's content lines.
+///
+/// Returns true only if:
+/// 1. The note has a recorded compound hash or source lines to verify against.
+/// 2. The note's target range `[start..=end]` is valid and within bounds.
+/// 3. All lines in that range match the note's recorded compound hash (or
+///    source lines).
+/// 4. The matching text chunk is unique across the entire file (appears exactly
+///    once).
+pub fn note_anchors_in_file<S: AsRef<str>>(note: &ReviewNote, file_lines: &[S]) -> bool {
+    if note.line_hash.is_none() && note.source_lines.is_none() {
+        return false;
+    }
+    let (start, end) = (note.start.min(note.end), note.start.max(note.end));
+    if start == 0 {
+        return false;
+    }
+    let start_idx = (start - 1) as usize;
+    let end_idx = end as usize;
+    if end_idx > file_lines.len() || start_idx >= end_idx {
+        return false;
+    }
+    let slice = &file_lines[start_idx..end_idx];
+    let len = (end - start + 1) as usize;
+    if !note_anchors_cleanly_lines(note, slice.iter().map(|s| s.as_ref())) {
+        return false;
+    }
+
+    let mut match_count = 0;
+    for window in file_lines.windows(len) {
+        if note_anchors_cleanly_lines(note, window.iter().map(|s| s.as_ref())) {
+            match_count += 1;
+            if match_count > 1 {
+                return false;
+            }
+        }
+    }
+    match_count == 1
 }
 
 /// Load notes from disk. Returns an empty DB if the file does not exist or
@@ -480,13 +548,15 @@ pub fn notes_for_file<'a>(
         .flatten()
 }
 
-/// Query notes for a file from `db`.
+/// Query notes for a specific file path.
 ///
-/// If `repo` is provided:
-/// - First checks an exact match on `repo`.
-/// - If not found or empty, checks commit-scoped keys matching `{repo}@`.
+/// Priority resolution order:
+/// - Exact match on bucket `repo` (e.g. `repo@commit` or bare `repo`).
+/// - If `repo` is commit-scoped (`repo@commit`), matches buckets with
+///   compatible commit prefix.
+/// - If `repo` is bare (`repo`), matches `{repo}@` buckets.
 ///
-/// If still not found or `repo` is `None`:
+/// If `repo` is `None` (standalone review):
 /// - Searches all buckets in `db` for notes matching `file`.
 pub fn query_notes_for_file<'a>(
     db: &'a NotesDB,
@@ -500,15 +570,28 @@ pub fn query_notes_for_file<'a>(
         {
             return notes.iter().collect();
         }
-        let prefix = format!("{r}@");
-        let matching: Vec<&'a ReviewNote> = db
-            .iter()
-            .filter(|(k, _)| k.starts_with(&prefix))
-            .filter_map(|(_, repo_map)| repo_map.get(file))
-            .flatten()
-            .collect();
-        if !matching.is_empty() {
-            return matching;
+        if let Some((repo_name, commit)) = r.split_once('@') {
+            let prefix = format!("{repo_name}@");
+            return db
+                .iter()
+                .filter(|(k, _)| {
+                    if let Some(hash) = k.strip_prefix(&prefix) {
+                        commit.starts_with(hash) || hash.starts_with(commit)
+                    } else {
+                        false
+                    }
+                })
+                .filter_map(|(_, repo_map)| repo_map.get(file))
+                .flatten()
+                .collect();
+        } else {
+            let prefix = format!("{r}@");
+            return db
+                .iter()
+                .filter(|(k, _)| k.as_str() == r || k.starts_with(&prefix))
+                .filter_map(|(_, repo_map)| repo_map.get(file))
+                .flatten()
+                .collect();
         }
     }
     db.values()
@@ -529,21 +612,23 @@ pub fn note_files_for_repo(db: &NotesDB, repo: Option<&str>) -> Vec<String> {
                 }
             }
         }
-        let prefix = format!("{r}@");
-        for (k, repo_map) in db {
-            if k.starts_with(&prefix) {
-                for (f, notes) in repo_map {
-                    if !notes.is_empty() {
-                        files.insert(f.clone());
+        if let Some((repo_name, commit)) = r.split_once('@') {
+            let prefix = format!("{repo_name}@");
+            for (k, repo_map) in db {
+                if let Some(hash) = k.strip_prefix(&prefix)
+                    && (commit.starts_with(hash) || hash.starts_with(commit))
+                {
+                    for (f, notes) in repo_map {
+                        if !notes.is_empty() {
+                            files.insert(f.clone());
+                        }
                     }
                 }
             }
-        }
-        if files.is_empty() {
-            let base_r = r.split('@').next().unwrap_or(r);
-            let base_prefix = format!("{base_r}@");
+        } else {
+            let prefix = format!("{r}@");
             for (k, repo_map) in db {
-                if k == base_r || k.starts_with(&base_prefix) {
+                if k.starts_with(&prefix) {
                     for (f, notes) in repo_map {
                         if !notes.is_empty() {
                             files.insert(f.clone());
@@ -552,8 +637,7 @@ pub fn note_files_for_repo(db: &NotesDB, repo: Option<&str>) -> Vec<String> {
                 }
             }
         }
-    }
-    if files.is_empty() {
+    } else {
         for repo_map in db.values() {
             for (f, notes) in repo_map {
                 if !notes.is_empty() {

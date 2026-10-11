@@ -341,13 +341,17 @@ pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> 
     let counts = hunk.counts();
     let (dels, adds, mods, movs) = (counts.dels, counts.adds, counts.mods, counts.movs);
     let total = dels + adds + mods + movs;
-    let unit = if total == 1 { "line" } else { "lines" };
-    let summary = format!("{} {unit}", total);
-    let counts_str = format_counts_plain(&counts);
-    let summary = if counts_str.is_empty() {
-        summary
+    let summary_part = if total > 0 {
+        let unit = if total == 1 { "line" } else { "lines" };
+        let s = format!("{total} {unit}");
+        let counts_str = format_counts_plain(&counts);
+        if counts_str.is_empty() {
+            format!(" · {s}")
+        } else {
+            format!(" · {s}: {counts_str}")
+        }
     } else {
-        format!("{summary}: {counts_str}")
+        String::new()
     };
 
     let gap_part = if hidden_gap > 0 {
@@ -361,7 +365,7 @@ pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> 
     } else {
         String::new()
     };
-    format!("──── {} · {summary}{gap_part} ────", badge.hunk_text())
+    format!("──── {}{summary_part}{gap_part} ────", badge.hunk_text())
 }
 
 /// Visual segment count for a divider text: ceiling division, except a

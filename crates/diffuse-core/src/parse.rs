@@ -383,7 +383,7 @@ impl Row {
 }
 
 /// A hunk: the `@@ -old +new @@` region of a diff.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Default)]
 pub struct Hunk {
     pub old_start: u32,
     pub old_count: u32,

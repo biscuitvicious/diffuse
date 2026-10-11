@@ -282,7 +282,7 @@ pub fn run_pipeline_full(
     }
 }
 
-fn split_content_lines(s: &str) -> Vec<&str> {
+pub(crate) fn split_content_lines(s: &str) -> Vec<&str> {
     let stripped = s.strip_suffix('\r').unwrap_or(s);
     let stripped = stripped.strip_suffix('\n').unwrap_or(stripped);
     let stripped = stripped.strip_suffix('\r').unwrap_or(stripped);
@@ -1297,6 +1297,13 @@ pub fn synthesize_note_context_hunks(
     let uncovered: Vec<&ReviewNote> = notes
         .into_iter()
         .filter(|note| {
+            let content_lines = match note.side {
+                Side::New => &f.new_content,
+                Side::Old => &f.old_content,
+            };
+            if !crate::notes::note_anchors_in_file(note, content_lines) {
+                return false;
+            }
             !f.hunks.iter().any(|h| match note.side {
                 Side::New => {
                     let h_start = h.new_start;

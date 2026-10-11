@@ -5,7 +5,7 @@ use std::{collections::HashMap, process};
 use crate::{render::ColorExt, types::FlatRowKind};
 
 use crate::core::notes::{
-    ReviewNote, Side, add_note, hash_line_content, note_anchors_cleanly, note_runs, notes_for_file,
+    LineHash, ReviewNote, Side, add_note, note_anchors_in_file, note_runs, notes_for_file,
     now_millis, remove_note_by_id, remove_notes, save_notes, update_note_text,
 };
 
@@ -155,28 +155,13 @@ impl AppState {
             }
             return;
         }
-        let (file, start, end, is_new, line_content, source_lines) =
+        let (file, start, end, is_new, selected_lines, source_lines) =
             if let Some(sel) = self.compute_selection() {
                 let file = self
                     .output
                     .files
                     .get(sel.file_idx)
                     .expect("selection file_idx out of bounds in output.files");
-                let pos = if sel.side_is_new {
-                    self.flat_pos_of_coord(sel.file_idx, Some(sel.end), None)
-                } else {
-                    self.flat_pos_of_coord(sel.file_idx, None, Some(sel.end))
-                };
-                let content = pos
-                    .and_then(|p| self.flat.get(p))
-                    .and_then(|fr| self.row_of(fr))
-                    .map(|r| {
-                        if sel.side_is_new {
-                            r.new_text()
-                        } else {
-                            r.old_text()
-                        }
-                    });
                 let mut selected_lines = Vec::new();
                 for fr in &self.flat {
                     if fr.file_idx != sel.file_idx {
@@ -201,17 +186,13 @@ impl AppState {
                         }
                     }
                 }
-                let source = if selected_lines.is_empty() {
-                    content.clone()
-                } else {
-                    Some(selected_lines.join("\n"))
-                };
+                let source = (!selected_lines.is_empty()).then(|| selected_lines.join("\n"));
                 (
                     file.path.clone(),
                     sel.start,
                     sel.end,
                     sel.side_is_new,
-                    content,
+                    selected_lines,
                     source,
                 )
             } else {
@@ -234,13 +215,19 @@ impl AppState {
                     c,
                     c,
                     is_new,
-                    Some(text.clone()),
+                    vec![text.clone()],
                     Some(text),
                 )
             };
         self.note_id_counter += 1;
         let created_at = now_millis();
-        let line_hash = line_content.as_deref().map(hash_line_content);
+        let line_hash = if !selected_lines.is_empty() {
+            Some(LineHash::from_lines(
+                selected_lines.iter().map(|s| s.as_str()),
+            ))
+        } else {
+            None
+        };
         let note_file = file.clone();
         let note = ReviewNote {
             id: format!(
@@ -492,11 +479,47 @@ impl AppState {
         }
     }
 
+    /// Determine which flat row a note anchors to.
+    ///
+    /// If the note anchors cleanly against the file's content lines, returns
+    /// the row index corresponding to `note.end`. Otherwise, falls back to
+    /// the file header banner row.
+    pub fn note_target_row(&self, file_idx: usize, note: &ReviewNote) -> usize {
+        let banner_idx = self.first_row_of_file(file_idx);
+        let Some(f) = self.output.files.get(file_idx) else {
+            return banner_idx;
+        };
+        let content_lines = match note.side {
+            Side::New => &f.new_content,
+            Side::Old => &f.old_content,
+        };
+        if !note_anchors_in_file(note, content_lines) {
+            return banner_idx;
+        }
+        let target_coord = note.start.max(note.end);
+        for (i, item) in self.flat.iter().enumerate() {
+            if item.file_idx != file_idx {
+                continue;
+            }
+            let Some(r) = self.row_of(item) else {
+                continue;
+            };
+            let coord = match note.side {
+                Side::New => r.new_line,
+                Side::Old => r.old_line,
+            };
+            if coord == Some(target_coord) {
+                return i;
+            }
+        }
+        banner_idx
+    }
+
     /// Map of flat-row index → pre-rendered note callout lines (`💬
     /// <markdown>`). Notes that have a line hash and anchor cleanly to
     /// their target line display inline on the last row in their coordinate
-    /// range. Notes that do not anchor cleanly, or do not have a line hash,
-    /// display attached to the file banner.
+    /// range. Notes that do not anchor cleanly display attached to the file
+    /// banner.
     pub(crate) fn note_callouts(&self, content_width: usize) -> HashMap<usize, Vec<String>> {
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
         let gutter_fg = crate::render::Color::Rgb(220, 220, 20).fg_code();
@@ -507,43 +530,11 @@ impl AppState {
         const BAND_BLOCK: &str = "\u{2588}";
         let text_cols = content_width.saturating_sub(8).max(1);
         for (file_idx, f) in self.output.files.iter().enumerate() {
-            let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
                 if !self.show_resolved_notes && n.status.is_resolved() {
                     continue;
                 }
-                let mut at: Option<usize> = None;
-                let mut anchor_line_content: Option<String> = None;
-                for (i, item) in self.flat.iter().enumerate() {
-                    if item.file_idx != file_idx {
-                        continue;
-                    }
-                    let Some(r) = self.row_of(item) else {
-                        continue;
-                    };
-                    let (line_num, text) = match n.side {
-                        Side::New => (r.new_line, r.new_text()),
-                        Side::Old => (r.old_line, r.old_text()),
-                    };
-                    if let Some(c) = line_num {
-                        if c == n.end {
-                            anchor_line_content = Some(text);
-                        }
-                        if c >= n.start && c <= n.end {
-                            at = Some(i);
-                        }
-                    }
-                }
-
-                let target_row = if n.line_hash.is_some()
-                    && let Some(ref content) = anchor_line_content
-                    && note_anchors_cleanly(n, content)
-                    && let Some(inline_idx) = at
-                {
-                    inline_idx
-                } else {
-                    banner_idx
-                };
+                let target_row = self.note_target_row(file_idx, n);
 
                 let (stripe_color, glyph) = match n.status {
                     diffuse_core::notes::NoteStatus::Open => {
@@ -620,43 +611,11 @@ impl AppState {
         let text_cols = content_width.saturating_sub(8).max(1);
         let mut results = Vec::new();
         for (file_idx, f) in self.output.files.iter().enumerate() {
-            let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
                 if !self.show_resolved_notes && n.status.is_resolved() {
                     continue;
                 }
-                let mut at: Option<usize> = None;
-                let mut anchor_line_content: Option<String> = None;
-                for (i, item) in self.flat.iter().enumerate() {
-                    if item.file_idx != file_idx {
-                        continue;
-                    }
-                    let Some(r) = self.row_of(item) else {
-                        continue;
-                    };
-                    let (line_num, text) = match n.side {
-                        Side::New => (r.new_line, r.new_text()),
-                        Side::Old => (r.old_line, r.old_text()),
-                    };
-                    if let Some(c) = line_num {
-                        if c == n.end {
-                            anchor_line_content = Some(text);
-                        }
-                        if c >= n.start && c <= n.end {
-                            at = Some(i);
-                        }
-                    }
-                }
-
-                let target_row = if n.line_hash.is_some()
-                    && let Some(ref content) = anchor_line_content
-                    && note_anchors_cleanly(n, content)
-                    && let Some(inline_idx) = at
-                {
-                    inline_idx
-                } else {
-                    banner_idx
-                };
+                let target_row = self.note_target_row(file_idx, n);
 
                 if target_row == row_idx {
                     let full_text = if self.show_source_lines

@@ -10,7 +10,7 @@ use std::{
 use diffuse::{
     git::is_inside_work_tree,
     notes::{
-        find_note_in_db, generate_note_id, hash_line_content, now_millis, reply_to_note_text,
+        LineHash, find_note_in_db, generate_note_id, now_millis, reply_to_note_text,
         synthesize_source_lines, update_note_in_db,
     },
     prelude::*,
@@ -386,11 +386,10 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 synthesize_source_lines(repo_root, &file_path, side_val, start_line, end_line)
             };
 
-            // 6. Calculate line hash from the last line of the source range (anchoring
-            //    point)
+            // 6. Calculate compound line hash across all lines of the source range
             let line_hash_val = source_lines_val
                 .as_ref()
-                .and_then(|s| s.lines().last().map(hash_line_content));
+                .map(|s| LineHash::from_lines(s.lines()));
 
             // 7. Generate note ID
             let note_id = generate_note_id();

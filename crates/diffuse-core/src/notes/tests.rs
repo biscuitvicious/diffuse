@@ -599,6 +599,122 @@ fn test_note_anchors_cleanly_predicate() {
         ..Default::default()
     };
     assert!(note_anchors_cleanly(&legacy_note, "any changed content"));
+
+    // Note with source_lines (no line_hash) -> matches source lines
+    let note_with_source = ReviewNote {
+        id: "n3".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "source note".into(),
+        line_hash: None,
+        source_lines: Some("fn foo() {}".into()),
+        ..Default::default()
+    };
+    assert!(note_anchors_cleanly(&note_with_source, "fn foo() {}"));
+    assert!(!note_anchors_cleanly(&note_with_source, "fn bar() {}"));
+}
+
+#[test]
+fn test_compound_line_hash_and_note_anchors_in_file() {
+    use crate::notes::note_anchors_in_file;
+
+    // 1. Single-line equivalence
+    let single = LineHash::from_lines(["fn foo() {}"]);
+    assert_eq!(single, LineHash::from_content("fn foo() {}"));
+
+    // 2. Multi-line compound hash
+    let multi1 = LineHash::from_lines(["fn foo() {", "    let x = 42;", "}"]);
+    let multi2 = LineHash::from_lines(["  fn foo() {\n", "let x = 42;", "  }\t"]);
+    assert_eq!(multi1, multi2);
+
+    let multi_diff = LineHash::from_lines(["fn foo() {", "    let x = 43;", "}"]);
+    assert_ne!(multi1, multi_diff);
+
+    // 3. note_anchors_in_file with multi-line note
+    let file_lines = vec![
+        "// header".to_string(),
+        "fn foo() {".to_string(),
+        "    let x = 42;".to_string(),
+        "}".to_string(),
+        "// footer".to_string(),
+    ];
+
+    let note_multi = ReviewNote {
+        id: "n_multi".into(),
+        file: "foo.rs".into(),
+        side: Side::New,
+        start: 2,
+        end: 4,
+        text: "check function".into(),
+        line_hash: Some(multi1),
+        ..Default::default()
+    };
+
+    assert!(note_anchors_in_file(&note_multi, &file_lines));
+
+    // Modified one line in the middle -> must fail to anchor
+    let file_lines_modified = vec![
+        "// header".to_string(),
+        "fn foo() {".to_string(),
+        "    let x = 43;".to_string(),
+        "}".to_string(),
+        "// footer".to_string(),
+    ];
+    assert!(!note_anchors_in_file(&note_multi, &file_lines_modified));
+
+    // Out of bounds -> must fail to anchor
+    let short_file = vec!["// header".to_string(), "fn foo() {".to_string()];
+    assert!(!note_anchors_in_file(&note_multi, &short_file));
+
+    // Note without hash or source_lines cannot reanchor
+    let legacy_in_bounds = ReviewNote {
+        id: "n_leg".into(),
+        file: "foo.rs".into(),
+        side: Side::New,
+        start: 2,
+        end: 4,
+        text: "legacy note".into(),
+        line_hash: None,
+        ..Default::default()
+    };
+    assert!(!note_anchors_in_file(&legacy_in_bounds, &file_lines));
+    assert!(!note_anchors_in_file(&legacy_in_bounds, &short_file));
+
+    // Note with source_lines (no line_hash) -> succeeds when matching, fails when
+    // modified
+    let note_source = ReviewNote {
+        id: "n_src".into(),
+        file: "foo.rs".into(),
+        side: Side::New,
+        start: 2,
+        end: 4,
+        text: "source lines note".into(),
+        line_hash: None,
+        source_lines: Some("fn foo() {\n    let x = 42;\n}".into()),
+        ..Default::default()
+    };
+    assert!(note_anchors_in_file(&note_source, &file_lines));
+    assert!(!note_anchors_in_file(&note_source, &file_lines_modified));
+
+    // 4. Uniqueness check across the file:
+    // If the selected chunk appears more than once anywhere in the file,
+    // reanchoring fails.
+    let file_with_duplicate = vec![
+        "// header".to_string(),
+        "fn foo() {".to_string(),
+        "    let x = 42;".to_string(),
+        "}".to_string(),
+        "// duplicate below".to_string(),
+        "fn foo() {".to_string(),
+        "    let x = 42;".to_string(),
+        "}".to_string(),
+    ];
+    assert!(
+        !note_anchors_in_file(&note_multi, &file_with_duplicate),
+        "chunk is not unique across the file, must fail to anchor"
+    );
 }
 
 #[test]
@@ -680,6 +796,16 @@ fn test_query_notes_for_file_scoping_and_standalone() {
     // 4. Missing file returns empty vec
     let missing = query_notes_for_file(&db, None, "src/nonexistent.rs");
     assert!(missing.is_empty());
+
+    // 5. Querying scoped commit does not leak notes from other commits
+    let mut db_multi = NotesDB::new();
+    add_note(&mut db_multi, "myrepo@commit123", note1.clone());
+    add_note(&mut db_multi, "myrepo@commit456", note2.clone());
+    let leaked = query_notes_for_file(&db_multi, Some("myrepo@commit123"), "src/other.rs");
+    assert!(
+        leaked.is_empty(),
+        "Notes from commit456 must not leak when querying commit123"
+    );
 }
 
 #[test]

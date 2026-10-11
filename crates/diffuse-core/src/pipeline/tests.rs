@@ -1717,7 +1717,7 @@ new file mode 100644
 
 #[test]
 fn test_isolated_note_hunk_synthesis() {
-    use crate::notes::{ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, Side, add_note};
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1747,7 +1747,7 @@ diff --git a/test.rs b/test.rs
         end: 80,
         text: "isolated review note".into(),
         created_at: 1000,
-        line_hash: None,
+        line_hash: Some(LineHash::from_content("line 80")),
         ..Default::default()
     };
     add_note(&mut db, "repo", note);
@@ -1778,7 +1778,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_boundary_adjacent_note_merging() {
-    use crate::notes::{ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, Side, add_note};
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1810,7 +1810,7 @@ diff --git a/test.rs b/test.rs
         end: 20,
         text: "boundary adjacent note".into(),
         created_at: 1000,
-        line_hash: None,
+        line_hash: Some(LineHash::from_content("line 20")),
         ..Default::default()
     };
     add_note(&mut db, "repo", note);
@@ -1844,7 +1844,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_multi_note_clustering_in_gap() {
-    use crate::notes::{ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, Side, add_note};
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1876,7 +1876,7 @@ diff --git a/test.rs b/test.rs
         end: 60,
         text: "cluster 1".into(),
         created_at: 1000,
-        line_hash: None,
+        line_hash: Some(LineHash::from_content("line 60")),
         ..Default::default()
     };
     let note2 = ReviewNote {
@@ -1887,7 +1887,7 @@ diff --git a/test.rs b/test.rs
         end: 65,
         text: "cluster 2".into(),
         created_at: 1001,
-        line_hash: None,
+        line_hash: Some(LineHash::from_content("line 65")),
         ..Default::default()
     };
     add_note(&mut db, "repo", note1);
@@ -1920,7 +1920,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_missing_snapshot_content_fallback() {
-    use crate::notes::{ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, Side, add_note};
 
     let diff = "\
 diff --git a/test.rs b/test.rs
@@ -1941,7 +1941,7 @@ diff --git a/test.rs b/test.rs
         end: 80,
         text: "note without snapshot".into(),
         created_at: 1000,
-        line_hash: None,
+        line_hash: Some(LineHash::from_content("line 80")),
         ..Default::default()
     };
     add_note(&mut db, "repo", note);
@@ -1962,7 +1962,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_note_on_old_side_gap_line_mapping() {
-    use crate::notes::{ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, Side, add_note};
 
     // Old file: 100 lines
     let mut old_lines = Vec::new();
@@ -2012,7 +2012,7 @@ diff --git a/test.rs b/test.rs
         end: 50,
         text: "old side note".into(),
         created_at: 1000,
-        line_hash: None,
+        line_hash: Some(LineHash::from_content("old line 50")),
         ..Default::default()
     };
     add_note(&mut db, "repo", note);
@@ -2050,4 +2050,80 @@ diff --git a/test.rs b/test.rs
         "Context row for old line 50 must exist"
     );
     assert_eq!(matching_row.unwrap().new_line, Some(53));
+}
+
+#[test]
+fn test_synthetic_note_hunk_anchoring() {
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n ctx1\n-old\n+new\n ctx2\n";
+    let new_content: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+    let old_content: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+
+    let mut new_map = HashMap::new();
+    new_map.insert("test.rs".to_string(), new_content);
+    let mut old_map = HashMap::new();
+    old_map.insert("test.rs".to_string(), old_content);
+
+    // Note 1: multi-line note (lines 50..=52) that matches cleanly and is unique.
+    let hash = crate::notes::LineHash::from_lines(["line 50", "line 51", "line 52"]);
+    let note_matching = ReviewNote {
+        id: "note-unique".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 50,
+        end: 52,
+        text: "clean match".into(),
+        line_hash: Some(hash),
+        ..Default::default()
+    };
+
+    let mut db = HashMap::new();
+    crate::notes::add_note(&mut db, "repo", note_matching);
+
+    let opts = PipelineOptions::default()
+        .with_notes(Some(db), Some("repo".to_string()))
+        .with_visual_context(4);
+
+    let output = PipelineInput::new(diff)
+        .with_new_content(new_map.clone())
+        .with_old_content(old_map.clone())
+        .with_options(opts)
+        .run();
+
+    assert_eq!(output.files.len(), 1);
+    let f = &output.files[0];
+    assert_eq!(
+        f.hunks.len(),
+        2,
+        "Hunk must be synthesized for cleanly anchored note"
+    );
+
+    // Note 2: line_hash does NOT match -> no hunk synthesized!
+    let wrong_hash = crate::notes::LineHash::from_lines(["changed 50", "changed 51", "changed 52"]);
+    let note_mismatched = ReviewNote {
+        id: "note-mismatched".into(),
+        file: "test.rs".into(),
+        side: Side::New,
+        start: 50,
+        end: 52,
+        text: "mismatch".into(),
+        line_hash: Some(wrong_hash),
+        ..Default::default()
+    };
+    let mut db2 = HashMap::new();
+    crate::notes::add_note(&mut db2, "repo", note_mismatched);
+    let opts2 = PipelineOptions::default()
+        .with_notes(Some(db2), Some("repo".to_string()))
+        .with_visual_context(4);
+
+    let output2 = PipelineInput::new(diff)
+        .with_new_content(new_map)
+        .with_old_content(old_map)
+        .with_options(opts2)
+        .run();
+
+    assert_eq!(
+        output2.files[0].hunks.len(),
+        1,
+        "Mismatched note must not synthesize a hunk"
+    );
 }
