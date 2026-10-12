@@ -2528,3 +2528,88 @@ fn test_unicode_statement_head_alignment() {
         other => panic!("expected 2 paired mod rows, got: {other:?}"),
     }
 }
+
+/// Regression: slot-continuity bonuses must never outvote content evidence.
+/// One del, two adds; the first add shares a 28-char run with the del while
+/// the second shares (almost) nothing, but the second sits adjacent to the
+/// following close. With δ sized to the close-agreement tier instead of a
+/// takeover 800, content wins.
+#[test]
+fn test_slot_continuity_bonus_sized_to_evidence() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(3).unwrap(),
+        "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
+    ))];
+    let new_rows = vec![
+        Row::Add(AddLine::new(
+            LineNum::new(3).unwrap(),
+            "        \" diffuse \u{2212}5 +20 ~3\",",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(4).unwrap(),
+            "        \"header must omit the directory prefix\"",
+        )),
+    ];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["    assert_eq!(", "        pfx_line.to_string(),"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["    );"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["mod", "add"]);
+    match &sol.rows[..] {
+        [Row::Mod { new_line, .. }, Row::Add(_)] => {
+            assert!(
+                new_line.text.contains("\u{2212}5 +20 ~3"),
+                "mod must pair the del with the content-matching add, got: {}",
+                new_line.text
+            );
+        }
+        other => panic!("expected [mod, add], got: {other:?}"),
+    }
+}
+
+/// The terminal-return/common-indent tail path still needs token evidence:
+/// zero word overlap at close_dist 1 must not pair, even with the bonus.
+#[test]
+fn test_tail_pair_requires_matched_floor() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(3).unwrap(),
+        "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
+    ))];
+    let new_rows = vec![Row::Add(AddLine::new(
+        LineNum::new(4).unwrap(),
+        "        \"header must omit the directory prefix\"",
+    ))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["    );"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["del", "add"]);
+}
+
+/// Short closers still pair on content alone: the cap must not break the
+/// rule's namesake case.
+#[test]
+fn test_short_closer_pairs_without_tail_bonus() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![Row::Del(DelLine::new(LineNum::new(10).unwrap(), "    }"))];
+    let new_rows = vec![Row::Add(AddLine::new(LineNum::new(20).unwrap(), "    };"))];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["    foo();"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["    bar();"],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["mod"]);
+}

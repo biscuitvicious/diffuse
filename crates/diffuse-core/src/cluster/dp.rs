@@ -144,6 +144,9 @@ pub struct Weights {
     /// γ — fragmentation: per extra sprawl line of a block transition.
     pub gamma: f64,
     /// δ — statement-head syntax agreement (and verbatim-pair) bonus.
+    /// Sized to the close-agreement tier (≈17 matched chars): decisive for
+    /// slot-continuity claims with real rivals about, but unable to outvote
+    /// strong content evidence on its own.
     pub delta: f64,
     /// ε — closing-brace proximity bonus for lines near a block end.
     pub epsilon: f64,
@@ -174,7 +177,7 @@ impl Default for Weights {
             mu: 8.0,
             beta: 5.0,
             gamma: 2.0,
-            delta: 800.0,
+            delta: 250.0,
             epsilon: 500.0,
             head_agree_bonus: 80.0,
             close_agree_bonus: 250.0,
