@@ -709,7 +709,11 @@ fn test_note_callout_gutter_band_and_terminal_line() {
         .iter()
         .map(|line| crate::render::strip_ansi(line))
         .collect();
-    assert_eq!(plain[0], "▌███ 💬 This is a 4-line note: let a = 17;");
+    assert_eq!(
+        plain[0].trim_end(),
+        "▌███ 💬 This is a 4-line note: let a = 17;"
+    );
+    assert_eq!(crate::render::display_width(&plain[0]), 80);
 }
 
 #[test]

@@ -11,14 +11,17 @@ pub mod badge;
 pub mod counts;
 pub mod diff;
 pub mod markdown;
+pub mod notes;
 pub mod row;
 pub mod theme;
 pub mod width;
 
 pub use ansi::*;
 pub use badge::*;
+pub use counts::*;
 pub use diff::*;
 pub use markdown::*;
+pub use notes::*;
 pub use row::*;
 pub use theme::*;
 pub use width::*;

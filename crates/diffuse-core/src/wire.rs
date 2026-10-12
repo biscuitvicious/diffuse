@@ -1235,6 +1235,23 @@ impl OutputNote {
     }
 }
 
+impl From<&OutputNote> for crate::notes::ReviewNote {
+    fn from(n: &OutputNote) -> Self {
+        crate::notes::ReviewNote {
+            id: n.id.clone(),
+            file: n.file.clone(),
+            side: n.side,
+            start: n.start,
+            end: n.end,
+            text: n.text.clone(),
+            created_at: n.created_at,
+            line_hash: n.line_hash,
+            status: n.status,
+            source_lines: n.source_lines.clone(),
+        }
+    }
+}
+
 /// A fenced syntax region in a file: the span of lines whose content
 /// classifies with a different language than the file's.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]

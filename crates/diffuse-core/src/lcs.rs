@@ -563,7 +563,196 @@ pub(crate) fn tokens_can_match(
     {
         return false;
     }
+
+    if a[i] == "(" {
+        let sig_a = is_method_decl_open_paren(prev_a, a, i);
+        let sig_b = is_method_decl_open_paren(prev_b, b, j);
+        if sig_a != sig_b {
+            return false;
+        }
+    } else if a[i] == ")" {
+        let sig_a = is_method_decl_close_paren(prev_a, a, i, next_a);
+        let sig_b = is_method_decl_close_paren(prev_b, b, j, next_b);
+        if sig_a != sig_b {
+            return false;
+        }
+    } else if a[i] == "{" {
+        let sig_a = is_method_decl_body_brace(prev_a, a, i);
+        let sig_b = is_method_decl_body_brace(prev_b, b, j);
+        if sig_a != sig_b {
+            return false;
+        }
+    }
+
     true
+}
+
+/// Determines whether the opening parenthesis at `tokens[idx]` belongs to a
+/// function or method declaration signature.
+fn is_method_decl_open_paren(prev: &[&str], tokens: &[&str], idx: usize) -> bool {
+    let mut rev_tokens = tokens[..idx].iter().rev().chain(prev.iter().rev());
+
+    let mut tok = loop {
+        match rev_tokens.next() {
+            Some(&t) if token_is_ws(t) => continue,
+            Some(&t) => break t,
+            None => return false,
+        }
+    };
+
+    if tok == ">" {
+        let mut depth = 1usize;
+        for &t in rev_tokens.by_ref() {
+            if t == ">" {
+                depth += 1;
+            } else if t == "<" {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            } else if matches!(t, ";" | "{" | "}" | "(" | ")") {
+                return false;
+            }
+        }
+        tok = loop {
+            match rev_tokens.next() {
+                Some(&t) if token_is_ws(t) => continue,
+                Some(&t) => break t,
+                None => return false,
+            }
+        };
+    }
+
+    if !token_is_alnum(tok) {
+        return false;
+    }
+
+    let mut saw_ws = false;
+    for &t in rev_tokens.by_ref() {
+        if token_is_ws(t) {
+            saw_ws = true;
+            break;
+        }
+        if token_is_alnum(t) || t == "_" {
+            continue;
+        }
+        return false;
+    }
+    if !saw_ws {
+        return false;
+    }
+
+    let kw = loop {
+        match rev_tokens.next() {
+            Some(&t) if token_is_ws(t) => continue,
+            Some(&t) => break t,
+            None => return false,
+        }
+    };
+
+    matches!(kw, "fn" | "def" | "func" | "function" | "sub")
+}
+
+/// Determines whether the closing parenthesis at `tokens[idx]` terminates a
+/// function or method parameter list.
+fn is_method_decl_close_paren(
+    prev: &[&str],
+    tokens: &[&str],
+    idx: usize,
+    next_tok: Option<&str>,
+) -> bool {
+    let mut depth = 1usize;
+    for (offset, &t) in tokens[..idx].iter().enumerate().rev() {
+        if t == ")" {
+            depth += 1;
+        } else if t == "(" {
+            depth -= 1;
+            if depth == 0 {
+                return is_method_decl_open_paren(prev, tokens, offset);
+            }
+        } else if matches!(t, ";" | "{" | "}") {
+            return false;
+        }
+    }
+
+    for (offset, &t) in prev.iter().enumerate().rev() {
+        if t == ")" {
+            depth += 1;
+        } else if t == "(" {
+            depth -= 1;
+            if depth == 0 {
+                return is_method_decl_open_paren(&[], prev, offset);
+            }
+        } else if matches!(t, ";" | "{" | "}") {
+            return false;
+        }
+    }
+
+    let is_first_on_line =
+        tokens[..idx].iter().all(|&t| token_is_ws(t)) && prev.iter().all(|&t| token_is_ws(t));
+    if is_first_on_line {
+        let mut fwd = tokens[idx + 1..].iter().filter(|&&t| !token_is_ws(t));
+        let next = fwd.next().copied().or(next_tok);
+        if let Some(n) = next
+            && (n == "->" || n == "{")
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Determines whether the opening brace at `tokens[idx]` introduces a function
+/// or method declaration body.
+pub(crate) fn is_method_decl_body_brace(prev: &[&str], tokens: &[&str], idx: usize) -> bool {
+    let mut depth = 0usize;
+    let mut close_paren_idx = None;
+
+    for (offset, &t) in tokens[..idx].iter().enumerate().rev() {
+        if token_is_ws(t) {
+            continue;
+        }
+        if t == ")" {
+            if depth == 0 {
+                close_paren_idx = Some(offset);
+                break;
+            }
+            depth += 1;
+        } else if t == "(" {
+            depth = depth.saturating_sub(1);
+        } else if matches!(t, ";" | "{" | "}") {
+            return false;
+        }
+    }
+
+    if let Some(close_idx) = close_paren_idx {
+        return is_method_decl_close_paren(prev, tokens, close_idx, None);
+    }
+
+    let mut prev_close_idx = None;
+    for (offset, &t) in prev.iter().enumerate().rev() {
+        if token_is_ws(t) {
+            continue;
+        }
+        if t == ")" {
+            if depth == 0 {
+                prev_close_idx = Some(offset);
+                break;
+            }
+            depth += 1;
+        } else if t == "(" {
+            depth = depth.saturating_sub(1);
+        } else if matches!(t, ";" | "{" | "}") {
+            return false;
+        }
+    }
+
+    if let Some(close_idx) = prev_close_idx {
+        is_method_decl_close_paren(&[], prev, close_idx, None)
+    } else {
+        false
+    }
 }
 
 /// Core LCS backtrace over string slices.

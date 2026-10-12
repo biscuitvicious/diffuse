@@ -189,5 +189,5 @@ cargo clippy --fix --allow-dirty --no-deps --all-targets --workspace -- -D warni
 ### Test discipline
 
 - **Unit tests**: Co-located in `tests` submodules within each module (`mod tests { use super::*; ... }`).
-- **Acceptance / invariant tests**: Run full golden walks and wire serialization verification in `tests/golden.rs`.
+- **Acceptance / invariant tests**: Run full golden walks and wire serialization verification in [`crates/diffuse/tests/golden.rs`](crates/diffuse/tests/golden.rs).
 - **Equivalence gate**: Ensure `npm test` passes in `extension/pi/` whenever engine or wire contract behaviors are touched.

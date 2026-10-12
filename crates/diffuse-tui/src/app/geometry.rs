@@ -475,39 +475,7 @@ impl AppState {
         let Some(f) = self.output.files.get(fi) else {
             return 0;
         };
-        let Some(hunk) = f.hunks.get(hi) else {
-            return 0;
-        };
-        let hunk_new_start = hunk.rows.iter().find_map(|r| r.new_line);
-        let hunk_old_start = hunk.rows.iter().find_map(|r| r.old_line);
-
-        if hi == 0 {
-            if let Some(ns) = hunk_new_start {
-                ns.saturating_sub(1) as usize
-            } else if let Some(os) = hunk_old_start {
-                os.saturating_sub(1) as usize
-            } else {
-                hunk.new_start.max(hunk.old_start).saturating_sub(1) as usize
-            }
-        } else {
-            let prev = &f.hunks[hi - 1];
-            let prev_new_end = prev.rows.iter().rev().find_map(|r| r.new_line);
-            let prev_old_end = prev.rows.iter().rev().find_map(|r| r.old_line);
-
-            if let (Some(cur_new), Some(prev_new)) = (hunk_new_start, prev_new_end) {
-                cur_new.saturating_sub(prev_new + 1) as usize
-            } else if let (Some(cur_old), Some(prev_old)) = (hunk_old_start, prev_old_end) {
-                cur_old.saturating_sub(prev_old + 1) as usize
-            } else {
-                let cur_s = hunk.new_start.max(hunk.old_start);
-                let prev_e = if prev.new_count > 0 {
-                    prev.new_start + prev.new_count.saturating_sub(1)
-                } else {
-                    prev.old_start + prev.old_count.saturating_sub(1)
-                };
-                cur_s.saturating_sub(prev_e + 1) as usize
-            }
-        }
+        crate::render::hunk_leading_gap(f, hi)
     }
 
     /// Return the number of hidden trailing lines after the last hunk in file

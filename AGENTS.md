@@ -37,7 +37,7 @@ $$\text{diffuse-algo} + \text{diffuse-syntax} \longrightarrow \text{diffuse-core
 
 The golden corpora in [`tests/golden/`](tests/golden/) are the locked, verified baseline output of the engine across real-world changesets. They encode fine-tuned algorithmic properties: strike/fill minimums, anchor pairings, move-block boundaries, and reverse-stretch behavior.
 
-The acceptance suite in [`tests/golden.rs`](tests/golden.rs) verifies the pipeline across two complementary execution paths:
+The acceptance suite in [`crates/diffuse/tests/golden.rs`](crates/diffuse/tests/golden.rs) verifies the pipeline across two complementary execution paths:
 
 1. **Library leg**: Direct in-process invocation of the pipeline over frozen inputs.
 2. **Binary leg**: External invocation of the compiled `diffuse` CLI binary, parsing the emitted JSON stream.

@@ -1573,9 +1573,11 @@ fn main() -> io::Result<()> {
                 process::exit(2);
             }
             let mut stdout = io::stdout().lock();
+            let term_width = detect_terminal_width();
             if is_raw {
                 for file in consumer {
-                    let mut rendered = render_raw_file_diff(&file, None, &theme);
+                    let mut rendered =
+                        render_raw_file_diff_with_width(&file, None, &theme, term_width);
                     if !colorize {
                         rendered = strip_ansi(&rendered).to_string();
                     }
@@ -1588,7 +1590,8 @@ fn main() -> io::Result<()> {
                 }
             } else {
                 for file in consumer {
-                    let mut rendered = render_file_diff(&file, None, &theme, true);
+                    let mut rendered =
+                        render_file_diff_with_width(&file, None, &theme, true, term_width);
                     if !colorize {
                         rendered = strip_ansi(&rendered).to_string();
                     }
@@ -1654,8 +1657,9 @@ fn main() -> io::Result<()> {
         }
         if is_raw {
             let mut stdout = io::stdout().lock();
+            let term_width = detect_terminal_width();
             for file in consumer {
-                let rendered = render_raw_file_diff(&file, None, &theme);
+                let rendered = render_raw_file_diff_with_width(&file, None, &theme, term_width);
                 if let Err(e) = stdout.write_all(rendered.as_bytes()) {
                     if e.kind() == io::ErrorKind::BrokenPipe {
                         return Ok(());
@@ -1745,8 +1749,10 @@ fn main() -> io::Result<()> {
                 let _ = stdout.flush();
             } else if is_raw {
                 let mut stdout = io::stdout().lock();
+                let term_width = detect_terminal_width();
                 for out in &outputs {
-                    let mut rendered = render_raw_pipeline_output(out, &theme);
+                    let mut rendered =
+                        render_raw_pipeline_output_with_width(out, &theme, term_width);
                     if !colorize {
                         rendered = strip_ansi(&rendered).to_string();
                     }
@@ -1789,7 +1795,9 @@ fn main() -> io::Result<()> {
                 let _ = stdout.flush();
             } else if is_raw {
                 let output = process_input(*input, &args);
-                let mut rendered = render_raw_pipeline_output(&output, &theme);
+                let term_width = detect_terminal_width();
+                let mut rendered =
+                    render_raw_pipeline_output_with_width(&output, &theme, term_width);
                 if !colorize {
                     rendered = strip_ansi(&rendered).to_string();
                 }

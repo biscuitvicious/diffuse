@@ -59,6 +59,12 @@ struct Fixture {
     /// (PLAN.md §4 Phase 6) uses it to prove `apply(diff, old) == new`
     /// mechanically — the diff is a semantic program, not just a render).
     old_content: HashMap<String, Arc<String>>,
+    #[serde(skip)]
+    notes_file: Option<PathBuf>,
+    #[serde(skip)]
+    notes_db: Option<diffuse::core::notes::NotesDB>,
+    #[serde(skip)]
+    repo_key: Option<String>,
 }
 
 fn golden_dir() -> PathBuf {
@@ -133,6 +139,10 @@ struct CorpusMeta {
     #[serde(default)]
     revision: String,
     #[serde(default)]
+    repo: Option<String>,
+    #[serde(default)]
+    repo_key: Option<String>,
+    #[serde(default)]
     files: Vec<MetaFileRecord>,
 }
 
@@ -183,10 +193,37 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
             old_content.insert(path, Arc::new(old_c));
         }
     }
+
+    let notes_json_path = corpus_dir.join("notes.json");
+    let (notes_file, notes_db, repo_key) = if notes_json_path.is_file() {
+        let db = diffuse::core::notes::load_notes(&notes_json_path);
+        let key = if let Some(ref rk) = meta.repo_key {
+            rk.clone()
+        } else {
+            let repo_name = meta.repo.as_deref().unwrap_or("diffuse");
+            if repo_name.contains('@') {
+                repo_name.to_string()
+            } else {
+                let base_commit = meta
+                    .revision
+                    .split_once("..")
+                    .map(|(base, _)| base.trim())
+                    .filter(|s| !s.is_empty());
+                diffuse::core::notes::notes_key(repo_name, base_commit)
+            }
+        };
+        (Some(notes_json_path), Some(db), Some(key))
+    } else {
+        (None, None, None)
+    };
+
     let f = Fixture {
         diff: Arc::new(diff),
         new_content,
         old_content,
+        notes_file,
+        notes_db,
+        repo_key,
     };
     let arc = Arc::new(f);
     let mut cache = FIXTURE_CACHE.lock().unwrap();
@@ -988,9 +1025,15 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
 fn run_bin_markdown_leg(name: &str) {
     let fixture = load_fixture(name);
     let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
-        .arg("-m")
-        .arg("--color=never")
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.arg("-m").arg("--color=never");
+    if let Some(ref notes_path) = fixture.notes_file {
+        cmd.arg("--notes-file").arg(notes_path);
+    }
+    if let Some(ref repo_key) = fixture.repo_key {
+        cmd.arg("--repo").arg(repo_key);
+    }
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -1059,9 +1102,15 @@ fn run_bin_raw_leg(name: &str) {
     }
     let fixture = load_fixture(name);
     let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
-        .arg("--raw")
-        .arg("--color=always")
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.arg("--raw").arg("--color=always");
+    if let Some(ref notes_path) = fixture.notes_file {
+        cmd.arg("--notes-file").arg(notes_path);
+    }
+    if let Some(ref repo_key) = fixture.repo_key {
+        cmd.arg("--repo").arg(repo_key);
+    }
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1122,11 +1171,15 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     } else {
         Some(fixture.old_content.clone())
     };
+    let mut opts = diffuse::core::pipeline::PipelineOptions::default();
+    if let Some(ref db) = fixture.notes_db {
+        opts = opts.with_notes(Some(db.clone()), fixture.repo_key.clone());
+    }
     let output = diffuse::core::pipeline::run_pipeline_arc(
         Arc::clone(&fixture.diff),
         new_content,
         old_content,
-        diffuse::core::pipeline::PipelineOptions::default(),
+        opts,
     );
     assert_wire_json_matches(&output, name);
     walk_and_assert(&output, name, min);
@@ -1141,8 +1194,15 @@ fn run_bin_leg(name: &str, min: usize) {
         // by the library leg, which diverges whenever the two differ.
         let fixture = load_fixture(name);
         let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
-        let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
-            .arg("--jsonl")
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+        cmd.arg("--jsonl");
+        if let Some(ref notes_path) = fixture.notes_file {
+            cmd.arg("--notes-file").arg(notes_path);
+        }
+        if let Some(ref repo_key) = fixture.repo_key {
+            cmd.arg("--repo").arg(repo_key);
+        }
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1180,8 +1240,15 @@ fn run_bin_leg(name: &str, min: usize) {
     }
     let fixture = load_fixture(name);
     let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
-        .arg("--jsonl")
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.arg("--jsonl");
+    if let Some(ref notes_path) = fixture.notes_file {
+        cmd.arg("--notes-file").arg(notes_path);
+    }
+    if let Some(ref repo_key) = fixture.repo_key {
+        cmd.arg("--repo").arg(repo_key);
+    }
+    let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1506,6 +1573,7 @@ corpus_tests!(
 corpus_tests!(theme_light_toggle, "theme-light-toggle", 40, true, true);
 corpus_tests!(row_groups_contrast, "row-groups-contrast", 20, true, true);
 corpus_tests!(rust_lifetime_char, "rust-lifetime-char", 90, true, true);
+corpus_tests!(review_notes, "review-notes", 14, true, false);
 
 #[test]
 fn test_golden_initialized_detection() {

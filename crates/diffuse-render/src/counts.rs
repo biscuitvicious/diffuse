@@ -48,6 +48,19 @@ pub fn count_cells(counts: &FileCounts, palette: &ThemePalette) -> SmallVec<[Cou
         .collect()
 }
 
+/// Format mod counts as a plain text string (`−dels`, `+adds`, `~mods`,
+/// `≈movs`, `💬notes`), omitting zero counts. Returns an empty string when
+/// all counts are zero.
+#[must_use]
+pub fn format_counts_plain(counts: &FileCounts) -> String {
+    counts
+        .segments()
+        .iter()
+        .map(|seg| format!("{}{}", seg.marker, seg.value))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +119,22 @@ mod tests {
         assert_eq!(cells[0].marker, "+");
         assert_eq!(cells[0].value, 5);
         assert_eq!(cells[0].color, palette.count_adds);
+    }
+
+    #[test]
+    fn test_format_counts_plain() {
+        let counts = FileCounts {
+            dels: 3,
+            adds: 12,
+            mods: 2,
+            movs: 1,
+            notes: 4,
+            in_progress_notes: 1,
+            resolved_notes: 2,
+        };
+        assert_eq!(format_counts_plain(&counts), "−3 +12 ~2 ≈1 💬4 🔄1 ✅2");
+
+        let empty = FileCounts::default();
+        assert_eq!(format_counts_plain(&empty), "");
     }
 }

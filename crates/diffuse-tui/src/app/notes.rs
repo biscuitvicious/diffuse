@@ -522,80 +522,22 @@ impl AppState {
     /// banner.
     pub(crate) fn note_callouts(&self, content_width: usize) -> HashMap<usize, Vec<String>> {
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
-        let gutter_fg = crate::render::Color::Rgb(220, 220, 20).fg_code();
-        let glyph_fg = crate::render::Color::Fixed(255).fg_code();
-        let note_bg = crate::render::Color::Fixed(234).bg_code();
-        let fg_reset = crate::render::FG_RESET;
-        const STRIPE_LEFT: &str = "\u{258C}";
-        const BAND_BLOCK: &str = "\u{2588}";
-        let text_cols = content_width.saturating_sub(8).max(1);
         for (file_idx, f) in self.output.files.iter().enumerate() {
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
                 if !self.show_resolved_notes && n.status.is_resolved() {
                     continue;
                 }
                 let target_row = self.note_target_row(file_idx, n);
-
-                let (stripe_color, glyph) = match n.status {
-                    diffuse_core::notes::NoteStatus::Open => {
-                        (crate::render::Color::Rgb(250, 75, 40), "💬")
-                    }
-                    diffuse_core::notes::NoteStatus::InProgress => {
-                        (crate::render::Color::Rgb(60, 180, 240), "🔄")
-                    }
-                    diffuse_core::notes::NoteStatus::Resolved => {
-                        (crate::render::Color::Rgb(40, 140, 60), "✅")
-                    }
-                };
-                let stripe_fg = stripe_color.fg_code();
-                let first_prefix = format!(
-                    "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}{glyph} {fg_reset}"
+                let rendered_lines = crate::render::render_note_callout_lines(
+                    n.status,
+                    &n.text,
+                    n.source_lines.as_deref(),
+                    self.show_source_lines,
+                    self.syntax_on,
+                    &self.theme,
+                    content_width,
                 );
-                let line_prefix = format!(
-                    "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
-                );
-                let final_prefix = format!(
-                    "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
-                );
-
-                let full_text = if self.show_source_lines
-                    && let Some(ref src) = n.source_lines
-                {
-                    let mut s = String::new();
-                    s.push_str("```\n");
-                    s.push_str(src);
-                    if !src.ends_with('\n') {
-                        s.push('\n');
-                    }
-                    s.push_str("```\n\n");
-                    s.push_str(&n.text);
-                    s
-                } else {
-                    n.text.clone()
-                };
-
-                let lines = crate::render::markdown_lines(&full_text, text_cols);
-                // An empty note still occupies its single gutter line.
-                let lines = if lines.is_empty() {
-                    vec![crate::render::MarkdownLine { runs: Vec::new() }]
-                } else {
-                    lines
-                };
-                let total = lines.len();
-                for (visual_idx, line) in lines.iter().enumerate() {
-                    let prefix = match visual_idx {
-                        0 => first_prefix.as_str(),
-                        n if total > 1 && n + 1 == total => final_prefix.as_str(),
-                        _ => line_prefix.as_str(),
-                    };
-                    let rendered = crate::render::render_markdown_line(
-                        line,
-                        prefix,
-                        self.syntax_on,
-                        &self.theme,
-                    );
-                    out.entry(target_row).or_default().push(rendered);
-                }
+                out.entry(target_row).or_default().extend(rendered_lines);
             }
         }
         out
@@ -608,7 +550,6 @@ impl AppState {
         row_idx: usize,
         content_width: usize,
     ) -> Vec<(&ReviewNote, usize)> {
-        let text_cols = content_width.saturating_sub(8).max(1);
         let mut results = Vec::new();
         for (file_idx, f) in self.output.files.iter().enumerate() {
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
@@ -616,26 +557,17 @@ impl AppState {
                     continue;
                 }
                 let target_row = self.note_target_row(file_idx, n);
-
                 if target_row == row_idx {
-                    let full_text = if self.show_source_lines
-                        && let Some(ref src) = n.source_lines
-                    {
-                        let mut s = String::new();
-                        s.push_str("```\n");
-                        s.push_str(src);
-                        if !src.ends_with('\n') {
-                            s.push('\n');
-                        }
-                        s.push_str("```\n\n");
-                        s.push_str(&n.text);
-                        s
-                    } else {
-                        n.text.clone()
-                    };
-                    let lines = crate::render::markdown_lines(&full_text, text_cols);
-                    let line_count = if lines.is_empty() { 1 } else { lines.len() };
-                    results.push((n, line_count));
+                    let lines = crate::render::render_note_callout_lines(
+                        n.status,
+                        &n.text,
+                        n.source_lines.as_deref(),
+                        self.show_source_lines,
+                        self.syntax_on,
+                        &self.theme,
+                        content_width,
+                    );
+                    results.push((n, lines.len()));
                 }
             }
         }

@@ -841,3 +841,89 @@ fn test_unicode_subline_alignment() {
         "    let résultat_[-ancien-]{+nouveau+} = calculer_total(valeur);"
     );
 }
+
+#[test]
+fn test_lcs_does_not_fragment_on_unbalanced_container_delimiter() {
+    let old_line = r#""fn test() {\n    let x = 1;\n""#;
+    let new_line = r#""{prefix}    let x = 1;\n""#;
+    let spans = word_spans(old_line, new_line);
+    assert_eq!(
+        spans.del.len(),
+        1,
+        "expected 1 contiguous deletion span: {:?}",
+        spans.del
+    );
+    assert_eq!(
+        spans.add.len(),
+        1,
+        "expected 1 contiguous addition span: {:?}",
+        spans.add
+    );
+    assert_eq!(
+        char_slice(old_line, spans.del[0].0, spans.del[0].1),
+        r#"fn test() {\n"#
+    );
+    assert_eq!(
+        char_slice(new_line, spans.add[0].0, spans.add[0].1),
+        "{prefix}"
+    );
+}
+
+#[test]
+fn test_lcs_does_not_mix_method_signature_parens_with_call_parens() {
+    let old_line =
+        r#"        "fn test() {\n    let x = 1;\n    // old comment — em dash\n}\n".to_string(),"#;
+    let new_line =
+        r#"        format!("{prefix}    let x = 1;\n    // old comment — em dash\n}}\n"),"#;
+    let spans = word_spans(old_line, new_line);
+    let first_del = char_slice(old_line, spans.del[0].0, spans.del[0].1);
+    assert!(
+        first_del.contains("fn test()"),
+        "expected 'fn test()' to be part of the first deletion span without parens matched, got: {first_del:?}, all dels: {:?}",
+        spans.del
+    );
+    let old_theme = "    pub fn fallback_named_color(name: &str) -> Option<&'static str> {";
+    let new_theme = "    pub fn auto_detect() -> Self {";
+    let (_, runs_theme) = word_spans_and_runs_with_profile(old_theme, new_theme, None);
+    assert!(
+        runs_theme
+            .iter()
+            .any(|(k, t)| *k == RunKind::Ctx && t.contains('(')),
+        "expected '(' to match as context between method declarations, got: {runs_theme:?}"
+    );
+    assert!(
+        runs_theme
+            .iter()
+            .any(|(k, t)| *k == RunKind::Ctx && t.contains(')')),
+        "expected ')' to match as context between method declarations, got: {runs_theme:?}"
+    );
+
+    let old_line_grid = "        for cell in count_cells(&file.counts) {";
+    let new_line_grid = "        for cell in count_cells(&file.counts, &theme.palette) {";
+    let (_, runs_grid) = word_spans_and_runs_with_profile(old_line_grid, new_line_grid, None);
+    assert!(
+        runs_grid
+            .iter()
+            .any(|(k, t)| *k == RunKind::Ctx && t.contains(')')),
+        "expected ')' to match as context in count_cells, got: {runs_grid:?}"
+    );
+    assert!(
+        runs_grid
+            .iter()
+            .any(|(k, t)| *k == RunKind::Ctx && t.contains('{')),
+        "expected '{{' to match as context in count_cells, got: {runs_grid:?}"
+    );
+
+    let del_text =
+        "    pub fn new(output: PipelineOutput, repo: String, notes_path: PathBuf) -> Self {";
+    let add_nxt = "    ) -> Self {";
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let tape = crate::tape::AlignmentTape::from_texts_with_cap(del_text, add_nxt, profile, 40000);
+    let runs_aux = tape.to_merged_runs();
+    assert!(
+        runs_aux
+            .iter()
+            .any(|r| r.kind == RunKind::Ctx && r.text.starts_with(')')),
+        "expected ')' to match as context between multiline decl closing and full signature, got: {runs_aux:?}"
+    );
+}

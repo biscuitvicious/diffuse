@@ -330,43 +330,7 @@ pub fn render_file_header(
     )
 }
 
-/// Build the raw text of a hunk header divider with format
-/// `H2/3 · 6 lines: −1 +4 ~1` plus the hidden-gap tail.
-/// Change counts reuse the shared [`format_counts_plain`] (zero counts
-/// omitted). The caller is responsible for filling any remaining width with
-/// `─` chars.
-pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> String {
-    use super::header::format_counts_plain;
-
-    let counts = hunk.counts();
-    let (dels, adds, mods, movs) = (counts.dels, counts.adds, counts.mods, counts.movs);
-    let total = dels + adds + mods + movs;
-    let summary_part = if total > 0 {
-        let unit = if total == 1 { "line" } else { "lines" };
-        let s = format!("{total} {unit}");
-        let counts_str = format_counts_plain(&counts);
-        if counts_str.is_empty() {
-            format!(" · {s}")
-        } else {
-            format!(" · {s}: {counts_str}")
-        }
-    } else {
-        String::new()
-    };
-
-    let gap_part = if hidden_gap > 0 {
-        let gap_unit = if hidden_gap == 1 { "line" } else { "lines" };
-        let arrows = if badge.idx == 0 {
-            "▼"
-        } else {
-            "⬍ · ▲ · ▼"
-        };
-        format!(" · {hidden_gap} more {gap_unit}: {arrows}")
-    } else {
-        String::new()
-    };
-    format!("──── {}{summary_part}{gap_part} ────", badge.hunk_text())
-}
+pub use diffuse_render::hunk_divider_text;
 
 /// Visual segment count for a divider text: ceiling division, except a
 /// trailing segment holding only bar dashes (no salient content) never

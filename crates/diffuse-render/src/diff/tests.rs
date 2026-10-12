@@ -1,6 +1,13 @@
 use super::*;
-use crate::core::PipelineOptions;
-use diffuse_core::{notes::Side as NoteSide, wire::OutputNote};
+use crate::{
+    ansi::strip_ansi,
+    core::{
+        PipelineOptions,
+        merge::RunKind,
+        wire::{OutputHunk, OutputNote, OutputRun},
+    },
+};
+use diffuse_core::notes::Side as NoteSide;
 
 #[test]
 fn test_output_ends_with_terminal_reset() {
@@ -217,8 +224,11 @@ fn test_write_file_header_bar_direct_buffer() {
     assert!(buf.contains("−2"));
     assert!(buf.contains("~3"));
     assert!(buf.contains("≈1"));
-    assert!(buf.ends_with(" \x1b[0m\n"));
+    assert!(buf.ends_with("\x1b[0m\n"));
+    assert!(!buf.ends_with(" \x1b[0m\n"));
     assert!(!buf.contains("(modified)"));
+    let plain = strip_ansi(&buf);
+    assert!(plain.contains("src/lib.rs −2 +5 ~3 ≈1"));
 
     // And with added status:
     file.status = "added".to_string();
@@ -300,4 +310,451 @@ fn test_status_suffix_unmodified_unadorned() {
     let mut buf = String::new();
     write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::DEFAULT).unwrap();
     assert!(!buf.contains("(unmodified)"));
+}
+
+#[test]
+fn test_render_file_diff_renders_inline_note_callouts() {
+    let file = OutputFile {
+        path: "src/lib.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 2,
+        old_line_count: 1,
+        new_content: vec!["line 1".to_string(), "line 2".to_string()],
+        old_content: vec!["line 1".to_string()],
+        hunks: vec![OutputHunk {
+            old_start: 1,
+            old_count: 1,
+            new_start: 1,
+            new_count: 2,
+            rows: vec![
+                OutputRow {
+                    kind: RowKind::Ctx,
+                    mov_side: None,
+                    new_line: Some(1),
+                    old_line: Some(1),
+                    runs: vec![OutputRun::new(RunKind::Ctx, "line 1".to_string())],
+                    wholesale: false,
+                    group: None,
+                },
+                OutputRow {
+                    kind: RowKind::Add,
+                    mov_side: None,
+                    new_line: Some(2),
+                    old_line: None,
+                    runs: vec![OutputRun::new(RunKind::Add, "line 2".to_string())],
+                    wholesale: false,
+                    group: None,
+                },
+            ],
+        }],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts::default(),
+        fences: vec![],
+        notes: vec![
+            OutputNote {
+                id: "banner-note".to_string(),
+                file: "src/lib.rs".to_string(),
+                side: NoteSide::New,
+                start: 999,
+                end: 999,
+                text: "Unanchored banner note".to_string(),
+                created_at: 0,
+                runs: vec![],
+                line_hash: None,
+                status: diffuse_core::notes::NoteStatus::Open,
+                source_lines: None,
+            },
+            OutputNote {
+                id: "line-note".to_string(),
+                file: "src/lib.rs".to_string(),
+                side: NoteSide::New,
+                start: 2,
+                end: 2,
+                text: "Anchored line note".to_string(),
+                created_at: 0,
+                runs: vec![],
+                line_hash: Some(diffuse_core::notes::LineHash::from_content("line 2")),
+                status: diffuse_core::notes::NoteStatus::InProgress,
+                source_lines: None,
+            },
+        ],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+
+    let rendered = render_file_diff(&file, None, &DiffuseTheme::DEFAULT, true);
+    let plain = strip_ansi(&rendered);
+
+    // Banner note must appear right after the header bar, before the first code
+    // line
+    assert!(plain.contains("▌███ 💬 Unanchored banner note"));
+    let banner_pos = plain.find("▌███ 💬 Unanchored banner note").unwrap();
+    let code_line_1_pos = plain.find("line 1").unwrap();
+    assert!(
+        banner_pos < code_line_1_pos,
+        "banner note must precede code rows"
+    );
+
+    // Line note must appear after line 2
+    assert!(plain.contains("▌███ 🔄 Anchored line note"));
+    let code_line_2_pos = plain.find("line 2").unwrap();
+    let line_note_pos = plain.find("▌███ 🔄 Anchored line note").unwrap();
+    assert!(
+        code_line_2_pos < line_note_pos,
+        "line note must follow target code row"
+    );
+
+    // Raw mode diff must also render the inline callouts
+    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::DEFAULT);
+    let raw_plain = strip_ansi(&raw);
+    assert!(raw_plain.contains("▌███ 💬 Unanchored banner note"));
+    assert!(raw_plain.contains("▌███ 🔄 Anchored line note"));
+}
+
+#[test]
+fn test_render_file_diff_wraps_notes_at_specified_width() {
+    let file = OutputFile {
+        path: "src/lib.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 1,
+        old_line_count: 1,
+        new_content: vec!["hello world".to_string()],
+        old_content: vec!["hello world".to_string()],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts::default(),
+        fences: vec![],
+        notes: vec![OutputNote {
+            id: "wrap-note".to_string(),
+            file: "src/lib.rs".to_string(),
+            side: NoteSide::New,
+            start: 1,
+            end: 1,
+            text: "This is a long review note with enough content that it will definitely wrap differently at narrow versus wide widths.".to_string(),
+            created_at: 0,
+            runs: vec![],
+            line_hash: None,
+            status: diffuse_core::notes::NoteStatus::Open,
+            source_lines: None,
+        }],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+
+    let narrow = render_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, true, 40);
+    let wide = render_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, true, 160);
+
+    let narrow_lines: Vec<&str> = narrow.lines().filter(|l| l.contains('▌')).collect();
+    let wide_lines: Vec<&str> = wide.lines().filter(|l| l.contains('▌')).collect();
+
+    assert!(narrow_lines.len() > wide_lines.len());
+    assert_eq!(wide_lines.len(), 1);
+
+    for line in narrow_lines {
+        let plain = strip_ansi(line);
+        assert!(crate::width::display_width(&plain) <= 40);
+    }
+
+    let pipeline_out = PipelineOutput {
+        files: vec![file.clone()],
+        branch: "main".to_string(),
+        untracked_skipped: vec![],
+    };
+
+    let p_narrow =
+        render_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, true, 40);
+    let p_wide =
+        render_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, true, 160);
+    let p_narrow_lines: Vec<&str> = p_narrow.lines().filter(|l| l.contains('▌')).collect();
+    let p_wide_lines: Vec<&str> = p_wide.lines().filter(|l| l.contains('▌')).collect();
+    assert!(p_narrow_lines.len() > p_wide_lines.len());
+
+    let raw_narrow = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, 40);
+    let raw_wide = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, 160);
+    let raw_narrow_lines: Vec<&str> = raw_narrow.lines().filter(|l| l.contains('▌')).collect();
+    let raw_wide_lines: Vec<&str> = raw_wide.lines().filter(|l| l.contains('▌')).collect();
+    assert!(raw_narrow_lines.len() > raw_wide_lines.len());
+
+    let raw_p_narrow =
+        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, 40);
+    let raw_p_wide =
+        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, 160);
+    let raw_p_narrow_lines: Vec<&str> = raw_p_narrow.lines().filter(|l| l.contains('▌')).collect();
+    let raw_p_wide_lines: Vec<&str> = raw_p_wide.lines().filter(|l| l.contains('▌')).collect();
+    assert!(raw_p_narrow_lines.len() > raw_p_wide_lines.len());
+}
+
+#[test]
+fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n ctx1\n-old1\n+new1\n ctx2\n@@ -20,3 +20,3 @@\n ctx3\n-old2\n+new2\n ctx4\n";
+    let new_content = Some(
+        [(
+            "a.txt".to_string(),
+            "ctx1\nnew1\nctx2\nctx3\nnew2\nctx4\n".to_string(),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let old_content = Some(
+        [(
+            "a.txt".to_string(),
+            "ctx1\nold1\nctx2\nctx3\nold2\nctx4\n".to_string(),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        new_content,
+        old_content,
+        crate::core::pipeline::PipelineOptions::default(),
+    );
+    assert_eq!(out.files.len(), 1);
+    assert_eq!(out.files[0].hunks.len(), 2);
+
+    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
+    let plain = strip_ansi(&rendered);
+
+    // File header must separate filename from badges
+    assert!(plain.contains("a.txt −2 +2"));
+
+    // Each hunk has a hunk divider
+    assert!(plain.contains("──── H1/2"));
+    assert!(plain.contains("──── H2/2"));
+
+    // -p hunk headers do not contain the hidden gap / expansion arrows
+    assert!(!plain.contains("more lines"));
+    assert!(!plain.contains('▼'));
+}
+
+#[test]
+fn test_render_file_diff_extends_background_to_terminal_width() {
+    let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,3 +1,3 @@\n ctx1\n-old1\n+new1\n ctx2\n";
+    let new_content = Some(
+        [("a.txt".to_string(), "ctx1\nnew1\nctx2\n".to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let old_content = Some(
+        [("a.txt".to_string(), "ctx1\nold1\nctx2\n".to_string())]
+            .into_iter()
+            .collect(),
+    );
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        new_content,
+        old_content,
+        crate::core::pipeline::PipelineOptions::default(),
+    );
+    assert_eq!(out.files.len(), 1);
+
+    let width = 80;
+    let rendered =
+        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::DEFAULT, true, width);
+
+    let lines: Vec<&str> = rendered.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let plain = strip_ansi(line);
+        let vis_w = crate::width::display_width(&plain);
+        assert_eq!(
+            vis_w, width,
+            "line {i} visual width {vis_w} does not match expected terminal width {width}: {line:?}"
+        );
+        assert!(
+            line.ends_with("\x1b[0m"),
+            "line {i} must reset ANSI styling at end of terminal width: {line:?}"
+        );
+    }
+
+    // Verify background tints are active on trailing spaces before reset
+    let theme = DiffuseTheme::DEFAULT;
+    let del_bg = theme.row_style(crate::core::parse::RowKind::Del).tint_bg();
+    let add_bg = theme.row_style(crate::core::parse::RowKind::Add).tint_bg();
+    let header_bg = theme.palette.header_bar_bg.bg_code();
+
+    // Line 0: Header bar
+    assert!(lines[0].starts_with(&header_bg));
+    assert!(lines[0].ends_with(&"  \x1b[0m".to_string()));
+
+    // Line 3: Deletion row (-old1)
+    assert!(lines[3].contains(&del_bg));
+    assert!(lines[3].ends_with(&format!("{del_bg}  \x1b[0m")) || lines[3].ends_with("  \x1b[0m"));
+
+    // Line 4: Addition row (+new1)
+    assert!(lines[4].contains(&add_bg));
+    assert!(lines[4].ends_with(&format!("{add_bg}  \x1b[0m")) || lines[4].ends_with("  \x1b[0m"));
+
+    // Direct check on write_file_header_bar_with_width
+    let mut header_buf = String::new();
+    write_file_header_bar_with_width(&mut header_buf, &out.files[0], None, &theme, Some(120))
+        .unwrap();
+    let header_plain = strip_ansi(&header_buf);
+    assert_eq!(
+        crate::width::display_width(header_plain.trim_end_matches('\n')),
+        120
+    );
+    assert!(header_buf.ends_with(" \x1b[0m\n"));
+}
+
+#[test]
+fn test_render_file_diff_multiline_wrapping_extends_last_line_to_width() {
+    let long_line = "x".repeat(130);
+    let diff = format!(
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line}\n+{long_line}\n"
+    );
+    let new_content = Some(
+        [("a.txt".to_string(), format!("{long_line}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let old_content = Some(
+        [("a.txt".to_string(), format!("{long_line}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let out = crate::core::pipeline::run_pipeline_full(
+        &diff,
+        new_content,
+        old_content,
+        crate::core::pipeline::PipelineOptions::default(),
+    );
+    assert_eq!(out.files.len(), 1);
+
+    let width = 80;
+    let rendered =
+        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::DEFAULT, true, width);
+
+    for (i, line) in rendered.lines().enumerate() {
+        let plain = strip_ansi(line);
+        let vis_w = crate::width::display_width(&plain);
+        assert_eq!(
+            vis_w % width,
+            0,
+            "line {i} visual width {vis_w} must be a multiple of terminal width {width} so the last line is fully painted: {line:?}"
+        );
+        assert!(
+            line.ends_with("\x1b[0m"),
+            "line {i} must reset ANSI styling at the end of the line: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn test_write_file_header_bar_without_width_has_no_trailing_space() {
+    let file = OutputFile {
+        path: "src/lib.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: "modified".to_string(),
+        new_line_count: 1,
+        old_line_count: 1,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![],
+        raw_hunks: vec![],
+        counts: diffuse_core::counts::FileCounts::default(),
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+    let mut buf = String::new();
+    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::DEFAULT).unwrap();
+    assert!(buf.ends_with("\x1b[0m\n"));
+    assert!(!buf.ends_with(" \x1b[0m\n"));
+}
+
+#[test]
+fn test_render_file_diff_continuation_lines_indented_six_spaces() {
+    let long_line = "abcdefghij".repeat(10); // 100 characters
+    let diff = format!(
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-{long_line}\n+{long_line}\n"
+    );
+    let new_content = Some(
+        [("a.txt".to_string(), format!("{long_line}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let old_content = Some(
+        [("a.txt".to_string(), format!("{long_line}\n"))]
+            .into_iter()
+            .collect(),
+    );
+    let out = crate::core::pipeline::run_pipeline_full(
+        &diff,
+        new_content,
+        old_content,
+        crate::core::pipeline::PipelineOptions::default(),
+    );
+
+    let width = 80;
+    let rendered =
+        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::DEFAULT, true, width);
+
+    let lines: Vec<&str> = rendered.lines().collect();
+    let diff_lines: Vec<&str> = lines
+        .into_iter()
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── H1/1"))
+        .collect();
+
+    assert_eq!(
+        diff_lines.len(),
+        2,
+        "expected 2 segments for 1 wrapped mod row: {diff_lines:#?}"
+    );
+    for line in &diff_lines {
+        let plain = strip_ansi(line);
+        assert_eq!(
+            crate::width::display_width(&plain),
+            width,
+            "each segment must be exactly terminal width"
+        );
+    }
+
+    let plain0 = strip_ansi(diff_lines[0]);
+    assert_eq!(
+        &plain0[0..6],
+        "   1 ~",
+        "segment 0 starts with line number gutter"
+    );
+    assert_eq!(
+        &plain0[6..16],
+        "abcdefghij",
+        "segment 0 content starts at col 6"
+    );
+
+    let plain1 = strip_ansi(diff_lines[1]);
+    assert_eq!(
+        &plain1[0..6],
+        "      ",
+        "continuation segment must start with 6 spaces"
+    );
+    assert_eq!(
+        &plain1[6..16],
+        "efghijabcd",
+        "continuation content starts at col 6 with offset 74"
+    );
+    assert!(
+        diff_lines[1].starts_with("\x1b[48;"),
+        "continuation line must preserve row background tint"
+    );
 }

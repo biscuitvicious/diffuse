@@ -7,7 +7,7 @@ discipline for any change in golden output.
 
 ## What lives here
 
-- `golden.rs` — the Rust golden acceptance: **two legs** over every frozen
+- [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) — the Rust golden acceptance: **two legs** over every frozen
   corpus, both asserting the wire-contract invariants and byte-identical
   output:
   1. **lib leg** — embed the engine, run the full pipeline directly.
@@ -38,8 +38,9 @@ discipline for any change in golden output.
 | `opt-4-manual-scanner-prefilter` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
 | `diffuse-history-mid` | ✅ | ✅ | Provisional | Pinned 100-commit window, absolute ids (pending full review) |
 | `untracked-files` | ✅ | ✅ | Provisional | Untracked additions & status representation (pending full review) |
+| `review-notes` | ✅ | ✅ | Provisional | Review notes anchoring, commit scoping isolation, and callouts (pending full review) |
 
-The terminal render walk in `tests/golden.rs` (`terminal_render_golden_walk`)
+The terminal render walk in [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.dark.txt`, `.render.light.txt`, and
 `.render.raw.txt` golden renders. `tests/golden/` is the single canonical copy.
 
@@ -104,7 +105,7 @@ signal.
 
 ### 4. Wire it in
 
-- `tests/golden.rs` → `corpus_tests!`: add
+- [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) → `corpus_tests!`: add
   `(<mod_name>, "<name>", <min_files>, <has_render>, <has_oracle>)` — the
   floor is a sanity assertion that the corpus actually loaded; pick the
   real file count minus a little slack.

@@ -724,3 +724,12 @@ fn test_notes_cli_args_revisions_and_staged() {
     let combined = r1.combined(&r2);
     assert_eq!(combined.git_args, vec!["HEAD~1", "src/main.rs"]);
 }
+
+#[test]
+fn test_pager_routing_and_detect_terminal_width() {
+    let args = Args::try_parse_from(["diffuse", "-p", "src/"]).unwrap();
+    assert!(args.pager);
+
+    let term_width = detect_terminal_width();
+    assert!(term_width > 0);
+}
