@@ -1,11 +1,10 @@
-//! Shared status-bar layout model: one ordered segment list and one overflow
-//! cascade (full badges → abbreviated badges → wrapping) consumed by
-//! both renderers — the ANSI string path and the ratatui span path — so
-//! their decisions can never drift apart.
+//! Shared status-bar layout model: one ordered segment list with overflow
+//! wrapping, consumed by both renderers — the ANSI string path and the
+//! ratatui span path — so their decisions can never drift apart.
 
-use crate::{core::counts::FileCounts, render::Color};
+use crate::render::Color;
 
-use super::header::{StatusBarContext, count_color};
+use super::header::StatusBarContext;
 use crate::render::width::display_width;
 
 /// One logical status-bar segment. Text is plain (no ANSI); `color` and
@@ -23,61 +22,37 @@ impl StatusSegment {
     }
 }
 
-/// Badge text for one variant of the overflow cascade.
-#[derive(Clone)]
-struct Badges {
-    hunk: String,
-}
-
-fn badges_for(ctx: &StatusBarContext<'_>, abbrev: bool) -> Badges {
-    let hunk_tag = if abbrev { "H" } else { "hunk " };
-    let hunk = if ctx.total_files == 0 || ctx.total_hunks == 0 {
-        format!("{hunk_tag}0/0")
+fn push_segment(
+    segs: &mut Vec<StatusSegment>,
+    text: String,
+    color: Color,
+    bold: bool,
+    p: &crate::render::ThemePalette,
+) {
+    if !segs.is_empty() {
+        segs.push(StatusSegment {
+            text: " \u{00b7} ".to_string(),
+            color: p.status_bar_dim,
+            bold: false,
+        });
+        segs.push(StatusSegment { text, color, bold });
     } else {
-        format!("{hunk_tag}{}/{}", ctx.cur_hunk + 1, ctx.total_hunks)
-    };
-    Badges { hunk }
+        segs.push(StatusSegment {
+            text: format!(" {text}"),
+            color,
+            bold,
+        });
+    }
 }
 
-fn counts_segments(
-    counts: &FileCounts,
-    first_space: bool,
-    palette: &crate::render::ThemePalette,
-) -> Vec<StatusSegment> {
-    counts
-        .segments()
-        .iter()
-        .enumerate()
-        .map(|(i, seg)| {
-            let sep = if i == 0 && first_space {
-                " "
-            } else if i == 0 {
-                ""
-            } else {
-                " "
-            };
-            StatusSegment {
-                text: format!("{sep}{}{}", seg.marker, seg.value),
-                color: count_color(seg.kind, palette),
-                bold: true,
-            }
-        })
-        .collect()
-}
-
-/// Build the ordered segment list for one cascade variant.
-fn segments_for(ctx: &StatusBarContext<'_>, badges: &Badges) -> Vec<StatusSegment> {
+/// Build the ordered segment list: the status message first, then the
+/// transient indicators.
+fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
     let p = &ctx.theme.palette;
     let mut segs = Vec::new();
-    segs.push(StatusSegment {
-        text: format!(" {}", badges.hunk),
-        color: p.hunk_divider_fg,
-        bold: true,
-    });
-    if let Some(c) = ctx.hunk_counts
-        && !c.is_empty()
-    {
-        segs.extend(counts_segments(&c, true, p));
+    if let Some((msg, is_ok)) = ctx.status_message {
+        let color = if is_ok { p.header_staged } else { p.count_dels };
+        push_segment(&mut segs, msg.to_string(), color, true, p);
     }
     if ctx.is_streaming {
         let dot = if ctx.streaming_dot.is_empty() {
@@ -85,52 +60,34 @@ fn segments_for(ctx: &StatusBarContext<'_>, badges: &Badges) -> Vec<StatusSegmen
         } else {
             ctx.streaming_dot
         };
-        segs.push(StatusSegment {
-            text: " \u{00b7} ".to_string(),
-            color: p.status_bar_dim,
-            bold: false,
-        });
-        segs.push(StatusSegment {
-            text: format!("{dot} streaming..."),
-            color: p.accent,
-            bold: true,
-        });
+        push_segment(&mut segs, format!("{dot} streaming..."), p.accent, true, p);
     }
     if ctx.raw_diff {
-        segs.push(StatusSegment {
-            text: " \u{00b7} ".to_string(),
-            color: p.status_bar_dim,
-            bold: false,
-        });
-        segs.push(StatusSegment {
-            text: "raw diff".to_string(),
-            color: p.status_bar_accent,
-            bold: true,
-        });
+        push_segment(
+            &mut segs,
+            "raw diff".to_string(),
+            p.status_bar_accent,
+            true,
+            p,
+        );
     }
     if ctx.col_offset > 0 {
-        segs.push(StatusSegment {
-            text: " \u{00b7} ".to_string(),
-            color: p.status_bar_dim,
-            bold: false,
-        });
-        segs.push(StatusSegment {
-            text: format!("col {}+", ctx.col_offset),
-            color: p.status_bar_dim,
-            bold: false,
-        });
+        push_segment(
+            &mut segs,
+            format!("col {}+", ctx.col_offset),
+            p.status_bar_dim,
+            false,
+            p,
+        );
     }
     if !ctx.num_buffer.is_empty() {
-        segs.push(StatusSegment {
-            text: " \u{00b7} ".to_string(),
-            color: p.status_bar_dim,
-            bold: false,
-        });
-        segs.push(StatusSegment {
-            text: format!("go {}", ctx.num_buffer),
-            color: p.warning,
-            bold: true,
-        });
+        push_segment(
+            &mut segs,
+            format!("go {}", ctx.num_buffer),
+            p.warning,
+            true,
+            p,
+        );
     }
     segs
 }
@@ -142,14 +99,19 @@ pub struct StatusLayout {
     pub wraps: bool,
 }
 
-/// Resolve the shared overflow cascade: full badges, then abbreviated
-/// `F`/`H` badges, then wrapping.
+/// Resolve the status-bar layout: segments when non-empty, then wrapping on
+/// overflow.
 pub fn status_layout(ctx: &StatusBarContext<'_>) -> StatusLayout {
     let width = ctx.width;
     let seg_width = |segs: &[StatusSegment]| segs.iter().map(StatusSegment::width).sum::<usize>();
 
-    let badges_full = badges_for(ctx, false);
-    let segs = segments_for(ctx, &badges_full);
+    let segs = segments_for(ctx);
+    if segs.is_empty() {
+        return StatusLayout {
+            segments: Vec::new(),
+            wraps: false,
+        };
+    }
     if seg_width(&segs) <= width {
         return StatusLayout {
             segments: segs,
@@ -157,17 +119,7 @@ pub fn status_layout(ctx: &StatusBarContext<'_>) -> StatusLayout {
         };
     }
 
-    let badges_short = badges_for(ctx, true);
-    let segs = segments_for(ctx, &badges_short);
-    if seg_width(&segs) <= width {
-        return StatusLayout {
-            segments: segs,
-            wraps: false,
-        };
-    }
-
-    // Nothing fits: wrap the full-badges variant.
-    let segs = segments_for(ctx, &badges_full);
+    // Overflow: wrap the segments.
     StatusLayout {
         segments: segs,
         wraps: true,
@@ -177,7 +129,7 @@ pub fn status_layout(ctx: &StatusBarContext<'_>) -> StatusLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::wire::OutputFile;
+    use crate::core::{counts::FileCounts, wire::OutputFile};
 
     fn ctx(width: usize, path: &str) -> (StatusBarContext<'static>, OutputFile) {
         let file = OutputFile {
@@ -222,6 +174,7 @@ mod tests {
                 width,
                 is_streaming: false,
                 streaming_dot: "●",
+                status_message: None,
                 file: None,
                 hunk_counts: None,
                 theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -241,45 +194,91 @@ mod tests {
     }
 
     #[test]
-    fn test_layout_full_badges_when_fits() {
+    fn test_status_layout_omits_hunk_data_and_is_empty() {
         let (mut c, file) = ctx(80, "short.rs");
         c.file = Some(&file);
-        let layout = status_layout(&c);
-        assert!(!layout.wraps);
-        assert_eq!(plain(&layout), "hunk 1/1");
-    }
-
-    #[test]
-    fn test_layout_cascade_abbreviates_on_overflow() {
-        let (mut c, file) = ctx(6, "crates/diffuse-core/src/lib.rs");
-        c.file = Some(&file);
-        let layout = status_layout(&c);
-        assert!(!layout.wraps);
-        // Width 6: " hunk 1/1" is 9 cols, so badge abbreviates to " H1/1" (5 cols)
-        // which fits.
-        assert_eq!(plain(&layout), "H1/1");
-    }
-
-    #[test]
-    fn test_layout_wraps_when_nothing_fits() {
-        let (mut c, file) = ctx(4, "crates/diffuse-core/src/lib.rs");
-        c.file = Some(&file);
-        let layout = status_layout(&c);
-        assert!(layout.wraps, "must wrap: {}", plain(&layout));
-        assert_eq!(plain(&layout), "hunk 1/1");
-    }
-
-    #[test]
-    fn test_layout_shows_hunk_counts() {
-        let (mut c, file) = ctx(80, "short.rs");
-        c.file = Some(&file);
+        c.cur_hunk = 0;
+        c.total_hunks = 3;
         c.hunk_counts = Some(FileCounts {
             adds: 2,
             dels: 1,
             ..Default::default()
         });
         let layout = status_layout(&c);
+        assert!(
+            layout.segments.is_empty(),
+            "status bar must omit hunk data and be empty"
+        );
+    }
+
+    #[test]
+    fn test_layout_single_segment_when_fits() {
+        let (mut c, file) = ctx(80, "short.rs");
+        c.file = Some(&file);
+        c.is_streaming = true;
+        let layout = status_layout(&c);
         assert!(!layout.wraps);
-        assert_eq!(plain(&layout), "hunk 1/1 −1 +2");
+        assert_eq!(plain(&layout), "● streaming...");
+    }
+
+    #[test]
+    fn test_layout_multiple_segments_joined() {
+        let (mut c, file) = ctx(80, "crates/diffuse-core/src/lib.rs");
+        c.file = Some(&file);
+        c.raw_diff = true;
+        c.col_offset = 12;
+        c.num_buffer = "42";
+        let layout = status_layout(&c);
+        assert!(!layout.wraps);
+        assert_eq!(plain(&layout), "raw diff · col 12+ · go 42");
+    }
+
+    #[test]
+    fn test_layout_wraps_when_overflows() {
+        let (mut c, file) = ctx(10, "crates/diffuse-core/src/lib.rs");
+        c.file = Some(&file);
+        c.raw_diff = true;
+        c.col_offset = 12;
+        let layout = status_layout(&c);
+        assert!(layout.wraps, "must wrap: {}", plain(&layout));
+        assert_eq!(plain(&layout), "raw diff · col 12+");
+    }
+
+    #[test]
+    fn test_layout_status_message_leads_segments() {
+        let (mut c, _file) = ctx(80, "short.rs");
+        c.status_message = Some(("staged hunk", true));
+        c.num_buffer = "42";
+        let layout = status_layout(&c);
+        assert!(!layout.wraps);
+        assert_eq!(plain(&layout), "staged hunk · go 42");
+    }
+
+    #[test]
+    fn test_layout_status_message_alone() {
+        let (mut c, _file) = ctx(80, "short.rs");
+        c.status_message = Some(("no staged changes", false));
+        let layout = status_layout(&c);
+        assert!(!layout.segments.is_empty());
+        assert_eq!(plain(&layout), "no staged changes");
+    }
+
+    #[test]
+    fn test_layout_status_message_colors_by_severity() {
+        let (mut c, _file) = ctx(80, "short.rs");
+        c.status_message = Some(("ok note", true));
+        let ok = status_layout(&c);
+        assert_eq!(
+            ok.segments[0].color,
+            crate::render::DiffuseTheme::DEFAULT.palette.header_staged
+        );
+        assert!(ok.segments[0].bold);
+        c.status_message = Some(("bad note", false));
+        let err = status_layout(&c);
+        assert_eq!(
+            err.segments[0].color,
+            crate::render::DiffuseTheme::DEFAULT.palette.count_dels
+        );
+        assert!(err.segments[0].bold);
     }
 }

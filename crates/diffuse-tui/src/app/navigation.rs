@@ -226,8 +226,9 @@ impl AppState {
         let cursor_flat = self.row_idx;
         let cursor_vis = starts.get(cursor_flat).copied().unwrap_or(0) + self.vis_line;
 
-        let sticky = self.sticky_header_info_from_layout(&starts, &geo.seg_counts);
-        let sticky_count = sticky.map_or(0, |s| s.sticky_lines_count);
+        let sticky =
+            self.sticky_header_info_from_layout(&starts, &geo.seg_counts, geo.content_width);
+        let sticky_count = sticky.map_or(0, |s| s.total_sticky_lines());
         let content_start = self.scroll + sticky_count;
         if cursor_vis < content_start {
             for (i, &s) in starts.iter().enumerate() {

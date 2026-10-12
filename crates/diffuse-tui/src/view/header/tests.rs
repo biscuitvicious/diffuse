@@ -23,22 +23,28 @@ fn test_render_status_bar_styling() {
         width: 100,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: None,
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let rendered = render_status_bar(ctx).join("\n");
     assert!(
-        rendered.contains("hunk 1/3"),
-        "status bar must show hunk 1/3"
+        rendered.is_empty(),
+        "secondary status bar must be empty when no transient segments, got: {rendered}"
+    );
+    let line = status_bar_line(ctx);
+    assert!(
+        line.to_string().is_empty(),
+        "TUI status line must be empty when no transient segments"
+    );
+    assert!(
+        !rendered.contains("hunk 1/3"),
+        "status bar must not show hunk badge"
     );
     assert!(
         !rendered.contains("file 1/11"),
         "status bar must omit file count badge"
-    );
-    assert!(
-        rendered.contains("38;5;213m"),
-        "hunk count in status bar must match in-file hunk divider purple tint 213"
     );
     assert!(
         !rendered.contains("prefix:"),
@@ -58,11 +64,16 @@ fn test_render_status_bar_styling() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: None,
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let rendered_root = render_status_bar(root_ctx).join("\n");
+    assert!(
+        rendered_root.is_empty(),
+        "status bar must be empty when no transient segments, got: {rendered_root}"
+    );
     assert!(
         !rendered_root.contains("prefix:"),
         "status bar must not show prefix: when files are in root"
@@ -177,12 +188,13 @@ fn test_ratatui_header_and_status_lines() {
         width: 80,
         is_streaming: true,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let status_line = status_bar_line(ctx);
-    assert!(status_line.to_string().contains("hunk 1/1"));
+    assert!(!status_line.to_string().contains("hunk 1/1"));
     assert!(!status_line.to_string().contains("file 1/2"));
     assert!(status_line.to_string().contains("streaming..."));
     assert!(status_line.to_string().contains("col 4+"));
@@ -197,22 +209,33 @@ fn test_ratatui_header_and_status_lines() {
         "secondary status bar must omit file change counts"
     );
 
-    // Hunk badge leads, streaming indicator follows.
+    // Streaming leads: transient segments are ordered streaming, raw diff,
+    // col offset, go buffer.
     let text = status_line.to_string();
-    let hunk = text.find("hunk 1/1").expect("must show hunk badge");
     let stream = text.find("streaming...").expect("must show streaming");
+    let col = text.find("col 4+").expect("must show col offset");
+    let go = text.find("go 12").expect("must show go buffer");
     assert!(
-        hunk < stream,
-        "streaming must come after the hunk badge: {text}"
+        stream < col && col < go,
+        "transient order must be streaming, col, go: {text}"
+    );
+    assert!(
+        !text.contains("hunk"),
+        "status line must omit hunk data: {text}"
     );
     let ansi = render_status_bar(ctx).join("\n");
-    let (a_hunk, a_stream) = (
-        ansi.find("hunk 1/1").expect("ansi hunk badge"),
+    let (a_stream, a_col, a_go) = (
         ansi.find("streaming...").expect("ansi streaming"),
+        ansi.find("col 4+").expect("ansi col"),
+        ansi.find("go 12").expect("ansi go"),
     );
     assert!(
-        a_hunk < a_stream,
-        "ANSI streaming must come after the hunk badge"
+        a_stream < a_col && a_col < a_go,
+        "ANSI transient order must be streaming, col, go"
+    );
+    assert!(
+        !ansi.contains("hunk"),
+        "ANSI status bar must omit hunk data"
     );
 
     // Renamed files do not show path in the secondary status bar.
@@ -230,12 +253,11 @@ fn test_ratatui_header_and_status_lines() {
     let hunk_span = status_line
         .spans
         .iter()
-        .find(|s| s.content.contains("hunk 1/1"))
-        .expect("must have hunk span");
-    assert_eq!(
-        hunk_span.style.fg,
-        Some(Color::Indexed(213)),
-        "hunk span must use color 213"
+        .find(|s| s.content.contains("streaming..."))
+        .expect("must have streaming span");
+    assert!(
+        hunk_span.style.add_modifier.contains(Modifier::BOLD),
+        "streaming span must be bold"
     );
 
     let (div, rib) = bottom_ribbon_lines(80, &DiffuseTheme::DEFAULT.palette);
@@ -285,6 +307,7 @@ fn test_header_bar_zero_notes_suppressed() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -307,6 +330,7 @@ fn test_header_bar_zero_notes_suppressed() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -392,7 +416,7 @@ fn test_header_bar_nonzero_notes_shown() {
         new_bytes: None,
         raw_source: None,
     };
-    // ANSI status bar: must contain "💬2".
+    // ANSI status bar: transient-only, so notes no longer surface here.
     let ctx = StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -405,20 +429,21 @@ fn test_header_bar_nonzero_notes_shown() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: Some(file.counts),
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let ansi = render_status_bar(ctx).join("\n");
     assert!(
-        ansi.contains("💬2"),
-        "ANSI status bar must show '💬2' when there are 2 notes"
+        ansi.is_empty(),
+        "ANSI status bar must be empty when no transient segments, got: {ansi}"
     );
-    // Ratatui status bar: must contain "💬2".
+    // Ratatui status bar: must be empty when no transient segments.
     let line = status_bar_line(ctx);
     assert!(
-        line.to_string().contains("💬2"),
-        "TUI status line must show '💬2' when there are 2 notes"
+        line.to_string().is_empty(),
+        "TUI status line must be empty when no transient segments"
     );
     // Global counts surface notes in the top header too.
     let global = FileCounts {
@@ -501,6 +526,7 @@ fn test_status_bar_no_branch_indicator() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: None,
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -532,6 +558,7 @@ fn test_status_bar_streaming_dot_blinking() {
         width: 80,
         is_streaming: true,
         streaming_dot: "●",
+        status_message: None,
         file: None,
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -553,6 +580,7 @@ fn test_status_bar_streaming_dot_blinking() {
         width: 80,
         is_streaming: true,
         streaming_dot: " ",
+        status_message: None,
         file: None,
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -608,6 +636,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -631,6 +660,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -655,6 +685,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -676,6 +707,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -700,6 +732,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -721,6 +754,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         width: 80,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -894,7 +928,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
     assert_eq!(mov_span.style.fg, Some(Color::Indexed(147)));
     assert!(mov_span.style.add_modifier.contains(Modifier::BOLD));
 
-    // Hunk counts with moved lines render in the status bar.
+    // Hunk counts no longer render in the transient-only status bar.
     let mut file_with_movs = file.clone();
     file_with_movs.counts.movs = 3;
     let status_ctx = StatusBarContext {
@@ -909,18 +943,20 @@ fn test_header_bar_global_mod_counts_ratatui() {
         width: 120,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file_with_movs),
         hunk_counts: Some(file_with_movs.counts),
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let local_mov_text = status_bar_line(status_ctx).to_string();
     assert!(
-        !local_mov_text.contains("AGENTS.md"),
-        "status line must not show the file path"
+        local_mov_text.is_empty(),
+        "status line must be empty when no transient segments, got: {local_mov_text}"
     );
+    let local_mov_ansi = render_status_bar(status_ctx).join("\n");
     assert!(
-        local_mov_text.contains("−7 +15 ~6 ≈3"),
-        "status line must format hunk counts with ≈3 (without 'moved')"
+        local_mov_ansi.is_empty(),
+        "ANSI status bar must be empty when no transient segments, got: {local_mov_ansi}"
     );
 }
 
@@ -988,7 +1024,7 @@ fn test_header_bar_global_mod_counts_ansi() {
         "top header must not show the current file"
     );
 
-    // The current file surfaces in the status bar instead.
+    // The transient-only status bar is empty when no transient segments.
     let status_ansi = render_status_bar(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -1001,17 +1037,16 @@ fn test_header_bar_global_mod_counts_ansi() {
         width: 120,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
     })
     .join("\n");
     assert!(
-        !status_ansi.contains("AGENTS.md"),
-        "status bar must omit file path"
+        status_ansi.is_empty(),
+        "status bar must be empty when no transient segments, got: {status_ansi}"
     );
-    assert!(status_ansi.contains("hunk 1/1"));
-    assert!(!status_ansi.contains("file 1/1"));
 }
 
 #[test]
@@ -1082,7 +1117,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         " diffuse −5 +20 ~3 · crates/diffuse-tui/src/"
     );
 
-    // The status bar does not show the file path.
+    // The transient-only status bar is empty when no transient segments.
     let pfx_status = status_bar_line(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -1095,22 +1130,15 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         width: 120,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
     })
     .to_string();
     assert!(
-        !pfx_status.contains("main.rs"),
-        "status line must omit file path"
-    );
-    assert!(
-        pfx_status.contains("hunk 1/1"),
-        "status line must show hunk badge"
-    );
-    assert!(
-        !pfx_status.contains("file 1/1"),
-        "status line must omit file badge"
+        pfx_status.is_empty(),
+        "status line must be empty when no transient segments, got: {pfx_status}"
     );
 }
 
@@ -1469,24 +1497,24 @@ fn test_status_bar_shows_file_and_hunk_stats() {
         width: 120,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file: Some(&file),
         hunk_counts: Some(hunk_counts),
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
 
+    // Transient-only status bar omits hunk/file/counts data entirely.
     let ansi = render_status_bar(ctx).join("\n");
-    let visible = crate::render::ansi::strip_ansi(&ansi);
-    assert_eq!(
-        visible.trim_end(),
-        " hunk 1/3 −2 +1",
-        "unexpected status bar visible text"
+    assert!(
+        ansi.is_empty(),
+        "ANSI status bar must be empty when no transient segments, got: {ansi}"
     );
 
     let line = status_bar_line(ctx);
     assert_eq!(
-        line.to_string().trim_end(),
-        " hunk 1/3 −2 +1",
-        "unexpected status bar text"
+        line,
+        Line::default(),
+        "TUI status line must be empty when no transient segments"
     );
 }
 
@@ -1535,6 +1563,7 @@ fn status_ctx<'a>(file: Option<&'a OutputFile>, width: usize) -> StatusBarContex
         width,
         is_streaming: false,
         streaming_dot: "●",
+        status_message: None,
         file,
         hunk_counts: None,
         theme: &crate::render::DiffuseTheme::DEFAULT,
@@ -1544,35 +1573,58 @@ fn status_ctx<'a>(file: Option<&'a OutputFile>, width: usize) -> StatusBarContex
 #[test]
 fn test_status_bar_full_badges() {
     let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let lines = render_status_bar(status_ctx(Some(&file), 80));
+    let mut ctx = status_ctx(Some(&file), 80);
+    ctx.raw_diff = true;
+    let lines = render_status_bar(ctx);
     assert_eq!(lines.len(), 1);
     let plain = crate::render::strip_ansi(&lines[0]);
-    assert_eq!(plain.trim_end(), " hunk 1/1");
+    assert!(
+        plain.contains("raw diff"),
+        "single transient must fit on one line: {plain:?}"
+    );
+    let line = status_bar_line(ctx);
+    assert!(line.to_string().contains("raw diff"));
 }
 
 #[test]
 fn test_status_bar_abbreviates_badges_on_overflow() {
-    let file = status_test_file("1234567890");
-    let lines = render_status_bar(status_ctx(Some(&file), 6));
+    let file = status_test_file("crates/diffuse-core/src/lib.rs");
+    let mut ctx = status_ctx(Some(&file), 80);
+    ctx.raw_diff = true;
+    ctx.col_offset = 12;
+    ctx.num_buffer = "42";
+    let lines = render_status_bar(ctx);
     assert_eq!(lines.len(), 1, "must stay one line: {lines:?}");
     let plain = crate::render::strip_ansi(&lines[0]);
-    assert_eq!(plain.trim_end(), " H1/1");
+    assert!(
+        plain.contains("raw diff") && plain.contains("col 12+") && plain.contains("go 42"),
+        "multiple transients must be joined: {plain:?}"
+    );
 }
 
 #[test]
 fn test_status_bar_tight_width_falls_back_to_wrap() {
     let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let lines = render_status_bar(status_ctx(Some(&file), 4));
+    let mut ctx = status_ctx(Some(&file), 10);
+    ctx.raw_diff = true;
+    ctx.col_offset = 12;
+    let lines = render_status_bar(ctx);
     assert!(lines.len() > 1, "must wrap: {lines:?}");
 }
 
 #[test]
 fn test_status_bar_line_abbreviates() {
-    let file = status_test_file("1234567890");
-    let line = status_bar_line(status_ctx(Some(&file), 6));
-    assert!(line.width() <= 6, "must fit: {}", line.width());
+    let file = status_test_file("crates/diffuse-core/src/lib.rs");
+    let mut ctx = status_ctx(Some(&file), 80);
+    ctx.raw_diff = true;
+    ctx.col_offset = 12;
+    ctx.num_buffer = "42";
+    let line = status_bar_line(ctx);
     let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-    assert_eq!(text.trim_end(), " H1/1");
+    assert!(
+        text.contains("raw diff") && text.contains("col 12+") && text.contains("go 42"),
+        "line must join multiple transients: {text:?}"
+    );
 }
 
 #[test]
@@ -1617,6 +1669,7 @@ fn test_stripped_file_path_rename_and_prefix() {
 fn test_status_bar_background_styled() {
     let file = status_test_file("src/main.rs");
     let mut ctx = status_ctx(Some(&file), 80);
+    ctx.raw_diff = true;
 
     // Dark theme
     ctx.theme = &crate::render::DiffuseTheme::DEFAULT;

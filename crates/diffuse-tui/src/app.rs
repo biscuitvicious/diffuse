@@ -60,7 +60,11 @@ pub struct AppState {
     pub notes_key: String,
     pub target: diffuse_core::ReviewTarget,
     pub should_quit: bool,
-    pub status_message: Option<(String, bool)>, // (message, is_error)
+    /// Ephemeral action feedback rendered at the front of the secondary
+    /// status bar: `(message, is_ok, created_at)`. All messages expire
+    /// (errors linger longer); expiry is polled by the event loop and
+    /// lazily on render so the reserved secondary slot simply goes blank.
+    pub status_message: Option<(String, bool, Instant)>,
     pub viewport_height: usize,
     pub screen_height: usize,
     pub show_resolved_notes: bool,
@@ -287,6 +291,55 @@ impl AppState {
         } else {
             "●"
         }
+    }
+
+    /// Time-to-live for status-bar feedback: ok confirmations vanish
+    /// quickly, errors linger longer. Both expire.
+    pub const STATUS_OK_TTL: Duration = Duration::from_secs(4);
+    pub const STATUS_ERR_TTL: Duration = Duration::from_secs(10);
+
+    pub fn status_ttl(is_ok: bool) -> Duration {
+        if is_ok {
+            Self::STATUS_OK_TTL
+        } else {
+            Self::STATUS_ERR_TTL
+        }
+    }
+
+    /// Record ephemeral feedback for the secondary status bar.
+    pub fn set_status_message(&mut self, msg: String, is_ok: bool) {
+        self.set_status_message_at(msg, is_ok, Instant::now());
+    }
+
+    pub fn set_status_message_at(&mut self, msg: String, is_ok: bool, at: Instant) {
+        self.status_message = Some((msg, is_ok, at));
+    }
+
+    /// The message as of `now`, or `None` when absent/expired (pure).
+    pub fn status_message_at(&self, now: Instant) -> Option<(&str, bool)> {
+        let (msg, is_ok, at) = self.status_message.as_ref()?;
+        if now.duration_since(*at) >= Self::status_ttl(*is_ok) {
+            return None;
+        }
+        Some((msg.as_str(), *is_ok))
+    }
+
+    /// The currently visible message, if any.
+    pub fn visible_status_message(&self) -> Option<(&str, bool)> {
+        self.status_message_at(Instant::now())
+    }
+
+    /// Drop the message when past its TTL. Returns true when cleared.
+    pub fn poll_status_expiry(&mut self, now: Instant) -> bool {
+        let expired = match self.status_message.as_ref() {
+            Some((_, is_ok, at)) => now.duration_since(*at) >= Self::status_ttl(*is_ok),
+            None => false,
+        };
+        if expired {
+            self.status_message = None;
+            return true;
+        }
+        false
     }
 
     pub fn current_file_idx(&self) -> usize {

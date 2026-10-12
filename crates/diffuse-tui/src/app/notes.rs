@@ -150,7 +150,7 @@ impl AppState {
                         self.sync_file_notes(fi);
                     }
                     self.bump_notes();
-                    self.status_message = Some(("updated note".to_string(), true));
+                    self.set_status_message("updated note".to_string(), true);
                 }
             }
             return;
@@ -289,17 +289,18 @@ impl AppState {
                 self.sync_file_notes(fi);
             }
             self.bump_notes();
-            self.status_message = Some((
-                if removed > 0 {
+            let (note_msg, note_ok) = if removed > 0 {
+                (
                     format!(
                         "deleted {removed} note{}",
                         if removed == 1 { "" } else { "s" }
-                    )
-                } else {
-                    "no note here".to_string()
-                },
-                removed > 0,
-            ));
+                    ),
+                    true,
+                )
+            } else {
+                ("no note here".to_string(), false)
+            };
+            self.set_status_message(note_msg, note_ok);
         } else if let Some(target) = self.visual_target_at(self.row_idx, self.vis_line) {
             let note_info = match target {
                 VisualTarget::Note { note, .. } => Some((note.file.clone(), note.id.clone())),
@@ -322,13 +323,13 @@ impl AppState {
                     if self.vis_line >= max_nav {
                         self.vis_line = max_nav.saturating_sub(1);
                     }
-                    self.status_message = Some(("deleted note".to_string(), true));
+                    self.set_status_message("deleted note".to_string(), true);
                 }
             } else {
-                self.status_message = Some(("no note here".to_string(), false));
+                self.set_status_message("no note here".to_string(), false);
             }
         } else {
-            self.status_message = Some(("no note here".to_string(), false));
+            self.set_status_message("no note here".to_string(), false);
         }
         self.confirmed_sel = None;
         self.anchor = None;
@@ -402,8 +403,7 @@ impl AppState {
                 diffuse_core::notes::NoteStatus::InProgress => "in progress",
                 diffuse_core::notes::NoteStatus::Resolved => "resolved",
             };
-            self.status_message =
-                Some((format!("note marked {label} {}", next_status.glyph()), true));
+            self.set_status_message(format!("note marked {label} {}", next_status.glyph()), true);
             true
         } else {
             false
@@ -419,7 +419,7 @@ impl AppState {
         } else {
             "hiding resolved notes"
         };
-        self.status_message = Some((msg.to_string(), true));
+        self.set_status_message(msg.to_string(), true);
     }
 
     /// Toggle displaying original source lines in note callouts.
@@ -431,7 +431,7 @@ impl AppState {
         } else {
             "hiding note source lines"
         };
-        self.status_message = Some((msg.to_string(), true));
+        self.set_status_message(msg.to_string(), true);
     }
 
     /// Synchronize review notes and counts on an [`OutputFile`] in

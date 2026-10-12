@@ -96,7 +96,7 @@ impl AppState {
                 let git_args = self.git_args.clone();
                 match crate::actions::toggle_staged_action(self, &repo_root, &git_args) {
                     Ok(()) => self.status_message = None,
-                    Err(e) => self.status_message = Some((e, false)),
+                    Err(e) => self.set_status_message(e, false),
                 }
             }
             TuiCommand::ExpandAllHidden => {
@@ -170,10 +170,10 @@ impl AppState {
                 let git_args = self.git_args.clone();
                 match crate::actions::stage_action(self, &repo_root, &git_args, false) {
                     Ok(()) => {
-                        self.status_message = Some(("staged hunk".into(), true));
+                        self.set_status_message("staged hunk".into(), true);
                         let _ = crate::actions::reload_diff(self, &repo_root, &git_args);
                     }
-                    Err(e) => self.status_message = Some((e, false)),
+                    Err(e) => self.set_status_message(e, false),
                 }
             }
             TuiCommand::Unstage => {
@@ -181,10 +181,10 @@ impl AppState {
                 let git_args = self.git_args.clone();
                 match crate::actions::unstage_action(self, &repo_root, &git_args, false) {
                     Ok(()) => {
-                        self.status_message = Some(("unstaged hunk".into(), true));
+                        self.set_status_message("unstaged hunk".into(), true);
                         let _ = crate::actions::reload_diff(self, &repo_root, &git_args);
                     }
-                    Err(e) => self.status_message = Some((e, false)),
+                    Err(e) => self.set_status_message(e, false),
                 }
             }
             TuiCommand::Discard => {
@@ -197,10 +197,10 @@ impl AppState {
                         } else {
                             "discarded hunk".into()
                         };
-                        self.status_message = Some((msg, true));
+                        self.set_status_message(msg, true);
                         let _ = crate::actions::reload_diff(self, &repo_root, &git_args);
                     }
-                    Err(e) => self.status_message = Some((e, false)),
+                    Err(e) => self.set_status_message(e, false),
                 }
             }
             TuiCommand::StartNoteDraft => self.start_note_draft(),

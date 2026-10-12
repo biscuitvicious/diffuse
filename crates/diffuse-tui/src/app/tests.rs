@@ -2129,6 +2129,7 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
     state.render_frame(80, 30);
     let vh = state.viewport_height;
     let track_h = state.screen_height;
+    let header_offset = state.last_viewport_start;
     state.scroll_to_visual(20);
     state.render_frame(80, 30);
     let scrolled = state.scroll;
@@ -2140,9 +2141,11 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
     let (_, _, _, total) = state.visual_geometry(cw);
     let max_scroll = total.saturating_sub(vh);
 
-    // Clicking the thumb row seeks exactly like a track click.
-    let thumb_row = track_h / 2;
-    let want = AppState::scrollbar_scroll_for_row(track_h, max_scroll, thumb_row);
+    // Clicking the thumb row seeks exactly like a track click: the mapping
+    // uses the viewport-relative row and viewport height.
+    let thumb_row = header_offset + vh / 2;
+    let row_relative = thumb_row.saturating_sub(header_offset);
+    let want = AppState::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
     state.execute(TuiCommand::MouseClick {
         row: thumb_row,
         col: cw,
@@ -2660,7 +2663,7 @@ fn test_render_ratatui_frame_layout() {
         temp_notes_path(),
         crate::render::DiffuseTheme::DEFAULT,
     );
-    state.status_message = Some(("Saved note".to_string(), true));
+    state.set_status_message("Saved note".to_string(), true);
 
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -2679,27 +2682,29 @@ fn test_render_ratatui_frame_layout() {
     assert!(line0.contains("diffuse"));
     assert!(!line0.contains("src/lib.rs"));
 
-    // Second line must contain hunks badge; file path and file badge moved to
-    // sticky file banner.
+    // No separate message row: the message renders at the front of the
+    // secondary bar at row 1, and the diff starts at row 2.
     let mut line1 = String::new();
     for x in 0..80 {
         line1.push_str(buffer[(x, 1)].symbol());
     }
-    assert!(!line1.contains("src/lib.rs"));
+    assert!(line1.contains("Saved note"));
+    assert!(!line1.contains("hunk 1/1"));
     assert!(!line1.contains("file 1/1"));
-    assert!(line1.contains("hunk 1/1"));
 
-    // Third line must contain the status message "Saved note"
     let mut line2 = String::new();
     for x in 0..80 {
         line2.push_str(buffer[(x, 2)].symbol());
     }
-    assert!(line2.contains("Saved note"));
+    assert!(!line2.contains("Saved note"));
+    assert!(!line2.contains("hunk 1/1"));
+    assert!(!line2.contains("file 1/1"));
+    assert!(line2.contains("src/lib.rs") || line2.contains("fn hello()"));
 
     // Viewport area must contain diff grid lines (e.g. file header or hunk
     // content)
     let mut grid_text = String::new();
-    for y in 3..22 {
+    for y in 2..21 {
         for x in 0..80 {
             grid_text.push_str(buffer[(x, y)].symbol());
         }
@@ -2914,7 +2919,7 @@ fn test_render_ratatui_frame_mouse_hit_testing() {
 
     assert_eq!(
         state.last_viewport_start, 2,
-        "Viewport starts after header and status bars"
+        "Viewport starts after header + reserved secondary"
     );
     assert!(state.viewport_height > 0);
 
@@ -3437,14 +3442,20 @@ fn test_no_diffs_renders_header_footer_and_main_message_frame() {
     // Header bar with repo name
     assert!(frame.contains("my_repo"), "frame must include repo name");
 
-    // Status bar with hunk 0/0 (file badge omitted)
-    assert!(!frame.contains("file 0/0"), "status bar must omit file 0/0");
-    assert!(frame.contains("hunk 0/0"), "status bar must show hunk 0/0");
+    // Secondary status bar is transient-only: hidden when empty, with a
+    // reserved blank slot so hide/show never shifts content.
+    assert!(!frame.contains("file 0/0"), "frame must omit file badge");
     assert!(
-        frame.contains('\u{2387}'),
-        "status bar must show branch glyph"
+        !frame.contains("hunk 0/0"),
+        "frame must omit hunk badge when secondary is hidden"
     );
-    assert!(frame.contains("main"), "status bar must show branch name");
+    // Header still carries repo + branch glyph.
+    let header_row = frame.lines().next().unwrap_or_default().to_string();
+    assert!(
+        header_row.contains('\u{2387}'),
+        "header must show branch glyph"
+    );
+    assert!(header_row.contains("main"), "header must show branch name");
 
     // Main area message
     assert!(
@@ -3492,21 +3503,41 @@ fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
         })
         .collect();
 
-    // Row 0: Header bar
+    // Row 0: Header bar (still carries repo + branch glyph).
     assert!(
         row_strings[0].contains("demo_repo"),
         "Row 0 must be header bar: {}",
         row_strings[0]
     );
-
-    // Row 1: Secondary status bar
     assert!(
-        !row_strings[1].contains("file 0/0") && row_strings[1].contains("hunk 0/0"),
-        "Row 1 must be status bar: {}",
+        row_strings[0].contains('\u{2387}'),
+        "Row 0 header must show branch glyph: {}",
+        row_strings[0]
+    );
+    assert!(
+        row_strings[0].contains("feature-branch"),
+        "Row 0 header must show branch name: {}",
+        row_strings[0]
+    );
+
+    // Secondary status bar is transient-only: hidden when empty, so no
+    // row may carry hunk/file badges.
+    for (i, row) in row_strings.iter().enumerate() {
+        assert!(
+            !row.contains("hunk 0/0") && !row.contains("file 0/0"),
+            "Row {i} must not carry hunk/file badge when secondary hidden: {row}"
+        );
+    }
+
+    // Row 1: reserved secondary slot (blank when hidden).
+    assert!(
+        row_strings[1].trim().is_empty(),
+        "Row 1 must be blank reserved secondary slot: {:?}",
         row_strings[1]
     );
 
-    // Row 2: Main area with message
+    // Row 2: Main area with message (diff area starts after header +
+    // secondary).
     assert!(
         row_strings[2].contains("No diff to display."),
         "Row 2 must be main area with message: {}",
@@ -3751,6 +3782,9 @@ fn test_ratatui_status_bar_uses_scrollbar_narrowed_width() {
         temp_notes_path(),
         crate::render::DiffuseTheme::DEFAULT,
     );
+    // Transient-only secondary bar: force it visible with the `go` buffer
+    // (raw_diff would disable the scrollbar column).
+    state.num_buffer = "42".to_string();
 
     let backend = TestBackend::new(48, 24);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -3760,16 +3794,32 @@ fn test_ratatui_status_bar_uses_scrollbar_narrowed_width() {
         })
         .unwrap();
     let buffer = terminal.backend().buffer();
-    let mut row = String::new();
-    for x in 0..48 {
-        row.push_str(buffer[(x, 1)].symbol());
+    let main_width = state.last_content_width;
+    // The reserved secondary slot lives at row 1; find the transient row
+    // dynamically.
+    let mut found = None;
+    for y in 0..24 {
+        let mut row = String::new();
+        for x in 0..48 {
+            row.push_str(buffer[(x, y)].symbol());
+        }
+        if row.contains("go 42") {
+            found = Some((y, row));
+            break;
+        }
     }
+    let (y, row) = found.expect("status bar must show transient go segment");
     assert!(
-        row.contains("hunk 1/12"),
-        "status bar must contain hunk badge: {row:?}"
+        !row.contains("hunk 1/12") && !row.contains("hunk"),
+        "transient-only status bar must not contain hunk badge: {row:?} (row {y})"
+    );
+    let chars: Vec<char> = row.chars().collect();
+    assert!(
+        chars.len() > main_width,
+        "status row must reach the scrollbar column (main_width {main_width}): {row:?}"
     );
     assert!(
-        row.ends_with('█'),
+        chars[main_width] == '█' || chars[main_width] == '│',
         "status bar must be narrowed to preserve scrollbar column: {row:?}"
     );
 }
@@ -4754,9 +4804,14 @@ fn test_sticky_file_banner_sticks_to_top_when_scrolling_down() {
         "row 0 must stick to a.rs banner when scrolled down into content"
     );
     assert!(
-        crate::render::strip_ansi(&lines_5[1]).contains("line 5"),
-        "screen row 1 must show visual line 6 (line 5) beneath the sticky banner, got: {:?}",
+        lines_5[1].contains("H1/1"),
+        "screen row 1 must show sticky hunk divider beneath file banner, got: {:?}",
         lines_5[1]
+    );
+    assert!(
+        crate::render::strip_ansi(&lines_5[2]).contains("line 6"),
+        "screen row 2 must show visual line 7 (line 6) beneath the sticky headers, got: {:?}",
+        lines_5[2]
     );
 }
 
@@ -4793,7 +4848,7 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
     let b_vis = starts[b_banner_row];
 
     // When scroll = b_vis - 1:
-    // b.rs banner is at screen row 1.
+    // b.rs banner is at screen row 1, pushing File A's hunk divider off.
     // a.rs sticky banner is at screen row 0. They meet!
     state.scroll_to_visual(b_vis.saturating_sub(1));
     let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
@@ -4816,15 +4871,20 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
     );
 
     // On further scrolling into b.rs:
-    // b.rs banner now sticks to the top!
-    state.scroll_to_visual(b_vis + 3);
+    // b.rs banner and hunk divider stick to the top!
+    state.scroll_to_visual(b_vis + 1);
     let (lines_b_sticky, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(
         lines_b_sticky[0].contains("b.rs"),
         "b.rs banner must now stick to row 0"
     );
     assert!(
-        crate::render::strip_ansi(&lines_b_sticky[1]).contains("b line 2"),
+        lines_b_sticky[1].contains("H1/1"),
+        "screen row 1 must show sticky hunk divider beneath b.rs banner, got: {:?}",
+        lines_b_sticky[1]
+    );
+    assert!(
+        crate::render::strip_ansi(&lines_b_sticky[2]).contains("b line 2"),
         "b.rs content must scroll beneath it"
     );
 }
@@ -4871,4 +4931,423 @@ fn test_clicking_sticky_header_toggles_collapse() {
         state.collapsed_files.contains(&0),
         "clicking sticky header indicator must toggle collapse"
     );
+}
+
+#[test]
+fn test_sticky_hunk_header_sticks_below_file_header() {
+    let mut lines_a = String::new();
+    let mut diff_a = String::new();
+    for i in 1..=30 {
+        lines_a.push_str(&format!("line {i}\n"));
+        diff_a.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,30 @@\n{diff_a}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a)].into_iter().collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 10;
+    state.last_content_width = 80;
+
+    // At scroll = 0: row 0 is a.rs header, row 1 is H1 divider.
+    let (lines_0, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_0[0].contains("a.rs"));
+    assert!(lines_0[1].contains("H1/1"));
+
+    // Scroll down inside a.rs (scroll = 5).
+    state.scroll_to_visual(5);
+    let (lines_5, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(
+        lines_5[0].contains("a.rs"),
+        "row 0 must stick to a.rs banner"
+    );
+    assert!(
+        lines_5[1].contains("H1/1"),
+        "row 1 must stick to hunk divider H1/1 immediately below file banner, got: {:?}",
+        lines_5[1]
+    );
+    assert!(
+        crate::render::strip_ansi(&lines_5[2]).contains("line 6"),
+        "screen row 2 must show content beneath the sticky hunk divider, got: {:?}",
+        lines_5[2]
+    );
+
+    // viewport_row_to_visual mapping
+    assert_eq!(
+        state.viewport_row_to_visual(0),
+        0,
+        "screen row 0 maps to file banner"
+    );
+    assert_eq!(
+        state.viewport_row_to_visual(1),
+        1,
+        "screen row 1 maps to hunk divider"
+    );
+    assert_eq!(
+        state.viewport_row_to_visual(2),
+        7,
+        "screen row 2 maps to line 6 (visual line 7)"
+    );
+}
+
+#[test]
+fn test_sticky_hunk_header_pushed_by_next_hunk() {
+    let mut diff_1 = String::new();
+    let mut diff_2 = String::new();
+    for i in 1..=15 {
+        diff_1.push_str(&format!("+h1 line {i}\n"));
+        diff_2.push_str(&format!("+h2 line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,15 @@\n{diff_1}@@ -30,0 +30,15 @@\n{diff_2}"
+    );
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, None, None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 10;
+    state.last_content_width = 80;
+
+    let (starts, _, _, _) = state.visual_geometry(80);
+    let h2_row = state.hunk_starts[1].flat;
+    let h2_vis = starts[h2_row];
+
+    // Scroll right before H2 pushes H1 off.
+    // Screen row 0: a.rs (sticky)
+    // Screen row 1: H1 (sticky)
+    // Screen row 2: H2 meeting it!
+    state.scroll_to_visual(h2_vis.saturating_sub(2));
+    state.row_idx = h2_row; // Cursor on H2 so keep_cursor_visible doesn't clamp scroll up
+    let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_meet[0].contains("a.rs"));
+    assert!(lines_meet[1].contains("H1/2"), "H1/2 still sticky at row 1");
+    assert!(lines_meet[2].contains("H2/2"), "H2/2 meeting at row 2");
+
+    // Scroll 1 line further: H2 reaches row 1, pushing H1 completely off!
+    state.scroll_to_visual(h2_vis.saturating_sub(1));
+    state.row_idx = h2_row;
+    let (lines_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_pushed[0].contains("a.rs"));
+    assert!(lines_pushed[1].contains("H2/2"), "H2/2 now sticky at row 1");
+    assert!(crate::render::strip_ansi(&lines_pushed[6]).contains("h2 line 1"));
+}
+
+#[test]
+fn test_sticky_hunk_header_pushed_by_next_file() {
+    let mut diff_a = String::new();
+    let mut diff_b = String::new();
+    for i in 1..=15 {
+        diff_a.push_str(&format!("+a line {i}\n"));
+        diff_b.push_str(&format!("+b line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,15 @@\n{diff_a}diff --git a/b.rs b/b.rs\nindex 222..333 100644\n--- a/b.rs\n+++ b/b.rs\n@@ -0,0 +1,15 @@\n{diff_b}"
+    );
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, None, None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 10;
+    state.last_content_width = 80;
+
+    let b_banner_row = state.first_row_of_file(1);
+    let (starts, _, _, _) = state.visual_geometry(80);
+    let b_vis = starts[b_banner_row];
+
+    // Scroll so b.rs header is at row 2 (below sticky a.rs at row 0 and sticky H1
+    // at row 1)
+    state.scroll_to_visual(b_vis.saturating_sub(2));
+    state.row_idx = b_banner_row;
+    let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_meet[0].contains("a.rs"));
+    assert!(lines_meet[1].contains("H1/1"));
+    assert!(lines_meet[2].contains("b.rs"));
+
+    // Scroll 1 line further: b.rs reaches row 1, pushing H1 off!
+    state.scroll_to_visual(b_vis.saturating_sub(1));
+    state.row_idx = b_banner_row;
+    let (lines_hunk_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_hunk_pushed[0].contains("a.rs"));
+    assert!(lines_hunk_pushed[1].contains("b.rs"));
+
+    // Scroll 1 line further: b.rs reaches row 0, pushing a.rs off!
+    state.scroll_to_visual(b_vis);
+    state.row_idx = b_banner_row;
+    let (lines_file_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
+    assert!(lines_file_pushed[0].contains("b.rs"));
+    assert!(lines_file_pushed[1].contains("H1/1")); // b.rs's H1/1!
+}
+
+#[test]
+fn test_clicking_sticky_hunk_header_selects_hunk() {
+    let mut lines_a = String::new();
+    let mut diff_a = String::new();
+    for i in 1..=30 {
+        lines_a.push_str(&format!("line {i}\n"));
+        diff_a.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,30 @@\n{diff_a}"
+    );
+    let new_content = [("a.rs".to_string(), lines_a)].into_iter().collect();
+
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 10;
+    state.last_content_width = 80;
+    state.last_viewport_start = 2;
+    state.scroll_to_visual(8);
+    state.row_idx = 8;
+
+    // Viewport row 1 is the sticky hunk header.
+    // Screen row is header offset (2) + viewport row (1) = 3.
+    state.execute(TuiCommand::MouseClick {
+        row: 3,
+        col: 10,
+        shift: false,
+    });
+
+    let hunk_row = state.hunk_starts[0].flat;
+    assert_eq!(
+        state.row_idx, hunk_row,
+        "clicking sticky hunk header must place cursor on hunk divider flat row"
+    );
+}
+
+#[test]
+fn test_secondary_status_hide_show_does_not_shift_content() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    // Hidden: no transient segments.
+    state.num_buffer.clear();
+    let frame_hidden = state.render_frame(100, 30);
+    let start_hidden = state.last_viewport_start;
+    let vh_hidden = state.viewport_height;
+    let lines_hidden: Vec<String> = frame_hidden.lines().map(|l| l.to_string()).collect();
+
+    // Shown: `go` buffer forces one status segment without touching diff.
+    state.num_buffer = "42".to_string();
+    let frame_shown = state.render_frame(100, 30);
+    let start_shown = state.last_viewport_start;
+    let vh_shown = state.viewport_height;
+    let lines_shown: Vec<String> = frame_shown.lines().map(|l| l.to_string()).collect();
+
+    assert_eq!(
+        start_hidden, start_shown,
+        "viewport top must not move when secondary appears"
+    );
+    assert_eq!(
+        vh_hidden, vh_shown,
+        "viewport height must not change when secondary appears"
+    );
+    assert_eq!(
+        lines_hidden.len(),
+        lines_shown.len(),
+        "frame line count must stay stable (reserved slot)"
+    );
+    let diff_hidden =
+        &lines_hidden[start_hidden..(start_hidden + vh_hidden).min(lines_hidden.len())];
+    let diff_shown = &lines_shown[start_shown..(start_shown + vh_shown).min(lines_shown.len())];
+    assert_eq!(
+        diff_hidden, diff_shown,
+        "diff rows must not shift up/down when secondary appears"
+    );
+    assert!(
+        lines_shown.iter().any(|l| l.contains("go 42")),
+        "shown frame must contain the status segment"
+    );
+}
+
+#[test]
+fn test_status_message_moves_to_secondary_and_expires() {
+    use std::time::{Duration, Instant};
+
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.num_buffer.clear();
+    let baseline = state.render_frame(100, 30);
+    let base_start = state.last_viewport_start;
+    let base_vh = state.viewport_height;
+    let base_lines: Vec<String> = baseline.lines().map(|l| l.to_string()).collect();
+
+    // Message goes to the secondary bar at the top, not a separate row.
+    state.set_status_message("staged hunk".to_string(), true);
+    let frame = state.render_frame(100, 30);
+    assert_eq!(
+        state.last_viewport_start, base_start,
+        "message must not add a row above the viewport"
+    );
+    assert_eq!(
+        state.viewport_height, base_vh,
+        "message must not shrink the viewport"
+    );
+    let lines: Vec<String> = frame.lines().map(|l| l.to_string()).collect();
+    assert_eq!(lines.len(), base_lines.len(), "frame stays stable");
+    assert!(
+        lines[..base_start]
+            .iter()
+            .any(|l| l.contains("staged hunk")),
+        "message must render in the secondary slot above diff"
+    );
+    assert!(
+        !lines
+            .iter()
+            .skip(base_start + base_vh)
+            .any(|l| l.contains("staged hunk")),
+        "message must not render below the viewport"
+    );
+
+    // Message leads transient segments.
+    state.num_buffer = "42".to_string();
+    let frame2 = state.render_frame(100, 30);
+    let msg_line = frame2
+        .lines()
+        .map(crate::render::strip_ansi)
+        .find(|l| l.contains("staged hunk"))
+        .expect("message line must exist");
+    let (mi, gi) = (
+        msg_line.find("staged hunk").unwrap(),
+        msg_line.find("go 42").unwrap(),
+    );
+    assert!(mi < gi, "message leads `go` segment: {msg_line}");
+
+    // Expiry: ok messages time out, errors linger longer but also expire.
+    state.set_status_message_at(
+        "staged hunk".to_string(),
+        true,
+        Instant::now() - Duration::from_secs(60),
+    );
+    assert!(
+        state.visible_status_message().is_none(),
+        "stale ok message must read as expired"
+    );
+    let frame3 = state.render_frame(100, 30);
+    assert!(
+        !frame3.contains("staged hunk"),
+        "expired message must disappear from the frame"
+    );
+
+    state.set_status_message_at(
+        "no staged changes".to_string(),
+        false,
+        Instant::now() - Duration::from_secs(5),
+    );
+    assert!(
+        state.visible_status_message().is_some(),
+        "recent error must still be visible"
+    );
+    state.set_status_message_at(
+        "no staged changes".to_string(),
+        false,
+        Instant::now() - Duration::from_secs(60),
+    );
+    assert!(
+        state.visible_status_message().is_none(),
+        "stale error must eventually expire"
+    );
+    assert!(
+        state.poll_status_expiry(Instant::now()),
+        "poll must report clearing an expired message"
+    );
+    assert!(state.status_message.is_none());
+    assert!(
+        !state.poll_status_expiry(Instant::now()),
+        "poll on empty must report nothing cleared"
+    );
+    state.set_status_message("fresh".to_string(), true);
+    assert!(
+        !state.poll_status_expiry(Instant::now()),
+        "poll on fresh message must keep it"
+    );
+}
+
+#[test]
+fn test_secondary_status_bar_keeps_background_when_empty() {
+    use crate::render::ColorExt;
+
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.num_buffer.clear();
+    let bg_code = crate::render::DiffuseTheme::DEFAULT
+        .palette
+        .status_bar_bg
+        .bg_code();
+
+    // ANSI path: empty slot keeps the status background.
+    let hidden = state.render_frame(100, 30);
+    let hidden_lines: Vec<&str> = hidden.lines().collect();
+    assert!(
+        hidden_lines[1].contains(&bg_code),
+        "empty secondary must keep status bg: {:?}",
+        hidden_lines[1]
+    );
+    assert!(
+        crate::render::strip_ansi(hidden_lines[1]).trim().is_empty(),
+        "empty secondary carries no text"
+    );
+    state.num_buffer = "42".to_string();
+    let shown = state.render_frame(100, 30);
+    let shown_lines: Vec<&str> = shown.lines().collect();
+    assert!(
+        shown_lines[1].contains(&bg_code),
+        "shown secondary must use the same bg"
+    );
+
+    // Ratatui path: cell backgrounds match in both states.
+    state.num_buffer.clear();
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+    let expected =
+        crate::view::to_color(crate::render::DiffuseTheme::DEFAULT.palette.status_bar_bg);
+    for x in 0..80 {
+        assert_eq!(
+            terminal.backend().buffer()[(x, 1)].bg,
+            expected,
+            "empty secondary cell {x} must keep status bg"
+        );
+    }
+    state.num_buffer = "42".to_string();
+    terminal
+        .draw(|f| {
+            state.render_ratatui_frame(f);
+        })
+        .unwrap();
+    for x in 0..80 {
+        assert_eq!(
+            terminal.backend().buffer()[(x, 1)].bg,
+            expected,
+            "shown secondary cell {x} must use the same bg"
+        );
+    }
 }

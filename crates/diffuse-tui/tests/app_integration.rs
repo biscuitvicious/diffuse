@@ -614,10 +614,9 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(screen_lines[0].contains("~1"));
     assert!(!screen_lines[0].contains("filesystem.rs"));
 
-    // Row 1: Secondary Status Bar (hunk badge and counts)
-    assert!(screen_lines[1].starts_with(" hunk 1/1 +1 ~1"));
-    assert!(!screen_lines[1].contains("filesystem.rs"));
-    assert!(!screen_lines[1].contains("file 1/1"));
+    // Row 1: reserved secondary slot (blank when hidden).
+    assert!(screen_lines[1].trim().is_empty());
+    assert!(!screen_lines[1].contains("hunk"));
 
     // Row 2: File Header Banner in Diff Viewport
     assert!(screen_lines[2].contains("▼ F1/1 · filesystem.rs"));
@@ -708,11 +707,8 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     assert!(screen_lines[0].contains("crates/diffuse-core/src/moves/"));
     assert!(!screen_lines[0].contains("mod.rs"));
 
-    // Row 1: Secondary status bar with hunk badge and counts (no file badge or
-    // sub-path)
-    assert!(screen_lines[1].starts_with(" hunk 1/1 −1 +3"));
-    assert!(!screen_lines[1].contains("mod.rs"));
-    assert!(!screen_lines[1].contains("file 1/2"));
+    // Row 1: reserved secondary slot (blank when hidden).
+    assert!(screen_lines[1].trim().is_empty());
 
     // Row 2: File header banner
     assert!(screen_lines[2].contains("▼ F1/2 · mod.rs"));

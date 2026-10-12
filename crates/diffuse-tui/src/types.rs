@@ -119,6 +119,18 @@ impl FlatRow {
     }
 }
 
+/// Sticky hunk divider layout metadata for viewport rendering and hit-testing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StickyHunkInfo {
+    pub file_idx: usize,
+    pub hunk_idx: usize,
+    pub flat_row: usize,
+    pub hunk_vis: usize,
+    pub hunk_len: usize,
+    pub sticky_lines_count: usize,
+    pub sticky_start_seg: usize,
+}
+
 /// Sticky file header layout metadata for viewport rendering and hit-testing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StickyHeaderInfo {
@@ -128,4 +140,12 @@ pub struct StickyHeaderInfo {
     pub banner_len: usize,
     pub sticky_lines_count: usize,
     pub sticky_start_seg: usize,
+    pub hunk: Option<StickyHunkInfo>,
+}
+
+impl StickyHeaderInfo {
+    #[inline]
+    pub fn total_sticky_lines(&self) -> usize {
+        self.sticky_lines_count + self.hunk.map_or(0, |h| h.sticky_lines_count)
+    }
 }

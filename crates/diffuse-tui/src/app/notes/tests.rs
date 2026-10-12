@@ -967,7 +967,7 @@ fn test_delete_note_disabled_on_diff_row_without_selection() {
     state.delete_note();
 
     assert_eq!(
-        state.status_message.as_ref().map(|(s, _)| s.as_str()),
+        state.status_message.as_ref().map(|(s, _, _)| s.as_str()),
         Some("no note here")
     );
     let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();

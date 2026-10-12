@@ -24,7 +24,9 @@ pub use editor::{Editor, open_editor, resolve_editor_args};
 pub use event::handle_event;
 pub use finder::FileFinderState;
 pub use terminal::TerminalGuard;
-pub use types::{FlatRow, FlatRowKind, HunkMeta, HunkStart, Selection, StickyHeaderInfo};
+pub use types::{
+    FlatRow, FlatRowKind, HunkMeta, HunkStart, Selection, StickyHeaderInfo, StickyHunkInfo,
+};
 
 use std::{
     io,
@@ -92,7 +94,7 @@ pub fn run_tui(
                     dirty = true;
                 }
                 Ok(Err(err)) => {
-                    state.status_message = Some((err, false));
+                    state.set_status_message(err, false);
                     dirty = true;
                 }
                 Err(_) => {}
@@ -134,6 +136,10 @@ pub fn run_tui(
         if size != last_size {
             dirty = true;
             last_size = size;
+        }
+
+        if state.poll_status_expiry(std::time::Instant::now()) {
+            dirty = true;
         }
 
         if dirty {

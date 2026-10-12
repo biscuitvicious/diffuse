@@ -289,10 +289,10 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
             let git_args = state.git_args.clone();
             match super::actions::unstage_action(state, &repo_root, &git_args, true) {
                 Ok(()) => {
-                    state.status_message = Some(("unstaged file".into(), true));
+                    state.set_status_message("unstaged file".into(), true);
                     let _ = super::actions::reload_diff(state, &repo_root, &git_args);
                 }
-                Err(e) => state.status_message = Some((e, false)),
+                Err(e) => state.set_status_message(e, false),
             }
         }
         (KeyModifiers::NONE, KeyCode::Char('x')) => {
@@ -310,10 +310,10 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                     } else {
                         "discarded file".into()
                     };
-                    state.status_message = Some((msg, true));
+                    state.set_status_message(msg, true);
                     let _ = super::actions::reload_diff(state, &repo_root, &git_args);
                 }
-                Err(e) => state.status_message = Some((e, false)),
+                Err(e) => state.set_status_message(e, false),
             }
         }
         _ => {}

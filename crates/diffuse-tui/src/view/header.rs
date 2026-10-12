@@ -345,6 +345,8 @@ pub struct StatusBarContext<'a> {
     pub width: usize,
     pub is_streaming: bool,
     pub streaming_dot: &'a str,
+    /// Ephemeral action feedback shown first when present.
+    pub status_message: Option<(&'a str, bool)>,
     /// Current file (optional; file path and stats render in sticky file
     /// banners).
     pub file: Option<&'a OutputFile>,
@@ -394,8 +396,9 @@ pub(crate) fn file_status_tag(file: &OutputFile) -> String {
 }
 
 /// Render the secondary status bar as ANSI strings: the shared
-/// [`status_layout`](super::status_layout) cascade (full badges →
-/// abbreviated badges → wrap) emitted as escape runs.
+/// [`status_layout`](super::status_layout) segments emitted as escape runs
+/// (empty when no transient content; callers render a blank slot to hold
+/// layout and background).
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     use super::status_layout::{StatusSegment, status_layout};
 
@@ -412,6 +415,9 @@ pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     };
 
     let layout = status_layout(&ctx);
+    if layout.segments.is_empty() {
+        return Vec::new();
+    }
     let line: String = layout.segments.iter().map(seg_ansi).collect();
     if !layout.wraps {
         let vw = visible_width(&line);
@@ -558,7 +564,7 @@ pub fn header_bar_line(
 }
 
 /// Render the secondary status bar as a styled Ratatui [`Line`], consuming
-/// the same shared [`status_layout`](super::status_layout) cascade as the
+/// the same shared [`status_layout`](super::status_layout) segments as the
 /// ANSI path.
 pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
     use super::status_layout::{StatusSegment, status_layout};
@@ -572,6 +578,9 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
     };
 
     let layout = status_layout(&ctx);
+    if layout.segments.is_empty() {
+        return Line::default();
+    }
     let spans: Vec<Span<'static>> = layout.segments.iter().map(seg_span).collect();
     let bg = crate::view::to_color(ctx.theme.palette.status_bar_bg);
     padded_line(spans, ctx.width).style(Style::default().bg(bg))

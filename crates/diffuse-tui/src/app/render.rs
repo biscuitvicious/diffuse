@@ -10,7 +10,7 @@ use ratatui::{
 use crate::{
     core::parse::RowKind,
     render::{ColorExt, render_raw_row, render_row_segment, slice_by_visual_width},
-    types::{FlatRowKind, StickyHeaderInfo},
+    types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
         bottom_ribbon_lines, clamp_or_pad_ansi,
         header::{render_bottom_ribbon, render_header_bar, render_status_bar, status_bar_line},
@@ -27,12 +27,30 @@ pub(crate) fn escape_ansi_for_diagnostic(s: &str) -> String {
     s.replace('\x1b', "\\x1b")
 }
 
+/// Blank secondary line keeping the status background when empty, so the
+/// reserved slot never changes color or height.
+fn blank_status_ansi(width: usize, palette: &crate::render::ThemePalette) -> String {
+    format!(
+        "{}{}\x1b[0m",
+        palette.status_bar_bg.bg_code(),
+        " ".repeat(width)
+    )
+}
+
+/// Blank secondary widget keeping the status background when empty.
+fn blank_status_widget(palette: &crate::render::ThemePalette) -> Paragraph<'static> {
+    Paragraph::new(ratatui::text::Line::default())
+        .style(Style::default().bg(crate::view::to_color(palette.status_bar_bg)))
+}
+
 impl AppState {
     /// Render full visual screen frame as a String of ANSI terminal lines.
     pub fn render_frame(&mut self, width: usize, height: usize) -> String {
         let max_rows = height.saturating_sub(4).max(4);
         self.viewport_height = max_rows;
         let mut lines = Vec::new();
+
+        self.poll_status_expiry(std::time::Instant::now());
 
         let cur_fi = self.current_file_idx();
         let f = self.output.files.get(cur_fi);
@@ -51,12 +69,12 @@ impl AppState {
             &self.theme.palette,
         ));
 
-        // Secondary status bar
+        let status_msg = self.visible_status_message();
         let total_files = self.output.files.len();
         let cur_hunk = self.current_hunk().unwrap_or(0);
         let total_hunks = f.map_or(0, |file| file.hunks.len().max(1));
         let hunk_counts = f.and_then(|file| file.hunks.get(cur_hunk).map(|h| h.counts()));
-        lines.extend(render_status_bar(crate::view::StatusBarContext {
+        let status_lines = render_status_bar(crate::view::StatusBarContext {
             cur_fi,
             total_files,
             cur_hunk,
@@ -68,22 +86,21 @@ impl AppState {
             width,
             is_streaming: self.is_streaming,
             streaming_dot: self.streaming_dot(),
+            status_message: status_msg,
             file: f,
             hunk_counts,
             theme: &self.theme,
-        }));
-
-        // Ephemeral action feedback (note saved/deleted, git ops, ...)
-        if let Some((msg, is_ok)) = self.status_message.clone() {
-            let color = if is_ok {
-                self.theme.palette.header_staged
-            } else {
-                self.theme.palette.count_dels
-            };
-            lines.push(format!("{} {msg}\x1b[39m", color.fg_code()));
-        }
+        });
 
         if let Some(f) = f {
+            // Secondary status bar above the viewport; the slot is always
+            // reserved with the status background so showing/hiding never
+            // shifts diff rows nor changes the bar color.
+            if status_lines.is_empty() {
+                lines.push(blank_status_ansi(width, &self.theme.palette));
+            } else {
+                lines.extend(status_lines);
+            }
             // Inline note draft if active
             if let Some(ref draft) = self.note_draft {
                 let loc = if let Some(sel) = self.compute_selection() {
@@ -136,6 +153,13 @@ impl AppState {
 
             lines.extend(grid_lines);
         } else {
+            // Secondary slot above the message area, always with the
+            // status background.
+            if status_lines.is_empty() {
+                lines.push(blank_status_ansi(width, &self.theme.palette));
+            } else {
+                lines.extend(status_lines);
+            }
             let viewport_start_line = lines.len();
             let vh = height.saturating_sub(viewport_start_line + 2);
             self.last_viewport_start = viewport_start_line;
@@ -390,19 +414,30 @@ impl AppState {
         };
         let est_total = self.cached_geometry_tuple(est_cw).3;
 
+        self.poll_status_expiry(std::time::Instant::now());
+
+        // Owned up front so no borrow is held across the mutable viewport
+        // call below.
+        let status_msg_owned: Option<(String, bool)> = self
+            .visible_status_message()
+            .map(|(m, ok)| (m.to_string(), ok));
+
         let file = self.output.files.get(cur_fi);
+        // Reserve the secondary slot even when empty so showing/hiding
+        // never shifts diff rows. Emptiness is width-independent (see
+        // `status_layout::segments_for`), so flags suffice for layout.
+        let show_status = status_msg_owned.is_some()
+            || self.is_streaming
+            || self.raw_diff
+            || self.col_offset > 0
+            || !self.num_buffer.is_empty();
 
-        let has_status_msg = self.status_message.is_some();
-
-        let mut constraints = vec![
+        let constraints = vec![
             Constraint::Length(1), // Header bar
-            Constraint::Length(1), // Secondary status bar
+            Constraint::Length(1), // Secondary status bar (reserved)
+            Constraint::Min(1),    // Main diff area
+            Constraint::Length(2), // Bottom ribbon
         ];
-        if has_status_msg {
-            constraints.push(Constraint::Length(1));
-        }
-        constraints.push(Constraint::Min(1)); // Main diff area
-        constraints.push(Constraint::Length(2)); // Bottom ribbon
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -412,8 +447,8 @@ impl AppState {
         // Scrollbar pre-pass: the horizontal split needs to know up front
         // whether the bar column exists. Heights come from the vertical
         // chunks above, so this estimates with the scrollbar-width content.
-        let diff_chunk_idx = if has_status_msg { 3 } else { 2 };
-        let diff_vh = chunks[diff_chunk_idx].height as usize;
+        // Layout is Header/Status/Diff/Ribbon, so the diff is chunk 2.
+        let diff_vh = chunks[2].height as usize;
         let show_bar = file.is_some()
             && !self.raw_diff
             && width > 1
@@ -461,54 +496,17 @@ impl AppState {
         );
         chunk_idx += 1;
 
-        // 2. Status Bar
-        let cur_hunk = self.current_hunk().unwrap_or(0);
-        let hunk_counts = file.and_then(|fl| fl.hunks.get(cur_hunk).map(|h| h.counts()));
-        let status_ctx = crate::view::StatusBarContext {
-            cur_fi,
-            total_files: self.output.files.len(),
-            cur_hunk,
-            total_hunks: file.map_or(0, |fl| fl.hunks.len().max(1)),
-            raw_diff: self.raw_diff,
-            col_offset: self.col_offset,
-            num_buffer: &self.num_buffer,
-            common_prefix: common_prefix.as_deref(),
-            // The bar paints into the scrollbar-narrowed app column, not
-            // the full viewport: targeting full width clips the last cell
-            // (usually the filename tail) under the scrollbar.
-            width: main_width,
-            is_streaming: self.is_streaming,
-            streaming_dot: self.streaming_dot(),
-            file,
-            hunk_counts,
-            theme: &self.theme,
-        };
-        let status_line = status_bar_line(status_ctx);
-        let status_bg = crate::view::to_color(self.theme.palette.status_bar_bg);
-        f.render_widget(
-            Paragraph::new(status_line).style(Style::default().bg(status_bg)),
-            main_chunks[chunk_idx],
-        );
+        // 2. Secondary status bar (reserved with status bg when empty).
+        let status_area = main_chunks[chunk_idx];
         chunk_idx += 1;
 
-        // 3. Status Message
-        if let Some((ref msg, is_ok)) = self.status_message {
-            let color = if is_ok {
-                crate::view::to_color(self.theme.palette.header_staged)
-            } else {
-                crate::view::to_color(self.theme.palette.count_dels)
-            };
-            let bg = crate::view::to_color(self.theme.palette.bg_base);
-            let p = Paragraph::new(format!(" {msg}")).style(Style::default().fg(color).bg(bg));
-            f.render_widget(p, main_chunks[chunk_idx]);
-            chunk_idx += 1;
-        }
-
+        // 3. Main diff area.
         let diff_area = main_chunks[chunk_idx];
         chunk_idx += 1;
+
         let ribbon_area = main_chunks[chunk_idx];
 
-        let Some(file) = file else {
+        if self.output.files.get(cur_fi).is_none() {
             let bg = crate::view::to_color(self.theme.palette.bg_base);
             let p = Paragraph::new(" No diff to display.").style(
                 Style::default()
@@ -516,6 +514,37 @@ impl AppState {
                     .bg(bg),
             );
             f.render_widget(p, diff_area);
+
+            if show_status {
+                let cur_hunk = self.current_hunk().unwrap_or(0);
+                let none_file = None;
+                let hunk_counts = None;
+                let msg_ref = status_msg_owned.as_ref().map(|(m, ok)| (m.as_str(), *ok));
+                let status_line = status_bar_line(crate::view::StatusBarContext {
+                    cur_fi,
+                    total_files: self.output.files.len(),
+                    cur_hunk,
+                    total_hunks: 0,
+                    raw_diff: self.raw_diff,
+                    col_offset: self.col_offset,
+                    num_buffer: &self.num_buffer,
+                    common_prefix: common_prefix.as_deref(),
+                    width: main_width,
+                    is_streaming: self.is_streaming,
+                    streaming_dot: self.streaming_dot(),
+                    status_message: msg_ref,
+                    file: none_file,
+                    hunk_counts,
+                    theme: &self.theme,
+                });
+                let status_bg = crate::view::to_color(self.theme.palette.status_bar_bg);
+                f.render_widget(
+                    Paragraph::new(status_line).style(Style::default().bg(status_bg)),
+                    status_area,
+                );
+            } else {
+                f.render_widget(blank_status_widget(&self.theme.palette), status_area);
+            }
 
             let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette);
             f.render_widget(
@@ -535,9 +564,14 @@ impl AppState {
                 crate::view::render_finder_modal_widget(f, &self.output, finder, &self.theme, area);
             }
             return;
-        };
+        }
 
-        let file_path = file.path.clone();
+        let file_path = self
+            .output
+            .files
+            .get(cur_fi)
+            .map(|fl| fl.path.clone())
+            .unwrap_or_default();
 
         // 4. Diff Grid Viewport (no scrollbar chars here anymore; the bar
         // owns its own full-height column). Pass the full width: the
@@ -593,6 +627,36 @@ impl AppState {
                 Paragraph::new(bar_lines).style(Style::default().bg(track_bg)),
                 bar,
             );
+        }
+        if show_status {
+            let cur_hunk = self.current_hunk().unwrap_or(0);
+            let file_ref = self.output.files.get(cur_fi);
+            let hunk_counts = file_ref.and_then(|fl| fl.hunks.get(cur_hunk).map(|h| h.counts()));
+            let msg_ref = status_msg_owned.as_ref().map(|(m, ok)| (m.as_str(), *ok));
+            let status_line = status_bar_line(crate::view::StatusBarContext {
+                cur_fi,
+                total_files: self.output.files.len(),
+                cur_hunk,
+                total_hunks: file_ref.map_or(0, |fl| fl.hunks.len().max(1)),
+                raw_diff: self.raw_diff,
+                col_offset: self.col_offset,
+                num_buffer: &self.num_buffer,
+                common_prefix: common_prefix.as_deref(),
+                width: main_width,
+                is_streaming: self.is_streaming,
+                streaming_dot: self.streaming_dot(),
+                status_message: msg_ref,
+                file: file_ref,
+                hunk_counts,
+                theme: &self.theme,
+            });
+            let status_bg = crate::view::to_color(self.theme.palette.status_bar_bg);
+            f.render_widget(
+                Paragraph::new(status_line).style(Style::default().bg(status_bg)),
+                status_area,
+            );
+        } else {
+            f.render_widget(blank_status_widget(&self.theme.palette), status_area);
         }
 
         // 6. Bottom Ribbon
@@ -669,12 +733,13 @@ impl AppState {
         format!("{} flat row {i}", file.path)
     }
 
-    /// Calculate sticky file header metadata for the current scroll position
-    /// and content width.
+    /// Calculate sticky file and hunk header metadata for the current scroll
+    /// position and content width.
     pub(crate) fn sticky_header_info_from_layout(
         &self,
         starts: &[usize],
         seg_counts: &[usize],
+        content_width: usize,
     ) -> Option<StickyHeaderInfo> {
         if self.raw_diff || self.flat.is_empty() || self.output.files.is_empty() {
             return None;
@@ -712,6 +777,58 @@ impl AppState {
         }
         let sticky_start_seg = banner_len.saturating_sub(sticky_lines_count);
 
+        let hunk = if self.collapsed_files.contains(&active_fi)
+            || self.output.files[active_fi].hunks.is_empty()
+        {
+            None
+        } else {
+            let file_hunks: Vec<&crate::types::HunkStart> = self
+                .hunk_starts
+                .iter()
+                .filter(|hs| hs.file == active_fi)
+                .collect();
+            let active_hunk_opt = file_hunks
+                .iter()
+                .rfind(|hs| {
+                    starts
+                        .get(hs.flat)
+                        .is_some_and(|&hv| hv <= self.scroll + sticky_lines_count)
+                })
+                .copied();
+
+            if let Some(cur_hs) = active_hunk_opt {
+                let hunk_vis = *starts.get(cur_hs.flat)?;
+                let hunk_len = self.hunk_div_seg_count(active_fi, cur_hs.hunk, content_width);
+                let next_boundary_vis = if let Some(next_hs) =
+                    file_hunks.iter().find(|hs| hs.hunk == cur_hs.hunk + 1)
+                {
+                    starts.get(next_hs.flat).copied()
+                } else {
+                    next_banner_vis
+                };
+                let next_boundary_screen_row =
+                    next_boundary_vis.map_or(usize::MAX, |nbv| nbv.saturating_sub(self.scroll));
+                let hunk_avail_rows = next_boundary_screen_row.saturating_sub(sticky_lines_count);
+                let sticky_hunk_lines_count = hunk_len.min(hunk_avail_rows);
+                if sticky_hunk_lines_count > 0 {
+                    let sticky_start_seg = hunk_len.saturating_sub(sticky_hunk_lines_count);
+                    Some(StickyHunkInfo {
+                        file_idx: active_fi,
+                        hunk_idx: cur_hs.hunk,
+                        flat_row: cur_hs.flat,
+                        hunk_vis,
+                        hunk_len,
+                        sticky_lines_count: sticky_hunk_lines_count,
+                        sticky_start_seg,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
         Some(StickyHeaderInfo {
             file_idx: active_fi,
             banner_row,
@@ -719,21 +836,30 @@ impl AppState {
             banner_len,
             sticky_lines_count,
             sticky_start_seg,
+            hunk,
         })
     }
 
     pub fn sticky_header_info(&self, cw: usize) -> Option<StickyHeaderInfo> {
         let (starts, _, seg_counts, _) = self.visual_geometry(cw);
-        self.sticky_header_info_from_layout(&starts, &seg_counts)
+        self.sticky_header_info_from_layout(&starts, &seg_counts, cw)
     }
 
     /// Translate a viewport-relative screen row (0..vh) to its corresponding
-    /// visual line offset, taking into account pinned sticky file headers.
+    /// visual line offset, taking into account pinned sticky file and hunk
+    /// headers.
     pub fn viewport_row_to_visual(&self, row_in_viewport: usize) -> usize {
-        if let Some(s) = self.sticky_header_info(self.last_content_width)
-            && row_in_viewport < s.sticky_lines_count
-        {
-            s.banner_vis + s.sticky_start_seg + row_in_viewport
+        if let Some(s) = self.sticky_header_info(self.last_content_width) {
+            if row_in_viewport < s.sticky_lines_count {
+                s.banner_vis + s.sticky_start_seg + row_in_viewport
+            } else if let Some(h) = s.hunk
+                && row_in_viewport < s.sticky_lines_count + h.sticky_lines_count
+            {
+                let hunk_row = row_in_viewport - s.sticky_lines_count;
+                h.hunk_vis + h.sticky_start_seg + hunk_row
+            } else {
+                self.scroll + row_in_viewport
+            }
         } else {
             self.scroll + row_in_viewport
         }
@@ -811,12 +937,14 @@ impl AppState {
             pin_applied = true;
         }
         if !pin_applied {
-            let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts);
+            let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts, content_width);
             let sticky_count = sticky.map_or(0, |s| {
                 if self.row_idx == s.banner_row {
                     0
-                } else {
+                } else if s.hunk.is_some_and(|h| self.row_idx == h.flat_row) {
                     s.sticky_lines_count
+                } else {
+                    s.total_sticky_lines()
                 }
             });
             let top_vis = if self.vis_line == 0 {
@@ -834,8 +962,8 @@ impl AppState {
         let max_scroll = total_vis_lines.saturating_sub(max_rows);
         self.scroll = self.scroll.min(max_scroll);
 
-        let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts);
-        let sticky_count = sticky.map_or(0, |s| s.sticky_lines_count);
+        let sticky = self.sticky_header_info_from_layout(&starts, &seg_counts, content_width);
+        let sticky_count = sticky.map_or(0, |s| s.total_sticky_lines());
         let content_start_vis = self.scroll + sticky_count;
         let content_end_vis = self.scroll + max_rows;
 
@@ -866,6 +994,29 @@ impl AppState {
                     common_prefix.as_deref(),
                 ));
             }
+            if let Some(h) = s.hunk {
+                let hunk_obj = &self.output.files[h.file_idx].hunks[h.hunk_idx];
+                let hidden_gap = self.hunk_leading_gap(h.file_idx, h.hunk_idx);
+                let is_cur = h.file_idx == self.current_file_idx() && cur_hunk == Some(h.hunk_idx);
+                for s_idx in h.sticky_start_seg..h.hunk_len {
+                    let is_selected = h.flat_row == self.row_idx && self.vis_line == s_idx;
+                    let seg_start = s_idx * text_cols;
+                    line_src.push(Some(h.flat_row));
+                    lines.push(crate::view::diff_grid::render_hunk_divider_segment(
+                        crate::render::Badge {
+                            idx: h.hunk_idx,
+                            total: self.output.files[h.file_idx].hunks.len(),
+                        },
+                        hunk_obj,
+                        hidden_gap,
+                        is_cur,
+                        is_selected,
+                        seg_start,
+                        content_width,
+                        &self.theme,
+                    ));
+                }
+            }
         }
 
         // Viewport iteration, seeking the first visible row by binary
@@ -893,6 +1044,9 @@ impl AppState {
             let in_band = band[idx];
             let in_hunk_extent = !in_band && hunk_extent[idx];
 
+            let is_sticky_hunk = sticky
+                .and_then(|s| s.hunk)
+                .is_some_and(|sh| sh.flat_row == idx);
             let div_segs = if let Some(&(div_fi, div_hi)) = div_at.get(&idx) {
                 let h = &self.output.files[div_fi].hunks[div_hi];
                 let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
@@ -900,7 +1054,7 @@ impl AppState {
                 let d_segs = self.hunk_div_seg_count(div_fi, div_hi, content_width);
                 let text_cols = content_width.max(1);
                 for s_idx in 0..d_segs {
-                    if vis_i >= content_start_vis && vis_i < content_end_vis {
+                    if !is_sticky_hunk && vis_i >= content_start_vis && vis_i < content_end_vis {
                         let is_selected = idx == self.row_idx && self.vis_line == s_idx;
                         let seg_start = s_idx * text_cols;
                         line_src.push(Some(idx));
