@@ -702,13 +702,13 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     }
     println!("└{}┘\n", "─".repeat(width));
 
-    // Row 0: Header bar (repo + global counts + common prefix, no file)
+    // Row 0: Header bar (repo + global counts, no file, no prefix)
     assert!(screen_lines[0].contains("diffuse"));
-    assert!(screen_lines[0].contains("crates/diffuse-core/src/moves/"));
+    assert!(!screen_lines[0].contains("crates/diffuse-core/src/moves/"));
     assert!(!screen_lines[0].contains("mod.rs"));
 
-    // Row 1: reserved secondary slot (blank when hidden).
-    assert!(screen_lines[1].trim().is_empty());
+    // Row 1: secondary carries the common directory prefix.
+    assert!(screen_lines[1].contains("crates/diffuse-core/src/moves/"));
 
     // Row 2: File header banner
     assert!(screen_lines[2].contains("▼ F1/2 · mod.rs"));

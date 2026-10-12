@@ -61,7 +61,6 @@ impl AppState {
         lines.extend(render_header_bar(
             &self.repo,
             width,
-            common_prefix.as_deref(),
             Some(self.output.total_counts()),
             Some(&self.output.branch),
             self.commit_range.as_deref(),
@@ -421,6 +420,7 @@ impl AppState {
         let status_msg_owned: Option<(String, bool)> = self
             .visible_status_message()
             .map(|(m, ok)| (m.to_string(), ok));
+        let common_prefix = self.output.common_directory_prefix();
 
         let file = self.output.files.get(cur_fi);
         // Reserve the secondary slot even when empty so showing/hiding
@@ -430,7 +430,8 @@ impl AppState {
             || self.is_streaming
             || self.raw_diff
             || self.col_offset > 0
-            || !self.num_buffer.is_empty();
+            || !self.num_buffer.is_empty()
+            || common_prefix.as_deref().is_some_and(|p| !p.is_empty());
 
         let constraints = vec![
             Constraint::Length(1), // Header bar
@@ -479,11 +480,9 @@ impl AppState {
         let mut chunk_idx = 0;
 
         // 1. Header Bar
-        let common_prefix = self.output.common_directory_prefix();
         let header_line = crate::view::header_bar_line(
             &self.repo,
             &self.theme,
-            common_prefix.as_deref(),
             Some(self.output.total_counts()),
             Some(&self.output.branch),
             self.commit_range.as_deref(),

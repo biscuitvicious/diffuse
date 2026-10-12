@@ -89,6 +89,20 @@ fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
             p,
         );
     }
+    // Global directory prefix trails last, truncated leftmost-first so the
+    // deepest part stays visible.
+    if let Some(prefix) = ctx.common_prefix
+        && !prefix.is_empty()
+    {
+        let used: usize = segs.iter().map(StatusSegment::width).sum();
+        let sep = if segs.is_empty() { 1 } else { 3 };
+        let budget = ctx.width.saturating_sub(used + sep);
+        if budget > 0 {
+            let text = super::header::truncate_status_path(prefix, budget)
+                .unwrap_or_else(|| prefix.to_string());
+            push_segment(&mut segs, text, p.status_bar_dim, false, p);
+        }
+    }
     segs
 }
 
@@ -280,5 +294,38 @@ mod tests {
             crate::render::DiffuseTheme::DEFAULT.palette.count_dels
         );
         assert!(err.segments[0].bold);
+    }
+
+    #[test]
+    fn test_layout_prefix_alone_when_no_segments() {
+        let (mut c, _file) = ctx(80, "short.rs");
+        c.common_prefix = Some("crates/diffuse-core/src/");
+        let layout = status_layout(&c);
+        assert!(!layout.wraps);
+        assert_eq!(plain(&layout), "crates/diffuse-core/src/");
+    }
+
+    #[test]
+    fn test_layout_prefix_trails_segments_with_dot_separator() {
+        let (mut c, _file) = ctx(80, "short.rs");
+        c.raw_diff = true;
+        c.common_prefix = Some("crates/");
+        let layout = status_layout(&c);
+        assert!(!layout.wraps);
+        assert_eq!(plain(&layout), "raw diff · crates/");
+    }
+
+    #[test]
+    fn test_layout_prefix_truncates_left_keeping_deepest() {
+        let (mut c, _file) = ctx(20, "short.rs");
+        c.common_prefix = Some("crates/diffuse-core/src/moves/");
+        let layout = status_layout(&c);
+        let text = plain(&layout);
+        assert!(
+            text.ends_with("src/moves/"),
+            "deepest path part must stay visible: {text}"
+        );
+        assert!(text.starts_with("…"), "cut must be marked: {text}");
+        assert!(!layout.wraps, "truncated prefix must fit one line: {text}");
     }
 }

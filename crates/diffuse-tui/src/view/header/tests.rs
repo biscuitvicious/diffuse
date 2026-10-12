@@ -29,14 +29,17 @@ fn test_render_status_bar_styling() {
         theme: &crate::render::DiffuseTheme::DEFAULT,
     };
     let rendered = render_status_bar(ctx).join("\n");
-    assert!(
-        rendered.is_empty(),
-        "secondary status bar must be empty when no transient segments, got: {rendered}"
+    let visible = crate::render::strip_ansi(&rendered);
+    assert_eq!(
+        visible.trim(),
+        "crates/diffuse-core/src/",
+        "secondary must carry the directory prefix, got: {visible}"
     );
     let line = status_bar_line(ctx);
-    assert!(
-        line.to_string().is_empty(),
-        "TUI status line must be empty when no transient segments"
+    assert_eq!(
+        line.to_string().trim(),
+        "crates/diffuse-core/src/",
+        "TUI status line must carry the directory prefix"
     );
     assert!(
         !rendered.contains("hunk 1/3"),
@@ -112,30 +115,16 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let header_line = header_bar_line(
-        "diffuse",
-        &DiffuseTheme::DEFAULT,
-        Some("src/"),
-        None,
-        None,
-        None,
-        false,
-    );
+    let header_line = header_bar_line("diffuse", &DiffuseTheme::DEFAULT, None, None, None, false);
     assert!(header_line.to_string().contains("diffuse"));
-    assert!(header_line.to_string().contains("src/"));
+    assert!(
+        !header_line.to_string().contains("src/"),
+        "top header must not show the directory prefix (it lives in the secondary bar)"
+    );
     assert!(
         !header_line.to_string().contains("main.rs"),
         "top header must not show the current file"
     );
-
-    // Check that common prefix span in header line is styled with mild accent
-    // 152
-    let prefix_span = header_line
-        .spans
-        .iter()
-        .find(|s| s.content == "src/")
-        .expect("must have src/ span in header line");
-    assert_eq!(prefix_span.style.fg, Some(Color::Indexed(152)));
 
     // Rename file test
     let rename_file = OutputFile {
@@ -161,16 +150,12 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let rename_header = header_bar_line(
-        "diffuse",
-        &DiffuseTheme::DEFAULT,
-        Some("crates/"),
-        None,
-        None,
-        None,
-        false,
+    let rename_header = header_bar_line("diffuse", &DiffuseTheme::DEFAULT, None, None, None, false);
+    assert!(rename_header.to_string().contains("diffuse"));
+    assert!(
+        !rename_header.to_string().contains("crates/"),
+        "top header must not show the directory prefix"
     );
-    assert!(rename_header.to_string().contains("crates/"));
     assert!(
         !rename_header.to_string().contains("algo.rs"),
         "top header must not show the current file"
@@ -199,6 +184,7 @@ fn test_ratatui_header_and_status_lines() {
     assert!(status_line.to_string().contains("streaming..."));
     assert!(status_line.to_string().contains("col 4+"));
     assert!(status_line.to_string().contains("go 12"));
+    assert!(status_line.to_string().contains("src/"));
     assert!(!status_line.to_string().contains("prefix:"));
     assert!(
         !status_line.to_string().contains("main.rs"),
@@ -209,29 +195,31 @@ fn test_ratatui_header_and_status_lines() {
         "secondary status bar must omit file change counts"
     );
 
-    // Streaming leads: transient segments are ordered streaming, raw diff,
-    // col offset, go buffer.
+    // Streaming leads; the directory prefix trails last: streaming, col,
+    // go, prefix.
     let text = status_line.to_string();
     let stream = text.find("streaming...").expect("must show streaming");
     let col = text.find("col 4+").expect("must show col offset");
     let go = text.find("go 12").expect("must show go buffer");
+    let pfx = text.find("src/").expect("must show directory prefix");
     assert!(
-        stream < col && col < go,
-        "transient order must be streaming, col, go: {text}"
+        stream < col && col < go && go < pfx,
+        "order must be streaming, col, go, prefix: {text}"
     );
     assert!(
         !text.contains("hunk"),
         "status line must omit hunk data: {text}"
     );
     let ansi = render_status_bar(ctx).join("\n");
-    let (a_stream, a_col, a_go) = (
+    let (a_stream, a_col, a_go, a_pfx) = (
         ansi.find("streaming...").expect("ansi streaming"),
         ansi.find("col 4+").expect("ansi col"),
         ansi.find("go 12").expect("ansi go"),
+        ansi.find("src/").expect("ansi prefix"),
     );
     assert!(
-        a_stream < a_col && a_col < a_go,
-        "ANSI transient order must be streaming, col, go"
+        a_stream < a_col && a_col < a_go && a_go < a_pfx,
+        "ANSI order must be streaming, col, go, prefix"
     );
     assert!(
         !ansi.contains("hunk"),
@@ -245,6 +233,10 @@ fn test_ratatui_header_and_status_lines() {
         ..ctx
     };
     let rename_text = status_bar_line(rename_ctx).to_string();
+    assert!(
+        rename_text.contains("crates/"),
+        "secondary status bar must show the directory prefix: {rename_text}"
+    );
     assert!(
         !rename_text.contains("algo.rs"),
         "secondary status bar must not contain file path: {rename_text}"
@@ -343,7 +335,6 @@ fn test_header_bar_zero_notes_suppressed() {
     let header_ansi = render_header_bar(
         "repo",
         80,
-        None,
         None,
         None,
         None,
@@ -457,7 +448,6 @@ fn test_header_bar_nonzero_notes_shown() {
     let header_ansi = render_header_bar(
         "repo",
         80,
-        None,
         Some(global),
         None,
         None,
@@ -476,7 +466,6 @@ fn test_header_bar_none_file_no_diffs() {
     let ansi = render_header_bar(
         "my_repo",
         80,
-        Some("crates/"),
         None,
         None,
         None,
@@ -486,29 +475,19 @@ fn test_header_bar_none_file_no_diffs() {
     .join("\n");
 
     assert!(ansi.contains("my_repo"), "must contain repo name");
-    assert!(ansi.contains("crates/"), "must contain prefix");
-
-    let line = header_bar_line(
-        "my_repo",
-        &DiffuseTheme::DEFAULT,
-        Some("crates/"),
-        None,
-        None,
-        None,
-        false,
+    assert!(
+        !ansi.contains("crates/"),
+        "header must not contain the prefix (it lives in the secondary bar)"
     );
+
+    let line = header_bar_line("my_repo", &DiffuseTheme::DEFAULT, None, None, None, false);
     assert!(line.to_string().contains("my_repo"));
-    assert!(line.to_string().contains("crates/"));
-
-    let plain_line = header_bar_line(
-        "my_repo",
-        &DiffuseTheme::DEFAULT,
-        None,
-        None,
-        None,
-        None,
-        false,
+    assert!(
+        !line.to_string().contains("crates/"),
+        "header line must not contain the prefix"
     );
+
+    let plain_line = header_bar_line("my_repo", &DiffuseTheme::DEFAULT, None, None, None, false);
     assert!(plain_line.to_string().contains("my_repo"));
 }
 
@@ -859,7 +838,6 @@ fn test_header_bar_global_mod_counts_ratatui() {
     let header_line = header_bar_line(
         "diffuse",
         &DiffuseTheme::DEFAULT,
-        None,
         Some(global_counts),
         None,
         None,
@@ -908,7 +886,6 @@ fn test_header_bar_global_mod_counts_ratatui() {
     let mov_header_line = header_bar_line(
         "diffuse",
         &DiffuseTheme::DEFAULT,
-        None,
         Some(global_with_movs),
         None,
         None,
@@ -1004,7 +981,6 @@ fn test_header_bar_global_mod_counts_ansi() {
     let ansi_lines = render_header_bar(
         "diffuse",
         120,
-        None,
         Some(global_counts),
         None,
         None,
@@ -1060,11 +1036,11 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         ..Default::default()
     };
 
-    // No file in the top header: repo, global counts, prefix only.
+    // No file in the top header: repo and global counts only; the prefix
+    // lives in the secondary bar.
     let none_line = header_bar_line(
         "diffuse",
         &DiffuseTheme::DEFAULT,
-        None,
         Some(global_counts),
         None,
         None,
@@ -1106,7 +1082,6 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
     let pfx_line = header_bar_line(
         "diffuse",
         &DiffuseTheme::DEFAULT,
-        Some("crates/diffuse-tui/src/"),
         Some(global_counts),
         None,
         None,
@@ -1114,10 +1089,11 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
     );
     assert_eq!(
         pfx_line.to_string(),
-        " diffuse −5 +20 ~3 · crates/diffuse-tui/src/"
+        " diffuse −5 +20 ~3",
+        "header must omit the directory prefix"
     );
 
-    // The transient-only status bar is empty when no transient segments.
+    // The prefix trails in the secondary bar.
     let pfx_status = status_bar_line(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -1136,9 +1112,10 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         theme: &crate::render::DiffuseTheme::DEFAULT,
     })
     .to_string();
-    assert!(
-        pfx_status.is_empty(),
-        "status line must be empty when no transient segments, got: {pfx_status}"
+    assert_eq!(
+        pfx_status.trim(),
+        "crates/diffuse-tui/src/",
+        "secondary must carry the directory prefix, got: {pfx_status}"
     );
 }
 
@@ -1235,8 +1212,7 @@ fn test_format_counts_omit_zero_dels() {
 fn test_header_bar_shows_branch_indicator() {
     let p = crate::render::ThemePalette::default_palette();
     // ANSI header with branch
-    let ansi =
-        render_header_bar("diffuse", 80, None, None, Some("main"), None, false, &p).join("\n");
+    let ansi = render_header_bar("diffuse", 80, None, Some("main"), None, false, &p).join("\n");
     assert!(
         ansi.contains("\u{2387}"),
         "ANSI header must show branch glyph"
@@ -1255,8 +1231,7 @@ fn test_header_bar_shows_branch_indicator() {
     );
 
     // ANSI header without branch
-    let ansi_no_branch =
-        render_header_bar("diffuse", 80, None, None, None, None, false, &p).join("\n");
+    let ansi_no_branch = render_header_bar("diffuse", 80, None, None, None, false, &p).join("\n");
     assert!(
         !ansi_no_branch.contains("\u{2387}"),
         "ANSI header must not show branch glyph when branch is None"
@@ -1266,7 +1241,6 @@ fn test_header_bar_shows_branch_indicator() {
     let line = header_bar_line(
         "diffuse",
         &DiffuseTheme::DEFAULT,
-        None,
         None,
         Some("main"),
         None,
@@ -1313,7 +1287,6 @@ fn test_header_bar_shows_branch_indicator() {
         &DiffuseTheme::DEFAULT,
         None,
         None,
-        None,
         Some("v1.0..v2.0"),
         false,
     );
@@ -1325,8 +1298,7 @@ fn test_header_bar_shows_branch_indicator() {
 fn test_header_bar_shows_staged_indicator() {
     let p = crate::render::ThemePalette::default_palette();
     // When is_staged is true, the header must show `(staged)` after the branch
-    let ansi =
-        render_header_bar("diffuse", 80, None, None, Some("work"), None, true, &p).join("\n");
+    let ansi = render_header_bar("diffuse", 80, None, Some("work"), None, true, &p).join("\n");
     let visible_ansi = crate::render::ansi::strip_ansi(&ansi);
     assert!(
         visible_ansi.contains("work"),
@@ -1345,7 +1317,6 @@ fn test_header_bar_shows_staged_indicator() {
     let line = header_bar_line(
         "diffuse",
         &DiffuseTheme::DEFAULT,
-        None,
         None,
         Some("work"),
         None,
@@ -1381,17 +1352,8 @@ fn test_top_header_drops_file_section_and_counts_dot() {
     };
     // ANSI header: repo, glyph, branch, then global counts with no dot and
     // no file section.
-    let ansi = render_header_bar(
-        "diffuse",
-        120,
-        None,
-        Some(global),
-        Some("main"),
-        None,
-        false,
-        &p,
-    )
-    .join("\n");
+    let ansi =
+        render_header_bar("diffuse", 120, Some(global), Some("main"), None, false, &p).join("\n");
     assert!(ansi.contains("diffuse"), "must show repo name");
     let visible = crate::render::ansi::strip_ansi(&ansi);
     assert_eq!(
@@ -1408,7 +1370,6 @@ fn test_top_header_drops_file_section_and_counts_dot() {
     let line = header_bar_line(
         "diffuse",
         &DiffuseTheme::DEFAULT,
-        None,
         Some(global),
         Some("main"),
         None,

@@ -245,12 +245,10 @@ pub fn format_counts_spans(
 }
 
 /// Render the top review header bar: repo name, branch/commit-range glyph,
-/// global counts, and common directory prefix.
-#[expect(clippy::too_many_arguments)]
+/// and global counts.
 pub fn render_header_bar(
     repo: &str,
     width: usize,
-    common_prefix: Option<&str>,
     global_counts: Option<FileCounts>,
     branch: Option<&str>,
     commit_range: Option<&str>,
@@ -300,20 +298,8 @@ pub fn render_header_bar(
         _ => String::new(),
     };
 
-    let prefix_seg = if let Some(pfx) = common_prefix
-        && !pfx.is_empty()
-    {
-        format!(
-            " {}·\x1b[0m \x1b[1m{}{pfx}\x1b[0m",
-            palette.header_dim.fg_code(),
-            palette.header_prefix.fg_code()
-        )
-    } else {
-        String::new()
-    };
-
     let head_raw = format!(
-        " \x1b[1m{}{repo}\x1b[0m{branch_seg}{global_counts_seg}{prefix_seg}",
+        " \x1b[1m{}{repo}\x1b[0m{branch_seg}{global_counts_seg}",
         palette.header_repo.fg_code()
     );
     let wrapped = wrap_text_by_visual_width(&head_raw, width);
@@ -453,12 +439,10 @@ pub fn render_bottom_ribbon(
 }
 
 /// Render the review header bar as a styled Ratatui [`Line`] with theme
-/// support: repo name, branch/commit-range glyph, global counts, and common
-/// directory prefix.
+/// support: repo name, branch/commit-range glyph, and global counts.
 pub fn header_bar_line(
     repo: &str,
     theme: &crate::render::DiffuseTheme,
-    common_prefix: Option<&str>,
     global_counts: Option<FileCounts>,
     branch: Option<&str>,
     commit_range: Option<&str>,
@@ -542,21 +526,6 @@ pub fn header_bar_line(
         // separates the global counts.
         spans.push(Span::raw(" "));
         spans.extend(format_counts_spans(gc, &theme.palette));
-    }
-
-    if let Some(pfx) = common_prefix
-        && !pfx.is_empty()
-    {
-        spans.push(Span::styled(
-            " · ",
-            Style::default().fg(crate::view::to_color(theme.palette.header_dim)),
-        ));
-        spans.push(Span::styled(
-            pfx.to_string(),
-            Style::default()
-                .fg(crate::view::to_color(theme.palette.header_prefix))
-                .add_modifier(Modifier::BOLD),
-        ));
     }
 
     let bg = crate::view::to_color(theme.palette.header_bar_bg);
