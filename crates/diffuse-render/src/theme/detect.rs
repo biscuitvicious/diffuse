@@ -168,7 +168,10 @@ fn query_terminal_mode_osc11() -> Option<TerminalMode> {
 /// 1. `DIFFUSE_THEME` environment override
 /// 2. Non-TTY / dumb terminal bypass
 /// 3. `TERM_BACKGROUND` and `COLORFGBG` environment indicators
-/// 4. OSC 11 dynamic query sequence with non-blocking 30ms timeout
+///
+/// Never writes to the terminal: safe in one-shot (pager/pipe/redirect)
+/// modes. The OSC 11 dynamic query lives in
+/// [`detect_terminal_mode_interactive`] only.
 #[must_use]
 pub fn detect_terminal_mode() -> Option<TerminalMode> {
     if let Ok(val) = env::var("DIFFUSE_THEME") {
@@ -198,5 +201,19 @@ pub fn detect_terminal_mode() -> Option<TerminalMode> {
         return Some(mode);
     }
 
-    query_terminal_mode_osc11()
+    None
+}
+
+/// Full detection pipeline for interactive sessions: the environment tiers
+/// of [`detect_terminal_mode`], then the OSC 11 dynamic query with a
+/// non-blocking 30ms timeout.
+///
+/// Call ONLY when the process owns the terminal for its whole lifetime
+/// (raw mode held, all stdin consumed — the interactive TUI). A one-shot
+/// process that queries and exits can outrun a slow terminal response;
+/// the late reply then arrives as shell input — echoed garbage plus
+/// phantom typed text (`11;rgb:...`).
+#[must_use]
+pub fn detect_terminal_mode_interactive() -> Option<TerminalMode> {
+    detect_terminal_mode().or_else(query_terminal_mode_osc11)
 }

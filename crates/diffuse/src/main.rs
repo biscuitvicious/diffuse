@@ -340,7 +340,9 @@ featuring summary count badges, syntax-highlighted code blocks, and review notes
         help_heading = "Theme & Styling",
         help = "Color theme: 'auto', 'default'/'dark', 'light'",
         long_help = "Color palette theme for terminal rendering. \
-'auto' (default) queries terminal background luminance via OSC 11 / COLORFGBG; \
+'auto' (default) detects the background via COLORFGBG / environment, and via \
+an OSC 11 terminal query in interactive TUI mode only (one-shot pager/pipe \
+modes never query, so nothing can leak into the shell); \
 'default'/'dark' applies deep dark theme; 'light' applies high-contrast light theme. \
 Overrides the DIFFUSE_THEME environment variable."
     )]
@@ -1291,14 +1293,31 @@ fn route_mode(
 /// Resolve the active [`DiffuseTheme`] from the `--theme` CLI flag,
 /// falling back to the `DIFFUSE_THEME` environment variable and then the
 /// default theme. An unknown `--theme` name warns on stderr and falls back.
-pub fn resolve_theme(cli_theme: Option<&str>) -> DiffuseTheme {
+///
+/// `interactive` must be true only when the process owns the terminal for
+/// its whole lifetime (the fullscreen TUI): only then may `auto` issue the
+/// OSC 11 background query. One-shot modes (`-p`, pipes, redirects) always
+/// resolve without touching the terminal, so no late query response can
+/// leak into the shell as typed input.
+pub fn resolve_theme(cli_theme: Option<&str>, interactive: bool) -> DiffuseTheme {
     if let Some(name) = cli_theme {
+        if name.trim().eq_ignore_ascii_case("auto") {
+            return if interactive {
+                DiffuseTheme::auto_detect_interactive()
+            } else {
+                DiffuseTheme::auto_detect()
+            };
+        }
         if let Some(theme) = DiffuseTheme::from_name(name) {
             return theme;
         }
         eprintln!("diffuse: unknown theme '{name}', falling back to default theme");
     }
-    DiffuseTheme::from_env()
+    if interactive {
+        DiffuseTheme::from_env_interactive()
+    } else {
+        DiffuseTheme::from_env()
+    }
 }
 
 /// Configure global ANSI styling condition via `yansi` from CLI flags and
@@ -1335,7 +1354,6 @@ fn main() -> io::Result<()> {
     let stdin_tty = io::stdin().is_terminal();
     let stdout_tty = io::stdout().is_terminal();
     let colorize = init_color_mode(&args.color, args.no_color);
-    let theme = resolve_theme(args.theme.as_deref());
 
     let workers = args
         .jobs
@@ -1483,6 +1501,13 @@ fn main() -> io::Result<()> {
         // pager or markdown mode; any piped or redirected end falls
         // back to the full ANSI or Markdown render.
         if !no_tui && stdin_tty && stdout_tty {
+            // Theme resolves here — TUI takeover is now certain, so `auto`
+            // may issue the OSC 11 background query: the app owns the
+            // terminal (raw mode, full stdin consumption) for its whole
+            // lifetime, and any late response lands in its own event loop,
+            // never in the shell. Every other branch below resolves
+            // query-free.
+            let theme = resolve_theme(args.theme.as_deref(), true);
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
                 git_args.clone(),
@@ -1514,6 +1539,9 @@ fn main() -> io::Result<()> {
                 show_source,
             )?;
         } else if is_markdown {
+            // One-shot render: resolve query-free so no terminal response
+            // can outrun process exit and leak into the shell.
+            let theme = resolve_theme(args.theme.as_deref(), false);
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
                 git_args.clone(),
@@ -1559,6 +1587,8 @@ fn main() -> io::Result<()> {
             }
             let _ = stdout.flush();
         } else {
+            // One-shot render: resolve query-free (see markdown branch).
+            let theme = resolve_theme(args.theme.as_deref(), false);
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
                 git_args.clone(),
@@ -1642,6 +1672,9 @@ fn main() -> io::Result<()> {
             .with_cluster_bandwidth_min(args.cluster_bandwidth_min)
             .with_cluster_bandwidth_slack(args.cluster_bandwidth_slack);
 
+        // One-shot path (raw/jsonl/json render, no TUI): resolve query-free
+        // so no terminal response can outrun process exit.
+        let theme = resolve_theme(args.theme.as_deref(), false);
         let (consumer, meta_rx) = spawn_git_stream_pipeline(
             repo_root,
             git_args,
@@ -1704,6 +1737,9 @@ fn main() -> io::Result<()> {
             }
         }
     };
+
+    // JSON-contract tail path: one-shot by construction, resolve query-free.
+    let theme = resolve_theme(args.theme.as_deref(), false);
 
     let payload: InputPayload = serde_json::from_str(&raw).unwrap_or_else(|_| {
         InputPayload::Single(Box::new(Input {

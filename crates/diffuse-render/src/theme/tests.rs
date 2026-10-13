@@ -1,8 +1,13 @@
-use std::env;
+use std::{env, sync::Mutex};
 
 use diffuse_syntax::color::TokenColor;
 
 use super::*;
+
+/// Serializes the environment-touching tests below: process env is global,
+/// so parallel auto-detect tests would otherwise observe each other's
+/// `DIFFUSE_THEME`/`COLORFGBG` values.
+static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_default_theme_token_colors() {
@@ -132,6 +137,7 @@ fn test_row_style_methods() {
 
 #[test]
 fn test_theme_from_name_and_env() {
+    let _guard = ENV_MUTEX.lock().unwrap();
     assert_eq!(
         DiffuseTheme::from_name("default"),
         Some(DiffuseTheme::DEFAULT)
@@ -730,4 +736,51 @@ fn test_theme_char_literal_rendering() {
     assert_eq!(chr_light_add, "\x1b[38;2;16;128;67m'x'\x1b[39m");
     assert_eq!(chr_light_del, "\x1b[38;2;190;45;55m'x'\x1b[39m");
     assert_eq!(chr_light_ctx, "\x1b[38;2;16;128;67m'x'\x1b[39m");
+}
+
+#[test]
+fn test_theme_auto_interactive_matches_env_tiers() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // Interactive auto honors explicit names without querying.
+    unsafe {
+        env::set_var("DIFFUSE_THEME", "light");
+        assert_eq!(DiffuseTheme::auto_detect_interactive(), DiffuseTheme::LIGHT);
+        assert_eq!(DiffuseTheme::from_env_interactive(), DiffuseTheme::LIGHT);
+        env::set_var("DIFFUSE_THEME", "dark");
+        assert_eq!(DiffuseTheme::from_env_interactive(), DiffuseTheme::DEFAULT);
+        // Explicit auto, invalid values, and unset all fall through to the
+        // query-backed pipeline (a non-TTY test session resolves default).
+        env::set_var("DIFFUSE_THEME", "auto");
+        let auto_theme = DiffuseTheme::from_env_interactive();
+        assert!(auto_theme == DiffuseTheme::DEFAULT || auto_theme == DiffuseTheme::LIGHT);
+        env::set_var("DIFFUSE_THEME", "invalid");
+        let invalid_theme = DiffuseTheme::from_env_interactive();
+        assert!(invalid_theme == DiffuseTheme::DEFAULT || invalid_theme == DiffuseTheme::LIGHT);
+        env::remove_var("DIFFUSE_THEME");
+        let unset_theme = DiffuseTheme::from_env_interactive();
+        assert!(unset_theme == DiffuseTheme::DEFAULT || unset_theme == DiffuseTheme::LIGHT);
+    }
+}
+
+#[test]
+fn test_theme_from_name_auto_stays_query_free() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    // `auto` by name resolves through the environment-only pipeline, so
+    // one-shot callers of `from_name` can never trigger a terminal query.
+    unsafe {
+        env::remove_var("DIFFUSE_THEME");
+        env::remove_var("COLORFGBG");
+        env::remove_var("TERM_BACKGROUND");
+    }
+    let named = DiffuseTheme::from_name("auto");
+    assert!(named.is_some());
+    let safe = DiffuseTheme::auto_detect();
+    assert_eq!(named, Some(safe));
+    // `DIFFUSE_THEME=auto` selects the same query-free pipeline (tier 1
+    // falls through to the lower environment tiers, never to a query).
+    unsafe {
+        env::set_var("DIFFUSE_THEME", "auto");
+        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::auto_detect());
+        env::remove_var("DIFFUSE_THEME");
+    }
 }

@@ -1588,3 +1588,67 @@ fn test_notes_list_revisions_and_pathspecs() {
     assert!(stdout_staged.contains("Note on c2 doc"));
     assert!(!stdout_staged.contains("Note on c1"));
 }
+
+/// Regression: one-shot runs must never emit the OSC 11 background query
+/// (`ESC ] 11 ; ?`). The terminal answers with its background color as
+/// *input*; when the 30ms read times out, the late response leaks into the
+/// shell as echoed garbage and phantom typed text (`11;rgb:...`).
+/// Only the interactive TUI (which owns the terminal for its whole
+/// lifetime) may query. Covers both the reported `diffuse -p` and the bare
+/// early-exit path (which never reaches TUI takeover).
+#[cfg(unix)]
+#[test]
+fn pty_one_shot_run_never_emits_osc11_background_query() {
+    use std::io::Read;
+
+    for extra_args in [&[] as &[&str], &["-p"] as &[&str]] {
+        let pty = nix::pty::openpty(None, None).expect("openpty failed");
+        let mut master = File::from(pty.master);
+        let slave = File::from(pty.slave);
+
+        // Scrub every env indicator so detection can only succeed via query;
+        // force a query-capable TERM so the test is not vacuous.
+        let dir = tempfile::tempdir().unwrap();
+        let child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+            .current_dir(dir.path())
+            .args(extra_args)
+            .stdin(slave.try_clone().unwrap())
+            .stdout(slave)
+            .stderr(Stdio::piped())
+            .env("TERM", "xterm")
+            .env_remove("DIFFUSE_THEME")
+            .env_remove("COLORFGBG")
+            .env_remove("TERM_BACKGROUND")
+            .spawn()
+            .unwrap();
+
+        // Drain the pty master on a side thread. Break on EOF *or* read error:
+        // Linux reports EIO instead of EOF once the slave side closes.
+        let reader = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 256];
+            loop {
+                match master.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                    Err(_) => break,
+                }
+            }
+            buf
+        });
+
+        let out = child.wait_with_output().unwrap();
+        let pty_bytes = reader.join().expect("pty reader thread panicked");
+
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "must exit 2 on non-repo dir (args {extra_args:?}, stderr: {})",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !pty_bytes.windows(5).any(|w| w == b"]11;?"),
+            "one-shot run {extra_args:?} must not emit the OSC 11 query, pty saw: {pty_bytes:?}"
+        );
+    }
+}

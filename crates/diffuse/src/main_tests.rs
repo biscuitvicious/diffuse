@@ -131,11 +131,51 @@ fn test_cli_args_theme_flag() {
 fn test_resolve_theme_prefers_cli_flag() {
     let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::remove_var("DIFFUSE_THEME") };
-    assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
-    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::LIGHT);
-    let auto_theme = super::resolve_theme(Some("auto"));
+    assert_eq!(
+        super::resolve_theme(Some("dark"), false),
+        DiffuseTheme::DEFAULT
+    );
+    assert_eq!(
+        super::resolve_theme(Some("light"), false),
+        DiffuseTheme::LIGHT
+    );
+    let auto_theme = super::resolve_theme(Some("auto"), false);
     assert!(auto_theme == DiffuseTheme::DEFAULT || auto_theme == DiffuseTheme::LIGHT);
-    assert_eq!(super::resolve_theme(None), DiffuseTheme::from_env());
+    assert_eq!(super::resolve_theme(None, false), DiffuseTheme::from_env());
+}
+
+/// One-shot (non-interactive) resolution must stay on the environment-only
+/// pipeline even for explicit `auto`: no OSC 11 query may be issued, so no
+/// late terminal response can leak into the shell as typed input. (The
+/// pty end-to-end test `pty_one_shot_run_never_emits_osc11_background_query`
+/// proves the byte-level absence; here the routing inputs are pinned.)
+#[test]
+fn test_resolve_theme_non_interactive_auto_matches_env_only() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    unsafe {
+        env::remove_var("DIFFUSE_THEME");
+        env::remove_var("COLORFGBG");
+        env::remove_var("TERM_BACKGROUND");
+    }
+    // Named themes resolve identically in both modes (no query either way).
+    assert_eq!(
+        super::resolve_theme(Some("dark"), false),
+        super::resolve_theme(Some("dark"), true)
+    );
+    assert_eq!(
+        super::resolve_theme(Some("light"), false),
+        super::resolve_theme(Some("light"), true)
+    );
+    // Explicit auto in a non-TTY test session falls back to the default;
+    // the interactive arm may only add the query, never change env tiers.
+    let auto_safe = super::resolve_theme(Some("auto"), false);
+    assert!(auto_safe == DiffuseTheme::DEFAULT || auto_safe == DiffuseTheme::LIGHT);
+    unsafe {
+        env::set_var("DIFFUSE_THEME", "light");
+        assert_eq!(super::resolve_theme(None, false), DiffuseTheme::LIGHT);
+        assert_eq!(super::resolve_theme(None, true), DiffuseTheme::LIGHT);
+        env::remove_var("DIFFUSE_THEME");
+    }
 }
 
 #[test]
@@ -143,7 +183,7 @@ fn test_resolve_theme_falls_back_on_unknown_name() {
     let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::remove_var("DIFFUSE_THEME") };
     assert_eq!(
-        super::resolve_theme(Some("bogus-theme")),
+        super::resolve_theme(Some("bogus-theme"), false),
         DiffuseTheme::DEFAULT
     );
 }

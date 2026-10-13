@@ -260,10 +260,26 @@ impl DiffuseTheme {
     }
 
     /// Automatically detect the theme based on the terminal's background mode.
-    /// Falls back to `DiffuseTheme::DEFAULT` when detection is unavailable.
+    /// Environment indicators only — never queries the terminal, so this is
+    /// safe in one-shot (pager/pipe) modes. Falls back to
+    /// `DiffuseTheme::DEFAULT` when detection is unavailable.
     #[must_use]
     pub fn auto_detect() -> Self {
         match detect_terminal_mode() {
+            Some(TerminalMode::Light) => Self::LIGHT,
+            Some(TerminalMode::Dark) | None => Self::DEFAULT,
+        }
+    }
+
+    /// Automatically detect the theme, querying the terminal background via
+    /// OSC 11 when the environment tiers are silent. Call ONLY from the
+    /// interactive TUI (see
+    /// [`detect_terminal_mode_interactive`](crate::theme::detect_terminal_mode_interactive)):
+    /// one-shot modes must use [`auto_detect`](Self::auto_detect), or a
+    /// late query response leaks into the shell as typed input.
+    #[must_use]
+    pub fn auto_detect_interactive() -> Self {
+        match detect_terminal_mode_interactive() {
             Some(TerminalMode::Light) => Self::LIGHT,
             Some(TerminalMode::Dark) | None => Self::DEFAULT,
         }
@@ -283,13 +299,31 @@ impl DiffuseTheme {
 
     /// Resolve the active theme from the `DIFFUSE_THEME` environment variable,
     /// falling back to automated detection if unset or `auto`, and defaulting
-    /// to `default` if invalid.
+    /// to `default` if invalid. Never queries the terminal; safe in any mode.
     #[must_use]
     pub fn from_env() -> Self {
         if let Ok(val) = env::var("DIFFUSE_THEME") {
             Self::from_name(&val).unwrap_or_else(Self::auto_detect)
         } else {
             Self::auto_detect()
+        }
+    }
+
+    /// [`from_env`](Self::from_env) for interactive sessions: `auto`
+    /// (explicit, unset, or invalid) falls back to the OSC 11 terminal
+    /// query. Call ONLY from the interactive TUI.
+    #[must_use]
+    pub fn from_env_interactive() -> Self {
+        if let Ok(val) = env::var("DIFFUSE_THEME") {
+            if val.trim().eq_ignore_ascii_case("auto") {
+                return Self::auto_detect_interactive();
+            }
+            if let Some(named) = Self::from_name(&val) {
+                return named;
+            }
+            Self::auto_detect_interactive()
+        } else {
+            Self::auto_detect_interactive()
         }
     }
 }
