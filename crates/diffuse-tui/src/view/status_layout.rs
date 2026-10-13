@@ -46,13 +46,26 @@ fn push_segment(
 }
 
 /// Build the ordered segment list: the status message first, then the
-/// transient indicators.
+/// persistent empty-state notice (zero files), then the transient
+/// indicators.
 fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
     let p = &ctx.theme.palette;
     let mut segs = Vec::new();
     if let Some((msg, is_ok)) = ctx.status_message {
         let color = if is_ok { p.header_staged } else { p.count_dels };
         push_segment(&mut segs, msg.to_string(), color, true, p);
+    }
+    // Persistent empty state (no timeout): with no files the bar always
+    // carries the notice instead of the main area, so the reserved slot
+    // stays meaningful and the viewport keeps its geometry.
+    if ctx.total_files == 0 {
+        push_segment(
+            &mut segs,
+            "No diff to display.".to_string(),
+            p.status_bar_dim,
+            false,
+            p,
+        );
     }
     if ctx.is_streaming {
         let dot = if ctx.streaming_dot.is_empty() {
@@ -327,5 +340,67 @@ mod tests {
         );
         assert!(text.starts_with("…"), "cut must be marked: {text}");
         assert!(!layout.wraps, "truncated prefix must fit one line: {text}");
+    }
+}
+
+#[cfg(test)]
+mod empty_state_tests {
+    use super::*;
+
+    fn empty_ctx(width: usize) -> StatusBarContext<'static> {
+        StatusBarContext {
+            cur_fi: 0,
+            total_files: 0,
+            cur_hunk: 0,
+            total_hunks: 0,
+            raw_diff: false,
+            col_offset: 0,
+            num_buffer: "",
+            common_prefix: None,
+            width,
+            is_streaming: false,
+            streaming_dot: "●",
+            status_message: None,
+            file: None,
+            hunk_counts: None,
+            theme: &crate::render::DiffuseTheme::DEFAULT,
+        }
+    }
+
+    fn plain(layout: &StatusLayout) -> String {
+        layout
+            .segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<String>()
+            .trim()
+            .to_string()
+    }
+
+    #[test]
+    fn test_layout_empty_state_when_no_files() {
+        let c = empty_ctx(80);
+        let layout = status_layout(&c);
+        assert_eq!(plain(&layout), "No diff to display.");
+    }
+
+    #[test]
+    fn test_layout_empty_state_trails_status_message() {
+        let mut c = empty_ctx(80);
+        c.status_message = Some(("staged hunk", true));
+        let layout = status_layout(&c);
+        assert_eq!(plain(&layout), "staged hunk · No diff to display.");
+    }
+
+    #[test]
+    fn test_layout_no_empty_state_with_files() {
+        let mut c = empty_ctx(80);
+        c.total_files = 3;
+        let layout = status_layout(&c);
+        assert!(
+            layout.segments.is_empty(),
+            "files present must not show the empty state: {}",
+            plain(&layout)
+        );
     }
 }

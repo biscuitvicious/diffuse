@@ -153,7 +153,9 @@ impl AppState {
             lines.extend(grid_lines);
         } else {
             // Secondary slot above the message area, always with the
-            // status background.
+            // status background. The empty-state notice lives in the
+            // secondary bar itself (persistent, no timeout); the main
+            // area stays blank so geometry never shifts.
             if status_lines.is_empty() {
                 lines.push(blank_status_ansi(width, &self.theme.palette));
             } else {
@@ -165,11 +167,7 @@ impl AppState {
             self.viewport_height = vh;
             self.screen_height = height;
 
-            lines.push(format!(
-                "{} No diff to display.\x1b[0m",
-                self.theme.palette.status_bar_dim.fg_code()
-            ));
-            for _ in 1..vh {
+            for _ in 0..vh {
                 lines.push(String::new());
             }
         }
@@ -426,11 +424,14 @@ impl AppState {
         // Reserve the secondary slot even when empty so showing/hiding
         // never shifts diff rows. Emptiness is width-independent (see
         // `status_layout::segments_for`), so flags suffice for layout.
+        // The empty state ("No diff to display.") lives in the bar itself
+        // with no timeout, so zero files always shows the bar.
         let show_status = status_msg_owned.is_some()
             || self.is_streaming
             || self.raw_diff
             || self.col_offset > 0
             || !self.num_buffer.is_empty()
+            || self.output.files.is_empty()
             || common_prefix.as_deref().is_some_and(|p| !p.is_empty());
 
         let constraints = vec![
@@ -507,11 +508,9 @@ impl AppState {
 
         if self.output.files.get(cur_fi).is_none() {
             let bg = crate::view::to_color(self.theme.palette.bg_base);
-            let p = Paragraph::new(" No diff to display.").style(
-                Style::default()
-                    .fg(crate::view::to_color(self.theme.palette.status_bar_dim))
-                    .bg(bg),
-            );
+            // Main area stays blank: the empty-state notice lives in the
+            // secondary bar (persistent, no timeout).
+            let p = Paragraph::new(ratatui::text::Line::default()).style(Style::default().bg(bg));
             f.render_widget(p, diff_area);
 
             if show_status {

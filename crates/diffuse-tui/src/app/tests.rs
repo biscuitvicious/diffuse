@@ -3425,7 +3425,7 @@ fn test_mouse_click_diff_row_with_hunk_divider_selects_code_row() {
 }
 
 #[test]
-fn test_no_diffs_renders_header_footer_and_main_message_frame() {
+fn test_no_diffs_renders_header_footer_and_secondary_message_frame() {
     let empty_output = PipelineOutput {
         files: Vec::new(),
         branch: "main".into(),
@@ -3442,8 +3442,9 @@ fn test_no_diffs_renders_header_footer_and_main_message_frame() {
     // Header bar with repo name
     assert!(frame.contains("my_repo"), "frame must include repo name");
 
-    // Secondary status bar is transient-only: hidden when empty, with a
-    // reserved blank slot so hide/show never shifts content.
+    // Secondary status bar carries the persistent empty-state notice when
+    // there are no files (plus any transient segments), with a reserved
+    // slot so hide/show never shifts content.
     assert!(!frame.contains("file 0/0"), "frame must omit file badge");
     assert!(
         !frame.contains("hunk 0/0"),
@@ -3457,10 +3458,19 @@ fn test_no_diffs_renders_header_footer_and_main_message_frame() {
     );
     assert!(header_row.contains("main"), "header must show branch name");
 
-    // Main area message
+    // Empty-state notice lives in the secondary bar (persistent, no
+    // timeout); the main area stays blank.
+    let rows: Vec<String> = frame.lines().map(|l| l.to_string()).collect();
     assert!(
-        frame.contains("No diff to display."),
-        "main area must contain no diff message"
+        rows.get(1)
+            .is_some_and(|r| r.contains("No diff to display.")),
+        "secondary bar (row 1) must carry the empty-state notice"
+    );
+    let main_rows = &rows[state.last_viewport_start
+        ..(state.last_viewport_start + state.viewport_height).min(rows.len())];
+    assert!(
+        main_rows.iter().all(|r| !r.contains("No diff to display.")),
+        "main area must stay blank once the notice moves to the secondary bar"
     );
 
     // Bottom ribbon footer
@@ -3471,7 +3481,7 @@ fn test_no_diffs_renders_header_footer_and_main_message_frame() {
 }
 
 #[test]
-fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
+fn test_no_diffs_renders_header_footer_and_secondary_message_ratatui() {
     let empty_output = PipelineOutput {
         files: Vec::new(),
         branch: "feature-branch".into(),
@@ -3520,8 +3530,8 @@ fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
         row_strings[0]
     );
 
-    // Secondary status bar is transient-only: hidden when empty, so no
-    // row may carry hunk/file badges.
+    // Secondary bar carries the persistent empty-state notice when there
+    // are no files, so no row may carry hunk/file badges.
     for (i, row) in row_strings.iter().enumerate() {
         assert!(
             !row.contains("hunk 0/0") && !row.contains("file 0/0"),
@@ -3529,18 +3539,18 @@ fn test_no_diffs_renders_header_footer_and_main_message_ratatui() {
         );
     }
 
-    // Row 1: reserved secondary slot (blank when hidden).
+    // Row 1: secondary bar carries the persistent empty-state notice
+    // (no timeout).
     assert!(
-        row_strings[1].trim().is_empty(),
-        "Row 1 must be blank reserved secondary slot: {:?}",
+        row_strings[1].contains("No diff to display."),
+        "Row 1 secondary bar must carry the empty-state notice: {:?}",
         row_strings[1]
     );
 
-    // Row 2: Main area with message (diff area starts after header +
-    // secondary).
+    // Row 2: main area stays blank once the notice moves to the bar.
     assert!(
-        row_strings[2].contains("No diff to display."),
-        "Row 2 must be main area with message: {}",
+        !row_strings[2].contains("No diff to display."),
+        "Row 2 main area must stay blank: {}",
         row_strings[2]
     );
 

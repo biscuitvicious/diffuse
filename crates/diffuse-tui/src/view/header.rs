@@ -383,8 +383,8 @@ pub(crate) fn file_status_tag(file: &OutputFile) -> String {
 
 /// Render the secondary status bar as ANSI strings: the shared
 /// [`status_layout`](super::status_layout) segments emitted as escape runs
-/// (empty when no transient content; callers render a blank slot to hold
-/// layout and background).
+/// (empty when no persistent or transient content; callers render a blank
+/// slot to hold layout and background).
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     use super::status_layout::{StatusSegment, status_layout};
 
