@@ -2613,3 +2613,42 @@ fn test_short_closer_pairs_without_tail_bonus() {
     let sol = dp::solve_cluster(&cluster, rs);
     assert_eq!(signature(&sol), ["mod"]);
 }
+
+/// Open proximity must not elect a keyword-coincidence rival over a content
+/// twin: the dissimilar add sits closer to the block open (higher open
+/// proximity) with head-word agreement for validity, but the similar add
+/// shares a real token run. Locks the baseline behavior.
+#[test]
+fn test_open_proximity_prefers_content_twin() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![Row::Del(DelLine::new(
+        LineNum::new(3).unwrap(),
+        "        if alpha_condition_here {",
+    ))];
+    let new_rows = vec![
+        Row::Add(AddLine::new(LineNum::new(3).unwrap(), "        if x {")),
+        Row::Add(AddLine::new(
+            LineNum::new(4).unwrap(),
+            "        if alpha_condition_there {",
+        )),
+    ];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["    fn f() {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec![],
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["add", "mod"]);
+    match &sol.rows[..] {
+        [Row::Add(_), Row::Mod { new_line, .. }] => {
+            assert!(
+                new_line.text.contains("alpha_condition_there"),
+                "mod must pair the content twin, got: {}",
+                new_line.text
+            );
+        }
+        other => panic!("expected [add, mod], got: {other:?}"),
+    }
+}

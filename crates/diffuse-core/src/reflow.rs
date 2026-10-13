@@ -111,13 +111,13 @@ impl<'a> BlockReflow<'a> {
         let total = side_chars.max(block_chars);
         let unmatched = total.saturating_sub(matched);
         let indent_diff = (indent_old as isize - indent_new as isize).unsigned_abs() as f64;
-        let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
+        let indent_penalty = w.sprawl_penalty * indent_diff * w.indent_penalty_factor;
 
-        w.alpha * matched as f64
-            - w.mu * unmatched as f64
-            - w.beta * k as f64
-            - w.gamma * (k - 1) as f64
-            - w.gamma * moved_lines as f64 * 0.5
+        w.matched_char_reward * matched as f64
+            - w.unmatched_char_penalty * unmatched as f64
+            - w.row_cost * k as f64
+            - w.sprawl_penalty * (k - 1) as f64
+            - w.sprawl_penalty * moved_lines as f64 * 0.5
             - indent_penalty
     }
 }

@@ -50,8 +50,8 @@ fn test_block_reflow_symmetric_indent_penalty() {
     let score_b_to_a = BlockReflow::score(8, 4, 50, 40, 35, 2, 0, &w);
 
     // Indentation penalty deviation |4 - 8| == |8 - 4|, yielding equal penalty
-    let pen_a = w.gamma * 4.0 * w.indent_penalty_factor;
-    let pen_b = w.gamma * 4.0 * w.indent_penalty_factor;
+    let pen_a = w.sprawl_penalty * 4.0 * w.indent_penalty_factor;
+    let pen_b = w.sprawl_penalty * 4.0 * w.indent_penalty_factor;
     assert_eq!(pen_a, pen_b);
     assert_eq!(score_a_to_b, score_b_to_a);
 }

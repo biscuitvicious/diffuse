@@ -18,8 +18,9 @@
 //! The objective (plan §3.3) is multi-objective:
 //!
 //! ```text
-//! score = α·matched_chars − μ·unmatched_chars − β·row_count
-//!       − γ·fragmentation + δ·syntax_alignment
+//! score = match_reward·matched_chars − mismatch·unmatched_chars
+//!       − row_cost·row_count − sprawl·fragmentation + syntax_alignment
+//!       + slot_continuity + boundary_proximity
 //! ```
 //!
 //! - `matched_chars` — the token-LCS characters shared by the transition's old
@@ -27,13 +28,53 @@
 //! - `unmatched_chars` — the character mismatch penalty: content the pairing
 //!   failed to account for. This is what makes a garbage `Mod` lose to a
 //!   standalone `Del` + `Add`.
-//! - `row_count` — visual sprawl: every emitted row costs `β`.
-//! - `fragmentation` — block transitions pay `γ` per extra line beyond the
-//!   anchor (K−1), plus a softer `γ/2` per non-anchor line that still carries
-//!   matched tokens (a reflow spanning lines reads worse than a clean anchor).
+//! - `row_count` — visual sprawl: every emitted row costs `row_cost`.
+//! - `fragmentation` — block transitions pay `sprawl` per extra line beyond the
+//!   anchor (K−1), plus a softer `sprawl/2` per non-anchor line that still
+//!   carries matched tokens (a reflow spanning lines reads worse than a clean
+//!   anchor).
 //! - `syntax_alignment` — statement-head keyword agreement bonus (`let …`
 //!   pairing with `let …`); verbatim pairs take a small fixed bonus so a
 //!   semantic `Mov` outranks an equal-scoring `Mod`.
+//! - `slot_continuity` / `boundary_proximity` — structural bonuses for lines
+//!   sharing a structural slot or sitting near block boundaries. Unlike the
+//!   content terms they do not scale with evidence, so their sizes decide how
+//!   much position may outvote text; see `Weights` for the calibration history
+//!   (δ 800→250, ε grid consensus at 500/500).
+//!
+//! Admission gates keep the bonuses honest: below 0.25 token similarity a
+//! pair needs a structural claim (tail, property, head-word, containment),
+//! and zero-overlap pairs never form (`alpha();` vs `zzzzz = 42;` stays
+//! `Del` + `Add` even beside a `}`).
+//!
+//! Gate profile (see `Weights` threshold fields for detail):
+//!
+//! - **Ratio floors — 0.25 code, 0.35 comment, 0.65 comment-with-offset.** The
+//!   only gate that needs no structural claim at all. Tiers exist because
+//!   coincidence is cheap in prose: two comments share `//` plus ordinary
+//!   words, so a reordered comment pair (offset > 0) must clear 0.65, a
+//!   same-slot comment pair 0.35, while code needs only 0.25. Protects:
+//!   doc-comment truncation still pairs as `Mod`; prevents: rewritten comment
+//!   blocks pairing across offset drift, and the unrelated-tail zero-overlap
+//!   case.
+//! - **Tail floor — 8 matched chars.** The delimiter-equality path and the
+//!   block-candidate pre-filters (`char_bound < 8`) refuse punctuation
+//!   coincidence: two shared quote marks (2 chars, as in the `",`
+//!   slot-continuity misfire) are not tail evidence. Note the
+//!   terminal-return/common-indent path historically bypassed this floor — that
+//!   bypass is exactly what let a zero-overlap pair outvote a 28-char content
+//!   twin; see `slot_continuity_bonus`.
+//! - **Containment — 8-char minimum, 16-col indent ceiling, token boundary.** A
+//!   prefix claim (`let result = foo();` absorbing a suffixed twin) needs 8+
+//!   chars so short stems (`let x`) do not match everywhere, a token-boundary
+//!   cut so `unmark_positions` never matches inside
+//!   `unmark_positions_different_call`, and ≤16 columns of shift (about four
+//!   indent levels — beyond that "same statement" is implausible). Comment
+//!   lines can never contain code lines.
+//! - **Block coverage — 0.50.** A 1-to-K expansion (or K-to-1 collapse) must
+//!   content-match at least half its lines, so one anchor line cannot drag
+//!   unrelated formatting lines into a block; unformatted stragglers stay plain
+//!   adds/dels.
 //!
 //! The traceback emits the optimal row sequence, and [`verify_projection`]
 //! enforces the universal bidirectional invariant (plan Step 3.4): the
@@ -132,24 +173,60 @@ pub fn cluster_bandwidth_slack() -> usize {
     CLUSTER_BANDWIDTH_SLACK.with(|c| c.get())
 }
 
-/// The multi-objective weights (plan §3.3). Initial tuning; golden review
-/// gates any change.
+/// The multi-objective weights (plan §3.3): the engine's model of what
+/// reads well. The DP solver is optimal *relative to these weights*, so
+/// every pairing judgment below is a statement about them, not about the
+/// search. Read all sizes in matched-char units (÷ `matched_char_reward`):
+/// a bonus worth N chars outvotes any content margin smaller than N.
+/// Golden review gates any change.
 pub struct Weights {
-    /// α — value of one matched character.
-    pub alpha: f64,
-    /// μ — penalty for one unmatched content character.
-    pub mu: f64,
-    /// β — visual cost of one emitted row.
-    pub beta: f64,
-    /// γ — fragmentation: per extra sprawl line of a block transition.
-    pub gamma: f64,
-    /// δ — statement-head syntax agreement (and verbatim-pair) bonus.
-    /// Sized to the close-agreement tier (≈17 matched chars): decisive for
-    /// slot-continuity claims with real rivals about, but unable to outvote
-    /// strong content evidence on its own.
-    pub delta: f64,
-    /// ε — closing-brace proximity bonus for lines near a block end.
-    pub epsilon: f64,
+    /// Reward per token-matched content character: the evidence currency
+    /// everything else is priced in (15.0). A 20-char shared run is worth
+    /// ~300 points. Historical initial tuning, unchanged since.
+    pub matched_char_reward: f64,
+    /// Penalty per unmatched content character (8.0 ≈ 0.53 matched chars):
+    /// what a pairing fails to account for. This is what makes a garbage
+    /// `Mod` lose to a standalone `Del` + `Add` — a 100-char mismatch costs
+    /// ~800, i.e. exactly one old-δ. Historical initial tuning.
+    pub unmatched_char_penalty: f64,
+    /// Visual cost of one emitted row (5.0 ≈ ⅓ char): rows are nearly free,
+    /// so the engine is recall-heavy — it pairs whenever anything supports
+    /// the pairing, and almost never prefers `Del` + `Add` over a `Mod` on
+    /// row economy alone. Raise only if the output gets over-paired.
+    pub row_cost: f64,
+    /// Fragmentation penalty per extra sprawl line of a block transition
+    /// (2.0), also scaling the indent-shift penalty. Small by design: block
+    /// shape is cheap, content carries the decision.
+    pub sprawl_penalty: f64,
+    /// Slot-continuity bonus (250.0 ≈ 17 matched chars): pairing two lines
+    /// that occupy the same structural slot (same tails/indent next to a
+    /// block boundary) even when their bodies differ.
+    ///
+    /// Protects: the brace-anchor (`None` → `Some(result)` before `}` wins
+    /// over a verbatim `None` mid-block).
+    ///
+    /// Calibrated Oct 2026 from 800: at 800 a zero-overlap slot pair scored
+    /// +516 against `Del` + `Add` at −10 and outvoted a 28-char content twin
+    /// (`cluster::tests::test_slot_continuity_bonus_sized_to_evidence`).
+    /// Sized to the `close_agree_bonus` tier so slot claims beat weak rivals
+    /// but lose to strong content. Do not raise without re-running the
+    /// golden review: the failure mode is silent cross-pairing.
+    pub slot_continuity_bonus: f64,
+    /// Boundary-proximity bonus (500.0 ≈ 33 matched chars per side): lines
+    /// adjacent to a block open get `open` credit, lines adjacent to a
+    /// block close/dedent get `close` credit, each up to 500, stacking with
+    /// each other and with the slot bonus.
+    ///
+    /// Protects: the `if !run.is_empty()` pairing (`pipeline::tests::
+    /// test_head_commit_hunk_render`), which needs the full close credit —
+    /// halving it drops the `Mod`.
+    ///
+    /// Grid-tested Oct 2026 over {250, 500, 750}²: 500 is both floor and
+    /// consensus. Lower regroups validated scrollbar hunks and loses real
+    /// mods; higher absorbs content-anchored mods into `Expand` blocks and
+    /// breaks true inline edits for keyword-coincidence rival pairings
+    /// (review-notes `{r}` → `{repo_name}`). Keep unless the grid is rerun.
+    pub boundary_proximity_bonus: f64,
     /// Bonus for statement head keyword agreement when similarity is
     /// sufficient.
     pub head_agree_bonus: f64,
@@ -157,28 +234,36 @@ pub struct Weights {
     pub close_agree_bonus: f64,
     /// Multiplier on line indentation differences.
     pub indent_penalty_factor: f64,
-    /// Minimum trimmed character length for 100% prefix containment bonus.
+    /// Minimum trimmed character length for prefix-containment claims
+    /// (8 chars): one line containing the other at a token boundary (e.g. a
+    /// statement collapse gaining a `// suffix comment`). Below ~8 chars
+    /// nearly any short stem is a "prefix" of something, so shorter claims
+    /// are refused outright.
     pub min_containment_len: usize,
-    /// Maximum indentation shift (in characters) permitted for prefix
-    /// containment and block reflow before being disqualified.
+    /// Maximum indentation shift permitted for prefix containment and block
+    /// reflow (16 columns ≈ four indent levels): beyond that the two lines
+    /// cannot plausibly be the same statement, however similar the tokens.
     pub max_indent_shift: usize,
-    /// Minimum character count required for direct closing delimiter tail
-    /// pairing.
+    /// Minimum matched-character floor for the delimiter-equality tail path
+    /// and the block-candidate pre-filters (8 chars): shared punctuation
+    /// alone (a `",` pair shares 2) is coincidence, not tail evidence.
     pub min_tail_matched_chars: usize,
-    /// Minimum ratio of lines in a 1-to-K or K-to-1 block that must have
-    /// matching content.
+    /// Minimum content-match ratio across a 1-to-K expansion or K-to-1
+    /// collapse (0.50): at least half the block's lines must share content
+    /// tokens, so one anchor line cannot drag unrelated formatting lines
+    /// into a block; unformatted stragglers stay plain adds/dels.
     pub min_block_line_coverage: f64,
 }
 
 impl Default for Weights {
     fn default() -> Self {
         Self {
-            alpha: 15.0,
-            mu: 8.0,
-            beta: 5.0,
-            gamma: 2.0,
-            delta: 250.0,
-            epsilon: 500.0,
+            matched_char_reward: 15.0,
+            unmatched_char_penalty: 8.0,
+            row_cost: 5.0,
+            sprawl_penalty: 2.0,
+            slot_continuity_bonus: 250.0,
+            boundary_proximity_bonus: 500.0,
             head_agree_bonus: 80.0,
             close_agree_bonus: 250.0,
             indent_penalty_factor: 5.0,
@@ -490,24 +575,24 @@ pub(crate) fn mod_pair_needs_scoring(
         0.0
     };
     let max_close = if could_be_tail_pair {
-        w.delta
+        w.slot_continuity_bonus
     } else {
-        w.epsilon * om.prox_close * nm.prox_close
+        w.boundary_proximity_bonus * om.prox_close * nm.prox_close
     };
-    let max_open = w.epsilon * om.prox_open * nm.prox_open;
-    let indent_penalty = w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
-    let base_delta = w.alpha * max_matched as f64
-        - w.gamma * (total - max_matched) as f64
-        - w.beta
+    let max_open = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
+    let indent_penalty = w.sprawl_penalty * (indent_shift as f64) * w.indent_penalty_factor;
+    let base_delta = w.matched_char_reward * max_matched as f64
+        - w.sprawl_penalty * (total - max_matched) as f64
+        - w.row_cost
         - indent_penalty
         + max_syn
         + max_close
         + max_open;
 
-    if base_delta <= -2.0 * w.beta {
+    if base_delta <= -2.0 * w.row_cost {
         if is_prefix_containment == Some(false)
             || (!can_have_containment && is_prefix_containment.is_none())
-            || (base_delta + w.head_agree_bonus <= -2.0 * w.beta)
+            || (base_delta + w.head_agree_bonus <= -2.0 * w.row_cost)
         {
             return false;
         }
@@ -1707,8 +1792,9 @@ pub(crate) fn solve_cluster_with_anchors(
             let old_chars = cluster.old_rows[ai].text().chars().count();
             let new_chars = cluster.new_rows[aj].text().chars().count();
             let length_diff = (old_chars as f64 - new_chars as f64).abs();
-            total_score +=
-                w.alpha * (old_chars.max(new_chars) as f64) - w.beta - w.gamma * length_diff;
+            total_score += w.matched_char_reward * (old_chars.max(new_chars) as f64)
+                - w.row_cost
+                - w.sprawl_penalty * length_diff;
         } else {
             let preceding_ctx = if ai == 0 {
                 cluster.preceding_ctx.clone()
@@ -2121,11 +2207,11 @@ pub(crate) fn solve_cluster_matrix(
          -> f64 {
             let total = side_chars.max(block_chars);
             let unmatched = total.saturating_sub(matched);
-            w.alpha * matched as f64
-                - w.mu * unmatched as f64
-                - w.beta * k as f64
-                - w.gamma * (k - 1) as f64
-                - w.gamma * moved_lines as f64 * 0.5
+            w.matched_char_reward * matched as f64
+                - w.unmatched_char_penalty * unmatched as f64
+                - w.row_cost * k as f64
+                - w.sprawl_penalty * (k - 1) as f64
+                - w.sprawl_penalty * moved_lines as f64 * 0.5
         };
 
         // Flatten old tokens
@@ -2213,10 +2299,10 @@ pub(crate) fn solve_cluster_matrix(
                 // Standalone Del / Add.
                 if has_old
                     && let Some(target) = grid.get_mut(i + 1, j)
-                    && base - w.beta > target.score
+                    && base - w.row_cost > target.score
                 {
                     *target = Cell {
-                        score: base - w.beta,
+                        score: base - w.row_cost,
                         prev_i: i as u32,
                         prev_j: j as u32,
                         k: 1,
@@ -2225,14 +2311,14 @@ pub(crate) fn solve_cluster_matrix(
                 }
                 if j < n
                     && let Some(target) = grid.get_mut(i, j + 1)
-                    && base - w.beta >= target.score
+                    && base - w.row_cost >= target.score
                 {
                     // `>=`: on a del/add tie the path prefers ending with
                     // the add — the emission reads
                     // dels first, adds after (the
                     // diff reading convention).
                     *target = Cell {
-                        score: base - w.beta,
+                        score: base - w.row_cost,
                         prev_i: i as u32,
                         prev_j: j as u32,
                         k: 1,
@@ -2249,7 +2335,7 @@ pub(crate) fn solve_cluster_matrix(
                     let nt = &new_tokens[j];
                     if ot.ids.is_empty() && nt.ids.is_empty() {
                         // blank ↔ blank: a trivial full match in one row.
-                        let s = base - w.beta + w.delta;
+                        let s = base - w.row_cost + w.slot_continuity_bonus;
                         if let Some(target) = grid.get_mut(i + 1, j + 1)
                             && s > target.score
                         {
@@ -2264,9 +2350,9 @@ pub(crate) fn solve_cluster_matrix(
                     } else if om.trimmed_id == nm.trimmed_id {
                         // Verbatim (trim-insensitive) — a Mov.
                         let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
-                        let s = base + w.alpha * ot.chars.max(nt.chars) as f64
-                            - w.beta
-                            - w.gamma * length_diff;
+                        let s = base + w.matched_char_reward * ot.chars.max(nt.chars) as f64
+                            - w.row_cost
+                            - w.sprawl_penalty * length_diff;
                         if let Some(target) = grid.get_mut(i + 1, j + 1)
                             && s > target.score
                         {
@@ -2412,14 +2498,14 @@ pub(crate) fn solve_cluster_matrix(
                         }
 
                         let max_close = if could_be_tail_pair {
-                            w.delta
+                            w.slot_continuity_bonus
                         } else {
-                            w.epsilon * om.prox_close * nm.prox_close
+                            w.boundary_proximity_bonus * om.prox_close * nm.prox_close
                         };
-                        let max_open = w.epsilon * om.prox_open * nm.prox_open;
+                        let max_open = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
 
                         let indent_penalty =
-                            w.gamma * (indent_shift as f64) * w.indent_penalty_factor;
+                            w.sprawl_penalty * (indent_shift as f64) * w.indent_penalty_factor;
 
                         let max_syn_bonus = match is_prefix_containment {
                             Some(true) => max_syn + w.head_agree_bonus,
@@ -2433,15 +2519,15 @@ pub(crate) fn solve_cluster_matrix(
                                     })
                             }
                         };
-                        let max_possible_mod_s = base + w.alpha * max_matched as f64
-                            - w.gamma * (total - max_matched) as f64
-                            - w.beta
+                        let max_possible_mod_s = base + w.matched_char_reward * max_matched as f64
+                            - w.sprawl_penalty * (total - max_matched) as f64
+                            - w.row_cost
                             - indent_penalty
                             + max_syn_bonus
                             + max_close
                             + max_open;
                         let next_diag_score = target_diag.score;
-                        let mod_threshold = (base - 2.0 * w.beta).max(next_diag_score);
+                        let mod_threshold = (base - 2.0 * w.row_cost).max(next_diag_score);
                         if max_possible_mod_s <= mod_threshold {
                             continue;
                         }
@@ -2503,7 +2589,8 @@ pub(crate) fn solve_cluster_matrix(
                         let (penalty, syntax) = if is_property_match || is_prefix_containment {
                             let core_unmatched = min_chars.saturating_sub(matched);
                             let length_diff = (total - min_chars) as f64;
-                            let pen = w.mu * core_unmatched as f64 + w.gamma * length_diff;
+                            let pen = w.unmatched_char_penalty * core_unmatched as f64
+                                + w.sprawl_penalty * length_diff;
                             let syn = if is_prefix_containment {
                                 max_syn + w.head_agree_bonus
                             } else {
@@ -2511,13 +2598,15 @@ pub(crate) fn solve_cluster_matrix(
                             };
                             (pen, syn)
                         } else {
-                            (w.mu * unmatched as f64, max_syn)
+                            (w.unmatched_char_penalty * unmatched as f64, max_syn)
                         };
 
-                        let close_bonus = w.epsilon * om.prox_close * nm.prox_close;
-                        let open_bonus = w.epsilon * om.prox_open * nm.prox_open;
+                        let close_bonus =
+                            w.boundary_proximity_bonus * om.prox_close * nm.prox_close;
+                        let open_bonus = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
                         let indent_diff = indent_shift as f64;
-                        let indent_penalty = w.gamma * indent_diff * w.indent_penalty_factor;
+                        let indent_penalty =
+                            w.sprawl_penalty * indent_diff * w.indent_penalty_factor;
 
                         let similarity_ratio = matched as f64 / total as f64;
                         let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
@@ -2588,7 +2677,7 @@ pub(crate) fn solve_cluster_matrix(
                         }
 
                         let effective_close_bonus = if is_direct_tail_pair {
-                            w.delta
+                            w.slot_continuity_bonus
                         } else {
                             close_bonus
                         };
@@ -2603,7 +2692,10 @@ pub(crate) fn solve_cluster_matrix(
                             0.0
                         };
 
-                        let s = base + w.alpha * matched as f64 - penalty - w.beta - indent_penalty
+                        let s = base + w.matched_char_reward * matched as f64
+                            - penalty
+                            - w.row_cost
+                            - indent_penalty
                             + syntax
                             + (effective_close_bonus + open_bonus) * proximity_gate;
                         if let Some(target) = grid.get_mut(i + 1, j + 1)
@@ -2650,7 +2742,7 @@ pub(crate) fn solve_cluster_matrix(
                             continue;
                         }
                         let max_syntax = if om.first_word.is_some() {
-                            w.delta
+                            w.slot_continuity_bonus
                         } else {
                             0.0
                         };
@@ -2664,7 +2756,8 @@ pub(crate) fn solve_cluster_matrix(
                             + max_syntax
                             + max_close;
                         let target_score = target_cell.score;
-                        let expand_threshold = (base - (1 + k) as f64 * w.beta).max(target_score);
+                        let expand_threshold =
+                            (base - (1 + k) as f64 * w.row_cost).max(target_score);
                         if max_possible_s <= expand_threshold {
                             continue;
                         }
@@ -2689,7 +2782,7 @@ pub(crate) fn solve_cluster_matrix(
                             && (om.first_word == nm.first_word
                                 || om.first_word == new_meta[j + anchor].first_word)
                         {
-                            w.delta
+                            w.slot_continuity_bonus
                         } else {
                             0.0
                         };
@@ -2755,7 +2848,7 @@ pub(crate) fn solve_cluster_matrix(
                             continue;
                         }
                         let max_syntax = if nm.first_word.is_some() {
-                            w.delta
+                            w.slot_continuity_bonus
                         } else {
                             0.0
                         };
@@ -2769,7 +2862,8 @@ pub(crate) fn solve_cluster_matrix(
                             + max_syntax
                             + max_close;
                         let target_score = target_cell.score;
-                        let collapse_threshold = (base - (k + 1) as f64 * w.beta).max(target_score);
+                        let collapse_threshold =
+                            (base - (k + 1) as f64 * w.row_cost).max(target_score);
                         if max_possible_s <= collapse_threshold {
                             continue;
                         }
@@ -2794,7 +2888,7 @@ pub(crate) fn solve_cluster_matrix(
                             && (nm.first_word == om.first_word
                                 || nm.first_word == old_meta[i + anchor].first_word)
                         {
-                            w.delta
+                            w.slot_continuity_bonus
                         } else {
                             0.0
                         };
