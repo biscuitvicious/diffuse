@@ -2866,3 +2866,91 @@ fn test_deleted_function_falls_back_to_file_counts() {
         "unresolvable new scope must fall back to file counts, not skip"
     );
 }
+
+fn return_cluster(dels: Vec<(&str, u32)>, adds: Vec<(&str, u32)>) -> ChangeCluster<'static> {
+    let old_rows = dels
+        .into_iter()
+        .map(|(t, n)| Row::Del(DelLine::new(LineNum::new(n).unwrap(), t)))
+        .collect();
+    let new_rows = adds
+        .into_iter()
+        .map(|(t, n)| Row::Add(AddLine::new(LineNum::new(n).unwrap(), t)))
+        .collect();
+    ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows,
+        new_rows,
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    }
+}
+
+/// Changed Rust return types pair as Mod: the slot claim admits the pair
+/// (similarity alone is below the floor) and the bonus elects it.
+#[test]
+fn test_rust_return_tail_pairs_as_mod() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![(") -> FxHashSet<usize> {", 7)],
+        vec![(") -> DelGuards {", 7)],
+    );
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["mod"]);
+    match &sol.rows[..] {
+        [Row::Mod { .. }] => {}
+        other => panic!("expected [mod], got: {other:?}"),
+    }
+}
+
+/// Python `def` tails pair the same way.
+#[test]
+fn test_python_return_tail_pairs_as_mod() {
+    let py = lang_profile("py");
+    let cluster = return_cluster(
+        vec![("        ) -> Dict[str, Tuple[int, str]]:", 3)],
+        vec![("        ) -> bool:", 3)],
+    );
+    let sol = dp::solve_cluster(&cluster, py);
+    assert_eq!(signature(&sol), ["mod"]);
+}
+
+/// TypeScript `):` tails stay silent: the rule covers arrow tails only.
+#[test]
+fn test_typescript_return_tail_stays_unpaired() {
+    let ts = lang_profile("ts");
+    let cluster = return_cluster(
+        vec![("    ): Promise<Xylophone> {", 3)],
+        vec![("    ): Ret<Tango> {", 3)],
+    );
+    let sol = dp::solve_cluster(&cluster, ts);
+    assert_eq!(signature(&sol), ["del", "add"]);
+}
+
+/// Ambiguous slots stay unpaired: two return tails on each side must not
+/// claim each other even when every shape matches.
+#[test]
+fn test_ambiguous_return_slot_stays_unpaired() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![(") -> boolean_flag {", 7), (") -> string_value {", 8)],
+        vec![
+            (") -> Result<Transform<T>, E> {", 7),
+            (") -> Option<Wrapped<T>> {", 8),
+        ],
+    );
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["del", "del", "add", "add"]);
+}
+
+/// Indent mismatch stays unpaired: the slot claim requires equal indent.
+#[test]
+fn test_mismatched_indent_return_tail_stays_unpaired() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![(") -> FxHashSet<usize> {", 7)],
+        vec![("    ) -> DelGuards {", 7)],
+    );
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["del", "add"]);
+}

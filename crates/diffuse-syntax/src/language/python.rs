@@ -31,6 +31,7 @@ pub fn profile() -> LangProfile {
         block_style: BlockDelimStyle::IndentColon,
         significant_indent: true,
         implicit_return: false,
+        tail_return_arrow: true,
         fn_decl: Some(Regex::new(r"^\s*(?:async\s+)?def\s+([A-Za-z0-9_]+)").expect("py fn_decl")),
         decl_prefixes: &["def ", "async def ", "class "],
         operators: OPERATORS,

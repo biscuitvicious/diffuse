@@ -75,6 +75,7 @@ pub fn profile() -> LangProfile {
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
         implicit_return: false,
+        tail_return_arrow: false,
         fn_decl: Some(
             Regex::new(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)")
                 .expect("ts fn_decl"),

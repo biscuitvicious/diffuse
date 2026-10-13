@@ -1468,6 +1468,11 @@ pub(crate) struct DpRowMeta {
     pub close_tail: CloseDelimiter,
     pub exact_close: CloseDelimiter,
     pub is_terminal_return: bool,
+    /// Function-tail return position (`) -> T`): pairing two of these at
+    /// equal indent is a structural slot claim, scored with the slot bonus.
+    /// Set from `LangProfile::is_return_tail_position`; silent without a
+    /// profile or for languages that opt out.
+    pub is_return_tail: bool,
     /// Verbatim twin survives elsewhere with multiplicity intact: pairing
     /// this del as `Mod` pays `Weights::survives_elsewhere_penalty`.
     pub survives_in_new: bool,
@@ -2080,6 +2085,7 @@ pub(crate) fn solve_cluster_matrix(
             let t = text.trim();
             !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
         };
+        let is_return_tail = profile.is_some_and(|p| p.is_return_tail_position(trimmed));
         let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
 
@@ -2102,6 +2108,7 @@ pub(crate) fn solve_cluster_matrix(
             close_tail,
             exact_close,
             is_terminal_return,
+            is_return_tail,
             survives_in_new: r
                 .old_line()
                 .is_some_and(|n| cluster.del_survival.contains(&n)),
@@ -2151,6 +2158,7 @@ pub(crate) fn solve_cluster_matrix(
             let t = text.trim();
             !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
         };
+        let is_return_tail = profile.is_some_and(|p| p.is_return_tail_position(trimmed));
         let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
 
@@ -2173,9 +2181,16 @@ pub(crate) fn solve_cluster_matrix(
             close_tail,
             exact_close,
             is_terminal_return,
+            is_return_tail,
             survives_in_new: false,
         });
     }
+
+    // Return-tail slot claims require an unambiguous slot: exactly one
+    // return tail on each side. Two same-shape tails must not claim each
+    // other; they fall back to `Del` + `Add`.
+    let unique_return_slot = arena.old_meta.iter().filter(|m| m.is_return_tail).count() == 1
+        && arena.new_meta.iter().filter(|m| m.is_return_tail).count() == 1;
 
     // Full matrix solve with the given corridor bounds, reporting whether
     // the optimal traceback touched the band edge. Shared by the narrow
@@ -2439,6 +2454,16 @@ pub(crate) fn solve_cluster_matrix(
                         let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
                         let offset_diff = (i as isize - j as isize).unsigned_abs();
 
+                        // Function-tail return slot: both lines are `) -> T`
+                        // tails at equal indent in a unique-slot cluster.
+                        // Shape rarity (profile-gated) plus indent plus
+                        // uniqueness make this bomb-proof: no other construct
+                        // in these languages produces the shape.
+                        let is_return_slot = unique_return_slot
+                            && om.is_return_tail
+                            && nm.is_return_tail
+                            && indent_shift == 0;
+
                         let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
                             0.65
                         } else if om.comment || nm.comment {
@@ -2501,7 +2526,8 @@ pub(crate) fn solve_cluster_matrix(
                         let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
                             || is_property_match
                             || statement_head_match
-                            || could_be_tail_pair;
+                            || could_be_tail_pair
+                            || is_return_slot;
                         if !could_be_valid_mod_fast {
                             if !can_have_containment {
                                 continue;
@@ -2518,7 +2544,7 @@ pub(crate) fn solve_cluster_matrix(
                             is_prefix_containment = Some(true);
                         }
 
-                        let max_close = if could_be_tail_pair {
+                        let max_close = if could_be_tail_pair || is_return_slot {
                             w.slot_continuity_bonus
                         } else {
                             w.boundary_proximity_bonus * om.prox_close * nm.prox_close
@@ -2693,6 +2719,7 @@ pub(crate) fn solve_cluster_matrix(
                         } else {
                             similarity_ratio >= 0.25
                                 || is_direct_tail_pair
+                                || is_return_slot
                                 || is_property_match
                                 || statement_head_match
                                 || is_prefix_containment
@@ -2702,13 +2729,14 @@ pub(crate) fn solve_cluster_matrix(
                             continue;
                         }
 
-                        let effective_close_bonus = if is_direct_tail_pair {
+                        let effective_close_bonus = if is_direct_tail_pair || is_return_slot {
                             w.slot_continuity_bonus
                         } else {
                             close_bonus
                         };
                         let proximity_gate = if similarity_ratio >= 0.25
                             || is_direct_tail_pair
+                            || is_return_slot
                             || is_property_match
                             || statement_head_match
                             || is_prefix_containment

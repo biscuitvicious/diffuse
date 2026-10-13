@@ -22,6 +22,7 @@ pub fn profile() -> LangProfile {
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
         implicit_return: false,
+        tail_return_arrow: false,
         fn_decl: None,
         decl_prefixes: &[],
         operators: &[],

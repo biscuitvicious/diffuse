@@ -74,6 +74,7 @@ pub fn profile() -> LangProfile {
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
         implicit_return: true,
+        tail_return_arrow: true,
         fn_decl: Some(
             Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)")
                 .expect("rs fn_decl"),

@@ -411,6 +411,17 @@ pub struct LangProfile {
     /// Whether the language supports implicit return expressions without a
     /// `return` keyword (e.g. Rust, Ruby).
     pub implicit_return: bool,
+    /// Whether multi-line function tails spell the return type as `) -> T`
+    /// (Rust, Python, C++ trailing returns). Only these profiles answer
+    /// `is_return_tail_position` affirmatively. Shared profiles cover
+    /// languages without the construct (C, Java): the shape essentially
+    /// cannot occur there, so the flag is dead in practice for them.
+    pub tail_return_arrow: bool,
+    /// Whether multi-line function tails spell the return type as `) -> T`
+    /// (Rust, Python, C++ trailing returns). Only these profiles answer
+    /// `is_return_tail_position` affirmatively. Shared profiles cover
+    /// languages without the construct (C, Java): the shape essentially
+    /// cannot occur there, so the flag is dead in practice for them.
     /// Regex capturing the function name (group 1) from a function declaration
     /// line.
     pub fn_decl: Option<Regex>,
@@ -449,6 +460,17 @@ pub struct LangProfile {
 }
 
 impl LangProfile {
+    /// Whether a trimmed line is a function-tail return position (`) -> T`,
+    /// as in Rust, Python, and C++ trailing returns. Only profiles that opt
+    /// in via `tail_return_arrow` answer true; every other language — and
+    /// files without a known profile — is silent, so the engine never
+    /// assumes function syntax it has not been told about. The shape is
+    /// deliberately narrow: no other construct in these languages starts a
+    /// stripped line with `)` and continues with `->`.
+    pub fn is_return_tail_position(&self, trimmed: &str) -> bool {
+        self.tail_return_arrow && trimmed.starts_with(')') && trimmed.contains("->")
+    }
+
     /// Extracts the property or field name from a line if it matches this
     /// language's property syntax.
     pub fn extract_property_key<'a>(&self, line: &'a str) -> Option<&'a str> {

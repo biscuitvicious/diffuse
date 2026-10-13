@@ -31,6 +31,7 @@ pub fn profile() -> LangProfile {
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
         implicit_return: false,
+        tail_return_arrow: true,
         // C/C++ function definitions are hard to distinguish from declarations;
         // capture the name from the last word-token before the opening paren.
         fn_decl: Some(

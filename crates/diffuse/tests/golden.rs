@@ -1574,6 +1574,7 @@ corpus_tests!(theme_light_toggle, "theme-light-toggle", 40, true, true);
 corpus_tests!(row_groups_contrast, "row-groups-contrast", 20, true, true);
 corpus_tests!(rust_lifetime_char, "rust-lifetime-char", 90, true, true);
 corpus_tests!(review_notes, "review-notes", 14, true, false);
+corpus_tests!(fn_return_tail, "fn-return-tail", 4, true, false);
 
 #[test]
 fn test_golden_initialized_detection() {
