@@ -140,6 +140,7 @@ fn code_cluster(old: Vec<Row>, new: Vec<Row>) -> ChangeCluster<'static> {
         old_rows: old,
         new_rows: new,
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     }
 }
@@ -601,6 +602,7 @@ fn test_mirage_cache_cluster() {
         old_rows,
         new_rows,
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let rs = lang_profile("rs");
@@ -694,6 +696,7 @@ fn test_mirage_lookup_cluster() {
         old_rows,
         new_rows,
         following_ctx: vec!["    }"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let rs = lang_profile("rs");
@@ -738,6 +741,7 @@ fn test_doc_comment_partial_truncation_pairs_as_mod() {
         old_rows,
         new_rows,
         following_ctx: vec!["//!"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::DocComment,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -818,6 +822,7 @@ fn test_weights_min_containment_len_tuning() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -911,6 +916,7 @@ fn test_rewritten_comment_block_does_not_pair_across_offset_drift() {
         old_rows,
         new_rows,
         following_ctx: vec!["    let mut unmark_positions: Vec<RowPos> = Vec::new();"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::LineComment,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -951,6 +957,7 @@ fn test_symmetrical_block_reflow_involution() {
         old_rows: old_rows_expand,
         new_rows: new_rows_expand,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol_expand = dp::solve_cluster(&cluster_expand, rs);
@@ -982,6 +989,7 @@ fn test_symmetrical_block_reflow_involution() {
         old_rows: old_rows_collapse,
         new_rows: new_rows_collapse,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol_collapse = dp::solve_cluster(&cluster_collapse, rs);
@@ -1017,6 +1025,7 @@ fn test_block_reflow_disqualified_on_head_indent_mismatch() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1056,6 +1065,7 @@ fn test_block_line_coverage_allows_unmatched_formatting_lines() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1098,6 +1108,7 @@ fn test_block_line_coverage_rejects_insufficient_matches() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1128,6 +1139,7 @@ fn test_prefix_containment_within_max_indent_shift_pairs_as_mod() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1158,6 +1170,7 @@ fn test_prefix_containment_exceeding_max_indent_shift_is_rejected() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1187,6 +1200,7 @@ fn test_prefix_containment_reverse_direction_pairs_as_mod() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1216,6 +1230,7 @@ fn test_prefix_containment_non_boundary_subword_rejected() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1244,6 +1259,7 @@ fn test_prefix_containment_comment_mismatch_rejected() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1276,6 +1292,7 @@ fn test_unrelated_tail_statements_not_paired_on_zero_indent_diff() {
         old_rows,
         new_rows,
         following_ctx: vec!["}"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -1431,6 +1448,7 @@ fn test_is_statement_start_head_pairing() {
         old_rows: h.rows[..4].to_vec(),
         new_rows: h.rows[4..].to_vec(),
         following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: crate::cluster::SyntaxSectionKind::Code,
     };
     let mut arena = crate::cluster::dp::DpScratchArena::default();
@@ -1691,6 +1709,7 @@ fn test_cluster_product_cap_falls_back_to_wholesale() {
         new_rows,
         preceding_ctx: vec![],
         following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -1768,6 +1787,7 @@ fn test_skyline_dp_2000_line_wholesale_replacement_pairs_into_mods() {
         old_rows,
         new_rows,
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -1830,6 +1850,7 @@ fn test_skyline_dp_7000_line_wholesale_replacement_pairs_into_mods() {
         old_rows,
         new_rows,
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -1903,6 +1924,7 @@ fn test_skyline_dp_asymmetric_burst_preserves_alignment() {
         old_rows,
         new_rows,
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -2008,6 +2030,7 @@ fn scoring_fixture() -> ScoringFixture {
             })
             .collect(),
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     ScoringFixture {
@@ -2090,6 +2113,7 @@ fn test_mod_pair_prunes_incompatible_tail_and_high_indent() {
             new_text.to_string(),
         ))],
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -2220,6 +2244,7 @@ fn test_anchor_decomposition_large_cluster() {
         old_rows,
         new_rows,
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -2259,6 +2284,7 @@ fn test_anchor_decomposition_large_cluster() {
             })
             .collect(),
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     assert!(
@@ -2310,6 +2336,7 @@ fn test_anchor_decomposition_with_word_skeleton() {
         old_rows,
         new_rows,
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
 
@@ -2403,11 +2430,12 @@ fn test_guarded_dels_tail_candidates_parity() {
         below_ctx: 0,
     };
     let mut fn_cache = rustc_hash::FxHashMap::default();
-    let guarded = super::pairing::guarded_dels(&h, None, None, rs, &mut fn_cache);
+    let guards = super::pairing::classify_dels(&h, None, None, rs, &mut fn_cache);
     // Since neither del survives in new_content and neither is identical,
-    // guarded should not skip them
-    assert!(!guarded.contains(&0));
-    assert!(!guarded.contains(&1));
+    // classification must guard nothing neither hard nor soft
+    assert!(!guards.hard.contains(&0));
+    assert!(!guards.hard.contains(&1));
+    assert!(guards.soft.is_empty());
 }
 
 #[test]
@@ -2455,6 +2483,7 @@ fn test_mod_pair_precomputed_invariants_and_prefix_containment() {
             Row::Add(AddLine::new(LineNum::new(2).unwrap(), new_text.to_string())),
         ],
         following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::LineComment,
     };
 
@@ -2556,6 +2585,7 @@ fn test_slot_continuity_bonus_sized_to_evidence() {
         old_rows,
         new_rows,
         following_ctx: vec!["    );"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -2574,8 +2604,10 @@ fn test_slot_continuity_bonus_sized_to_evidence() {
 
 /// The terminal-return/common-indent tail path still needs token evidence:
 /// zero word overlap at close_dist 1 must not pair, even with the bonus.
+/// Dissimilar lines stay unpaired at the solve level even with identical
+/// surroundings: guards this against regressing into a forced pairing.
 #[test]
-fn test_tail_pair_requires_matched_floor() {
+fn test_dissimilar_pair_stays_unpaired() {
     let rs = lang_profile("rs");
     let old_rows = vec![Row::Del(DelLine::new(
         LineNum::new(3).unwrap(),
@@ -2590,14 +2622,15 @@ fn test_tail_pair_requires_matched_floor() {
         old_rows,
         new_rows,
         following_ctx: vec!["    );"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
     assert_eq!(signature(&sol), ["del", "add"]);
 }
 
-/// Short closers still pair on content alone: the cap must not break the
-/// rule's namesake case.
+/// Short closers still pair on content alone: the δ sizing must not break
+/// the rule's namesake case.
 #[test]
 fn test_short_closer_pairs_without_tail_bonus() {
     let rs = lang_profile("rs");
@@ -2608,6 +2641,7 @@ fn test_short_closer_pairs_without_tail_bonus() {
         old_rows,
         new_rows,
         following_ctx: vec!["    bar();"],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -2637,6 +2671,7 @@ fn test_open_proximity_prefers_content_twin() {
         old_rows,
         new_rows,
         following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
     };
     let sol = dp::solve_cluster(&cluster, rs);
@@ -2651,4 +2686,183 @@ fn test_open_proximity_prefers_content_twin() {
         }
         other => panic!("expected [add, mod], got: {other:?}"),
     }
+}
+
+/// Surplus survival must not veto a high-similarity modification: the del
+/// text has a verbatim twin elsewhere in the new file, but the nearby add
+/// is its obvious 95%-overlap counterpart. Must pair as Mod.
+#[test]
+fn test_surviving_duplicate_high_similarity_pairs_as_mod() {
+    let rows = vec![
+        Row::Del(DelLine::new(
+            LineNum::new(10).unwrap(),
+            "        let x = 1;",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(10).unwrap(),
+            "        let x = 2;",
+        )),
+    ];
+    let h = Hunk {
+        old_start: 10,
+        old_count: 1,
+        new_start: 10,
+        new_count: 1,
+        section: String::new(),
+        rows,
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let old = ["fn f() {", "        let x = 1;", "}"];
+    let new = [
+        "fn f() {",
+        "        let x = 2;",
+        "}",
+        "fn g() {",
+        "        let x = 1;",
+        "}",
+    ];
+    let res = super::pairing::dp_pairing(&h, Some(&old[..]), Some(&new[..]), None);
+    assert_eq!(
+        res.pair_of.get(&1),
+        Some(&0),
+        "surviving twin elsewhere must not veto the modification pair"
+    );
+}
+
+/// Surplus survival with no content behind the rival: stays unpaired even
+/// once the veto becomes a penalty.
+#[test]
+fn test_surviving_duplicate_dissimilar_stays_unpaired() {
+    let rows = vec![
+        Row::Del(DelLine::new(
+            LineNum::new(10).unwrap(),
+            "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
+        )),
+        Row::Add(AddLine::new(
+            LineNum::new(10).unwrap(),
+            "        \"header must omit the directory prefix\"",
+        )),
+    ];
+    let h = Hunk {
+        old_start: 10,
+        old_count: 1,
+        new_start: 10,
+        new_count: 1,
+        section: String::new(),
+        rows,
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let old = [
+        "fn f() {",
+        "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
+        "    );",
+    ];
+    let new = [
+        "fn f() {",
+        "        \"header must omit the directory prefix\"",
+        "    );",
+        "fn g() {",
+        "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
+        "}",
+    ];
+    let res = super::pairing::dp_pairing(&h, Some(&old[..]), Some(&new[..]), None);
+    assert!(
+        res.pair_of.is_empty(),
+        "dissimilar rival must stay unpaired, got: {:?}",
+        res.pair_of
+    );
+}
+
+/// Same-function twin: fn-scoped survival still pairs high-similarity mods.
+#[test]
+fn test_same_function_twin_pairs_as_mod() {
+    let rs = lang_profile("rs");
+    let rows = vec![
+        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
+        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
+    ];
+    let h = Hunk {
+        old_start: 1,
+        old_count: 3,
+        new_start: 1,
+        new_count: 4,
+        section: String::new(),
+        rows,
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let old = ["fn f() {", "        let x = 1;", "}"];
+    let new = ["fn f() {", "        let x = 2;", "        let x = 1;", "}"];
+    let res = super::pairing::dp_pairing(&h, Some(&old[..]), Some(&new[..]), rs);
+    assert_eq!(
+        res.pair_of.get(&1),
+        Some(&0),
+        "same-function twin must not veto the modification pair"
+    );
+}
+
+/// Twin in a different function: scope-narrowed survival never penalizes.
+#[test]
+fn test_different_function_twin_pairs_as_mod() {
+    let rs = lang_profile("rs");
+    let rows = vec![
+        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
+        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
+    ];
+    let h = Hunk {
+        old_start: 1,
+        old_count: 3,
+        new_start: 1,
+        new_count: 3,
+        section: String::new(),
+        rows,
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let old = ["fn f() {", "        let x = 1;", "}"];
+    let new = [
+        "fn f() {",
+        "        let x = 2;",
+        "}",
+        "fn g() {",
+        "        let x = 1;",
+        "}",
+    ];
+    let res = super::pairing::dp_pairing(&h, Some(&old[..]), Some(&new[..]), rs);
+    assert_eq!(
+        res.pair_of.get(&1),
+        Some(&0),
+        "different-function twin is out of scope and must not affect pairing"
+    );
+}
+
+/// Deleted function: the del's fn resolves on the old side but has no new
+/// body, so survival falls back to whole-file counts rather than skipping.
+#[test]
+fn test_deleted_function_falls_back_to_file_counts() {
+    let rs = lang_profile("rs");
+    let rows = vec![
+        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
+        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
+    ];
+    let h = Hunk {
+        old_start: 1,
+        old_count: 3,
+        new_start: 1,
+        new_count: 3,
+        section: String::new(),
+        rows,
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let old = ["fn f() {", "        let x = 1;", "}"];
+    let new = ["fn g() {", "        let x = 2;", "}"];
+    let res = super::pairing::dp_pairing(&h, Some(&old[..]), Some(&new[..]), rs);
+    assert_eq!(
+        res.pair_of.get(&1),
+        Some(&0),
+        "unresolvable new scope must fall back to file counts, not skip"
+    );
 }

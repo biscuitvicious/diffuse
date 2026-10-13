@@ -91,26 +91,98 @@ fn memo_fn_of_str<'a>(
     computed
 }
 
-/// The dels the legacy `pass_pairing` refuses to pair (its top-of-loop
-/// guards), computed identically — the DP's pairs over these dels are
-/// dropped so both engines leave the same rows standalone.
-pub(crate) fn guarded_dels<'a>(
+/// Per-del pairing guards for one hunk: hard vetoes plus soft survival
+/// signals. Relocated lines (`is_moved`) stay hard-guarded — moves.rs owns
+/// relocations. Verbatim twins surviving elsewhere are *not* vetoed: they
+/// are reported as soft signals carrying multiplicity accounting, and the
+/// DP penalizes (rather than forbids) pairing them, so high-similarity
+/// modifications still form while slot-coincidence pairings fall back to
+/// `Del` + `Add`.
+#[derive(Default)]
+pub(crate) struct DelGuards {
+    /// Global row indices that must never pair.
+    pub hard: FxHashSet<usize>,
+    /// Old line numbers with surplus verbatim survival elsewhere
+    /// (`count_new >= count_old` in the resolved scope): pairing one as
+    /// `Mod` pays `Weights::survives_elsewhere_penalty`.
+    pub soft: FxHashSet<u32>,
+}
+
+/// True when `trim` survives with multiplicity intact in the resolved
+/// scope: the new count covers a non-zero old count, so this del instance
+/// is redundant (a surviving twin) rather than transformed. A modified
+/// instance always drops the new count below the old one and is exempt.
+/// The non-zero old count also keeps synthetic contents (which may omit
+/// the del text entirely) from ever penalizing. Scope mirrors the old
+/// veto: the enclosing function when both bodies resolve, otherwise the
+/// whole file; unavailable content never penalizes.
+fn surplus_survival<'a>(
+    trim: &str,
+    del_fn: Option<&str>,
+    old_content: Option<&'a [&'a str]>,
+    new_content: Option<&'a [&'a str]>,
+    profile: Option<&LangProfile>,
+    old_counts: &mut Option<FxHashMap<&'a str, usize>>,
+    new_counts: &mut Option<FxHashMap<&'a str, usize>>,
+) -> bool {
+    // Count occurrences of one trimmed line.
+    fn count_in(lines: &[&str], trim: &str) -> usize {
+        lines.iter().filter(|l| l.trim() == trim).count()
+    }
+    if let Some(dfn) = del_fn
+        && let (Some(old_body), Some(new_body)) = (
+            crate::scope::fn_body_lines(old_content, dfn, profile),
+            crate::scope::fn_body_lines(new_content, dfn, profile),
+        )
+    {
+        // Surplus needs a non-zero baseline: a twin can only remain
+        // where one existed.
+        return count_in(new_body, trim) >= count_in(old_body, trim).max(1);
+    }
+    match (old_content, new_content) {
+        (Some(old), Some(new)) => {
+            let old_map = old_counts.get_or_insert_with(|| {
+                let mut m = FxHashMap::default();
+                for l in old.iter() {
+                    let s: &'a str = l;
+                    *m.entry(s.trim()).or_insert(0) += 1;
+                }
+                m
+            });
+            let new_map = new_counts.get_or_insert_with(|| {
+                let mut m = FxHashMap::default();
+                for l in new.iter() {
+                    let s: &'a str = l;
+                    *m.entry(s.trim()).or_insert(0) += 1;
+                }
+                m
+            });
+            new_map.get(trim).copied().unwrap_or(0)
+                >= old_map.get(trim).copied().unwrap_or(0).max(1)
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn classify_dels<'a>(
     h: &Hunk,
     old_content: Option<&'a [&'a str]>,
     new_content: Option<&'a [&'a str]>,
     profile: Option<&LangProfile>,
     fn_cache: &mut FnScopeCache<'a>,
-) -> FxHashSet<usize> {
+) -> DelGuards {
     if !h
         .rows
         .iter()
         .any(|r| matches!(r, Row::Del(_) | Row::MovSrc(_)))
     {
-        return FxHashSet::default();
+        return DelGuards::default();
     }
 
-    let mut skip = FxHashSet::default();
-    let mut new_trimmed_set: Option<FxHashSet<&str>> = None;
+    let mut hard = FxHashSet::default();
+    let mut soft = FxHashSet::default();
+    let mut new_counts: Option<FxHashMap<&str, usize>> = None;
+    let mut old_counts: Option<FxHashMap<&str, usize>> = None;
     let has_any_moved = h.rows.iter().any(|a| a.is_moved());
 
     let same_hunk_add_trimmed: FxHashSet<&str> = h
@@ -173,11 +245,16 @@ pub(crate) fn guarded_dels<'a>(
     }
 
     for (ri, r) in h.rows.iter().enumerate() {
-        if !matches!(r, Row::Del(_) | Row::MovSrc(_)) {
+        // Del and moved-source rows carry old line numbers by construction;
+        // everything else skips classification entirely.
+        let Some(line_num) = (match r {
+            Row::Del(d) | Row::MovSrc(d) => Some(d.num.get()),
+            _ => None,
+        }) else {
             continue;
-        }
+        };
         if r.is_moved() {
-            skip.insert(ri);
+            hard.insert(ri);
             continue;
         }
         let r_trim = r.text().trim();
@@ -188,7 +265,7 @@ pub(crate) fn guarded_dels<'a>(
                 .is_some_and(|num| moved_old_lines.contains(&num))
                 || moved_trimmed.contains(r_trim));
         if was_moved {
-            skip.insert(ri);
+            hard.insert(ri);
             continue;
         }
         let has_same_hunk_add = same_hunk_add_trimmed.contains(r_trim);
@@ -214,29 +291,20 @@ pub(crate) fn guarded_dels<'a>(
             && !tail_candidate
             && !has_same_hunk_add
             && !has_same_hunk_property_add
+            && surplus_survival(
+                r_trim,
+                del_fn,
+                old_content,
+                new_content,
+                profile,
+                &mut old_counts,
+                &mut new_counts,
+            )
         {
-            let in_new = if let Some(dfn) = del_fn {
-                // If function scope is known, check whether the line survives
-                // within the SAME function in the new file,
-                // rather than an unrelated scope.
-                if let Some(body) = crate::scope::fn_body_lines(new_content, dfn, profile) {
-                    body.iter().any(|l| l.trim() == r_trim)
-                } else {
-                    false
-                }
-            } else if let Some(nc) = new_content {
-                let set =
-                    new_trimmed_set.get_or_insert_with(|| nc.iter().map(|l| l.trim()).collect());
-                set.contains(r_trim)
-            } else {
-                false
-            };
-            if in_new {
-                skip.insert(ri);
-            }
+            soft.insert(line_num);
         }
     }
-    skip
+    DelGuards { hard, soft }
 }
 
 fn is_fragment_pair_rejected<'a>(
@@ -267,7 +335,7 @@ fn is_fragment_pair_rejected<'a>(
 /// with the DP, and convert the transitions into the legacy `pair_of` map
 /// (global add row index -> global del row index). 1-to-1 `Mod`/`Mov`
 /// transitions pair directly; block transitions contribute their anchor
-/// pair; guarded dels never pair.
+/// pair; hard-guarded (relocated) dels never pair.
 pub static T_DP: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
 
 pub fn dp_pairing(
@@ -285,7 +353,7 @@ pub fn dp_pairing(
     );
 
     let mut fn_cache: FnScopeCache = FxHashMap::default();
-    let guards = guarded_dels(h, old_content, new_content, profile, &mut fn_cache);
+    let guards = classify_dels(h, old_content, new_content, profile, &mut fn_cache);
     let t2 = Instant::now();
     T_DP[1].fetch_add(
         t2.duration_since(t1).as_micros() as u64,
@@ -333,7 +401,10 @@ pub fn dp_pairing(
     super::dp::with_tls_arena(|arena| {
         for seg in segments {
             let cluster = match seg {
-                HunkSegment::Cluster(c) => c,
+                HunkSegment::Cluster(mut c) => {
+                    c.del_survival = guards.soft.clone();
+                    c
+                }
                 HunkSegment::Context(_) => continue,
             };
             let t_s0 = Instant::now();
@@ -377,7 +448,7 @@ pub fn dp_pairing(
                     }
                     dp::DpOp::Mod { .. } | dp::DpOp::Mov => {
                         if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni))
-                            && !guards.contains(&gd)
+                            && !guards.hard.contains(&gd)
                             && !h.rows[gd].is_moved()
                             && !h.rows[ga].is_moved()
                             && !pair_of.contains_key(&ga)
@@ -398,7 +469,7 @@ pub fn dp_pairing(
                     }
                     dp::DpOp::Expand { anchor, k, .. } => {
                         if let (Some(gd), Some(ga)) = (global_del(oi), global_add(ni + anchor))
-                            && !guards.contains(&gd)
+                            && !guards.hard.contains(&gd)
                             && !h.rows[gd].is_moved()
                             && !h.rows[ga].is_moved()
                             && !pair_of.contains_key(&ga)
@@ -436,7 +507,7 @@ pub fn dp_pairing(
                     }
                     dp::DpOp::Collapse { anchor, k, .. } => {
                         if let (Some(gd), Some(ga)) = (global_del(oi + anchor), global_add(ni))
-                            && !guards.contains(&gd)
+                            && !guards.hard.contains(&gd)
                             && !h.rows[gd].is_moved()
                             && !h.rows[ga].is_moved()
                             && !pair_of.contains_key(&ga)
@@ -455,7 +526,7 @@ pub fn dp_pairing(
                             let mut all_valid = true;
                             for offset in 0..*k {
                                 if let Some(d) = global_del(oi + offset) {
-                                    if guards.contains(&d) || h.rows[d].is_moved() {
+                                    if guards.hard.contains(&d) || h.rows[d].is_moved() {
                                         all_valid = false;
                                         break;
                                     }

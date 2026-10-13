@@ -227,6 +227,16 @@ pub struct Weights {
     /// breaks true inline edits for keyword-coincidence rival pairings
     /// (review-notes `{r}` → `{repo_name}`). Keep unless the grid is rerun.
     pub boundary_proximity_bonus: f64,
+    /// Penalty for pairing a del whose text survives elsewhere with
+    /// multiplicity intact (a twin copy remains, so the del instance is
+    /// redundant rather than transformed): the successor to the old
+    /// `guarded_dels` veto. A veto blocked genuine high-similarity
+    /// modifications along with the garbage; a penalty lets content decide.
+    /// Sized at 150.0: below the ~200-point margin of a genuine
+    /// high-similarity modification (which must keep pairing), while any
+    /// positive value keeps already content-negative garbage pairs
+    /// unpaired. Golden review gates any change.
+    pub survives_elsewhere_penalty: f64,
     /// Bonus for statement head keyword agreement when similarity is
     /// sufficient.
     pub head_agree_bonus: f64,
@@ -264,6 +274,7 @@ impl Default for Weights {
             sprawl_penalty: 2.0,
             slot_continuity_bonus: 250.0,
             boundary_proximity_bonus: 500.0,
+            survives_elsewhere_penalty: 150.0,
             head_agree_bonus: 80.0,
             close_agree_bonus: 250.0,
             indent_penalty_factor: 5.0,
@@ -1457,6 +1468,9 @@ pub(crate) struct DpRowMeta {
     pub close_tail: CloseDelimiter,
     pub exact_close: CloseDelimiter,
     pub is_terminal_return: bool,
+    /// Verbatim twin survives elsewhere with multiplicity intact: pairing
+    /// this del as `Mod` pays `Weights::survives_elsewhere_penalty`.
+    pub survives_in_new: bool,
 }
 
 /// Scratch arena for DP cluster solving to reuse memory across clusters.
@@ -1767,6 +1781,7 @@ pub(crate) fn solve_cluster_with_anchors(
                 old_rows: cluster.old_rows[curr_i..ai].to_vec(),
                 new_rows: cluster.new_rows[curr_j..aj].to_vec(),
                 following_ctx,
+                del_survival: cluster.del_survival.clone(),
                 section: cluster.section,
             };
             let sub_sol = solve_cluster_with_arena(&sub_cluster, profile, w, arena);
@@ -1811,6 +1826,7 @@ pub(crate) fn solve_cluster_with_anchors(
                 old_rows: vec![cluster.old_rows[ai].clone()],
                 new_rows: vec![cluster.new_rows[aj].clone()],
                 following_ctx,
+                del_survival: cluster.del_survival.clone(),
                 section: cluster.section,
             };
             let sub_sol = solve_cluster_with_arena(&sub_cluster, profile, w, arena);
@@ -1835,6 +1851,7 @@ pub(crate) fn solve_cluster_with_anchors(
             old_rows: cluster.old_rows[curr_i..m].to_vec(),
             new_rows: cluster.new_rows[curr_j..n].to_vec(),
             following_ctx,
+            del_survival: cluster.del_survival.clone(),
             section: cluster.section,
         };
         let sub_sol = solve_cluster_with_arena(&sub_cluster, profile, w, arena);
@@ -2085,6 +2102,9 @@ pub(crate) fn solve_cluster_matrix(
             close_tail,
             exact_close,
             is_terminal_return,
+            survives_in_new: r
+                .old_line()
+                .is_some_and(|n| cluster.del_survival.contains(&n)),
         });
     }
 
@@ -2153,6 +2173,7 @@ pub(crate) fn solve_cluster_matrix(
             close_tail,
             exact_close,
             is_terminal_return,
+            survives_in_new: false,
         });
     }
 
@@ -2523,6 +2544,11 @@ pub(crate) fn solve_cluster_matrix(
                             - w.sprawl_penalty * (total - max_matched) as f64
                             - w.row_cost
                             - indent_penalty
+                            - if om.survives_in_new {
+                                w.survives_elsewhere_penalty
+                            } else {
+                                0.0
+                            }
                             + max_syn_bonus
                             + max_close
                             + max_open;
@@ -2692,10 +2718,21 @@ pub(crate) fn solve_cluster_matrix(
                             0.0
                         };
 
+                        // Verbatim twins surviving elsewhere pay the survival
+                        // penalty instead of being vetoed: clear content
+                        // wins still form, slot-coincidence pairings fall
+                        // back to `Del` + `Add`.
+                        let survives_penalty = if om.survives_in_new {
+                            w.survives_elsewhere_penalty
+                        } else {
+                            0.0
+                        };
+
                         let s = base + w.matched_char_reward * matched as f64
                             - penalty
                             - w.row_cost
                             - indent_penalty
+                            - survives_penalty
                             + syntax
                             + (effective_close_bonus + open_bonus) * proximity_gate;
                         if let Some(target) = grid.get_mut(i + 1, j + 1)

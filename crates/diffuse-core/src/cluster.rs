@@ -6,6 +6,7 @@ pub mod pairing;
 pub mod render;
 
 use diffuse_syntax::profile::LangProfile;
+use rustc_hash::FxHashSet;
 
 use crate::parse::{Hunk, Row};
 
@@ -93,6 +94,10 @@ pub struct ChangeCluster<'a> {
     /// Following context lines immediately after this cluster (for brace/syntax
     /// anchor proximity).
     pub following_ctx: Vec<&'a str>,
+    /// Old line numbers with surplus verbatim survival elsewhere: pairing
+    /// one as `Mod` pays `Weights::survives_elsewhere_penalty` instead of
+    /// being vetoed. Filled by `dp_pairing`; empty by default.
+    pub del_survival: FxHashSet<u32>,
     pub section: SyntaxSectionKind,
 }
 
@@ -254,6 +259,7 @@ pub fn partition_hunk_segments<'a>(
                 old_rows,
                 new_rows,
                 following_ctx,
+                del_survival: FxHashSet::default(),
                 section: first_kind,
             }));
         }
