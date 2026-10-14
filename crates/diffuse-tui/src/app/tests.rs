@@ -376,14 +376,19 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
 
     let frame = state.render_frame(120, 40);
     assert!(frame.contains("@@ -1025,6 +1025,8 @@"), "raw @@ header");
-    assert!(
-        frame.contains("\x1b[38;5;203m-\x1b[39m\x1b[23m\x1b[38;5;203m"),
-        "raw deleted lines render red marker and red text"
-    );
-    assert!(
-        frame.contains("\x1b[38;5;120m+\x1b[39m\x1b[23m\x1b[38;5;120m"),
-        "raw added lines render green marker and green text"
-    );
+    // Raw markers render in kind colors. Asserted on visible text plus
+    // live color, not byte adjacency (the optimizer drops redundant
+    // repeats, carrying the color forward instead).
+    for (marker, color) in [("-", "\x1b[38;5;203m"), ("+", "\x1b[38;5;120m")] {
+        let raw_line = frame
+            .lines()
+            .find(|l| crate::render::ansi::strip_ansi(l).contains(marker) && l.contains("comment"))
+            .unwrap_or_else(|| panic!("raw {marker} marker line must render"));
+        assert!(
+            raw_line.contains(color),
+            "raw {marker} lines render {color} marker and text: {raw_line:?}"
+        );
+    }
 }
 
 #[test]
@@ -5359,5 +5364,30 @@ fn test_secondary_status_bar_keeps_background_when_empty() {
             expected,
             "shown secondary cell {x} must use the same bg"
         );
+    }
+}
+
+#[test]
+fn test_tui_frames_emit_optimal_ansi() {
+    // The TUI must not emit redundant SGR state: every frame line is
+    // already a fixed point of the optimizer (no-op codes would bloat
+    // every keystroke's worth of terminal bytes).
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    for (w, h) in [(100, 30), (80, 24), (48, 24)] {
+        let frame = state.render_frame(w, h);
+        for line in frame.lines() {
+            let optimized = crate::render::ansi::optimize_ansi(line);
+            assert_eq!(
+                optimized.as_ref(),
+                line,
+                "frame line carries redundant SGR at {w}x{h}: {line:?}"
+            );
+        }
+        state.move_down();
     }
 }

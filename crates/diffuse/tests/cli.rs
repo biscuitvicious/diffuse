@@ -744,12 +744,85 @@ index 0000000..1111111 100644\n\
         stdout.contains("@@ -1,2 +1,2 @@"),
         "raw output must contain hunk header, got: {stdout}"
     );
-    // Number gutter and change type symbols are styled
+    // Number gutter and change type symbols are styled: walk SGR
+    // foreground state and assert the symbol renders while its kind color
+    // is live (byte adjacency is not asserted — the optimizer legitimately
+    // drops redundant repeats, carrying the color forward instead).
     assert!(
-        stdout.contains("\x1b[38;5;120m+") || stdout.contains("\x1b[38;5;203m-"),
+        gutter_symbol_live_color(&stdout, '+', 120) || gutter_symbol_live_color(&stdout, '-', 203),
         "change type symbols must be colorized, got: {stdout}"
     );
     assert!(!stdout.trim_start().starts_with('{'), "must not be JSON");
+}
+
+/// Scan `output` for a gutter line whose change symbol (`+`/`-`) renders
+/// while 256-palette foreground `fg` is live. Tracks a tiny subset of SGR
+/// (38;5;N, 39/0 resets) — enough to assert visual semantics without
+/// depending on exact escape placement.
+fn gutter_symbol_live_color(output: &str, symbol: char, fg: u8) -> bool {
+    for raw_line in output.lines() {
+        let stripped = strip_ansi_codes(raw_line);
+        let Some(sym_idx) = stripped.find(symbol) else {
+            continue;
+        };
+        // Only gutter symbols (near line start) count, not code content.
+        if sym_idx > 6 {
+            continue;
+        }
+        let mut live_fg: Option<u8> = None;
+        let bytes = raw_line.as_bytes();
+        let mut i = 0;
+        let mut vis_idx = 0usize;
+        while i < bytes.len() {
+            if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+                let mut j = i + 2;
+                while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b';') {
+                    j += 1;
+                }
+                if j < bytes.len() && bytes[j] == b'm' {
+                    let body = &raw_line[i + 2..j];
+                    let params: Vec<u32> = body.split(';').filter_map(|w| w.parse().ok()).collect();
+                    match params.as_slice() {
+                        [0] | [] => live_fg = None,
+                        [39] => live_fg = None,
+                        [38, 5, n] => live_fg = Some(*n as u8),
+                        _ => {}
+                    }
+                    i = j + 1;
+                    continue;
+                }
+            }
+            if vis_idx == sym_idx {
+                return live_fg == Some(fg);
+            }
+            vis_idx += raw_line[i..].chars().next().map_or(1, |_c| 1);
+            i += raw_line[i..].chars().next().map_or(1, |c| c.len_utf8());
+        }
+    }
+    false
+}
+
+/// Strip `\x1b[...m` SGR sequences (only) for structural assertions.
+fn strip_ansi_codes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            let mut j = i + 2;
+            while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b';') {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'm' {
+                i = j + 1;
+                continue;
+            }
+        }
+        let c = s[i..].chars().next().unwrap_or('\u{FFFD}');
+        out.push(c);
+        i += c.len_utf8();
+    }
+    out
 }
 
 /// `diffuse parse --raw` on a git repo emits raw ANSI diff.

@@ -9,7 +9,9 @@ use ratatui::{
 
 use crate::{
     core::parse::RowKind,
-    render::{ColorExt, render_raw_row, render_row_segment, slice_by_visual_width},
+    render::{
+        ColorExt, ansi::optimize_ansi, render_raw_row, render_row_segment, slice_by_visual_width,
+    },
     types::{FlatRowKind, StickyHeaderInfo, StickyHunkInfo},
     view::{
         bottom_ribbon_lines, clamp_or_pad_ansi,
@@ -201,7 +203,9 @@ impl AppState {
                 out.push_str("\x1b[0m");
             }
         }
-        out
+        // Drop redundant SGR state frame-wide (grid, header, ribbon,
+        // modals): identical terminal effect per line, smaller payload.
+        optimize_ansi(&out).into_owned()
     }
 
     /// Switch between the visual (reflowed) and raw unified-diff
@@ -590,7 +594,7 @@ impl AppState {
 
         let paragraph_lines: Vec<ratatui::text::Line> = grid_lines
             .into_iter()
-            .map(|l| crate::view::ansi_to_ratatui_line(&l))
+            .map(|l| crate::view::ansi_to_ratatui_line(optimize_ansi(&l).as_ref()))
             .collect();
         let diff_bg = crate::view::to_color(self.theme.palette.bg_base);
         let diff_fg = crate::view::to_color(self.theme.palette.text);

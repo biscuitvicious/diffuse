@@ -176,9 +176,13 @@ index 1111111..2222222 100644
     );
 
     let frame = state.render_frame(50, 20);
+    let raw_line = frame
+        .lines()
+        .find(|l| crate::render::ansi::strip_ansi(l).contains("+very long line"))
+        .expect("segment 0 must start with gutter line number and + marker followed by green text");
     assert!(
-        frame.contains("\x1b[38;5;120m+\x1b[39m\x1b[23m\x1b[38;5;120mvery long line"),
-        "segment 0 must start with gutter line number and + marker followed by green text"
+        raw_line.contains("\x1b[38;5;120m"),
+        "marker and text must render green: {raw_line:?}"
     );
     assert!(
         frame.contains("\x1b[38;5;242m      \x1b[39m\x1b[38;5;120m"),

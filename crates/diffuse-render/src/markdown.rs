@@ -7,6 +7,7 @@
 use std::borrow::Cow;
 
 use crate::{
+    ansi::optimize_ansi,
     core::{
         parse::RowKind,
         wire::{OutputFile, PipelineOutput},
@@ -380,7 +381,7 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
         push_md_line(&mut out, "</details>", options.colorize, &theme);
     }
 
-    out
+    optimize_ansi(&out).into_owned()
 }
 
 struct MarkdownRenderCtx<'a> {

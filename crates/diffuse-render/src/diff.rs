@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     Badge,
-    ansi::{ColorExt, FG_RESET, SGR_RESET, strip_ansi},
+    ansi::{ColorExt, FG_RESET, SGR_RESET, optimize_ansi, strip_ansi},
     core::{
         notes::{ReviewNote, Side as NoteSide, note_anchors_in_file},
         parse::RowKind,
@@ -536,7 +536,9 @@ pub fn render_file_diff_with_width(
         }
     }
 
-    out
+    // Drop redundant SGR state transitions per line: identical terminal
+    // effect, smaller payload. Wire runs are untouched.
+    optimize_ansi(&out).into_owned()
 }
 
 /// Render complete pipeline output in raw mode: flat green/red text with no
@@ -649,7 +651,7 @@ pub fn render_raw_file_diff_with_width(
         }
     }
 
-    out
+    optimize_ansi(&out).into_owned()
 }
 
 #[cfg(test)]
