@@ -3,7 +3,6 @@
 
 pub mod dp;
 pub mod pairing;
-pub mod render;
 
 use diffuse_syntax::profile::LangProfile;
 use rustc_hash::FxHashSet;

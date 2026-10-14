@@ -372,12 +372,6 @@ fn dp_subline_moves_recorded_for_reflow_expansion() {
     let sol = solve_cluster(&c, rs);
     assert!(matches!(sol.transitions[0], DpOp::Expand { k: 2, .. }));
     verify_projection(&sol, &c).expect("projection invariant holds");
-    if let DpOp::Expand { spans, .. } = &sol.transitions[0] {
-        assert!(
-            spans.iter().all(|s| s.line > 0),
-            "subline moves must target lines beyond the anchor: {spans:?}"
-        );
-    }
 }
 
 fn run_dp_oracle_on_corpus(name: &str) -> usize {

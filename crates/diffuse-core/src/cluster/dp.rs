@@ -286,25 +286,6 @@ impl Default for Weights {
     }
 }
 
-/// A subline move: a token that crossed a line boundary inside a block
-/// transition — the source token index on the OLD-side anchor line, the
-/// target line offset within the NEW-side block (or vice versa for a
-/// collapse) and the target token index there. Phase 4's `RunKind::Mov`
-/// rendering consumes these.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SublineMove {
-    /// 0-based line offset of the target within the block (0 = anchor).
-    /// For an Expand: which NEW line (in the block) received reflowed content
-    /// from the anchor line. For a Collapse: which OLD line (in the block)
-    /// had content absorbed into the anchor line.
-    pub line: usize,
-    /// Character span in the anchor line (the reference line) that was moved.
-    pub anchor_span: (usize, usize),
-    /// Character span in the target line (at index `line`) that received/was
-    /// the moved content.
-    pub line_span: (usize, usize),
-}
-
 /// One DP transition on the traceback path.
 #[derive(Clone, Debug)]
 pub enum DpOp {
@@ -317,14 +298,12 @@ pub enum DpOp {
         k: usize,
         matched: usize,
         anchor: usize,
-        spans: Vec<SublineMove>,
     },
     /// K-to-1 collapse: old lines i..i+k folded into new line j.
     Collapse {
         k: usize,
         matched: usize,
         anchor: usize,
-        spans: Vec<SublineMove>,
     },
     /// Standalone deletion of old line i.
     Del,
@@ -1423,27 +1402,6 @@ pub fn block_anchor(bm: &BlockMatch, head_is_stmt_start: bool) -> usize {
 
 /// Subline move spans for a block transition: matched tokens landing on
 /// non-anchor lines.
-pub fn subline_moves(bm: &BlockMatch, anchor: usize) -> Vec<SublineMove> {
-    let mut spans = Vec::new();
-    for (li, s) in bm.per_line.iter().enumerate() {
-        if li == anchor {
-            continue;
-        }
-        let mut tis: Vec<usize> = s.iter().copied().collect();
-        tis.sort_unstable();
-        for ti in tis {
-            if bm.pair_of.contains_key(&(li, ti)) {
-                spans.push(SublineMove {
-                    line: li,
-                    anchor_span: (0, 0),
-                    line_span: (0, 0),
-                });
-            }
-        }
-    }
-    spans
-}
-
 /// Solve one cluster with the default weights.
 pub fn solve_cluster(cluster: &ChangeCluster, profile: Option<&LangProfile>) -> DpSolution {
     solve_cluster_with(cluster, profile, &Weights::default())
@@ -3085,7 +3043,6 @@ pub(crate) fn solve_cluster_matrix(
                 OpKind::Expand => {
                     let bm = block_lcs(&old[pi], &new[pj..pj + k], interner);
                     let anchor = block_anchor(&bm, new_meta[pj].is_stmt_start);
-                    let spans = subline_moves(&bm, anchor);
 
                     for idx in 0..k {
                         let nl = new_line_of(pj + idx);
@@ -3102,13 +3059,11 @@ pub(crate) fn solve_cluster_matrix(
                         matched: bm.matched,
                         k,
                         anchor,
-                        spans,
                     });
                 }
                 OpKind::Collapse => {
                     let bm = block_lcs(&new[pj], &old[pi..pi + k], interner);
                     let anchor = block_anchor(&bm, old_meta[pi].is_stmt_start);
-                    let spans = subline_moves(&bm, anchor);
 
                     for idx in 0..k {
                         let ol = old_line_of(pi + idx);
@@ -3125,7 +3080,6 @@ pub(crate) fn solve_cluster_matrix(
                         matched: bm.matched,
                         k,
                         anchor,
-                        spans,
                     });
                 }
                 OpKind::None => unreachable!(),
