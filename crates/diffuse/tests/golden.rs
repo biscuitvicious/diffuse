@@ -41,7 +41,7 @@ use diffuse::{
         apply::{apply_file_diff, apply_hunk_rows},
         lcs::char_len,
         merge::{RunKind, display_text_with_profile, is_wholesale_mod},
-        parse::{Row, RowKind},
+        parse::{Row, RowGroup, RowKind},
         wire::{MovSide, OutputFile, PipelineOutput},
     },
     render::{
@@ -311,6 +311,20 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
         let mut mods = 0usize;
         let mut movs = 0usize;
         for h in &f.hunks {
+            // Aux row texts in this hunk, for the moved-out tripwire below.
+            let aux_texts: Vec<String> = h
+                .rows
+                .iter()
+                .filter(|r| matches!(r.group, Some(RowGroup::Aux { .. })))
+                .map(|r| r.text())
+                .collect();
+            // Anchor deletion texts in this hunk, for the moved-in mirror.
+            let anchor_dels: Vec<String> = h
+                .rows
+                .iter()
+                .filter(|r| matches!(r.group, Some(RowGroup::Anchor)))
+                .filter_map(|r| r.del_text())
+                .collect();
             for r in &h.rows {
                 match r.kind {
                     RowKind::Mov => {
@@ -423,15 +437,17 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                     concat.chars().count(),
                     expected.chars().count()
                 );
-                // The DISK-EXACT invariant: removing the struck (del) content
-                // from the render must leave exactly the row's new-side line —
-                // A mod or add row's non-del runs concatenate to the new line
-                // (the old fragments), and this walk locks it.
+                // The DISK-EXACT invariant: removing the struck (del-like)
+                // content from the render must leave exactly the row's
+                // new-side line — A mod or add row's non-del-like runs
+                // concatenate to the new line (the old fragments), and
+                // this walk locks it. Moved-out runs are old-side like
+                // struck runs (see `RunKind::is_del_like`).
                 if (r.kind == RowKind::Mod || r.kind == RowKind::Add) && r.del_text().is_some() {
                     let kept: String = r
                         .runs
                         .iter()
-                        .filter(|x| x.kind != RunKind::Del)
+                        .filter(|x| !x.kind.is_del_like())
                         .map(|x| x.text.as_ref())
                         .collect();
                     check!(
@@ -447,7 +463,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                     let rev: String = r
                         .runs
                         .iter()
-                        .filter(|x| x.kind != RunKind::Add)
+                        .filter(|x| !x.kind.is_add_like())
                         .map(|x| x.text.as_ref())
                         .collect();
                     check!(
@@ -461,12 +477,14 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 }
                 for run in &r.runs {
                     match run.kind {
-                        RunKind::Del => check!(
+                        // Moved-out runs ride the del channel (no color/sgr,
+                        // like struck runs); only renderers tell them apart.
+                        RunKind::Del | RunKind::MovedSrc => check!(
                             run.color.is_default() && run.sgr.is_none(),
                             "{}: a del run carries no color/sgr",
                             f.path
                         ),
-                        RunKind::Add | RunKind::Ctx => {
+                        RunKind::Add | RunKind::Ctx | RunKind::MovedTgt => {
                             if let Some(s) = run.sgr {
                                 check!(
                                     matches!(s, 1 | 3 | 4 | 9 | 14),
@@ -475,6 +493,47 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                                 );
                             }
                         }
+                    }
+                    // Tripwire: moved-out text must survive in a same-hunk
+                    // aux row — otherwise the engine hid a genuine deletion
+                    // behind the moved mark. Token granularity: the moved
+                    // ranges come from word alignment, so shared tokens must
+                    // survive while edge punctuation (whose occurrence
+                    // identity across a reflow is ambiguous) may not match
+                    // verbatim.
+                    if run.kind == RunKind::MovedSrc && !run.text.is_empty() {
+                        let missing: Vec<&str> = run
+                            .text
+                            .split(|c: char| !c.is_alphanumeric())
+                            .filter(|t| !t.is_empty())
+                            .filter(|t| !aux_texts.iter().any(|a| a.contains(t)))
+                            .collect();
+                        check!(
+                            missing.is_empty(),
+                            "{}:{}: moved-out tokens survive nowhere in-hunk: {:?} (run {:?})",
+                            f.path,
+                            r.old_line.unwrap_or(0),
+                            missing,
+                            run.text
+                        );
+                    }
+                    // Mirror: moved-in target tokens must come from a
+                    // same-hunk anchor's old text.
+                    if run.kind == RunKind::MovedTgt && !run.text.is_empty() {
+                        let missing: Vec<&str> = run
+                            .text
+                            .split(|c: char| !c.is_alphanumeric())
+                            .filter(|t| !t.is_empty())
+                            .filter(|t| !anchor_dels.iter().any(|a| a.contains(t)))
+                            .collect();
+                        check!(
+                            missing.is_empty(),
+                            "{}:{}: moved-in tokens come from nowhere in-hunk: {:?} (run {:?})",
+                            f.path,
+                            r.new_line.unwrap_or(0),
+                            missing,
+                            run.text
+                        );
                     }
                 }
                 if r.kind == RowKind::Mod {
@@ -1575,6 +1634,7 @@ corpus_tests!(row_groups_contrast, "row-groups-contrast", 20, true, true);
 corpus_tests!(rust_lifetime_char, "rust-lifetime-char", 90, true, true);
 corpus_tests!(review_notes, "review-notes", 14, true, false);
 corpus_tests!(fn_return_tail, "fn-return-tail", 4, true, false);
+corpus_tests!(osc11_query_gate, "osc11-query-gate", 6, true, false);
 
 #[test]
 fn test_golden_initialized_detection() {

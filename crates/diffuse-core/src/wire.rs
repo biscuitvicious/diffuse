@@ -1001,10 +1001,19 @@ pub fn derive_spans_from_runs(runs: &[OutputRun]) -> Spans {
                 new_offset += char_len;
                 add.push((start, new_offset));
             }
-            RunKind::Del => {
+            // Moved-out source text left this line exactly like struck
+            // text (old-side coverage is identical); only renderers
+            // distinguish the two. See `RunKind::is_del_like`.
+            RunKind::Del | RunKind::MovedSrc => {
                 let start = old_offset;
                 old_offset += char_len;
                 del.push((start, old_offset));
+            }
+            // Moved-in target text is new-side-only (like filled text for
+            // offset purposes) but lands in no span bucket — it is shared,
+            // not novel. See `RunKind::is_add_like`.
+            RunKind::MovedTgt => {
+                new_offset += char_len;
             }
         }
     }
@@ -1173,26 +1182,26 @@ impl OutputRun {
     }
 }
 
-/// Project the forward/new text from an iterator of [`OutputRun`]s (Ctx + Add,
-/// non-Del).
+/// Project the forward/new text from an iterator of [`OutputRun`]s (Ctx +
+/// Add; del-like runs — struck or moved-out — are old-side only).
 pub fn runs_new_text<'a, I>(runs: I) -> String
 where
     I: IntoIterator<Item = &'a OutputRun>,
 {
     runs.into_iter()
-        .filter(|r| r.kind != RunKind::Del)
+        .filter(|r| !r.kind.is_del_like())
         .map(|r| r.text.as_ref())
         .collect()
 }
 
-/// Project the reverse/old text from an iterator of [`OutputRun`]s (Ctx + Del,
-/// non-Add).
+/// Project the reverse/old text from an iterator of [`OutputRun`]s (Ctx + Del
+/// + moved-out source; new-side-only runs are excluded).
 pub fn runs_old_text<'a, I>(runs: I) -> String
 where
     I: IntoIterator<Item = &'a OutputRun>,
 {
     runs.into_iter()
-        .filter(|r| r.kind != RunKind::Add)
+        .filter(|r| !r.kind.is_add_like())
         .map(|r| r.text.as_ref())
         .collect()
 }

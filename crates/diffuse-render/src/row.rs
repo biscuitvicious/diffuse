@@ -142,17 +142,22 @@ pub fn styled_prefix(
         Some(RowGroup::Aux { .. }) => match kind {
             RowKind::Add => {
                 let pad = pad4_bytes(new_line, &mut buf);
-                let num_fg = theme.palette.add_gutter_num.fg_code();
+                // Aux numbers share the anchor's number color so the block
+                // reads as one unit; the ~+ icons carry the add signal.
+                let num_fg = theme.palette.mod_gutter_num.fg_code();
                 let mod_fg = theme.palette.mod_gutter_icon.fg_code();
                 let add_fg = theme.palette.add_gutter_icon.fg_code();
                 format!("{num_fg}{pad}{mod_fg}~{add_fg}+{FG_RESET}\x1b[23m")
             }
             RowKind::Del => {
                 let pad = pad4_bytes(old_line, &mut buf);
-                let num_fg = theme.palette.del_gutter_num.italic_fg_code();
+                // Aux numbers replicate the anchor number style exactly
+                // (no del italic): the block reads as one unit, with the
+                // ~- icons carrying the del signal.
+                let num_fg = theme.palette.mod_gutter_num.fg_code();
                 let mod_fg = theme.palette.mod_gutter_icon.fg_code();
                 let del_fg = theme.palette.del_gutter_icon.fg_code();
-                format!("{num_fg}{pad}\x1b[23m{mod_fg}~{del_fg}-{FG_RESET}\x1b[23m")
+                format!("{num_fg}{pad}{mod_fg}~{del_fg}-{FG_RESET}\x1b[23m")
             }
             _ => {
                 let pad = pad4_bytes(new_line.or(old_line), &mut buf);
@@ -225,8 +230,14 @@ pub fn display_text(
         && word_diff
         && !runs.is_empty();
 
+    // Measure what renders: moved-out source text is skipped by the
+    // renderer, so counting it here would wrap rows onto blank corpse
+    // lines (geometry) and mis-slice scrolled views.
     let full_text = if use_merged {
-        runs.iter().map(|r| r.text.as_ref()).collect::<String>()
+        runs.iter()
+            .filter(|r| r.kind != RunKind::MovedSrc)
+            .map(|r| r.text.as_ref())
+            .collect::<String>()
     } else {
         text.to_string()
     };
@@ -402,6 +413,23 @@ pub fn write_row_segment<W: Write>(
         runs.iter().any(|t| t.kind == RunKind::Add) && runs.iter().any(|t| t.kind != RunKind::Add);
     let is_expansion_add = kind == RowKind::Add && del_text.is_some();
 
+    // Moved-out source text never renders (struck or otherwise): the aux
+    // rows portion it out as context, so emitting it here would claim the
+    // text twice. The wire keeps the runs. Filtered once up front so the
+    // full-row and segmented paths — including visual-column bookkeeping —
+    // agree on displayed text; no allocation when no moved runs exist.
+    let filtered_runs: Vec<OutputRun>;
+    let runs: &[OutputRun] = if runs.iter().any(|t| t.kind == RunKind::MovedSrc) {
+        filtered_runs = runs
+            .iter()
+            .filter(|t| t.kind != RunKind::MovedSrc)
+            .cloned()
+            .collect();
+        &filtered_runs
+    } else {
+        runs
+    };
+
     let base_bg = |tok_kind: RunKind| -> &str {
         if is_ctx {
             if selected {
@@ -415,8 +443,10 @@ pub fn write_row_segment<W: Write>(
             &del_bg
         } else if tok_kind == RunKind::Add && (is_mod_row || has_subwords || is_expansion_add) {
             &word_bg
-        } else {
+        } else if matches!(tok_kind, RunKind::Ctx | RunKind::MovedTgt | RunKind::Add) {
             line_bg
+        } else {
+            unreachable!("moved-out runs are filtered before rendering")
         }
     };
 
@@ -495,10 +525,15 @@ pub fn write_row_segment<W: Write>(
                 continue;
             }
             let bg = base_bg(tok.kind);
+            // Moved-in target text renders exactly as context: it is
+            // shared, not novel. Moved-out source never reaches here
+            // (filtered above) — failing loudly rather than mislabeling
+            // it context if that invariant ever breaks.
             let tok_kind_str = match tok.kind {
                 RunKind::Add => "add",
                 RunKind::Del => "del",
-                _ => "ctx",
+                RunKind::Ctx | RunKind::MovedTgt => "ctx",
+                RunKind::MovedSrc => unreachable!("moved-out runs are filtered before rendering"),
             };
             let row_kind_str = match kind {
                 RowKind::Add => "add",
@@ -568,10 +603,12 @@ pub fn write_row_segment<W: Write>(
         }
 
         let bg = base_bg(tok.kind);
+        // Moved-in target text renders exactly as context (see above).
         let tok_kind_str = match tok.kind {
             RunKind::Add => "add",
             RunKind::Del => "del",
-            _ => "ctx",
+            RunKind::Ctx | RunKind::MovedTgt => "ctx",
+            RunKind::MovedSrc => unreachable!("moved-out runs are filtered before rendering"),
         };
         let row_kind_str = match kind {
             RowKind::Add => "add",

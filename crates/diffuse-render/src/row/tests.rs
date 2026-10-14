@@ -97,6 +97,12 @@ fn test_styled_prefix_group_and_non_group() {
     assert_eq!(crate::ansi::strip_ansi(&s_aux_add), " 140~+");
     assert!(s_aux_add.contains(&theme.palette.mod_gutter_icon.fg_code()));
     assert!(s_aux_add.contains(&theme.palette.add_gutter_icon.fg_code()));
+    // Aux numbers carry the anchor's number color so the block reads as
+    // one unit; the ~+ icon (not the number) signals the add.
+    assert!(
+        s_aux_add.starts_with(&theme.palette.mod_gutter_num.fg_code()),
+        "aux add number must match anchor number color: {s_aux_add:?}"
+    );
 
     // Group aux del row has ~- (" 140~-")
     let s_aux_del = styled_prefix(
@@ -112,6 +118,14 @@ fn test_styled_prefix_group_and_non_group() {
     assert_eq!(crate::ansi::strip_ansi(&s_aux_del), " 140~-");
     assert!(s_aux_del.contains(&theme.palette.mod_gutter_icon.fg_code()));
     assert!(s_aux_del.contains(&theme.palette.del_gutter_icon.fg_code()));
+    assert!(
+        s_aux_del.starts_with(&theme.palette.mod_gutter_num.fg_code()),
+        "aux del number must replicate the anchor number style: {s_aux_del:?}"
+    );
+    assert!(
+        !s_aux_del.contains("\x1b[3m") && !s_aux_del.contains("\x1b[3;"),
+        "aux del number must not be italic like standalone dels: {s_aux_del:?}"
+    );
 }
 
 #[test]
@@ -840,4 +854,136 @@ fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_st
         !rendered.contains("\x1b[38;5;168m"),
         "must not contain pink foreground: {rendered:?}"
     );
+}
+
+#[test]
+fn test_render_moved_src_run_skipped() {
+    let theme = DiffuseTheme::DEFAULT;
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "    assert_eq!(".into(),
+        },
+        OutputRun {
+            kind: RunKind::MovedSrc,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "super::resolve_theme".into(),
+        },
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: ", ".into(),
+        },
+    ];
+    let rendered = render_row_segment(
+        "    assert_eq!(",
+        Some("    assert_eq!(super::resolve_theme, "),
+        &Spans::default(),
+        RowKind::Mod,
+        &runs,
+        0,
+        usize::MAX,
+        " 135~ ",
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(
+        !rendered.contains("super::resolve_theme"),
+        "moved-out source text must not render: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("assert_eq!"),
+        "common head must render: {rendered:?}"
+    );
+    // Genuinely deleted text keeps its strike.
+    assert!(
+        rendered.contains("\x1b[9m"),
+        "struck deletion must keep strike styling: {rendered:?}"
+    );
+}
+
+#[test]
+fn test_render_moved_tgt_like_context() {
+    let theme = DiffuseTheme::DEFAULT;
+    let ctx_runs = vec![OutputRun {
+        kind: RunKind::Ctx,
+        color: TokenColor::Function,
+        sgr: None,
+        text: "resolve_theme".into(),
+    }];
+    let tgt_runs = vec![OutputRun {
+        kind: RunKind::MovedTgt,
+        color: TokenColor::Function,
+        sgr: None,
+        text: "resolve_theme".into(),
+    }];
+    let render_with = |runs: &Vec<OutputRun>| {
+        render_row_segment(
+            "resolve_theme",
+            None,
+            &Spans::default(),
+            RowKind::Add,
+            runs,
+            0,
+            usize::MAX,
+            " 135~+ ",
+            false,
+            false,
+            0,
+            true,
+            true,
+            &theme,
+        )
+    };
+    // Moved-in target text renders exactly as context: shared, not novel.
+    // In particular it must never take strike or fill styling.
+    assert_eq!(render_with(&tgt_runs), render_with(&ctx_runs));
+    assert!(
+        !render_with(&tgt_runs).contains("\x1b[9m"),
+        "moved-in target must not strike"
+    );
+}
+
+#[test]
+fn test_display_text_skips_moved_source_runs() {
+    // Geometry must measure what renders: moved-out source text is
+    // skipped by the renderer, so measuring it would wrap the row onto
+    // blank corpse lines.
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "    assert_eq!(".into(),
+        },
+        OutputRun {
+            kind: RunKind::MovedSrc,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "super::resolve_theme".into(),
+        },
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: " ".into(),
+        },
+    ];
+    let disp = display_text(
+        "    assert_eq!(",
+        Some("    assert_eq!(super::resolve_theme "),
+        RowKind::Mod,
+        &runs,
+        0,
+        true,
+    );
+    assert_eq!(disp, "    assert_eq!( ");
 }

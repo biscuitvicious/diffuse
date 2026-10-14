@@ -721,7 +721,8 @@ fn test_note_lines_addition_alignment() {
         .iter()
         .map(|(kind, text)| match kind {
             RunKind::Ctx => text.clone(),
-            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Del | RunKind::MovedSrc => format!("[-{text}-]"),
+            RunKind::MovedTgt => format!("[>{text}>]"),
             RunKind::Add => format!("{{+{text}+}}"),
         })
         .collect();
@@ -743,7 +744,8 @@ fn test_token_is_alnum_replacement() {
         .iter()
         .map(|(kind, text)| match kind {
             RunKind::Ctx => text.clone(),
-            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Del | RunKind::MovedSrc => format!("[-{text}-]"),
+            RunKind::MovedTgt => format!("[>{text}>]"),
             RunKind::Add => format!("{{+{text}+}}"),
         })
         .collect();
@@ -762,7 +764,8 @@ fn test_prefix_gutter_comment_alignment() {
         .iter()
         .map(|(kind, text)| match kind {
             RunKind::Ctx => text.clone(),
-            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Del | RunKind::MovedSrc => format!("[-{text}-]"),
+            RunKind::MovedTgt => format!("[>{text}>]"),
             RunKind::Add => format!("{{+{text}+}}"),
         })
         .collect();
@@ -782,7 +785,8 @@ fn test_path_change_local_to_parenthetical_addition() {
         .iter()
         .map(|(kind, text)| match kind {
             RunKind::Ctx => text.clone(),
-            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Del | RunKind::MovedSrc => format!("[-{text}-]"),
+            RunKind::MovedTgt => format!("[>{text}>]"),
             RunKind::Add => format!("{{+{text}+}}"),
         })
         .collect();
@@ -801,7 +805,8 @@ fn test_pi_review_path_alignment() {
         .iter()
         .map(|(kind, text)| match kind {
             RunKind::Ctx => text.clone(),
-            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Del | RunKind::MovedSrc => format!("[-{text}-]"),
+            RunKind::MovedTgt => format!("[>{text}>]"),
             RunKind::Add => format!("{{+{text}+}}"),
         })
         .collect();
@@ -832,7 +837,8 @@ fn test_unicode_subline_alignment() {
         .iter()
         .map(|(kind, text)| match kind {
             RunKind::Ctx => text.clone(),
-            RunKind::Del => format!("[-{text}-]"),
+            RunKind::Del | RunKind::MovedSrc => format!("[-{text}-]"),
+            RunKind::MovedTgt => format!("[>{text}>]"),
             RunKind::Add => format!("{{+{text}+}}"),
         })
         .collect();

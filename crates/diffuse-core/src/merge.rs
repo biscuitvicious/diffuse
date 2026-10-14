@@ -7,7 +7,7 @@ use std::{slice, str};
 
 use crate::{
     lcs::char_slice,
-    parse::{Row, Spans},
+    parse::{Row, RowGroup, Spans},
 };
 
 /// The semantic classification of a token run in a diff row.
@@ -16,6 +16,19 @@ pub enum RunKind {
     Ctx,
     Del,
     Add,
+    /// Reflow-moved source text: characters that left this (anchor) line
+    /// for continuation aux rows in the same Expand block. Old-side
+    /// content, like [`RunKind::Del`], but explicitly *not* deleted — it
+    /// survives verbatim elsewhere in the hunk. Renderers skip it by
+    /// default (the aux rows show where it went); the strike is reserved
+    /// for genuinely deleted text. See `is_del_like`.
+    MovedSrc,
+    /// Reflow-moved target text: characters an aux row shares with its
+    /// anchor donor — moved in, explicitly not novel. Emitted forward for
+    /// aux-grouped additions (the mirror of [`RunKind::MovedSrc`]); also
+    /// the image of `MovedSrc` under reversal, which keeps wire reversal
+    /// an exact involution. Renders exactly as context. See `is_add_like`.
+    MovedTgt,
 }
 
 impl RunKind {
@@ -25,6 +38,8 @@ impl RunKind {
             RunKind::Ctx => '_',
             RunKind::Del => '-',
             RunKind::Add => '+',
+            RunKind::MovedSrc => '<',
+            RunKind::MovedTgt => '>',
         }
     }
 
@@ -34,8 +49,26 @@ impl RunKind {
             '_' => Some(RunKind::Ctx),
             '-' => Some(RunKind::Del),
             '+' => Some(RunKind::Add),
+            '<' => Some(RunKind::MovedSrc),
+            '>' => Some(RunKind::MovedTgt),
             _ => None,
         }
+    }
+
+    /// True for old-side change marking: struck-deleted or struck-moved.
+    /// Span derivation, wholesale coverage, and forward-projection filters
+    /// must treat both identically (moved text still left this line); only
+    /// renderers distinguish them.
+    #[inline]
+    pub fn is_del_like(self) -> bool {
+        matches!(self, RunKind::Del | RunKind::MovedSrc)
+    }
+
+    /// True for new-side-only content: filled-novel or moved-in. Reverse
+    /// (old-side) projections must exclude both.
+    #[inline]
+    pub fn is_add_like(self) -> bool {
+        matches!(self, RunKind::Add | RunKind::MovedTgt)
     }
 
     pub fn reverse(&self) -> Self {
@@ -43,6 +76,8 @@ impl RunKind {
             RunKind::Ctx => RunKind::Ctx,
             RunKind::Del => RunKind::Add,
             RunKind::Add => RunKind::Del,
+            RunKind::MovedSrc => RunKind::MovedTgt,
+            RunKind::MovedTgt => RunKind::MovedSrc,
         }
     }
 }
@@ -63,22 +98,24 @@ impl<'a> Run<'a> {
     }
 }
 
-/// Project the old side of a run sequence (non-Add, i.e. Ctx + Del).
+/// Project the old side of a run sequence (excluding new-side-only
+/// runs: filled-novel and moved-in target text).
 pub fn project_old_runs(runs: &[Run]) -> String {
     let mut s = String::new();
     for r in runs {
-        if r.kind != RunKind::Add {
+        if !r.kind.is_add_like() {
             s.push_str(r.text);
         }
     }
     s
 }
 
-/// Project the new side of a run sequence (non-Del, i.e. Ctx + Add).
+/// Project the new side of a run sequence (non-del-like, i.e. Ctx + Add;
+/// moved-out source text is old-side only).
 pub fn project_new_runs(runs: &[Run]) -> String {
     let mut s = String::new();
     for r in runs {
-        if r.kind != RunKind::Del {
+        if !r.kind.is_del_like() {
             s.push_str(r.text);
         }
     }
@@ -207,6 +244,26 @@ pub fn merged_runs_with_profile<'a>(
             del_text,
             project_reverse(&runs)
         );
+    }
+    // Aux-grouped additions are reflow destinations: text they share with
+    // the anchor donor moved in — mark it target. (Plain context would be
+    // equally truthful; the mark lets renderers tell moved-in from merely
+    // common, and completes the wire's account of the move whose source
+    // half the anchor marks moved-out.) Genuine fills keep Add.
+    if matches!(r.group(), Some(RowGroup::Aux { .. })) && matches!(r, Row::Add(_)) {
+        return runs
+            .into_iter()
+            .map(|run| {
+                if run.kind == RunKind::Ctx {
+                    Run {
+                        kind: RunKind::MovedTgt,
+                        ..run
+                    }
+                } else {
+                    run
+                }
+            })
+            .collect();
     }
     runs
 }
@@ -342,20 +399,20 @@ pub fn display_text_with_profile(
         .collect()
 }
 
-/// Project the row runs forward to reconstruct the new line (stripping Del
-/// runs).
+/// Project the row runs forward to reconstruct the new line (stripping
+/// del-like runs: struck-deleted and struck-moved alike are old-side).
 pub fn project_forward(runs: &[Run]) -> String {
     runs.iter()
-        .filter(|r| r.kind != RunKind::Del)
+        .filter(|r| !r.kind.is_del_like())
         .map(|r| r.text)
         .collect()
 }
 
 /// Project the row runs backward to reconstruct the old line (stripping Add
-/// runs).
+/// runs; moved-out source text reconstructs like struck text).
 pub fn project_reverse(runs: &[Run]) -> String {
     runs.iter()
-        .filter(|r| r.kind != RunKind::Add)
+        .filter(|r| !r.kind.is_add_like())
         .map(|r| r.text)
         .collect()
 }
@@ -364,7 +421,7 @@ pub fn project_reverse(runs: &[Run]) -> String {
 pub fn project_reverse_matches(runs: &[Run], del_text: &str) -> bool {
     let mut remainder = del_text;
     for r in runs {
-        if r.kind != RunKind::Add {
+        if !r.kind.is_add_like() {
             if !remainder.starts_with(r.text) {
                 return false;
             }
@@ -376,3 +433,53 @@ pub fn project_reverse_matches(runs: &[Run], del_text: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod moved_src_tests {
+    use super::*;
+
+    #[test]
+    fn test_moved_src_sigil_round_trip() {
+        assert_eq!(RunKind::MovedSrc.sign_char(), '<');
+        assert_eq!(RunKind::from_sign_char('<'), Some(RunKind::MovedSrc));
+        assert_eq!(RunKind::MovedTgt.sign_char(), '>');
+        assert_eq!(RunKind::from_sign_char('>'), Some(RunKind::MovedTgt));
+        // Existing sigils unaffected.
+        assert_eq!(RunKind::from_sign_char('_'), Some(RunKind::Ctx));
+        assert_eq!(RunKind::from_sign_char('-'), Some(RunKind::Del));
+        assert_eq!(RunKind::from_sign_char('+'), Some(RunKind::Add));
+    }
+
+    #[test]
+    fn test_moved_src_is_del_like_but_not_del() {
+        assert!(RunKind::MovedSrc.is_del_like());
+        assert!(RunKind::Del.is_del_like());
+        assert!(!RunKind::Ctx.is_del_like());
+        assert!(!RunKind::Add.is_del_like());
+        // Del-like is not Del: renderers must distinguish struck-moved
+        // (skipped by default) from struck-deleted.
+        assert_ne!(RunKind::MovedSrc, RunKind::Del);
+    }
+
+    #[test]
+    fn test_moved_kinds_reverse_into_each_other() {
+        // Moved kinds reverse into each other, preserving direction across
+        // the old/new swap — this is what keeps wire reversal an exact
+        // involution *and* direction-correct (unlike mapping to Add/Del,
+        // which breaks one or the other).
+        assert_eq!(RunKind::MovedSrc.reverse(), RunKind::MovedTgt);
+        assert_eq!(RunKind::MovedTgt.reverse(), RunKind::MovedSrc);
+        assert_eq!(RunKind::Del.reverse(), RunKind::Add);
+        assert_eq!(RunKind::Ctx.reverse(), RunKind::Ctx);
+    }
+
+    #[test]
+    fn test_moved_tgt_is_add_like_but_not_add() {
+        assert!(RunKind::MovedTgt.is_add_like());
+        assert!(RunKind::Add.is_add_like());
+        assert!(!RunKind::Ctx.is_add_like());
+        assert!(!RunKind::Del.is_add_like());
+        assert!(!RunKind::MovedSrc.is_add_like());
+        assert_ne!(RunKind::MovedTgt, RunKind::Add);
+    }
+}

@@ -1057,6 +1057,19 @@ pub fn colored_runs_with_next(
                         text: token_cow(run.text),
                     },
                 );
+            } else if run.kind == RunKind::MovedSrc {
+                // Moved-out source text is old-side: emit it whole (no
+                // new-side token slicing — its characters are absent from
+                // the new line) for the wire; renderers skip it by default.
+                push_output_run(
+                    &mut out,
+                    OutputRun {
+                        kind: RunKind::MovedSrc,
+                        color: TokenColor::Default,
+                        sgr: None,
+                        text: token_cow(run.text),
+                    },
+                );
             } else {
                 let run_len = if run.text.is_ascii() {
                     run.text.len()

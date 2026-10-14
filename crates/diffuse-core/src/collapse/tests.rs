@@ -1907,3 +1907,86 @@ fn test_auxiliary_deletion_in_expansion_block_receives_row_group_aux() {
         "Deletion inside expansion block must have RowGroup::Aux with anchor 67"
     );
 }
+
+fn kinds_texts(runs: &[(RunKind, String)]) -> Vec<(&str, &str)> {
+    runs.iter()
+        .map(|(k, t)| {
+            (
+                match k {
+                    RunKind::Del => "del",
+                    RunKind::MovedTgt => "ctx",
+                    RunKind::Add => "add",
+                    RunKind::Ctx => "ctx",
+                    RunKind::MovedSrc => "moved",
+                },
+                t.as_str(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn test_relabel_moved_runs_empty_moved_is_identity() {
+    use crate::collapse::relabel_moved_runs;
+    let runs = vec![
+        (RunKind::Ctx, "    assert_eq!(".to_string()),
+        (RunKind::Del, "super::x".to_string()),
+    ];
+    let out = relabel_moved_runs(runs.clone(), &[]);
+    assert_eq!(kinds_texts(&out), kinds_texts(&runs));
+}
+
+#[test]
+fn test_relabel_moved_runs_full_coverage() {
+    use crate::collapse::relabel_moved_runs;
+    let runs = vec![
+        (RunKind::Ctx, "    assert_eq!(".to_string()),
+        (RunKind::Del, "super::x".to_string()),
+    ];
+    let out = relabel_moved_runs(runs, &[(15, 23)]);
+    assert_eq!(
+        kinds_texts(&out),
+        vec![("ctx", "    assert_eq!("), ("moved", "super::x")]
+    );
+}
+
+#[test]
+fn test_relabel_moved_runs_partial_coverage_splits() {
+    use crate::collapse::relabel_moved_runs;
+    // Old tail `a, b`: `a` moved away, `, ` genuinely deleted, `b` moved.
+    let runs = vec![(RunKind::Del, "a, b".to_string())];
+    let out = relabel_moved_runs(runs, &[(0, 1), (3, 4)]);
+    assert_eq!(
+        kinds_texts(&out),
+        vec![("moved", "a"), ("del", ", "), ("moved", "b")]
+    );
+}
+
+#[test]
+fn test_relabel_moved_runs_leaves_add_and_ctx_alone() {
+    use crate::collapse::relabel_moved_runs;
+    let runs = vec![
+        (RunKind::Ctx, "ab".to_string()),
+        (RunKind::Add, "cd".to_string()),
+        (RunKind::Del, "ab".to_string()),
+    ];
+    // Moved range covers the del run's span only; ctx/add runs keep kinds
+    // (add runs consume new-side text, never old offsets, so the del run
+    // sits at old [2, 4) despite preceding the add in run order).
+    let out = relabel_moved_runs(runs, &[(2, 4)]);
+    assert_eq!(
+        kinds_texts(&out),
+        vec![("ctx", "ab"), ("add", "cd"), ("moved", "ab")]
+    );
+}
+
+#[test]
+fn test_relabel_moved_runs_clamps_out_of_range() {
+    use crate::collapse::relabel_moved_runs;
+    let runs = vec![(RunKind::Del, "ab".to_string())];
+    let out = relabel_moved_runs(runs, &[(1, 99)]);
+    assert_eq!(kinds_texts(&out), vec![("del", "a"), ("moved", "b")]);
+    let runs = vec![(RunKind::Del, "ab".to_string())];
+    let out = relabel_moved_runs(runs, &[(5, 9)]);
+    assert_eq!(kinds_texts(&out), vec![("del", "ab")]);
+}

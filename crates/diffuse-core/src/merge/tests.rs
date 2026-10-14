@@ -59,9 +59,9 @@ fn trace_wobble() {
         .map(|x| {
             (
                 match x.kind {
-                    RunKind::Del => "del",
+                    RunKind::Del | RunKind::MovedSrc => "del",
                     RunKind::Add => "add",
-                    RunKind::Ctx => "ctx",
+                    RunKind::Ctx | RunKind::MovedTgt => "ctx",
                 },
                 x.text,
             )
@@ -105,9 +105,9 @@ fn whitespace_minimum() {
         .map(|x| {
             (
                 match x.kind {
-                    RunKind::Del => "del",
+                    RunKind::Del | RunKind::MovedSrc => "del",
                     RunKind::Add => "add",
-                    RunKind::Ctx => "ctx",
+                    RunKind::Ctx | RunKind::MovedTgt => "ctx",
                 },
                 x.text,
             )

@@ -2127,3 +2127,131 @@ fn test_synthetic_note_hunk_anchoring() {
         "Mismatched note must not synthesize a hunk"
     );
 }
+
+/// Expand anchors must mark reflow-moved source text as moved-out instead
+/// of struck: the old tail survives verbatim in the aux rows, so striking
+/// it claims a deletion that never happened (struck + context implies the
+/// text occurs twice in old). Only genuinely deleted text stays struck.
+#[test]
+fn test_expand_anchor_marks_moved_source() {
+    let diff = r#"diff --git a/crates/diffuse/src/main_tests.rs b/crates/diffuse/src/main_tests.rs
+--- a/crates/diffuse/src/main_tests.rs
++++ b/crates/diffuse/src/main_tests.rs
+@@ -131,7 +131,10 @@ fn test_resolve_theme_prefers_cli_flag() {
+     let _guard = ENV_MUTEX.lock().unwrap();
+     unsafe { env::remove_var("DIFFUSE_THEME") };
+     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
+-    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::LIGHT);
++    assert_eq!(
++        super::resolve_theme(Some("light"), false),
++        DiffuseTheme::LIGHT
++    );
+     let auto_theme = super::resolve_theme(Some("auto"));
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+
+    let anchor = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Mod
+                && r.group == Some(crate::parse::RowGroup::Anchor)
+                && r.old_line == Some(134)
+        })
+        .expect("expand anchor mod for old line 134");
+    let kinds: Vec<crate::merge::RunKind> = anchor.runs.iter().map(|r| r.kind).collect();
+    assert!(
+        kinds.contains(&crate::merge::RunKind::MovedSrc),
+        "anchor must carry moved-out runs, got: {:?}",
+        anchor.runs.iter().map(|r| &r.text).collect::<Vec<_>>()
+    );
+    // Moved text is never struck ...
+    for r in &anchor.runs {
+        if r.kind == crate::merge::RunKind::Del {
+            assert!(
+                !r.text.contains("super") && !r.text.contains("DiffuseTheme"),
+                "moved text must not be struck: {:?}",
+                r.text
+            );
+        }
+    }
+    // ... and moved runs cover the reflowed tail.
+    let moved_text: String = anchor
+        .runs
+        .iter()
+        .filter(|r| r.kind == crate::merge::RunKind::MovedSrc)
+        .map(|r| r.text.as_ref())
+        .collect();
+    assert!(
+        moved_text.contains("super::resolve_theme"),
+        "moved runs must cover the reflowed tail, got: {moved_text:?}"
+    );
+}
+
+/// Expand aux rows mark moved-in target text: context that survived from
+/// the anchor donor renders as moved-target, keeping the wire's account of
+/// where text came from (the anchor's moved-out mark is the other half).
+#[test]
+fn test_expand_aux_marks_moved_target() {
+    let diff = r#"diff --git a/crates/diffuse/src/main_tests.rs b/crates/diffuse/src/main_tests.rs
+--- a/crates/diffuse/src/main_tests.rs
++++ b/crates/diffuse/src/main_tests.rs
+@@ -131,7 +131,10 @@ fn test_resolve_theme_prefers_cli_flag() {
+     let _guard = ENV_MUTEX.lock().unwrap();
+     unsafe { env::remove_var("DIFFUSE_THEME") };
+     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
+-    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::LIGHT);
++    assert_eq!(
++        super::resolve_theme(Some("light"), false),
++        DiffuseTheme::LIGHT
++    );
+     let auto_theme = super::resolve_theme(Some("auto"));
+"#;
+
+    let output = run_pipeline_diff(diff);
+    let rows = &output.files[0].hunks[0].rows;
+    let aux = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Add
+                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 134 })
+                && r.new_line == Some(135)
+        })
+        .expect("expand aux add for new line 135");
+    // Every run is either moved-in target or novel fill: no plain context
+    // (everything shared came from the donor) and no struck runs.
+    for r in &aux.runs {
+        assert!(
+            matches!(
+                r.kind,
+                crate::merge::RunKind::MovedTgt | crate::merge::RunKind::Add
+            ),
+            "aux runs must be target or fill, got: {:?}:{}",
+            r.kind,
+            r.text
+        );
+    }
+    let moved_text: String = aux
+        .runs
+        .iter()
+        .filter(|r| r.kind == crate::merge::RunKind::MovedTgt)
+        .map(|r| r.text.as_ref())
+        .collect();
+    assert!(
+        moved_text.contains("super::resolve_theme"),
+        "aux moved-in text must cover the reflowed tail, got: {moved_text:?}"
+    );
+    // Genuinely novel fills keep their kind.
+    assert!(
+        aux.runs
+            .iter()
+            .any(|r| r.kind == crate::merge::RunKind::Add && r.text.contains("false")),
+        "novel fills must stay Add, got: {:?}",
+        aux.runs
+            .iter()
+            .map(|r| format!("{:?}:{}", r.kind, r.text))
+            .collect::<Vec<_>>()
+    );
+}

@@ -31,6 +31,73 @@ pub struct PairingResults {
     pub expand_blocks: FxHashMap<usize, Vec<usize>>,
 }
 
+/// Relabel pairwise del runs covered by recorded moves as moved-out:
+/// Expand anchors strike only genuinely deleted text. `runs` are
+/// `(RunKind, String)` over the anchor old text; `moved` holds char-offset
+/// ranges into that same text. Del runs intersecting `moved` split into
+/// Del/MovedSrc pieces (same-kind adjacents merged); Ctx/Add runs pass
+/// through untouched (Add runs consume new-side text, never old offsets).
+/// Out-of-range moved spans clamp; empty ones are ignored.
+pub(crate) fn relabel_moved_runs(
+    runs: Vec<(RunKind, String)>,
+    moved: &[(usize, usize)],
+) -> Vec<(RunKind, String)> {
+    if moved.is_empty() {
+        return runs;
+    }
+    let push = |out: &mut Vec<(RunKind, String)>, kind: RunKind, text: String| {
+        if text.is_empty() {
+            return;
+        }
+        if let Some((last_kind, last_text)) = out.last_mut()
+            && *last_kind == kind
+        {
+            last_text.push_str(&text);
+            return;
+        }
+        out.push((kind, text));
+    };
+    let mut out = Vec::with_capacity(runs.len());
+    let mut old_pos = 0usize;
+    for (kind, text) in runs {
+        let len = text.chars().count();
+        if kind != RunKind::Del || len == 0 {
+            if matches!(kind, RunKind::Del | RunKind::Ctx) {
+                old_pos += len;
+            }
+            push(&mut out, kind, text);
+            continue;
+        }
+        let chars: Vec<char> = text.chars().collect();
+        let mut spans: Vec<(usize, usize)> = moved
+            .iter()
+            .filter_map(|&(s, e)| {
+                let s = s.saturating_sub(old_pos);
+                let e = e.saturating_sub(old_pos).min(len);
+                (s < e && s < len).then_some((s.min(len), e))
+            })
+            .collect();
+        spans.sort_unstable();
+        let mut p = 0usize;
+        for (s, e) in spans {
+            let s = s.max(p);
+            if s >= e {
+                continue;
+            }
+            if s > p {
+                push(&mut out, RunKind::Del, chars[p..s].iter().collect());
+            }
+            push(&mut out, RunKind::MovedSrc, chars[s..e].iter().collect());
+            p = e;
+        }
+        if p < len {
+            push(&mut out, RunKind::Del, chars[p..].iter().collect());
+        }
+        old_pos += len;
+    }
+    out
+}
+
 /// Products of the assembly pass.
 pub struct AssembledMods {
     pub out: Vec<Row>,
@@ -396,12 +463,22 @@ pub fn pass_assemble_mods(
             next_adds.sort_unstable();
             next_adds.dedup();
 
-            // The mod row always presents its own word-level truth: strike
-            // what left this line, fill what replaced it — even when the
-            // struck content reflows into the continuation adds below
-            // (where the donor distribution shows where it went).  The
-            // source strike is what connects the two; suppressing it made
-            // wrapped tails silently vanish from the diff.
+            // The mod row presents its word-level truth over the anchor
+            // pair: strike what left this line, fill what replaced it.
+            // When the struck content reflows into the continuation adds
+            // below, old ranges surviving anywhere in those aux rows are
+            // marked moved-out instead of struck — the aux rows' context
+            // shows where the text went, so the strike would claim a
+            // deletion that never happened. This is marking, not
+            // suppression: every character stays present in the runs
+            // (concat == display still holds), only the kind changes, so
+            // wrapped tails cannot silently vanish the way outright
+            // suppression once made them do. Stored spans stay pairwise
+            // (wholesale coverage semantics are unchanged); runs carry the
+            // block-contextualized presentation. The moved set derives
+            // from the same word alignment family as everything else
+            // here (old text vs joined aux texts), so DP and heuristic
+            // anchors render uniformly.
             let mut anchor_group = None;
             if !next_adds.is_empty() {
                 let anchor_num = add.new_line_num().unwrap().get();
@@ -491,10 +568,42 @@ pub fn pass_assemble_mods(
                 }
             }
 
+            // Moved-out set: old ranges surviving in the continuation aux
+            // rows (complement of the joined-aux alignment's del spans).
+            // Empty for 1-to-1 mods (no aux rows): their runs pass through
+            // untouched with zero behavior change. Borrow ends before the
+            // DelLine move below, so no clone on the hot path.
+            let moved = if next_adds.is_empty() {
+                Vec::new()
+            } else {
+                let joined = next_adds
+                    .iter()
+                    .map(|&ai| h.rows[ai].text())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let aux_spans = word_spans_with_profile(&del_text, &joined, profile);
+                let mut del = aux_spans.del;
+                del.sort_unstable();
+                let old_len = del_text.chars().count();
+                let mut moved = Vec::new();
+                let mut pos = 0usize;
+                for (s, e) in del {
+                    let s = s.min(old_len);
+                    let e = e.min(old_len);
+                    if s > pos {
+                        moved.push((pos, s));
+                    }
+                    pos = pos.max(e);
+                }
+                if pos < old_len {
+                    moved.push((pos, old_len));
+                }
+                moved
+            };
             let mut old_line = DelLine::new(first_old_num, del_text);
             old_line.group = anchor_group;
             let mut new_line = AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans)
-                .with_cached_runs(runs);
+                .with_cached_runs(relabel_moved_runs(runs, &moved));
             new_line.group = anchor_group;
             let mod_row = Row::Mod { old_line, new_line };
             out.push(mod_row);
