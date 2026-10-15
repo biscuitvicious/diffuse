@@ -603,13 +603,60 @@ pub fn pass_assemble_mods(
                     })
                         || diffuse_syntax::profile::CloseDelimiter::default_classify_exact(
                             nxt_trim,
-                        ) != diffuse_syntax::profile::CloseDelimiter::None;
+                        ) != diffuse_syntax::profile::CloseDelimiter::None
+                        || (!nxt_trim.is_empty() && del_text.trim_end().ends_with(nxt_trim));
                     let is_opening_row = profile.is_some_and(|p| p.is_expression_open(nxt_trim))
                         || nxt_trim == "{"
                         || nxt_trim == "("
                         || nxt_trim == "[";
 
-                    let has_common_tokens = tok_count > 0 && donor_spans.add.len() < tok_count;
+                    let has_common_tokens = if tok_count > 0 && donor_spans.add.len() < tok_count {
+                        let aux_chars: Vec<char> = add_nxt.text().chars().collect();
+                        let mut fill = donor_spans.add.clone();
+                        normalize_ranges(&mut fill);
+                        let mut pos = 0usize;
+                        let mut has_content = false;
+                        let is_glue = |c: char| {
+                            c.is_whitespace()
+                                || matches!(
+                                    c,
+                                    '{' | '}'
+                                        | '('
+                                        | ')'
+                                        | '['
+                                        | ']'
+                                        | ','
+                                        | ';'
+                                        | ':'
+                                        | '.'
+                                        | '-'
+                                        | '>'
+                                        | '='
+                                        | '|'
+                                        | '&'
+                                )
+                        };
+                        for &(s, e) in &fill {
+                            if s > pos
+                                && aux_chars[pos..s.min(aux_chars.len())]
+                                    .iter()
+                                    .any(|&c| !is_glue(c))
+                            {
+                                has_content = true;
+                                break;
+                            }
+                            pos = pos.max(e);
+                        }
+                        if !has_content
+                            && pos < aux_chars.len()
+                            && aux_chars[pos..].iter().any(|&c| !is_glue(c))
+                        {
+                            has_content = true;
+                        }
+                        has_content
+                    } else {
+                        false
+                    };
                     if is_opening_row {
                         let text_len = add_nxt.text().chars().count();
                         let indent_len = add_nxt

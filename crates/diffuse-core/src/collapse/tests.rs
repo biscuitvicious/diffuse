@@ -2032,3 +2032,76 @@ fn seeded_anchor_does_not_absorb_run_members() {
         .expect("seeded }; anchor must pair");
     assert_eq!(anchor.new_line(), Some(850));
 }
+
+/// In a 1-to-K expansion where an import list expands into multiple imports,
+/// unrelated additions (e.g. `io::{self, Write}`) must not hijack the
+/// structural delimiters (`::{`, `,`, `}`) from the donor line's true
+/// continuation row (`sync::{Arc, Mutex, MutexGuard}`).
+#[test]
+fn test_import_block_expansion_delimiter_hijacking() {
+    let h = hunk(vec![
+        row(RowKind::Del, "use std::sync::{Arc, Mutex};", None, Some(1)),
+        row(RowKind::Add, "use std::{", Some(1), None),
+        row(RowKind::Add, "    fs,", Some(2), None),
+        row(RowKind::Add, "    io::{self, Write},", Some(3), None),
+        row(
+            RowKind::Add,
+            "    sync::{Arc, Mutex, MutexGuard},",
+            Some(4),
+            None,
+        ),
+        row(RowKind::Add, "};", Some(5), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    // Line 2 (fs,) and Line 3 (io::{self, Write},) are independent additions.
+    // They must NOT hijack delimiters (::{, }, ,) from the donor line.
+    let io_row = c
+        .iter()
+        .find(|r| r.text().contains("io::{"))
+        .expect("io row");
+    let io_runs = merged_runs(io_row);
+    let io_moved_runs: Vec<_> = io_runs
+        .iter()
+        .filter(|r| r.kind == RunKind::MovedTgt)
+        .collect();
+    assert!(
+        io_moved_runs.is_empty(),
+        "io row must not claim MovedTgt tokens from donor line, but claimed: {io_moved_runs:?}"
+    );
+
+    // Line 4 (sync::{Arc, Mutex, MutexGuard},) is the true reflow destination of
+    // sync::{Arc, Mutex}. Its own ::{ must NOT be an Add while sync is
+    // MovedTgt.
+    let sync_row = c
+        .iter()
+        .find(|r| r.text().contains("sync::{"))
+        .expect("sync row");
+    let sync_runs = merged_runs(sync_row);
+    let delim_run = sync_runs
+        .iter()
+        .find(|r| r.text.contains("::{"))
+        .expect("sync row ::{ run");
+    assert_ne!(
+        delim_run.kind,
+        RunKind::Add,
+        "sync row's ::{{ delimiter must not be demoted to Add by another line's claim"
+    );
+
+    // Concatenating the non-add tokens across the visual reflow group:
+    // Anchor context + aux MovedTgt tokens must reconstruct the exact original old
+    // line.
+    let mut reconstructed = String::new();
+    for r in &c {
+        for run in merged_runs(r) {
+            if run.kind == RunKind::Ctx || run.kind == RunKind::MovedTgt {
+                reconstructed.push_str(run.text);
+            }
+        }
+    }
+    assert_eq!(
+        reconstructed, "use std::sync::{Arc, Mutex};",
+        "Reflow group non-add runs must reconstruct original old line, got: {reconstructed:?}"
+    );
+}
