@@ -46,6 +46,7 @@ pub fn profile() -> LangProfile {
             "template ",
             "namespace ",
         ],
+        stmt_head_prefixes: &[],
         operators: OPERATORS,
         scope_stop_prefixes: &["class ", "struct ", "enum ", "namespace "],
         exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),

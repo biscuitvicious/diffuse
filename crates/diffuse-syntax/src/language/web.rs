@@ -100,6 +100,7 @@ pub fn profile() -> LangProfile {
             "export const ",
             "export let ",
         ],
+        stmt_head_prefixes: &[],
         operators: OPERATORS,
         scope_stop_prefixes: &[
             "class ",

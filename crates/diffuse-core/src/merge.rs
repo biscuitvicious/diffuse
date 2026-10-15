@@ -340,10 +340,21 @@ pub fn merged_runs_from_texts_with_profile<'a>(
         return coalesce_runs(runs);
     }
 
+    // Honor stored spans when they rebuild the same pairing: a customized
+    // pairing (verbatim-block demotion) survives to display instead of
+    // being re-derived. Profiled display only — unprofiled display keeps
+    // the legacy recompute (see the `colored_runs` wholesale test).
+    // Falls back to the fresh tape on any malformed span shape, so
+    // ordinary inputs render exactly as before.
+    if profile.is_some()
+        && let Some(chunks) =
+            crate::tape::AlignmentTape::chunks_from_spans(del_text, add_text, spans)
+    {
+        return crate::tape::AlignmentTape::runs_from_chunks(&chunks);
+    }
     let tape = crate::tape::AlignmentTape::from_texts(del_text, add_text, profile);
     tape.to_merged_runs()
 }
-
 /// Compress adjacent runs of the same kind into a single run with joined text.
 pub fn coalesce_runs<'a>(runs: Vec<Run<'a>>) -> Vec<Run<'a>> {
     let mut out: Vec<Run<'a>> = Vec::new();

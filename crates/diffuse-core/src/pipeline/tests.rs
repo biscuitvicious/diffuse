@@ -2255,3 +2255,355 @@ fn test_expand_aux_marks_moved_target() {
             .collect::<Vec<_>>()
     );
 }
+
+/// Reflow anchors pair the statement head with the block's head line: old
+/// `use std::...` anchors at new `use std::{` (same head, same indent,
+/// same line number), with the continuation lines as aux adds — not at the
+/// highest-content-overlap continuation line deeper in the block.
+#[test]
+fn test_reflow_anchor_prefers_head_line() {
+    let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
+--- a/crates/diffuse-render/src/ansi.rs
++++ b/crates/diffuse-render/src/ansi.rs
+@@ -4,7 +4,10 @@
+ //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
+ 
+-use std::fmt::{self, Write};
++use std::{
++    borrow::Cow,
++    fmt::{self, Write},
++};
+ 
+ pub use yansi::{Color, Condition, Paint, Style};
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    let anchor = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Mod && r.group == Some(crate::parse::RowGroup::Anchor)
+        })
+        .expect("reflow anchor mod");
+    assert_eq!(
+        (anchor.old_line, anchor.new_line),
+        (Some(6), Some(6)),
+        "anchor must pair the statement head lines, got old={:?} new={:?}",
+        anchor.old_line,
+        anchor.new_line
+    );
+    for new_line in [7, 8, 9] {
+        assert!(
+            rows.iter().any(|r| r.new_line == Some(new_line)
+                && r.group == Some(crate::parse::RowGroup::Aux { anchor: 6 })),
+            "new line {new_line} must be an aux add of the anchor"
+        );
+    }
+}
+
+/// Verbatim seeding forces the true move over a content-similar rival:
+/// old `let prefix` reflows with its tail moving several lines down while
+/// a novel `{repo_name}` line shares the head nearby. The seeded verbatim
+/// pair must win; the rival stays a pure addition.
+#[test]
+fn test_verbatim_seed_forces_true_move_over_rival() {
+    let diff = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +1,6 @@\n ctx\n-        let prefix = format!(\"{r}@\");\n+            let prefix = format!(\"{repo_name}@\");\n+            let prefix = format!(\"{r}@\");\n ctx2\n";
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    let verbatim = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Mod
+                && r.old_line == Some(2)
+                && r.text().contains("{r}@")
+        })
+        .expect("verbatim reindent must pair as Mod");
+    assert_eq!(
+        verbatim.new_line,
+        Some(3),
+        "verbatim pair must target the identical line, got new={:?}",
+        verbatim.new_line
+    );
+    let rival = rows
+        .iter()
+        .find(|r| r.new_line == Some(2))
+        .expect("rival row");
+    assert_eq!(
+        rival.kind,
+        crate::parse::RowKind::Add,
+        "rival novel line must stay a pure addition, got {:?}",
+        rival.kind
+    );
+}
+
+/// Aux moved-in marking is multiplicity-aware: the old head line carries
+/// two brackets (`{…}`) while the reflowed group carries four. Exactly two
+/// of the four may render as context (survivors); the other two must render
+/// as fill. All-context claims the same occurrence twice.
+#[test]
+fn test_reflow_aux_brackets_obey_multiplicity() {
+    let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
+--- a/crates/diffuse-render/src/ansi.rs
++++ b/crates/diffuse-render/src/ansi.rs
+@@ -4,7 +4,10 @@
+ //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
+
+-use std::fmt::{self, Write};
++use std::{
++    borrow::Cow,
++    fmt::{self, Write},
++};
+
+ pub use yansi::{Color, Condition, Paint, Style};
+"#;
+
+    let output = run_pipeline_diff(diff);
+    let rows = &output.files[0].hunks[0].rows;
+    let group: Vec<_> = rows
+        .iter()
+        .filter(|r| {
+            (r.kind == crate::parse::RowKind::Mod
+                && r.group == Some(crate::parse::RowGroup::Anchor))
+                || r.group == Some(crate::parse::RowGroup::Aux { anchor: 6 })
+        })
+        .collect();
+    assert_eq!(group.len(), 4, "anchor + three aux rows, got {group:?}");
+    let mut ctx = 0usize;
+    let mut fill = 0usize;
+    for row in &group {
+        for run in &row.runs {
+            for ch in run.text.chars() {
+                if ch == '{' || ch == '}' {
+                    match run.kind {
+                        crate::merge::RunKind::Add => fill += 1,
+                        // MovedTgt renders exactly as context.
+                        _ if run.kind == crate::merge::RunKind::Ctx
+                            || run.kind == crate::merge::RunKind::MovedTgt =>
+                        {
+                            ctx += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        (ctx, fill),
+        (2, 2),
+        "two brackets survive as context, two render as fill (old carries 2, new carries 4)"
+    );
+}
+
+/// Moved-in allocation is whole-token: aux-`"    let x = 1;"` must not
+/// consume the donor's `let` letter-by-letter out of an unrelated
+/// identifier, starving the verbatim aux row. The surviving row keeps its
+/// tokens; the rival's shared tokens render as fill.
+#[test]
+fn test_reflow_aux_claims_are_whole_tokens() {
+    let diff = "diff --git a/f.rs b/f.rs\n--- a/f.rs\n+++ b/f.rs\n@@ -1,2 +1,5 @@\n ctx\n-    let last_line_hash = hash_line_content(\"    let y = 2;\");\n+    let compound_hash = LineHash::from_lines([\n+        \"    let x = 1;\",\n+        \"    let y = 2;\",\n+    ]);\n ctx2\n";
+
+    let output = run_pipeline_diff(diff);
+    let rows = &output.files[0].hunks[0].rows;
+    let y_row = rows
+        .iter()
+        .find(|r| r.kind == crate::parse::RowKind::Add && r.text().contains("\"    let y = 2;\""))
+        .expect("verbatim y string aux row");
+    let moved: String = y_row
+        .runs
+        .iter()
+        .filter(|r| r.kind == crate::merge::RunKind::MovedTgt)
+        .map(|r| r.text.as_ref() as &str)
+        .collect();
+    assert!(
+        moved.contains('y'),
+        "verbatim row keeps its distinctive tokens moved-in, got moved {moved:?}"
+    );
+    assert!(
+        !moved.contains("let"),
+        "rival-row consumption must not scatter `let` letters; `let` renders as fill, got moved {moved:?}"
+    );
+}
+
+/// Strict ordered replay: every Mod row's runs must apply left-to-right
+/// over (del_text, new text) — Ctx checks both cursors with equality,
+/// Del/MovedSrc consume old, Add/MovedTgt consume new — ending with both
+/// sides fully consumed. This locks plumbing integrity (spans → runs →
+/// wire): any corruption, cursor drift, or dropped span fails here.
+#[test]
+fn test_mod_rows_replay_cleanly() {
+    let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
+--- a/crates/diffuse-render/src/ansi.rs
++++ b/crates/diffuse-render/src/ansi.rs
+@@ -4,7 +4,10 @@
+ //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
+
+-use std::fmt::{self, Write};
++use std::{
++    borrow::Cow,
++    fmt::{self, Write},
++};
+
+ pub use yansi::{Color, Condition, Paint, Style};
+"#;
+
+    let output = run_pipeline_diff(diff);
+    let rows = &output.files[0].hunks[0].rows;
+    let mut mods = 0;
+    for r in rows.iter().filter(|r| r.kind == crate::parse::RowKind::Mod) {
+        mods += 1;
+        let old: Vec<char> = r.del_text().expect("mod del_text").chars().collect();
+        let new: Vec<char> = r.text().chars().collect();
+        let (mut o, mut n) = (0usize, 0usize);
+        for run in &r.runs {
+            let t: Vec<char> = run.text.chars().collect();
+            match run.kind {
+                crate::merge::RunKind::Ctx => {
+                    assert_eq!(
+                        &old[o..o + t.len()],
+                        &t[..],
+                        "ctx run must match old at cursor (old={:?})",
+                        r.del_text().unwrap()
+                    );
+                    assert_eq!(
+                        &new[n..n + t.len()],
+                        &t[..],
+                        "ctx run must match new at cursor (new={:?})",
+                        r.text()
+                    );
+                    o += t.len();
+                    n += t.len();
+                }
+                crate::merge::RunKind::Del | crate::merge::RunKind::MovedSrc => {
+                    assert_eq!(&old[o..o + t.len()], &t[..], "del run must match old");
+                    o += t.len();
+                }
+                crate::merge::RunKind::Add | crate::merge::RunKind::MovedTgt => {
+                    assert_eq!(&new[n..n + t.len()], &t[..], "add run must match new");
+                    n += t.len();
+                }
+            }
+        }
+        assert_eq!(o, old.len(), "old side fully consumed");
+        assert_eq!(n, new.len(), "new side fully consumed");
+    }
+    assert!(mods > 0, "hunk must contain a Mod row");
+}
+
+/// Visible contiguity: replay a Mod row's runs tracking the old offset of
+/// the last VISIBLE run (Ctx/Del advance it; MovedSrc is skipped by
+/// renderers and must not). A Ctx run must start exactly there — anything
+/// else claims context the reader cannot verify against old. Del runs
+/// re-sync (their strike is visible). MovedSrc may not go backward.
+#[test]
+fn test_mod_rows_visible_contiguity() {
+    let diff = r#"diff --git a/crates/diffuse-render/src/ansi.rs b/crates/diffuse-render/src/ansi.rs
+--- a/crates/diffuse-render/src/ansi.rs
++++ b/crates/diffuse-render/src/ansi.rs
+@@ -4,7 +4,10 @@
+ //! Enforces that no raw `\x1b[...]` strings are hardcoded across modules.
+
+-use std::fmt::{self, Write};
++use std::{
++    borrow::Cow,
++    fmt::{self, Write},
++};
+
+ pub use yansi::{Color, Condition, Paint, Style};
+"#;
+
+    let output = run_pipeline_diff(diff);
+    let rows = &output.files[0].hunks[0].rows;
+    let mut mods = 0;
+    for r in rows.iter().filter(|r| r.kind == crate::parse::RowKind::Mod) {
+        mods += 1;
+        let old: Vec<char> = r.del_text().expect("mod del_text").chars().collect();
+        let (mut o, mut vo) = (0usize, 0usize);
+        for run in &r.runs {
+            let t: Vec<char> = run.text.chars().collect();
+            match run.kind {
+                crate::merge::RunKind::Ctx => {
+                    assert_eq!(
+                        o,
+                        vo,
+                        "ctx run {:?} follows skipped moved-out text; reader cannot verify it (old={:?})",
+                        run.text,
+                        r.del_text().unwrap()
+                    );
+                    assert_eq!(&old[o..o + t.len()], &t[..]);
+                    o += t.len();
+                    vo = o;
+                }
+                crate::merge::RunKind::Del => {
+                    assert!(o >= vo, "run must not go backward");
+                    assert_eq!(&old[o..o + t.len()], &t[..]);
+                    o += t.len();
+                    vo = o;
+                }
+                crate::merge::RunKind::MovedSrc => {
+                    assert!(o >= vo, "run must not go backward");
+                    assert_eq!(&old[o..o + t.len()], &t[..]);
+                    o += t.len();
+                }
+                crate::merge::RunKind::Add | crate::merge::RunKind::MovedTgt => {}
+            }
+        }
+        assert_eq!(o, old.len(), "old side fully consumed");
+    }
+    assert!(mods > 0, "hunk must contain a Mod row");
+}
+
+/// A split statement keeps its head anchor: old `let heading = ...` pairs
+/// with the unfinished `let heading =` head (new-432, context indent) and
+/// the moved-down value lines attach as aux — never the reverse (anchor on
+/// the content-heavy tail with the head as fragment).
+#[test]
+fn test_reflow_head_anchors_split_declaration() {
+    let diff = r#"diff --git a/src/syntax/mod.rs b/src/syntax/mod.rs
+--- a/src/syntax/mod.rs
++++ b/src/syntax/mod.rs
+@@ -423,9 +423,15 @@ pub fn fence_regions(lines: &[String], profile: Option<&LangProfile>) -> Vec<Fen
+ /// `markdownTokens` ported): `#`-headings (the marker muted, the title
+ /// accent + bold), inline code (syntax-string), `**bold**`, `*italic*`,
+ /// `~~strike~~`, `[text](url)` — the SGR rides the token.
+ pub fn markdown_tokens(text: &str) -> Vec<ClassifiedToken> {
+-    let heading = Regex::new(r"^(#{1,6})(\s+)(.*)$").expect("the md heading");
++    // The md regexes are FIXED — compile ONCE (the classify runs per row /
++    // per merged fragment; a recompile per call was the classify's cost for
++    // the markdown corpus).
++    static HEADING: OnceLock<Regex> = OnceLock::new();
++    static MD_INLINE: OnceLock<Regex> = OnceLock::new();
++    let heading =
++        HEADING.get_or_init(|| Regex::new(r"^(#{1,6})(\s+)(.*)$").expect("the md heading"));
+     if let Some(h) = heading.captures(text) {
+         return vec![];
+     }
+"#;
+
+    let output = run_pipeline_diff(diff);
+    assert_eq!(output.files.len(), 1);
+    let rows = &output.files[0].hunks[0].rows;
+    let anchor = rows
+        .iter()
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Mod
+                && r.old_line == Some(427)
+                && r.group == Some(crate::parse::RowGroup::Anchor)
+        })
+        .expect("reflow anchor mod on the declaration head");
+    assert_eq!(
+        (anchor.old_line, anchor.new_line),
+        (Some(427), Some(432)),
+        "anchor must pair the declaration head, got old={:?} new={:?}",
+        anchor.old_line,
+        anchor.new_line
+    );
+    assert!(
+        rows.iter().any(|r| r.new_line == Some(433)
+            && matches!(r.group, Some(crate::parse::RowGroup::Aux { .. }))),
+        "moved-down value line must attach as aux"
+    );
+}

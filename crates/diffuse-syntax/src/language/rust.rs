@@ -98,6 +98,7 @@ pub fn profile() -> LangProfile {
             "mod ",
             "type ",
         ],
+        stmt_head_prefixes: &["let ", "const ", "static "],
         operators: OPERATORS,
         scope_stop_prefixes: &[
             "struct ",

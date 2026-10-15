@@ -32,6 +32,7 @@ pub fn profile() -> LangProfile {
             Regex::new(r"^\s*(?:function\s+)?([A-Za-z0-9_]+)\s*\(\)").expect("sh fn_decl"),
         ),
         decl_prefixes: &["function "],
+        stmt_head_prefixes: &["local ", "export "],
         operators: OPERATORS,
         scope_stop_prefixes: &[],
         exact_delimiters: BlockDelimStyle::Keywords.default_exact_delimiters(),

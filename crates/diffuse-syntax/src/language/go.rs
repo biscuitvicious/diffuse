@@ -57,6 +57,7 @@ pub fn profile() -> LangProfile {
             Regex::new(r"^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z0-9_]+)").expect("go fn_decl"),
         ),
         decl_prefixes: &["func ", "type ", "var ", "const ", "package ", "import "],
+        stmt_head_prefixes: &[],
         operators: OPERATORS,
         scope_stop_prefixes: &["type ", "package ", "import "],
         exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),

@@ -1990,3 +1990,45 @@ fn test_relabel_moved_runs_clamps_out_of_range() {
     let out = relabel_moved_runs(runs, &[(5, 9)]);
     assert_eq!(kinds_texts(&out), vec![("del", "ab")]);
 }
+
+/// Seeded anchors must not swallow run members: a verbatim seed pairs its
+/// anchor 1-to-1, and sibling dels of the same run still render (as
+/// reflow pairs or standalone dels) — never vanish. Every old line
+/// renders.
+#[test]
+fn seeded_anchor_does_not_absorb_run_members() {
+    // Mirrors the `word_spans` early-return refactor: old `};` (indent 8)
+    // seeds with new `};` (indent 4); the DP pairs the `WordSpans {`
+    // bodies; the leftover lone-`}` dels must reflow-pair, never vanish.
+    let h = hunk(vec![
+        row(RowKind::Del, "        };", None, Some(549)),
+        row(RowKind::Del, "    }", None, Some(550)),
+        row(RowKind::Del, "    WordSpans {", None, Some(551)),
+        row(RowKind::Del, "        del: x,", None, Some(552)),
+        row(RowKind::Del, "        add: y,", None, Some(553)),
+        row(RowKind::Del, "    }", None, Some(554)),
+        row(RowKind::Add, "        }", Some(844), None),
+        row(RowKind::Add, "    } else {", Some(845), None),
+        row(RowKind::Add, "    WordSpans {", Some(846), None),
+        row(RowKind::Add, "        del: x,", Some(847), None),
+        row(RowKind::Add, "        add: y,", Some(848), None),
+        row(RowKind::Add, "        }", Some(849), None),
+        row(RowKind::Add, "    };", Some(850), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+    let rendered_old: std::collections::HashSet<u32> =
+        c.iter().filter_map(|r| r.old_line()).collect();
+    for n in 549..=554 {
+        assert!(
+            rendered_old.contains(&n),
+            "old line {n} must render (Mod, Del, or reflow), got olds {rendered_old:?}"
+        );
+    }
+    // The verbatim `};` relocation still pairs as the anchor.
+    let anchor = c
+        .iter()
+        .find(|r| r.kind() == RowKind::Mod && r.old_line() == Some(549))
+        .expect("seeded }; anchor must pair");
+    assert_eq!(anchor.new_line(), Some(850));
+}

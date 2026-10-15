@@ -286,6 +286,377 @@ fn load_expected_render(name: &str, flavor: &'static str) -> Arc<String> {
 
 /// The walk: every invariant over the whole corpus. A failure increments
 /// `failures` and prints the exact row; the caller asserts zero at the end.
+/// Round-trip invariants, checked on live output for every corpus:
+/// - old + diff = old snapshot, new − diff = new snapshot: every patch hunk
+///   range renders (no drops), and every numbered row matches its snapshot line
+///   (no inventions, no misnumbering). Output legitimately contains extra
+///   context beyond hunk boundaries (expanded from the snapshots), so the check
+///   is required-presence plus snapshot-equality, never exact row/patch
+///   equality.
+/// - moved-in multiplicity per hunk: moved-in tokens ⊆ struck tokens (fires on
+///   double-claimed occurrences, e.g. two old brackets rendered as four context
+///   brackets).
+fn assert_diff_invariants(
+    patch: &str,
+    out: &PipelineOutput,
+    corpus: &str,
+    old_snap: &std::collections::HashMap<String, std::sync::Arc<String>>,
+    new_snap: &std::collections::HashMap<String, std::sync::Arc<String>>,
+) {
+    use std::collections::HashMap;
+
+    // Parse the patch into per-file required changed-line numbers: every
+    // `-` line's old number and every `+` line's new number, tracked with
+    // running counters reset at each hunk header. Context lines are
+    // intentionally NOT required — the engine trims and expands context
+    // windows freely; only changed lines must render.
+    struct FileReq {
+        display: String,
+        old_path: String,
+        req_old: Vec<(u32, String)>,
+        req_new: Vec<(u32, String)>,
+        cur_old: u32,
+        cur_new: u32,
+        in_hunk: bool,
+    }
+    let mut files: Vec<FileReq> = Vec::new();
+    // Split on `diff --git` (not `+++`) so renames and deletions (`+++
+    // /dev/null`) also open entries; display path prefers the new side.
+    // Paths may contain unquoted spaces; the ` b/` separator between the
+    // two sides is unambiguous.
+    let split_paths = |line: &str| {
+        let rest = line.strip_prefix("diff --git ")?;
+        let cut = rest.find(" b/")?;
+        let (a, b) = rest.split_at(cut);
+        let strip = |p: &str| {
+            p.strip_prefix("a/")
+                .or_else(|| p.strip_prefix("b/"))
+                .or_else(|| p.strip_prefix("/dev/null").map(|_| ""))
+                .unwrap_or(p)
+                .to_string()
+        };
+        Some((strip(a), strip(&b[1..])))
+    };
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            if let Some((old_p, new_p)) = split_paths(line) {
+                let display = if new_p.is_empty() {
+                    old_p.clone()
+                } else {
+                    new_p.clone()
+                };
+                files.push(FileReq {
+                    display,
+                    old_path: old_p,
+                    req_old: Vec::new(),
+                    req_new: Vec::new(),
+                    cur_old: 0,
+                    cur_new: 0,
+                    in_hunk: false,
+                });
+            }
+        } else if line.strip_prefix("@@ ").is_some() {
+            // Reset running counters from the hunk header; counts may be
+            // omitted (= 1). Zero-length sides (`-0,0`) reset to 0 and
+            // record nothing.
+            if let Some(f) = files.last_mut() {
+                let h = &line[3..];
+                let mut sides = h.split(' ').filter_map(|w| {
+                    if let Some((a, b)) = w.split_once(',') {
+                        let a = a.trim_start_matches(['-', '+']).parse::<u32>().ok()?;
+                        let b = b.trim_end_matches('@').parse::<u32>().ok();
+                        Some((a, b.unwrap_or(1)))
+                    } else {
+                        let a = w.trim_start_matches(['-', '+']).parse::<u32>().ok()?;
+                        Some((a, 1))
+                    }
+                });
+                if let (Some((os, _)), Some((ns, _))) = (sides.next(), sides.next()) {
+                    f.cur_old = os;
+                    f.cur_new = ns;
+                    f.in_hunk = true;
+                }
+            }
+        } else if let Some(f) = files.last_mut() {
+            if !f.in_hunk {
+                continue;
+            }
+            match line.as_bytes().first() {
+                Some(b' ') => {
+                    f.cur_old += 1;
+                    f.cur_new += 1;
+                }
+                Some(b'-') => {
+                    f.req_old.push((f.cur_old, line[1..].to_string()));
+                    f.cur_old += 1;
+                }
+                Some(b'+') => {
+                    f.req_new.push((f.cur_new, line[1..].to_string()));
+                    f.cur_new += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    // Skip files without changes (mode changes, binary notices): the engine
+    // emits no rows for them.
+    let files: Vec<FileReq> = files
+        .into_iter()
+        .filter(|f| !f.req_old.is_empty() || !f.req_new.is_empty())
+        .collect();
+    assert_eq!(
+        files.len(),
+        out.files.len(),
+        "[{corpus}] patch files with changes must match output files"
+    );
+    for (fi, (freq, of)) in files.iter().zip(out.files.iter()).enumerate() {
+        let (path, old_path, req_old, req_new) =
+            (&freq.display, &freq.old_path, &freq.req_old, &freq.req_new);
+        let old_lines: Option<Vec<&str>> = old_snap
+            .get(old_path.as_str())
+            .or_else(|| old_snap.get(path.as_str()))
+            .map(|c| c.lines().collect());
+        let new_lines: Option<Vec<&str>> = new_snap
+            .get(path.as_str())
+            .or_else(|| new_snap.get(old_path.as_str()))
+            .map(|c| c.lines().collect());
+        let strip_ws = |t: &str| t.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        // Record an old-side line, firing on contradictory duplicates
+        // (same number, different text — overlapping hunks may repeat a
+        // row, but never with different content).
+        let mut seen_old: HashMap<u32, String> = HashMap::new();
+        let mut seen_new: HashMap<u32, String> = HashMap::new();
+        let mut record_old = |n: u32, text: String| {
+            if let Some(prev) = seen_old.get(&n) {
+                assert!(
+                    prev == &text,
+                    "[{corpus}] {path} (file {fi}): old line {n} renders twice with different text: {prev:?} vs {text:?}"
+                );
+            } else {
+                seen_old.insert(n, text);
+            }
+        };
+        let mut record_new = |n: u32, text: String| {
+            if let Some(prev) = seen_new.get(&n) {
+                assert!(
+                    prev == &text,
+                    "[{corpus}] {path} (file {fi}): new line {n} renders twice with different text: {prev:?} vs {text:?}"
+                );
+            } else {
+                seen_new.insert(n, text);
+            }
+        };
+        for h in &of.hunks {
+            for r in &h.rows {
+                match r.kind {
+                    RowKind::Ctx | RowKind::Del => {
+                        if let Some(n) = r.old_line {
+                            record_old(n, r.old_text());
+                        }
+                        if matches!(r.kind, RowKind::Ctx)
+                            && let Some(n) = r.new_line
+                        {
+                            record_new(n, r.new_text());
+                        }
+                    }
+                    RowKind::Mod => {
+                        // A Collapse anchor's del_text spans its whole
+                        // block (possibly reflow-joined): match it against
+                        // the snapshot window starting at its first line,
+                        // whitespace-insensitively (joins insert spaces).
+                        if let (Some(n), Some(dt)) = (r.old_line, r.del_text()) {
+                            // Window source: snapshot lines when present,
+                            // else the patch's own del lines (renamed files
+                            // ship only new content). Either way the match
+                            // is whitespace-insensitive: Collapse joins
+                            // insert spaces.
+                            let src: Vec<String> = match &old_lines {
+                                Some(snap) => {
+                                    let mut v = Vec::new();
+                                    let mut m = n;
+                                    while v.len() <= 64 {
+                                        match snap.get(m as usize - 1) {
+                                            Some(l) => v.push(l.to_string()),
+                                            None => break,
+                                        }
+                                        m += 1;
+                                    }
+                                    v
+                                }
+                                None => req_old
+                                    .iter()
+                                    .skip_while(|(k, _)| *k != n)
+                                    .map(|(_, t)| t.clone())
+                                    .collect(),
+                            };
+                            let want = strip_ws(&dt);
+                            // How many leading source lines the
+                            // del_text covers: smallest k with equal
+                            // stripped content.
+                            let mut acc = String::new();
+                            let mut take = 0usize;
+                            for l in &src {
+                                acc.extend(l.chars().filter(|c| !c.is_whitespace()));
+                                take += 1;
+                                if acc == want {
+                                    break;
+                                }
+                                if acc.len() > want.len() || take > 64 {
+                                    take = usize::MAX;
+                                    break;
+                                }
+                            }
+                            if take == usize::MAX || acc != want {
+                                panic!(
+                                    "[{corpus}] {path} (file {fi}): mod old line {n} del_text {dt:?} matches no source window"
+                                );
+                            }
+                            // Mark covered numbers: snapshot positions when
+                            // available, else the patch's own del numbers.
+                            if old_lines.is_some() {
+                                for k in n..n + take as u32 {
+                                    if let Some(snap) = &old_lines {
+                                        record_old(k, snap[(k as usize) - 1].to_string());
+                                    }
+                                }
+                            } else {
+                                let mut marked = 0;
+                                for (k, t) in req_old.iter() {
+                                    if *k < n {
+                                        continue;
+                                    }
+                                    if marked >= take {
+                                        break;
+                                    }
+                                    record_old(*k, t.clone());
+                                    marked += 1;
+                                }
+                            }
+                        }
+                        if let Some(n) = r.new_line {
+                            record_new(n, r.new_text());
+                        }
+                    }
+                    RowKind::Add => {
+                        if let Some(n) = r.new_line {
+                            record_new(n, r.new_text());
+                        }
+                    }
+                    RowKind::Mov => {
+                        if r.mov_side == Some(MovSide::Src) {
+                            if let Some(n) = r.old_line {
+                                record_old(n, r.old_text());
+                            }
+                        } else if let Some(n) = r.new_line {
+                            record_new(n, r.new_text());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for (n, _) in req_old {
+            assert!(
+                seen_old.contains_key(n),
+                "[{corpus}] {path} (file {fi}): old line {n} never renders"
+            );
+        }
+        for (n, _) in req_new {
+            assert!(
+                seen_new.contains_key(n),
+                "[{corpus}] {path} (file {fi}): new line {n} never renders"
+            );
+        }
+        // Snapshot equality for single-line rows (joined Mod blocks are
+        // covered by the window match above).
+        for h in &of.hunks {
+            for r in &h.rows {
+                if let Some(n) = r.old_line
+                    && matches!(r.kind, RowKind::Ctx | RowKind::Del)
+                    && let Some(snap) = &old_lines
+                    && let Some(exp) = snap.get(n as usize - 1)
+                    && r.old_text() != *exp
+                {
+                    panic!(
+                        "[{corpus}] {path} (file {fi}): old line {n} renders as {:?}, snapshot has {exp:?}",
+                        r.old_text()
+                    );
+                }
+                if let Some(n) = r.new_line
+                    && matches!(r.kind, RowKind::Ctx | RowKind::Add)
+                    && let Some(snap) = &new_lines
+                    && let Some(exp) = snap.get(n as usize - 1)
+                    && r.new_text() != *exp
+                {
+                    panic!(
+                        "[{corpus}] {path} (file {fi}): new line {n} renders as {:?}, snapshot has {exp:?}",
+                        r.new_text()
+                    );
+                }
+            }
+        }
+        // Moved-in multiplicity per hunk. Whitespace tokens are split
+        // into single spaces: occurrence supply is positional, so an aux
+        // indent may legitimately consume part of a wider struck indent;
+        // exact-string token counting would false-fire there.
+        // Non-whitespace tokens stay whole (single-char delimiters
+        // included — those are the double-claim signal).
+        for (hi, oh) in of.hunks.iter().enumerate() {
+            let mut struck: HashMap<String, usize> = HashMap::new();
+            let mut moved_in: HashMap<String, usize> = HashMap::new();
+            let count = |map: &mut HashMap<String, usize>, tok: &str| {
+                if diffuse::core::lcs::token_is_ws(tok) {
+                    for _ in tok.chars() {
+                        *map.entry(" ".to_string()).or_default() += 1;
+                    }
+                } else {
+                    *map.entry(tok.to_string()).or_default() += 1;
+                }
+            };
+            // Merge adjacent same-kind runs first: the wire layer
+            // splits runs for syntax coloring (e.g. lifetime `'` from
+            // `static`) without changing kinds; tokenizing the fragments
+            // would manufacture mismatches against whole-token supply.
+            let mut merged: Vec<(RunKind, String)> = Vec::new();
+            for r in &oh.rows {
+                for run in &r.runs {
+                    if let Some((k, t)) = merged.last_mut()
+                        && *k == run.kind
+                    {
+                        t.push_str(&run.text);
+                        continue;
+                    }
+                    merged.push((run.kind, run.text.to_string()));
+                }
+            }
+            for (kind, text) in &merged {
+                {
+                    let toks = diffuse::core::lcs::tokenize_line(text).collect::<Vec<_>>();
+                    match kind {
+                        RunKind::Del | RunKind::MovedSrc => {
+                            for t in toks {
+                                count(&mut struck, t);
+                            }
+                        }
+                        RunKind::MovedTgt => {
+                            for t in toks {
+                                count(&mut moved_in, t);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            for (tok, n) in &moved_in {
+                let have = struck.get(tok).copied().unwrap_or(0);
+                assert!(
+                    have >= *n,
+                    "[{corpus}] {path} hunk {hi} (file {fi}): moved-in {tok:?} ×{n} exceeds struck ×{have}"
+                );
+            }
+        }
+    }
+}
 fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
     let mut failures = 0usize;
     macro_rules! check {
@@ -1242,6 +1613,13 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     );
     assert_wire_json_matches(&output, name);
     walk_and_assert(&output, name, min);
+    assert_diff_invariants(
+        &fixture.diff,
+        &output,
+        name,
+        &fixture.old_content,
+        &fixture.new_content,
+    );
     (fixture, output)
 }
 
@@ -1431,6 +1809,14 @@ fn run_bin_leg(name: &str, min: usize) {
         untracked_skipped: vec![],
     };
     walk_and_assert(&decoded, name, min);
+    let bin_fixture = load_fixture(name);
+    assert_diff_invariants(
+        &bin_fixture.diff,
+        &decoded,
+        name,
+        &bin_fixture.old_content,
+        &bin_fixture.new_content,
+    );
 }
 
 /// Slice a single path's portion out of a multi-file diff: from its

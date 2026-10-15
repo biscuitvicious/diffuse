@@ -428,6 +428,11 @@ pub struct LangProfile {
     /// Prefixes that introduce declarations/items in this language.
     /// Used to break multi-line statement expansion in `pass_assemble_mods`.
     pub decl_prefixes: &'static [&'static str],
+    /// Prefixes that begin a statement head anywhere, including unfinished
+    /// continuations (e.g. variable declarations like `let x =`). Consulted
+    /// by statement-start classification. Unlike `decl_prefixes`, implies
+    /// nothing about sections: a `let` inside a function body is Code.
+    pub stmt_head_prefixes: &'static [&'static str],
     /// Sorted multi-character operators for `O(log n)` binary-search lookup.
     pub operators: &'static [&'static str],
     /// Structural scope-boundary prefixes — items that delimit top-level scopes

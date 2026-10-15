@@ -25,6 +25,7 @@ pub fn profile() -> LangProfile {
         tail_return_arrow: false,
         fn_decl: None,
         decl_prefixes: &[],
+        stmt_head_prefixes: &[],
         operators: &[],
         scope_stop_prefixes: &[],
         exact_delimiters: BlockDelimStyle::Braces.default_exact_delimiters(),

@@ -2948,3 +2948,413 @@ fn test_mismatched_indent_return_tail_stays_unpaired() {
     let sol = dp::solve_cluster(&cluster, rs);
     assert_eq!(signature(&sol), ["del", "add"]);
 }
+/// Verbatim seeding maps unambiguous trimmed-equal del/add pairs before
+/// the DP walk: the DP corridor and global rerouting can strand true
+/// moves (pairing content-similar rivals instead), while a unique
+/// verbatim counterpart on both sides is exact evidence.
+#[test]
+fn test_verbatim_seeds_unique_pair() {
+    let h = Hunk {
+        old_start: 1,
+        old_count: 2,
+        new_start: 1,
+        new_count: 3,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(
+                LineNum::new(1).unwrap(),
+                "        let prefix = format!(\"{r}@\");",
+            )),
+            Row::Del(DelLine::new(
+                LineNum::new(2).unwrap(),
+                "        let other = 1;",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(1).unwrap(),
+                "            let prefix = format!(\"{repo_name}@\");",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(2).unwrap(),
+                "            let prefix = format!(\"{r}@\");",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(3).unwrap(),
+                "            let other = 1;",
+            )),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: vec![h.rows[0].clone(), h.rows[1].clone()],
+        new_rows: vec![h.rows[2].clone(), h.rows[3].clone(), h.rows[4].clone()],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 0), (2, 1)].into_iter().collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> =
+        [(1, 2), (2, 3), (3, 4)].into_iter().collect();
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: None,
+        new_content: None,
+        profile: None,
+        fn_cache: &mut fn_cache,
+        hard: &rustc_hash::FxHashSet::default(),
+    });
+    // The verbatim reindent (old-1 <-> new-2) seeds; the rival novel line
+    // and the identical pair (old-2 <-> new-3, also verbatim!) seed too.
+    assert_eq!(seeds.get(&3), Some(&0), "verbatim reindent must seed");
+    assert_eq!(seeds.get(&4), Some(&1), "verbatim pair must seed");
+    assert!(!seeds.contains_key(&2), "novel rival must not seed");
+}
+
+/// Ambiguity refuses seeding: two identical dels, one add — the DP
+/// decides (seeding cannot know which occurrence moved).
+#[test]
+fn test_verbatim_seeds_ambiguous_stays_empty() {
+    let h = Hunk {
+        old_start: 1,
+        old_count: 2,
+        new_start: 1,
+        new_count: 1,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "        x();")),
+            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        x();")),
+            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "        x();")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: vec![h.rows[0].clone(), h.rows[1].clone()],
+        new_rows: vec![h.rows[2].clone()],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 0), (2, 1)].into_iter().collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 2)].into_iter().collect();
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: None,
+        new_content: None,
+        profile: None,
+        fn_cache: &mut fn_cache,
+        hard: &rustc_hash::FxHashSet::default(),
+    });
+    assert!(
+        seeds.is_empty(),
+        "ambiguous duplicates must not seed: {seeds:?}"
+    );
+}
+
+/// Moved-marked and hard-guarded rows never seed: moves.rs owns
+/// relocations, guards own vetoes.
+#[test]
+fn test_verbatim_seeds_respect_moves_and_guards() {
+    let h = Hunk {
+        old_start: 1,
+        old_count: 2,
+        new_start: 1,
+        new_count: 2,
+        section: String::new(),
+        rows: vec![
+            Row::MovSrc(DelLine::new(LineNum::new(1).unwrap(), "        moved();")),
+            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        guarded();")),
+            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "        moved();")),
+            Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        guarded();")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: vec![h.rows[0].clone(), h.rows[1].clone()],
+        new_rows: vec![h.rows[2].clone(), h.rows[3].clone()],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 0), (2, 1)].into_iter().collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 2), (2, 3)].into_iter().collect();
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let mut hard = rustc_hash::FxHashSet::default();
+    hard.insert(1);
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: None,
+        new_content: None,
+        profile: None,
+        fn_cache: &mut fn_cache,
+        hard: &hard,
+    });
+    assert!(
+        seeds.is_empty(),
+        "moved/guarded rows must not seed: {seeds:?}"
+    );
+}
+
+/// Blank lines never seed (the trivial blank path owns them).
+#[test]
+fn test_verbatim_seeds_skip_blanks() {
+    let h = Hunk {
+        old_start: 1,
+        old_count: 1,
+        new_start: 1,
+        new_count: 1,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "   ")),
+            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "   ")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: vec![h.rows[0].clone()],
+        new_rows: vec![h.rows[1].clone()],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 0)].into_iter().collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 1)].into_iter().collect();
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: None,
+        new_content: None,
+        profile: None,
+        fn_cache: &mut fn_cache,
+        hard: &rustc_hash::FxHashSet::default(),
+    });
+    assert!(seeds.is_empty(), "blanks must not seed: {seeds:?}");
+}
+
+/// Cross-function twins never seed: the fragment guard (same policy as
+/// the DP walk arms) refuses pairs whose scopes diverge.
+#[test]
+fn test_verbatim_seeds_reject_cross_function() {
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 1,
+        old_count: 3,
+        new_start: 4,
+        new_count: 3,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
+            Row::Add(AddLine::new(
+                LineNum::new(5).unwrap(),
+                "            let x = 1;",
+            )),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: vec![h.rows[0].clone()],
+        new_rows: vec![h.rows[1].clone()],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = [(2, 0)].into_iter().collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> = [(5, 1)].into_iter().collect();
+    // Del lives in f, add lives in g; both functions survive, so the
+    // fragment guard rejects the cross-function pairing. (The add is
+    // deliberately deeper-indented so the indent rule cannot also block:
+    // this test pins the fragment policy exactly.)
+    let old = [
+        "fn f() {",
+        "        let x = 1;",
+        "}",
+        "fn g() {",
+        "        let y = 2;",
+        "}",
+    ];
+    let new = [
+        "fn f() {",
+        "        let x = 2;",
+        "}",
+        "fn g() {",
+        "            let x = 1;",
+        "}",
+    ];
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: Some(&old[..]),
+        new_content: Some(&new[..]),
+        profile: rs,
+        fn_cache: &mut fn_cache,
+        hard: &rustc_hash::FxHashSet::default(),
+    });
+    assert!(
+        seeds.is_empty(),
+        "cross-function twins must not seed: {seeds:?}"
+    );
+}
+
+/// Same-slot competition belongs to the DP: a same-indent head-matching
+/// rival add blocks seeding even for a verbatim twin at another indent
+/// (in-place edit beside a moved twin — only the DP weighs both).
+#[test]
+fn test_verbatim_seeds_yield_to_same_slot_rival() {
+    let h = Hunk {
+        old_start: 1,
+        old_count: 1,
+        new_start: 1,
+        new_count: 2,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
+            Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
+            Row::Add(AddLine::new(
+                LineNum::new(5).unwrap(),
+                "            let x = 1;",
+            )),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: vec![h.rows[0].clone()],
+        new_rows: vec![h.rows[1].clone(), h.rows[2].clone()],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = [(2, 0)].into_iter().collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> = [(2, 1), (5, 2)].into_iter().collect();
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: None,
+        new_content: None,
+        profile: None,
+        fn_cache: &mut fn_cache,
+        hard: &rustc_hash::FxHashSet::default(),
+    });
+    assert!(
+        seeds.is_empty(),
+        "same-indent head rival must defer to the DP: {seeds:?}"
+    );
+}
+
+/// Same-spot verbatim pairs never seed (relocations resolve through
+/// Mov/trivial-Mod already); seeding targets indent-changing moves.
+#[test]
+fn test_verbatim_seeds_skip_same_indent() {
+    let h = Hunk {
+        old_start: 1,
+        old_count: 1,
+        new_start: 1,
+        new_count: 1,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "    x();")),
+            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "    x();")),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let cluster = super::ChangeCluster {
+        preceding_ctx: vec![],
+        old_rows: vec![h.rows[0].clone()],
+        new_rows: vec![h.rows[1].clone()],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: super::SyntaxSectionKind::Code,
+    };
+    let del_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 0)].into_iter().collect();
+    let add_by_num: rustc_hash::FxHashMap<u32, usize> = [(1, 1)].into_iter().collect();
+    let mut fn_cache = rustc_hash::FxHashMap::default();
+    let seeds = super::pairing::verbatim_seeds(super::pairing::VerbatimSeedInput {
+        cluster: &cluster,
+        h: &h,
+        del_by_num: &del_by_num,
+        add_by_num: &add_by_num,
+        old_content: None,
+        new_content: None,
+        profile: None,
+        fn_cache: &mut fn_cache,
+        hard: &rustc_hash::FxHashSet::default(),
+    });
+    assert!(
+        seeds.is_empty(),
+        "same-spot verbatim must not seed: {seeds:?}"
+    );
+}
+
+/// An unfinished `let` declaration head still begins a statement: the
+/// declaration starts here even when its value continues on later lines.
+/// Block anchors must not let content volume override such a head.
+#[test]
+fn test_let_declaration_head_is_statement_start() {
+    let rs = lang_profile("rs");
+    assert!(
+        dp::is_statement_start("    let heading =", rs),
+        "unfinished `let` head must be a statement start"
+    );
+    assert!(
+        dp::is_statement_start("    let mut buf = Vec::new();", rs),
+        "complete `let` head must be a statement start"
+    );
+    assert!(
+        !dp::is_statement_start("    let_chains = true;", rs),
+        "`let_` prefix must not match"
+    );
+    assert!(
+        !dp::is_statement_start("    let heading =", None),
+        "no-profile fallback stays conservative"
+    );
+}
+
+/// Shell `local`/`export` bindings are statement heads like `let`: an
+/// unfinished `local x=$(...)` still begins a declaration for anchor and
+/// reflow purposes, without becoming a Declaration section.
+#[test]
+fn test_shell_local_export_is_statement_start() {
+    let sh = lang_profile("sh");
+    assert!(
+        dp::is_statement_start("    local out=$(cmd arg)", sh),
+        "unfinished `local` head must be a statement start"
+    );
+    assert!(
+        dp::is_statement_start("export FOO=bar", sh),
+        "`export` head must be a statement start"
+    );
+    assert!(
+        !dp::is_statement_start("    locality = true;", sh),
+        "`locality` prefix must not match"
+    );
+}

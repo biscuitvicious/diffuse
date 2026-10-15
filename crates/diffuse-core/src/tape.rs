@@ -228,15 +228,21 @@ impl<'a> AlignmentTape<'a> {
     /// Convert alignment chunks directly into renderer `Run` items without
     /// heuristic reconstruction.
     pub fn to_merged_runs(&self) -> Vec<Run<'a>> {
-        let mut runs: Vec<Run<'a>> = Vec::with_capacity(self.chunks.len() + 4);
+        Self::runs_from_chunks(&self.chunks)
+    }
+
+    /// Render merged runs from an explicit chunk stream (same presentation
+    /// logic as [`Self::to_merged_runs`], decoupled from fresh alignment).
+    /// Used to honor stored spans that record a customized pairing.
+    pub(crate) fn runs_from_chunks(chunks: &[TapeChunk<'a>]) -> Vec<Run<'a>> {
+        let mut runs: Vec<Run<'a>> = Vec::with_capacity(chunks.len() + 4);
         let mut is_leading = true;
         let mut idx = 0;
 
-        while idx < self.chunks.len() {
+        while idx < chunks.len() {
             // Check for adjacent (Strike, Fill) pair
-            if idx + 1 < self.chunks.len()
-                && let (TapeChunk::Strike(d), TapeChunk::Fill(a)) =
-                    (&self.chunks[idx], &self.chunks[idx + 1])
+            if idx + 1 < chunks.len()
+                && let (TapeChunk::Strike(d), TapeChunk::Fill(a)) = (&chunks[idx], &chunks[idx + 1])
             {
                 if is_leading {
                     let d_ws_len = d.len() - d.trim_start().len();
@@ -352,7 +358,7 @@ impl<'a> AlignmentTape<'a> {
                 }
             }
 
-            let chunk = &self.chunks[idx];
+            let chunk = &chunks[idx];
             match chunk {
                 TapeChunk::Keep(text) => {
                     if !all_ws_or_empty(text) {
@@ -419,6 +425,70 @@ impl<'a> AlignmentTape<'a> {
         coalesced
     }
 
+    /// Build tape chunks directly from stored spans (both sides non-empty).
+    /// Returns `None` unless spans are pairwise well-formed: sorted,
+    /// non-overlapping, in-bounds, equal del/add counts, and every common
+    /// gap byte-identical on both sides. Callers fall back to a fresh tape
+    /// then, so behavior on ordinary inputs is unchanged.
+    pub(crate) fn chunks_from_spans(
+        del_text: &'a str,
+        add_text: &'a str,
+        spans: &Spans,
+    ) -> Option<Vec<TapeChunk<'a>>> {
+        let ok_side = |ranges: &[(usize, usize)], len: usize| {
+            let mut pos = 0usize;
+            for &(s, e) in ranges {
+                if s < pos || e < s || e > len {
+                    return false;
+                }
+                pos = e;
+            }
+            true
+        };
+        let del_len = char_len(del_text);
+        let add_len = char_len(add_text);
+        if !ok_side(&spans.del, del_len) || !ok_side(&spans.add, add_len) {
+            return None;
+        }
+        if spans.del.len() != spans.add.len() {
+            return None;
+        }
+        let mut chunks: Vec<TapeChunk<'a>> = Vec::new();
+        let mut pd = 0usize;
+        let mut pa = 0usize;
+        for (&(ds, de), &(as_, ae)) in spans.del.iter().zip(spans.add.iter()) {
+            let gap_del = char_slice(del_text, pd, ds);
+            let gap_add = char_slice(add_text, pa, as_);
+            if gap_del != gap_add {
+                return None;
+            }
+            if ds > pd {
+                // Gap text from the ADD side: downstream whitespace
+                // splitting slices the Fill chunk, and coalescing needs
+                // a shared parent.
+                chunks.push(TapeChunk::Keep(gap_add));
+            }
+            if de > ds {
+                chunks.push(TapeChunk::Strike(char_slice(del_text, ds, de)));
+            }
+            if ae > as_ {
+                chunks.push(TapeChunk::Fill(char_slice(add_text, as_, ae)));
+            }
+            pd = de;
+            pa = ae;
+        }
+        if pd < del_len || pa < add_len {
+            let tail_del = char_slice(del_text, pd, del_len);
+            let tail_add = char_slice(add_text, pa, add_len);
+            if tail_del != tail_add {
+                return None;
+            }
+            if !tail_add.is_empty() {
+                chunks.push(TapeChunk::Keep(tail_add));
+            }
+        }
+        Some(chunks)
+    }
     /// Computes canonical `Spans { del, add }` from the alignment tape.
     pub fn to_spans(&self) -> Spans {
         let mut del: Vec<(usize, usize)> = Vec::new();

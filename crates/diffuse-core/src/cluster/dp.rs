@@ -240,6 +240,26 @@ pub struct Weights {
     /// Bonus for statement head keyword agreement when similarity is
     /// sufficient.
     pub head_agree_bonus: f64,
+    /// Bonus for statement head agreement at equal indent (160.0 = 2x the
+    /// plain head bonus): a reflowed statement head belongs with its head
+    /// line — the block's opener at the same level — rather than with a
+    /// higher-overlap continuation line deeper in the block. Replaces
+    /// `head_agree_bonus` (it does not stack) when indents match. Code
+    /// lines with keyword heads only (`use`, `let`, …): comment prose and
+    /// macro/identifier heads keep the legacy flat bonus, so comment
+    /// reflow blocks keep their grouping and prose never claims
+    /// statement slots. Withheld when the del survives elsewhere with
+    /// multiplicity intact: a redundant instance is not a transformation,
+    /// so placement credit must not outvote the survival penalty — the
+    /// pair falls back to the legacy flat bonus exactly.
+    ///
+    /// Sized Oct 2026 from exact detour arithmetic (a 19-vs-9-char content
+    /// margin outvoted head +80, indent, and position by 4 points after the
+    /// 2-Add detour the head pairing pays): 160 flips it with a 16-point
+    /// margin while staying well below the slot tier (250), so slot claims
+    /// keep their role. Golden review gates any change — the failure mode
+    /// is over-pairing same-head low-content pairs.
+    pub same_indent_head_bonus: f64,
     /// Bonus for matching compound block closing delimiters (e.g. `};` or `}`).
     pub close_agree_bonus: f64,
     /// Multiplier on line indentation differences.
@@ -276,6 +296,7 @@ impl Default for Weights {
             boundary_proximity_bonus: 500.0,
             survives_elsewhere_penalty: 150.0,
             head_agree_bonus: 80.0,
+            same_indent_head_bonus: 160.0,
             close_agree_bonus: 250.0,
             indent_penalty_factor: 5.0,
             min_containment_len: DEFAULT_MIN_CONTAINMENT_LEN,
@@ -559,6 +580,15 @@ pub(crate) fn mod_pair_needs_scoring(
 
     let max_syn = if is_property_match {
         w.head_agree_bonus + 200.0
+    } else if statement_head_match
+        && indent_shift == 0
+        && !om.comment
+        && !nm.comment
+        && om.head_is_keyword
+        && nm.head_is_keyword
+        && !om.survives_in_new
+    {
+        w.same_indent_head_bonus
     } else if statement_head_match {
         w.head_agree_bonus
     } else {
@@ -582,7 +612,10 @@ pub(crate) fn mod_pair_needs_scoring(
     if base_delta <= -2.0 * w.row_cost {
         if is_prefix_containment == Some(false)
             || (!can_have_containment && is_prefix_containment.is_none())
-            || (base_delta + w.head_agree_bonus <= -2.0 * w.row_cost)
+            // Second chance with head credit: the tier-appropriate bonus
+            // (same-indent heads earn more), floored at the legacy flat
+            // credit so unmatched pairs prune exactly as before.
+            || (base_delta + max_syn.max(w.head_agree_bonus) <= -2.0 * w.row_cost)
         {
             return false;
         }
@@ -1336,6 +1369,7 @@ pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> b
         if p.decl_prefixes.iter().any(|&pf| t.starts_with(pf))
             || p.scope_stop_prefixes.iter().any(|&pf| t.starts_with(pf))
             || p.import_prefixes.iter().any(|&pf| t.starts_with(pf))
+            || p.stmt_head_prefixes.iter().any(|&pf| t.starts_with(pf))
         {
             return true;
         }
@@ -1400,8 +1434,6 @@ pub fn block_anchor(bm: &BlockMatch, head_is_stmt_start: bool) -> usize {
     most
 }
 
-/// Subline move spans for a block transition: matched tokens landing on
-/// non-anchor lines.
 /// Solve one cluster with the default weights.
 pub fn solve_cluster(cluster: &ChangeCluster, profile: Option<&LangProfile>) -> DpSolution {
     solve_cluster_with(cluster, profile, &Weights::default())
@@ -1426,6 +1458,10 @@ pub(crate) struct DpRowMeta {
     pub close_tail: CloseDelimiter,
     pub exact_close: CloseDelimiter,
     pub is_terminal_return: bool,
+    /// First word is a language keyword (`use`, `let`, …): the line has a
+    /// genuine statement head (prose and macro/identifier heads do not).
+    /// Gates the same-indent head bonus.
+    pub head_is_keyword: bool,
     /// Function-tail return position (`) -> T`): pairing two of these at
     /// equal indent is a structural slot claim, scored with the slot bonus.
     /// Set from `LangProfile::is_return_tail_position`; silent without a
@@ -2006,14 +2042,17 @@ pub(crate) fn solve_cluster_matrix(
         let dt = dp_tokens(&mut arena.interner, text);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
-        let first_word = if comment {
+        let first_word_str = if comment {
             let comment_body = trimmed
                 .trim_start_matches(|c: char| !c.is_alphanumeric() && !c.is_whitespace())
                 .trim_start();
-            first_word(comment_body).map(|w| arena.interner.intern(w))
+            first_word(comment_body)
         } else {
-            first_word(text).map(|w| arena.interner.intern(w))
+            first_word(text)
         };
+        let head_is_keyword =
+            profile.is_some_and(|p| first_word_str.is_some_and(|w| p.is_keyword(w)));
+        let first_word = first_word_str.map(|w| arena.interner.intern(w));
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.old_close_dist[i];
         let prox_close = if close_dist == usize::MAX {
@@ -2066,6 +2105,7 @@ pub(crate) fn solve_cluster_matrix(
             close_tail,
             exact_close,
             is_terminal_return,
+            head_is_keyword,
             is_return_tail,
             survives_in_new: r
                 .old_line()
@@ -2079,14 +2119,17 @@ pub(crate) fn solve_cluster_matrix(
         let dt = dp_tokens(&mut arena.interner, text);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
-        let first_word = if comment {
+        let first_word_str = if comment {
             let comment_body = trimmed
                 .trim_start_matches(|c: char| !c.is_alphanumeric() && !c.is_whitespace())
                 .trim_start();
-            first_word(comment_body).map(|w| arena.interner.intern(w))
+            first_word(comment_body)
         } else {
-            first_word(text).map(|w| arena.interner.intern(w))
+            first_word(text)
         };
+        let head_is_keyword =
+            profile.is_some_and(|p| first_word_str.is_some_and(|w| p.is_keyword(w)));
+        let first_word = first_word_str.map(|w| arena.interner.intern(w));
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.new_close_dist[j];
         let prox_close = if close_dist == usize::MAX {
@@ -2139,6 +2182,7 @@ pub(crate) fn solve_cluster_matrix(
             close_tail,
             exact_close,
             is_terminal_return,
+            head_is_keyword,
             is_return_tail,
             survives_in_new: false,
         });
@@ -2401,8 +2445,17 @@ pub(crate) fn solve_cluster_matrix(
                         };
                         let is_property_match =
                             om.property_key.is_some() && om.property_key == nm.property_key;
+                        let same_indent_head_match = statement_head_match
+                            && om.indent == nm.indent
+                            && !om.comment
+                            && !nm.comment
+                            && om.head_is_keyword
+                            && nm.head_is_keyword
+                            && !om.survives_in_new;
                         let max_syn = if is_property_match {
                             w.head_agree_bonus + 200.0
+                        } else if same_indent_head_match {
+                            w.same_indent_head_bonus
                         } else if statement_head_match {
                             w.head_agree_bonus
                         } else {
