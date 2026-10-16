@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
-    lcs::{tokenize_line, word_spans_and_runs_with_profile, word_spans_with_profile},
+    lcs::{word_spans_and_runs_with_profile, word_spans_with_profile},
     merge::RunKind,
     parse::{AddLine, DelLine, Hunk, Row, RowGroup, Spans},
     shift::pass_shift_hunk,
@@ -221,6 +221,12 @@ pub fn collapse_hunk_rows(
         "Collapsed rows must never contain wholesale replacement Mod rows"
     );
 
+    crate::invariant!(
+        assert_collapsed_reflow_invariants(&res, profile).is_ok(),
+        "Collapsed rows must satisfy reflow group invariants: {:?}",
+        assert_collapsed_reflow_invariants(&res, profile).err()
+    );
+
     res
 }
 
@@ -317,6 +323,24 @@ fn supplied_occurrence(
     (0..=hay.len() - needle.len()).find_map(|s| {
         let e = s + needle.len();
         if hay[s..e] != *needle {
+            return None;
+        }
+        // Word boundary check: needle must not be an interior subword of a larger
+        // alphanumeric token in hay
+        if needle
+            .first()
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+            && s > 0
+            && (hay[s - 1].is_alphanumeric() || hay[s - 1] == '_')
+        {
+            return None;
+        }
+        if needle
+            .last()
+            .is_some_and(|c| c.is_alphanumeric() || *c == '_')
+            && e < hay.len()
+            && (hay[e].is_alphanumeric() || hay[e] == '_')
+        {
             return None;
         }
         // Covered: every position sits inside some supply range. Supply
@@ -499,6 +523,8 @@ pub fn pass_assemble_mods(
                             && (del_text.contains('{') || del_text.contains('(')));
 
                     if opens_delim {
+                        let mut depth = line_delim_delta(add.text());
+
                         while k < h.rows.len()
                             && matches!(h.rows[k], Row::Add(_))
                             && !ctx.pair_of.contains_key(&k)
@@ -507,9 +533,11 @@ pub fn pass_assemble_mods(
                             if p.is_decl_break(nxt_t) {
                                 break;
                             }
+                            let delta = line_delim_delta(nxt_t);
+                            let is_exact_del_close = del_text.trim_end().ends_with(nxt_t);
                             let is_closing = p.is_expression_close(nxt_t)
                                 || p.is_block_close(nxt_t)
-                                || del_text.trim_end().ends_with(nxt_t);
+                                || is_exact_del_close;
                             let is_param_or_item = nxt_t.ends_with(',')
                                 || nxt_t.ends_with('(')
                                 || nxt_t.ends_with('{')
@@ -517,10 +545,12 @@ pub fn pass_assemble_mods(
                                 || p.is_comment_line(nxt_t);
                             let is_continuation = p.is_continuation_line(nxt_t);
 
-                            if is_closing {
+                            depth += delta;
+
+                            if is_closing && depth <= 0 {
                                 next_adds.push(k);
                                 break;
-                            } else if is_param_or_item || is_continuation {
+                            } else if is_param_or_item || is_continuation || depth > 0 {
                                 next_adds.push(k);
                                 k += 1;
                             } else {
@@ -554,7 +584,39 @@ pub fn pass_assemble_mods(
             // Empty for 1-to-1 mods (no aux rows): their runs pass through
             // untouched with zero behavior change. Computed before the
             // aux loop: the moved-in supply below derives from it (moved
-            // AND displayed-struck — genuinely relocated text).
+            let is_import = profile.is_some_and(|p| p.is_import_statement(&del_text));
+            if is_import
+                && !next_adds.is_empty()
+                && let (Some(add_brace), Some(del_brace)) =
+                    (add.text().rfind('{'), del_text.find('{'))
+            {
+                let add_pfx = add.text()[..add_brace].trim_end();
+                let del_pfx = del_text[..del_brace].trim_end();
+                if add_pfx != del_pfx && del_pfx.starts_with(add_pfx) {
+                    let add_char_idx = add.text()[..add_brace].chars().count();
+                    spans.add.push((add_char_idx, add_char_idx + 1));
+                    normalize_ranges(&mut spans.add);
+
+                    let mut new_runs = Vec::new();
+                    for (kind, text) in runs {
+                        if kind == RunKind::Ctx && text == "{" {
+                            new_runs.push((RunKind::Del, "{".to_string()));
+                            new_runs.push((RunKind::Add, "{".to_string()));
+                        } else if kind == RunKind::Ctx && text.ends_with('{') {
+                            let pfx = &text[..text.len() - 1];
+                            if !pfx.is_empty() {
+                                new_runs.push((RunKind::Ctx, pfx.to_string()));
+                            }
+                            new_runs.push((RunKind::Del, "{".to_string()));
+                            new_runs.push((RunKind::Add, "{".to_string()));
+                        } else {
+                            new_runs.push((kind, text));
+                        }
+                    }
+                    runs = new_runs;
+                }
+            }
+
             let moved = if next_adds.is_empty() {
                 Vec::new()
             } else {
@@ -583,7 +645,7 @@ pub fn pass_assemble_mods(
                 moved
             };
             let mut anchor_group = None;
-            if !next_adds.is_empty() {
+            let actually_moved = if !next_adds.is_empty() {
                 let anchor_num = add.new_line_num().unwrap().get();
                 anchor_group = Some(RowGroup::Anchor);
 
@@ -594,9 +656,6 @@ pub fn pass_assemble_mods(
                     let add_nxt = &h.rows[nxt_i];
                     let mut donor_spans =
                         word_spans_with_profile(&del_text, add_nxt.text(), profile);
-                    let tok_count = tokenize_line(add_nxt.text())
-                        .filter(|t| !t.trim().is_empty())
-                        .count();
                     let nxt_trim = add_nxt.text().trim();
                     let is_closing_row = profile.is_some_and(|p| {
                         p.is_expression_close(nxt_trim) || p.is_block_close(nxt_trim)
@@ -610,7 +669,7 @@ pub fn pass_assemble_mods(
                         || nxt_trim == "("
                         || nxt_trim == "[";
 
-                    let has_common_tokens = if tok_count > 0 && donor_spans.add.len() < tok_count {
+                    let has_common_tokens = {
                         let aux_chars: Vec<char> = add_nxt.text().chars().collect();
                         let mut fill = donor_spans.add.clone();
                         normalize_ranges(&mut fill);
@@ -654,34 +713,17 @@ pub fn pass_assemble_mods(
                             has_content = true;
                         }
                         has_content
-                    } else {
-                        false
                     };
-                    if is_opening_row {
+                    if is_opening_row && !del_text.trim_end().ends_with(nxt_trim) {
                         let text_len = add_nxt.text().chars().count();
-                        let indent_len = add_nxt
-                            .text()
-                            .chars()
-                            .take_while(|c| c.is_whitespace())
-                            .count();
-                        if del_text.trim_end().ends_with(nxt_trim) {
-                            let spans = Spans {
-                                del: Vec::new(),
-                                add: if indent_len > 0 {
-                                    vec![(0, indent_len)]
-                                } else {
-                                    Vec::new()
-                                },
-                            };
-                            add_spans.insert(nxt_i, (spans, del_text.clone()));
-                        } else if text_len > 0 {
+                        if text_len > 0 {
                             let spans = Spans {
                                 del: Vec::new(),
                                 add: vec![(0, text_len)],
                             };
                             add_spans.insert(nxt_i, (spans, del_text.clone()));
                         }
-                    } else if has_common_tokens || is_closing_row {
+                    } else if has_common_tokens || is_closing_row || is_opening_row {
                         let indent_len = add_nxt
                             .text()
                             .chars()
@@ -735,9 +777,31 @@ pub fn pass_assemble_mods(
                             off += len;
                         }
                         debug_assert_eq!(off, aux_chars.len());
-                        let mut claims = Vec::new();
+                        let is_word_subword = |t1: &[char], t2: &[char]| {
+                            t1.last().is_some_and(|c| c.is_alphanumeric() || *c == '_')
+                                && t2.first().is_some_and(|c| c.is_alphanumeric() || *c == '_')
+                        };
+                        let is_closing_punct = |t1: &[char], t2: &[char]| {
+                            t1.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
+                                && t2.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
+                        };
+                        let mut claims: Vec<(usize, usize)> = Vec::new();
                         for (ts, te) in toks {
                             if common.iter().any(|&(cs, ce)| cs <= ts && te <= ce) {
+                                if let Some(last) = claims.last_mut()
+                                    && last.1 == ts
+                                    && (is_word_subword(
+                                        &aux_chars[last.0..last.1],
+                                        &aux_chars[ts..te],
+                                    ) || is_closing_punct(
+                                        &aux_chars[last.0..last.1],
+                                        &aux_chars[ts..te],
+                                    ))
+                                    && is_contiguous_in_del(&del_chars, &aux_chars, last.0, te)
+                                {
+                                    last.1 = te;
+                                    continue;
+                                }
                                 claims.push((ts, te));
                             }
                         }
@@ -825,7 +889,16 @@ pub fn pass_assemble_mods(
                                 .take_while(|(i, c)| *i < ce && c.is_whitespace())
                                 .count()
                                 + cs;
-                            if ce.saturating_sub(s) < VERBATIM_MIN {
+                            let len = ce.saturating_sub(s);
+                            let min_len = if aux_chars[s..ce]
+                                .last()
+                                .is_some_and(|&c| matches!(c, '{' | '(' | '['))
+                            {
+                                4
+                            } else {
+                                VERBATIM_MIN
+                            };
+                            if len < min_len {
                                 continue;
                             }
                             if !aux_chars[s..ce].iter().any(|c| c.is_alphanumeric()) {
@@ -872,7 +945,7 @@ pub fn pass_assemble_mods(
                         }
                     }
                     // Longest first; del occurrences must not overlap.
-                    blocks.sort_by(|a, b| b.0.cmp(&a.0));
+                    blocks.sort_by_key(|a| std::cmp::Reverse(a.0));
                     let mut used: Vec<(usize, usize)> = Vec::new();
                     let mut flips: Vec<(usize, usize, usize)> = Vec::new();
                     for (_, nxt_i, s, e, ds, de) in std::mem::take(&mut blocks) {
@@ -962,7 +1035,28 @@ pub fn pass_assemble_mods(
                 // then position — fully deterministic): each whole-token
                 // claim consumes its occurrence from supply or renders as
                 // fill. Longest-first maximizes total moved-in display, so
-                // a verbatim row outranks a partial rival's fragments.
+                let anchor_has_add_open = runs
+                    .iter()
+                    .any(|(kind, text)| kind.is_add_like() && text.contains('{'));
+                if anchor_has_add_open && let Some(last_p) = pending.last_mut() {
+                    let trim = last_p.aux_chars.iter().collect::<String>();
+                    let trim = trim.trim();
+                    if trim == "};" {
+                        let mut new_claims = Vec::new();
+                        for &(s, e) in &last_p.claims {
+                            for idx in s..e {
+                                if last_p.aux_chars[idx] == ';' {
+                                    new_claims.push((idx, idx + 1));
+                                } else {
+                                    last_p.donor.add.push((idx, idx + 1));
+                                }
+                            }
+                        }
+                        normalize_ranges(&mut last_p.donor.add);
+                        last_p.claims = new_claims;
+                    }
+                }
+
                 let mut order: Vec<(usize, usize, usize, usize)> = Vec::new();
                 for (i, p) in pending.iter().enumerate() {
                     for &(s, e) in &p.claims {
@@ -971,16 +1065,19 @@ pub fn pass_assemble_mods(
                 }
                 order.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
                 let mut extra: FxHashMap<usize, Vec<(usize, usize)>> = FxHashMap::default();
+                let mut actually_consumed: Vec<(usize, usize)> = Vec::new();
                 for (_, i, s, e) in order {
                     let p = &pending[i];
                     if let Some((ds, de)) =
                         supplied_occurrence(&del_chars, &p.aux_chars[s..e], &supply)
                     {
                         consume_supply(&mut supply, ds, de);
+                        actually_consumed.push((ds, de));
                     } else {
                         extra.entry(p.nxt_i).or_default().push((s, e));
                     }
                 }
+                normalize_ranges(&mut actually_consumed);
                 for mut p in pending {
                     if let Some(mut xf) = extra.remove(&p.nxt_i) {
                         p.donor.add.append(&mut xf);
@@ -988,12 +1085,15 @@ pub fn pass_assemble_mods(
                     }
                     add_spans.insert(p.nxt_i, (p.donor, del_text.clone()));
                 }
-            }
+                actually_consumed
+            } else {
+                moved
+            };
 
             let mut old_line = DelLine::new(first_old_num, del_text);
             old_line.group = anchor_group;
             let mut new_line = AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans)
-                .with_cached_runs(relabel_moved_runs(runs, &moved));
+                .with_cached_runs(relabel_moved_runs(runs, &actually_moved));
             new_line.group = anchor_group;
             let mod_row = Row::Mod { old_line, new_line };
             out.push(mod_row);
@@ -1259,6 +1359,204 @@ pub fn pass_sort_ordered_walk(
     });
 
     keyed.into_iter().map(|(r, _)| r).collect()
+}
+
+/// Calculate net delimiter delta for bracket pairs `{}`, `()`, `[]`, ignoring
+/// delimiters within string literals.
+fn line_delim_delta(text: &str) -> i32 {
+    let mut delta = 0i32;
+    let mut in_str = false;
+    let mut str_char = '"';
+    let mut escaped = false;
+    for ch in text.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if in_str {
+            if ch == str_char {
+                in_str = false;
+            }
+            continue;
+        }
+        if ch == '"' || ch == '\'' || ch == '`' {
+            in_str = true;
+            str_char = ch;
+            continue;
+        }
+        match ch {
+            '{' | '(' | '[' => delta += 1,
+            '}' | ')' | ']' => delta -= 1,
+            _ => {}
+        }
+    }
+    delta
+}
+
+/// Checks whether `aux_chars[s..e]` occurs contiguously anywhere in
+/// `del_chars`.
+fn is_contiguous_in_del(del_chars: &[char], aux_chars: &[char], s: usize, e: usize) -> bool {
+    let needle = &aux_chars[s..e];
+    if needle.len() > del_chars.len() {
+        return false;
+    }
+    del_chars.windows(needle.len()).any(|w| w == needle)
+}
+
+/// Asserts reflow group invariants on collapsed rows:
+/// 1. Old-side reconstruction: removing novel additions across the group in
+///    visual order reproduces the surviving old-side text.
+/// 2. Moved-text conservation: anchor MovedSrc == sum(aux MovedTgt).
+/// 3. Aux line numbers strictly ascending.
+/// 4. No orphan aux rows.
+fn assert_collapsed_reflow_invariants(
+    rows: &[Row],
+    profile: Option<&LangProfile>,
+) -> Result<(), String> {
+    use crate::merge::merged_runs;
+
+    let strip_ws = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+
+    let mut anchors: FxHashMap<u32, usize> = FxHashMap::default();
+    for (i, r) in rows.iter().enumerate() {
+        if r.group() == Some(RowGroup::Anchor) {
+            let anchor_num = r.new_line().or_else(|| r.old_line()).unwrap_or(0);
+            anchors.insert(anchor_num, i);
+        }
+    }
+
+    for (&anchor_num, &anchor_idx) in &anchors {
+        let anchor_row = &rows[anchor_idx];
+        if anchor_row.del_text().is_none() {
+            continue;
+        }
+
+        let mut group_rows: Vec<&Row> = Vec::new();
+        for r in rows {
+            if r.group() == Some(RowGroup::Anchor) {
+                let num = r.new_line().or_else(|| r.old_line()).unwrap_or(0);
+                if num == anchor_num {
+                    group_rows.push(r);
+                }
+            } else if let Some(RowGroup::Aux { anchor }) = r.group()
+                && anchor == anchor_num
+            {
+                group_rows.push(r);
+            }
+        }
+
+        let aux_adds: Vec<&&Row> = group_rows
+            .iter()
+            .filter(|r| matches!(r, Row::Add(_)))
+            .collect();
+        let has_aux_dels = group_rows
+            .iter()
+            .any(|r| matches!(r, Row::Del(_) | Row::MovSrc(_)));
+
+        if !aux_adds.is_empty() && !has_aux_dels {
+            let is_import = profile.is_some_and(|p| {
+                anchor_row
+                    .del_text()
+                    .is_some_and(|dt| p.is_import_statement(dt))
+            });
+
+            let anchor_moved_src: String = merged_runs(anchor_row)
+                .into_iter()
+                .filter(|run| run.kind == RunKind::MovedSrc)
+                .map(|run| run.text)
+                .collect();
+            let aux_moved_tgt: String = aux_adds
+                .iter()
+                .flat_map(|aux| merged_runs(aux))
+                .filter(|run| run.kind == RunKind::MovedTgt)
+                .map(|run| run.text)
+                .collect();
+
+            // 1. Old-side reconstruction invariant (mandatory for import statements)
+            if is_import {
+                let expected_old: String = merged_runs(anchor_row)
+                    .into_iter()
+                    .filter(|run| run.kind == RunKind::Ctx || run.kind == RunKind::MovedSrc)
+                    .map(|run| run.text)
+                    .collect();
+                let mut reconstructed_old = String::new();
+                for r in &group_rows {
+                    if matches!(r, Row::Mod { .. }) {
+                        reconstructed_old.extend(
+                            merged_runs(r)
+                                .into_iter()
+                                .filter(|run| run.kind == RunKind::Ctx)
+                                .map(|run| run.text),
+                        );
+                    } else if matches!(r, Row::Add(_)) {
+                        reconstructed_old.extend(
+                            merged_runs(r)
+                                .into_iter()
+                                .filter(|run| run.kind == RunKind::MovedTgt)
+                                .map(|run| run.text),
+                        );
+                    }
+                }
+                if strip_ws(&reconstructed_old) != strip_ws(&expected_old) {
+                    return Err(format!(
+                        "Anchor line {anchor_num} old-text reconstruction mismatch:\n  expected: {expected_old:?}\n  got:      {reconstructed_old:?}"
+                    ));
+                }
+                if strip_ws(&anchor_moved_src) != strip_ws(&aux_moved_tgt) {
+                    return Err(format!(
+                        "Anchor line {anchor_num} moved-text conservation mismatch:\n  anchor MovedSrc: {anchor_moved_src:?}\n  aux MovedTgt:    {aux_moved_tgt:?}"
+                    ));
+                }
+            } else {
+                // 2. Character conservation invariant across all reflow groups
+                let mut s1: Vec<char> = anchor_moved_src
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                let mut s2: Vec<char> = aux_moved_tgt
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                s1.sort_unstable();
+                s2.sort_unstable();
+                if s1 != s2 {
+                    return Err(format!(
+                        "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedSrc chars: {s1:?}\n  aux MovedTgt chars:    {s2:?}"
+                    ));
+                }
+            }
+
+            // 3. Suffix aux add line numbers strictly ascending
+            let mut last_aux_line = None;
+            for aux in group_rows.iter().filter(|r| matches!(r, Row::Add(_))) {
+                if let Some(nl) = aux.new_line() {
+                    if let Some(prev) = last_aux_line
+                        && nl <= prev
+                    {
+                        return Err(format!("Aux row line {nl} <= previous aux line {prev}"));
+                    }
+                    last_aux_line = Some(nl);
+                }
+            }
+        }
+    }
+
+    // Verify no orphan aux rows
+    for (i, r) in rows.iter().enumerate() {
+        if let Some(RowGroup::Aux { anchor }) = r.group()
+            && !anchors.contains_key(&anchor)
+        {
+            return Err(format!(
+                "Orphan aux row {i} (line {:?}) pointing to non-existent anchor {anchor}",
+                r.new_line().or_else(|| r.old_line())
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

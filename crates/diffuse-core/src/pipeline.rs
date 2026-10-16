@@ -884,6 +884,12 @@ pub fn process_single_diff_file(
             .all(|r| !matches!(r, Row::Mod { .. }) || !is_wholesale_replacement(r))),
         "DiffFile hunks must not contain wholesale replacement Mod rows"
     );
+    crate::ensure!(
+        res.validate_invariants().is_ok(),
+        "OutputFile invariants violated for {}: {:?}",
+        res.path,
+        res.validate_invariants().err()
+    );
 
     res
 }

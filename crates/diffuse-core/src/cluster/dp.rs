@@ -385,9 +385,19 @@ fn trim_trailing_delims<'a>(t: &'a str, profile: Option<&LangProfile>) -> &'a st
     if let Some(p) = profile {
         p.trim_trailing_delimiters(t)
     } else {
-        t.trim_end_matches(|c: char| {
-            c.is_whitespace() || matches!(c, '{' | '}' | ';' | ':' | ',' | ')' | ']')
-        })
+        let mut s = t.trim_end();
+        while let Some(last) = s.chars().next_back() {
+            if matches!(last, '{' | '}' | ';' | ':' | ',' | ')' | ']') {
+                if last == ':' && s.ends_with("::") {
+                    break;
+                }
+                s = &s[..s.len() - last.len_utf8()];
+                s = s.trim_end();
+            } else {
+                break;
+            }
+        }
+        s
     }
 }
 
@@ -553,10 +563,17 @@ pub(crate) fn mod_pair_needs_scoring(
         false
     };
     let max_similarity_ratio = max_matched as f64 / total as f64;
+    let same_indent_head_match = statement_head_match
+        && indent_shift == 0
+        && !om.comment
+        && !nm.comment
+        && om.head_is_keyword
+        && nm.head_is_keyword
+        && !om.survives_in_new;
     let can_have_containment = indent_shift <= w.max_indent_shift
         && (om.comment == nm.comment)
-        && om.stripped_len >= w.min_containment_len
-        && nm.stripped_len >= w.min_containment_len;
+        && ((om.stripped_len >= w.min_containment_len && nm.stripped_len >= w.min_containment_len)
+            || same_indent_head_match);
 
     let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
         || is_property_match
@@ -580,14 +597,7 @@ pub(crate) fn mod_pair_needs_scoring(
 
     let max_syn = if is_property_match {
         w.head_agree_bonus + 200.0
-    } else if statement_head_match
-        && indent_shift == 0
-        && !om.comment
-        && !nm.comment
-        && om.head_is_keyword
-        && nm.head_is_keyword
-        && !om.survives_in_new
-    {
+    } else if same_indent_head_match {
         w.same_indent_head_bonus
     } else if statement_head_match {
         w.head_agree_bonus
@@ -2530,8 +2540,9 @@ pub(crate) fn solve_cluster_matrix(
                         let max_similarity_ratio = max_matched as f64 / total as f64;
                         let can_have_containment = indent_shift <= w.max_indent_shift
                             && (om.comment == nm.comment)
-                            && om.stripped_len >= w.min_containment_len
-                            && nm.stripped_len >= w.min_containment_len;
+                            && ((om.stripped_len >= w.min_containment_len
+                                && nm.stripped_len >= w.min_containment_len)
+                                || same_indent_head_match);
 
                         let mut is_prefix_containment = None;
                         let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio

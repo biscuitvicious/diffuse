@@ -765,7 +765,19 @@ impl LangProfile {
     /// expression line (e.g. `;`, `,`, `{`, `}`, `)` in brace languages, or
     /// `:` in indent-colon languages).
     pub fn trim_trailing_delimiters<'a>(&self, line: &'a str) -> &'a str {
-        line.trim_end_matches(|c: char| c.is_whitespace() || self.is_trailing_delimiter(c))
+        let mut s = line.trim_end();
+        while let Some(last) = s.chars().next_back() {
+            if self.is_trailing_delimiter(last) {
+                if last == ':' && s.ends_with("::") {
+                    break;
+                }
+                s = &s[..s.len() - last.len_utf8()];
+                s = s.trim_end();
+            } else {
+                break;
+            }
+        }
+        s
     }
 
     /// Whether a character acts as a trailing syntax delimiter in this

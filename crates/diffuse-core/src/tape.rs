@@ -768,6 +768,19 @@ impl<'a> AlignmentTape<'a> {
             emit_gap(&mut tape, old_tok_idx, ot.len(), new_tok_idx, nt.len());
         }
 
+        crate::ensure!(
+            tape.project_old() == old_text,
+            "AlignmentTape project_old must equal old_text: expected {:?}, got {:?}",
+            old_text,
+            tape.project_old()
+        );
+        crate::ensure!(
+            tape.project_new() == new_text,
+            "AlignmentTape project_new must equal new_text: expected {:?}, got {:?}",
+            new_text,
+            tape.project_new()
+        );
+
         tape
     }
 }

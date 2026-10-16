@@ -1134,6 +1134,8 @@ fn test_close_delimiter_and_profile_syntax_matching() {
         "if !run.is_empty("
     );
     assert_eq!(rs.trim_trailing_delimiters("let x = 1;"), "let x = 1");
+    assert_eq!(rs.trim_trailing_delimiters("use std::{"), "use std::");
+    assert_eq!(rs.trim_trailing_delimiters("use std::"), "use std::");
     assert_eq!(py.trim_trailing_delimiters("def foo():"), "def foo(");
 }
 

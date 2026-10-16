@@ -672,6 +672,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
         "corpus parses into {min_files}+ files, got {}",
         out.files.len()
     );
+    check!(
+        out.validate_invariants().is_ok(),
+        "{}: output wire invariants failed: {:?}",
+        corpus,
+        out.validate_invariants().err()
+    );
     for f in &out.files {
         check!(!f.path.is_empty(), "a file has an empty path");
         // The header counts must equal a re-walk of the rows

@@ -616,6 +616,58 @@ fn test_mirage_cache_cluster() {
 }
 
 #[test]
+fn test_import_expansion_anchors_on_statement_head() {
+    let old = "use std::{collections::HashMap, sync::Arc};";
+    let new_lines = [
+        "use std::{",
+        "    borrow::Cow,",
+        "    collections::HashMap,",
+        "    fs, mem,",
+        "    num::NonZero,",
+        "    path::Path,",
+        "    sync::{",
+        "        Arc,",
+        "        atomic::{self, AtomicU64},",
+        "    },",
+        "    time::Instant,",
+        "};",
+    ];
+
+    use crate::{
+        cluster::{ChangeCluster, dp},
+        parse::{AddLine, DelLine, LineNum, RowKind},
+    };
+
+    let old_rows = vec![Row::Del(DelLine::new(LineNum::new(23).unwrap(), old))];
+    let new_rows = new_lines
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| Row::Add(AddLine::new(LineNum::new(i as u32 + 23).unwrap(), s)))
+        .collect();
+
+    let cluster = ChangeCluster {
+        preceding_ctx: Vec::new(),
+        old_rows,
+        new_rows,
+        following_ctx: Vec::new(),
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    };
+    let rs = lang_profile("rs");
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(
+        sol.rows[0].kind(),
+        RowKind::Mod,
+        "first row must be the Mod anchor"
+    );
+    assert_eq!(
+        sol.rows[0].new_line(),
+        Some(23),
+        "Mod anchor must be on line 23 ('use std::{{'), not line 25"
+    );
+}
+
+#[test]
 fn test_mirage_lookup_cluster() {
     use crate::{
         cluster::{ChangeCluster, dp},

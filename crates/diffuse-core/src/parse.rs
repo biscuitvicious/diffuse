@@ -836,12 +836,16 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 ni += 1;
+                hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
+                raw_hunk.new_count = hunk.new_count;
             } else if let Some(rest) = line.strip_prefix('-') {
                 let num = LineNum::new(oi).unwrap_or(LineNum::MIN);
                 let row = Row::Del(DelLine::new(num, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;
+                hunk.old_count = hunk.old_count.max(oi.saturating_sub(hunk.old_start));
+                raw_hunk.old_count = hunk.old_count;
             } else if let Some(rest) = line.strip_prefix(' ') {
                 let old_num = LineNum::new(oi).unwrap_or(LineNum::MIN);
                 let new_num = LineNum::new(ni).unwrap_or(LineNum::MIN);
@@ -850,6 +854,10 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 raw_hunk.rows.push(row);
                 oi += 1;
                 ni += 1;
+                hunk.old_count = hunk.old_count.max(oi.saturating_sub(hunk.old_start));
+                hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
+                raw_hunk.old_count = hunk.old_count;
+                raw_hunk.new_count = hunk.new_count;
             } else if line.is_empty()
                 && ni < hunk.new_start + hunk.new_count
                 && oi < hunk.old_start + hunk.old_count
@@ -861,6 +869,10 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 raw_hunk.rows.push(row);
                 oi += 1;
                 ni += 1;
+                hunk.old_count = hunk.old_count.max(oi.saturating_sub(hunk.old_start));
+                hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
+                raw_hunk.old_count = hunk.old_count;
+                raw_hunk.new_count = hunk.new_count;
             }
         }
     }

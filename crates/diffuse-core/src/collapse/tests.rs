@@ -2105,3 +2105,184 @@ fn test_import_block_expansion_delimiter_hijacking() {
         "Reflow group non-add runs must reconstruct original old line, got: {reconstructed:?}"
     );
 }
+
+#[test]
+fn test_import_expansion_reaches_terminal_close_delimiter() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "use std::{collections::HashMap, sync::Arc};",
+            None,
+            Some(23),
+        ),
+        row(RowKind::Add, "use std::{", Some(23), None),
+        row(RowKind::Add, "    borrow::Cow,", Some(24), None),
+        row(RowKind::Add, "    collections::HashMap,", Some(25), None),
+        row(RowKind::Add, "    fs, mem,", Some(26), None),
+        row(RowKind::Add, "    num::NonZero,", Some(27), None),
+        row(RowKind::Add, "    path::Path,", Some(28), None),
+        row(RowKind::Add, "    sync::{", Some(29), None),
+        row(RowKind::Add, "        Arc,", Some(30), None),
+        row(
+            RowKind::Add,
+            "        atomic::{self, AtomicU64},",
+            Some(31),
+            None,
+        ),
+        row(RowKind::Add, "    },", Some(32), None),
+        row(RowKind::Add, "    time::Instant,", Some(33), None),
+        row(RowKind::Add, "};", Some(34), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    // Line 34 (};) must be part of the reflow group with anchor 23
+    let last_row = c
+        .iter()
+        .find(|r| r.text() == "};")
+        .expect("terminal }; row");
+    assert_eq!(
+        last_row.group(),
+        Some(crate::parse::RowGroup::Aux { anchor: 23 }),
+        "terminal '}};' row must be in the reflow group as Aux with anchor 23"
+    );
+
+    // Line 23 (use std::{) must NOT have a struck ';'
+    let anchor_row = &c[0];
+    let anchor_del_runs: Vec<_> = merged_runs(anchor_row)
+        .into_iter()
+        .filter(|r| r.kind == RunKind::Del && r.text.contains(';'))
+        .collect();
+    assert!(
+        anchor_del_runs.is_empty(),
+        "anchor row must not strike out ';' when terminal '}};' is part of reflow group, but found: {anchor_del_runs:?}"
+    );
+
+    // The anchor row reconstructs the old line in full (Ctx + MovedSrc + Del).
+    let anchor_reconstructed: String = merged_runs(&c[0])
+        .into_iter()
+        .filter(|r| r.kind == RunKind::Ctx || r.kind == RunKind::MovedSrc || r.kind == RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(
+        anchor_reconstructed, "use std::{collections::HashMap, sync::Arc};",
+        "Anchor row must reconstruct the old line"
+    );
+
+    // Concatenating surviving runs (Ctx + MovedTgt) across the reflow rows matches
+    // surviving tokens.
+    let surviving: String = c
+        .iter()
+        .flat_map(merged_runs)
+        .filter(|r| r.kind == RunKind::Ctx || r.kind == RunKind::MovedTgt)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(
+        surviving, "use std::{collections::HashMap,sync::Arc};",
+        "Surviving text across reflow rows must match"
+    );
+}
+
+#[test]
+fn test_import_expansion_with_misaligned_brace_indentation() {
+    // Del line is indented with 4 spaces; terminal brace has 8 spaces (misaligned).
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "    use std::{collections::HashMap, sync::Arc};",
+            None,
+            Some(10),
+        ),
+        row(RowKind::Add, "    use std::{", Some(10), None),
+        row(
+            RowKind::Add,
+            "        collections::HashMap,",
+            Some(11),
+            None,
+        ),
+        row(RowKind::Add, "        sync::{", Some(12), None),
+        row(RowKind::Add, "            Arc,", Some(13), None),
+        row(RowKind::Add, "          },", Some(14), None), // misaligned inner brace (10 spaces)
+        row(RowKind::Add, "        };", Some(15), None),   /* misaligned terminal brace (8
+                                                            * spaces vs del's 4) */
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    // Terminal row must be part of the reflow group with anchor 10
+    let last_row = c
+        .iter()
+        .find(|r| r.text().trim() == "};")
+        .expect("terminal }; row");
+    assert_eq!(
+        last_row.group(),
+        Some(crate::parse::RowGroup::Aux { anchor: 10 }),
+        "terminal '}};' row with misaligned indent must still be in the reflow group"
+    );
+
+    // Anchor row must not strike out ';'
+    let anchor_del_runs: Vec<_> = merged_runs(&c[0])
+        .into_iter()
+        .filter(|r| r.kind == RunKind::Del && r.text.contains(';'))
+        .collect();
+    assert!(
+        anchor_del_runs.is_empty(),
+        "anchor row must not strike out ';' when terminal '}};' is part of reflow group"
+    );
+
+    // Terminal row must have }; marked as MovedTgt, with leading indent marked as
+    // Add
+    let tgt_runs: Vec<_> = merged_runs(last_row)
+        .into_iter()
+        .filter(|r| r.kind == RunKind::MovedTgt)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(
+        tgt_runs,
+        vec!["};"],
+        "misaligned terminal row must claim '}};' as MovedTgt"
+    );
+}
+
+#[test]
+fn test_import_nesting_outer_wrapper_braces_are_add_fill() {
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "use std::io::{BufRead, Write};",
+            None,
+            Some(7),
+        ),
+        row(RowKind::Add, "use std::{", Some(7), None),
+        row(
+            RowKind::Add,
+            "    io::{self, BufRead, Write},",
+            Some(8),
+            None,
+        ),
+        row(RowKind::Add, "    ops,", Some(9), None),
+        row(RowKind::Add, "};", Some(10), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    for r in &c {
+        eprintln!("ROW {:?} (group={:?}): {:?}", r.kind(), r.group(), r.text());
+        for run in merged_runs(r) {
+            eprintln!("  RUN {:?}: {:?}", run.kind, run.text);
+        }
+    }
+
+    // Reconstruction invariant: concatenating non-add runs across the group must
+    // yield the original line "use std::io::{BufRead, Write};"
+    let reconstructed: String = c
+        .iter()
+        .flat_map(merged_runs)
+        .filter(|r| r.kind != RunKind::Add && r.kind != RunKind::Del && r.kind != RunKind::MovedSrc)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(
+        reconstructed, "use std::io::{BufRead, Write};",
+        "Non-add runs across reflow group must reconstruct original line"
+    );
+}
