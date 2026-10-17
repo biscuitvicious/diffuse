@@ -118,10 +118,9 @@ impl AppState {
                     if len == 0 { 1 } else { len.div_ceil(text_cols) }
                 } else {
                     let text_cols = content_width.saturating_sub(6).max(1);
-                    let del_text = r.del_text();
                     let disp = display_text(
                         &text,
-                        del_text.as_deref(),
+                        r.is_aux(),
                         r.kind,
                         &r.runs,
                         self.col_offset,

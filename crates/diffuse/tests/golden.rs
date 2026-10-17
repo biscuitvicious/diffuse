@@ -460,11 +460,12 @@ fn assert_diff_invariants(
                         }
                     }
                     RowKind::Mod => {
-                        // A Collapse anchor's del_text spans its whole
+                        // A Collapse anchor's old_text spans its whole
                         // block (possibly reflow-joined): match it against
                         // the snapshot window starting at its first line,
                         // whitespace-insensitively (joins insert spaces).
-                        if let (Some(n), Some(dt)) = (r.old_line, r.del_text()) {
+                        if let Some(n) = r.old_line {
+                            let dt = r.old_text();
                             // Window source: snapshot lines when present,
                             // else the patch's own del lines (renamed files
                             // ship only new content). Either way the match
@@ -841,21 +842,20 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         r.new_line.unwrap_or(0)
                     );
                 }
-                if r.kind == RowKind::Mod
-                    && let Some(del_text) = r.del_text()
-                {
+                if r.kind == RowKind::Mod {
                     let rev: String = r
                         .runs
                         .iter()
                         .filter(|x| !x.kind.is_add_like())
                         .map(|x| x.text.as_ref())
                         .collect();
+                    let old_text = r.old_text();
                     check!(
-                        rev == del_text,
+                        rev == old_text,
                         "{}:{}: the add-removed (reverse) render differs from the old line. Expected: {:?}, Got: {:?}",
                         f.path,
                         r.old_line.unwrap_or(0),
-                        del_text,
+                        old_text,
                         rev
                     );
                 }

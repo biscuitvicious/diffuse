@@ -65,9 +65,7 @@ pub fn file_raw_counts(file: &OutputFile) -> (usize, usize) {
                 RowKind::Del => dels += 1,
                 RowKind::Add => adds += 1,
                 RowKind::Mod => {
-                    if row.del_text().is_some() {
-                        dels += 1;
-                    }
+                    dels += 1;
                     adds += 1;
                 }
                 _ => {}
@@ -262,12 +260,11 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
                         push_diff_row(&mut out, '-', &text, &mut active_fence_profile, &ctx);
                     }
                     RowKind::Mod => {
-                        if let Some(del_text) = row.del_text() {
-                            let mut del_fence = active_fence_profile;
-                            push_diff_row(&mut out, '-', &del_text, &mut del_fence, &ctx);
-                        }
-                        let text = row.new_text();
-                        push_diff_row(&mut out, '+', &text, &mut active_fence_profile, &ctx);
+                        let old_text = row.old_text();
+                        let mut old_fence = active_fence_profile;
+                        push_diff_row(&mut out, '-', &old_text, &mut old_fence, &ctx);
+                        let new_text = row.new_text();
+                        push_diff_row(&mut out, '+', &new_text, &mut active_fence_profile, &ctx);
                     }
                     RowKind::Mov => match row
                         .mov_side

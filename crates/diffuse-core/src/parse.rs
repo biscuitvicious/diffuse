@@ -322,6 +322,12 @@ impl Row {
         }
     }
 
+    /// Whether this row is an auxiliary row within a multiline cluster.
+    #[inline]
+    pub fn is_aux(&self) -> bool {
+        matches!(self.group(), Some(RowGroup::Aux { .. }))
+    }
+
     pub fn reverse(&self) -> Self {
         match self {
             Row::Ctx(ctx_line) => Row::Ctx(CtxLine {

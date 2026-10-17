@@ -1214,10 +1214,9 @@ impl AppState {
                                 let text_cols = content_width.saturating_sub(6).max(1);
                                 let seg_start = s_idx * text_cols;
                                 let seg_end = seg_start + text_cols;
-                                let del_text = r.del_text();
                                 render_row_segment(
                                     &row_text,
-                                    del_text.as_deref(),
+                                    r.is_aux(),
                                     r.kind,
                                     r.mov_side,
                                     &r.runs,

@@ -381,14 +381,13 @@ pub fn render_file_diff_with_width(
         };
 
         let text = r.text();
-        let del_text = r.del_text();
 
         if width == 0 {
             let mut row_buf = String::with_capacity(text.len() + 64);
             let _ = write_row_segment(
                 &mut row_buf,
                 &text,
-                del_text.as_deref(),
+                r.is_aux(),
                 r.kind,
                 r.mov_side,
                 &r.runs,
@@ -409,7 +408,7 @@ pub fn render_file_diff_with_width(
         }
 
         let text_cols = width.saturating_sub(6).max(1);
-        let disp = display_text(&text, del_text.as_deref(), r.kind, &r.runs, 0, true);
+        let disp = display_text(&text, r.is_aux(), r.kind, &r.runs, 0, true);
         let exp = expand_tabs(&disp, 4);
         let len = display_width(&exp);
         let seg_count = if len == 0 { 1 } else { len.div_ceil(text_cols) };
@@ -419,7 +418,7 @@ pub fn render_file_diff_with_width(
             let _ = write_row_segment(
                 &mut row_buf,
                 &text,
-                del_text.as_deref(),
+                r.is_aux(),
                 r.kind,
                 r.mov_side,
                 &r.runs,
@@ -455,7 +454,7 @@ pub fn render_file_diff_with_width(
             let _ = write_row_segment(
                 &mut row_buf,
                 &text,
-                del_text.as_deref(),
+                r.is_aux(),
                 r.kind,
                 r.mov_side,
                 &r.runs,

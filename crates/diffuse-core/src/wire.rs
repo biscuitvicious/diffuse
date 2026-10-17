@@ -993,19 +993,18 @@ impl OutputHunk {
                     ));
                 }
             }
-            // Reverse: non-add-like runs concatenate to row.del_text()
-            if r.kind == RowKind::Mod
-                && let Some(del_text) = r.del_text()
-            {
+            // Reverse: non-add-like runs concatenate to row.old_text()
+            if r.kind == RowKind::Mod {
                 let rev: String = r
                     .runs
                     .iter()
                     .filter(|x| !x.kind.is_add_like())
                     .map(|x| x.text.as_ref())
                     .collect();
-                if rev != del_text {
+                let old_text = r.old_text();
+                if rev != old_text {
                     return Err(format!(
-                        "Hunk row {row_idx}: reverse text mismatch: rev {rev:?} != del_text {del_text:?}"
+                        "Hunk row {row_idx}: reverse text mismatch: rev {rev:?} != old_text {old_text:?}"
                     ));
                 }
             }
@@ -1353,6 +1352,12 @@ impl OutputRow {
     #[inline]
     pub fn reconstruct(&self) -> Row {
         self.into()
+    }
+
+    /// Whether this row is an auxiliary row within a multiline cluster.
+    #[inline]
+    pub fn is_aux(&self) -> bool {
+        matches!(self.group, Some(RowGroup::Aux { .. }))
     }
 
     /// Computes the new-side line text projected across this row's runs (Ctx +

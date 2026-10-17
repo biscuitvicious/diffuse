@@ -166,7 +166,7 @@ fn test_render_addition_row_with_subword_styling() {
     let prefix = "  12 + ";
     let rendered = render_row_segment(
         "pub fn render",
-        None,
+        false,
         RowKind::Add,
         None,
         &runs,
@@ -200,7 +200,7 @@ fn test_grapheme_clusters_never_split() {
     // seg [0,1) in grapheme units must keep the whole cluster, not split it.
     let seg = render_row_segment(
         text,
-        None,
+        false,
         RowKind::Ctx,
         None,
         &runs,
@@ -223,7 +223,7 @@ fn test_grapheme_clusters_never_split() {
     // col_offset=1 skips one grapheme (the whole cluster), landing on "x".
     let off = render_row_segment(
         text,
-        None,
+        false,
         RowKind::Ctx,
         None,
         &runs,
@@ -256,7 +256,7 @@ fn test_syntax_on_toggle_disables_token_colors() {
     let prefix = "   1  ";
     let on = render_row_segment(
         "fn",
-        None,
+        false,
         RowKind::Ctx,
         None,
         &runs,
@@ -276,7 +276,7 @@ fn test_syntax_on_toggle_disables_token_colors() {
     );
     let off = render_row_segment(
         "fn",
-        None,
+        false,
         RowKind::Ctx,
         None,
         &runs,
@@ -316,7 +316,7 @@ fn test_col_offset_applies_to_token_runs() {
     let prefix = "  12 + ";
     let rendered = render_row_segment(
         "pub fn render",
-        None,
+        false,
         RowKind::Add,
         None,
         &runs,
@@ -474,7 +474,7 @@ fn test_render_moved_row_with_indentation_subwords() {
     let prefix = "  10≈+ ";
     let rendered = render_row_segment(
         "        foo()",
-        Some("    foo()"),
+        true,
         RowKind::Add,
         None,
         &runs,
@@ -523,7 +523,7 @@ fn test_render_mod_row_with_indentation_subwords() {
     let prefix = "  20 ~ ";
     let rendered = render_row_segment(
         "        bar()",
-        Some("    bar()"),
+        false,
         RowKind::Mod,
         None,
         &runs,
@@ -557,7 +557,7 @@ fn test_render_moved_source_del_row() {
     let prefix = "  15≈- ";
     let rendered = render_row_segment(
         "    foo()",
-        None,
+        false,
         RowKind::Del,
         None,
         &runs,
@@ -591,7 +591,7 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
     let prefix = "  15≈- ";
     let rendered = render_row_segment(
         "    foo()",
-        None,
+        false,
         RowKind::Mov,
         Some(MovSide::Src),
         &runs,
@@ -633,7 +633,7 @@ fn test_write_row_segment_direct_buffer() {
     write_row_segment(
         &mut buf,
         "let x = 1;",
-        None,
+        false,
         RowKind::Add,
         None,
         &runs,
@@ -652,7 +652,7 @@ fn test_write_row_segment_direct_buffer() {
         buf,
         render_row_segment(
             "let x = 1;",
-            None,
+            false,
             RowKind::Add,
             None,
             &runs,
@@ -708,7 +708,7 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
     // Segment [0, 8) covers the 8 expanded tab spaces
     let seg1 = render_row_segment(
         "\t\tlet x = 1;",
-        None,
+        false,
         RowKind::Ctx,
         None,
         &runs,
@@ -728,7 +728,7 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
     // Full row preserves original tabs (golden contract invariant)
     let full = render_row_segment(
         "\t\tlet x = 1;",
-        None,
+        false,
         RowKind::Ctx,
         None,
         &runs,
@@ -754,7 +754,7 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     // "ab✅" (4 columns), never the 5-column "ab✅c".
     let del = render_row_segment(
         "ab✅cd",
-        None,
+        false,
         RK::Del,
         None,
         &[],
@@ -781,7 +781,7 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     }];
     let run_seg = render_row_segment(
         "ab✅cd",
-        None,
+        false,
         RK::Ctx,
         None,
         &runs,
@@ -802,7 +802,7 @@ fn test_wide_emoji_never_exceeds_segment_window() {
 
     let empty = render_row_segment(
         "ab✅cd",
-        None,
+        false,
         RK::Ctx,
         None,
         &[],
@@ -824,7 +824,7 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     // The remainder window still shows the tail content that fits.
     let tail = render_row_segment(
         "ab✅cd",
-        None,
+        false,
         RK::Del,
         None,
         &[],
@@ -869,7 +869,7 @@ fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_st
     ];
     let rendered = render_row_segment(
         "~~deprecated~~",
-        None,
+        false,
         RowKind::Add,
         None,
         &runs,
@@ -918,7 +918,7 @@ fn test_render_moved_src_run_skipped() {
     ];
     let rendered = render_row_segment(
         "    assert_eq!(",
-        Some("    assert_eq!(super::resolve_theme, "),
+        false,
         RowKind::Mod,
         None,
         &runs,
@@ -959,7 +959,7 @@ fn test_render_mov_tgt_with_add_row_bg() {
     }];
     let rendered_mov = render_row_segment(
         "resolve_theme",
-        None,
+        false,
         RowKind::Mov,
         Some(MovSide::Tgt),
         &runs,
@@ -992,7 +992,7 @@ fn test_render_mov_tgt_with_add_row_bg() {
     // Selected MovTgt row background must use add_cursor_bg.
     let rendered_sel = render_row_segment(
         "resolve_theme",
-        None,
+        false,
         RowKind::Mov,
         Some(MovSide::Tgt),
         &runs,
@@ -1037,13 +1037,31 @@ fn test_display_text_skips_moved_source_runs() {
             text: " ".into(),
         },
     ];
-    let disp = display_text(
-        "    assert_eq!(",
-        Some("    assert_eq!(super::resolve_theme "),
-        RowKind::Mod,
-        &runs,
-        0,
-        true,
-    );
+    let disp = display_text("    assert_eq!(", false, RowKind::Mod, &runs, 0, true);
     assert_eq!(disp, "    assert_eq!( ");
+}
+
+#[test]
+fn test_aux_add_row_use_merged_display_text() {
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "old_part".into(),
+        },
+        OutputRun {
+            kind: RunKind::Add,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "new_part".into(),
+        },
+    ];
+    // With is_aux_row = true, display_text merges the del and add runs.
+    let disp_aux = display_text("new_part", true, RowKind::Add, &runs, 0, true);
+    assert_eq!(disp_aux, "old_partnew_part");
+
+    // With is_aux_row = false, display_text does not merge; returns text.
+    let disp_plain = display_text("new_part", false, RowKind::Add, &runs, 0, true);
+    assert_eq!(disp_plain, "new_part");
 }

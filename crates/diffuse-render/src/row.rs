@@ -219,14 +219,13 @@ pub fn styled_prefix(
 /// Extract display text of a row considering word diff and column offset.
 pub fn display_text(
     text: &str,
-    del_text: Option<&str>,
+    is_aux_row: bool,
     kind: RowKind,
     runs: &[OutputRun],
     col_offset: usize,
     word_diff: bool,
 ) -> String {
-    let use_merged = (kind == RowKind::Mod || kind == RowKind::Mov || kind == RowKind::Add)
-        && del_text.is_some()
+    let use_merged = (kind == RowKind::Mod || (kind == RowKind::Add && is_aux_row))
         && word_diff
         && !runs.is_empty();
 
@@ -320,7 +319,7 @@ pub fn expand_runs_tabs(runs: &[OutputRun], tab_width: usize) -> Vec<OutputRun> 
 pub fn write_row_segment<W: Write>(
     out: &mut W,
     text: &str,
-    del_text: Option<&str>,
+    is_aux_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
     runs: &[OutputRun],
@@ -400,7 +399,7 @@ pub fn write_row_segment<W: Write>(
 
     let has_subwords =
         runs.iter().any(|t| t.kind == RunKind::Add) && runs.iter().any(|t| t.kind != RunKind::Add);
-    let is_expansion_add = kind == RowKind::Add && del_text.is_some();
+    let is_expansion_add = kind == RowKind::Add && is_aux_row;
 
     // Moved-out source text never renders (struck or otherwise): the aux
     // rows portion it out as context, so emitting it here would claim the
@@ -457,13 +456,6 @@ pub fn write_row_segment<W: Write>(
     };
     let text = exp_text.as_ref();
 
-    let exp_del_text = if !is_full_row {
-        del_text.map(|dt| expand_tabs(dt, 4))
-    } else {
-        None
-    };
-    let del_text = exp_del_text.as_deref().or(del_text);
-
     let has_styled_prefix =
         prefix.starts_with("\x1b[") || selected || band || !ctx_tint_bg.is_empty();
     let lead_bg = if has_styled_prefix { line_bg } else { "" };
@@ -480,7 +472,7 @@ pub fn write_row_segment<W: Write>(
         if is_full_row {
             return write!(out, "{lead_bg}{prefix}{bg}{del_fg}{text}{reset}{trail_bg}");
         }
-        let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
+        let disp = display_text(text, is_aux_row, kind, runs, col_offset, word_diff);
         // Slice by visual columns, not grapheme count: wide graphemes (CJK,
         // emoji) occupy two columns, so grapheme-index slicing overshoots.
         let piece = slice_by_visual_width(&disp, seg_start, seg_end.saturating_sub(seg_start));
@@ -502,7 +494,7 @@ pub fn write_row_segment<W: Write>(
         if is_full_row {
             return write!(out, "{lead_bg}{prefix}{bg}{text}{trail_bg}");
         }
-        let disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
+        let disp = display_text(text, is_aux_row, kind, runs, col_offset, word_diff);
         let piece = slice_by_visual_width(&disp, seg_start, seg_end.saturating_sub(seg_start));
         return write!(out, "{lead_bg}{prefix}{bg}{piece}{trail_bg}");
     }
@@ -551,7 +543,6 @@ pub fn write_row_segment<W: Write>(
         return Ok(());
     }
 
-    let _disp = display_text(text, del_text, kind, runs, col_offset, word_diff);
     write!(out, "{lead_bg}{prefix}")?;
     // Visual columns consumed by the col_offset-skipped grapheme prefix, so
     // run positions map into displayed coordinates even with wide graphemes.
@@ -638,7 +629,7 @@ pub fn write_row_segment<W: Write>(
 #[allow(clippy::too_many_arguments)]
 pub fn render_row_segment(
     text: &str,
-    del_text: Option<&str>,
+    is_aux_row: bool,
     kind: RowKind,
     mov_side: Option<MovSide>,
     runs: &[OutputRun],
@@ -654,8 +645,8 @@ pub fn render_row_segment(
 ) -> String {
     let mut out = String::with_capacity(text.len() + 64);
     let _ = write_row_segment(
-        &mut out, text, del_text, kind, mov_side, runs, seg_start, seg_end, prefix, selected, band,
-        col_offset, word_diff, syntax_on, theme,
+        &mut out, text, is_aux_row, kind, mov_side, runs, seg_start, seg_end, prefix, selected,
+        band, col_offset, word_diff, syntax_on, theme,
     );
     out
 }

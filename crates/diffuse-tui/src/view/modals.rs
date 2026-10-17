@@ -382,10 +382,9 @@ pub fn render_finder_modal(
                     r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
                 );
                 let text = r.text();
-                let del_text = r.del_text();
                 let rendered_row = render_row_segment(
                     &text,
-                    del_text.as_deref(),
+                    r.is_aux(),
                     r.kind,
                     r.mov_side,
                     &r.runs,
@@ -600,10 +599,9 @@ pub fn render_finder_modal_widget(
                     r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
                 );
                 let text = r.text();
-                let del_text = r.del_text();
                 let rendered_row = render_row_segment(
                     &text,
-                    del_text.as_deref(),
+                    r.is_aux(),
                     r.kind,
                     r.mov_side,
                     &r.runs,
