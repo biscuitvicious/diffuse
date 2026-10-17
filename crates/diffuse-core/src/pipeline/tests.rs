@@ -658,8 +658,8 @@ fn test_head_commit_hunk_render() {
         "line 150 should pair with the old if statement as Mod"
     );
     assert_eq!(
-        r150.del_text().as_deref().map(str::trim),
-        Some("if !run.is_empty() && !moved_dels.contains(&run[0]) {")
+        r150.old_text().trim(),
+        "if !run.is_empty() && !moved_dels.contains(&run[0]) {"
     );
     assert_eq!(
         r150.spans().del,
@@ -677,7 +677,7 @@ fn test_head_commit_hunk_render() {
         crate::parse::RowKind::Add,
         "line 156 should be a clean pure Add"
     );
-    assert_eq!(r156.del_text(), None);
+    assert_eq!(r156.old_text(), "");
 
     let r166 = rows
         .iter()
@@ -688,10 +688,7 @@ fn test_head_commit_hunk_render() {
         crate::parse::RowKind::Mod,
         "line 166 should pair with old receiver line 148 as Mod"
     );
-    assert_eq!(
-        r166.del_text().as_deref().map(str::trim),
-        Some("unmark_positions")
-    );
+    assert_eq!(r166.old_text().trim(), "unmark_positions");
 
     let r_filter = rows
         .iter()
@@ -699,8 +696,8 @@ fn test_head_commit_hunk_render() {
         .expect("filter row");
     assert_eq!(r_filter.kind, crate::parse::RowKind::Mod);
     assert_eq!(
-        r_filter.del_text().as_deref().map(str::trim),
-        Some(".extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));")
+        r_filter.old_text().trim(),
+        ".extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));"
     );
 }
 
@@ -2457,7 +2454,7 @@ fn test_mod_rows_replay_cleanly() {
     let mut mods = 0;
     for r in rows.iter().filter(|r| r.kind == crate::parse::RowKind::Mod) {
         mods += 1;
-        let old: Vec<char> = r.del_text().expect("mod del_text").chars().collect();
+        let old: Vec<char> = r.old_text().chars().collect();
         let new: Vec<char> = r.text().chars().collect();
         let (mut o, mut n) = (0usize, 0usize);
         for run in &r.runs {
@@ -2468,7 +2465,7 @@ fn test_mod_rows_replay_cleanly() {
                         &old[o..o + t.len()],
                         &t[..],
                         "ctx run must match old at cursor (old={:?})",
-                        r.del_text().unwrap()
+                        r.old_text()
                     );
                     assert_eq!(
                         &new[n..n + t.len()],
@@ -2522,7 +2519,7 @@ fn test_mod_rows_visible_contiguity() {
     let mut mods = 0;
     for r in rows.iter().filter(|r| r.kind == crate::parse::RowKind::Mod) {
         mods += 1;
-        let old: Vec<char> = r.del_text().expect("mod del_text").chars().collect();
+        let old: Vec<char> = r.old_text().chars().collect();
         let (mut o, mut vo) = (0usize, 0usize);
         for run in &r.runs {
             let t: Vec<char> = run.text.chars().collect();
@@ -2533,7 +2530,7 @@ fn test_mod_rows_visible_contiguity() {
                         vo,
                         "ctx run {:?} follows skipped moved-out text; reader cannot verify it (old={:?})",
                         run.text,
-                        r.del_text().unwrap()
+                        r.old_text()
                     );
                     assert_eq!(&old[o..o + t.len()], &t[..]);
                     o += t.len();

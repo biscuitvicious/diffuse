@@ -465,7 +465,7 @@ fn assert_diff_invariants(
                         // the snapshot window starting at its first line,
                         // whitespace-insensitively (joins insert spaces).
                         if let Some(n) = r.old_line {
-                            let dt = r.old_text();
+                            let ot = r.old_text();
                             // Window source: snapshot lines when present,
                             // else the patch's own del lines (renamed files
                             // ship only new content). Either way the match
@@ -490,9 +490,9 @@ fn assert_diff_invariants(
                                     .map(|(_, t)| t.clone())
                                     .collect(),
                             };
-                            let want = strip_ws(&dt);
+                            let want = strip_ws(&ot);
                             // How many leading source lines the
-                            // del_text covers: smallest k with equal
+                            // old_text covers: smallest k with equal
                             // stripped content.
                             let mut acc = String::new();
                             let mut take = 0usize;
@@ -509,7 +509,7 @@ fn assert_diff_invariants(
                             }
                             if take == usize::MAX || acc != want {
                                 panic!(
-                                    "[{corpus}] {path} (file {fi}): mod old line {n} del_text {dt:?} matches no source window"
+                                    "[{corpus}] {path} (file {fi}): mod old line {n} old_text {ot:?} matches no source window"
                                 );
                             }
                             // Mark covered numbers: snapshot positions when
@@ -693,12 +693,13 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
             let aux_texts: Vec<String> = h
                 .rows
                 .iter()
-                .filter(|r| matches!(r.group, Some(RowGroup::Aux { .. })))
+                .filter(|r| r.is_aux())
                 .map(|r| {
                     let mut s = r.text();
-                    if let Some(dt) = r.del_text() {
+                    let ot = r.old_text();
+                    if !ot.is_empty() {
                         s.push(' ');
-                        s.push_str(&dt);
+                        s.push_str(&ot);
                     }
                     s
                 })
@@ -708,7 +709,8 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 .rows
                 .iter()
                 .filter(|r| matches!(r.group, Some(RowGroup::Anchor)))
-                .filter_map(|r| r.del_text())
+                .map(|r| r.old_text())
+                .filter(|t| !t.is_empty())
                 .collect();
             for r in &h.rows {
                 match r.kind {
@@ -765,11 +767,6 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                             r.new_line,
                             r.old_line
                         );
-                        check!(
-                            r.del_text().is_some(),
-                            "{}: mod row carries delText",
-                            f.path
-                        );
                     }
                     RowKind::Ctx => {
                         check!(
@@ -792,19 +789,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         f.path
                     );
                 }
-                if let Some(dt) = r.del_text() {
-                    let del_chars = char_len(&dt);
-                    for &(s, e) in &spans.del {
-                        check!(
-                            s <= e && e <= del_chars,
-                            "{}: del span {s}..{e} beyond delText len {del_chars}",
-                            f.path
-                        );
-                    }
-                } else {
+                let ot = r.old_text();
+                let del_chars = char_len(&ot);
+                for &(s, e) in &spans.del {
                     check!(
-                        spans.del.is_empty(),
-                        "{}: del spans without delText",
+                        s <= e && e <= del_chars,
+                        "{}: del span {s}..{e} beyond oldText len {del_chars}",
                         f.path
                     );
                 }
@@ -828,7 +818,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 // concatenate to the new line (the old fragments), and
                 // this walk locks it. Moved-out runs are old-side like
                 // struck runs (see `RunKind::is_del_like`).
-                if (r.kind == RowKind::Mod || r.kind == RowKind::Add) && r.del_text().is_some() {
+                if r.kind == RowKind::Mod || (r.kind == RowKind::Add && r.is_aux()) {
                     let kept: String = r
                         .runs
                         .iter()
@@ -1152,11 +1142,11 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
                             er.text()
                         ));
                     }
-                    if ar.del_text() != er.del_text() {
+                    if ar.old_text() != er.old_text() {
                         msg.push_str(&format!(
-                            "\n    del_text actual:   {:?}\n    del_text expected: {:?}",
-                            ar.del_text(),
-                            er.del_text()
+                            "\n    old_text actual:   {:?}\n    old_text expected: {:?}",
+                            ar.old_text(),
+                            er.old_text()
                         ));
                     }
                     if ar.spans() != er.spans() {

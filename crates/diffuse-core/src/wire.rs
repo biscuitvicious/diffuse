@@ -903,9 +903,6 @@ impl OutputHunk {
                             r.new_line, r.old_line
                         ));
                     }
-                    if r.del_text().is_none() {
-                        return Err(format!("Hunk row {row_idx}: Mod row missing del_text"));
-                    }
                     if r.wholesale {
                         return Err(format!("Hunk row {row_idx}: Mod row must not be wholesale"));
                     }
@@ -960,26 +957,20 @@ impl OutputHunk {
                 prev_add_end = e;
             }
 
-            if let Some(dt) = r.del_text() {
-                let del_char_len = dt.chars().count();
-                let mut prev_del_end = 0;
-                for &(s, e) in &spans.del {
-                    if s > e || e > del_char_len || s < prev_del_end {
-                        return Err(format!(
-                            "Hunk row {row_idx}: invalid del span [{s}..{e}] for del text length {del_char_len}"
-                        ));
-                    }
-                    prev_del_end = e;
+            let old_char_len = r.old_text().chars().count();
+            let mut prev_del_end = 0;
+            for &(s, e) in &spans.del {
+                if s > e || e > old_char_len || s < prev_del_end {
+                    return Err(format!(
+                        "Hunk row {row_idx}: invalid del span [{s}..{e}] for old text length {old_char_len}"
+                    ));
                 }
-            } else if !spans.del.is_empty() {
-                return Err(format!(
-                    "Hunk row {row_idx}: del spans present without del_text"
-                ));
+                prev_del_end = e;
             }
 
             // Disk-exact invariant:
             // Forward: non-del-like runs concatenate to row.text()
-            if (r.kind == RowKind::Mod || r.kind == RowKind::Add) && r.del_text().is_some() {
+            if r.kind == RowKind::Mod || (r.kind == RowKind::Add && r.is_aux()) {
                 let kept: String = r
                     .runs
                     .iter()
@@ -1039,7 +1030,7 @@ impl OutputHunk {
 
         for (&anchor_num, &anchor_idx) in &anchors {
             let anchor_row = &self.rows[anchor_idx];
-            if anchor_row.del_text().is_none() {
+            if anchor_row.old_line.is_none() {
                 continue;
             }
 
@@ -1067,11 +1058,8 @@ impl OutputHunk {
             });
 
             if !aux_adds.is_empty() && !has_aux_dels {
-                let is_import = profile.is_some_and(|p| {
-                    anchor_row
-                        .del_text()
-                        .is_some_and(|dt| p.is_import_statement(&dt))
-                });
+                let is_import =
+                    profile.is_some_and(|p| p.is_import_statement(&anchor_row.old_text()));
 
                 let anchor_moved_src: String = anchor_row
                     .runs
@@ -1290,8 +1278,8 @@ impl From<&OutputRow> for Row {
             }
             RowKind::Add => {
                 let num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let mut add = if let Some(dt) = r.del_text() {
-                    AddLine::with_donor(num, r.new_text(), dt, r.spans())
+                let mut add = if r.is_aux() {
+                    AddLine::with_donor(num, r.new_text(), r.old_text(), r.spans())
                 } else {
                     AddLine::with_spans(num, r.new_text(), r.spans())
                 };
@@ -1318,9 +1306,8 @@ impl From<&OutputRow> for Row {
                 }
                 Some(MovSide::Tgt) | None => {
                     let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                    let del_text = r.del_text();
-                    let del_str = del_text.as_deref().unwrap_or("");
-                    let mut add = AddLine::with_donor(new_num, r.new_text(), del_str, r.spans());
+                    let mut add =
+                        AddLine::with_donor(new_num, r.new_text(), r.old_text(), r.spans());
                     add.group = r.group;
                     add.cached_runs = cached_runs;
                     Row::MovTgt(add)
@@ -1382,21 +1369,6 @@ impl OutputRow {
             RowKind::Del => self.old_text(),
             RowKind::Mov if self.mov_side == Some(MovSide::Src) => self.old_text(),
             _ => self.new_text(),
-        }
-    }
-
-    /// Associated deletion text for modified, deleted, or relocated rows, if
-    /// any.
-    #[inline]
-    pub fn del_text(&self) -> Option<String> {
-        match self.kind {
-            RowKind::Mod | RowKind::Del => Some(self.old_text()),
-            RowKind::Mov if self.mov_side == Some(MovSide::Src) => Some(self.old_text()),
-            RowKind::Add | RowKind::Mov if self.runs.iter().any(|r| r.kind == RunKind::Del) => {
-                Some(self.old_text())
-            }
-            RowKind::Add if matches!(self.group, Some(RowGroup::Aux { .. })) => Some(String::new()),
-            _ => None,
         }
     }
 

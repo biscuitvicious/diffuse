@@ -788,7 +788,6 @@ fn test_compact_wire_run_and_row_serialization() {
     assert_eq!(de_row.old_text(), "old_call();");
     assert_eq!(de_row.new_text(), "new_call();");
     assert_eq!(de_row.text(), "new_call();");
-    assert_eq!(de_row.del_text().as_deref(), Some("old_call();"));
 
     // WireRecord::Line serializes identically to OutputRow (as a tuple)
     let line_rec = WireRecord::Line(row);
