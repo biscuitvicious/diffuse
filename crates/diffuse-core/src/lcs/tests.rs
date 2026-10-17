@@ -933,3 +933,37 @@ fn test_lcs_does_not_mix_method_signature_parens_with_call_parens() {
         "expected ')' to match as context between multiline decl closing and full signature, got: {runs_aux:?}"
     );
 }
+
+#[test]
+fn container_delimiter_depth_preference() {
+    let old_import = "    path::Path,";
+    let new_import = "    path::{Path, PathBuf},";
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let tape = crate::tape::AlignmentTape::from_texts(old_import, new_import, profile);
+    let runs = tape.to_merged_runs();
+    assert_eq!(
+        runs,
+        vec![
+            crate::merge::Run {
+                kind: RunKind::Ctx,
+                text: "    path::",
+            },
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: "{",
+            },
+            crate::merge::Run {
+                kind: RunKind::Ctx,
+                text: "Path",
+            },
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: ", PathBuf}",
+            },
+            crate::merge::Run {
+                kind: RunKind::Ctx,
+                text: ",",
+            },
+        ]
+    );
+}

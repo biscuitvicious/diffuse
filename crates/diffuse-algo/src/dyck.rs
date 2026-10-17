@@ -288,6 +288,94 @@ where
     result
 }
 
+/// Computes delimiter nesting depths for each item in `items`, continuing
+/// from the delimiter state established by `prev_items`. Writes into `out`.
+///
+/// Delimiter depths are assigned using a formal Dyck pushdown automaton:
+/// - Opening delimiters (`(`, `[`, `{`) are assigned the depth of their
+///   enclosing scope.
+/// - Closing delimiters (`)`, `]`, `}`) are assigned the depth of the scope
+///   they close to.
+/// - Items inside containers are assigned the depth of the active container
+///   stack.
+pub fn track_nesting_depths_into<T, C>(
+    prev_items: &[T],
+    items: &[T],
+    classifier: &C,
+    out: &mut [u16],
+) where
+    C: DelimiterClassifier<T>,
+{
+    debug_assert_eq!(items.len(), out.len());
+    let mut stack: SmallStack<u8, 32> = SmallStack::new();
+
+    for item in prev_items {
+        let cat = classifier.classify(item);
+        match cat {
+            Some(DelimiterCategory::Open(id)) => {
+                stack.push(id);
+            }
+            Some(DelimiterCategory::Close(id)) => {
+                if stack.last() == Some(&id) {
+                    stack.pop();
+                }
+            }
+            Some(DelimiterCategory::Symmetric(id)) => {
+                if stack.last() == Some(&id) {
+                    stack.pop();
+                } else {
+                    stack.push(id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for (item, slot) in items.iter().zip(out.iter_mut()) {
+        let cat = classifier.classify(item);
+        match cat {
+            Some(DelimiterCategory::Open(id)) => {
+                *slot = stack.len() as u16;
+                stack.push(id);
+            }
+            Some(DelimiterCategory::Close(id)) => {
+                if stack.last() == Some(&id) {
+                    stack.pop();
+                    *slot = stack.len() as u16;
+                } else {
+                    *slot = stack.len() as u16;
+                }
+            }
+            Some(DelimiterCategory::Symmetric(id)) => {
+                if stack.last() == Some(&id) {
+                    stack.pop();
+                    *slot = stack.len() as u16;
+                } else {
+                    *slot = stack.len() as u16;
+                    stack.push(id);
+                }
+            }
+            _ => {
+                *slot = stack.len() as u16;
+            }
+        }
+    }
+}
+
+/// Computes the delimiter nesting depth for each item in a sequence.
+pub fn track_nesting_depths_with_prev<T, C>(
+    prev_items: &[T],
+    items: &[T],
+    classifier: &C,
+) -> Vec<usize>
+where
+    C: DelimiterClassifier<T>,
+{
+    let mut out = vec![0u16; items.len()];
+    track_nesting_depths_into(prev_items, items, classifier, &mut out);
+    out.into_iter().map(|d| d as usize).collect()
+}
+
 /// Dedicated iterator adapter yielding balanced container ranges `(start, end)`
 /// in a sequence.
 pub struct DyckBalanced<I, C, T> {
@@ -572,5 +660,17 @@ mod tests {
             .dyck_balanced(default_classifier)
             .collect();
         assert_eq!(ranges, vec![(1, 4), (5, 8)]);
+    }
+
+    #[test]
+    fn test_track_nesting_depths() {
+        let c = AsciiDelimiterClassifier;
+        let tokens = vec!["path", "::", "{", "Path", ",", "PathBuf", "}", ","];
+        let depths = track_nesting_depths_with_prev(&[], &tokens, &c);
+        assert_eq!(depths, vec![0, 0, 0, 1, 1, 1, 0, 0]);
+
+        let prev = vec!["use", "std", "::", "{"];
+        let depths_with_prev = track_nesting_depths_with_prev(&prev, &tokens, &c);
+        assert_eq!(depths_with_prev, vec![1, 1, 1, 2, 2, 2, 1, 1]);
     }
 }

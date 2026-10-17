@@ -799,10 +799,49 @@ fn token_match_reward(t: &str) -> i32 {
     }
 }
 
-const GAP_OPEN: i32 = 18;
-const GAP_EXTEND: i32 = 2;
-const CONTIG_BONUS: i32 = 6;
 const NEG_INF: i32 = -1_000_000;
+
+/// Scoring weights and alignment parameters for Gotoh subline sequence
+/// alignment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Weights {
+    /// Cost to open a gap in Gotoh affine DP (18).
+    pub gap_open: i32,
+    /// Incremental cost to extend a gap (2).
+    pub gap_extend: i32,
+    /// Bonus for consecutive matched tokens in the same container run (6).
+    pub contig_bonus: i32,
+    /// Subword concatenation bonus when adjacent subwords match (16).
+    pub subword_bonus: i32,
+    /// Bonus for matching tokens at identical delimiter nesting depth (2).
+    pub depth_match_bonus: i32,
+    /// Penalty for matching tokens at differing delimiter nesting depths (0).
+    pub depth_mismatch_penalty: i32,
+    /// Bonus for matching tokens with concordant subword boundary context (2).
+    pub boundary_match_bonus: i32,
+    /// Penalty for matching tokens with discordant subword boundary context
+    /// (0).
+    pub boundary_mismatch_penalty: i32,
+}
+
+impl Default for Weights {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl Weights {
+    pub const DEFAULT: Self = Self {
+        gap_open: 18,
+        gap_extend: 2,
+        contig_bonus: 6,
+        subword_bonus: 16,
+        depth_match_bonus: 2,
+        depth_mismatch_penalty: 0,
+        boundary_match_bonus: 2,
+        boundary_mismatch_penalty: 0,
+    };
+}
 
 /// Reusable scratch memory arena for Gotoh 3-state affine gap dynamic
 /// programming matrices, eliminating repeated per-invocation heap allocations.
@@ -815,6 +854,8 @@ pub struct LcsScratchArena {
     tb_m: Vec<u8>,
     tb_x: Vec<u8>,
     tb_y: Vec<u8>,
+    depth_a: Vec<u16>,
+    depth_b: Vec<u16>,
 }
 
 impl LcsScratchArena {
@@ -826,7 +867,7 @@ impl LcsScratchArena {
     /// Prepares backing matrices for a DP run of size `total_cells`.
     /// Reallocates only if the existing capacity is insufficient, and
     /// resets initial values without releasing allocated memory.
-    pub fn prepare(&mut self, total_cells: usize) {
+    pub fn prepare(&mut self, total_cells: usize, n: usize, m: usize) {
         if self.m_matrix.len() < total_cells {
             self.m_matrix.resize(total_cells, NEG_INF);
             self.x_matrix.resize(total_cells, NEG_INF);
@@ -835,6 +876,12 @@ impl LcsScratchArena {
             self.tb_m.resize(total_cells, 0);
             self.tb_x.resize(total_cells, 0);
             self.tb_y.resize(total_cells, 0);
+        }
+        if self.depth_a.len() < n {
+            self.depth_a.resize(n, 0);
+        }
+        if self.depth_b.len() < m {
+            self.depth_b.resize(m, 0);
         }
         self.m_matrix[..total_cells].fill(NEG_INF);
         self.x_matrix[..total_cells].fill(NEG_INF);
@@ -851,7 +898,7 @@ thread_local! {
 }
 
 /// Core sequence alignment backtrace with Gotoh 3-state affine gap dynamic
-/// programming using a reusable scratch arena.
+/// programming using a reusable scratch arena and default weights.
 pub fn raw_lcs_pairs_with_arena(
     arena: &mut LcsScratchArena,
     a: &[&str],
@@ -860,6 +907,31 @@ pub fn raw_lcs_pairs_with_arena(
     prev_b: &[&str],
     next_a: Option<&str>,
     next_b: Option<&str>,
+) -> FxHashMap<usize, usize> {
+    raw_lcs_pairs_with_arena_and_weights(
+        arena,
+        a,
+        b,
+        prev_a,
+        prev_b,
+        next_a,
+        next_b,
+        &Weights::DEFAULT,
+    )
+}
+
+/// Core sequence alignment backtrace with Gotoh 3-state affine gap dynamic
+/// programming using a reusable scratch arena and custom weights.
+#[allow(clippy::too_many_arguments)]
+pub fn raw_lcs_pairs_with_arena_and_weights(
+    arena: &mut LcsScratchArena,
+    a: &[&str],
+    b: &[&str],
+    prev_a: &[&str],
+    prev_b: &[&str],
+    next_a: Option<&str>,
+    next_b: Option<&str>,
+    weights: &Weights,
 ) -> FxHashMap<usize, usize> {
     let n = a.len();
     let m = b.len();
@@ -871,7 +943,22 @@ pub fn raw_lcs_pairs_with_arena(
     let idx = |i: usize, j: usize| i * stride + j;
     let total_cells = (n + 1) * (m + 1);
 
-    arena.prepare(total_cells);
+    arena.prepare(total_cells, n, m);
+    diffuse_algo::track_nesting_depths_into(
+        prev_a,
+        a,
+        &diffuse_algo::AsciiDelimiterClassifier,
+        &mut arena.depth_a[..n],
+    );
+    diffuse_algo::track_nesting_depths_into(
+        prev_b,
+        b,
+        &diffuse_algo::AsciiDelimiterClassifier,
+        &mut arena.depth_b[..m],
+    );
+    let depth_a = &arena.depth_a[..n];
+    let depth_b = &arena.depth_b[..m];
+
     let m_matrix = &mut arena.m_matrix[..total_cells];
     let x_matrix = &mut arena.x_matrix[..total_cells];
     let y_matrix = &mut arena.y_matrix[..total_cells];
@@ -883,20 +970,21 @@ pub fn raw_lcs_pairs_with_arena(
     // Backward Gotoh DP over suffixes: cell (i, j) aligns a[i..n] and b[j..m].
     m_matrix[idx(n, m)] = 0;
     for i in (0..n).rev() {
-        x_matrix[idx(i, m)] = -GAP_OPEN - ((n - i) as i32) * GAP_EXTEND;
+        x_matrix[idx(i, m)] = -weights.gap_open - ((n - i) as i32) * weights.gap_extend;
         tb_x[idx(i, m)] = 1;
     }
     for j in (0..m).rev() {
-        y_matrix[idx(n, j)] = -GAP_OPEN - ((m - j) as i32) * GAP_EXTEND;
+        y_matrix[idx(n, j)] = -weights.gap_open - ((m - j) as i32) * weights.gap_extend;
         tb_y[idx(n, j)] = 2;
     }
 
     for i in (0..n).rev() {
         for j in (0..m).rev() {
             // State X: deletion of a[i]
-            let cx = x_matrix[idx(i + 1, j)].saturating_sub(GAP_EXTEND);
-            let cm_x = m_matrix[idx(i + 1, j)].saturating_sub(GAP_OPEN + GAP_EXTEND);
-            let cy = y_matrix[idx(i + 1, j)].saturating_sub(GAP_EXTEND);
+            let cx = x_matrix[idx(i + 1, j)].saturating_sub(weights.gap_extend);
+            let cm_x =
+                m_matrix[idx(i + 1, j)].saturating_sub(weights.gap_open + weights.gap_extend);
+            let cy = y_matrix[idx(i + 1, j)].saturating_sub(weights.gap_extend);
             let (best_x, to_x) = if cx >= cm_x && cx >= cy {
                 (cx, 1)
             } else if cy >= cm_x {
@@ -908,9 +996,10 @@ pub fn raw_lcs_pairs_with_arena(
             tb_x[idx(i, j)] = to_x;
 
             // State Y: insertion of b[j]
-            let cy = y_matrix[idx(i, j + 1)].saturating_sub(GAP_EXTEND);
-            let cm_y = m_matrix[idx(i, j + 1)].saturating_sub(GAP_OPEN + GAP_EXTEND);
-            let cx = x_matrix[idx(i, j + 1)].saturating_sub(GAP_EXTEND);
+            let cy = y_matrix[idx(i, j + 1)].saturating_sub(weights.gap_extend);
+            let cm_y =
+                m_matrix[idx(i, j + 1)].saturating_sub(weights.gap_open + weights.gap_extend);
+            let cx = x_matrix[idx(i, j + 1)].saturating_sub(weights.gap_extend);
             let (best_y, to_y) = if cy >= cm_y && cy >= cx {
                 (cy, 2)
             } else if cx >= cm_y {
@@ -924,32 +1013,66 @@ pub fn raw_lcs_pairs_with_arena(
             // State M: match a[i] with b[j]
             if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
                 let is_ws = token_is_ws(a[i]);
+                let depth_matched = depth_a[i] == depth_b[j];
                 let next_rl = if is_ws { 0 } else { run_len[idx(i + 1, j + 1)] };
                 let is_subword_pair = i + 1 < n
                     && j + 1 < m
                     && are_contiguous_subwords(a[i], a[i + 1])
                     && are_contiguous_subwords(b[j], b[j + 1]);
-                let subword_bonus = if is_subword_pair { 16 } else { 0 };
-                let run_bonus = if is_ws {
+                let subword_bonus = if is_subword_pair {
+                    weights.subword_bonus
+                } else {
+                    0
+                };
+                let same_container =
+                    depth_matched && (i + 1 == n || j + 1 == m || depth_a[i + 1] == depth_b[j + 1]);
+                let run_bonus = if is_ws || !same_container {
                     0
                 } else {
-                    CONTIG_BONUS + (next_rl.min(8) as i32) * 2 + subword_bonus
+                    weights.contig_bonus + (next_rl.min(8) as i32) * 2 + subword_bonus
                 };
                 let next_m_val = m_matrix[idx(i + 1, j + 1)].saturating_add(run_bonus);
                 let next_x = x_matrix[idx(i + 1, j + 1)];
                 let next_y = y_matrix[idx(i + 1, j + 1)];
                 let (best_next, to_m, rl) = if next_m_val >= next_x && next_m_val >= next_y {
-                    (next_m_val, 0, next_rl + 1)
+                    (next_m_val, 0, if same_container { next_rl + 1 } else { 1 })
                 } else if next_x >= next_y {
                     (next_x, 1, 1)
                 } else {
                     (next_y, 2, 1)
                 };
-                let r = if is_ws {
+                let base_r = if is_ws {
                     token_ws_kind(a, prev_a, next_a, i).match_reward()
                 } else {
                     token_match_reward(a[i])
                 };
+                let depth_adj = if depth_matched {
+                    weights.depth_match_bonus
+                } else {
+                    -weights.depth_mismatch_penalty
+                };
+                let boundary_adj = if is_subword_token(a[i]) {
+                    let la = i > 0
+                        && is_subword_token(a[i - 1])
+                        && are_contiguous_subwords(a[i - 1], a[i]);
+                    let ra = i + 1 < n
+                        && is_subword_token(a[i + 1])
+                        && are_contiguous_subwords(a[i], a[i + 1]);
+                    let lb = j > 0
+                        && is_subword_token(b[j - 1])
+                        && are_contiguous_subwords(b[j - 1], b[j]);
+                    let rb = j + 1 < m
+                        && is_subword_token(b[j + 1])
+                        && are_contiguous_subwords(b[j], b[j + 1]);
+                    if la == lb && ra == rb {
+                        weights.boundary_match_bonus
+                    } else {
+                        -weights.boundary_mismatch_penalty
+                    }
+                } else {
+                    0
+                };
+                let r = (base_r + depth_adj + boundary_adj).max(0);
                 m_matrix[idx(i, j)] = r.saturating_add(best_next);
                 tb_m[idx(i, j)] = to_m;
                 run_len[idx(i, j)] = if is_ws { 0 } else { rl };
