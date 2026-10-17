@@ -383,12 +383,11 @@ pub fn render_finder_modal(
                 );
                 let text = r.text();
                 let del_text = r.del_text();
-                let spans = r.spans();
                 let rendered_row = render_row_segment(
                     &text,
                     del_text.as_deref(),
-                    &spans,
                     r.kind,
+                    r.mov_side,
                     &r.runs,
                     0,
                     text_cols,
@@ -602,12 +601,11 @@ pub fn render_finder_modal_widget(
                 );
                 let text = r.text();
                 let del_text = r.del_text();
-                let spans = r.spans();
                 let rendered_row = render_row_segment(
                     &text,
                     del_text.as_deref(),
-                    &spans,
                     r.kind,
+                    r.mov_side,
                     &r.runs,
                     0,
                     text_cols,

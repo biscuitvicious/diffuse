@@ -382,7 +382,6 @@ pub fn render_file_diff_with_width(
 
         let text = r.text();
         let del_text = r.del_text();
-        let spans = r.spans();
 
         if width == 0 {
             let mut row_buf = String::with_capacity(text.len() + 64);
@@ -390,8 +389,8 @@ pub fn render_file_diff_with_width(
                 &mut row_buf,
                 &text,
                 del_text.as_deref(),
-                &spans,
                 r.kind,
+                r.mov_side,
                 &r.runs,
                 0,
                 usize::MAX,
@@ -421,8 +420,8 @@ pub fn render_file_diff_with_width(
                 &mut row_buf,
                 &text,
                 del_text.as_deref(),
-                &spans,
                 r.kind,
+                r.mov_side,
                 &r.runs,
                 0,
                 usize::MAX,
@@ -457,8 +456,8 @@ pub fn render_file_diff_with_width(
                 &mut row_buf,
                 &text,
                 del_text.as_deref(),
-                &spans,
                 r.kind,
+                r.mov_side,
                 &r.runs,
                 seg_start,
                 seg_end,

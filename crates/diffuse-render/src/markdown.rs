@@ -10,7 +10,7 @@ use crate::{
     ansi::optimize_ansi,
     core::{
         parse::RowKind,
-        wire::{OutputFile, PipelineOutput},
+        wire::{MovSide, OutputFile, PipelineOutput},
     },
     syntax::classifier::for_each_markdown_token,
     theme::DiffuseTheme,
@@ -261,7 +261,7 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
                         let text = row.old_text();
                         push_diff_row(&mut out, '-', &text, &mut active_fence_profile, &ctx);
                     }
-                    RowKind::Mod | RowKind::Mov => {
+                    RowKind::Mod => {
                         if let Some(del_text) = row.del_text() {
                             let mut del_fence = active_fence_profile;
                             push_diff_row(&mut out, '-', &del_text, &mut del_fence, &ctx);
@@ -269,6 +269,19 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
                         let text = row.new_text();
                         push_diff_row(&mut out, '+', &text, &mut active_fence_profile, &ctx);
                     }
+                    RowKind::Mov => match row
+                        .mov_side
+                        .expect("RowKind::Mov rows must specify mov_side")
+                    {
+                        MovSide::Src => {
+                            let text = row.old_text();
+                            push_diff_row(&mut out, '-', &text, &mut active_fence_profile, &ctx);
+                        }
+                        MovSide::Tgt => {
+                            let text = row.new_text();
+                            push_diff_row(&mut out, '+', &text, &mut active_fence_profile, &ctx);
+                        }
+                    },
                     RowKind::File | RowKind::Sep => {}
                 }
             }

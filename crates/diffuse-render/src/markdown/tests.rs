@@ -1125,3 +1125,80 @@ fn test_render_markdown_source_lines_code_block() {
     assert!(!md_no_src.contains("> ```rs"));
     assert!(md_no_src.contains("> 💬 **Lines 2-3**: Quoted review note"));
 }
+
+#[test]
+fn test_render_markdown_mov_sides() {
+    let mut output = sample_output();
+    output.files[0].notes.clear();
+    output.files[0].hunks[0].rows = vec![
+        OutputRow {
+            kind: RowKind::Mov,
+            mov_side: Some(MovSide::Src),
+            old_line: Some(1),
+            new_line: None,
+            runs: vec![OutputRun {
+                kind: RunKind::MovedSrc,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "original line".into(),
+            }],
+            wholesale: false,
+            group: None,
+        },
+        OutputRow {
+            kind: RowKind::Mov,
+            mov_side: Some(MovSide::Tgt),
+            old_line: None,
+            new_line: Some(1),
+            runs: vec![OutputRun {
+                kind: RunKind::MovedTgt,
+                color: TokenColor::Default,
+                sgr: None,
+                text: "relocated line".into(),
+            }],
+            wholesale: false,
+            group: None,
+        },
+    ];
+
+    let opts = MarkdownOptions {
+        collapsible: false,
+        colorize: false,
+        summary_table: false,
+        ..MarkdownOptions::default()
+    };
+    let md = render_markdown_output(&output, &opts);
+    assert!(
+        md.contains("-original line\n+relocated line\n"),
+        "expected MovSrc to render '-' and MovTgt to render '+', but got:\n{md}"
+    );
+}
+
+#[test]
+#[should_panic(expected = "RowKind::Mov rows must specify mov_side")]
+fn test_render_markdown_mov_none_side_panics() {
+    let mut output = sample_output();
+    output.files[0].notes.clear();
+    output.files[0].hunks[0].rows = vec![OutputRow {
+        kind: RowKind::Mov,
+        mov_side: None,
+        old_line: Some(1),
+        new_line: Some(1),
+        runs: vec![OutputRun {
+            kind: RunKind::MovedTgt,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "invalid move".into(),
+        }],
+        wholesale: false,
+        group: None,
+    }];
+
+    let opts = MarkdownOptions {
+        collapsible: false,
+        colorize: false,
+        summary_table: false,
+        ..MarkdownOptions::default()
+    };
+    let _ = render_markdown_output(&output, &opts);
+}

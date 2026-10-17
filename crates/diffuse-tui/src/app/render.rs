@@ -1215,12 +1215,11 @@ impl AppState {
                                 let seg_start = s_idx * text_cols;
                                 let seg_end = seg_start + text_cols;
                                 let del_text = r.del_text();
-                                let spans = r.spans();
                                 render_row_segment(
                                     &row_text,
                                     del_text.as_deref(),
-                                    &spans,
                                     r.kind,
+                                    r.mov_side,
                                     &r.runs,
                                     seg_start,
                                     seg_end,

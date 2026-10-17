@@ -1,5 +1,8 @@
 use super::*;
-use crate::core::{merge::RunKind, wire::OutputRun};
+use crate::core::{
+    merge::RunKind,
+    wire::{MovSide, OutputRun},
+};
 use diffuse_syntax::color::TokenColor;
 
 #[test]
@@ -164,8 +167,8 @@ fn test_render_addition_row_with_subword_styling() {
     let rendered = render_row_segment(
         "pub fn render",
         None,
-        &Spans::default(),
         RowKind::Add,
+        None,
         &runs,
         0,
         13,
@@ -198,8 +201,8 @@ fn test_grapheme_clusters_never_split() {
     let seg = render_row_segment(
         text,
         None,
-        &Spans::default(),
         RowKind::Ctx,
+        None,
         &runs,
         0,
         1,
@@ -221,8 +224,8 @@ fn test_grapheme_clusters_never_split() {
     let off = render_row_segment(
         text,
         None,
-        &Spans::default(),
         RowKind::Ctx,
+        None,
         &runs,
         0,
         1,
@@ -254,8 +257,8 @@ fn test_syntax_on_toggle_disables_token_colors() {
     let on = render_row_segment(
         "fn",
         None,
-        &Spans::default(),
         RowKind::Ctx,
+        None,
         &runs,
         0,
         2,
@@ -274,8 +277,8 @@ fn test_syntax_on_toggle_disables_token_colors() {
     let off = render_row_segment(
         "fn",
         None,
-        &Spans::default(),
         RowKind::Ctx,
+        None,
         &runs,
         0,
         2,
@@ -314,8 +317,8 @@ fn test_col_offset_applies_to_token_runs() {
     let rendered = render_row_segment(
         "pub fn render",
         None,
-        &Spans::default(),
         RowKind::Add,
+        None,
         &runs,
         0,
         13,
@@ -469,15 +472,11 @@ fn test_render_moved_row_with_indentation_subwords() {
         },
     ];
     let prefix = "  10≈+ ";
-    let spans = Spans {
-        del: vec![(0, 4)],
-        add: vec![(0, 8)],
-    };
     let rendered = render_row_segment(
         "        foo()",
         Some("    foo()"),
-        &spans,
         RowKind::Add,
+        None,
         &runs,
         0,
         usize::MAX,
@@ -522,15 +521,11 @@ fn test_render_mod_row_with_indentation_subwords() {
         },
     ];
     let prefix = "  20 ~ ";
-    let spans = Spans {
-        del: vec![(0, 4)],
-        add: vec![(0, 8)],
-    };
     let rendered = render_row_segment(
         "        bar()",
         Some("    bar()"),
-        &spans,
         RowKind::Mod,
+        None,
         &runs,
         0,
         usize::MAX,
@@ -563,8 +558,8 @@ fn test_render_moved_source_del_row() {
     let rendered = render_row_segment(
         "    foo()",
         None,
-        &Spans::default(),
         RowKind::Del,
+        None,
         &runs,
         0,
         usize::MAX,
@@ -584,6 +579,48 @@ fn test_render_moved_source_del_row() {
 }
 
 #[test]
+fn test_mov_src_renders_like_del_row_without_strikethrough() {
+    let theme = DiffuseTheme::DEFAULT;
+    let s_del = theme.row_style(RowKind::Del);
+    let runs = vec![OutputRun {
+        kind: RunKind::Del,
+        color: TokenColor::Default,
+        sgr: None,
+        text: "    foo()".into(),
+    }];
+    let prefix = "  15≈- ";
+    let rendered = render_row_segment(
+        "    foo()",
+        None,
+        RowKind::Mov,
+        Some(MovSide::Src),
+        &runs,
+        0,
+        usize::MAX,
+        prefix,
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(rendered.contains("  15≈- "));
+    assert!(
+        rendered.contains(&s_del.fg.fg_code()),
+        "mov src must have deletion foreground color"
+    );
+    assert!(
+        rendered.contains(&s_del.tint_bg()),
+        "mov src must have deletion tint background"
+    );
+    assert!(
+        !rendered.contains("\x1b[9m"),
+        "mov src must NOT have strikethrough styling"
+    );
+}
+
+#[test]
 fn test_write_row_segment_direct_buffer() {
     let theme = DiffuseTheme::DEFAULT;
     let runs = vec![OutputRun {
@@ -597,8 +634,8 @@ fn test_write_row_segment_direct_buffer() {
         &mut buf,
         "let x = 1;",
         None,
-        &Spans::default(),
         RowKind::Add,
+        None,
         &runs,
         0,
         usize::MAX,
@@ -616,8 +653,8 @@ fn test_write_row_segment_direct_buffer() {
         render_row_segment(
             "let x = 1;",
             None,
-            &Spans::default(),
             RowKind::Add,
+            None,
             &runs,
             0,
             usize::MAX,
@@ -672,8 +709,8 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
     let seg1 = render_row_segment(
         "\t\tlet x = 1;",
         None,
-        &Spans::default(),
         RowKind::Ctx,
+        None,
         &runs,
         0,
         8,
@@ -692,8 +729,8 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
     let full = render_row_segment(
         "\t\tlet x = 1;",
         None,
-        &Spans::default(),
         RowKind::Ctx,
+        None,
         &runs,
         0,
         usize::MAX,
@@ -718,8 +755,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     let del = render_row_segment(
         "ab✅cd",
         None,
-        &Spans::default(),
         RK::Del,
+        None,
         &[],
         0,
         4,
@@ -745,8 +782,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     let run_seg = render_row_segment(
         "ab✅cd",
         None,
-        &Spans::default(),
         RK::Ctx,
+        None,
         &runs,
         0,
         4,
@@ -766,8 +803,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     let empty = render_row_segment(
         "ab✅cd",
         None,
-        &Spans::default(),
         RK::Ctx,
+        None,
         &[],
         0,
         4,
@@ -788,8 +825,8 @@ fn test_wide_emoji_never_exceeds_segment_window() {
     let tail = render_row_segment(
         "ab✅cd",
         None,
-        &Spans::default(),
         RK::Del,
+        None,
         &[],
         4,
         6,
@@ -833,8 +870,8 @@ fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_st
     let rendered = render_row_segment(
         "~~deprecated~~",
         None,
-        &Spans::default(),
         RowKind::Add,
+        None,
         &runs,
         0,
         20,
@@ -882,8 +919,8 @@ fn test_render_moved_src_run_skipped() {
     let rendered = render_row_segment(
         "    assert_eq!(",
         Some("    assert_eq!(super::resolve_theme, "),
-        &Spans::default(),
         RowKind::Mod,
+        None,
         &runs,
         0,
         usize::MAX,
@@ -911,44 +948,67 @@ fn test_render_moved_src_run_skipped() {
 }
 
 #[test]
-fn test_render_moved_tgt_like_context() {
+fn test_render_mov_tgt_with_add_row_bg() {
     let theme = DiffuseTheme::DEFAULT;
-    let ctx_runs = vec![OutputRun {
-        kind: RunKind::Ctx,
-        color: TokenColor::Function,
-        sgr: None,
-        text: "resolve_theme".into(),
-    }];
-    let tgt_runs = vec![OutputRun {
+    let s_add = theme.row_style(RowKind::Add);
+    let runs = vec![OutputRun {
         kind: RunKind::MovedTgt,
         color: TokenColor::Function,
         sgr: None,
         text: "resolve_theme".into(),
     }];
-    let render_with = |runs: &Vec<OutputRun>| {
-        render_row_segment(
-            "resolve_theme",
-            None,
-            &Spans::default(),
-            RowKind::Add,
-            runs,
-            0,
-            usize::MAX,
-            " 135~+ ",
-            false,
-            false,
-            0,
-            true,
-            true,
-            &theme,
-        )
-    };
-    // Moved-in target text renders exactly as context: shared, not novel.
-    // In particular it must never take strike or fill styling.
-    assert_eq!(render_with(&tgt_runs), render_with(&ctx_runs));
+    let rendered_mov = render_row_segment(
+        "resolve_theme",
+        None,
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        &runs,
+        0,
+        usize::MAX,
+        " 135~+ ",
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    // MovTgt row background must use the addition tint background like
+    // RowKind::Add.
     assert!(
-        !render_with(&tgt_runs).contains("\x1b[9m"),
-        "moved-in target must not strike"
+        rendered_mov.contains(&s_add.tint_bg()),
+        "MovTgt must render with addition tint background: {rendered_mov:?}"
+    );
+    // RunKind::MovedTgt tokens remain context-colored, not novelty-colored.
+    let ctx_color = theme
+        .palette
+        .token_color(TokenColor::Function, RowKind::Ctx)
+        .unwrap();
+    assert!(
+        rendered_mov.contains(&ctx_color.fg_code()),
+        "MovedTgt tokens must keep context token color: {rendered_mov:?}"
+    );
+
+    // Selected MovTgt row background must use add_cursor_bg.
+    let rendered_sel = render_row_segment(
+        "resolve_theme",
+        None,
+        RowKind::Mov,
+        Some(MovSide::Tgt),
+        &runs,
+        0,
+        usize::MAX,
+        " 135~+ ",
+        true,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    assert!(
+        rendered_sel.contains(&s_add.cursor_bg()),
+        "Selected MovTgt must render with addition cursor background: {rendered_sel:?}"
     );
 }
 

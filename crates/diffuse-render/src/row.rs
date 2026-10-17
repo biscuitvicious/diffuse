@@ -13,7 +13,7 @@ use crate::{
         lcs::char_slice,
         merge::RunKind,
         parse::{RowGroup, RowKind, Spans},
-        wire::OutputRun,
+        wire::{MovSide, OutputRun},
     },
 };
 use diffuse_syntax::color::TokenColor;
@@ -321,8 +321,8 @@ pub fn write_row_segment<W: Write>(
     out: &mut W,
     text: &str,
     del_text: Option<&str>,
-    _spans: &Spans,
     kind: RowKind,
+    mov_side: Option<MovSide>,
     runs: &[OutputRun],
     seg_start: usize,
     seg_end: usize,
@@ -335,9 +335,9 @@ pub fn write_row_segment<W: Write>(
     theme: &DiffuseTheme,
 ) -> fmt::Result {
     let is_ctx = matches!(kind, RowKind::Ctx) || is_common_only_row(kind, runs);
-    let is_del_row = kind == RowKind::Del;
+    let is_mov_src = mov_side == Some(MovSide::Src);
+    let is_del_row = kind == RowKind::Del || is_mov_src;
     let is_mod_row = kind == RowKind::Mod;
-    let is_mov_row = kind == RowKind::Mov;
 
     // The visual-selection band: one neutral shade applied across the whole
     // row (distinct from the cursor's per-style lift).
@@ -348,13 +348,10 @@ pub fn write_row_segment<W: Write>(
         color => color.bg_code(),
     };
 
-    let s_mov = theme.row_style(RowKind::Mov);
     let s_mod = theme.row_style(RowKind::Mod);
     let s_del = theme.row_style(RowKind::Del);
     let s_add = theme.row_style(RowKind::Add);
 
-    let s_mov_cursor_bg = s_mov.cursor_bg();
-    let s_mov_tint_bg = s_mov.tint_bg();
     let s_mod_cursor_bg = s_mod.cursor_bg();
     let s_mod_tint_bg = s_mod.tint_bg();
     let s_del_cursor_bg = s_del.cursor_bg();
@@ -369,14 +366,6 @@ pub fn write_row_segment<W: Write>(
             &band_bg
         } else {
             &ctx_tint_bg
-        }
-    } else if is_mov_row {
-        if selected {
-            &s_mov_cursor_bg
-        } else if band {
-            &band_bg
-        } else {
-            &s_mov_tint_bg
         }
     } else if is_mod_row {
         if selected {
@@ -650,8 +639,8 @@ pub fn write_row_segment<W: Write>(
 pub fn render_row_segment(
     text: &str,
     del_text: Option<&str>,
-    spans: &Spans,
     kind: RowKind,
+    mov_side: Option<MovSide>,
     runs: &[OutputRun],
     seg_start: usize,
     seg_end: usize,
@@ -665,7 +654,7 @@ pub fn render_row_segment(
 ) -> String {
     let mut out = String::with_capacity(text.len() + 64);
     let _ = write_row_segment(
-        &mut out, text, del_text, spans, kind, runs, seg_start, seg_end, prefix, selected, band,
+        &mut out, text, del_text, kind, mov_side, runs, seg_start, seg_end, prefix, selected, band,
         col_offset, word_diff, syntax_on, theme,
     );
     out
