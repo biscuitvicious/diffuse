@@ -597,6 +597,17 @@ impl LangProfile {
         t == "{" || t == "(" || t == "["
     }
 
+    /// Whether a token or text fragment acts as an expression or block
+    /// opening delimiter (e.g. `(`, `{`, `[`).
+    pub fn is_opening_delimiter(&self, text: &str) -> bool {
+        let t = text.trim();
+        self.is_expression_open(t)
+            || (t.len() == 1
+                && t.chars()
+                    .next()
+                    .is_some_and(|c| c == '(' || c == '{' || c == '['))
+    }
+
     /// Whether a line acts as a closing delimiter for expressions or statements
     /// (parentheses, brackets, braces).
     pub fn is_expression_close(&self, line: &str) -> bool {
@@ -610,6 +621,32 @@ impl LangProfile {
                 t == "fi" || t == "done" || t == "esac" || t == "}" || t == ")" || t == "]"
             }
         }
+    }
+
+    /// Whether a token or text fragment acts as an expression or statement
+    /// closing delimiter (e.g. `);`, `}`, `;`).
+    pub fn is_closing_delimiter(&self, text: &str) -> bool {
+        let t = text.trim();
+        self.classify_exact_close(t) != CloseDelimiter::None
+            || self.classify_close_tail(t) != CloseDelimiter::None
+            || (t.len() == 1
+                && t.chars()
+                    .next()
+                    .is_some_and(|c| self.is_trailing_delimiter(c) && c != ':'))
+    }
+
+    /// Whether text represents a statement terminator or closing statement
+    /// delimiter (e.g. `;`, `);`, `};`, `];`, `)`, `}`, `]`).
+    pub fn is_statement_terminator(&self, text: &str) -> bool {
+        let t = text.trim();
+        if t.is_empty() || t == "," || t == ":" {
+            return false;
+        }
+        t == ";"
+            || (t.ends_with(';') && (self.is_expression_close(t) || self.is_block_close(t)))
+            || self.is_block_close(t)
+            || self.is_expression_close(t)
+            || self.classify_exact_close(t) != CloseDelimiter::None
     }
 
     /// Whether a line is an attribute, decorator, or annotation line.

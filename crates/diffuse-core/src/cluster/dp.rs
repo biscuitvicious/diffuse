@@ -2444,422 +2444,432 @@ pub(crate) fn solve_cluster_matrix(
                 } else {
                     DpRowMeta::default()
                 };
-                if has_old && j < n && om.comment == nm.comment && om.kind.is_compatible(nm.kind) {
-                    let nt = &new_tokens[j];
-                    if ot.ids.is_empty() && nt.ids.is_empty() {
-                        // blank ↔ blank: a trivial full match in one row.
-                        let s = base - w.row_cost + w.slot_continuity_bonus;
-                        if let Some(target) = grid.get_mut(i + 1, j + 1)
-                            && s > target.score
-                        {
-                            *target = Cell {
-                                score: s,
-                                prev_i: i as u32,
-                                prev_j: j as u32,
-                                k: 1,
-                                op: OpKind::Mod,
-                            };
-                        }
-                    } else if om.trimmed_id == nm.trimmed_id {
-                        // Verbatim (trim-insensitive) — a Mov.
-                        let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
-                        let s = base + w.matched_char_reward * ot.chars.max(nt.chars) as f64
-                            - w.row_cost
-                            - w.sprawl_penalty * length_diff;
-                        if let Some(target) = grid.get_mut(i + 1, j + 1)
-                            && s > target.score
-                        {
-                            *target = Cell {
-                                score: s,
-                                prev_i: i as u32,
-                                prev_j: j as u32,
-                                k: 1,
-                                op: OpKind::Mov,
-                            };
-                        }
-                    } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
-                        let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
-                        let min_chars = ot.chars.min(nt.chars);
-                        let char_bound = if token_overlap {
-                            token_intersection_bound(
-                                &ot.token_multiset,
-                                &nt.token_multiset,
-                                &interner.char_lens,
-                            )
-                            .min(min_chars)
-                        } else {
-                            0
-                        };
-                        // Disjoint lines with zero overlapping tokens and zero
-                        // common indentation cannot be in-place
-                        // substitutions (wholesale replacements).
-                        let mut common_indent: Option<usize> = if char_bound > 0 {
-                            None
-                        } else if om.indent == 0 || nm.indent == 0 {
-                            continue;
-                        } else {
-                            let ci = calc_common_indent(
-                                cluster.old_rows[i].text(),
-                                cluster.new_rows[j].text(),
-                            );
-                            if ci == 0 {
-                                continue;
-                            }
-                            Some(ci)
-                        };
-                        let total = ot.chars.max(nt.chars);
-                        let max_matched = char_bound;
-
-                        let Some(target_diag) = grid.get(i + 1, j + 1) else {
-                            continue;
-                        };
-
-                        let statement_head_match = match (om.first_word, nm.first_word) {
-                            (Some(a), Some(b)) => a == b,
-                            _ => false,
-                        };
-                        let is_property_match =
-                            om.property_key.is_some() && om.property_key == nm.property_key;
-                        let same_indent_head_match = statement_head_match
-                            && om.indent == nm.indent
-                            && !om.comment
-                            && !nm.comment
-                            && om.head_is_keyword
-                            && nm.head_is_keyword
-                            && !om.survives_in_new;
-                        let max_syn = if is_property_match {
-                            w.head_agree_bonus + 200.0
-                        } else if same_indent_head_match {
-                            w.same_indent_head_bonus
-                        } else if statement_head_match {
-                            w.head_agree_bonus
-                        } else {
-                            0.0
-                        };
-
-                        let indent_shift = (om.indent as isize - nm.indent as isize).unsigned_abs();
-                        let offset_diff = (i as isize - j as isize).unsigned_abs();
-
-                        // Function-tail return slot: both lines are `) -> T`
-                        // tails at equal indent in a unique-slot cluster.
-                        // Shape rarity (profile-gated) plus indent plus
-                        // uniqueness make this bomb-proof: no other construct
-                        // in these languages produces the shape.
-                        let is_return_slot = unique_return_slot
-                            && om.is_return_tail
-                            && nm.is_return_tail
-                            && indent_shift == 0;
-
-                        let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
-                            0.65
-                        } else if om.comment || nm.comment {
-                            0.35
-                        } else {
-                            0.25
-                        };
-                        let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-                            if om.close_tail != CloseDelimiter::None
-                                && nm.close_tail != CloseDelimiter::None
+                'eval_mod: {
+                    if has_old
+                        && j < n
+                        && om.comment == nm.comment
+                        && om.kind.is_compatible(nm.kind)
+                    {
+                        let nt = &new_tokens[j];
+                        if ot.ids.is_empty() && nt.ids.is_empty() {
+                            // blank ↔ blank: a trivial full match in one row.
+                            let s = base - w.row_cost + w.slot_continuity_bonus;
+                            if let Some(target) = grid.get_mut(i + 1, j + 1)
+                                && s > target.score
                             {
-                                if let Some(p) = profile {
-                                    p.is_direct_tail_match(
-                                        om.close_tail,
-                                        nm.close_tail,
-                                        max_matched,
-                                        w.min_tail_matched_chars,
-                                    )
-                                } else {
-                                    CloseDelimiter::default_is_direct_tail_match(
-                                        om.close_tail,
-                                        nm.close_tail,
-                                        max_matched,
-                                        w.min_tail_matched_chars,
-                                    )
-                                }
-                            } else if om.is_terminal_return && nm.is_terminal_return {
-                                let has_common_indent = if indent_shift == 0 {
-                                    *common_indent.get_or_insert_with(|| {
-                                        if om.indent == 0 || nm.indent == 0 {
-                                            0
-                                        } else {
-                                            calc_common_indent(
-                                                cluster.old_rows[i].text(),
-                                                cluster.new_rows[j].text(),
-                                            )
-                                        }
-                                    }) > 0
-                                } else {
-                                    false
+                                *target = Cell {
+                                    score: s,
+                                    prev_i: i as u32,
+                                    prev_j: j as u32,
+                                    k: 1,
+                                    op: OpKind::Mod,
                                 };
-                                if has_common_indent {
-                                    true
-                                } else {
-                                    max_matched >= w.min_tail_matched_chars
-                                }
+                            }
+                        } else if om.trimmed_id == nm.trimmed_id {
+                            // Verbatim (trim-insensitive) — a Mov.
+                            let length_diff = (ot.chars as i64 - nt.chars as i64).abs() as f64;
+                            let s = base + w.matched_char_reward * ot.chars.max(nt.chars) as f64
+                                - w.row_cost
+                                - w.sprawl_penalty * length_diff;
+                            if let Some(target) = grid.get_mut(i + 1, j + 1)
+                                && s > target.score
+                            {
+                                *target = Cell {
+                                    score: s,
+                                    prev_i: i as u32,
+                                    prev_j: j as u32,
+                                    k: 1,
+                                    op: OpKind::Mov,
+                                };
+                            }
+                        } else if !ot.ids.is_empty() && !nt.ids.is_empty() {
+                            let token_overlap = mask_overlap(&ot.token_mask, &nt.token_mask);
+                            let min_chars = ot.chars.min(nt.chars);
+                            let char_bound = if token_overlap {
+                                token_intersection_bound(
+                                    &ot.token_multiset,
+                                    &nt.token_multiset,
+                                    &interner.char_lens,
+                                )
+                                .min(min_chars)
                             } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                        let max_similarity_ratio = max_matched as f64 / total as f64;
-                        let can_have_containment = indent_shift <= w.max_indent_shift
-                            && (om.comment == nm.comment)
-                            && ((om.stripped_len >= w.min_containment_len
-                                && nm.stripped_len >= w.min_containment_len)
-                                || same_indent_head_match);
+                                0
+                            };
+                            // Disjoint lines with zero overlapping tokens and zero
+                            // common indentation cannot be in-place
+                            // substitutions (wholesale replacements).
+                            let mut common_indent: Option<usize> = if char_bound > 0 {
+                                None
+                            } else if om.indent == 0 || nm.indent == 0 {
+                                break 'eval_mod;
+                            } else {
+                                let ci = calc_common_indent(
+                                    cluster.old_rows[i].text(),
+                                    cluster.new_rows[j].text(),
+                                );
+                                if ci == 0 {
+                                    break 'eval_mod;
+                                }
+                                Some(ci)
+                            };
+                            let total = ot.chars.max(nt.chars);
+                            let max_matched = char_bound;
 
-                        let mut is_prefix_containment = None;
-                        let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
-                            || is_property_match
-                            || statement_head_match
-                            || could_be_tail_pair
-                            || is_return_slot;
-                        if !could_be_valid_mod_fast {
-                            if !can_have_containment {
-                                continue;
-                            }
-                            let ot_strip =
-                                &cluster.old_rows[i].text()[om.indent..om.indent + om.stripped_len];
-                            let nt_strip =
-                                &cluster.new_rows[j].text()[nm.indent..nm.indent + nm.stripped_len];
-                            let is_pc = is_prefix_at_boundary(ot_strip, nt_strip)
-                                || is_prefix_at_boundary(nt_strip, ot_strip);
-                            if !is_pc {
-                                continue;
-                            }
-                            is_prefix_containment = Some(true);
-                        }
+                            let Some(target_diag) = grid.get(i + 1, j + 1) else {
+                                break 'eval_mod;
+                            };
 
-                        let max_close = if could_be_tail_pair || is_return_slot {
-                            w.slot_continuity_bonus
-                        } else {
-                            w.boundary_proximity_bonus * om.prox_close * nm.prox_close
-                        };
-                        let max_open = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
-
-                        let indent_penalty =
-                            w.sprawl_penalty * (indent_shift as f64) * w.indent_penalty_factor;
-
-                        let max_syn_bonus = match is_prefix_containment {
-                            Some(true) => max_syn + w.head_agree_bonus,
-                            Some(false) => max_syn,
-                            None => {
-                                max_syn
-                                    + (if can_have_containment {
-                                        w.head_agree_bonus
-                                    } else {
-                                        0.0
-                                    })
-                            }
-                        };
-                        let max_possible_mod_s = base + w.matched_char_reward * max_matched as f64
-                            - w.sprawl_penalty * (total - max_matched) as f64
-                            - w.row_cost
-                            - indent_penalty
-                            - if om.survives_in_new {
-                                w.survives_elsewhere_penalty
+                            let statement_head_match = match (om.first_word, nm.first_word) {
+                                (Some(a), Some(b)) => a == b,
+                                _ => false,
+                            };
+                            let is_property_match =
+                                om.property_key.is_some() && om.property_key == nm.property_key;
+                            let same_indent_head_match = statement_head_match
+                                && om.indent == nm.indent
+                                && !om.comment
+                                && !nm.comment
+                                && om.head_is_keyword
+                                && nm.head_is_keyword
+                                && !om.survives_in_new;
+                            let max_syn = if is_property_match {
+                                w.head_agree_bonus + 200.0
+                            } else if same_indent_head_match {
+                                w.same_indent_head_bonus
+                            } else if statement_head_match {
+                                w.head_agree_bonus
                             } else {
                                 0.0
-                            }
-                            + max_syn_bonus
-                            + max_close
-                            + max_open;
-                        let next_diag_score = target_diag.score;
-                        let mod_threshold = (base - 2.0 * w.row_cost).max(next_diag_score);
-                        if max_possible_mod_s <= mod_threshold {
-                            continue;
-                        }
+                            };
 
-                        let matched = if ot.ids == nt.ids {
-                            ot.chars
-                        } else if token_overlap && char_bound > 0 {
-                            // Precomputed in parallel up front; recomputed
-                            // inline on a miss so
-                            // output never depends on enumeration
-                            // coverage.
-                            match precomputed_lcs.get(i, j).copied() {
-                                Some(m) if m != u32::MAX => m as usize,
-                                _ => lcs_matched_chars_ids(
-                                    &ot.ids,
-                                    &nt.ids,
-                                    &interner.ws,
-                                    &interner.alnum,
-                                    &nt.token_chars,
-                                    lcs_scratch,
-                                ),
-                            }
-                        } else {
-                            0usize
-                        };
-                        if matched == 0 {
-                            let ci = *common_indent.get_or_insert_with(|| {
-                                if om.indent == 0 || nm.indent == 0 {
-                                    0
-                                } else {
-                                    calc_common_indent(
-                                        cluster.old_rows[i].text(),
-                                        cluster.new_rows[j].text(),
-                                    )
-                                }
-                            });
-                            if ci == 0 {
-                                continue;
-                            }
-                        }
+                            let indent_shift =
+                                (om.indent as isize - nm.indent as isize).unsigned_abs();
+                            let offset_diff = (i as isize - j as isize).unsigned_abs();
 
-                        let is_prefix_containment = match is_prefix_containment {
-                            Some(v) => v,
-                            None => {
-                                if can_have_containment {
-                                    let ot_strip = &cluster.old_rows[i].text()
-                                        [om.indent..om.indent + om.stripped_len];
-                                    let nt_strip = &cluster.new_rows[j].text()
-                                        [nm.indent..nm.indent + nm.stripped_len];
-                                    is_prefix_at_boundary(ot_strip, nt_strip)
-                                        || is_prefix_at_boundary(nt_strip, ot_strip)
+                            // Function-tail return slot: both lines are `) -> T`
+                            // tails at equal indent in a unique-slot cluster.
+                            // Shape rarity (profile-gated) plus indent plus
+                            // uniqueness make this bomb-proof: no other construct
+                            // in these languages produces the shape.
+                            let is_return_slot = unique_return_slot
+                                && om.is_return_tail
+                                && nm.is_return_tail
+                                && indent_shift == 0;
+
+                            let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
+                                0.65
+                            } else if om.comment || nm.comment {
+                                0.35
+                            } else {
+                                0.25
+                            };
+                            let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
+                                if om.close_tail != CloseDelimiter::None
+                                    && nm.close_tail != CloseDelimiter::None
+                                {
+                                    if let Some(p) = profile {
+                                        p.is_direct_tail_match(
+                                            om.close_tail,
+                                            nm.close_tail,
+                                            max_matched,
+                                            w.min_tail_matched_chars,
+                                        )
+                                    } else {
+                                        CloseDelimiter::default_is_direct_tail_match(
+                                            om.close_tail,
+                                            nm.close_tail,
+                                            max_matched,
+                                            w.min_tail_matched_chars,
+                                        )
+                                    }
+                                } else if om.is_terminal_return && nm.is_terminal_return {
+                                    let has_common_indent = if indent_shift == 0 {
+                                        *common_indent.get_or_insert_with(|| {
+                                            if om.indent == 0 || nm.indent == 0 {
+                                                0
+                                            } else {
+                                                calc_common_indent(
+                                                    cluster.old_rows[i].text(),
+                                                    cluster.new_rows[j].text(),
+                                                )
+                                            }
+                                        }) > 0
+                                    } else {
+                                        false
+                                    };
+                                    if has_common_indent {
+                                        true
+                                    } else {
+                                        max_matched >= w.min_tail_matched_chars
+                                    }
                                 } else {
                                     false
-                                }
-                            }
-                        };
-
-                        let unmatched = total.saturating_sub(matched);
-                        let (penalty, syntax) = if is_property_match || is_prefix_containment {
-                            let core_unmatched = min_chars.saturating_sub(matched);
-                            let length_diff = (total - min_chars) as f64;
-                            let pen = w.unmatched_char_penalty * core_unmatched as f64
-                                + w.sprawl_penalty * length_diff;
-                            let syn = if is_prefix_containment {
-                                max_syn + w.head_agree_bonus
-                            } else {
-                                max_syn
-                            };
-                            (pen, syn)
-                        } else {
-                            (w.unmatched_char_penalty * unmatched as f64, max_syn)
-                        };
-
-                        let close_bonus =
-                            w.boundary_proximity_bonus * om.prox_close * nm.prox_close;
-                        let open_bonus = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
-                        let indent_diff = indent_shift as f64;
-                        let indent_penalty =
-                            w.sprawl_penalty * indent_diff * w.indent_penalty_factor;
-
-                        let similarity_ratio = matched as f64 / total as f64;
-                        let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-                            let delim_match = if om.close_tail != CloseDelimiter::None
-                                && nm.close_tail != CloseDelimiter::None
-                            {
-                                if let Some(p) = profile {
-                                    p.is_direct_tail_match(
-                                        om.close_tail,
-                                        nm.close_tail,
-                                        matched,
-                                        w.min_tail_matched_chars,
-                                    )
-                                } else {
-                                    CloseDelimiter::default_is_direct_tail_match(
-                                        om.close_tail,
-                                        nm.close_tail,
-                                        matched,
-                                        w.min_tail_matched_chars,
-                                    )
                                 }
                             } else {
                                 false
                             };
-                            if delim_match {
-                                true
-                            } else if om.is_terminal_return && nm.is_terminal_return {
-                                let has_common_indent = if indent_diff == 0.0 {
-                                    *common_indent.get_or_insert_with(|| {
-                                        if om.indent == 0 || nm.indent == 0 {
-                                            0
+                            let max_similarity_ratio = max_matched as f64 / total as f64;
+                            let can_have_containment = indent_shift <= w.max_indent_shift
+                                && (om.comment == nm.comment)
+                                && ((om.stripped_len >= w.min_containment_len
+                                    && nm.stripped_len >= w.min_containment_len)
+                                    || same_indent_head_match);
+
+                            let mut is_prefix_containment = None;
+                            let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
+                                || is_property_match
+                                || statement_head_match
+                                || could_be_tail_pair
+                                || is_return_slot;
+                            if !could_be_valid_mod_fast {
+                                if !can_have_containment {
+                                    break 'eval_mod;
+                                }
+                                let ot_strip = &cluster.old_rows[i].text()
+                                    [om.indent..om.indent + om.stripped_len];
+                                let nt_strip = &cluster.new_rows[j].text()
+                                    [nm.indent..nm.indent + nm.stripped_len];
+                                let is_pc = is_prefix_at_boundary(ot_strip, nt_strip)
+                                    || is_prefix_at_boundary(nt_strip, ot_strip);
+                                if !is_pc {
+                                    break 'eval_mod;
+                                }
+                                is_prefix_containment = Some(true);
+                            }
+
+                            let max_close = if could_be_tail_pair || is_return_slot {
+                                w.slot_continuity_bonus
+                            } else {
+                                w.boundary_proximity_bonus * om.prox_close * nm.prox_close
+                            };
+                            let max_open = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
+
+                            let indent_penalty =
+                                w.sprawl_penalty * (indent_shift as f64) * w.indent_penalty_factor;
+
+                            let max_syn_bonus = match is_prefix_containment {
+                                Some(true) => max_syn + w.head_agree_bonus,
+                                Some(false) => max_syn,
+                                None => {
+                                    max_syn
+                                        + (if can_have_containment {
+                                            w.head_agree_bonus
                                         } else {
-                                            calc_common_indent(
-                                                cluster.old_rows[i].text(),
-                                                cluster.new_rows[j].text(),
-                                            )
-                                        }
-                                    }) > 0
+                                            0.0
+                                        })
+                                }
+                            };
+                            let max_possible_mod_s = base
+                                + w.matched_char_reward * max_matched as f64
+                                - w.sprawl_penalty * (total - max_matched) as f64
+                                - w.row_cost
+                                - indent_penalty
+                                - if om.survives_in_new {
+                                    w.survives_elsewhere_penalty
+                                } else {
+                                    0.0
+                                }
+                                + max_syn_bonus
+                                + max_close
+                                + max_open;
+                            let next_diag_score = target_diag.score;
+                            let mod_threshold = (base - 2.0 * w.row_cost).max(next_diag_score);
+                            if max_possible_mod_s <= mod_threshold {
+                                break 'eval_mod;
+                            }
+
+                            let matched = if ot.ids == nt.ids {
+                                ot.chars
+                            } else if token_overlap && char_bound > 0 {
+                                // Precomputed in parallel up front; recomputed
+                                // inline on a miss so
+                                // output never depends on enumeration
+                                // coverage.
+                                match precomputed_lcs.get(i, j).copied() {
+                                    Some(m) if m != u32::MAX => m as usize,
+                                    _ => lcs_matched_chars_ids(
+                                        &ot.ids,
+                                        &nt.ids,
+                                        &interner.ws,
+                                        &interner.alnum,
+                                        &nt.token_chars,
+                                        lcs_scratch,
+                                    ),
+                                }
+                            } else {
+                                0usize
+                            };
+                            if matched == 0 {
+                                let ci = *common_indent.get_or_insert_with(|| {
+                                    if om.indent == 0 || nm.indent == 0 {
+                                        0
+                                    } else {
+                                        calc_common_indent(
+                                            cluster.old_rows[i].text(),
+                                            cluster.new_rows[j].text(),
+                                        )
+                                    }
+                                });
+                                if ci == 0 {
+                                    break 'eval_mod;
+                                }
+                            }
+
+                            let is_prefix_containment = match is_prefix_containment {
+                                Some(v) => v,
+                                None => {
+                                    if can_have_containment {
+                                        let ot_strip = &cluster.old_rows[i].text()
+                                            [om.indent..om.indent + om.stripped_len];
+                                        let nt_strip = &cluster.new_rows[j].text()
+                                            [nm.indent..nm.indent + nm.stripped_len];
+                                        is_prefix_at_boundary(ot_strip, nt_strip)
+                                            || is_prefix_at_boundary(nt_strip, ot_strip)
+                                    } else {
+                                        false
+                                    }
+                                }
+                            };
+
+                            let unmatched = total.saturating_sub(matched);
+                            let (penalty, syntax) = if is_property_match || is_prefix_containment {
+                                let core_unmatched = min_chars.saturating_sub(matched);
+                                let length_diff = (total - min_chars) as f64;
+                                let pen = w.unmatched_char_penalty * core_unmatched as f64
+                                    + w.sprawl_penalty * length_diff;
+                                let syn = if is_prefix_containment {
+                                    max_syn + w.head_agree_bonus
+                                } else {
+                                    max_syn
+                                };
+                                (pen, syn)
+                            } else {
+                                (w.unmatched_char_penalty * unmatched as f64, max_syn)
+                            };
+
+                            let close_bonus =
+                                w.boundary_proximity_bonus * om.prox_close * nm.prox_close;
+                            let open_bonus =
+                                w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
+                            let indent_diff = indent_shift as f64;
+                            let indent_penalty =
+                                w.sprawl_penalty * indent_diff * w.indent_penalty_factor;
+
+                            let similarity_ratio = matched as f64 / total as f64;
+                            let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
+                                let delim_match = if om.close_tail != CloseDelimiter::None
+                                    && nm.close_tail != CloseDelimiter::None
+                                {
+                                    if let Some(p) = profile {
+                                        p.is_direct_tail_match(
+                                            om.close_tail,
+                                            nm.close_tail,
+                                            matched,
+                                            w.min_tail_matched_chars,
+                                        )
+                                    } else {
+                                        CloseDelimiter::default_is_direct_tail_match(
+                                            om.close_tail,
+                                            nm.close_tail,
+                                            matched,
+                                            w.min_tail_matched_chars,
+                                        )
+                                    }
                                 } else {
                                     false
                                 };
-                                if has_common_indent {
+                                if delim_match {
                                     true
+                                } else if om.is_terminal_return && nm.is_terminal_return {
+                                    let has_common_indent = if indent_diff == 0.0 {
+                                        *common_indent.get_or_insert_with(|| {
+                                            if om.indent == 0 || nm.indent == 0 {
+                                                0
+                                            } else {
+                                                calc_common_indent(
+                                                    cluster.old_rows[i].text(),
+                                                    cluster.new_rows[j].text(),
+                                                )
+                                            }
+                                        }) > 0
+                                    } else {
+                                        false
+                                    };
+                                    if has_common_indent {
+                                        true
+                                    } else {
+                                        matched >= w.min_tail_matched_chars
+                                    }
                                 } else {
-                                    matched >= w.min_tail_matched_chars
+                                    false
                                 }
                             } else {
                                 false
-                            }
-                        } else {
-                            false
-                        };
+                            };
 
-                        let is_valid_mod_pair = if (om.comment || nm.comment) && offset_diff > 0 {
-                            is_prefix_containment || similarity_ratio >= 0.65
-                        } else if om.comment || nm.comment {
-                            similarity_ratio >= 0.35 || is_prefix_containment
-                        } else {
-                            similarity_ratio >= 0.25
+                            let is_valid_mod_pair = if (om.comment || nm.comment) && offset_diff > 0
+                            {
+                                is_prefix_containment || similarity_ratio >= 0.65
+                            } else if om.comment || nm.comment {
+                                similarity_ratio >= 0.35 || is_prefix_containment
+                            } else {
+                                similarity_ratio >= 0.25
+                                    || is_direct_tail_pair
+                                    || is_return_slot
+                                    || is_property_match
+                                    || statement_head_match
+                                    || is_prefix_containment
+                            };
+
+                            if !is_valid_mod_pair {
+                                break 'eval_mod;
+                            }
+
+                            let effective_close_bonus = if is_direct_tail_pair || is_return_slot {
+                                w.slot_continuity_bonus
+                            } else {
+                                close_bonus
+                            };
+                            let proximity_gate = if similarity_ratio >= 0.25
                                 || is_direct_tail_pair
                                 || is_return_slot
                                 || is_property_match
                                 || statement_head_match
                                 || is_prefix_containment
-                        };
-
-                        if !is_valid_mod_pair {
-                            continue;
-                        }
-
-                        let effective_close_bonus = if is_direct_tail_pair || is_return_slot {
-                            w.slot_continuity_bonus
-                        } else {
-                            close_bonus
-                        };
-                        let proximity_gate = if similarity_ratio >= 0.25
-                            || is_direct_tail_pair
-                            || is_return_slot
-                            || is_property_match
-                            || statement_head_match
-                            || is_prefix_containment
-                        {
-                            1.0
-                        } else {
-                            0.0
-                        };
-
-                        // Verbatim twins surviving elsewhere pay the survival
-                        // penalty instead of being vetoed: clear content
-                        // wins still form, slot-coincidence pairings fall
-                        // back to `Del` + `Add`.
-                        let survives_penalty = if om.survives_in_new {
-                            w.survives_elsewhere_penalty
-                        } else {
-                            0.0
-                        };
-
-                        let s = base + w.matched_char_reward * matched as f64
-                            - penalty
-                            - w.row_cost
-                            - indent_penalty
-                            - survives_penalty
-                            + syntax
-                            + (effective_close_bonus + open_bonus) * proximity_gate;
-                        if let Some(target) = grid.get_mut(i + 1, j + 1)
-                            && s > target.score
-                        {
-                            *target = Cell {
-                                score: s,
-                                prev_i: i as u32,
-                                prev_j: j as u32,
-                                k: 1,
-                                op: OpKind::Mod,
+                            {
+                                1.0
+                            } else {
+                                0.0
                             };
+
+                            // Verbatim twins surviving elsewhere pay the survival
+                            // penalty instead of being vetoed: clear content
+                            // wins still form, slot-coincidence pairings fall
+                            // back to `Del` + `Add`.
+                            let survives_penalty = if om.survives_in_new {
+                                w.survives_elsewhere_penalty
+                            } else {
+                                0.0
+                            };
+
+                            let s = base + w.matched_char_reward * matched as f64
+                                - penalty
+                                - w.row_cost
+                                - indent_penalty
+                                - survives_penalty
+                                + syntax
+                                + (effective_close_bonus + open_bonus) * proximity_gate;
+                            if let Some(target) = grid.get_mut(i + 1, j + 1)
+                                && s > target.score
+                            {
+                                *target = Cell {
+                                    score: s,
+                                    prev_i: i as u32,
+                                    prev_j: j as u32,
+                                    k: 1,
+                                    op: OpKind::Mod,
+                                };
+                            }
                         }
                     }
                 }

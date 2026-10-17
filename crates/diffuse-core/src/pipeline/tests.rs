@@ -2220,15 +2220,17 @@ fn test_expand_aux_marks_moved_target() {
                 && r.new_line == Some(135)
         })
         .expect("expand aux add for new line 135");
-    // Every run is either moved-in target or novel fill: no plain context
-    // (everything shared came from the donor) and no struck runs.
+    // Every run is either moved-in target, novel fill, or struck residue:
+    // no plain context (everything shared came from the donor).
     for r in &aux.runs {
         assert!(
             matches!(
                 r.kind,
-                crate::merge::RunKind::MovedTgt | crate::merge::RunKind::Add
+                crate::merge::RunKind::MovedTgt
+                    | crate::merge::RunKind::Add
+                    | crate::merge::RunKind::Del
             ),
-            "aux runs must be target or fill, got: {:?}:{}",
+            "aux runs must be target, fill, or struck residue, got: {:?}:{}",
             r.kind,
             r.text
         );

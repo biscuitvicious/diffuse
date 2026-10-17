@@ -815,7 +815,8 @@ pub struct Weights {
     pub subword_bonus: i32,
     /// Bonus for matching tokens at identical delimiter nesting depth (2).
     pub depth_match_bonus: i32,
-    /// Penalty for matching tokens at differing delimiter nesting depths (0).
+    /// Penalty per depth level for matching tokens at differing delimiter
+    /// nesting depths (2).
     pub depth_mismatch_penalty: i32,
     /// Bonus for matching tokens with concordant subword boundary context (2).
     pub boundary_match_bonus: i32,
@@ -837,7 +838,7 @@ impl Weights {
         contig_bonus: 6,
         subword_bonus: 16,
         depth_match_bonus: 2,
-        depth_mismatch_penalty: 0,
+        depth_mismatch_penalty: 2,
         boundary_match_bonus: 2,
         boundary_mismatch_penalty: 0,
     };
@@ -1046,10 +1047,11 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
                 } else {
                     token_match_reward(a[i])
                 };
-                let depth_adj = if depth_matched {
+                let depth_diff = (depth_a[i] as i32 - depth_b[j] as i32).abs();
+                let depth_adj = if depth_diff == 0 {
                     weights.depth_match_bonus
                 } else {
-                    -weights.depth_mismatch_penalty
+                    -depth_diff * weights.depth_mismatch_penalty
                 };
                 let boundary_adj = if is_subword_token(a[i]) {
                     let la = i > 0

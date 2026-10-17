@@ -35,10 +35,13 @@ discipline for any change in golden output.
 | `opt-1-cache-regex-window-slice` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
 | `opt-2-cache-markdown-regex` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
 | `opt-3-cache-lang-profile` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
-| `opt-4-manual-scanner-prefilter` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
+| `opt-4-manual-scanner-prefilter` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (reflow atomicity & delimiter alignment); strict hard gate |
 | `diffuse-history-mid` | ✅ | ✅ | Provisional | Pinned 100-commit window, absolute ids (pending full review) |
 | `untracked-files` | ✅ | ✅ | Provisional | Untracked additions & status representation (pending full review) |
 | `review-notes` | ✅ | ✅ | Provisional | Review notes anchoring, commit scoping isolation, and callouts (pending full review) |
+| `ansi-optimizer` | ✅ | ✅ | Provisional | SGR transition collapsing and terminal escape sequence optimization (pending full review) |
+| `fn-return-tail` | ✅ | ✅ | Provisional | Return type slot pairing and trailing delimiter boundary alignment (pending full review) |
+| `osc11-query-gate` | ✅ | ✅ | Provisional | Terminal mode query gating and interactive reflow expansion (pending full review) |
 
 The terminal render walk in [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.dark.txt`, `.render.light.txt`, and

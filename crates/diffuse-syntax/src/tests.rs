@@ -1473,3 +1473,27 @@ fn test_rust_lifetimes_and_char_literals() {
         "JSON should not parse single quotes as String or CharLiteral"
     );
 }
+
+#[test]
+fn test_is_statement_terminator() {
+    let rs = lang_profile("rs").unwrap();
+    assert!(rs.is_statement_terminator(";"));
+    assert!(rs.is_statement_terminator(");"));
+    assert!(rs.is_statement_terminator("};"));
+    assert!(rs.is_statement_terminator("];"));
+    assert!(rs.is_statement_terminator(")"));
+    assert!(rs.is_statement_terminator("}"));
+    assert!(rs.is_statement_terminator("]"));
+    assert!(!rs.is_statement_terminator("let x = 1"));
+    assert!(!rs.is_statement_terminator(","));
+}
+
+#[test]
+fn test_is_opening_delimiter() {
+    let rs = lang_profile("rs").unwrap();
+    assert!(rs.is_opening_delimiter("("));
+    assert!(rs.is_opening_delimiter("{"));
+    assert!(rs.is_opening_delimiter("["));
+    assert!(!rs.is_opening_delimiter(";"));
+    assert!(!rs.is_opening_delimiter("foo"));
+}

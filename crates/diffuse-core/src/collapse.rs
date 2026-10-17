@@ -62,7 +62,7 @@ pub(crate) fn relabel_moved_runs(
     for (kind, text) in runs {
         let len = text.chars().count();
         if kind != RunKind::Del || len == 0 {
-            if matches!(kind, RunKind::Del | RunKind::Ctx) {
+            if matches!(kind, RunKind::Del | RunKind::Ctx | RunKind::MovedSrc) {
                 old_pos += len;
             }
             push(&mut out, kind, text);
@@ -98,6 +98,185 @@ pub(crate) fn relabel_moved_runs(
     out
 }
 
+struct SlicedMultilineRuns {
+    sliced: Vec<Vec<(RunKind, String)>>,
+    anchor_runs: Vec<(RunKind, String)>,
+    aux_moved_ranges: Vec<(usize, usize)>,
+}
+
+fn slice_multiline_runs(
+    full_runs: &[(RunKind, String)],
+    line_texts: &[&str],
+) -> SlicedMultilineRuns {
+    let line_count = line_texts.len();
+    let push = |runs: &mut Vec<(RunKind, String)>, kind: RunKind, text: String| {
+        if text.is_empty() {
+            return;
+        }
+        if let Some((last_kind, last_text)) = runs.last_mut()
+            && *last_kind == kind
+        {
+            last_text.push_str(&text);
+            return;
+        }
+        runs.push((kind, text));
+    };
+
+    let mut out: Vec<Vec<(RunKind, String)>> = vec![Vec::new(); line_count];
+    let mut anchor_runs: Vec<(RunKind, String)> = Vec::new();
+    let mut current_line = 0usize;
+    let mut aux_moved_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut del_pos = 0usize;
+
+    for (kind, text) in full_runs {
+        let len = text.chars().count();
+        if *kind == RunKind::Del {
+            let start = del_pos;
+            let end = del_pos + len;
+            del_pos = end;
+
+            let target_line = current_line;
+
+            if target_line < line_count {
+                push(&mut out[target_line], RunKind::Del, text.clone());
+            }
+            if target_line == 0 {
+                push(&mut anchor_runs, RunKind::Del, text.clone());
+            } else {
+                push(&mut anchor_runs, RunKind::MovedSrc, text.clone());
+                aux_moved_ranges.push((start, end));
+            }
+        } else {
+            let mut remaining = text.as_str();
+            let is_ctx = *kind == RunKind::Ctx;
+            let mut chunk_start = del_pos;
+
+            while let Some(nl_pos) = remaining.find('\n') {
+                let before = &remaining[..nl_pos];
+                let before_len = before.chars().count();
+                if !before.is_empty() {
+                    if current_line < line_count {
+                        push(&mut out[current_line], *kind, before.to_string());
+                    }
+                    if current_line == 0 {
+                        push(&mut anchor_runs, *kind, before.to_string());
+                    } else if is_ctx {
+                        push(&mut anchor_runs, RunKind::MovedSrc, before.to_string());
+                    }
+                }
+                if is_ctx && before_len > 0 {
+                    if current_line > 0 {
+                        aux_moved_ranges.push((chunk_start, chunk_start + before_len));
+                    }
+                    chunk_start += before_len;
+                }
+                current_line = (current_line + 1).min(line_count.saturating_sub(1));
+                remaining = &remaining[nl_pos + 1..];
+            }
+            let rem_len = remaining.chars().count();
+            if !remaining.is_empty() {
+                if current_line < line_count {
+                    push(&mut out[current_line], *kind, remaining.to_string());
+                }
+                if current_line == 0 {
+                    push(&mut anchor_runs, *kind, remaining.to_string());
+                } else if is_ctx {
+                    push(&mut anchor_runs, RunKind::MovedSrc, remaining.to_string());
+                }
+            }
+            if is_ctx && rem_len > 0 {
+                if current_line > 0 {
+                    aux_moved_ranges.push((chunk_start, chunk_start + rem_len));
+                }
+                chunk_start += rem_len;
+            }
+            if is_ctx {
+                del_pos = chunk_start;
+            }
+        }
+    }
+
+    normalize_ranges(&mut aux_moved_ranges);
+
+    SlicedMultilineRuns {
+        sliced: out,
+        anchor_runs,
+        aux_moved_ranges,
+    }
+}
+
+/// Assemble display runs for an auxiliary reflow addition row:
+/// Non-fill slices of `aux_chars` render as `MovedTgt` (claimed from the donor
+/// line); novel additions (e.g. indentation) render as `Add`; any inter-chunk
+/// or trailing deletions transferred from the donor line render as `Del`.
+fn build_aux_runs(
+    aux_chars: &[char],
+    add_spans: &[(usize, usize)],
+    attached_dels: &[(usize, String)],
+) -> Vec<(RunKind, String)> {
+    let mut runs: Vec<(RunKind, String)> = Vec::new();
+    let push = |runs: &mut Vec<(RunKind, String)>, kind: RunKind, text: String| {
+        if text.is_empty() {
+            return;
+        }
+        if let Some((last_kind, last_text)) = runs.last_mut()
+            && *last_kind == kind
+        {
+            last_text.push_str(&text);
+            return;
+        }
+        runs.push((kind, text));
+    };
+
+    let mut dels_by_pos: FxHashMap<usize, Vec<&str>> = FxHashMap::default();
+    for (pos, text) in attached_dels {
+        dels_by_pos.entry(*pos).or_default().push(text.as_str());
+    }
+
+    let mut pos = 0usize;
+    let aux_len = aux_chars.len();
+    while pos < aux_len || !dels_by_pos.is_empty() {
+        if let Some(dels) = dels_by_pos.remove(&pos) {
+            for d in dels {
+                push(&mut runs, RunKind::Del, d.to_string());
+            }
+        }
+        if pos >= aux_len {
+            for (_, dels) in dels_by_pos {
+                for d in dels {
+                    push(&mut runs, RunKind::Del, d.to_string());
+                }
+            }
+            break;
+        }
+        if let Some(&(_as, ae)) = add_spans.iter().find(|&&(s, e)| s <= pos && pos < e) {
+            let next_del = dels_by_pos
+                .keys()
+                .copied()
+                .filter(|&k| k > pos && k < ae)
+                .min();
+            let next_stop = next_del.unwrap_or(ae);
+            let chunk: String = aux_chars[pos..next_stop].iter().collect();
+            push(&mut runs, RunKind::Add, chunk);
+            pos = next_stop;
+        } else {
+            let next_add = add_spans.iter().map(|&(s, _)| s).filter(|&s| s > pos).min();
+            let next_del = dels_by_pos.keys().copied().filter(|&k| k > pos).min();
+            let mut next_stop = aux_len;
+            if let Some(na) = next_add {
+                next_stop = next_stop.min(na);
+            }
+            if let Some(nd) = next_del {
+                next_stop = next_stop.min(nd);
+            }
+            let chunk: String = aux_chars[pos..next_stop].iter().collect();
+            push(&mut runs, RunKind::MovedTgt, chunk);
+            pos = next_stop;
+        }
+    }
+    runs
+}
+
 /// Products of the assembly pass.
 pub struct AssembledMods {
     pub out: Vec<Row>,
@@ -105,6 +284,7 @@ pub struct AssembledMods {
     pub pure_adds: Vec<usize>,
     pub add_spans: FxHashMap<usize, (Spans, String)>,
     pub add_groups: FxHashMap<usize, RowGroup>,
+    pub add_runs: FxHashMap<usize, Vec<(RunKind, String)>>,
 }
 
 /// Per paired del row: donor text, first del number, word spans, and the
@@ -185,15 +365,7 @@ pub fn collapse_hunk_rows(
     );
 
     // Pass 4: Keyed anchor sorting into the final visual row stream
-    let res = pass_sort_ordered_walk(
-        h,
-        p2.out,
-        &p3.meaningful_dels,
-        &p3.kept_adds,
-        &p2.add_spans,
-        &p2.add_groups,
-        p3.reflow_ctx,
-    );
+    let res = pass_sort_ordered_walk(h, p2.out, p3, &p2.add_spans, &p2.add_groups, &p2.add_runs);
     let t5 = Instant::now();
     T_COLLAPSE[4].fetch_add(
         t5.duration_since(t4).as_micros() as u64,
@@ -398,6 +570,7 @@ pub fn pass_assemble_mods(
     let mut pure_adds: Vec<usize> = Vec::new();
     let mut add_spans: FxHashMap<usize, (Spans, String)> = FxHashMap::default();
     let mut add_groups: FxHashMap<usize, RowGroup> = FxHashMap::default();
+    let mut add_runs: FxHashMap<usize, Vec<(RunKind, String)>> = FxHashMap::default();
 
     let mut collapse_absorbed_dels: FxHashSet<usize> = FxHashSet::default();
     for dels in ctx.collapse_blocks.values() {
@@ -633,15 +806,47 @@ pub fn pass_assemble_mods(
                 }
             }
 
-            let moved = if next_adds.is_empty() {
-                Vec::new()
+            let (moved, full_adds, full_runs) = if next_adds.is_empty() {
+                (Vec::new(), None, Vec::new())
             } else {
-                let joined = next_adds
-                    .iter()
-                    .map(|&ai| h.rows[ai].text())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let aux_spans = word_spans_with_profile(&del_text, &joined, profile);
+                let anchor_opens_delim = {
+                    let t = add.text().trim();
+                    line_delim_delta(add.text()) > 0
+                        && (del_text.contains(t) || del_text.trim_start().starts_with(t) || {
+                            if let Some(last_delim) = t.rfind(['(', '{', '[']) {
+                                let head = t[..=last_delim].trim_start();
+                                let last_token = head
+                                    .rsplit(|c: char| {
+                                        c.is_whitespace() || matches!(c, '=' | ':' | '.' | ',')
+                                    })
+                                    .next()
+                                    .unwrap_or("");
+                                !last_token.is_empty() && del_text.contains(last_token)
+                            } else {
+                                false
+                            }
+                        })
+                };
+                let (joined, full_adds) = if anchor_opens_delim {
+                    let mut full_adds = next_adds.clone();
+                    full_adds.push(add_ri);
+                    full_adds.sort_unstable();
+                    let j = full_adds
+                        .iter()
+                        .map(|&ai| h.rows[ai].text())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    (j, Some(full_adds))
+                } else {
+                    let j = next_adds
+                        .iter()
+                        .map(|&ai| h.rows[ai].text())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    (j, None)
+                };
+                let (aux_spans, full_runs) =
+                    word_spans_and_runs_with_profile(&del_text, &joined, profile);
                 let mut del = aux_spans.del;
                 del.sort_unstable();
                 let old_len = del_text.chars().count();
@@ -658,207 +863,496 @@ pub fn pass_assemble_mods(
                 if pos < old_len {
                     moved.push((pos, old_len));
                 }
-                moved
+                (moved, full_adds, full_runs)
             };
             let mut anchor_group = None;
             let actually_moved = if !next_adds.is_empty() {
                 let anchor_num = add.new_line_num().unwrap().get();
                 anchor_group = Some(RowGroup::Anchor);
 
-                let del_chars: Vec<char> = del_text.chars().collect();
-                let mut pending: Vec<PendingAux> = Vec::new();
-                for &nxt_i in &next_adds {
-                    add_groups.insert(nxt_i, RowGroup::Aux { anchor: anchor_num });
-                    let add_nxt = &h.rows[nxt_i];
-                    let mut donor_spans =
-                        word_spans_with_profile(&del_text, add_nxt.text(), profile);
-                    let nxt_trim = add_nxt.text().trim();
-                    let is_closing_row = profile.is_some_and(|p| {
-                        p.is_expression_close(nxt_trim) || p.is_block_close(nxt_trim)
-                    })
-                        || diffuse_syntax::profile::CloseDelimiter::default_classify_exact(
-                            nxt_trim,
-                        ) != diffuse_syntax::profile::CloseDelimiter::None
-                        || (!nxt_trim.is_empty() && del_text.trim_end().ends_with(nxt_trim));
-                    let is_opening_row = profile.is_some_and(|p| p.is_expression_open(nxt_trim))
-                        || nxt_trim == "{"
-                        || nxt_trim == "("
-                        || nxt_trim == "[";
-
-                    let has_common_tokens = {
-                        let aux_chars: Vec<char> = add_nxt.text().chars().collect();
-                        let mut fill = donor_spans.add.clone();
-                        normalize_ranges(&mut fill);
+                if let Some(full_adds) = full_adds {
+                    let full_add_texts: Vec<&str> =
+                        full_adds.iter().map(|&ai| h.rows[ai].text()).collect();
+                    let SlicedMultilineRuns {
+                        sliced,
+                        anchor_runs,
+                        aux_moved_ranges,
+                    } = slice_multiline_runs(&full_runs, &full_add_texts);
+                    for (k, &nxt_i) in full_adds.iter().enumerate().skip(1) {
+                        add_groups.insert(nxt_i, RowGroup::Aux { anchor: anchor_num });
+                        let mut line_runs = sliced[k].clone();
+                        for (kind, _) in &mut line_runs {
+                            if *kind == RunKind::Ctx {
+                                *kind = RunKind::MovedTgt;
+                            }
+                        }
+                        let mut add_ranges = Vec::new();
                         let mut pos = 0usize;
-                        let mut has_content = false;
-                        let is_glue = |c: char| {
-                            c.is_whitespace()
-                                || matches!(
-                                    c,
-                                    '{' | '}'
-                                        | '('
-                                        | ')'
-                                        | '['
-                                        | ']'
-                                        | ','
-                                        | ';'
-                                        | ':'
-                                        | '.'
-                                        | '-'
-                                        | '>'
-                                        | '='
-                                        | '|'
-                                        | '&'
-                                )
+                        for (kind, text) in &line_runs {
+                            let len = text.chars().count();
+                            if *kind == RunKind::Add {
+                                if len > 0 {
+                                    add_ranges.push((pos, pos + len));
+                                }
+                                pos += len;
+                            } else if *kind == RunKind::MovedTgt {
+                                pos += len;
+                            }
+                        }
+                        let donor = Spans {
+                            del: Vec::new(),
+                            add: add_ranges,
                         };
-                        for &(s, e) in &fill {
-                            if s > pos
-                                && aux_chars[pos..s.min(aux_chars.len())]
-                                    .iter()
-                                    .any(|&c| !is_glue(c))
+                        add_runs.insert(nxt_i, line_runs);
+                        add_spans.insert(nxt_i, (donor, del_text.clone()));
+                    }
+                    runs = anchor_runs;
+                    aux_moved_ranges
+                } else {
+                    let del_chars: Vec<char> = del_text.chars().collect();
+                    let mut pending: Vec<PendingAux> = Vec::new();
+                    for &nxt_i in &next_adds {
+                        add_groups.insert(nxt_i, RowGroup::Aux { anchor: anchor_num });
+                        let add_nxt = &h.rows[nxt_i];
+                        let mut donor_spans =
+                            word_spans_with_profile(&del_text, add_nxt.text(), profile);
+                        let nxt_trim = add_nxt.text().trim();
+                        let is_closing_row = profile.is_some_and(|p| {
+                            p.is_expression_close(nxt_trim)
+                                || p.is_block_close(nxt_trim)
+                                || p.is_closing_delimiter(nxt_trim)
+                        }) || (!nxt_trim.is_empty()
+                            && del_text.trim_end().ends_with(nxt_trim));
+                        let is_opening_row =
+                            profile.is_some_and(|p| p.is_opening_delimiter(nxt_trim));
+
+                        let has_common_tokens = {
+                            let aux_chars: Vec<char> = add_nxt.text().chars().collect();
+                            let mut fill = donor_spans.add.clone();
+                            normalize_ranges(&mut fill);
+                            let mut pos = 0usize;
+                            let mut has_content = false;
+                            let is_glue = |c: char| {
+                                c.is_whitespace()
+                                    || matches!(
+                                        c,
+                                        '{' | '}'
+                                            | '('
+                                            | ')'
+                                            | '['
+                                            | ']'
+                                            | ','
+                                            | ';'
+                                            | ':'
+                                            | '.'
+                                            | '-'
+                                            | '>'
+                                            | '='
+                                            | '|'
+                                            | '&'
+                                    )
+                            };
+                            for &(s, e) in &fill {
+                                if s > pos
+                                    && aux_chars[pos..s.min(aux_chars.len())]
+                                        .iter()
+                                        .any(|&c| !is_glue(c))
+                                {
+                                    has_content = true;
+                                    break;
+                                }
+                                pos = pos.max(e);
+                            }
+                            if !has_content
+                                && pos < aux_chars.len()
+                                && aux_chars[pos..].iter().any(|&c| !is_glue(c))
                             {
                                 has_content = true;
-                                break;
                             }
-                            pos = pos.max(e);
-                        }
-                        if !has_content
-                            && pos < aux_chars.len()
-                            && aux_chars[pos..].iter().any(|&c| !is_glue(c))
-                        {
-                            has_content = true;
-                        }
-                        has_content
-                    };
-                    if is_opening_row && !del_text.trim_end().ends_with(nxt_trim) {
-                        let text_len = add_nxt.text().chars().count();
-                        if text_len > 0 {
-                            let spans = Spans {
-                                del: Vec::new(),
-                                add: vec![(0, text_len)],
-                            };
-                            add_spans.insert(nxt_i, (spans, del_text.clone()));
-                        }
-                    } else if has_common_tokens || is_closing_row || is_opening_row {
-                        let indent_len = add_nxt
-                            .text()
-                            .chars()
-                            .take_while(|c| c.is_whitespace())
-                            .count();
-                        donor_spans.add = donor_spans
-                            .add
-                            .into_iter()
-                            .map(|(as_, ae)| {
-                                let start = as_;
-                                let mut end = ae;
-                                let chars: Vec<char> = add_nxt.text().chars().collect();
-                                if as_ <= indent_len && end < chars.len() && chars[end] == ' ' {
-                                    end += 1;
-                                }
-                                (start, end)
-                            })
-                            .filter(|(s, e)| s < e)
-                            .collect();
-
-                        // Companion addition rows never carry deletions from
-                        // the donor line. The anchor
-                        // mod row already displays the struck content.
-                        donor_spans.del = Vec::new();
-
-                        // Whole-token claims for global allocation below:
-                        // tokens fully inside donor-common ranges compete
-                        // for supply; sub-token fragments never claim
-                        // (splitting `let` into scattered single letters
-                        // would consume unrelated occurrences).
-                        let aux_text = add_nxt.text();
-                        let aux_chars: Vec<char> = aux_text.chars().collect();
-                        let mut fill = donor_spans.add.clone();
-                        normalize_ranges(&mut fill);
-                        let mut common: Vec<(usize, usize)> = Vec::new();
-                        let mut pos = 0usize;
-                        for &(s, e) in &fill {
-                            if s > pos {
-                                common.push((pos, s));
-                            }
-                            pos = pos.max(e);
-                        }
-                        if pos < aux_chars.len() {
-                            common.push((pos, aux_chars.len()));
-                        }
-                        let mut toks: Vec<(usize, usize)> = Vec::new();
-                        let mut off = 0usize;
-                        for tok in crate::lcs::tokenize_line(aux_text) {
-                            let len = tok.chars().count();
-                            toks.push((off, off + len));
-                            off += len;
-                        }
-                        debug_assert_eq!(off, aux_chars.len());
-                        let is_word_subword = |t1: &[char], t2: &[char]| {
-                            t1.last().is_some_and(|c| c.is_alphanumeric() || *c == '_')
-                                && t2.first().is_some_and(|c| c.is_alphanumeric() || *c == '_')
+                            has_content
                         };
-                        let is_closing_punct = |t1: &[char], t2: &[char]| {
-                            t1.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
-                                && t2.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
-                        };
-                        let mut claims: Vec<(usize, usize)> = Vec::new();
-                        for (ts, te) in toks {
-                            if common.iter().any(|&(cs, ce)| cs <= ts && te <= ce) {
-                                if let Some(last) = claims.last_mut()
-                                    && last.1 == ts
-                                    && (is_word_subword(
-                                        &aux_chars[last.0..last.1],
-                                        &aux_chars[ts..te],
-                                    ) || is_closing_punct(
-                                        &aux_chars[last.0..last.1],
-                                        &aux_chars[ts..te],
-                                    ))
-                                    && is_contiguous_in_del(&del_chars, &aux_chars, last.0, te)
-                                {
-                                    last.1 = te;
-                                    continue;
-                                }
-                                claims.push((ts, te));
+                        if is_opening_row && !del_text.trim_end().ends_with(nxt_trim) {
+                            let text_len = add_nxt.text().chars().count();
+                            if text_len > 0 {
+                                let spans = Spans {
+                                    del: Vec::new(),
+                                    add: vec![(0, text_len)],
+                                };
+                                add_spans.insert(nxt_i, (spans, del_text.clone()));
                             }
-                        }
-                        pending.push(PendingAux {
-                            nxt_i,
-                            donor: donor_spans,
-                            aux_chars,
-                            claims,
-                        });
-                    } else {
-                        let text_len = add_nxt.text().chars().count();
-                        if text_len > 0 {
-                            let spans = Spans {
-                                del: Vec::new(),
-                                add: vec![(0, text_len)],
+                        } else if has_common_tokens || is_closing_row || is_opening_row {
+                            let indent_len = add_nxt
+                                .text()
+                                .chars()
+                                .take_while(|c| c.is_whitespace())
+                                .count();
+                            donor_spans.add = donor_spans
+                                .add
+                                .into_iter()
+                                .map(|(as_, ae)| {
+                                    let start = as_;
+                                    let mut end = ae;
+                                    let chars: Vec<char> = add_nxt.text().chars().collect();
+                                    if as_ <= indent_len && end < chars.len() && chars[end] == ' ' {
+                                        end += 1;
+                                    }
+                                    (start, end)
+                                })
+                                .filter(|(s, e)| s < e)
+                                .collect();
+
+                            // Companion addition rows never carry deletions from
+                            // the donor line. The anchor
+                            // mod row already displays the struck content.
+                            donor_spans.del = Vec::new();
+
+                            // Whole-token claims for global allocation below:
+                            // tokens fully inside donor-common ranges compete
+                            // for supply; sub-token fragments never claim
+                            // (splitting `let` into scattered single letters
+                            // would consume unrelated occurrences).
+                            let aux_text = add_nxt.text();
+                            let aux_chars: Vec<char> = aux_text.chars().collect();
+                            let mut fill = donor_spans.add.clone();
+                            normalize_ranges(&mut fill);
+                            let mut common: Vec<(usize, usize)> = Vec::new();
+                            let mut pos = 0usize;
+                            for &(s, e) in &fill {
+                                if s > pos {
+                                    common.push((pos, s));
+                                }
+                                pos = pos.max(e);
+                            }
+                            if pos < aux_chars.len() {
+                                common.push((pos, aux_chars.len()));
+                            }
+                            let mut toks: Vec<(usize, usize)> = Vec::new();
+                            let mut off = 0usize;
+                            for tok in crate::lcs::tokenize_line(aux_text) {
+                                let len = tok.chars().count();
+                                toks.push((off, off + len));
+                                off += len;
+                            }
+                            debug_assert_eq!(off, aux_chars.len());
+                            let is_word_subword = |t1: &[char], t2: &[char]| {
+                                t1.last().is_some_and(|c| c.is_alphanumeric() || *c == '_')
+                                    && t2.first().is_some_and(|c| c.is_alphanumeric() || *c == '_')
                             };
-                            add_spans.insert(nxt_i, (spans, del_text.clone()));
+                            let is_closing_punct = |t1: &[char], t2: &[char]| {
+                                t1.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
+                                    && t2.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
+                            };
+                            let mut claims: Vec<(usize, usize)> = Vec::new();
+                            for (ts, te) in toks {
+                                if common.iter().any(|&(cs, ce)| cs <= ts && te <= ce) {
+                                    if let Some(last) = claims.last_mut()
+                                        && last.1 == ts
+                                        && (is_word_subword(
+                                            &aux_chars[last.0..last.1],
+                                            &aux_chars[ts..te],
+                                        ) || is_closing_punct(
+                                            &aux_chars[last.0..last.1],
+                                            &aux_chars[ts..te],
+                                        ))
+                                        && is_contiguous_in_del(&del_chars, &aux_chars, last.0, te)
+                                    {
+                                        last.1 = te;
+                                        continue;
+                                    }
+                                    claims.push((ts, te));
+                                }
+                            }
+                            pending.push(PendingAux {
+                                nxt_i,
+                                donor: donor_spans,
+                                aux_chars,
+                                claims,
+                            });
+                        } else {
+                            let text_len = add_nxt.text().chars().count();
+                            if text_len > 0 {
+                                let spans = Spans {
+                                    del: Vec::new(),
+                                    add: vec![(0, text_len)],
+                                };
+                                add_spans.insert(nxt_i, (spans, del_text.clone()));
+                            }
                         }
                     }
-                }
 
-                // Verbatim-block demotion (profiled display only — the
-                // demoted pairing survives to display through stored
-                // spans, which unprofiled display recomputes away; without
-                // a profile the anchor keeps its LCS pairing and aux rows
-                // keep supply-based marking): an aux donor-common range
-                // that is long, contentful, and contiguous in del reclaims
-                // its occurrence. Masking that occurrence out of del forces
-                // the anchor to re-derive without it (context twin turns
-                // to fill, struck stays struck), and the aux range flips
-                // fill to moved-in. Only MIXED blocks qualify (covering
-                // both struck and context): purely calm blocks are shared
-                // content, not relocations; purely struck blocks need no
-                // demotion. This keeps verbatim relocations atomic instead
-                // of splitting their delimiters across narratives.
-                const VERBATIM_MIN: usize = 8;
-                if profile.is_some() {
-                    // Displayed-struck vs context del ranges (pre-relabel runs
-                    // tile del_text through the del side).
-                    let mut struck_runs: Vec<(usize, usize)> = Vec::new();
-                    let mut ctx_runs: Vec<(usize, usize)> = Vec::new();
+                    // Verbatim-block demotion (profiled display only — the
+                    // demoted pairing survives to display through stored
+                    // spans, which unprofiled display recomputes away; without
+                    // a profile the anchor keeps its LCS pairing and aux rows
+                    // keep supply-based marking): an aux donor-common range
+                    // that is long, contentful, and contiguous in del reclaims
+                    // its occurrence. Masking that occurrence out of del forces
+                    // the anchor to re-derive without it (context twin turns
+                    // to fill, struck stays struck), and the aux range flips
+                    // fill to moved-in. Only MIXED blocks qualify (covering
+                    // both struck and context): purely calm blocks are shared
+                    // content, not relocations; purely struck blocks need no
+                    // demotion. This keeps verbatim relocations atomic instead
+                    // of splitting their delimiters across narratives.
+                    const VERBATIM_MIN: usize = 8;
+                    if profile.is_some() {
+                        // Displayed-struck vs context del ranges (pre-relabel runs
+                        // tile del_text through the del side).
+                        let mut struck_runs: Vec<(usize, usize)> = Vec::new();
+                        let mut ctx_runs: Vec<(usize, usize)> = Vec::new();
+                        {
+                            let mut off = 0usize;
+                            for (kind, text) in &runs {
+                                if kind.is_add_like() {
+                                    continue;
+                                }
+                                let len = text.chars().count();
+                                if *kind == RunKind::Del {
+                                    struck_runs.push((off, off + len));
+                                } else {
+                                    ctx_runs.push((off, off + len));
+                                }
+                                off += len;
+                            }
+                        }
+                        let overlaps = |ranges: &[(usize, usize)], ds: usize, de: usize| {
+                            ranges.iter().any(|&(s, e)| s < de && ds < e)
+                        };
+                        // Candidate blocks: (len, nxt_i, aux_s, aux_e, del_s, del_e).
+                        let mut blocks: Vec<(usize, usize, usize, usize, usize, usize)> =
+                            Vec::new();
+                        for &nxt_i in &next_adds {
+                            let aux_text = h.rows[nxt_i].text();
+                            let aux_chars: Vec<char> = aux_text.chars().collect();
+                            let donor = word_spans_with_profile(&del_text, aux_text, profile);
+                            let mut fill = donor.add.clone();
+                            normalize_ranges(&mut fill);
+                            let mut pos = 0usize;
+                            let mut common: Vec<(usize, usize)> = Vec::new();
+                            for &(a, b) in &fill {
+                                if a > pos {
+                                    common.push((pos, a));
+                                }
+                                pos = pos.max(b);
+                            }
+                            if pos < aux_chars.len() {
+                                common.push((pos, aux_chars.len()));
+                            }
+                            for (cs, ce) in common {
+                                // Never demote leading whitespace (indents stay).
+                                let s = aux_chars
+                                    .iter()
+                                    .enumerate()
+                                    .skip(cs)
+                                    .take_while(|(i, c)| *i < ce && c.is_whitespace())
+                                    .count()
+                                    + cs;
+                                let len = ce.saturating_sub(s);
+                                let min_len = if aux_chars[s..ce]
+                                    .last()
+                                    .is_some_and(|&c| matches!(c, '{' | '(' | '['))
+                                {
+                                    4
+                                } else {
+                                    VERBATIM_MIN
+                                };
+                                if len < min_len {
+                                    continue;
+                                }
+                                if !aux_chars[s..ce].iter().any(|c| c.is_alphanumeric()) {
+                                    continue;
+                                }
+                                let needle: Vec<char> = aux_chars[s..ce].to_vec();
+                                // Contiguous verbatim occurrences, preferring the
+                                // one overlapping struck ranges most (then first).
+                                let mut best: Option<(usize, usize)> = None;
+                                let mut best_hits: usize = 0;
+                                let nlen = needle.len();
+                                if nlen <= del_chars.len() {
+                                    for ds in 0..=del_chars.len() - nlen {
+                                        let de = ds + nlen;
+                                        if del_chars[ds..de] != needle[..] {
+                                            continue;
+                                        }
+                                        let struck_hits: usize = struck_runs
+                                            .iter()
+                                            .map(|&(a, b)| {
+                                                a.max(ds).min(de).saturating_sub(b.min(de).max(ds))
+                                            })
+                                            .sum();
+                                        let better = match best {
+                                            None => true,
+                                            Some((bds, _)) => {
+                                                struck_hits > best_hits
+                                                    || (struck_hits == best_hits && ds < bds)
+                                            }
+                                        };
+                                        if better {
+                                            best = Some((ds, de));
+                                            best_hits = struck_hits;
+                                        }
+                                    }
+                                }
+                                if let Some((ds, de)) = best {
+                                    let mixed = overlaps(&struck_runs, ds, de)
+                                        && overlaps(&ctx_runs, ds, de);
+                                    if mixed {
+                                        blocks.push((ce - s, nxt_i, s, ce, ds, de));
+                                    }
+                                }
+                            }
+                        }
+                        // Longest first; del occurrences must not overlap.
+                        blocks.sort_by_key(|a| std::cmp::Reverse(a.0));
+                        let mut used: Vec<(usize, usize)> = Vec::new();
+                        let mut flips: Vec<(usize, usize, usize)> = Vec::new();
+                        for (_, nxt_i, s, e, ds, de) in std::mem::take(&mut blocks) {
+                            if used.iter().any(|&(a, b)| a < de && ds < b) {
+                                continue;
+                            }
+                            used.push((ds, de));
+                            flips.push((nxt_i, s, e));
+                        }
+                        if !flips.is_empty() {
+                            const SENTINEL: char = '\u{E000}';
+                            let mut masked = del_chars.clone();
+                            for &(ds, de) in &used {
+                                for c in &mut masked[ds..de] {
+                                    *c = SENTINEL;
+                                }
+                            }
+                            let masked_str: String = masked.iter().collect();
+                            let (spans2, runs2) = crate::lcs::word_spans_and_runs_with_profile(
+                                &masked_str,
+                                add.text(),
+                                profile,
+                            );
+                            // Apply demotion only when the display path can honor
+                            // the recomputed spans (same well-formedness gate it
+                            // uses): otherwise the wire runs and the display would
+                            // disagree and the anchor keeps its LCS pairing.
+                            if profile.is_some()
+                                && crate::tape::AlignmentTape::chunks_from_spans(
+                                    &del_text,
+                                    add.text(),
+                                    &spans2,
+                                )
+                                .is_some()
+                            {
+                                // Restore original chars in del-side runs (1:1 offsets).
+                                let mut runs2 = runs2;
+                                let mut off = 0usize;
+                                for (kind, text) in &mut runs2 {
+                                    if kind.is_add_like() {
+                                        continue;
+                                    }
+                                    let mut chars: Vec<char> = text.chars().collect();
+                                    for c in &mut chars {
+                                        if *c == SENTINEL {
+                                            *c = del_chars[off];
+                                        }
+                                        off += 1;
+                                    }
+                                    *text = chars.into_iter().collect();
+                                }
+                                spans = spans2;
+                                runs = runs2;
+                            }
+                        }
+                    } // end profile-gated verbatim demotion
+                    // Moved-in supply from the FINAL runs (post-demotion if
+                    // accepted, else the LCS runs): displayed-struck del ranges
+                    // that also survive in aux, consumed once each below.
+                    // Demoted ranges join supply here, so their aux twins render
+                    // moved-in instead of fill — relocation display stays atomic.
+                    let mut supply: Vec<(usize, usize)> = Vec::new();
+                    let mut off = 0usize;
+                    for (kind, text) in &runs {
+                        if kind.is_add_like() {
+                            continue;
+                        }
+                        let len = text.chars().count();
+                        if *kind == RunKind::Del {
+                            let mut pos = off;
+                            for &(ms, me) in &moved {
+                                if ms >= off + len {
+                                    break;
+                                }
+                                let a = pos.max(ms);
+                                let e = (off + len).min(me);
+                                if a < e {
+                                    supply.push((a, e));
+                                }
+                                pos = pos.max(me);
+                            }
+                        }
+                        off += len;
+                    }
+                    normalize_ranges(&mut supply);
+                    // Global allocation, longest claim first (ties: row order,
+                    // then position — fully deterministic): each whole-token
+                    // claim consumes its occurrence from supply or renders as
+                    // fill. Longest-first maximizes total moved-in display, so
+                    let anchor_has_add_open = profile.is_some_and(|p| {
+                        runs.iter().any(|(kind, text)| {
+                            kind.is_add_like()
+                                && text.chars().any(|c| {
+                                    p.is_trailing_delimiter(c) && matches!(c, '{' | '(' | '[')
+                                })
+                        })
+                    }) || runs.iter().any(|(kind, text)| {
+                        kind.is_add_like() && text.chars().any(|c| matches!(c, '{' | '(' | '['))
+                    });
+                    if anchor_has_add_open && let Some(last_p) = pending.last_mut() {
+                        let trim = last_p.aux_chars.iter().collect::<String>();
+                        let trim = trim.trim();
+                        let is_close_line = profile
+                            .is_some_and(|p| p.is_expression_close(trim) || p.is_block_close(trim))
+                            || diffuse_syntax::profile::CloseDelimiter::default_classify_exact(
+                                trim,
+                            ) != diffuse_syntax::profile::CloseDelimiter::None;
+                        if is_close_line && trim.ends_with(';') {
+                            let mut new_claims = Vec::new();
+                            for &(s, e) in &last_p.claims {
+                                for idx in s..e {
+                                    if last_p.aux_chars[idx] == ';' {
+                                        new_claims.push((idx, idx + 1));
+                                    } else {
+                                        last_p.donor.add.push((idx, idx + 1));
+                                    }
+                                }
+                            }
+                            normalize_ranges(&mut last_p.donor.add);
+                            last_p.claims = new_claims;
+                        }
+                    }
+
+                    let mut order: Vec<(usize, usize, usize, usize)> = Vec::new();
+                    for (i, p) in pending.iter().enumerate() {
+                        for &(s, e) in &p.claims {
+                            order.push((e - s, i, s, e));
+                        }
+                    }
+                    order.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+                    let mut extra: FxHashMap<usize, Vec<(usize, usize)>> = FxHashMap::default();
+                    let mut actually_consumed: Vec<(usize, usize)> = Vec::new();
+                    type MatchedClaim = ((usize, usize), (usize, usize));
+                    let mut aux_matched_claims: Vec<Vec<MatchedClaim>> =
+                        vec![Vec::new(); pending.len()];
+                    for (_, i, s, e) in order {
+                        let p = &pending[i];
+                        if let Some((ds, de)) =
+                            supplied_occurrence(&del_chars, &p.aux_chars[s..e], &supply)
+                        {
+                            consume_supply(&mut supply, ds, de);
+                            actually_consumed.push((ds, de));
+                            aux_matched_claims[i].push(((s, e), (ds, de)));
+                        } else {
+                            extra.entry(p.nxt_i).or_default().push((s, e));
+                        }
+                    }
+
+                    let mut struck_ranges: Vec<(usize, usize)> = Vec::new();
                     {
                         let mut off = 0usize;
                         for (kind, text) in &runs {
@@ -867,241 +1361,167 @@ pub fn pass_assemble_mods(
                             }
                             let len = text.chars().count();
                             if *kind == RunKind::Del {
-                                struck_runs.push((off, off + len));
-                            } else {
-                                ctx_runs.push((off, off + len));
+                                struck_ranges.push((off, off + len));
                             }
                             off += len;
                         }
                     }
-                    let overlaps = |ranges: &[(usize, usize)], ds: usize, de: usize| {
-                        ranges.iter().any(|&(s, e)| s < de && ds < e)
-                    };
-                    // Candidate blocks: (len, nxt_i, aux_s, aux_e, del_s, del_e).
-                    let mut blocks: Vec<(usize, usize, usize, usize, usize, usize)> = Vec::new();
-                    for &nxt_i in &next_adds {
-                        let aux_text = h.rows[nxt_i].text();
-                        let aux_chars: Vec<char> = aux_text.chars().collect();
-                        let donor = word_spans_with_profile(&del_text, aux_text, profile);
-                        let mut fill = donor.add.clone();
-                        normalize_ranges(&mut fill);
-                        let mut pos = 0usize;
-                        let mut common: Vec<(usize, usize)> = Vec::new();
-                        for &(a, b) in &fill {
-                            if a > pos {
-                                common.push((pos, a));
-                            }
-                            pos = pos.max(b);
-                        }
-                        if pos < aux_chars.len() {
-                            common.push((pos, aux_chars.len()));
-                        }
-                        for (cs, ce) in common {
-                            // Never demote leading whitespace (indents stay).
-                            let s = aux_chars
-                                .iter()
-                                .enumerate()
-                                .skip(cs)
-                                .take_while(|(i, c)| *i < ce && c.is_whitespace())
-                                .count()
-                                + cs;
-                            let len = ce.saturating_sub(s);
-                            let min_len = if aux_chars[s..ce]
-                                .last()
-                                .is_some_and(|&c| matches!(c, '{' | '(' | '['))
-                            {
-                                4
-                            } else {
-                                VERBATIM_MIN
-                            };
-                            if len < min_len {
+
+                    let mut consumed_sorted = actually_consumed.clone();
+                    normalize_ranges(&mut consumed_sorted);
+
+                    let mut unclaimed_residues: Vec<(usize, usize)> = Vec::new();
+                    for &(mut bs, be) in &struck_ranges {
+                        for &(ss, se) in &consumed_sorted {
+                            if ss >= be || se <= bs {
                                 continue;
                             }
-                            if !aux_chars[s..ce].iter().any(|c| c.is_alphanumeric()) {
-                                continue;
+                            if ss > bs {
+                                unclaimed_residues.push((bs, ss));
                             }
-                            let needle: Vec<char> = aux_chars[s..ce].to_vec();
-                            // Contiguous verbatim occurrences, preferring the
-                            // one overlapping struck ranges most (then first).
-                            let mut best: Option<(usize, usize)> = None;
-                            let mut best_hits: usize = 0;
-                            let nlen = needle.len();
-                            if nlen <= del_chars.len() {
-                                for ds in 0..=del_chars.len() - nlen {
-                                    let de = ds + nlen;
-                                    if del_chars[ds..de] != needle[..] {
-                                        continue;
-                                    }
-                                    let struck_hits: usize = struck_runs
-                                        .iter()
-                                        .map(|&(a, b)| {
-                                            a.max(ds).min(de).saturating_sub(b.min(de).max(ds))
-                                        })
-                                        .sum();
-                                    let better = match best {
-                                        None => true,
-                                        Some((bds, _)) => {
-                                            struck_hits > best_hits
-                                                || (struck_hits == best_hits && ds < bds)
-                                        }
-                                    };
-                                    if better {
-                                        best = Some((ds, de));
-                                        best_hits = struck_hits;
-                                    }
-                                }
-                            }
-                            if let Some((ds, de)) = best {
-                                let mixed =
-                                    overlaps(&struck_runs, ds, de) && overlaps(&ctx_runs, ds, de);
-                                if mixed {
-                                    blocks.push((ce - s, nxt_i, s, ce, ds, de));
-                                }
-                            }
-                        }
-                    }
-                    // Longest first; del occurrences must not overlap.
-                    blocks.sort_by_key(|a| std::cmp::Reverse(a.0));
-                    let mut used: Vec<(usize, usize)> = Vec::new();
-                    let mut flips: Vec<(usize, usize, usize)> = Vec::new();
-                    for (_, nxt_i, s, e, ds, de) in std::mem::take(&mut blocks) {
-                        if used.iter().any(|&(a, b)| a < de && ds < b) {
-                            continue;
-                        }
-                        used.push((ds, de));
-                        flips.push((nxt_i, s, e));
-                    }
-                    if !flips.is_empty() {
-                        const SENTINEL: char = '\u{E000}';
-                        let mut masked = del_chars.clone();
-                        for &(ds, de) in &used {
-                            for c in &mut masked[ds..de] {
-                                *c = SENTINEL;
-                            }
-                        }
-                        let masked_str: String = masked.iter().collect();
-                        let (spans2, runs2) = crate::lcs::word_spans_and_runs_with_profile(
-                            &masked_str,
-                            add.text(),
-                            profile,
-                        );
-                        // Apply demotion only when the display path can honor
-                        // the recomputed spans (same well-formedness gate it
-                        // uses): otherwise the wire runs and the display would
-                        // disagree and the anchor keeps its LCS pairing.
-                        if profile.is_some()
-                            && crate::tape::AlignmentTape::chunks_from_spans(
-                                &del_text,
-                                add.text(),
-                                &spans2,
-                            )
-                            .is_some()
-                        {
-                            // Restore original chars in del-side runs (1:1 offsets).
-                            let mut runs2 = runs2;
-                            let mut off = 0usize;
-                            for (kind, text) in &mut runs2 {
-                                if kind.is_add_like() {
-                                    continue;
-                                }
-                                let mut chars: Vec<char> = text.chars().collect();
-                                for c in &mut chars {
-                                    if *c == SENTINEL {
-                                        *c = del_chars[off];
-                                    }
-                                    off += 1;
-                                }
-                                *text = chars.into_iter().collect();
-                            }
-                            spans = spans2;
-                            runs = runs2;
-                        }
-                    }
-                } // end profile-gated verbatim demotion
-                // Moved-in supply from the FINAL runs (post-demotion if
-                // accepted, else the LCS runs): displayed-struck del ranges
-                // that also survive in aux, consumed once each below.
-                // Demoted ranges join supply here, so their aux twins render
-                // moved-in instead of fill — relocation display stays atomic.
-                let mut supply: Vec<(usize, usize)> = Vec::new();
-                let mut off = 0usize;
-                for (kind, text) in &runs {
-                    if kind.is_add_like() {
-                        continue;
-                    }
-                    let len = text.chars().count();
-                    if *kind == RunKind::Del {
-                        let mut pos = off;
-                        for &(ms, me) in &moved {
-                            if ms >= off + len {
+                            bs = bs.max(se);
+                            if bs >= be {
                                 break;
                             }
-                            let a = pos.max(ms);
-                            let e = (off + len).min(me);
-                            if a < e {
-                                supply.push((a, e));
-                            }
-                            pos = pos.max(me);
+                        }
+                        if bs < be {
+                            unclaimed_residues.push((bs, be));
                         }
                     }
-                    off += len;
-                }
-                normalize_ranges(&mut supply);
-                // Global allocation, longest claim first (ties: row order,
-                // then position — fully deterministic): each whole-token
-                // claim consumes its occurrence from supply or renders as
-                // fill. Longest-first maximizes total moved-in display, so
-                let anchor_has_add_open = runs
-                    .iter()
-                    .any(|(kind, text)| kind.is_add_like() && text.contains('{'));
-                if anchor_has_add_open && let Some(last_p) = pending.last_mut() {
-                    let trim = last_p.aux_chars.iter().collect::<String>();
-                    let trim = trim.trim();
-                    if trim == "};" {
-                        let mut new_claims = Vec::new();
-                        for &(s, e) in &last_p.claims {
-                            for idx in s..e {
-                                if last_p.aux_chars[idx] == ';' {
-                                    new_claims.push((idx, idx + 1));
-                                } else {
-                                    last_p.donor.add.push((idx, idx + 1));
+
+                    for claims in &mut aux_matched_claims {
+                        claims.sort_by_key(|&((aux_s, _), _)| aux_s);
+                    }
+
+                    let mut anchor_claims: Vec<(usize, usize)> = Vec::new();
+                    {
+                        let mut off = 0usize;
+                        for (kind, text) in &runs {
+                            if kind.is_add_like() {
+                                continue;
+                            }
+                            let len = text.chars().count();
+                            if *kind == RunKind::Ctx {
+                                anchor_claims.push((off, off + len));
+                            }
+                            off += len;
+                        }
+                    }
+
+                    let mut attached_dels: FxHashMap<usize, Vec<(usize, String)>> =
+                        FxHashMap::default();
+                    for &(rs, re) in &unclaimed_residues {
+                        let residue_text: String = del_chars[rs..re].iter().collect();
+                        let is_closing_residue = profile.is_some_and(|p| {
+                            p.is_closing_delimiter(&residue_text)
+                                || p.is_statement_terminator(&residue_text)
+                        });
+                        let is_opening_residue =
+                            profile.is_some_and(|p| p.is_opening_delimiter(&residue_text));
+
+                        let mut best_claim: Option<(usize, usize, usize)> = None;
+                        for (i, claims) in aux_matched_claims.iter().enumerate() {
+                            let p = &pending[i];
+                            let is_prefix = p.nxt_i < add_ri;
+                            // Prefix row insulation: prefix companion rows represent content
+                            // strictly before the anchor, so they may
+                            // never claim residues that occur at or
+                            // after the anchor's retained context.
+                            if is_prefix
+                                && anchor_claims
+                                    .first()
+                                    .is_some_and(|&(anchor_s, _)| rs >= anchor_s)
+                            {
+                                continue;
+                            }
+
+                            // Closing delimiter insulation: closing punctuation residues may only
+                            // attach to an explicit closing row or a row at net
+                            // zero container depth, never to intermediate items.
+                            if is_closing_residue {
+                                let nxt_trim = p.aux_chars.iter().collect::<String>();
+                                let nxt_trim = nxt_trim.trim();
+                                let is_closing_row = profile.is_some_and(|pr| {
+                                    pr.is_expression_close(nxt_trim)
+                                        || pr.is_block_close(nxt_trim)
+                                        || pr.is_closing_delimiter(nxt_trim)
+                                }) || (!nxt_trim.is_empty()
+                                    && del_text.trim_end().ends_with(nxt_trim));
+                                if !is_closing_row {
+                                    continue;
+                                }
+                            }
+
+                            // Opening delimiter insulation: opening delimiters may only attach to
+                            // an explicit opening row, never to intermediate items.
+                            if is_opening_residue {
+                                let nxt_trim = p.aux_chars.iter().collect::<String>();
+                                let nxt_trim = nxt_trim.trim();
+                                let is_opening_row =
+                                    profile.is_some_and(|pr| pr.is_opening_delimiter(nxt_trim));
+                                if !is_opening_row {
+                                    continue;
+                                }
+                            }
+
+                            for &((_aux_s, aux_e), (_del_s, del_e)) in claims {
+                                if del_e <= rs {
+                                    // If the anchor retained context between this claim and the
+                                    // residue, the residue belongs with
+                                    // the anchor by monotonic coordinate ordering.
+                                    let anchor_intervenes = anchor_claims
+                                        .iter()
+                                        .any(|&(acs, ace)| acs < rs && ace > del_e);
+                                    if anchor_intervenes {
+                                        continue;
+                                    }
+
+                                    let is_better = match best_claim {
+                                        None => true,
+                                        Some((_, _, prev_del_e)) => del_e > prev_del_e,
+                                    };
+                                    if is_better {
+                                        best_claim = Some((i, aux_e, del_e));
+                                    }
                                 }
                             }
                         }
-                        normalize_ranges(&mut last_p.donor.add);
-                        last_p.claims = new_claims;
+                        if let Some((i, aux_e, _)) = best_claim {
+                            let trailing_delim_idx = profile.and_then(|p| {
+                                pending[i]
+                                    .aux_chars
+                                    .iter()
+                                    .rposition(|&c| p.is_trailing_delimiter(c))
+                            });
+                            let insert_pos = if let Some(delim_pos) = trailing_delim_idx
+                                && aux_e > delim_pos
+                                && !residue_text.trim().is_empty()
+                            {
+                                delim_pos
+                            } else {
+                                aux_e
+                            };
+                            attached_dels
+                                .entry(pending[i].nxt_i)
+                                .or_default()
+                                .push((insert_pos, residue_text));
+                            actually_consumed.push((rs, re));
+                        }
                     }
-                }
 
-                let mut order: Vec<(usize, usize, usize, usize)> = Vec::new();
-                for (i, p) in pending.iter().enumerate() {
-                    for &(s, e) in &p.claims {
-                        order.push((e - s, i, s, e));
+                    normalize_ranges(&mut actually_consumed);
+                    for mut p in pending {
+                        if let Some(mut xf) = extra.remove(&p.nxt_i) {
+                            p.donor.add.append(&mut xf);
+                            normalize_ranges(&mut p.donor.add);
+                        }
+                        let dels = attached_dels.remove(&p.nxt_i).unwrap_or_default();
+                        let aux_runs = build_aux_runs(&p.aux_chars, &p.donor.add, &dels);
+                        add_runs.insert(p.nxt_i, aux_runs);
+                        add_spans.insert(p.nxt_i, (p.donor, del_text.clone()));
                     }
+                    actually_consumed
                 }
-                order.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
-                let mut extra: FxHashMap<usize, Vec<(usize, usize)>> = FxHashMap::default();
-                let mut actually_consumed: Vec<(usize, usize)> = Vec::new();
-                for (_, i, s, e) in order {
-                    let p = &pending[i];
-                    if let Some((ds, de)) =
-                        supplied_occurrence(&del_chars, &p.aux_chars[s..e], &supply)
-                    {
-                        consume_supply(&mut supply, ds, de);
-                        actually_consumed.push((ds, de));
-                    } else {
-                        extra.entry(p.nxt_i).or_default().push((s, e));
-                    }
-                }
-                normalize_ranges(&mut actually_consumed);
-                for mut p in pending {
-                    if let Some(mut xf) = extra.remove(&p.nxt_i) {
-                        p.donor.add.append(&mut xf);
-                        normalize_ranges(&mut p.donor.add);
-                    }
-                    add_spans.insert(p.nxt_i, (p.donor, del_text.clone()));
-                }
-                actually_consumed
             } else {
                 moved
             };
@@ -1126,6 +1546,7 @@ pub fn pass_assemble_mods(
         pure_adds,
         add_spans,
         add_groups,
+        add_runs,
     }
 }
 
@@ -1256,14 +1677,13 @@ pub fn pass_filter_reflows(
 pub fn pass_sort_ordered_walk(
     h: &Hunk,
     out: Vec<Row>,
-    meaningful_dels: &[usize],
-    kept_adds: &[usize],
+    reflow: ReflowFilter,
     add_spans: &FxHashMap<usize, (Spans, String)>,
     add_groups: &FxHashMap<usize, RowGroup>,
-    reflow_ctx: Vec<Row>,
+    add_runs: &FxHashMap<usize, Vec<(RunKind, String)>>,
 ) -> Vec<Row> {
     let mut anchor_of: FxHashMap<usize, usize> = FxHashMap::default();
-    for &di in meaningful_dels {
+    for &di in &reflow.meaningful_dels {
         let Some(dold) = h.rows[di].old_line() else {
             continue;
         };
@@ -1282,6 +1702,17 @@ pub fn pass_sort_ordered_walk(
         }
     }
 
+    let mut anchor_max_aux: FxHashMap<u32, u32> = FxHashMap::default();
+    for &ai in &reflow.kept_adds {
+        if let Some(RowGroup::Aux { anchor }) = add_groups.get(&ai) {
+            let nl = h.rows[ai].new_line().unwrap_or(0);
+            anchor_max_aux
+                .entry(*anchor)
+                .and_modify(|m| *m = (*m).max(nl))
+                .or_insert(nl);
+        }
+    }
+
     let mut keyed: Vec<(Row, (u32, f64))> = Vec::new();
     for r in out.into_iter() {
         let key = (
@@ -1294,7 +1725,7 @@ pub fn pass_sort_ordered_walk(
         );
         keyed.push((r, key));
     }
-    for &di in meaningful_dels {
+    for &di in &reflow.meaningful_dels {
         let d = &h.rows[di];
         let (key, anchor_group) = match anchor_of.get(&di) {
             None => ((0, d.old_line().unwrap_or(0) as f64), None),
@@ -1308,7 +1739,12 @@ pub fn pass_sort_ordered_walk(
                 } else {
                     None
                 };
-                ((base, 1.5), grp)
+                let sort_base = if let Some(RowGroup::Aux { anchor }) = grp {
+                    anchor_max_aux.get(&anchor).copied().unwrap_or(base)
+                } else {
+                    base
+                };
+                ((sort_base, 1.5), grp)
             }
         };
         let row = match d {
@@ -1325,18 +1761,26 @@ pub fn pass_sort_ordered_walk(
         };
         keyed.push((row, key));
     }
-    for &ai in kept_adds {
+    for &ai in &reflow.kept_adds {
         let a = match &h.rows[ai] {
             Row::Add(add_line) => {
                 let mut line = if let Some((spans, del_text)) = add_spans.get(&ai) {
-                    AddLine::with_donor(
+                    let mut a = AddLine::with_donor(
                         add_line.num,
                         add_line.text.clone(),
                         del_text.clone(),
                         spans.clone(),
-                    )
+                    );
+                    if let Some(runs) = add_runs.get(&ai) {
+                        a.cached_runs = runs.clone();
+                    }
+                    a
                 } else {
-                    add_line.clone()
+                    let mut a = add_line.clone();
+                    if let Some(runs) = add_runs.get(&ai) {
+                        a.cached_runs = runs.clone();
+                    }
+                    a
                 };
                 if let Some(&grp) = add_groups.get(&ai) {
                     line.group = Some(grp);
@@ -1345,9 +1789,18 @@ pub fn pass_sort_ordered_walk(
             }
             Row::MovTgt(new_line) => {
                 let mut line = if let Some((spans, _)) = add_spans.get(&ai) {
-                    AddLine::with_spans(new_line.num, new_line.text.clone(), spans.clone())
+                    let mut a =
+                        AddLine::with_spans(new_line.num, new_line.text.clone(), spans.clone());
+                    if let Some(runs) = add_runs.get(&ai) {
+                        a.cached_runs = runs.clone();
+                    }
+                    a
                 } else {
-                    new_line.clone()
+                    let mut a = new_line.clone();
+                    if let Some(runs) = add_runs.get(&ai) {
+                        a.cached_runs = runs.clone();
+                    }
+                    a
                 };
                 if let Some(&grp) = add_groups.get(&ai) {
                     line.group = Some(grp);
@@ -1359,7 +1812,7 @@ pub fn pass_sort_ordered_walk(
         let key = (h.rows[ai].new_line().unwrap_or(0), 1.0);
         keyed.push((a, key));
     }
-    for ctx in reflow_ctx {
+    for ctx in reflow.reflow_ctx {
         let key = (ctx.new_line().unwrap_or(0), 1.0);
         keyed.push((ctx, key));
     }
@@ -1485,10 +1938,10 @@ fn assert_collapsed_reflow_invariants(
                 .filter(|run| run.kind == RunKind::MovedSrc)
                 .map(|run| run.text)
                 .collect();
-            let aux_moved_tgt: String = aux_adds
+            let aux_non_add: String = aux_adds
                 .iter()
                 .flat_map(|aux| merged_runs(aux))
-                .filter(|run| run.kind == RunKind::MovedTgt)
+                .filter(|run| run.kind == RunKind::MovedTgt || run.kind == RunKind::Del)
                 .map(|run| run.text)
                 .collect();
 
@@ -1512,7 +1965,9 @@ fn assert_collapsed_reflow_invariants(
                         reconstructed_old.extend(
                             merged_runs(r)
                                 .into_iter()
-                                .filter(|run| run.kind == RunKind::MovedTgt)
+                                .filter(|run| {
+                                    run.kind == RunKind::MovedTgt || run.kind == RunKind::Del
+                                })
                                 .map(|run| run.text),
                         );
                     }
@@ -1522,9 +1977,9 @@ fn assert_collapsed_reflow_invariants(
                         "Anchor line {anchor_num} old-text reconstruction mismatch:\n  expected: {expected_old:?}\n  got:      {reconstructed_old:?}"
                     ));
                 }
-                if strip_ws(&anchor_moved_src) != strip_ws(&aux_moved_tgt) {
+                if strip_ws(&anchor_moved_src) != strip_ws(&aux_non_add) {
                     return Err(format!(
-                        "Anchor line {anchor_num} moved-text conservation mismatch:\n  anchor MovedSrc: {anchor_moved_src:?}\n  aux MovedTgt:    {aux_moved_tgt:?}"
+                        "Anchor line {anchor_num} moved-text conservation mismatch:\n  anchor MovedSrc: {anchor_moved_src:?}\n  aux non-add:     {aux_non_add:?}"
                     ));
                 }
             } else {
@@ -1533,15 +1988,13 @@ fn assert_collapsed_reflow_invariants(
                     .chars()
                     .filter(|c| !c.is_whitespace())
                     .collect();
-                let mut s2: Vec<char> = aux_moved_tgt
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .collect();
+                let mut s2: Vec<char> =
+                    aux_non_add.chars().filter(|c| !c.is_whitespace()).collect();
                 s1.sort_unstable();
                 s2.sort_unstable();
                 if s1 != s2 {
                     return Err(format!(
-                        "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedSrc chars: {s1:?}\n  aux MovedTgt chars:    {s2:?}"
+                        "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedSrc chars: {s1:?}\n  aux non-add chars:     {s2:?}"
                     ));
                 }
             }
@@ -1556,6 +2009,34 @@ fn assert_collapsed_reflow_invariants(
                         return Err(format!("Aux row line {nl} <= previous aux line {prev}"));
                     }
                     last_aux_line = Some(nl);
+                }
+            }
+        }
+    }
+
+    // 4. Reflow Group Atomicity: Anchor row and all its companion aux additions
+    // (both prefix and suffix) must form an unbroken contiguous slice in visual row
+    // order.
+    for (&anchor_num, &anchor_idx) in &anchors {
+        let mut group_indices: Vec<usize> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                matches!(r.group(), Some(RowGroup::Aux { anchor }) if anchor == anchor_num)
+                    && matches!(r, Row::Add(_) | Row::MovTgt(_))
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        if !group_indices.is_empty() {
+            group_indices.push(anchor_idx);
+            group_indices.sort_unstable();
+            for window in group_indices.windows(2) {
+                if window[1] != window[0] + 1 {
+                    return Err(format!(
+                        "Reflow atomicity violation: Reflow group for anchor line {anchor_num} is interrupted at row indices {} and {}",
+                        window[0], window[1]
+                    ));
                 }
             }
         }

@@ -1685,6 +1685,41 @@ fn test_dp_pairing_populates_expand_blocks() {
 }
 
 #[test]
+fn test_doc_comment_reflow_pairing() {
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 263,
+        old_count: 1,
+        new_start: 263,
+        new_count: 3,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(
+                LineNum::new(263).unwrap(),
+                "    /// Falls back to `DiffuseTheme::DEFAULT` when detection is unavailable.",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(263).unwrap(),
+                "    /// Environment indicators only — never queries the terminal, so this is",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(264).unwrap(),
+                "    /// safe in one-shot (pager/pipe) modes. Falls back to",
+            )),
+            Row::Add(AddLine::new(
+                LineNum::new(265).unwrap(),
+                "    /// `DiffuseTheme::DEFAULT` when detection is unavailable.",
+            )),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+
+    let results = crate::cluster::pairing::dp_pairing(&h, None, None, rs);
+    assert_eq!(results.pair_of.get(&3), Some(&0));
+}
+
+#[test]
 fn test_expansion_companion_adds_receive_donor_spans() {
     let rs = lang_profile("rs");
     let h = Hunk {

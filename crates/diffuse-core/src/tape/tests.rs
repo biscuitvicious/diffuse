@@ -567,3 +567,48 @@ fn test_prefix_suffix_peeling_equivalence() {
     assert_eq!(tape_ws.project_new(), new_ws);
     assert_eq!(tape_ws.reverse().reverse(), tape_ws);
 }
+
+#[test]
+fn test_method_call_parens_insertion_before_trailing_comma() {
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let old = "                            ar.del_text, er.del_text";
+    let new = "                            ar.del_text(),";
+    let tape = AlignmentTape::from_texts(old, new, profile);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    let runs = tape.to_merged_runs();
+    assert_eq!(runs.len(), 4);
+    assert_eq!(runs[0].kind, RunKind::Ctx);
+    assert_eq!(runs[0].text, "                            ar.del_text");
+    assert_eq!(runs[1].kind, RunKind::Add);
+    assert_eq!(runs[1].text, "()");
+    assert_eq!(runs[2].kind, RunKind::Ctx);
+    assert_eq!(runs[2].text, ",");
+    assert_eq!(runs[3].kind, RunKind::Del);
+    assert_eq!(runs[3].text, " er.del_text");
+}
+
+#[test]
+fn test_let_pairs_let_matched_tape() {
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let old = "    let pairs = crate::lcs::lcs_pairs_ids(&ot.ids, nt_ids, ws, alnum);";
+    let new = "    let matched =";
+    let tape = AlignmentTape::from_texts(old, new, profile);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    let runs = tape.to_merged_runs();
+    assert_eq!(runs.len(), 5);
+    assert_eq!(runs[0].kind, RunKind::Ctx);
+    assert_eq!(runs[0].text, "    let ");
+    assert_eq!(runs[1].kind, RunKind::Del);
+    assert_eq!(runs[1].text, "pairs");
+    assert_eq!(runs[2].kind, RunKind::Add);
+    assert_eq!(runs[2].text, "matched");
+    assert_eq!(runs[3].kind, RunKind::Ctx);
+    assert_eq!(runs[3].text, " =");
+    assert_eq!(runs[4].kind, RunKind::Del);
+    assert_eq!(
+        runs[4].text,
+        " crate::lcs::lcs_pairs_ids(&ot.ids, nt_ids, ws, alnum);"
+    );
+}

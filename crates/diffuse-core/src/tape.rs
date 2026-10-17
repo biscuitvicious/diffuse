@@ -745,6 +745,77 @@ impl<'a> AlignmentTape<'a> {
             let has_old = old_to > old_from;
             let has_new = new_to > new_from;
 
+            if has_old
+                && has_new
+                && (new_to == nt.len() || nt[new_to..].iter().all(|t| token_is_ws(t)))
+            {
+                let new_tail_opt = (new_from..new_to).rev().find(|&idx| !token_is_ws(nt[idx]));
+                if let Some(new_tail_idx) = new_tail_opt {
+                    let tail_token = nt[new_tail_idx];
+                    let old_match_opt = (old_from..old_to).find(|&idx| ot[idx] == tail_token);
+                    if let Some(old_match_idx) = old_match_opt {
+                        let mut o_m_start = old_match_idx;
+                        let mut n_m_start = new_tail_idx;
+                        if o_m_start > old_from
+                            && n_m_start > new_from
+                            && token_is_ws(ot[o_m_start - 1])
+                            && ot[o_m_start - 1] == nt[n_m_start - 1]
+                        {
+                            o_m_start -= 1;
+                            n_m_start -= 1;
+                        }
+                        let o_m_end = old_match_idx + 1;
+                        let n_m_end = new_tail_idx + 1;
+
+                        let old_keep =
+                            char_slice(old_text, o_spans[o_m_start].0, o_spans[o_m_end - 1].1);
+                        let new_keep =
+                            char_slice(new_text, n_spans[n_m_start].0, n_spans[n_m_end - 1].1);
+
+                        if old_keep == new_keep && !old_keep.is_empty() {
+                            if o_m_start > old_from {
+                                let strike_before = char_slice(
+                                    old_text,
+                                    o_spans[old_from].0,
+                                    o_spans[o_m_start - 1].1,
+                                );
+                                if !strike_before.is_empty() {
+                                    tape.push(TapeChunk::Strike(strike_before));
+                                }
+                            }
+                            if n_m_start > new_from {
+                                let fill_before = char_slice(
+                                    new_text,
+                                    n_spans[new_from].0,
+                                    n_spans[n_m_start - 1].1,
+                                );
+                                if !fill_before.is_empty() {
+                                    tape.push(TapeChunk::Fill(fill_before));
+                                }
+                            }
+
+                            tape.push(TapeChunk::Keep(new_keep));
+
+                            if old_to > o_m_end {
+                                let strike_after =
+                                    char_slice(old_text, o_spans[o_m_end].0, o_spans[old_to - 1].1);
+                                if !strike_after.is_empty() {
+                                    tape.push(TapeChunk::Strike(strike_after));
+                                }
+                            }
+                            if new_to > n_m_end {
+                                let fill_after =
+                                    char_slice(new_text, n_spans[n_m_end].0, n_spans[new_to - 1].1);
+                                if !fill_after.is_empty() {
+                                    tape.push(TapeChunk::Fill(fill_after));
+                                }
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+
             if has_old {
                 let o_slice = char_slice(old_text, o_spans[old_from].0, o_spans[old_to - 1].1);
                 tape.push(TapeChunk::Strike(o_slice));

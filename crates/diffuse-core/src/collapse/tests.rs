@@ -2314,3 +2314,313 @@ fn test_multiline_import_collapse_nested_core() {
         "Expected core::{{...}} reflow to pair into Mod"
     );
 }
+
+#[test]
+fn test_multiline_inter_argument_residue_localized_to_aux_tail() {
+    let old_line = "check!(r.del_text().is_some(), \"{}: mod row carries delText\", f.path);";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(332)),
+        row(RowKind::Add, "check!(", Some(332), None),
+        row(RowKind::Add, "    r.del_text().is_some(),", Some(333), None),
+        row(
+            RowKind::Add,
+            "    \"{}: mod row carries delText\",",
+            Some(334),
+            None,
+        ),
+        row(RowKind::Add, "    f.path", Some(335), None),
+        row(RowKind::Add, ");", Some(336), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    // Anchor row should not have orphan Del runs for inter-argument residues
+    let anchor_del_runs: Vec<_> = merged_runs(&c[0])
+        .into_iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .collect();
+    assert!(
+        anchor_del_runs.is_empty(),
+        "Anchor row should not retain inter-argument Del residues, but found: {:?}",
+        anchor_del_runs
+    );
+
+    // Aux line 333 should end with Del(" ")
+    let aux1_runs = merged_runs(&c[1]);
+    assert_eq!(
+        aux1_runs.last().map(|r| (r.kind, r.text)),
+        Some((RunKind::Del, " ")),
+        "Aux row 1 should end with Del(\" \"), but got runs: {:?}",
+        aux1_runs
+    );
+
+    // Aux line 334 should end with Del(" ")
+    let aux2_runs = merged_runs(&c[2]);
+    assert_eq!(
+        aux2_runs.last().map(|r| (r.kind, r.text)),
+        Some((RunKind::Del, " ")),
+        "Aux row 2 should end with Del(\" \"), but got runs: {:?}",
+        aux2_runs
+    );
+}
+
+#[test]
+fn test_multiline_deleted_identifier_localized_to_aux_row() {
+    let old_line = "check!(a, deleted_arg, c);";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(10)),
+        row(RowKind::Add, "check!(", Some(10), None),
+        row(RowKind::Add, "    a,", Some(11), None),
+        row(RowKind::Add, "    c,", Some(12), None),
+        row(RowKind::Add, ");", Some(13), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    // Anchor row should have no orphan Del runs
+    let anchor_del_runs: Vec<_> = merged_runs(&c[0])
+        .into_iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .collect();
+    assert!(
+        anchor_del_runs.is_empty(),
+        "Anchor row should not retain Del residues, but found: {:?}",
+        anchor_del_runs
+    );
+
+    // Aux row 1 (a,) should have trailing Del containing "deleted_arg"
+    let aux1_runs = merged_runs(&c[1]);
+    let has_del_arg = aux1_runs
+        .iter()
+        .any(|r| r.kind == RunKind::Del && r.text.contains("deleted_arg"));
+    assert!(
+        has_del_arg,
+        "Aux row 1 should carry deleted_arg Del run, but got runs: {:?}",
+        aux1_runs
+    );
+}
+
+#[test]
+fn test_reflow_atomicity_trailing_deletions_do_not_interleave_anchor_and_aux_add() {
+    use crate::parse::RowGroup;
+    let h = hunk(vec![
+        row(
+            RowKind::Del,
+            "let pairs = crate::lcs::lcs_pairs_ids(&ot.ids, nt_ids, ws, alnum);",
+            None,
+            Some(189),
+        ),
+        row(RowKind::Del, "let mut matched: usize = 0;", None, Some(190)),
+        row(RowKind::Del, "for j in pairs.values() {", None, Some(191)),
+        row(
+            RowKind::Del,
+            "    matched += nt_token_chars[*j];",
+            None,
+            Some(192),
+        ),
+        row(RowKind::Del, "}", None, Some(193)),
+        row(RowKind::Add, "let matched =", Some(191), None),
+        row(
+            RowKind::Add,
+            "    crate::lcs::lcs_matched_chars_ids(&ot.ids, nt_ids, ws, alnum, nt_token_chars, scratch);",
+            Some(192),
+            None,
+        ),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    let anchor_pos = c
+        .iter()
+        .position(|r| r.group() == Some(RowGroup::Anchor))
+        .expect("must produce an anchor row");
+
+    let aux_adds: Vec<(usize, &Row)> = c
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| {
+            matches!(r.group(), Some(RowGroup::Aux { anchor }) if anchor == 191)
+                && matches!(r, Row::Add(_) | Row::MovTgt(_))
+        })
+        .collect();
+
+    assert!(
+        !aux_adds.is_empty(),
+        "must produce at least one aux addition"
+    );
+    for (offset, (idx, _)) in aux_adds.into_iter().enumerate() {
+        assert_eq!(
+            idx,
+            anchor_pos + 1 + offset,
+            "Aux addition must be contiguous with anchor without intervening deletions"
+        );
+    }
+}
+
+#[test]
+fn test_multiline_reflow_closing_terminator_does_not_attach_to_intermediate_item() {
+    let old_line = "    let last_line_hash = hash_line_content(\"    let y = 2;\");";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(308)),
+        row(
+            RowKind::Add,
+            "    let compound_hash = LineHash::from_lines([",
+            Some(312),
+            None,
+        ),
+        row(RowKind::Add, "        \"    let x = 1;\",", Some(313), None),
+        row(RowKind::Add, "        \"    let y = 2;\",", Some(314), None),
+        row(RowKind::Add, "    ]);", Some(315), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    let aux1 = c.iter().find(|r| r.text().contains("let x = 1")).unwrap();
+    let aux1_dels: Vec<_> = merged_runs(aux1)
+        .into_iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .collect();
+    assert!(
+        aux1_dels.is_empty(),
+        "Intermediate item should not have Del attached, got: {:?}",
+        aux1_dels
+    );
+}
+
+#[test]
+fn test_prefix_companion_does_not_steal_anchor_call_arguments() {
+    let old_line = "            ctx.theme.write_token(\"text\", text, \"ctx\", None, None, out);";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(376)),
+        row(RowKind::Add, "            ctx.theme", Some(381), None),
+        row(
+            RowKind::Add,
+            "                .write_token(TokenColor::Default, text, \"ctx\", None, None, out);",
+            Some(382),
+            None,
+        ),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    let pfx = c.iter().find(|r| r.text().contains("ctx.theme")).unwrap();
+    let pfx_has_text_del = merged_runs(pfx)
+        .into_iter()
+        .any(|r| r.kind == RunKind::Del && r.text.contains("text"));
+    assert!(
+        !pfx_has_text_del,
+        "Prefix row ctx.theme must not steal 'text' deletion from method call"
+    );
+}
+
+#[test]
+fn test_residue_inside_call_does_not_append_after_trailing_comma() {
+    let old_line = "let line_hash = line_content.as_deref().map(hash_line_content);";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(223)),
+        row(
+            RowKind::Add,
+            "let line_hash = if !selected_lines.is_empty() {",
+            Some(224),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "    selected_lines.iter().map(|s| s.as_str()),",
+            Some(225),
+            None,
+        ),
+        row(RowKind::Add, "} else {", Some(226), None),
+        row(RowKind::Add, "    None", Some(227), None),
+        row(RowKind::Add, "};", Some(228), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    let map_row = c.iter().find(|r| r.text().contains(".map")).unwrap();
+    let runs = merged_runs(map_row);
+    if let Some(pos) = runs
+        .iter()
+        .position(|r| r.kind == RunKind::Del && r.text.contains("hash_line_content"))
+    {
+        let subsequent_runs = &runs[pos + 1..];
+        let del_precedes_comma = subsequent_runs.iter().any(|r| r.text.contains(','));
+        assert!(
+            del_precedes_comma,
+            "hash_line_content deletion must be inside map, preceding the trailing comma, but runs are: {:?}",
+            runs
+        );
+    }
+}
+
+#[test]
+fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
+    let old_line = "    assert_eq!(super::resolve_theme(Some(\"dark\")), DiffuseTheme::DEFAULT);";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(134)),
+        row(RowKind::Add, "    assert_eq!(", Some(134), None),
+        row(
+            RowKind::Add,
+            "        super::resolve_theme(Some(\"dark\"), false),",
+            Some(135),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "        DiffuseTheme::DEFAULT",
+            Some(136),
+            None,
+        ),
+        row(RowKind::Add, "    );", Some(137), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    let anchor = c
+        .iter()
+        .find(|r| r.old_line_num().map(|n| n.get()) == Some(134))
+        .unwrap();
+    let anchor_runs = merged_runs(anchor);
+    // Anchor row assert_eq!( must not contain any deleted paren
+    let has_paren_del = anchor_runs
+        .iter()
+        .any(|r| r.kind == RunKind::Del && r.text.contains(')'));
+    assert!(
+        !has_paren_del,
+        "Anchor row assert_eq!( must not contain deleted ')', but runs are: {:?}",
+        anchor_runs
+    );
+
+    // Continuation row 1 carries super::resolve_theme call, added arguments,
+    // closing delimiters, and deleted space
+    let aux1 = c
+        .iter()
+        .find(|r| r.new_line_num().map(|n| n.get()) == Some(135))
+        .unwrap();
+    let aux1_runs = merged_runs(aux1);
+    assert_eq!(
+        aux1_runs,
+        vec![
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: "        ",
+            },
+            crate::merge::Run {
+                kind: RunKind::MovedTgt,
+                text: "super::resolve_theme(Some(\"dark\")",
+            },
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: ", false",
+            },
+            crate::merge::Run {
+                kind: RunKind::MovedTgt,
+                text: "),",
+            },
+            crate::merge::Run {
+                kind: RunKind::Del,
+                text: " ",
+            },
+        ]
+    );
+}

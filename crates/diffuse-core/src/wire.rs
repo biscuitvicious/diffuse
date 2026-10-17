@@ -1080,10 +1080,10 @@ impl OutputHunk {
                     .filter(|run| run.kind == RunKind::MovedSrc)
                     .map(|run| run.text.as_ref())
                     .collect();
-                let aux_moved_tgt: String = aux_adds
+                let aux_non_add: String = aux_adds
                     .iter()
                     .flat_map(|aux| &aux.runs)
-                    .filter(|run| run.kind == RunKind::MovedTgt)
+                    .filter(|run| run.kind == RunKind::MovedTgt || run.kind == RunKind::Del)
                     .map(|run| run.text.as_ref())
                     .collect();
 
@@ -1107,7 +1107,9 @@ impl OutputHunk {
                             reconstructed_old.extend(
                                 r.runs
                                     .iter()
-                                    .filter(|run| run.kind == RunKind::MovedTgt)
+                                    .filter(|run| {
+                                        run.kind == RunKind::MovedTgt || run.kind == RunKind::Del
+                                    })
                                     .map(|run| run.text.as_ref()),
                             );
                         }
@@ -1117,9 +1119,9 @@ impl OutputHunk {
                             "Anchor line {anchor_num} old-text reconstruction mismatch:\n  expected: {expected_old:?}\n  got:      {reconstructed_old:?}"
                         ));
                     }
-                    if strip_ws(&anchor_moved_src) != strip_ws(&aux_moved_tgt) {
+                    if strip_ws(&anchor_moved_src) != strip_ws(&aux_non_add) {
                         return Err(format!(
-                            "Anchor line {anchor_num} moved-text conservation mismatch:\n  anchor MovedSrc: {anchor_moved_src:?}\n  aux MovedTgt:    {aux_moved_tgt:?}"
+                            "Anchor line {anchor_num} moved-text conservation mismatch:\n  anchor MovedSrc: {anchor_moved_src:?}\n  aux non-add:     {aux_non_add:?}"
                         ));
                     }
                 } else {
@@ -1127,15 +1129,13 @@ impl OutputHunk {
                         .chars()
                         .filter(|c| !c.is_whitespace())
                         .collect();
-                    let mut s2: Vec<char> = aux_moved_tgt
-                        .chars()
-                        .filter(|c| !c.is_whitespace())
-                        .collect();
+                    let mut s2: Vec<char> =
+                        aux_non_add.chars().filter(|c| !c.is_whitespace()).collect();
                     s1.sort_unstable();
                     s2.sort_unstable();
                     if s1 != s2 {
                         return Err(format!(
-                            "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedSrc chars: {s1:?}\n  aux MovedTgt chars:    {s2:?}"
+                            "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedSrc chars: {s1:?}\n  aux non-add chars:     {s2:?}"
                         ));
                     }
                 }

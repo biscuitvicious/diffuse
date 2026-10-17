@@ -693,7 +693,14 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 .rows
                 .iter()
                 .filter(|r| matches!(r.group, Some(RowGroup::Aux { .. })))
-                .map(|r| r.text())
+                .map(|r| {
+                    let mut s = r.text();
+                    if let Some(dt) = r.del_text() {
+                        s.push(' ');
+                        s.push_str(&dt);
+                    }
+                    s
+                })
                 .collect();
             // Anchor deletion texts in this hunk, for the moved-in mirror.
             let anchor_dels: Vec<String> = h
