@@ -2286,3 +2286,31 @@ fn test_import_nesting_outer_wrapper_braces_are_add_fill() {
         "Non-add runs across reflow group must reconstruct original line"
     );
 }
+
+#[test]
+fn test_multiline_import_collapse_nested_core() {
+    let diff = r#"diff --git a/crates/diffuse-tui/src/app/geometry/tests.rs b/crates/diffuse-tui/src/app/geometry/tests.rs
+--- a/crates/diffuse-tui/src/app/geometry/tests.rs
++++ b/crates/diffuse-tui/src/app/geometry/tests.rs
+@@ -2,7 +2,13 @@ use std::collections::HashMap;
+ 
+ use crate::{
+     app::{AppState, temp_notes_path},
+-    core::{PipelineOptions, parse::RowKind, pipeline::run_pipeline_full, wire::PipelineOutput},
++    core::{
++        PipelineOptions,
++        merge::RunKind,
++        parse::RowKind,
++        pipeline::run_pipeline_full,
++        wire::{OutputRun, PipelineOutput},
++    },
+     view::{truncate_pad, visible_width},
+ };
+"#;
+    let out = crate::pipeline::run_pipeline_diff(diff);
+    let rows = &out.files[0].hunks[0].rows;
+    assert!(
+        rows.iter().any(|r| r.kind == crate::parse::RowKind::Mod),
+        "Expected core::{{...}} reflow to pair into Mod"
+    );
+}

@@ -524,37 +524,53 @@ pub fn pass_assemble_mods(
 
                     if opens_delim {
                         let mut depth = line_delim_delta(add.text());
-
-                        while k < h.rows.len()
-                            && matches!(h.rows[k], Row::Add(_))
-                            && !ctx.pair_of.contains_key(&k)
-                        {
-                            let nxt_t = h.rows[k].text().trim();
-                            if p.is_decl_break(nxt_t) {
-                                break;
-                            }
+                        let mut already_closed = false;
+                        for &ai in &next_adds {
+                            let nxt_t = h.rows[ai].text().trim();
                             let delta = line_delim_delta(nxt_t);
+                            depth += delta;
                             let is_exact_del_close = del_text.trim_end().ends_with(nxt_t);
                             let is_closing = p.is_expression_close(nxt_t)
                                 || p.is_block_close(nxt_t)
                                 || is_exact_del_close;
-                            let is_param_or_item = nxt_t.ends_with(',')
-                                || nxt_t.ends_with('(')
-                                || nxt_t.ends_with('{')
-                                || nxt_t.ends_with('[')
-                                || p.is_comment_line(nxt_t);
-                            let is_continuation = p.is_continuation_line(nxt_t);
-
-                            depth += delta;
-
                             if is_closing && depth <= 0 {
-                                next_adds.push(k);
+                                already_closed = true;
                                 break;
-                            } else if is_param_or_item || is_continuation || depth > 0 {
-                                next_adds.push(k);
-                                k += 1;
-                            } else {
-                                break;
+                            }
+                        }
+
+                        if !already_closed {
+                            while k < h.rows.len()
+                                && matches!(h.rows[k], Row::Add(_))
+                                && !ctx.pair_of.contains_key(&k)
+                            {
+                                let nxt_t = h.rows[k].text().trim();
+                                if p.is_decl_break(nxt_t) || p.is_import_statement(nxt_t) {
+                                    break;
+                                }
+                                let delta = line_delim_delta(nxt_t);
+                                let is_exact_del_close = del_text.trim_end().ends_with(nxt_t);
+                                let is_closing = p.is_expression_close(nxt_t)
+                                    || p.is_block_close(nxt_t)
+                                    || is_exact_del_close;
+                                let is_param_or_item = nxt_t.ends_with(',')
+                                    || nxt_t.ends_with('(')
+                                    || nxt_t.ends_with('{')
+                                    || nxt_t.ends_with('[')
+                                    || p.is_comment_line(nxt_t);
+                                let is_continuation = p.is_continuation_line(nxt_t);
+
+                                depth += delta;
+
+                                if is_closing && depth <= 0 {
+                                    next_adds.push(k);
+                                    break;
+                                } else if is_param_or_item || is_continuation || depth > 0 {
+                                    next_adds.push(k);
+                                    k += 1;
+                                } else {
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1363,7 +1379,7 @@ pub fn pass_sort_ordered_walk(
 
 /// Calculate net delimiter delta for bracket pairs `{}`, `()`, `[]`, ignoring
 /// delimiters within string literals.
-fn line_delim_delta(text: &str) -> i32 {
+pub(crate) fn line_delim_delta(text: &str) -> i32 {
     let mut delta = 0i32;
     let mut in_str = false;
     let mut str_char = '"';

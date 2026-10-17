@@ -1679,7 +1679,7 @@ fn test_dp_pairing_populates_expand_blocks() {
     );
     assert_eq!(
         results.expand_blocks.get(&2).unwrap(),
-        &vec![1, 2],
+        &vec![1, 2, 3, 4],
         "expand_blocks must contain all addition row indices in the expansion"
     );
 }

@@ -852,12 +852,13 @@ fn merge_multisets(a: &[(u32, u16)], b: &[(u32, u16)], out: &mut SmallVec<[(u32,
 
 #[derive(Clone, Default)]
 pub(crate) struct PrecomputedBlock {
-    k: usize,
-    mask: [u64; 4],
-    chars: usize,
-    token_start: usize,
-    token_end: usize,
-    token_multiset: SmallVec<[(u32, u16); 32]>,
+    pub(crate) k: usize,
+    pub(crate) mask: [u64; 4],
+    pub(crate) chars: usize,
+    pub(crate) token_start: usize,
+    pub(crate) token_end: usize,
+    pub(crate) token_multiset: SmallVec<[(u32, u16); 32]>,
+    pub(crate) opens_container: bool,
 }
 
 #[derive(Clone, Default)]
@@ -897,6 +898,7 @@ fn precompute_valid_blocks(
 
         let head_key = meta[j].property_key;
         let is_comment = meta[j].comment;
+        let opens_container = meta[j].delim_delta > 0;
 
         // idx = 0: row j
         mask[0] |= tokens[j].token_mask[0];
@@ -957,6 +959,7 @@ fn precompute_valid_blocks(
                 token_start,
                 token_end,
                 token_multiset: block_multiset.clone(),
+                opens_container,
             };
             row_blocks.len += 1;
         }
@@ -976,6 +979,8 @@ fn block_lcs_fast_fixed_walk<const K: usize>(
     id_ws: &[bool],
     id_alnum: &[bool],
     head_is_stmt_start: bool,
+    opens_container: bool,
+    is_expand: bool,
     p_keys: &[u32],
     p_masks: &[BitVector<K>],
     overflow_map: Option<&FxHashMap<u32, BitVector<K>>>,
@@ -1097,30 +1102,61 @@ fn block_lcs_fast_fixed_walk<const K: usize>(
     let mut most_n = 0usize;
     let mut moved_lines = 0usize;
     let mut lines_with_matches = 0usize;
-    for (li, &count) in line_matched_counts[..k].iter().enumerate() {
-        if count == 0 || (line_has_alnum[li] && line_matched_alnum[li] == 0) {
+
+    if is_expand && opens_container {
+        let head_matches =
+            line_matched_counts[0] > 0 && (!line_has_alnum[0] || line_matched_alnum[0] > 0);
+        let tail_matches = (line_matched_counts[k - 1] > 0
+            && (!line_has_alnum[k - 1] || line_matched_alnum[k - 1] > 0))
+            || !line_has_alnum[k - 1];
+        if !head_matches || !tail_matches {
             return (0, 0, 0);
         }
-        lines_with_matches += 1;
-        let alnum = line_matched_alnum[li];
-        if alnum > most_alnum || (alnum == most_alnum && count > most_n) {
-            most_alnum = alnum;
-            most_n = count;
-            most = li;
+        for (li, &count) in line_matched_counts[..k].iter().enumerate() {
+            if count == 0 || (line_has_alnum[li] && line_matched_alnum[li] == 0) {
+                continue;
+            }
+            lines_with_matches += 1;
+            let alnum = line_matched_alnum[li];
+            if alnum > most_alnum || (alnum == most_alnum && count > most_n) {
+                most_alnum = alnum;
+                most_n = count;
+                most = li;
+            }
+            if li > 0 && count > 0 {
+                moved_lines += 1;
+            }
         }
-        if li > 0 && count > 0 {
-            moved_lines += 1;
+    } else {
+        for (li, &count) in line_matched_counts[..k].iter().enumerate() {
+            if count == 0 || (line_has_alnum[li] && line_matched_alnum[li] == 0) {
+                return (0, 0, 0);
+            }
+            lines_with_matches += 1;
+            let alnum = line_matched_alnum[li];
+            if alnum > most_alnum || (alnum == most_alnum && count > most_n) {
+                most_alnum = alnum;
+                most_n = count;
+                most = li;
+            }
+            if li > 0 && count > 0 {
+                moved_lines += 1;
+            }
         }
     }
+
     if lines_with_matches < 2 || (lines_with_matches as f64 / k as f64) < min_block_line_coverage {
         return (0, 0, 0);
     }
+    let total_alnum: usize = line_matched_alnum[..k].iter().sum();
     let anchor = if let Some(h) = head {
         let head_alnum = line_matched_alnum[h];
         let override_anchor = if head_is_stmt_start {
             false
         } else {
-            most_alnum >= head_alnum.saturating_mul(3) && most_alnum >= 3
+            most_alnum >= head_alnum.saturating_mul(3)
+                && most_alnum >= 3
+                && most_alnum.saturating_mul(2) >= total_alnum
         };
         if override_anchor { most } else { h }
     } else {
@@ -1141,6 +1177,8 @@ fn block_lcs_fast_fixed<const K: usize>(
     id_ws: &[bool],
     id_alnum: &[bool],
     head_is_stmt_start: bool,
+    opens_container: bool,
+    is_expand: bool,
 ) -> (usize, usize, usize) {
     let n = old_ids.len();
     let m = block_ids.len();
@@ -1196,6 +1234,8 @@ fn block_lcs_fast_fixed<const K: usize>(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
             &p_keys[..p_len],
             &p_masks[..p_len],
             overflow_map.as_ref(),
@@ -1214,6 +1254,8 @@ fn block_lcs_fast_fixed<const K: usize>(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
             &p_keys[..p_len],
             &p_masks[..p_len],
             overflow_map.as_ref(),
@@ -1234,6 +1276,8 @@ fn block_lcs_fast_precomputed(
     id_ws: &[bool],
     id_alnum: &[bool],
     head_is_stmt_start: bool,
+    opens_container: bool,
+    is_expand: bool,
     _lcs_scratch: &mut Vec<u64>,
 ) -> (usize, usize, usize) {
     let n = old_ids.len();
@@ -1253,6 +1297,8 @@ fn block_lcs_fast_precomputed(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
         )
     } else if n <= 128 {
         block_lcs_fast_fixed::<2>(
@@ -1266,6 +1312,8 @@ fn block_lcs_fast_precomputed(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
         )
     } else if n <= 256 {
         block_lcs_fast_fixed::<4>(
@@ -1279,6 +1327,8 @@ fn block_lcs_fast_precomputed(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
         )
     } else if n <= 512 {
         block_lcs_fast_fixed::<8>(
@@ -1292,6 +1342,8 @@ fn block_lcs_fast_precomputed(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
         )
     } else if n <= 1024 {
         block_lcs_fast_fixed::<16>(
@@ -1305,6 +1357,8 @@ fn block_lcs_fast_precomputed(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
         )
     } else if n <= 2048 {
         block_lcs_fast_fixed::<32>(
@@ -1318,6 +1372,8 @@ fn block_lcs_fast_precomputed(
             id_ws,
             id_alnum,
             head_is_stmt_start,
+            opens_container,
+            is_expand,
         )
     } else {
         (0, 0, 0)
@@ -1429,12 +1485,15 @@ pub fn block_anchor(bm: &BlockMatch, head_is_stmt_start: bool) -> usize {
             }
         }
     }
+    let total_alnum: usize = bm.per_line_alnum.iter().sum();
     if let Some(h) = head {
         let head_alnum = bm.per_line_alnum.get(h).copied().unwrap_or(0);
         let override_anchor = if head_is_stmt_start {
             false
         } else {
-            most_alnum >= head_alnum.saturating_mul(3) && most_alnum >= 3
+            most_alnum >= head_alnum.saturating_mul(3)
+                && most_alnum >= 3
+                && most_alnum.saturating_mul(2) >= total_alnum
         };
         if override_anchor {
             return most;
@@ -1480,6 +1539,8 @@ pub(crate) struct DpRowMeta {
     /// Verbatim twin survives elsewhere with multiplicity intact: pairing
     /// this del as `Mod` pays `Weights::survives_elsewhere_penalty`.
     pub survives_in_new: bool,
+    /// Delimiter depth net delta for the row.
+    pub delim_delta: i16,
 }
 
 /// Scratch arena for DP cluster solving to reuse memory across clusters.
@@ -2095,6 +2156,7 @@ pub(crate) fn solve_cluster_matrix(
         let is_return_tail = profile.is_some_and(|p| p.is_return_tail_position(trimmed));
         let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
+        let delim_delta = crate::collapse::line_delim_delta(text) as i16;
 
         arena.old_tokens.push(dt);
         arena.old_meta.push(DpRowMeta {
@@ -2120,6 +2182,7 @@ pub(crate) fn solve_cluster_matrix(
             survives_in_new: r
                 .old_line()
                 .is_some_and(|n| cluster.del_survival.contains(&n)),
+            delim_delta,
         });
     }
 
@@ -2172,6 +2235,7 @@ pub(crate) fn solve_cluster_matrix(
         let is_return_tail = profile.is_some_and(|p| p.is_return_tail_position(trimmed));
         let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
+        let delim_delta = crate::collapse::line_delim_delta(text) as i16;
 
         arena.new_tokens.push(dt);
         arena.new_meta.push(DpRowMeta {
@@ -2195,6 +2259,7 @@ pub(crate) fn solve_cluster_matrix(
             head_is_keyword,
             is_return_tail,
             survives_in_new: false,
+            delim_delta,
         });
     }
 
@@ -2860,9 +2925,14 @@ pub(crate) fn solve_cluster_matrix(
                             &interner.ws,
                             &interner.alnum,
                             new_meta[j].is_stmt_start,
+                            pblock.opens_container,
+                            true,
                             lcs_scratch,
                         );
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        if pblock.opens_container && (bm_matched as f64 / ot.chars as f64) < 0.50 {
                             continue;
                         }
                         let syntax = if om.first_word.is_some()
@@ -2966,6 +3036,8 @@ pub(crate) fn solve_cluster_matrix(
                             &interner.ws,
                             &interner.alnum,
                             old_meta[i].is_stmt_start,
+                            false,
+                            false,
                             lcs_scratch,
                         );
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
