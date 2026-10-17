@@ -2409,7 +2409,9 @@ fn test_reflow_aux_claims_are_whole_tokens() {
     let rows = &output.files[0].hunks[0].rows;
     let y_row = rows
         .iter()
-        .find(|r| r.kind == crate::parse::RowKind::Add && r.text().contains("\"    let y = 2;\""))
+        .find(|r| {
+            r.kind == crate::parse::RowKind::Add && r.new_text().contains("\"    let y = 2;\"")
+        })
         .expect("verbatim y string aux row");
     let moved: String = y_row
         .runs
@@ -2455,7 +2457,7 @@ fn test_mod_rows_replay_cleanly() {
     for r in rows.iter().filter(|r| r.kind == crate::parse::RowKind::Mod) {
         mods += 1;
         let old: Vec<char> = r.old_text().chars().collect();
-        let new: Vec<char> = r.text().chars().collect();
+        let new: Vec<char> = r.new_text().chars().collect();
         let (mut o, mut n) = (0usize, 0usize);
         for run in &r.runs {
             let t: Vec<char> = run.text.chars().collect();
@@ -2471,7 +2473,7 @@ fn test_mod_rows_replay_cleanly() {
                         &new[n..n + t.len()],
                         &t[..],
                         "ctx run must match new at cursor (new={:?})",
-                        r.text()
+                        r.new_text()
                     );
                     o += t.len();
                     n += t.len();

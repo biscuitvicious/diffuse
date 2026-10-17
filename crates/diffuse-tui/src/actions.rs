@@ -21,7 +21,7 @@ pub fn hunk_patch(state: &AppState, repo_root: &Path, base_args: &[String]) -> O
         let body: String = h
             .rows
             .iter()
-            .map(|r| format!("+{}", r.text()))
+            .map(|r| format!("+{}", r.new_text()))
             .collect::<Vec<_>>()
             .join("\n");
         return Some(format!(

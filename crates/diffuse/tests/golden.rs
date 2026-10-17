@@ -781,7 +781,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                 }
                 // Spans in bounds (char offsets into their own text).
                 let spans = r.spans();
-                let text_chars = char_len(&r.text());
+                let text_chars = char_len(&r.new_text());
                 for &(s, e) in &spans.add {
                     check!(
                         s <= e && e <= text_chars,
@@ -826,7 +826,7 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .map(|x| x.text.as_ref())
                         .collect();
                     check!(
-                        kept == r.text(),
+                        kept == r.new_text(),
                         "{}:{}: the strike-removed (forward) render differs from the new line",
                         f.path,
                         r.new_line.unwrap_or(0)
@@ -1000,12 +1000,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                             .map(|s| s.as_str())
                             .unwrap_or("");
                         check!(
-                            r.text() == expected_text,
+                            r.new_text() == expected_text,
                             "{}:{}: visible row {} text {:?} != new_content text {:?}",
                             f.path,
                             nl,
                             ri,
-                            r.text(),
+                            r.new_text(),
                             expected_text
                         );
                     }
@@ -1018,12 +1018,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                         .map(|s| s.as_str())
                         .unwrap_or("");
                     check!(
-                        r.text() == expected_text,
+                        r.old_text() == expected_text,
                         "{}:{}: visible old row {} text {:?} != old_content text {:?}",
                         f.path,
                         ol,
                         ri,
-                        r.text(),
+                        r.old_text(),
                         expected_text
                     );
                 }
@@ -1037,12 +1037,12 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
                     );
                     let concat: String = r.runs.iter().map(|x| x.text.as_ref()).collect();
                     check!(
-                        concat == r.text(),
+                        concat == r.new_text(),
                         "{}: visible ctx row {} runs concat {:?} != text {:?}",
                         f.path,
                         ri,
                         concat,
-                        r.text()
+                        r.new_text()
                     );
                 }
             }
@@ -1125,21 +1125,21 @@ fn print_wire_diff(name: &str, actual: &PipelineOutput, expected: &PipelineOutpu
                     if ar.kind != er.kind
                         || ar.new_line != er.new_line
                         || ar.old_line != er.old_line
-                        || ar.text() != er.text()
+                        || ar.new_text() != er.new_text()
                     {
                         msg.push_str(&format!(
-                            "\n    actual:   kind={:?}, nl={:?}, ol={:?}, text={:?}",
+                            "\n    actual:   kind={:?}, nl={:?}, ol={:?}, new_text={:?}",
                             ar.kind,
                             ar.new_line,
                             ar.old_line,
-                            ar.text()
+                            ar.new_text()
                         ));
                         msg.push_str(&format!(
-                            "\n    expected: kind={:?}, nl={:?}, ol={:?}, text={:?}",
+                            "\n    expected: kind={:?}, nl={:?}, ol={:?}, new_text={:?}",
                             er.kind,
                             er.new_line,
                             er.old_line,
-                            er.text()
+                            er.new_text()
                         ));
                     }
                     if ar.old_text() != er.old_text() {

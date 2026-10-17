@@ -360,14 +360,14 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
             && state
                 .row_of(del.unwrap())
                 .unwrap()
-                .text()
+                .old_text()
                 .contains("old comment"),
         "the mod pair must un-collapse into a - line"
     );
     let add = state.flat.iter().find(|fr| {
         state
             .row_of(fr)
-            .is_some_and(|r| r.kind == RowKind::Add && r.text().contains("new comment"))
+            .is_some_and(|r| r.kind == RowKind::Add && r.new_text().contains("new comment"))
     });
     assert!(add.is_some(), "the mod pair must un-collapse into a + line");
 

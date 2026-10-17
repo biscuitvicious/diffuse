@@ -969,7 +969,7 @@ impl OutputHunk {
             }
 
             // Disk-exact invariant:
-            // Forward: non-del-like runs concatenate to row.text()
+            // Forward: non-del-like runs concatenate to row.new_text()
             if r.kind == RowKind::Mod || (r.kind == RowKind::Add && r.is_aux()) {
                 let kept: String = r
                     .runs
@@ -977,10 +977,10 @@ impl OutputHunk {
                     .filter(|x| !x.kind.is_del_like())
                     .map(|x| x.text.as_ref())
                     .collect();
-                if kept != r.text() {
+                if kept != r.new_text() {
                     return Err(format!(
                         "Hunk row {row_idx}: forward text mismatch: kept {kept:?} != text {:?}",
-                        r.text()
+                        r.new_text()
                     ));
                 }
             }
