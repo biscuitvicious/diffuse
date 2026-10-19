@@ -136,7 +136,7 @@ Pattern matching variables should mirror the type names they destructure:
 
 ### Safe coordinate and line types
 
-`LineNum = NonZero<u32>` represents 1-based source file line numbers.
+1-based source file line numbers are represented as primitive `u32` with Design-by-Contract non-zero preconditions enforced at row constructors (`DelLine::new`, `AddLine::new`, `CtxLine::new`, `Row::aux_add`, `Row::aux_del`).
 
 ### Struct constructors and initialization
 

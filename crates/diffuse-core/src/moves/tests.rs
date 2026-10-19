@@ -1,14 +1,14 @@
 //! Unit tests for exact move detection and block move rules.
 
 use super::*;
-use crate::parse::{AddLine, DelLine, FileStatus, Hunk, LineNum, Row};
+use crate::parse::{AddLine, DelLine, FileStatus, Hunk, Row};
 
 fn del(num: u32, text: &str) -> Row {
-    Row::Del(DelLine::new(LineNum::new(num).unwrap(), text))
+    Row::Del(DelLine::new(num, text))
 }
 
 fn add(num: u32, text: &str) -> Row {
-    Row::Add(AddLine::new(LineNum::new(num).unwrap(), text))
+    Row::Add(AddLine::new(num, text))
 }
 
 fn file(hunks: Vec<Hunk>) -> DiffFile {

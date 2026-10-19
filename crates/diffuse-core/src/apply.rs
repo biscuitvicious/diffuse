@@ -133,10 +133,14 @@ pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
                     new_lines.push(ctx_line.text.clone());
                     cursor += 1;
                 }
-                Row::Add(add_line) | Row::MovTgt(add_line) => {
+                Row::Add(add_line)
+                | Row::MovTgt { line: add_line, .. }
+                | Row::AuxAdd { line: add_line, .. } => {
                     new_lines.push(add_line.text.clone());
                 }
-                Row::Del(del_line) | Row::MovSrc(del_line) => {
+                Row::Del(del_line)
+                | Row::MovSrc { line: del_line, .. }
+                | Row::AuxDel { line: del_line, .. } => {
                     if cursor < out.len() {
                         assert_eq!(
                             &out[cursor],
@@ -149,7 +153,9 @@ pub fn apply_hunk_rows(hunks: &[Hunk], old: &[String]) -> Vec<String> {
                     }
                     cursor += 1;
                 }
-                Row::Mod { old_line, new_line } => {
+                Row::Mod {
+                    old_line, new_line, ..
+                } => {
                     if cursor < out.len() {
                         assert_eq!(
                             &out[cursor],
@@ -202,10 +208,14 @@ pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
                 out.push(ctx_line.text.clone());
                 cursor += 1;
             }
-            Row::Add(add_line) | Row::MovTgt(add_line) => {
+            Row::Add(add_line)
+            | Row::MovTgt { line: add_line, .. }
+            | Row::AuxAdd { line: add_line, .. } => {
                 out.push(add_line.text.clone());
             }
-            Row::Del(del_line) | Row::MovSrc(del_line) => {
+            Row::Del(del_line)
+            | Row::MovSrc { line: del_line, .. }
+            | Row::AuxDel { line: del_line, .. } => {
                 if cursor < old.len() {
                     assert_eq!(
                         &old[cursor],
@@ -216,7 +226,9 @@ pub fn apply_stream(rows: &[Row], old: &[String]) -> Vec<String> {
                 }
                 cursor += 1;
             }
-            Row::Mod { old_line, new_line } => {
+            Row::Mod {
+                old_line, new_line, ..
+            } => {
                 if cursor < old.len() {
                     assert_eq!(
                         &old[cursor],

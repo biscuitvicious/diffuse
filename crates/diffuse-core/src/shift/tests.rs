@@ -1,7 +1,7 @@
 //! Unit tests for diff identity shift transformations.
 
 use super::*;
-use crate::parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row};
+use crate::parse::{AddLine, CtxLine, DelLine, Hunk, Row};
 use diffuse_syntax::registry::lang_profile;
 
 fn hunk(rows: Vec<Row>) -> Hunk {
@@ -20,25 +20,14 @@ fn hunk(rows: Vec<Row>) -> Hunk {
 #[test]
 fn test_max_shift_down_rows() {
     let h = hunk(vec![
-        Row::Del(DelLine::new(LineNum::new(10).unwrap(), "old line")),
-        Row::Add(AddLine::new(LineNum::new(20).unwrap(), "line 1")),
-        Row::Add(AddLine::new(LineNum::new(21).unwrap(), "    }")),
-        Row::Add(AddLine::new(LineNum::new(22).unwrap(), "")),
-        Row::Add(AddLine::new(
-            LineNum::new(23).unwrap(),
-            "    pub fn next() {}",
-        )),
-        Row::Add(AddLine::new(LineNum::new(24).unwrap(), "    }")),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(15).unwrap(),
-            LineNum::new(25).unwrap(),
-            "    }",
-        )),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(16).unwrap(),
-            LineNum::new(26).unwrap(),
-            "",
-        )),
+        Row::Del(DelLine::new(10, "old line")),
+        Row::Add(AddLine::new(20, "line 1")),
+        Row::Add(AddLine::new(21, "    }")),
+        Row::Add(AddLine::new(22, "")),
+        Row::Add(AddLine::new(23, "    pub fn next() {}")),
+        Row::Add(AddLine::new(24, "    }")),
+        Row::Ctx(CtxLine::new(15, 25, "    }")),
+        Row::Ctx(CtxLine::new(16, 26, "")),
     ]);
 
     let max_rows = max_shift_down_rows(&h, 2, 6);
@@ -51,24 +40,13 @@ fn test_max_shift_down_rows() {
 #[test]
 fn test_apply_shift_down_identity() {
     let mut h = hunk(vec![
-        Row::Del(DelLine::new(LineNum::new(10).unwrap(), "old line")),
-        Row::Add(AddLine::new(LineNum::new(20).unwrap(), "line 1")),
-        Row::Add(AddLine::new(LineNum::new(21).unwrap(), "    }")),
-        Row::Add(AddLine::new(LineNum::new(22).unwrap(), "")),
-        Row::Add(AddLine::new(
-            LineNum::new(23).unwrap(),
-            "    pub fn next() {}",
-        )),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(12).unwrap(),
-            LineNum::new(24).unwrap(),
-            "    }",
-        )),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(13).unwrap(),
-            LineNum::new(25).unwrap(),
-            "",
-        )),
+        Row::Del(DelLine::new(10, "old line")),
+        Row::Add(AddLine::new(20, "line 1")),
+        Row::Add(AddLine::new(21, "    }")),
+        Row::Add(AddLine::new(22, "")),
+        Row::Add(AddLine::new(23, "    pub fn next() {}")),
+        Row::Ctx(CtxLine::new(12, 24, "    }")),
+        Row::Ctx(CtxLine::new(13, 25, "")),
     ]);
 
     apply_shift_down_identity(&mut h, 2, 5, 2);
@@ -136,20 +114,12 @@ fn test_inline_hunk_merging() {
                 new_count: 3,
                 section: String::new(),
                 rows: vec![
-                    Row::Ctx(CtxLine::new(
-                        LineNum::new(10).unwrap(),
-                        LineNum::new(10).unwrap(),
-                        "line 10",
-                    )),
-                    Row::Mod {
-                        old_line: DelLine::new(LineNum::new(11).unwrap(), "line 11"),
-                        new_line: AddLine::new(LineNum::new(11).unwrap(), "line 11 modified"),
-                    },
-                    Row::Ctx(CtxLine::new(
-                        LineNum::new(12).unwrap(),
-                        LineNum::new(12).unwrap(),
-                        "line 12",
-                    )),
+                    Row::Ctx(CtxLine::new(10, 10, "line 10")),
+                    Row::mod_row(
+                        DelLine::new(11, "line 11"),
+                        AddLine::new(11, "line 11 modified"),
+                    ),
+                    Row::Ctx(CtxLine::new(12, 12, "line 12")),
                 ],
                 above_ctx: 1,
                 below_ctx: 1,
@@ -161,20 +131,12 @@ fn test_inline_hunk_merging() {
                 new_count: 3,
                 section: String::new(),
                 rows: vec![
-                    Row::Ctx(CtxLine::new(
-                        LineNum::new(15).unwrap(),
-                        LineNum::new(15).unwrap(),
-                        "line 15",
-                    )),
-                    Row::Mod {
-                        old_line: DelLine::new(LineNum::new(16).unwrap(), "line 16"),
-                        new_line: AddLine::new(LineNum::new(16).unwrap(), "line 16 modified"),
-                    },
-                    Row::Ctx(CtxLine::new(
-                        LineNum::new(17).unwrap(),
-                        LineNum::new(17).unwrap(),
-                        "line 17",
-                    )),
+                    Row::Ctx(CtxLine::new(15, 15, "line 15")),
+                    Row::mod_row(
+                        DelLine::new(16, "line 16"),
+                        AddLine::new(16, "line 16 modified"),
+                    ),
+                    Row::Ctx(CtxLine::new(17, 17, "line 17")),
                 ],
                 above_ctx: 1,
                 below_ctx: 1,
@@ -216,10 +178,10 @@ fn test_context_budget_normalization() {
             new_start: 10,
             new_count: 1,
             section: String::new(),
-            rows: vec![Row::Mod {
-                old_line: DelLine::new(LineNum::new(10).unwrap(), "line 10"),
-                new_line: AddLine::new(LineNum::new(10).unwrap(), "line 10 mod"),
-            }],
+            rows: vec![Row::mod_row(
+                DelLine::new(10, "line 10"),
+                AddLine::new(10, "line 10 mod"),
+            )],
             above_ctx: 0,
             below_ctx: 0,
         }],
@@ -237,23 +199,12 @@ fn test_context_budget_normalization() {
 #[test]
 fn test_semantic_slide_addition_to_function_header() {
     let h = hunk(vec![
-        Row::Add(AddLine::new(LineNum::new(21).unwrap(), "    }")),
-        Row::Add(AddLine::new(LineNum::new(22).unwrap(), "")),
-        Row::Add(AddLine::new(
-            LineNum::new(23).unwrap(),
-            "    pub fn new_func() {",
-        )),
-        Row::Add(AddLine::new(LineNum::new(24).unwrap(), "        step();")),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(18).unwrap(),
-            LineNum::new(25).unwrap(),
-            "    }",
-        )),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(19).unwrap(),
-            LineNum::new(26).unwrap(),
-            "",
-        )),
+        Row::Add(AddLine::new(21, "    }")),
+        Row::Add(AddLine::new(22, "")),
+        Row::Add(AddLine::new(23, "    pub fn new_func() {")),
+        Row::Add(AddLine::new(24, "        step();")),
+        Row::Ctx(CtxLine::new(18, 25, "    }")),
+        Row::Ctx(CtxLine::new(19, 26, "")),
     ]);
 
     let profile = lang_profile("rs");
@@ -306,10 +257,10 @@ fn test_normalize_and_merge_hunks() {
                 new_start: 10,
                 new_count: 1,
                 section: String::new(),
-                rows: vec![Row::Mod {
-                    old_line: DelLine::new(LineNum::new(10).unwrap(), "line 10"),
-                    new_line: AddLine::new(LineNum::new(10).unwrap(), "line 10 mod"),
-                }],
+                rows: vec![Row::mod_row(
+                    DelLine::new(10, "line 10"),
+                    AddLine::new(10, "line 10 mod"),
+                )],
                 above_ctx: 0,
                 below_ctx: 0,
             },
@@ -319,10 +270,10 @@ fn test_normalize_and_merge_hunks() {
                 new_start: 20,
                 new_count: 1,
                 section: String::new(),
-                rows: vec![Row::Mod {
-                    old_line: DelLine::new(LineNum::new(20).unwrap(), "line 20"),
-                    new_line: AddLine::new(LineNum::new(20).unwrap(), "line 20 mod"),
-                }],
+                rows: vec![Row::mod_row(
+                    DelLine::new(20, "line 20"),
+                    AddLine::new(20, "line 20 mod"),
+                )],
                 above_ctx: 0,
                 below_ctx: 0,
             },
@@ -350,34 +301,15 @@ fn test_normalize_and_merge_hunks() {
 fn test_semantic_slide_json_object_closing_delimiter() {
     let h = hunk(vec![
         Row::Del(DelLine::new(
-            LineNum::new(2028).unwrap(),
+            2028,
             "                  \"text\": \"        \"",
         )),
-        Row::Add(AddLine::new(
-            LineNum::new(2029).unwrap(),
-            "                  \"text\": \"    \"",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(2030).unwrap(),
-            "                },",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(2031).unwrap(),
-            "                {",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(2032).unwrap(),
-            "                  \"kind\": \"del\",",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(2033).unwrap(),
-            "                  \"text\": \")\"",
-        )),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(2029).unwrap(),
-            LineNum::new(2034).unwrap(),
-            "                },",
-        )),
+        Row::Add(AddLine::new(2029, "                  \"text\": \"    \"")),
+        Row::Add(AddLine::new(2030, "                },")),
+        Row::Add(AddLine::new(2031, "                {")),
+        Row::Add(AddLine::new(2032, "                  \"kind\": \"del\",")),
+        Row::Add(AddLine::new(2033, "                  \"text\": \")\"")),
+        Row::Ctx(CtxLine::new(2029, 2034, "                },")),
     ]);
 
     let profile = lang_profile("json");
@@ -404,11 +336,11 @@ fn test_semantic_slide_json_object_closing_delimiter() {
 fn test_shift_down_recognizes_python_decorator_boundary() {
     let py = lang_profile("py");
     let h = hunk(vec![
-        Row::Del(DelLine::new(LineNum::new(10).unwrap(), "old line")),
-        Row::Add(AddLine::new(LineNum::new(20).unwrap(), "    pass")),
-        Row::Add(AddLine::new(LineNum::new(21).unwrap(), "    )")),
-        Row::Add(AddLine::new(LineNum::new(22).unwrap(), "@dataclass")),
-        Row::Add(AddLine::new(LineNum::new(23).unwrap(), "class Foo:")),
+        Row::Del(DelLine::new(10, "old line")),
+        Row::Add(AddLine::new(20, "    pass")),
+        Row::Add(AddLine::new(21, "    )")),
+        Row::Add(AddLine::new(22, "@dataclass")),
+        Row::Add(AddLine::new(23, "class Foo:")),
     ]);
     let shift_rows = calculate_needed_shift_down(&h, 1, 5, 2, py);
     assert_eq!(

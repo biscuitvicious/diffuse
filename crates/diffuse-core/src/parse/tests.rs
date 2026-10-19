@@ -133,17 +133,44 @@ fn test_diff_components_reverse_involution() {
     assert_eq!(rev_spans.reverse(), spans);
 
     // Mod row reverse
-    let mod_row = Row::Mod {
-        old_line: DelLine::new(LineNum::new(38).unwrap(), "old line text"),
-        new_line: AddLine::with_spans(LineNum::new(42).unwrap(), "new line text", spans.clone()),
-    };
+    let mod_row = Row::mod_with_spans(
+        DelLine::new(38, "old line text"),
+        AddLine::new(42, "new line text"),
+        spans.clone(),
+    );
     let rev_mod = mod_row.reverse();
     assert_eq!(rev_mod.kind(), RowKind::Mod);
     assert_eq!(rev_mod.text(), "old line text");
-    assert_eq!(rev_mod.del_text(), Some("new line text"));
+    assert_eq!(rev_mod.old_text(), Some("new line text"));
     assert_eq!(rev_mod.new_line(), Some(38));
     assert_eq!(rev_mod.old_line(), Some(42));
     assert_eq!(rev_mod.reverse(), mod_row);
+
+    // MovSrc <-> MovTgt reverse
+    let mov_src = Row::MovSrc {
+        line: DelLine::new(10, "moved text"),
+        spans: spans.clone(),
+        cached_runs: vec![(crate::merge::RunKind::MovedSrc, "moved text".to_string())],
+    };
+    let rev_mov = mov_src.reverse();
+    assert_eq!(rev_mov.kind(), RowKind::Mov);
+    assert_eq!(rev_mov.new_line(), Some(10));
+    assert_eq!(rev_mov.reverse(), mov_src);
+
+    // AuxAdd <-> AuxDel reverse
+    let aux_add = Row::AuxAdd {
+        anchor: 100,
+        line: AddLine::new(105, "aux text"),
+        spans: spans.clone(),
+        cached_runs: vec![(crate::merge::RunKind::MovedTgt, "aux text".to_string())],
+    };
+    let rev_aux = aux_add.reverse();
+    assert_eq!(
+        rev_aux.group(),
+        Some(crate::parse::RowGroup::Aux { anchor: 100 })
+    );
+    assert_eq!(rev_aux.old_line(), Some(105));
+    assert_eq!(rev_aux.reverse(), aux_add);
 }
 
 #[test]
@@ -250,4 +277,40 @@ fn test_parse_diff_unmodified_file() {
     assert_eq!(files[0].status, FileStatus::Unmodified);
     assert!(is_valid_diff_file(&files[0]));
     assert_eq!(files[0].status.reverse(), FileStatus::Unmodified);
+}
+
+#[test]
+#[should_panic(expected = "line number must be non-zero (1-based)")]
+fn test_del_line_zero_precondition() {
+    let _ = DelLine::new(0, "deleted text");
+}
+
+#[test]
+#[should_panic(expected = "line number must be non-zero (1-based)")]
+fn test_add_line_zero_precondition() {
+    let _ = AddLine::new(0, "added text");
+}
+
+#[test]
+#[should_panic(expected = "old_pos line number must be non-zero (1-based)")]
+fn test_ctx_line_zero_old_pos_precondition() {
+    let _ = CtxLine::new(0, 1, "context text");
+}
+
+#[test]
+#[should_panic(expected = "new_pos line number must be non-zero (1-based)")]
+fn test_ctx_line_zero_new_pos_precondition() {
+    let _ = CtxLine::new(1, 0, "context text");
+}
+
+#[test]
+#[should_panic(expected = "anchor line number must be non-zero (1-based)")]
+fn test_row_aux_add_zero_anchor_precondition() {
+    let _ = Row::aux_add(0, AddLine::new(1, "text"), Spans::default(), Vec::new());
+}
+
+#[test]
+#[should_panic(expected = "anchor line number must be non-zero (1-based)")]
+fn test_row_aux_del_zero_anchor_precondition() {
+    let _ = Row::aux_del(0, DelLine::new(1, "text"), Spans::default(), Vec::new());
 }

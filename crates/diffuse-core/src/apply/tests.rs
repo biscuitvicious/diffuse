@@ -1,7 +1,7 @@
 use std::string::ToString;
 
 use super::{apply_file_diff, apply_hunk_rows, apply_stream};
-use crate::parse::{AddLine, DelLine, Hunk, LineNum, Row};
+use crate::parse::{AddLine, DelLine, Hunk, Row};
 
 fn s(lines: &[&str]) -> Vec<String> {
     lines.iter().map(ToString::to_string).collect()
@@ -58,10 +58,10 @@ fn apply_hunk_rows_with_mod() {
         section: String::new(),
         above_ctx: 0,
         below_ctx: 0,
-        rows: vec![Row::Mod {
-            old_line: DelLine::new(LineNum::new(2).unwrap(), "bar"),
-            new_line: AddLine::new(LineNum::new(2).unwrap(), "bar_modified"),
-        }],
+        rows: vec![Row::mod_row(
+            DelLine::new(2, "bar"),
+            AddLine::new(2, "bar_modified"),
+        )],
     };
     assert_eq!(
         apply_hunk_rows(&[hunk], &old),
@@ -73,14 +73,8 @@ fn apply_hunk_rows_with_mod() {
 fn apply_stream_with_mod() {
     let old = s(&["hello", "world"]);
     let rows = vec![
-        Row::Mod {
-            old_line: DelLine::new(LineNum::new(1).unwrap(), "hello"),
-            new_line: AddLine::new(LineNum::new(1).unwrap(), "hello,"),
-        },
-        Row::Mod {
-            old_line: DelLine::new(LineNum::new(2).unwrap(), "world"),
-            new_line: AddLine::new(LineNum::new(2).unwrap(), "world!"),
-        },
+        Row::mod_row(DelLine::new(1, "hello"), AddLine::new(1, "hello,")),
+        Row::mod_row(DelLine::new(2, "world"), AddLine::new(2, "world!")),
     ];
     assert_eq!(apply_stream(&rows, &old), s(&["hello,", "world!"]));
 }

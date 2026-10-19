@@ -17,7 +17,7 @@ use crate::{
     counts::FileCounts,
     merge::RunKind,
     notes::{LineHash, NoteStatus, Side as NoteSide},
-    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind, Spans},
+    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, Row, RowKind, Spans},
 };
 
 pub use crate::parse::RowGroup;
@@ -1264,58 +1264,76 @@ impl From<&OutputRow> for Row {
             .iter()
             .map(|run| (run.kind, run.text.to_string()))
             .collect();
+        let spans = r.spans();
         match r.kind {
             RowKind::Ctx => {
-                let old_pos = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let new_pos = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+                let old_pos = r.old_line.expect("Ctx row must have old line");
+                let new_pos = r.new_line.expect("Ctx row must have new line");
                 Row::Ctx(CtxLine::new(old_pos, new_pos, r.new_text()))
             }
             RowKind::Del => {
-                let num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let mut del = DelLine::new(num, r.old_text());
-                del.group = r.group;
-                Row::Del(del)
+                let num = r.old_line.expect("Del row must have old line");
+                let del = DelLine::new(num, r.old_text());
+                if let Some(RowGroup::Aux { anchor }) = r.group {
+                    Row::AuxDel {
+                        anchor,
+                        line: del,
+                        spans,
+                        cached_runs,
+                    }
+                } else {
+                    Row::Del(del)
+                }
             }
             RowKind::Add => {
-                let num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let mut add = if r.is_aux() {
-                    AddLine::with_donor(num, r.new_text(), r.old_text(), r.spans())
+                let num = r.new_line.expect("Add row must have new line");
+                let add = AddLine::new(num, r.new_text());
+                if let Some(RowGroup::Aux { anchor }) = r.group {
+                    Row::AuxAdd {
+                        anchor,
+                        line: add,
+                        spans,
+                        cached_runs,
+                    }
                 } else {
-                    AddLine::with_spans(num, r.new_text(), r.spans())
-                };
-                add.group = r.group;
-                add.cached_runs = cached_runs;
-                Row::Add(add)
+                    Row::Add(add)
+                }
             }
             RowKind::Mod => {
-                let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                let mut old_line = DelLine::new(old_num, r.old_text());
-                old_line.group = r.group;
-                let mut new_line = AddLine::with_spans(new_num, r.new_text(), r.spans());
-                new_line.group = r.group;
-                new_line.cached_runs = cached_runs;
-                Row::Mod { old_line, new_line }
+                let old_num = r.old_line.expect("Mod row must have old line");
+                let new_num = r.new_line.expect("Mod row must have new line");
+                let old_line = DelLine::new(old_num, r.old_text());
+                let new_line = AddLine::new(new_num, r.new_text());
+                let is_anchor = r.group == Some(RowGroup::Anchor);
+                Row::Mod {
+                    old_line,
+                    new_line,
+                    spans,
+                    cached_runs,
+                    is_anchor,
+                }
             }
             RowKind::Mov => match r.mov_side {
                 Some(MovSide::Src) => {
-                    let old_num = r.old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                    let mut del = DelLine::new(old_num, r.old_text());
-                    del.group = r.group;
-                    Row::MovSrc(del)
+                    let old_num = r.old_line.expect("MovSrc row must have old line");
+                    let line = DelLine::new(old_num, r.old_text());
+                    Row::MovSrc {
+                        line,
+                        spans,
+                        cached_runs,
+                    }
                 }
                 Some(MovSide::Tgt) | None => {
-                    let new_num = r.new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                    let mut add =
-                        AddLine::with_donor(new_num, r.new_text(), r.old_text(), r.spans());
-                    add.group = r.group;
-                    add.cached_runs = cached_runs;
-                    Row::MovTgt(add)
+                    let new_num = r.new_line.expect("MovTgt row must have new line");
+                    let line = AddLine::new(new_num, r.new_text());
+                    Row::MovTgt {
+                        line,
+                        spans,
+                        cached_runs,
+                    }
                 }
             },
-            RowKind::File | RowKind::Sep => {
-                Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, r.new_text()))
-            }
+            RowKind::File | RowKind::Sep => Row::Sep(r.new_text()),
         }
     }
 }

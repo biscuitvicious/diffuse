@@ -7,7 +7,7 @@ use std::{slice, str};
 
 use crate::{
     lcs::char_slice,
-    parse::{Row, RowGroup, Spans},
+    parse::{Row, Spans},
 };
 
 /// The semantic classification of a token run in a diff row.
@@ -156,7 +156,7 @@ pub fn is_wholesale_replacement_spans(del_text: &str, add_text: &str, spans: &Sp
 /// True when a Row::Mod is a wholesale replacement (completely struck out and
 /// re-added).
 pub fn is_wholesale_replacement(r: &Row) -> bool {
-    let Some(del_text) = r.del_text() else {
+    let Some(del_text) = r.old_text() else {
         return false;
     };
     let computed_spans;
@@ -164,7 +164,7 @@ pub fn is_wholesale_replacement(r: &Row) -> bool {
         Some(s)
             if !s.is_empty()
                 || del_text == r.text()
-                || matches!(r, Row::Add(_) | Row::MovTgt(_)) =>
+                || matches!(r, Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. }) =>
         {
             s
         }
@@ -219,7 +219,19 @@ pub fn merged_runs_with_profile<'a>(
             })
             .collect();
     }
-    let Some(del_text) = r.del_text() else {
+    if matches!(r, Row::AuxAdd { .. }) {
+        return vec![Run {
+            kind: RunKind::Add,
+            text: r.text(),
+        }];
+    }
+    if matches!(r, Row::AuxDel { .. }) {
+        return vec![Run {
+            kind: RunKind::Del,
+            text: r.text(),
+        }];
+    }
+    let Some(del_text) = r.old_text() else {
         return Vec::new();
     };
     let computed_spans;
@@ -227,7 +239,7 @@ pub fn merged_runs_with_profile<'a>(
         Some(s)
             if !s.is_empty()
                 || del_text == r.text()
-                || matches!(r, Row::Add(_) | Row::MovTgt(_)) =>
+                || matches!(r, Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. }) =>
         {
             s
         }
@@ -250,7 +262,7 @@ pub fn merged_runs_with_profile<'a>(
     // equally truthful; the mark lets renderers tell moved-in from merely
     // common, and completes the wire's account of the move whose source
     // half the anchor marks moved-out.) Genuine fills keep Add.
-    if matches!(r.group(), Some(RowGroup::Aux { .. })) && matches!(r, Row::Add(_)) {
+    if matches!(r, Row::AuxAdd { .. }) {
         return runs
             .into_iter()
             .map(|run| {
@@ -394,15 +406,12 @@ pub fn display_text_with_profile(
     r: &Row,
     profile: Option<&diffuse_syntax::profile::LangProfile>,
 ) -> String {
-    let use_merged = (matches!(r, Row::Mod { .. })
-        || r.is_moved()
-        || (matches!(r, Row::Add(_)) && r.del_text().is_some()))
-        && r.del_text().is_some();
+    let use_merged = matches!(r, Row::Mod { .. }) || !r.cached_runs().is_empty();
     if !use_merged {
         return r.text().to_string();
     }
     if is_wholesale_mod(r) {
-        return format!("{}{}", r.del_text().unwrap_or_default(), r.text());
+        return format!("{}{}", r.old_text().unwrap_or_default(), r.text());
     }
     merged_runs_with_profile(r, profile)
         .iter()

@@ -166,11 +166,11 @@ pub fn file_counts(f: &DiffFile) -> FileCounts {
     for h in &f.hunks {
         for r in &h.rows {
             match r {
-                Row::Add(_) => adds += 1,
-                Row::Del(_) => dels += 1,
+                Row::Add(_) | Row::AuxAdd { .. } => adds += 1,
+                Row::Del(_) | Row::AuxDel { .. } => dels += 1,
                 Row::Mod { .. } => mods += 1,
-                Row::MovTgt(_) => movs += 1,
-                Row::MovSrc(_) | Row::Ctx(_) | Row::Sep(_) => {}
+                Row::MovTgt { .. } => movs += 1,
+                Row::MovSrc { .. } | Row::Ctx(_) | Row::Sep(_) => {}
             }
         }
     }

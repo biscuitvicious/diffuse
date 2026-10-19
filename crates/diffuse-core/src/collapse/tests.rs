@@ -8,51 +8,53 @@ use crate::{
     collapse::collapse_hunk_rows,
     merge::{RunKind, merged_runs},
     moves::mark_moves,
-    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row, RowKind},
+    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, Row, RowKind},
 };
 use diffuse_syntax::registry::lang_profile;
 
 fn row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
     match kind {
         RowKind::Del => {
-            let num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            let num = old_line.expect("Del row requires old_line in test helper");
             Row::Del(DelLine::new(num, text))
         }
         RowKind::Add => {
-            let num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            let num = new_line.expect("Add row requires new_line in test helper");
             Row::Add(AddLine::new(num, text))
         }
         RowKind::Mod => {
-            let old_num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-            let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-            Row::Mod {
-                old_line: DelLine::new(old_num, text),
-                new_line: AddLine::new(new_num, text),
-            }
+            let old_num = old_line.expect("Mod row requires old_line in test helper");
+            let new_num = new_line.expect("Mod row requires new_line in test helper");
+            Row::mod_row(DelLine::new(old_num, text), AddLine::new(new_num, text))
         }
         RowKind::Ctx => {
-            let old_num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-            let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
+            let old_num = old_line.expect("Ctx row requires old_line in test helper");
+            let new_num = new_line.expect("Ctx row requires new_line in test helper");
             Row::Ctx(CtxLine::new(old_num, new_num, text))
         }
         RowKind::Mov => {
-            if let Some(old) = old_line.and_then(LineNum::new) {
-                Row::MovSrc(DelLine::new(old, text))
+            if let Some(old) = old_line {
+                Row::mov_src(DelLine::new(old, text))
             } else {
-                let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-                Row::MovTgt(AddLine::new(new_num, text))
+                let new_num =
+                    new_line.expect("Mov row requires new_line when not old_line in test helper");
+                Row::mov_tgt(AddLine::new(new_num, text))
             }
         }
-        RowKind::File | RowKind::Sep => Row::Ctx(CtxLine::new(LineNum::MIN, LineNum::MIN, text)),
+        RowKind::File | RowKind::Sep => Row::Sep(text.to_string()),
     }
 }
 
 fn moved_row(kind: RowKind, text: &str, new_line: Option<u32>, old_line: Option<u32>) -> Row {
-    let old_num = old_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
-    let new_num = new_line.and_then(LineNum::new).unwrap_or(LineNum::MIN);
     match kind {
-        RowKind::Del => Row::MovSrc(DelLine::new(old_num, text)),
-        _ => Row::MovTgt(AddLine::new(new_num, text)),
+        RowKind::Del => Row::mov_src(DelLine::new(
+            old_line.expect("old_line required in test helper"),
+            text,
+        )),
+        _ => Row::mov_tgt(AddLine::new(
+            new_line.expect("new_line required in test helper"),
+            text,
+        )),
     }
 }
 
@@ -205,7 +207,7 @@ fn brace_anchor_none_some_result() {
     let c = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), profile);
     let none_mod = c
         .iter()
-        .find(|r| r.kind() == RowKind::Mod && r.del_text() == Some("        None"))
+        .find(|r| r.kind() == RowKind::Mod && r.old_text() == Some("        None"))
         .expect("the None mod");
     assert_eq!(
         none_mod.new_line(),
@@ -241,7 +243,7 @@ fn python_block_tail_anchor_none_some_result() {
     let c = collapse_hunk_rows(&h, Some(&old_content), Some(&new_content), py);
     let none_mod = c
         .iter()
-        .find(|r| r.kind() == RowKind::Mod && r.del_text() == Some("    return None"))
+        .find(|r| r.kind() == RowKind::Mod && r.old_text() == Some("    return None"))
         .expect("the None mod in python");
     assert_eq!(
         none_mod.new_line(),
@@ -280,7 +282,7 @@ fn reflow_pairing_first_del() {
     let m = &c[0];
     assert_eq!(m.kind(), RowKind::Mod);
     assert_eq!(
-        m.del_text(),
+        m.old_text(),
         Some("        self.resolved_layers.iter().any(|l| l.path().join(sub_path).is_dir())"),
         "the collapsed del lines pair into unified old text"
     );
@@ -292,7 +294,7 @@ fn reflow_pairing_first_del() {
         "pure deletion mod: resolved_ strike only, method chain is shared context"
     );
     let runs = crate::merge::merged_runs(m);
-    assert_eq!(crate::merge::project_reverse(&runs), m.del_text().unwrap());
+    assert_eq!(crate::merge::project_reverse(&runs), m.old_text().unwrap());
     assert_eq!(crate::merge::project_forward(&runs), m.text());
 
     // The `let up` one-liner's reflowed tail: the `.find(…)` content of the
@@ -331,7 +333,7 @@ fn reflow_pairing_first_del() {
     let runs2 = crate::merge::merged_runs(m2);
     assert_eq!(
         crate::merge::project_reverse(&runs2),
-        m2.del_text().unwrap()
+        m2.old_text().unwrap()
     );
     assert_eq!(crate::merge::project_forward(&runs2), m2.text());
 }
@@ -605,7 +607,7 @@ fn tail_guard_and_reflow_corpus() {
         Some(155),
         "pairs old None with Some(result)"
     );
-    assert_eq!(mod3.del_text(), Some("        None"));
+    assert_eq!(mod3.old_text(), Some("        None"));
     assert!(
         c.iter()
             .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(151)),
@@ -1030,9 +1032,9 @@ fn multiline_del_mount_pairs_1_to_1_with_two_del_rows() {
         .find(|r| r.kind() == RowKind::Mod)
         .expect("the 1-to-1 mod row");
     assert_eq!(
-        rmod.del_text(),
+        rmod.old_text(),
         Some("        self.mount_stack"),
-        "the mod row's del_text is strictly single-line"
+        "the mod row's old_text is strictly single-line"
     );
     assert_eq!(rmod.new_line(), Some(1060));
     assert_eq!(
@@ -1184,14 +1186,14 @@ fn test_resolved_layers_subword_collapse() {
         row(
             RowKind::Del,
             "        self.resolved_layers = resolved;",
-            Some(612),
             None,
+            Some(612),
         ),
         row(
             RowKind::Add,
             "        self.layers = resolved;",
-            None,
             Some(770),
+            None,
         ),
     ]);
     let collapsed = collapse_hunk_rows(&h, None, None, None);
@@ -1502,7 +1504,7 @@ fn test_multiline_statement_expansion_preserves_closing_delimiter() {
     let del_spans_81 = row_81.spans().map(|s| &s.del).cloned().unwrap_or_default();
     let del_texts_81: Vec<&str> = del_spans_81
         .iter()
-        .map(|&(s, e)| &row_81.del_text().unwrap()[s..e])
+        .map(|&(s, e)| &row_81.old_text().unwrap()[s..e])
         .collect();
     assert!(
         !del_texts_81.iter().any(|t| t.contains(");")),
@@ -1627,23 +1629,16 @@ fn test_json_property_modification_pairs_when_text_appears_elsewhere() {
 
     let h = hunk(vec![
         Row::Ctx(CtxLine::new(
-            LineNum::new(2027).unwrap(),
-            LineNum::new(2028).unwrap(),
+            2027,
+            2028,
             "                  \"color\": \"text\",",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(2028).unwrap(),
+            2028,
             "                  \"text\": \"        \"",
         )),
-        Row::Add(AddLine::new(
-            LineNum::new(2029).unwrap(),
-            "                  \"text\": \"    \"",
-        )),
-        Row::Ctx(CtxLine::new(
-            LineNum::new(2029).unwrap(),
-            LineNum::new(2030).unwrap(),
-            "                },",
-        )),
+        Row::Add(AddLine::new(2029, "                  \"text\": \"    \"")),
+        Row::Ctx(CtxLine::new(2029, 2030, "                },")),
     ]);
 
     let profile = lang_profile("json");
@@ -1659,7 +1654,7 @@ fn test_json_property_modification_pairs_when_text_appears_elsewhere() {
     assert_eq!(m.old_line(), Some(2028));
     assert_eq!(m.new_line(), Some(2029));
     assert_eq!(
-        m.del_text(),
+        m.old_text(),
         Some("                  \"text\": \"        \"")
     );
     assert_eq!(m.text(), "                  \"text\": \"    \"");
@@ -1777,9 +1772,14 @@ fn test_parallel_assemble_mods_multi_row_parity() {
     for (idx, r) in collapsed.iter().enumerate() {
         let i = idx + 1;
         match r {
-            Row::Mod { old_line, new_line } => {
-                assert_eq!(old_line.num.get(), i as u32);
-                assert_eq!(new_line.num.get(), i as u32);
+            Row::Mod {
+                old_line,
+                new_line,
+                spans,
+                ..
+            } => {
+                assert_eq!(old_line.num, i as u32);
+                assert_eq!(new_line.num, i as u32);
                 assert_eq!(
                     old_line.text,
                     format!("    let count_{i} = calculate_value(param_{i});")
@@ -1788,10 +1788,7 @@ fn test_parallel_assemble_mods_multi_row_parity() {
                     new_line.text,
                     format!("    let count_{i} = calculate_value(param_{i}, extra_flag);")
                 );
-                assert!(
-                    !new_line.spans.is_empty(),
-                    "Mod row must have subword spans"
-                );
+                assert!(!spans.is_empty(), "Mod row must have subword spans");
             }
             _ => panic!("Expected Row::Mod at index {idx}, got {r:?}"),
         }
@@ -2440,7 +2437,7 @@ fn test_reflow_atomicity_trailing_deletions_do_not_interleave_anchor_and_aux_add
         .enumerate()
         .filter(|(_, r)| {
             matches!(r.group(), Some(RowGroup::Aux { anchor }) if anchor == 191)
-                && matches!(r, Row::Add(_) | Row::MovTgt(_))
+                && matches!(r, Row::AuxAdd { .. } | Row::MovTgt { .. })
         })
         .collect();
 
@@ -2576,10 +2573,7 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
     let rs = lang_profile("rs");
     let c = collapse_hunk_rows(&h, None, None, rs);
 
-    let anchor = c
-        .iter()
-        .find(|r| r.old_line_num().map(|n| n.get()) == Some(134))
-        .unwrap();
+    let anchor = c.iter().find(|r| r.old_line_num() == Some(134)).unwrap();
     let anchor_runs = merged_runs(anchor);
     // Anchor row assert_eq!( must not contain any deleted paren
     let has_paren_del = anchor_runs
@@ -2593,10 +2587,7 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
 
     // Continuation row 1 carries super::resolve_theme call, added arguments,
     // closing delimiters, and deleted space
-    let aux1 = c
-        .iter()
-        .find(|r| r.new_line_num().map(|n| n.get()) == Some(135))
-        .unwrap();
+    let aux1 = c.iter().find(|r| r.new_line_num() == Some(135)).unwrap();
     let aux1_runs = merged_runs(aux1);
     assert_eq!(
         aux1_runs,

@@ -4,15 +4,15 @@ use crate::{
     collapse::collapse_hunk_rows,
     counts::{CountKind, FileCounts, file_counts},
     moves::mark_moves,
-    parse::{AddLine, DelLine, DiffFile, FileStatus, Hunk, LineNum, Row},
+    parse::{AddLine, DelLine, DiffFile, FileStatus, Hunk, Row},
 };
 
 fn del(num: u32, text: &str) -> Row {
-    Row::Del(DelLine::new(LineNum::new(num).unwrap(), text))
+    Row::Del(DelLine::new(num, text))
 }
 
 fn add(num: u32, text: &str) -> Row {
-    Row::Add(AddLine::new(LineNum::new(num).unwrap(), text))
+    Row::Add(AddLine::new(num, text))
 }
 
 fn hunk(rows: Vec<Row>) -> Hunk {

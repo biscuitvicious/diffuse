@@ -6,7 +6,7 @@ use super::*;
 use crate::{
     lcs::word_spans,
     merge::{RunKind, display_text},
-    parse::{AddLine, DelLine, DiffFile, LineNum, Row, RowKind},
+    parse::{AddLine, DelLine, DiffFile, Row, RowKind},
 };
 
 #[test]
@@ -58,14 +58,11 @@ fn test_comment_reflow_del_span_positioning() {
     // trailing `layer's markers —` lands at the end
     let old_1078 = "// Walk the lowers top → bottom, honoring each layer's markers —";
     let new_1078 = "// Walk the non-top-upper layers top → bottom, honoring each";
-    let r_1078 = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1078).unwrap(), old_1078),
-        new_line: AddLine::with_spans(
-            LineNum::new(1078).unwrap(),
-            new_1078,
-            word_spans(old_1078, new_1078),
-        ),
-    };
+    let r_1078 = Row::mod_with_spans(
+        DelLine::new(1078, old_1078),
+        AddLine::new(1078, new_1078),
+        word_spans(old_1078, new_1078),
+    );
     let runs_1078 = crate::merge::merged_runs(&r_1078);
     let non_common_1078: Vec<(RunKind, &str)> = runs_1078
         .iter()
@@ -86,14 +83,11 @@ fn test_comment_reflow_del_span_positioning() {
     // `whiteouts...` strikes at end of `carries` (not inside `ca...rries`)
     let old_1079 = "// a frozen (snapshotted) upper carries whiteouts and opaque dirs";
     let new_1079 = "// layer's markers — a frozen (snapshotted) layer carries";
-    let r_1079 = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1079).unwrap(), old_1079),
-        new_line: AddLine::with_spans(
-            LineNum::new(1079).unwrap(),
-            new_1079,
-            word_spans(old_1079, new_1079),
-        ),
-    };
+    let r_1079 = Row::mod_with_spans(
+        DelLine::new(1079, old_1079),
+        AddLine::new(1079, new_1079),
+        word_spans(old_1079, new_1079),
+    );
     let runs_1079 = crate::merge::merged_runs(&r_1079);
     let non_common_1079: Vec<(RunKind, &str)> = runs_1079
         .iter()
@@ -1433,10 +1427,7 @@ fn test_colored_runs_prefers_cached_profiled_runs() {
     let del = "    assert_eq!(f.hunks[0].rows.len(), 8); // lines 10..=17";
     let add = "    assert_eq!(f.hunks[0].rows.len(), 18); // lines 5..=22 (6 above + mod11 + ctx12..15 + mod16 + 6 below)";
     let spans = word_spans_with_profile(del, add, profile);
-    let plain = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1).unwrap(), del),
-        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, spans.clone()),
-    };
+    let plain = Row::mod_with_spans(DelLine::new(1, del), AddLine::new(1, add), spans.clone());
     let kinds = |runs: &[OutputRun]| {
         runs.iter()
             .map(|r| (format!("{:?}", r.kind), r.text.to_string()))
@@ -1449,10 +1440,7 @@ fn test_colored_runs_prefers_cached_profiled_runs() {
     );
 
     let (_, runs) = word_spans_and_runs_with_profile(del, add, profile);
-    let stored = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1).unwrap(), del),
-        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, spans).with_cached_runs(runs),
-    };
+    let stored = Row::mod_with_alignment(DelLine::new(1, del), AddLine::new(1, add), spans, runs);
     let rendered = kinds(&colored_runs(&stored, None, &[]));
     for want in [("Del", "10"), ("Add", "5"), ("Ctx", "..="), ("Del", "17")] {
         assert!(

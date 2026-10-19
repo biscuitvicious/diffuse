@@ -514,18 +514,11 @@ fn test_lcs_symmetric_tie_breaker_json_runs() {
     let profile = diffuse_syntax::registry::lang_profile("json");
     let ws = word_spans_with_profile(old_line, new_line, profile);
 
-    let r = crate::parse::Row::Mod {
-        old_line: crate::parse::DelLine {
-            num: crate::parse::LineNum::new(90).unwrap(),
-            text: old_line.to_string(),
-            group: None,
-        },
-        new_line: crate::parse::AddLine::with_spans(
-            crate::parse::LineNum::new(90).unwrap(),
-            new_line.to_string(),
-            ws,
-        ),
-    };
+    let r = crate::parse::Row::mod_with_spans(
+        crate::parse::DelLine::new(90, old_line),
+        crate::parse::AddLine::new(90, new_line),
+        ws,
+    );
     let runs = merged_runs(&r);
     // Find the run that adds the new object: it must start cleanly with
     // {"kind":"common" rather than splitting "kind" from its value.

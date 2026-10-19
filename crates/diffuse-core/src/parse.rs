@@ -2,14 +2,9 @@
 //!
 //! Models the diff hierarchy: `DiffFile` -> `Hunk` -> `Row`.
 
-use std::num::NonZero;
-
 use serde::{Deserialize, Serialize};
 
 use crate::merge::RunKind;
-
-/// A 1-based source line number.
-pub type LineNum = NonZero<u32>;
 
 /// A diff row kind.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -49,116 +44,58 @@ pub enum RowGroup {
 /// A line deletion: (`line_num`, text, moved).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct DelLine {
-    pub num: LineNum,
+    pub num: u32,
     pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group: Option<RowGroup>,
 }
 
 impl DelLine {
     #[inline]
-    pub fn new(num: LineNum, text: impl Into<String>) -> Self {
+    pub fn new(num: u32, text: impl Into<String>) -> Self {
+        crate::require!(num > 0, "line number must be non-zero (1-based)");
         Self {
             num,
             text: text.into(),
-            group: None,
         }
-    }
-
-    #[inline]
-    pub fn with_group(mut self, group: Option<RowGroup>) -> Self {
-        self.group = group;
-        self
     }
 }
 
-/// A line addition: (`line_num`, text, spans, optional donor `del_text`).
+/// A line addition: (`line_num`, text).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct AddLine {
-    pub num: LineNum,
+    pub num: u32,
     pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub del_text: Option<String>,
-    #[serde(default, skip_serializing_if = "Spans::is_empty")]
-    pub spans: Spans,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group: Option<RowGroup>,
-    /// Merged runs from the same profiled tape as `spans` (render
-    /// unification: render consumes these instead of rebuilding its own
-    /// unprofiled tape, so runs can never contradict the spans' tape).
-    /// Never serialized: the wire contract carries spans only, and empty
-    /// means "legacy recompute on demand".
-    #[serde(skip)]
-    pub cached_runs: Vec<(RunKind, String)>,
 }
 
 impl AddLine {
     #[inline]
-    pub fn new(num: LineNum, text: impl Into<String>) -> Self {
+    pub fn new(num: u32, text: impl Into<String>) -> Self {
+        crate::require!(num > 0, "line number must be non-zero (1-based)");
         Self {
             num,
             text: text.into(),
-            del_text: None,
-            spans: Spans::default(),
-            group: None,
-            cached_runs: Vec::new(),
         }
-    }
-
-    #[inline]
-    pub fn with_spans(num: LineNum, text: impl Into<String>, spans: Spans) -> Self {
-        Self {
-            num,
-            text: text.into(),
-            del_text: None,
-            spans,
-            group: None,
-            cached_runs: Vec::new(),
-        }
-    }
-
-    #[inline]
-    pub fn with_donor(
-        num: LineNum,
-        text: impl Into<String>,
-        del_text: impl Into<String>,
-        spans: Spans,
-    ) -> Self {
-        Self {
-            num,
-            text: text.into(),
-            del_text: Some(del_text.into()),
-            spans,
-            group: None,
-            cached_runs: Vec::new(),
-        }
-    }
-
-    #[inline]
-    pub fn with_group(mut self, group: Option<RowGroup>) -> Self {
-        self.group = group;
-        self
-    }
-
-    /// Attach the profiled-tape merged runs (see `cached_runs`).
-    #[inline]
-    pub fn with_cached_runs(mut self, runs: Vec<(RunKind, String)>) -> Self {
-        self.cached_runs = runs;
-        self
     }
 }
 
 /// A context line: (`old_pos`, `new_pos`, text).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct CtxLine {
-    pub old_pos: LineNum,
-    pub new_pos: LineNum,
+    pub old_pos: u32,
+    pub new_pos: u32,
     pub text: String,
 }
 
 impl CtxLine {
     #[inline]
-    pub fn new(old_pos: LineNum, new_pos: LineNum, text: impl Into<String>) -> Self {
+    pub fn new(old_pos: u32, new_pos: u32, text: impl Into<String>) -> Self {
+        crate::require!(
+            old_pos > 0,
+            "old_pos line number must be non-zero (1-based)"
+        );
+        crate::require!(
+            new_pos > 0,
+            "new_pos line number must be non-zero (1-based)"
+        );
         Self {
             old_pos,
             new_pos,
@@ -177,9 +114,43 @@ pub enum Row {
     Mod {
         old_line: DelLine,
         new_line: AddLine,
+        #[serde(default, skip_serializing_if = "Spans::is_empty")]
+        spans: Spans,
+        #[serde(skip)]
+        cached_runs: Vec<(RunKind, String)>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_anchor: bool,
     },
-    MovSrc(DelLine),
-    MovTgt(AddLine),
+    MovSrc {
+        line: DelLine,
+        #[serde(default, skip_serializing_if = "Spans::is_empty")]
+        spans: Spans,
+        #[serde(skip)]
+        cached_runs: Vec<(RunKind, String)>,
+    },
+    MovTgt {
+        line: AddLine,
+        #[serde(default, skip_serializing_if = "Spans::is_empty")]
+        spans: Spans,
+        #[serde(skip)]
+        cached_runs: Vec<(RunKind, String)>,
+    },
+    AuxDel {
+        anchor: u32,
+        line: DelLine,
+        #[serde(default, skip_serializing_if = "Spans::is_empty")]
+        spans: Spans,
+        #[serde(skip)]
+        cached_runs: Vec<(RunKind, String)>,
+    },
+    AuxAdd {
+        anchor: u32,
+        line: AddLine,
+        #[serde(default, skip_serializing_if = "Spans::is_empty")]
+        spans: Spans,
+        #[serde(skip)]
+        cached_runs: Vec<(RunKind, String)>,
+    },
     #[serde(skip_serializing)]
     Sep(String),
 }
@@ -217,13 +188,117 @@ impl Spans {
 
 impl Row {
     #[inline]
+    pub fn mod_row(old_line: DelLine, new_line: AddLine) -> Self {
+        Self::Mod {
+            old_line,
+            new_line,
+            spans: Spans::default(),
+            cached_runs: Vec::new(),
+            is_anchor: false,
+        }
+    }
+
+    #[inline]
+    pub fn mod_with_spans(old_line: DelLine, new_line: AddLine, spans: Spans) -> Self {
+        Self::Mod {
+            old_line,
+            new_line,
+            spans,
+            cached_runs: Vec::new(),
+            is_anchor: false,
+        }
+    }
+
+    #[inline]
+    pub fn mod_with_alignment(
+        old_line: DelLine,
+        new_line: AddLine,
+        spans: Spans,
+        cached_runs: Vec<(RunKind, String)>,
+    ) -> Self {
+        Self::Mod {
+            old_line,
+            new_line,
+            spans,
+            cached_runs,
+            is_anchor: false,
+        }
+    }
+
+    #[inline]
+    pub fn anchor_mod(
+        old_line: DelLine,
+        new_line: AddLine,
+        spans: Spans,
+        cached_runs: Vec<(RunKind, String)>,
+    ) -> Self {
+        Self::Mod {
+            old_line,
+            new_line,
+            spans,
+            cached_runs,
+            is_anchor: true,
+        }
+    }
+
+    #[inline]
+    pub fn mov_src(line: DelLine) -> Self {
+        Self::MovSrc {
+            line,
+            spans: Spans::default(),
+            cached_runs: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn mov_tgt(line: AddLine) -> Self {
+        Self::MovTgt {
+            line,
+            spans: Spans::default(),
+            cached_runs: Vec::new(),
+        }
+    }
+
+    #[inline]
+    pub fn aux_add(
+        anchor: u32,
+        line: AddLine,
+        spans: Spans,
+        cached_runs: Vec<(RunKind, String)>,
+    ) -> Self {
+        crate::require!(anchor > 0, "anchor line number must be non-zero (1-based)");
+        Self::AuxAdd {
+            anchor,
+            line,
+            spans,
+            cached_runs,
+        }
+    }
+
+    #[inline]
+    pub fn aux_del(
+        anchor: u32,
+        line: DelLine,
+        spans: Spans,
+        cached_runs: Vec<(RunKind, String)>,
+    ) -> Self {
+        crate::require!(anchor > 0, "anchor line number must be non-zero (1-based)");
+        Self::AuxDel {
+            anchor,
+            line,
+            spans,
+            cached_runs,
+        }
+    }
+
+    #[inline]
     pub fn kind(&self) -> RowKind {
         match self {
             Row::Ctx(_) | Row::Sep(_) => RowKind::Ctx,
-            Row::Del(_) => RowKind::Del,
-            Row::Add(_) => RowKind::Add,
+            Row::Del(_) | Row::AuxDel { .. } => RowKind::Del,
+            Row::Add(_) | Row::AuxAdd { .. } => RowKind::Add,
             Row::Mod { .. } => RowKind::Mod,
-            Row::MovSrc(_) | Row::MovTgt(_) => RowKind::Mov,
+            Row::MovSrc { .. } | Row::MovTgt { .. } => RowKind::Mov,
         }
     }
 
@@ -231,81 +306,101 @@ impl Row {
     pub fn text(&self) -> &str {
         match self {
             Row::Ctx(ctx_line) => &ctx_line.text,
-            Row::Del(del_line) | Row::MovSrc(del_line) => &del_line.text,
-            Row::Add(add_line) | Row::MovTgt(add_line) => &add_line.text,
+            Row::Del(del_line) => &del_line.text,
+            Row::Add(add_line) => &add_line.text,
             Row::Mod { new_line, .. } => &new_line.text,
+            Row::MovSrc { line, .. } => &line.text,
+            Row::MovTgt { line, .. } => &line.text,
+            Row::AuxDel { line, .. } => &line.text,
+            Row::AuxAdd { line, .. } => &line.text,
             Row::Sep(s) => s.as_str(),
         }
     }
 
     #[inline]
-    pub fn del_text(&self) -> Option<&str> {
+    pub fn old_text(&self) -> Option<&str> {
         match self {
             Row::Ctx(ctx_line) => Some(&ctx_line.text),
-            Row::Del(del_line) | Row::MovSrc(del_line) => Some(&del_line.text),
-            Row::Add(add_line) | Row::MovTgt(add_line) => add_line.del_text.as_deref(),
+            Row::Del(del_line) => Some(&del_line.text),
             Row::Mod { old_line, .. } => Some(&old_line.text),
-            Row::Sep(_) => None,
+            Row::MovSrc { line, .. } => Some(&line.text),
+            Row::AuxDel { line, .. } => Some(&line.text),
+            Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Sep(_) => None,
         }
     }
 
     #[inline]
-    pub fn old_line_num(&self) -> Option<LineNum> {
+    pub fn new_text(&self) -> Option<&str> {
         match self {
-            Row::Ctx(ctx_line) => Some(ctx_line.old_pos),
-            Row::Del(del_line) | Row::MovSrc(del_line) => Some(del_line.num),
-            Row::Mod { old_line, .. } => Some(old_line.num),
-            Row::Add(_) | Row::MovTgt(_) | Row::Sep(_) => None,
-        }
-    }
-
-    #[inline]
-    pub fn new_line_num(&self) -> Option<LineNum> {
-        match self {
-            Row::Ctx(ctx_line) => Some(ctx_line.new_pos),
-            Row::Add(add_line) | Row::MovTgt(add_line) => Some(add_line.num),
-            Row::Mod { new_line, .. } => Some(new_line.num),
-            Row::Del(_) | Row::MovSrc(_) | Row::Sep(_) => None,
+            Row::Ctx(ctx_line) => Some(&ctx_line.text),
+            Row::Add(add_line) => Some(&add_line.text),
+            Row::Mod { new_line, .. } => Some(&new_line.text),
+            Row::MovTgt { line, .. } => Some(&line.text),
+            Row::AuxAdd { line, .. } => Some(&line.text),
+            Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. } | Row::Sep(_) => None,
         }
     }
 
     #[inline]
     pub fn old_line(&self) -> Option<u32> {
-        self.old_line_num().map(NonZero::get)
+        match self {
+            Row::Ctx(ctx_line) => Some(ctx_line.old_pos),
+            Row::Del(del_line) => Some(del_line.num),
+            Row::Mod { old_line, .. } => Some(old_line.num),
+            Row::MovSrc { line, .. } => Some(line.num),
+            Row::AuxDel { line, .. } => Some(line.num),
+            Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Sep(_) => None,
+        }
     }
 
     #[inline]
     pub fn new_line(&self) -> Option<u32> {
-        self.new_line_num().map(NonZero::get)
+        match self {
+            Row::Ctx(ctx_line) => Some(ctx_line.new_pos),
+            Row::Add(add_line) => Some(add_line.num),
+            Row::Mod { new_line, .. } => Some(new_line.num),
+            Row::MovTgt { line, .. } => Some(line.num),
+            Row::AuxAdd { line, .. } => Some(line.num),
+            Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. } | Row::Sep(_) => None,
+        }
+    }
+
+    #[inline]
+    pub fn old_line_num(&self) -> Option<u32> {
+        self.old_line()
+    }
+
+    #[inline]
+    pub fn new_line_num(&self) -> Option<u32> {
+        self.new_line()
     }
 
     #[inline]
     pub fn spans(&self) -> Option<&Spans> {
         match self {
-            Row::Add(add_line) | Row::MovTgt(add_line) => {
-                if !add_line.spans.is_empty() || add_line.del_text.is_some() {
-                    Some(&add_line.spans)
-                } else {
-                    None
-                }
-            }
-            Row::Mod { new_line, .. } => Some(&new_line.spans),
+            Row::Mod { spans, .. } => Some(spans),
+            Row::MovTgt { spans, .. } if !spans.is_empty() => Some(spans),
+            Row::MovSrc { spans, .. } if !spans.is_empty() => Some(spans),
+            Row::AuxAdd { spans, .. } if !spans.is_empty() => Some(spans),
+            Row::AuxDel { spans, .. } if !spans.is_empty() => Some(spans),
             _ => None,
         }
     }
 
     #[inline]
     pub fn is_moved(&self) -> bool {
-        matches!(self, Row::MovSrc(_) | Row::MovTgt(_))
+        matches!(self, Row::MovSrc { .. } | Row::MovTgt { .. })
     }
 
-    /// Profiled-tape merged runs handed from assemble (`AddLine::cached_runs`);
-    /// empty when absent (render falls back to its legacy recompute).
+    /// Profiled-tape merged runs handed from assemble (`cached_runs`).
     #[inline]
     pub fn cached_runs(&self) -> &[(RunKind, String)] {
         match self {
-            Row::Add(add_line) | Row::MovTgt(add_line) => &add_line.cached_runs,
-            Row::Mod { new_line, .. } => &new_line.cached_runs,
+            Row::Mod { cached_runs, .. } => cached_runs,
+            Row::MovTgt { cached_runs, .. } => cached_runs,
+            Row::MovSrc { cached_runs, .. } => cached_runs,
+            Row::AuxAdd { cached_runs, .. } => cached_runs,
+            Row::AuxDel { cached_runs, .. } => cached_runs,
             _ => &[],
         }
     }
@@ -315,17 +410,19 @@ impl Row {
     #[inline]
     pub fn group(&self) -> Option<RowGroup> {
         match self {
-            Row::Add(add_line) | Row::MovTgt(add_line) => add_line.group,
-            Row::Mod { new_line, .. } => new_line.group,
-            Row::Del(del_line) | Row::MovSrc(del_line) => del_line.group,
-            Row::Ctx(_) | Row::Sep(_) => None,
+            Row::Mod {
+                is_anchor: true, ..
+            } => Some(RowGroup::Anchor),
+            Row::AuxAdd { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
+            Row::AuxDel { anchor, .. } => Some(RowGroup::Aux { anchor: *anchor }),
+            _ => None,
         }
     }
 
     /// Whether this row is an auxiliary row within a multiline cluster.
     #[inline]
     pub fn is_aux(&self) -> bool {
-        matches!(self.group(), Some(RowGroup::Aux { .. }))
+        matches!(self, Row::AuxAdd { .. } | Row::AuxDel { .. })
     }
 
     pub fn reverse(&self) -> Self {
@@ -335,54 +432,76 @@ impl Row {
                 new_pos: ctx_line.old_pos,
                 text: ctx_line.text.clone(),
             }),
-            Row::Del(del_line) => {
-                let mut add = AddLine::new(del_line.num, del_line.text.clone());
-                add.group = del_line.group;
-                Row::Add(add)
-            }
-            Row::Add(add_line) => {
-                let mut del = DelLine::new(
-                    add_line.num,
-                    add_line
-                        .del_text
-                        .as_deref()
-                        .unwrap_or(&add_line.text)
-                        .to_string(),
-                );
-                del.group = add_line.group;
-                Row::Del(del)
-            }
-            Row::Mod { old_line, new_line } => {
-                let mut old = DelLine::new(new_line.num, new_line.text.clone());
-                old.group = new_line.group;
-                let mut new = AddLine::with_spans(
-                    old_line.num,
-                    old_line.text.clone(),
-                    new_line.spans.reverse(),
-                );
-                new.group = old_line.group;
-                Row::Mod {
-                    old_line: old,
-                    new_line: new,
-                }
-            }
-            Row::MovSrc(del_line) => {
-                let mut add = AddLine::new(del_line.num, del_line.text.clone());
-                add.group = del_line.group;
-                Row::MovTgt(add)
-            }
-            Row::MovTgt(add_line) => {
-                let mut del = DelLine::new(
-                    add_line.num,
-                    add_line
-                        .del_text
-                        .as_deref()
-                        .unwrap_or(&add_line.text)
-                        .to_string(),
-                );
-                del.group = add_line.group;
-                Row::MovSrc(del)
-            }
+            Row::Del(del_line) => Row::Add(AddLine::new(del_line.num, del_line.text.clone())),
+            Row::Add(add_line) => Row::Del(DelLine::new(add_line.num, add_line.text.clone())),
+            Row::Mod {
+                old_line,
+                new_line,
+                spans,
+                cached_runs,
+                is_anchor,
+            } => Row::Mod {
+                old_line: DelLine::new(new_line.num, new_line.text.clone()),
+                new_line: AddLine::new(old_line.num, old_line.text.clone()),
+                spans: spans.reverse(),
+                cached_runs: cached_runs
+                    .iter()
+                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .collect(),
+                is_anchor: *is_anchor,
+            },
+            Row::MovSrc {
+                line,
+                spans,
+                cached_runs,
+            } => Row::MovTgt {
+                line: AddLine::new(line.num, line.text.clone()),
+                spans: spans.reverse(),
+                cached_runs: cached_runs
+                    .iter()
+                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .collect(),
+            },
+            Row::MovTgt {
+                line,
+                spans,
+                cached_runs,
+            } => Row::MovSrc {
+                line: DelLine::new(line.num, line.text.clone()),
+                spans: spans.reverse(),
+                cached_runs: cached_runs
+                    .iter()
+                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .collect(),
+            },
+            Row::AuxDel {
+                anchor,
+                line,
+                spans,
+                cached_runs,
+            } => Row::AuxAdd {
+                anchor: *anchor,
+                line: AddLine::new(line.num, line.text.clone()),
+                spans: spans.reverse(),
+                cached_runs: cached_runs
+                    .iter()
+                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .collect(),
+            },
+            Row::AuxAdd {
+                anchor,
+                line,
+                spans,
+                cached_runs,
+            } => Row::AuxDel {
+                anchor: *anchor,
+                line: DelLine::new(line.num, line.text.clone()),
+                spans: spans.reverse(),
+                cached_runs: cached_runs
+                    .iter()
+                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .collect(),
+            },
             Row::Sep(s) => Row::Sep(s.clone()),
         }
     }
@@ -424,14 +543,16 @@ pub fn add_count(h: &Hunk) -> u32 {
     let mut has_new = false;
     for r in &h.rows {
         match r {
-            Row::Add(add_line) | Row::MovTgt(add_line) => {
+            Row::Add(add_line)
+            | Row::MovTgt { line: add_line, .. }
+            | Row::AuxAdd { line: add_line, .. } => {
                 let lines = add_line.text.matches('\n').count() as u32;
-                max_new = max_new.max(add_line.num.get() + lines);
+                max_new = max_new.max(add_line.num + lines);
                 has_new = true;
             }
             Row::Mod { new_line, .. } => {
                 let lines = new_line.text.matches('\n').count() as u32;
-                max_new = max_new.max(new_line.num.get() + lines);
+                max_new = max_new.max(new_line.num + lines);
                 has_new = true;
             }
             _ => {}
@@ -837,25 +958,21 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 None => continue,
             };
             if let Some(rest) = line.strip_prefix('+') {
-                let num = LineNum::new(ni).unwrap_or(LineNum::MIN);
-                let row = Row::Add(AddLine::new(num, rest));
+                let row = Row::Add(AddLine::new(ni, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 ni += 1;
                 hunk.new_count = hunk.new_count.max(ni.saturating_sub(hunk.new_start));
                 raw_hunk.new_count = hunk.new_count;
             } else if let Some(rest) = line.strip_prefix('-') {
-                let num = LineNum::new(oi).unwrap_or(LineNum::MIN);
-                let row = Row::Del(DelLine::new(num, rest));
+                let row = Row::Del(DelLine::new(oi, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;
                 hunk.old_count = hunk.old_count.max(oi.saturating_sub(hunk.old_start));
                 raw_hunk.old_count = hunk.old_count;
             } else if let Some(rest) = line.strip_prefix(' ') {
-                let old_num = LineNum::new(oi).unwrap_or(LineNum::MIN);
-                let new_num = LineNum::new(ni).unwrap_or(LineNum::MIN);
-                let row = Row::Ctx(CtxLine::new(old_num, new_num, rest));
+                let row = Row::Ctx(CtxLine::new(oi, ni, rest));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);
                 oi += 1;
@@ -868,8 +985,8 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 && ni < hunk.new_start + hunk.new_count
                 && oi < hunk.old_start + hunk.old_count
             {
-                let old_num = LineNum::new(oi).unwrap_or(LineNum::MIN);
-                let new_num = LineNum::new(ni).unwrap_or(LineNum::MIN);
+                let old_num = oi.max(1);
+                let new_num = ni.max(1);
                 let row = Row::Ctx(CtxLine::new(old_num, new_num, ""));
                 hunk.rows.push(row.clone());
                 raw_hunk.rows.push(row);

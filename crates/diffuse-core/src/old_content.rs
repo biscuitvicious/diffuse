@@ -97,7 +97,7 @@ pub fn old_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
         for r in &h.rows {
             match r {
                 crate::parse::Row::Del(del) => {
-                    let num = del.num.get() as usize;
+                    let num = del.num as usize;
                     if num > 0 {
                         while out.len() < num {
                             out.push(String::new());
@@ -106,7 +106,7 @@ pub fn old_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                     }
                 }
                 crate::parse::Row::Ctx(ctx) => {
-                    let num = ctx.old_pos.get() as usize;
+                    let num = ctx.old_pos as usize;
                     if num > 0 {
                         while out.len() < num {
                             out.push(String::new());
@@ -137,7 +137,7 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
         for r in &h.rows {
             match r {
                 crate::parse::Row::Add(add) => {
-                    let num = add.num.get() as usize;
+                    let num = add.num as usize;
                     if num > 0 {
                         while out.len() < num {
                             out.push(String::new());
@@ -146,7 +146,7 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                     }
                 }
                 crate::parse::Row::Ctx(ctx) => {
-                    let num = ctx.new_pos.get() as usize;
+                    let num = ctx.new_pos as usize;
                     if num > 0 {
                         while out.len() < num {
                             out.push(String::new());
@@ -156,8 +156,10 @@ pub fn new_content_from_hunks(hunks: &[crate::parse::Hunk]) -> Vec<String> {
                         }
                     }
                 }
-                crate::parse::Row::Mod { new_line, .. } | crate::parse::Row::MovTgt(new_line) => {
-                    let num = new_line.num.get() as usize;
+                crate::parse::Row::Mod { new_line, .. }
+                | crate::parse::Row::MovTgt { line: new_line, .. }
+                | crate::parse::Row::AuxAdd { line: new_line, .. } => {
+                    let num = new_line.num as usize;
                     if num > 0 {
                         while out.len() < num {
                             out.push(String::new());

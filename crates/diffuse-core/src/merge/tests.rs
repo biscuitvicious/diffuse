@@ -3,16 +3,17 @@
 use crate::{
     lcs::{char_slice, word_spans, word_spans_with_profile},
     merge::*,
-    parse::{AddLine, DelLine, LineNum, Row},
+    parse::{AddLine, DelLine, Row},
     tape::AlignmentTape,
 };
 use diffuse_syntax::registry::lang_profile;
 
 fn mk(del: &str, add: &str) -> Row {
-    Row::Mod {
-        old_line: DelLine::new(LineNum::new(1).unwrap(), del),
-        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), add, word_spans(del, add)),
-    }
+    Row::mod_with_spans(
+        DelLine::new(1, del),
+        AddLine::new(1, add),
+        word_spans(del, add),
+    )
 }
 
 // Subword inline mod: an identifier modification (prefix_middle_suffix ->
@@ -204,12 +205,11 @@ fn unicode_whitespace_merged_runs() {
         ("\u{3000}self.x", "   self.x"),
     ];
     for (del, add) in cases {
-        let r = Row::MovTgt(AddLine::with_donor(
-            LineNum::new(1).unwrap(),
-            add,
-            del,
+        let r = Row::mod_with_spans(
+            DelLine::new(1, del),
+            AddLine::new(1, add),
             word_spans(del, add),
-        ));
+        );
         let runs = merged_runs(&r);
         let kinds: Vec<RunKind> = runs.iter().map(|x| x.kind).collect();
         assert!(
@@ -543,10 +543,7 @@ fn test_box_drawing_spacing_reconstruction() {
         "│        ├── package.json   builds the extension bundle (native diffuse TUI wrapper)";
     let profile = diffuse_syntax::registry::lang_profile("md");
     let ws = crate::lcs::word_spans_with_profile(old, new, profile);
-    let r = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1).unwrap(), old),
-        new_line: AddLine::with_spans(LineNum::new(1).unwrap(), new, ws),
-    };
+    let r = Row::mod_with_spans(DelLine::new(1, old), AddLine::new(1, new), ws);
     let runs = merged_runs(&r);
     assert_eq!(project_reverse(&runs), old);
     assert_eq!(project_forward(&runs), new);
@@ -570,56 +567,43 @@ fn test_is_wholesale_replacement_branches() {
     };
 
     // Non-mod row returns false
-    let ctx = Row::Ctx(CtxLine::new(
-        LineNum::new(1).unwrap(),
-        LineNum::new(1).unwrap(),
-        "hello",
-    ));
+    let ctx = Row::Ctx(CtxLine::new(1, 1, "hello"));
     assert!(!is_wholesale_replacement(&ctx));
 
     // Both empty returns false
     assert!(!is_wholesale_replacement_spans("", "", &Spans::default()));
 
     // Partial mod row returns false
-    let r_partial = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1).unwrap(), "hello world"),
-        new_line: AddLine::with_spans(
-            LineNum::new(1).unwrap(),
-            "hello rust",
-            Spans {
-                del: vec![(6, 11)],
-                add: vec![(6, 10)],
-            },
-        ),
-    };
+    let r_partial = Row::mod_with_spans(
+        DelLine::new(1, "hello world"),
+        AddLine::new(1, "hello rust"),
+        Spans {
+            del: vec![(6, 11)],
+            add: vec![(6, 10)],
+        },
+    );
     assert!(!is_wholesale_replacement(&r_partial));
 
     // Common indent returns false
-    let r_indent = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1).unwrap(), "  foo"),
-        new_line: AddLine::with_spans(
-            LineNum::new(1).unwrap(),
-            "  bar",
-            Spans {
-                del: vec![(0, 5)],
-                add: vec![(0, 5)],
-            },
-        ),
-    };
+    let r_indent = Row::mod_with_spans(
+        DelLine::new(1, "  foo"),
+        AddLine::new(1, "  bar"),
+        Spans {
+            del: vec![(0, 5)],
+            add: vec![(0, 5)],
+        },
+    );
     assert!(!is_wholesale_replacement(&r_indent));
 
     // Completely struck out and added returns true
-    let r_wholesale = Row::Mod {
-        old_line: DelLine::new(LineNum::new(1).unwrap(), "alpha"),
-        new_line: AddLine::with_spans(
-            LineNum::new(1).unwrap(),
-            "beta",
-            Spans {
-                del: vec![(0, 5)],
-                add: vec![(0, 4)],
-            },
-        ),
-    };
+    let r_wholesale = Row::mod_with_spans(
+        DelLine::new(1, "alpha"),
+        AddLine::new(1, "beta"),
+        Spans {
+            del: vec![(0, 5)],
+            add: vec![(0, 4)],
+        },
+    );
     assert!(is_wholesale_replacement(&r_wholesale));
 }
 

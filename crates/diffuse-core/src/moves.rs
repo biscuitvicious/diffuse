@@ -7,7 +7,10 @@ use std::mem;
 
 use diffuse_algo::bipartite_matching::{BipartiteMatcher, HunkGridNeighborhood};
 
-use crate::parse::{AddLine, DiffFile, Row};
+use crate::{
+    lcs::word_spans_and_runs_with_profile,
+    parse::{DiffFile, Row, Spans},
+};
 
 /// Mark exact-content del/add pairs as *moved*: the same line at a new
 /// position (e.g. renumbered sections) — rendered muted and excluded from
@@ -124,13 +127,17 @@ pub fn mark_moves_with_profile(
             Row::Add(a) => a.clone(),
             _ => continue,
         };
-        f.hunks[ah].rows[ar] = Row::MovTgt(AddLine::with_donor(
-            add_line.num,
-            &add_line.text,
-            &del_line.text,
-            add_line.spans.clone(),
-        ));
-        f.hunks[hi].rows[ri] = Row::MovSrc(del_line);
+        let (spans, cached_runs) = if del_line.text != add_line.text {
+            word_spans_and_runs_with_profile(&del_line.text, &add_line.text, profile)
+        } else {
+            (Spans::default(), Vec::new())
+        };
+        f.hunks[ah].rows[ar] = Row::MovTgt {
+            line: add_line,
+            spans,
+            cached_runs,
+        };
+        f.hunks[hi].rows[ri] = Row::mov_src(del_line);
         move_count += 1;
     }
 
@@ -138,18 +145,13 @@ pub fn mark_moves_with_profile(
 
     crate::ensure!(
         f.hunks.iter().flat_map(|h| &h.rows).all(|r| {
-            if let Row::MovTgt(a) = r {
-                // Verify any MovTgt with del_text has matching trimmed text.
-                if let Some(dt) = a.del_text.as_deref() {
-                    key(dt) == key(&a.text)
-                } else {
-                    true
-                }
+            if let Row::MovTgt { line, .. } = r {
+                r.text() == line.text
             } else {
                 true
             }
         }),
-        "Every Row::MovTgt must have matching trimmed text on old and new sides"
+        "Every Row::MovTgt must have matching line text"
     );
 }
 

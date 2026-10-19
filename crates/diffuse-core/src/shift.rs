@@ -10,7 +10,7 @@ use std::mem;
 
 use diffuse_syntax::profile::LangProfile;
 
-use crate::parse::{AddLine, CtxLine, DiffFile, Hunk, LineNum, Row};
+use crate::parse::{AddLine, CtxLine, DiffFile, Hunk, Row};
 
 /// Evaluates the semantic quality of a boundary between `prev_line` and
 /// `next_line`.
@@ -202,10 +202,12 @@ pub fn merge_adjacent_hunks_list(hunks: &mut Vec<Hunk>) {
 /// to the target `budget` (e.g. standard $N=6$).
 pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
     for h in &mut file.hunks {
-        let new_side = h
-            .rows
-            .iter()
-            .any(|r| matches!(r, Row::Add(_) | Row::MovTgt(_) | Row::Mod { .. }));
+        let new_side = h.rows.iter().any(|r| {
+            matches!(
+                r,
+                Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Mod { .. }
+            )
+        });
 
         // Expand leading context if needed
         if (h.above_ctx as usize) < budget && h.old_start > 1 && h.new_start > 1 {
@@ -228,11 +230,7 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                             .cloned()
                             .unwrap_or_default()
                     };
-                    leading.push(Row::Ctx(CtxLine::new(
-                        LineNum::new(old_ln).unwrap_or(LineNum::MIN),
-                        LineNum::new(new_ln).unwrap_or(LineNum::MIN),
-                        text,
-                    )));
+                    leading.push(Row::Ctx(CtxLine::new(old_ln, new_ln, text)));
                 }
                 leading.extend(mem::take(&mut h.rows));
                 h.rows = leading;
@@ -270,11 +268,7 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                             .cloned()
                             .unwrap_or_default()
                     };
-                    h.rows.push(Row::Ctx(CtxLine::new(
-                        LineNum::new(old_ln).unwrap_or(LineNum::MIN),
-                        LineNum::new(new_ln).unwrap_or(LineNum::MIN),
-                        text,
-                    )));
+                    h.rows.push(Row::Ctx(CtxLine::new(old_ln, new_ln, text)));
                 }
                 h.old_count += needed as u32;
                 h.new_count += needed as u32;
@@ -389,9 +383,15 @@ pub fn apply_shift_down_identity(hunk: &mut Hunk, split_idx: usize, end_idx: usi
     for offset in 0..count {
         let released = &hunk.rows[split_idx + offset];
         let absorbed = &hunk.rows[end_idx + offset];
-        let add_nl = released.new_line_num().unwrap_or(LineNum::MIN);
-        let ctx_old = absorbed.old_line_num().unwrap_or(LineNum::MIN);
-        let ctx_new = absorbed.new_line_num().unwrap_or(LineNum::MIN);
+        let add_nl = released
+            .new_line_num()
+            .expect("new line number must be present");
+        let ctx_old = absorbed
+            .old_line_num()
+            .expect("old line number must be present");
+        let ctx_new = absorbed
+            .new_line_num()
+            .expect("new line number must be present");
         swaps.push((
             split_idx + offset,
             Row::Ctx(CtxLine::new(ctx_old, add_nl, released.text().to_string())),

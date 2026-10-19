@@ -24,7 +24,6 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     fs, mem,
-    num::NonZero,
     path::Path,
     sync::{
         Arc,
@@ -52,7 +51,7 @@ use crate::{
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs_with_profile},
     moves::mark_moves_with_profile,
     notes::{NoteStatus, NotesDB, ReviewNote, Side, query_notes_for_file},
-    parse::{CtxLine, DiffFile, Hunk, LineNum, Row, RowKind},
+    parse::{CtxLine, DiffFile, Hunk, Row, RowKind},
     visible::Side as VisibleSide,
     wire::{
         MovSide, OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun,
@@ -498,25 +497,23 @@ pub fn process_single_diff_file(
         atomic::Ordering::Relaxed,
     );
 
-    // Span-fill for Mov rows that need subword diff spans.
+    // Span-fill for Mod rows that need subword diff spans.
     let fill_spans = |h: &mut crate::parse::Hunk| {
         for r in &mut h.rows {
-            if let Row::MovTgt(a) = r
-                && let Some(ref dt) = a.del_text
-                && dt.as_str() != a.text
-                && a.spans.is_empty()
-            {
-                let (spans, runs) = word_spans_and_runs_with_profile(dt, &a.text, profile);
-                a.spans = spans;
-                a.cached_runs = runs;
-            } else if let Row::Mod { old_line, new_line } = r
+            if let Row::Mod {
+                old_line,
+                new_line,
+                spans,
+                cached_runs,
+                ..
+            } = r
                 && old_line.text != new_line.text
-                && new_line.spans.is_empty()
+                && spans.is_empty()
             {
-                let (spans, runs) =
+                let (s, runs) =
                     word_spans_and_runs_with_profile(&old_line.text, &new_line.text, profile);
-                new_line.spans = spans;
-                new_line.cached_runs = runs;
+                *spans = s;
+                *cached_runs = runs;
             }
         }
     };
@@ -567,11 +564,10 @@ pub fn process_single_diff_file(
     {
         let mut del_rows = Vec::with_capacity(old_lines.len());
         for (i, line) in old_lines.iter().enumerate() {
-            if let Some(pos) = NonZero::new((i + 1) as u32) {
-                del_rows.push(crate::parse::Row::Del(crate::parse::DelLine::new(
-                    pos, *line,
-                )));
-            }
+            let pos = (i + 1) as u32;
+            del_rows.push(crate::parse::Row::Del(crate::parse::DelLine::new(
+                pos, *line,
+            )));
         }
         let count = del_rows.len() as u32;
         let hunk = crate::parse::Hunk {
@@ -668,7 +664,7 @@ pub fn process_single_diff_file(
                 RowKind::Del => vec![OutputRun::new(RunKind::Del, r.text().to_string())],
                 RowKind::Mod => {
                     let mut runs = Vec::new();
-                    if let Some(del) = r.del_text() {
+                    if let Some(del) = r.old_text() {
                         runs.push(OutputRun::new(RunKind::Del, del.to_string()));
                     }
                     runs.push(OutputRun::new(RunKind::Add, r.text().to_string()));
@@ -749,7 +745,7 @@ pub fn process_single_diff_file(
             let hunk_has_dels = h
                 .rows
                 .iter()
-                .any(|r| matches!(r, Row::Del(_) | Row::MovSrc(_)));
+                .any(|r| matches!(r, Row::Del(_) | Row::MovSrc { .. } | Row::AuxDel { .. }));
             let hunk_has_adds = crate::visible::hunk_has_adds(h);
             let is_pure_context = !hunk_has_adds && !hunk_has_dels;
             let side = if hunk_has_adds || is_pure_context {
@@ -1005,14 +1001,15 @@ pub fn colored_runs_with_next(
     let new_line = r.new_line();
     let region = new_line.and_then(|n| region_at(regions, n));
 
-    let use_merged = (matches!(r, Row::Mod { .. })
-        || (r.is_moved() && r.del_text() != Some(r.text()))
-        || (matches!(r, Row::Add(_)) && r.del_text().is_some()))
-        && r.del_text().is_some();
+    let use_merged =
+        matches!(r, Row::Mod { .. } | Row::AuxAdd { .. }) || !r.cached_runs().is_empty();
 
     if !use_merged {
-        if matches!(r, Row::Add(_) | Row::MovTgt(_) | Row::Ctx(_)) {
-            let kind = if matches!(r, Row::Add(_) | Row::MovTgt(_)) {
+        if matches!(
+            r,
+            Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. } | Row::Ctx(_)
+        ) {
+            let kind = if matches!(r, Row::Add(_) | Row::MovTgt { .. } | Row::AuxAdd { .. }) {
                 RunKind::Add
             } else {
                 RunKind::Ctx
@@ -1137,6 +1134,23 @@ pub fn colored_runs_with_next(
         }
         full_tokens.clear();
     });
+    if out.is_empty() && r.text().is_empty() {
+        if matches!(r, Row::AuxAdd { .. }) {
+            out.push(OutputRun {
+                kind: RunKind::Add,
+                color: TokenColor::Default,
+                sgr: None,
+                text: token_cow(""),
+            });
+        } else if matches!(r, Row::AuxDel { .. }) {
+            out.push(OutputRun {
+                kind: RunKind::Del,
+                color: TokenColor::Default,
+                sgr: None,
+                text: token_cow(""),
+            });
+        }
+    }
     out
 }
 
@@ -1278,8 +1292,8 @@ fn build_hunk_output_row(
     regions: &[FenceRegion],
 ) -> OutputRow {
     let (kind, mov_side, new_line, old_line) = match r {
-        Row::MovSrc(del) => (RowKind::Mov, Some(MovSide::Src), None, Some(del.num.get())),
-        Row::MovTgt(add) => (RowKind::Mov, Some(MovSide::Tgt), Some(add.num.get()), None),
+        Row::MovSrc { line, .. } => (RowKind::Mov, Some(MovSide::Src), None, Some(line.num)),
+        Row::MovTgt { line, .. } => (RowKind::Mov, Some(MovSide::Tgt), Some(line.num), None),
         _ => (r.kind(), None, r.new_line(), r.old_line()),
     };
     OutputRow {
@@ -1504,9 +1518,7 @@ pub fn synthesize_note_context_hunks(
                 } else {
                     String::new()
                 };
-                let old_pos = LineNum::new(ol).unwrap_or(LineNum::MIN);
-                let new_pos = LineNum::new(nl).unwrap_or(LineNum::MIN);
-                rows.push(Row::Ctx(CtxLine::new(old_pos, new_pos, text)));
+                rows.push(Row::Ctx(CtxLine::new(ol, nl, text)));
             }
 
             let hunk = Hunk {
@@ -1541,11 +1553,10 @@ pub fn synthesize_note_context_hunks(
 pub fn synthesize_plain_common_context_hunk(lines: &[&str]) -> crate::parse::Hunk {
     let mut ctx_rows = Vec::with_capacity(lines.len());
     for (i, line) in lines.iter().enumerate() {
-        if let Some(pos) = NonZero::new((i + 1) as u32) {
-            ctx_rows.push(crate::parse::Row::Ctx(crate::parse::CtxLine::new(
-                pos, pos, *line,
-            )));
-        }
+        let pos = (i + 1) as u32;
+        ctx_rows.push(crate::parse::Row::Ctx(crate::parse::CtxLine::new(
+            pos, pos, *line,
+        )));
     }
     let count = ctx_rows.len() as u32;
     crate::parse::Hunk {

@@ -9,7 +9,7 @@ use std::{
 use super::*;
 use diffuse_syntax::registry::lang_profile;
 
-use crate::parse::{AddLine, CtxLine, DelLine, Hunk, LineNum, Row};
+use crate::parse::{AddLine, CtxLine, DelLine, Hunk, Row};
 
 #[test]
 fn test_classify_syntax_section() {
@@ -67,13 +67,9 @@ fn test_partition_hunk_segments_with_syntax_barriers() {
         new_count: 5,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "/// Obsolete doc")),
-            Row::Ctx(CtxLine::new(
-                LineNum::new(2).unwrap(),
-                LineNum::new(2).unwrap(),
-                "pub fn existing() {",
-            )),
-            Row::Add(AddLine::new(LineNum::new(3).unwrap(), "    let x = 10;")),
+            Row::Del(DelLine::new(1, "/// Obsolete doc")),
+            Row::Ctx(CtxLine::new(2, 2, "pub fn existing() {")),
+            Row::Add(AddLine::new(3, "    let x = 10;")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -124,14 +120,14 @@ use super::dp::{
     solve_cluster, verify_projection,
 };
 use diffuse_syntax::prelude::CloseDelimiter;
-// (Row, DelLine, AddLine, LineNum already imported at the top of this file)
+// (Row, DelLine, AddLine already imported at the top of this file)
 
 fn del_row(n: u32, text: &str) -> Row {
-    Row::Del(DelLine::new(LineNum::new(n).unwrap(), text))
+    Row::Del(DelLine::new(n, text))
 }
 
 fn add_row(n: u32, text: &str) -> Row {
-    Row::Add(AddLine::new(LineNum::new(n).unwrap(), text))
+    Row::Add(AddLine::new(n, text))
 }
 
 fn code_cluster(old: Vec<Row>, new: Vec<Row>) -> ChangeCluster<'static> {
@@ -151,8 +147,8 @@ fn signature(sol: &DpSolution) -> Vec<&'static str> {
         .iter()
         .map(|r| match r {
             Row::Mod { .. } => "mod",
-            Row::MovSrc(_) => "mov_src",
-            Row::MovTgt(_) => "mov_tgt",
+            Row::MovSrc { .. } => "mov_src",
+            Row::MovTgt { .. } => "mov_tgt",
             Row::Del(_) => "del",
             Row::Add(_) => "add",
             other => panic!("unexpected row in DP output: {other:?}"),
@@ -311,7 +307,10 @@ fn dp_mixed_cluster_covers_all_lines_in_order() {
     // cluster partitioner's job; within a mixed cluster the DP's own
     // comment/code guard must keep them apart).
     for r in &sol.rows {
-        if let Row::Mod { old_line, new_line } = r {
+        if let Row::Mod {
+            old_line, new_line, ..
+        } = r
+        {
             let comment = |t: &str| t.trim_start().starts_with("//");
             assert!(
                 !(comment(&old_line.text) ^ comment(&new_line.text)),
@@ -581,14 +580,14 @@ fn test_mirage_cache_cluster() {
 
     use crate::{
         cluster::{ChangeCluster, dp},
-        parse::{AddLine, DelLine, LineNum},
+        parse::{AddLine, DelLine},
     };
 
-    let old_rows = vec![Row::Del(DelLine::new(LineNum::new(1).unwrap(), old))];
+    let old_rows = vec![Row::Del(DelLine::new(1, old))];
     let new_rows = new_lines
         .iter()
         .enumerate()
-        .map(|(i, &s)| Row::Add(AddLine::new(LineNum::new(i as u32 + 1).unwrap(), s)))
+        .map(|(i, &s)| Row::Add(AddLine::new(i as u32 + 1, s)))
         .collect();
 
     let cluster = ChangeCluster {
@@ -635,14 +634,14 @@ fn test_import_expansion_anchors_on_statement_head() {
 
     use crate::{
         cluster::{ChangeCluster, dp},
-        parse::{AddLine, DelLine, LineNum, RowKind},
+        parse::{AddLine, DelLine, RowKind},
     };
 
-    let old_rows = vec![Row::Del(DelLine::new(LineNum::new(23).unwrap(), old))];
+    let old_rows = vec![Row::Del(DelLine::new(23, old))];
     let new_rows = new_lines
         .iter()
         .enumerate()
-        .map(|(i, &s)| Row::Add(AddLine::new(LineNum::new(i as u32 + 23).unwrap(), s)))
+        .map(|(i, &s)| Row::Add(AddLine::new(i as u32 + 23, s)))
         .collect();
 
     let cluster = ChangeCluster {
@@ -671,70 +670,58 @@ fn test_import_expansion_anchors_on_statement_head() {
 fn test_mirage_lookup_cluster() {
     use crate::{
         cluster::{ChangeCluster, dp},
-        parse::{AddLine, DelLine, LineNum},
+        parse::{AddLine, DelLine},
     };
 
     let old_rows = vec![
         Row::Del(DelLine::new(
-            LineNum::new(109).unwrap(),
+            109,
             "            return self.results.borrow_mut().get(key).cloned();",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(111).unwrap(),
+            111,
             "        self.cache.borrow_mut().pop(key);",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(112).unwrap(),
+            112,
             "        self.results.borrow_mut().pop(key);",
         )),
-        Row::Del(DelLine::new(LineNum::new(113).unwrap(), "        None")),
+        Row::Del(DelLine::new(113, "        None")),
     ];
     let new_rows = vec![
         Row::Add(AddLine::new(
-            LineNum::new(143).unwrap(),
+            143,
             "            self.cache.borrow_mut().pop(key);",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(144).unwrap(),
+            144,
             "            self.results.borrow_mut().pop(key);",
         )),
+        Row::Add(AddLine::new(145, "            return None;")),
         Row::Add(AddLine::new(
-            LineNum::new(145).unwrap(),
-            "            return None;",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(147).unwrap(),
+            147,
             "        let (entry_epoch, result) = self.results.borrow_mut().get(key)?.clone();",
         )),
+        Row::Add(AddLine::new(148, "        if entry_epoch != epoch {")),
         Row::Add(AddLine::new(
-            LineNum::new(148).unwrap(),
-            "        if entry_epoch != epoch {",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(149).unwrap(),
+            149,
             "            // Computed under an older mount state: the epoch bump (mode flip,",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(150).unwrap(),
+            150,
             "            // mount mutation) invalidated it.",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(151).unwrap(),
+            151,
             "            self.cache.borrow_mut().pop(key);",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(152).unwrap(),
+            152,
             "            self.results.borrow_mut().pop(key);",
         )),
-        Row::Add(AddLine::new(
-            LineNum::new(153).unwrap(),
-            "            return None;",
-        )),
-        Row::Add(AddLine::new(LineNum::new(154).unwrap(), "        }")),
-        Row::Add(AddLine::new(
-            LineNum::new(155).unwrap(),
-            "        Some(result)",
-        )),
+        Row::Add(AddLine::new(153, "            return None;")),
+        Row::Add(AddLine::new(154, "        }")),
+        Row::Add(AddLine::new(155, "        Some(result)")),
     ];
 
     let cluster = ChangeCluster {
@@ -766,22 +753,16 @@ fn test_doc_comment_partial_truncation_pairs_as_mod() {
     let rs = lang_profile("rs");
     let old_rows = vec![
         Row::Del(DelLine::new(
-            LineNum::new(4).unwrap(),
+            4,
             "//! run UNCHANGED on top. The target: the frozen `mirage-2025-08` wire,",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(5).unwrap(),
+            5,
             "//! byte-identical; other corpora are allowed drift while the DP replaces",
         )),
-        Row::Del(DelLine::new(
-            LineNum::new(6).unwrap(),
-            "//! the greedy heuristics.",
-        )),
+        Row::Del(DelLine::new(6, "//! the greedy heuristics.")),
     ];
-    let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(4).unwrap(),
-        "//! run UNCHANGED on top.",
-    ))];
+    let new_rows = vec![Row::Add(AddLine::new(4, "//! run UNCHANGED on top."))];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["//! Header"],
         old_rows,
@@ -812,32 +793,18 @@ fn test_collapse_hunk_doc_comment_partial_truncation() {
         above_ctx: 1,
         below_ctx: 1,
         rows: vec![
-            Row::Ctx(CtxLine::new(
-                LineNum::new(3).unwrap(),
-                LineNum::new(3).unwrap(),
-                "//! Context above",
-            )),
+            Row::Ctx(CtxLine::new(3, 3, "//! Context above")),
             Row::Del(DelLine::new(
-                LineNum::new(4).unwrap(),
+                4,
                 "//! run UNCHANGED on top. The target: the frozen `mirage-2025-08` wire,",
             )),
             Row::Del(DelLine::new(
-                LineNum::new(5).unwrap(),
+                5,
                 "//! byte-identical; other corpora are allowed drift while the DP replaces",
             )),
-            Row::Del(DelLine::new(
-                LineNum::new(6).unwrap(),
-                "//! the greedy heuristics.",
-            )),
-            Row::Add(AddLine::new(
-                LineNum::new(4).unwrap(),
-                "//! run UNCHANGED on top.",
-            )),
-            Row::Ctx(CtxLine::new(
-                LineNum::new(7).unwrap(),
-                LineNum::new(5).unwrap(),
-                "//! Context below",
-            )),
+            Row::Del(DelLine::new(6, "//! the greedy heuristics.")),
+            Row::Add(AddLine::new(4, "//! run UNCHANGED on top.")),
+            Row::Ctx(CtxLine::new(7, 5, "//! Context below")),
         ],
     };
     let collapsed = crate::collapse::collapse_hunk_rows(&h, None, None, rs);
@@ -855,12 +822,9 @@ fn test_collapse_hunk_doc_comment_partial_truncation() {
 #[test]
 fn test_weights_min_containment_len_tuning() {
     let rs = lang_profile("rs");
-    let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(1).unwrap(),
-        "let result = foo();",
-    ))];
+    let old_rows = vec![Row::Del(DelLine::new(1, "let result = foo();"))];
     let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(1).unwrap(),
+        1,
         "let result = foo(); // suffix comment",
     ))];
     let cluster = ChangeCluster {
@@ -890,70 +854,64 @@ fn test_rewritten_comment_block_does_not_pair_across_offset_drift() {
     let rs = lang_profile("rs");
     let old_rows = vec![
         Row::Del(DelLine::new(
-            LineNum::new(132).unwrap(),
+            132,
             "    // A del run whose FIRST line did not move is a deleted block, not a",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(133).unwrap(),
+            133,
             "    // relocation — the interior \"moved\" lines are coincidental same-text",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(134).unwrap(),
+            134,
             "    // matches (the old `find_mount`'s `.iter()/.rfind()/.map()` chain",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(135).unwrap(),
+            135,
             "    // verbatim-matching lines inside the NEW `get` method). The move would",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(136).unwrap(),
+            136,
             "    // render the new method's chain as ≈ inside a clearly-added block —",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(137).unwrap(),
+            137,
             "    // \"`self.filesystems` added, the rest moved?\" — misleading. The whole",
         )),
         Row::Del(DelLine::new(
-            LineNum::new(138).unwrap(),
+            138,
             "    // deleted block reads as deleted; the new method reads as added.",
         )),
     ];
     let new_rows = vec![
+        Row::Add(AddLine::new(133, "    // Block Move Cohesion Rule:")),
         Row::Add(AddLine::new(
-            LineNum::new(133).unwrap(),
-            "    // Block Move Cohesion Rule:",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(134).unwrap(),
+            134,
             "    // In a multi-line deletion run (e.g. deleting a function), isolated matches",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(135).unwrap(),
+            135,
             "    // (e.g. single-line attributes like `#[test]`, closing braces `}`, or",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(136).unwrap(),
+            136,
             "    // interior method calls) are coincidental boilerplate, NOT code",
         )),
+        Row::Add(AddLine::new(137, "    // relocations.")),
+        Row::Add(AddLine::new(138, "    //")),
         Row::Add(AddLine::new(
-            LineNum::new(137).unwrap(),
-            "    // relocations.",
-        )),
-        Row::Add(AddLine::new(LineNum::new(138).unwrap(), "    //")),
-        Row::Add(AddLine::new(
-            LineNum::new(139).unwrap(),
+            139,
             "    // A deletion run is only marked moved if:",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(140).unwrap(),
+            140,
             "    // - The ENTIRE deletion run moved, OR",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(141).unwrap(),
+            141,
             "    // - A contiguous prefix block of >= 2 lines starting at run[0] moved.",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(142).unwrap(),
+            142,
             "    // Otherwise, all lines in the deletion run remain normal deletions.",
         )),
     ];
@@ -985,18 +943,12 @@ fn test_symmetrical_block_reflow_involution() {
     let rs = lang_profile("rs");
     // Expand (1-to-2): statement head indentation matches (4 spaces)
     let old_rows_expand = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
+        10,
         "    let result = compute_transform(alpha, beta);",
     ))];
     let new_rows_expand = vec![
-        Row::Add(AddLine::new(
-            LineNum::new(20).unwrap(),
-            "    let result = compute_transform(",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(21).unwrap(),
-            "        alpha, beta);",
-        )),
+        Row::Add(AddLine::new(20, "    let result = compute_transform(")),
+        Row::Add(AddLine::new(21, "        alpha, beta);")),
     ];
     let cluster_expand = ChangeCluster {
         preceding_ctx: vec!["fn transform() {"],
@@ -1017,17 +969,11 @@ fn test_symmetrical_block_reflow_involution() {
 
     // Collapse (2-to-1): exact inverse under diff reversal
     let old_rows_collapse = vec![
-        Row::Del(DelLine::new(
-            LineNum::new(20).unwrap(),
-            "    let result = compute_transform(",
-        )),
-        Row::Del(DelLine::new(
-            LineNum::new(21).unwrap(),
-            "        alpha, beta);",
-        )),
+        Row::Del(DelLine::new(20, "    let result = compute_transform(")),
+        Row::Del(DelLine::new(21, "        alpha, beta);")),
     ];
     let new_rows_collapse = vec![Row::Add(AddLine::new(
-        LineNum::new(10).unwrap(),
+        10,
         "    let result = compute_transform(alpha, beta);",
     ))];
     let cluster_collapse = ChangeCluster {
@@ -1053,18 +999,12 @@ fn test_block_reflow_disqualified_on_head_indent_mismatch() {
     let rs = lang_profile("rs");
     // 1-to-2 candidate with mismatched head indentation (0 vs 4 spaces)
     let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
+        10,
         "let result = compute_transform(alpha, beta);",
     ))];
     let new_rows = vec![
-        Row::Add(AddLine::new(
-            LineNum::new(20).unwrap(),
-            "    let result = compute_transform(",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(21).unwrap(),
-            "        alpha, beta);",
-        )),
+        Row::Add(AddLine::new(20, "    let result = compute_transform(")),
+        Row::Add(AddLine::new(21, "        alpha, beta);")),
     ];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["fn transform() {"],
@@ -1089,22 +1029,13 @@ fn test_block_line_coverage_allows_unmatched_formatting_lines() {
     // 1-to-3 expand where 2 lines match content tokens but 1 line has an
     // unmatched parameter
     let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
+        10,
         "let config = ClientConfigBuilder::new().with_timeout(30).build();",
     ))];
     let new_rows = vec![
-        Row::Add(AddLine::new(
-            LineNum::new(20).unwrap(),
-            "let config = ClientConfigBuilder::new()",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(21).unwrap(),
-            "    .with_debug_payload()",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(22).unwrap(),
-            "    .with_timeout(30).build();",
-        )),
+        Row::Add(AddLine::new(20, "let config = ClientConfigBuilder::new()")),
+        Row::Add(AddLine::new(21, "    .with_debug_payload()")),
+        Row::Add(AddLine::new(22, "    .with_timeout(30).build();")),
     ];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["fn setup() {"],
@@ -1132,22 +1063,16 @@ fn test_block_line_coverage_rejects_insufficient_matches() {
     // 1-to-3 candidate where only 1 line matches content tokens (1/3 = 33% <
     // 50% threshold)
     let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
+        10,
         "let config = ClientConfigBuilder::new();",
     ))];
     let new_rows = vec![
+        Row::Add(AddLine::new(20, "let config = ClientConfigBuilder::new();")),
         Row::Add(AddLine::new(
-            LineNum::new(20).unwrap(),
-            "let config = ClientConfigBuilder::new();",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(21).unwrap(),
+            21,
             "    let completely_unrelated = other_call();",
         )),
-        Row::Add(AddLine::new(
-            LineNum::new(22).unwrap(),
-            "    another_statement();",
-        )),
+        Row::Add(AddLine::new(22, "    another_statement();")),
     ];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["fn setup() {"],
@@ -1172,12 +1097,9 @@ fn test_prefix_containment_within_max_indent_shift_pairs_as_mod() {
     // Indentation shift of 8 spaces (within max_indent_shift = 16)
     // similarity_ratio = 16 / 102 = 0.156 (< 0.25 threshold), so this ONLY
     // pairs as Mod if prefix containment succeeds.
-    let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
-        "    unmark_positions",
-    ))];
+    let old_rows = vec![Row::Del(DelLine::new(10, "    unmark_positions"))];
     let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(20).unwrap(),
+        20,
         "            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
     ))];
     let cluster = ChangeCluster {
@@ -1203,12 +1125,9 @@ fn test_prefix_containment_exceeding_max_indent_shift_is_rejected() {
     // Indentation shift of 24 spaces (exceeds max_indent_shift = 16)
     // similarity_ratio = 16 / 102 = 0.156 (< 0.25 threshold), so with prefix
     // containment rejected, it must NOT pair as Mod.
-    let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
-        "unmark_positions",
-    ))];
+    let old_rows = vec![Row::Del(DelLine::new(10, "unmark_positions"))];
     let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(20).unwrap(),
+        20,
         "                        unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
     ))];
     let cluster = ChangeCluster {
@@ -1234,13 +1153,10 @@ fn test_prefix_containment_reverse_direction_pairs_as_mod() {
     // Reverse direction: old row is the longer line, new row is the prefix
     // receiver
     let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
+        10,
         "            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
     ))];
-    let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(20).unwrap(),
-        "    unmark_positions",
-    ))];
+    let new_rows = vec![Row::Add(AddLine::new(20, "    unmark_positions"))];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["fn process() {"],
         old_rows,
@@ -1263,12 +1179,9 @@ fn test_prefix_containment_non_boundary_subword_rejected() {
     let rs = lang_profile("rs");
     // New line has unmark_positions as a prefix substring, but not at a token
     // boundary ('_' continues the identifier).
-    let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
-        "    unmark_positions",
-    ))];
+    let old_rows = vec![Row::Del(DelLine::new(10, "    unmark_positions"))];
     let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(20).unwrap(),
+        20,
         "            unmark_positions_different_call(run.iter().copied().filter(|p| moved_dels.contains(p)));",
     ))];
     let cluster = ChangeCluster {
@@ -1292,12 +1205,9 @@ fn test_prefix_containment_non_boundary_subword_rejected() {
 fn test_prefix_containment_comment_mismatch_rejected() {
     let rs = lang_profile("rs");
     // Old row is a comment, new row is code
-    let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
-        "    // unmark_positions",
-    ))];
+    let old_rows = vec![Row::Del(DelLine::new(10, "    // unmark_positions"))];
     let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(20).unwrap(),
+        20,
         "            unmark_positions.extend(run.iter().copied().filter(|pos| moved_dels.contains(pos)));",
     ))];
     let cluster = ChangeCluster {
@@ -1325,14 +1235,8 @@ fn test_unrelated_tail_statements_not_paired_on_zero_indent_diff() {
     // New: zzzzz = 42;
     // Both followed by "}" (close_dist == 1). Indent diff == 0.0.
     // They share 0 tokens and should NOT be paired as Mod!
-    let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(10).unwrap(),
-        "    alpha();",
-    ))];
-    let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(20).unwrap(),
-        "    zzzzz = 42;",
-    ))];
+    let old_rows = vec![Row::Del(DelLine::new(10, "    alpha();"))];
+    let new_rows = vec![Row::Add(AddLine::new(20, "    zzzzz = 42;"))];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["fn process() {"],
         old_rows,
@@ -1370,7 +1274,7 @@ fn test_section_headers_distinguish_toml_from_rust_and_python() {
 fn test_scope_restricted_deletion_pairing() {
     use crate::{
         cluster::pairing::dp_pairing,
-        parse::{AddLine, CtxLine, DelLine, Hunk, LineNum},
+        parse::{AddLine, CtxLine, DelLine, Hunk},
     };
 
     let rs = lang_profile("rs");
@@ -1404,23 +1308,11 @@ fn test_scope_restricted_deletion_pairing() {
         new_count: 4,
         section: String::new(),
         rows: vec![
-            Row::Ctx(CtxLine::new(
-                LineNum::new(1).unwrap(),
-                LineNum::new(1).unwrap(),
-                "fn alpha() {",
-            )),
-            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "    let count = 0;")),
-            Row::Add(AddLine::new(LineNum::new(2).unwrap(), "    let total = 0;")),
-            Row::Ctx(CtxLine::new(
-                LineNum::new(3).unwrap(),
-                LineNum::new(3).unwrap(),
-                "    process();",
-            )),
-            Row::Ctx(CtxLine::new(
-                LineNum::new(4).unwrap(),
-                LineNum::new(4).unwrap(),
-                "}",
-            )),
+            Row::Ctx(CtxLine::new(1, 1, "fn alpha() {")),
+            Row::Del(DelLine::new(2, "    let count = 0;")),
+            Row::Add(AddLine::new(2, "    let total = 0;")),
+            Row::Ctx(CtxLine::new(3, 3, "    process();")),
+            Row::Ctx(CtxLine::new(4, 4, "}")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -1442,8 +1334,8 @@ fn test_dp_pairing_disqualifies_zero_common_substitutions_upstream() {
         new_count: 2,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "alpha")),
-            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "omega")),
+            Row::Del(DelLine::new(1, "alpha")),
+            Row::Add(AddLine::new(1, "omega")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -1470,18 +1362,15 @@ fn test_is_statement_start_head_pairing() {
         new_count: 1,
         section: String::new(),
         rows: vec![
+            Row::Del(DelLine::new(512, "pub(crate) fn is_statement_start(")),
+            Row::Del(DelLine::new(513, "    text: &str,")),
             Row::Del(DelLine::new(
-                LineNum::new(512).unwrap(),
-                "pub(crate) fn is_statement_start(",
-            )),
-            Row::Del(DelLine::new(LineNum::new(513).unwrap(), "    text: &str,")),
-            Row::Del(DelLine::new(
-                LineNum::new(514).unwrap(),
+                514,
                 "    profile: Option<&crate::syntax::profile::LangProfile>,",
             )),
-            Row::Del(DelLine::new(LineNum::new(515).unwrap(), ") -> bool {")),
+            Row::Del(DelLine::new(515, ") -> bool {")),
             Row::Add(AddLine::new(
-                LineNum::new(515).unwrap(),
+                515,
                 "pub(crate) fn is_statement_start(text: &str, profile: Option<&LangProfile>) -> bool {",
             )),
         ],
@@ -1614,19 +1503,16 @@ fn test_use_crate_expand_anchors_on_statement_head() {
         section: String::new(),
         rows: vec![
             Row::Del(DelLine::new(
-                LineNum::new(9).unwrap(),
+                9,
                 "use crate::core::counts::{CountKind, FileCounts};",
             )),
-            Row::Add(AddLine::new(LineNum::new(8).unwrap(), "use crate::{")),
+            Row::Add(AddLine::new(8, "use crate::{")),
             Row::Add(AddLine::new(
-                LineNum::new(9).unwrap(),
+                9,
                 "    core::counts::{CountKind, FileCounts},",
             )),
-            Row::Add(AddLine::new(
-                LineNum::new(10).unwrap(),
-                "    theme::ThemePalette,",
-            )),
-            Row::Add(AddLine::new(LineNum::new(11).unwrap(), "};")),
+            Row::Add(AddLine::new(10, "    theme::ThemePalette,")),
+            Row::Add(AddLine::new(11, "};")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -1652,19 +1538,16 @@ fn test_dp_pairing_populates_expand_blocks() {
         section: String::new(),
         rows: vec![
             Row::Del(DelLine::new(
-                LineNum::new(53).unwrap(),
+                53,
                 "    syntax::prelude::{CloseDelimiter, first_ascii_word},",
             )),
-            Row::Add(AddLine::new(LineNum::new(53).unwrap(), "    syntax::{")),
+            Row::Add(AddLine::new(53, "    syntax::{")),
             Row::Add(AddLine::new(
-                LineNum::new(54).unwrap(),
+                54,
                 "        prelude::{CloseDelimiter, first_ascii_word},",
             )),
-            Row::Add(AddLine::new(
-                LineNum::new(55).unwrap(),
-                "        profile::LangProfile,",
-            )),
-            Row::Add(AddLine::new(LineNum::new(56).unwrap(), "    },")),
+            Row::Add(AddLine::new(55, "        profile::LangProfile,")),
+            Row::Add(AddLine::new(56, "    },")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -1695,19 +1578,19 @@ fn test_doc_comment_reflow_pairing() {
         section: String::new(),
         rows: vec![
             Row::Del(DelLine::new(
-                LineNum::new(263).unwrap(),
+                263,
                 "    /// Falls back to `DiffuseTheme::DEFAULT` when detection is unavailable.",
             )),
             Row::Add(AddLine::new(
-                LineNum::new(263).unwrap(),
+                263,
                 "    /// Environment indicators only — never queries the terminal, so this is",
             )),
             Row::Add(AddLine::new(
-                LineNum::new(264).unwrap(),
+                264,
                 "    /// safe in one-shot (pager/pipe) modes. Falls back to",
             )),
             Row::Add(AddLine::new(
-                LineNum::new(265).unwrap(),
+                265,
                 "    /// `DiffuseTheme::DEFAULT` when detection is unavailable.",
             )),
         ],
@@ -1730,19 +1613,16 @@ fn test_expansion_companion_adds_receive_donor_spans() {
         section: String::new(),
         rows: vec![
             Row::Del(DelLine::new(
-                LineNum::new(53).unwrap(),
+                53,
                 "    syntax::prelude::{CloseDelimiter, first_ascii_word},",
             )),
-            Row::Add(AddLine::new(LineNum::new(53).unwrap(), "    syntax::{")),
+            Row::Add(AddLine::new(53, "    syntax::{")),
             Row::Add(AddLine::new(
-                LineNum::new(54).unwrap(),
+                54,
                 "        prelude::{CloseDelimiter, first_ascii_word},",
             )),
-            Row::Add(AddLine::new(
-                LineNum::new(55).unwrap(),
-                "        profile::LangProfile,",
-            )),
-            Row::Add(AddLine::new(LineNum::new(56).unwrap(), "    },")),
+            Row::Add(AddLine::new(55, "        profile::LangProfile,")),
+            Row::Add(AddLine::new(56, "    },")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -1751,39 +1631,24 @@ fn test_expansion_companion_adds_receive_donor_spans() {
     let collapsed = crate::collapse::collapse_hunk_rows(&h, None, None, rs);
     assert_eq!(collapsed.len(), 4);
     match &collapsed[0] {
-        Row::Add(add_line) => {
-            assert_eq!(add_line.text, "    syntax::{");
-            assert_eq!(
-                add_line.del_text.as_deref(),
-                Some("    syntax::prelude::{CloseDelimiter, first_ascii_word},"),
-                "Companion prefix addition must link to the donor line"
-            );
+        Row::AuxAdd { line, spans, .. } => {
+            assert_eq!(line.text, "    syntax::{");
             assert!(
-                !add_line.spans.add.contains(&(0, add_line.text.len())),
+                !spans.add.contains(&(0, line.text.len())),
                 "Companion prefix addition must not be marked as a wholesale addition"
             );
         }
-        other => panic!("Expected Row::Add for prefix row, got {:?}", other),
+        other => panic!("Expected Row::AuxAdd for prefix row, got {:?}", other),
     }
 }
 
 #[test]
 fn test_cluster_product_cap_falls_back_to_wholesale() {
     let old_rows: Vec<Row> = (1..=20)
-        .map(|i| {
-            Row::Del(DelLine::new(
-                LineNum::new(i).unwrap(),
-                format!("let a{i} = {i};"),
-            ))
-        })
+        .map(|i| Row::Del(DelLine::new(i, format!("let a{i} = {i};"))))
         .collect();
     let new_rows: Vec<Row> = (1..=20)
-        .map(|i| {
-            Row::Add(AddLine::new(
-                LineNum::new(i).unwrap(),
-                format!("let a{i} = {i} + 1;"),
-            ))
-        })
+        .map(|i| Row::Add(AddLine::new(i, format!("let a{i} = {i} + 1;"))))
         .collect();
     let cluster = ChangeCluster {
         old_rows,
@@ -1831,7 +1696,7 @@ fn test_cluster_product_cap_falls_back_to_wholesale() {
 fn test_skyline_dp_2000_line_wholesale_replacement_pairs_into_mods() {
     use crate::{
         cluster::{ChangeCluster, dp},
-        parse::{AddLine, DelLine, LineNum},
+        parse::{AddLine, DelLine},
     };
 
     let count = 2000;
@@ -1845,22 +1710,12 @@ fn test_skyline_dp_2000_line_wholesale_replacement_pairs_into_mods() {
     let old_rows: Vec<Row> = old_strings
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            Row::Del(DelLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
-                s.as_str(),
-            ))
-        })
+        .map(|(i, s)| Row::Del(DelLine::new(i as u32 + 1, s.as_str())))
         .collect();
     let new_rows: Vec<Row> = new_strings
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            Row::Add(AddLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
-                s.as_str(),
-            ))
-        })
+        .map(|(i, s)| Row::Add(AddLine::new(i as u32 + 1, s.as_str())))
         .collect();
 
     let cluster = ChangeCluster {
@@ -1894,7 +1749,7 @@ fn test_skyline_dp_2000_line_wholesale_replacement_pairs_into_mods() {
 fn test_skyline_dp_7000_line_wholesale_replacement_pairs_into_mods() {
     use crate::{
         cluster::{ChangeCluster, dp},
-        parse::{AddLine, DelLine, LineNum},
+        parse::{AddLine, DelLine},
     };
 
     let count = 7183;
@@ -1908,22 +1763,12 @@ fn test_skyline_dp_7000_line_wholesale_replacement_pairs_into_mods() {
     let old_rows: Vec<Row> = old_strings
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            Row::Del(DelLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
-                s.as_str(),
-            ))
-        })
+        .map(|(i, s)| Row::Del(DelLine::new(i as u32 + 1, s.as_str())))
         .collect();
     let new_rows: Vec<Row> = new_strings
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            Row::Add(AddLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
-                s.as_str(),
-            ))
-        })
+        .map(|(i, s)| Row::Add(AddLine::new(i as u32 + 1, s.as_str())))
         .collect();
 
     let cluster = ChangeCluster {
@@ -1957,7 +1802,7 @@ fn test_skyline_dp_7000_line_wholesale_replacement_pairs_into_mods() {
 fn test_skyline_dp_asymmetric_burst_preserves_alignment() {
     use crate::{
         cluster::{ChangeCluster, dp},
-        parse::{AddLine, DelLine, LineNum},
+        parse::{AddLine, DelLine},
     };
 
     // 50 lines modified before burst, 40 lines added (asymmetric burst), 50
@@ -1982,22 +1827,12 @@ fn test_skyline_dp_asymmetric_burst_preserves_alignment() {
     let old_rows: Vec<Row> = old_strings
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            Row::Del(DelLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
-                s.as_str(),
-            ))
-        })
+        .map(|(i, s)| Row::Del(DelLine::new(i as u32 + 1, s.as_str())))
         .collect();
     let new_rows: Vec<Row> = new_strings
         .iter()
         .enumerate()
-        .map(|(i, s)| {
-            Row::Add(AddLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
-                s.as_str(),
-            ))
-        })
+        .map(|(i, s)| Row::Add(AddLine::new(i as u32 + 1, s.as_str())))
         .collect();
 
     let cluster = ChangeCluster {
@@ -2093,22 +1928,12 @@ fn scoring_fixture() -> ScoringFixture {
         old_rows: old_texts
             .iter()
             .enumerate()
-            .map(|(i, t)| {
-                Row::Del(DelLine::new(
-                    LineNum::new(i as u32 + 1).unwrap(),
-                    (*t).to_string(),
-                ))
-            })
+            .map(|(i, t)| Row::Del(DelLine::new(i as u32 + 1, (*t).to_string())))
             .collect(),
         new_rows: new_texts
             .iter()
             .enumerate()
-            .map(|(i, t)| {
-                Row::Add(AddLine::new(
-                    LineNum::new(i as u32 + 1).unwrap(),
-                    (*t).to_string(),
-                ))
-            })
+            .map(|(i, t)| Row::Add(AddLine::new(i as u32 + 1, (*t).to_string())))
             .collect(),
         following_ctx: Vec::new(),
         del_survival: rustc_hash::FxHashSet::default(),
@@ -2185,14 +2010,8 @@ fn test_mod_pair_prunes_incompatible_tail_and_high_indent() {
 
     let cluster = ChangeCluster {
         preceding_ctx: Vec::new(),
-        old_rows: vec![Row::Del(DelLine::new(
-            LineNum::new(1).unwrap(),
-            old_text.to_string(),
-        ))],
-        new_rows: vec![Row::Add(AddLine::new(
-            LineNum::new(1).unwrap(),
-            new_text.to_string(),
-        ))],
+        old_rows: vec![Row::Del(DelLine::new(1, old_text.to_string()))],
+        new_rows: vec![Row::Add(AddLine::new(1, new_text.to_string()))],
         following_ctx: Vec::new(),
         del_survival: rustc_hash::FxHashSet::default(),
         section: SyntaxSectionKind::Code,
@@ -2312,12 +2131,12 @@ fn test_anchor_decomposition_large_cluster() {
     let old_rows: Vec<Row> = old_lines
         .iter()
         .enumerate()
-        .map(|(i, s)| Row::Del(DelLine::new(LineNum::new(i as u32 + 1).unwrap(), s.clone())))
+        .map(|(i, s)| Row::Del(DelLine::new(i as u32 + 1, s.clone())))
         .collect();
     let new_rows: Vec<Row> = new_lines
         .iter()
         .enumerate()
-        .map(|(i, s)| Row::Add(AddLine::new(LineNum::new(i as u32 + 1).unwrap(), s.clone())))
+        .map(|(i, s)| Row::Add(AddLine::new(i as u32 + 1, s.clone())))
         .collect();
 
     let cluster = ChangeCluster {
@@ -2359,7 +2178,7 @@ fn test_anchor_decomposition_large_cluster() {
         new_rows: (0..300)
             .map(|i| {
                 Row::Add(AddLine::new(
-                    LineNum::new(i as u32 + 1).unwrap(),
+                    i as u32 + 1,
                     format!("    let totally_different_{i} = 999;"),
                 ))
             })
@@ -2393,7 +2212,7 @@ fn test_anchor_decomposition_with_word_skeleton() {
         .map(|i| {
             let t = tag(i);
             Row::Del(DelLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
+                i as u32 + 1,
                 format!(
                     "{{48;5;233}}{{38;5;238}}  {i}  fn process_item_unique_tag_{t}() {{ {i} }} {{0}}"
                 ),
@@ -2404,7 +2223,7 @@ fn test_anchor_decomposition_with_word_skeleton() {
         .map(|i| {
             let t = tag(i);
             Row::Add(AddLine::new(
-                LineNum::new(i as u32 + 1).unwrap(),
+                i as u32 + 1,
                 format!(
                     "{{48;5;234}}\x1b[38;5;239m  {i}  fn process_item_unique_tag_{t}() {{ {i} }} {{0}}"
                 ),
@@ -2463,7 +2282,7 @@ fn test_narrow_band_large_replacement() {
     let old_rows: Vec<Row> = (1..=1100)
         .map(|i| {
             Row::Del(DelLine::new(
-                LineNum::new(i).unwrap(),
+                i,
                 format!("old line {i} with some content here"),
             ))
         })
@@ -2471,7 +2290,7 @@ fn test_narrow_band_large_replacement() {
     let new_rows: Vec<Row> = (1..=1100)
         .map(|i| {
             Row::Add(AddLine::new(
-                LineNum::new(i).unwrap(),
+                i,
                 format!("old line {i} with some content here!"),
             ))
         })
@@ -2495,10 +2314,10 @@ fn test_guarded_dels_tail_candidates_parity() {
     let rs = lang_profile("rs");
     // Hunk with del and add lines
     let rows = vec![
-        Row::Del(DelLine::new(LineNum::new(1).unwrap(), "    let a = 1;")),
-        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "    let b = 2;")),
-        Row::Add(AddLine::new(LineNum::new(1).unwrap(), "    let a = 10;")),
-        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "    let b = 20;")),
+        Row::Del(DelLine::new(1, "    let a = 1;")),
+        Row::Del(DelLine::new(2, "    let b = 2;")),
+        Row::Add(AddLine::new(1, "    let a = 10;")),
+        Row::Add(AddLine::new(2, "    let b = 20;")),
     ];
     let h = Hunk {
         old_start: 1,
@@ -2552,16 +2371,10 @@ fn test_mod_pair_precomputed_invariants_and_prefix_containment() {
 
     let cluster = ChangeCluster {
         preceding_ctx: Vec::new(),
-        old_rows: vec![Row::Del(DelLine::new(
-            LineNum::new(1).unwrap(),
-            old_text.to_string(),
-        ))],
+        old_rows: vec![Row::Del(DelLine::new(1, old_text.to_string()))],
         new_rows: vec![
-            Row::Add(AddLine::new(
-                LineNum::new(1).unwrap(),
-                "dummy row for offset".to_string(),
-            )),
-            Row::Add(AddLine::new(LineNum::new(2).unwrap(), new_text.to_string())),
+            Row::Add(AddLine::new(1, "dummy row for offset".to_string())),
+            Row::Add(AddLine::new(2, new_text.to_string())),
         ],
         following_ctx: Vec::new(),
         del_survival: rustc_hash::FxHashSet::default(),
@@ -2624,10 +2437,12 @@ fn test_unicode_statement_head_alignment() {
             Row::Mod {
                 old_line: d1,
                 new_line: a1,
+                ..
             },
             Row::Mod {
                 old_line: d2,
                 new_line: a2,
+                ..
             },
         ) => {
             assert!(d1.text.contains("вычисление_1"));
@@ -2648,16 +2463,13 @@ fn test_unicode_statement_head_alignment() {
 fn test_slot_continuity_bonus_sized_to_evidence() {
     let rs = lang_profile("rs");
     let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(3).unwrap(),
+        3,
         "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
     ))];
     let new_rows = vec![
+        Row::Add(AddLine::new(3, "        \" diffuse \u{2212}5 +20 ~3\",")),
         Row::Add(AddLine::new(
-            LineNum::new(3).unwrap(),
-            "        \" diffuse \u{2212}5 +20 ~3\",",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(4).unwrap(),
+            4,
             "        \"header must omit the directory prefix\"",
         )),
     ];
@@ -2691,11 +2503,11 @@ fn test_slot_continuity_bonus_sized_to_evidence() {
 fn test_dissimilar_pair_stays_unpaired() {
     let rs = lang_profile("rs");
     let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(3).unwrap(),
+        3,
         "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
     ))];
     let new_rows = vec![Row::Add(AddLine::new(
-        LineNum::new(4).unwrap(),
+        4,
         "        \"header must omit the directory prefix\"",
     ))];
     let cluster = ChangeCluster {
@@ -2715,8 +2527,8 @@ fn test_dissimilar_pair_stays_unpaired() {
 #[test]
 fn test_short_closer_pairs_without_tail_bonus() {
     let rs = lang_profile("rs");
-    let old_rows = vec![Row::Del(DelLine::new(LineNum::new(10).unwrap(), "    }"))];
-    let new_rows = vec![Row::Add(AddLine::new(LineNum::new(20).unwrap(), "    };"))];
+    let old_rows = vec![Row::Del(DelLine::new(10, "    }"))];
+    let new_rows = vec![Row::Add(AddLine::new(20, "    };"))];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["    foo();"],
         old_rows,
@@ -2737,15 +2549,12 @@ fn test_short_closer_pairs_without_tail_bonus() {
 fn test_open_proximity_prefers_content_twin() {
     let rs = lang_profile("rs");
     let old_rows = vec![Row::Del(DelLine::new(
-        LineNum::new(3).unwrap(),
+        3,
         "        if alpha_condition_here {",
     ))];
     let new_rows = vec![
-        Row::Add(AddLine::new(LineNum::new(3).unwrap(), "        if x {")),
-        Row::Add(AddLine::new(
-            LineNum::new(4).unwrap(),
-            "        if alpha_condition_there {",
-        )),
+        Row::Add(AddLine::new(3, "        if x {")),
+        Row::Add(AddLine::new(4, "        if alpha_condition_there {")),
     ];
     let cluster = ChangeCluster {
         preceding_ctx: vec!["    fn f() {"],
@@ -2775,14 +2584,8 @@ fn test_open_proximity_prefers_content_twin() {
 #[test]
 fn test_surviving_duplicate_high_similarity_pairs_as_mod() {
     let rows = vec![
-        Row::Del(DelLine::new(
-            LineNum::new(10).unwrap(),
-            "        let x = 1;",
-        )),
-        Row::Add(AddLine::new(
-            LineNum::new(10).unwrap(),
-            "        let x = 2;",
-        )),
+        Row::Del(DelLine::new(10, "        let x = 1;")),
+        Row::Add(AddLine::new(10, "        let x = 2;")),
     ];
     let h = Hunk {
         old_start: 10,
@@ -2817,11 +2620,11 @@ fn test_surviving_duplicate_high_similarity_pairs_as_mod() {
 fn test_surviving_duplicate_dissimilar_stays_unpaired() {
     let rows = vec![
         Row::Del(DelLine::new(
-            LineNum::new(10).unwrap(),
+            10,
             "        \" diffuse \u{2212}5 +20 ~3 \u{b7} crates/diffuse-tui/src/\"",
         )),
         Row::Add(AddLine::new(
-            LineNum::new(10).unwrap(),
+            10,
             "        \"header must omit the directory prefix\"",
         )),
     ];
@@ -2861,8 +2664,8 @@ fn test_surviving_duplicate_dissimilar_stays_unpaired() {
 fn test_same_function_twin_pairs_as_mod() {
     let rs = lang_profile("rs");
     let rows = vec![
-        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
-        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
+        Row::Del(DelLine::new(2, "        let x = 1;")),
+        Row::Add(AddLine::new(2, "        let x = 2;")),
     ];
     let h = Hunk {
         old_start: 1,
@@ -2889,8 +2692,8 @@ fn test_same_function_twin_pairs_as_mod() {
 fn test_different_function_twin_pairs_as_mod() {
     let rs = lang_profile("rs");
     let rows = vec![
-        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
-        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
+        Row::Del(DelLine::new(2, "        let x = 1;")),
+        Row::Add(AddLine::new(2, "        let x = 2;")),
     ];
     let h = Hunk {
         old_start: 1,
@@ -2925,8 +2728,8 @@ fn test_different_function_twin_pairs_as_mod() {
 fn test_deleted_function_falls_back_to_file_counts() {
     let rs = lang_profile("rs");
     let rows = vec![
-        Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
-        Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
+        Row::Del(DelLine::new(2, "        let x = 1;")),
+        Row::Add(AddLine::new(2, "        let x = 2;")),
     ];
     let h = Hunk {
         old_start: 1,
@@ -2951,11 +2754,11 @@ fn test_deleted_function_falls_back_to_file_counts() {
 fn return_cluster(dels: Vec<(&str, u32)>, adds: Vec<(&str, u32)>) -> ChangeCluster<'static> {
     let old_rows = dels
         .into_iter()
-        .map(|(t, n)| Row::Del(DelLine::new(LineNum::new(n).unwrap(), t)))
+        .map(|(t, n)| Row::Del(DelLine::new(n, t)))
         .collect();
     let new_rows = adds
         .into_iter()
-        .map(|(t, n)| Row::Add(AddLine::new(LineNum::new(n).unwrap(), t)))
+        .map(|(t, n)| Row::Add(AddLine::new(n, t)))
         .collect();
     ChangeCluster {
         preceding_ctx: vec![],
@@ -3048,26 +2851,17 @@ fn test_verbatim_seeds_unique_pair() {
         new_count: 3,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(
-                LineNum::new(1).unwrap(),
-                "        let prefix = format!(\"{r}@\");",
-            )),
-            Row::Del(DelLine::new(
-                LineNum::new(2).unwrap(),
-                "        let other = 1;",
-            )),
+            Row::Del(DelLine::new(1, "        let prefix = format!(\"{r}@\");")),
+            Row::Del(DelLine::new(2, "        let other = 1;")),
             Row::Add(AddLine::new(
-                LineNum::new(1).unwrap(),
+                1,
                 "            let prefix = format!(\"{repo_name}@\");",
             )),
             Row::Add(AddLine::new(
-                LineNum::new(2).unwrap(),
+                2,
                 "            let prefix = format!(\"{r}@\");",
             )),
-            Row::Add(AddLine::new(
-                LineNum::new(3).unwrap(),
-                "            let other = 1;",
-            )),
+            Row::Add(AddLine::new(3, "            let other = 1;")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -3113,9 +2907,9 @@ fn test_verbatim_seeds_ambiguous_stays_empty() {
         new_count: 1,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "        x();")),
-            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        x();")),
-            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "        x();")),
+            Row::Del(DelLine::new(1, "        x();")),
+            Row::Del(DelLine::new(2, "        x();")),
+            Row::Add(AddLine::new(1, "        x();")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -3159,10 +2953,10 @@ fn test_verbatim_seeds_respect_moves_and_guards() {
         new_count: 2,
         section: String::new(),
         rows: vec![
-            Row::MovSrc(DelLine::new(LineNum::new(1).unwrap(), "        moved();")),
-            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        guarded();")),
-            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "        moved();")),
-            Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        guarded();")),
+            Row::mov_src(DelLine::new(1, "        moved();")),
+            Row::Del(DelLine::new(2, "        guarded();")),
+            Row::Add(AddLine::new(1, "        moved();")),
+            Row::Add(AddLine::new(2, "        guarded();")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -3207,8 +3001,8 @@ fn test_verbatim_seeds_skip_blanks() {
         new_count: 1,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "   ")),
-            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "   ")),
+            Row::Del(DelLine::new(1, "   ")),
+            Row::Add(AddLine::new(1, "   ")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -3250,11 +3044,8 @@ fn test_verbatim_seeds_reject_cross_function() {
         new_count: 3,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
-            Row::Add(AddLine::new(
-                LineNum::new(5).unwrap(),
-                "            let x = 1;",
-            )),
+            Row::Del(DelLine::new(2, "        let x = 1;")),
+            Row::Add(AddLine::new(5, "            let x = 1;")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -3319,12 +3110,9 @@ fn test_verbatim_seeds_yield_to_same_slot_rival() {
         new_count: 2,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(LineNum::new(2).unwrap(), "        let x = 1;")),
-            Row::Add(AddLine::new(LineNum::new(2).unwrap(), "        let x = 2;")),
-            Row::Add(AddLine::new(
-                LineNum::new(5).unwrap(),
-                "            let x = 1;",
-            )),
+            Row::Del(DelLine::new(2, "        let x = 1;")),
+            Row::Add(AddLine::new(2, "        let x = 2;")),
+            Row::Add(AddLine::new(5, "            let x = 1;")),
         ],
         above_ctx: 0,
         below_ctx: 0,
@@ -3368,8 +3156,8 @@ fn test_verbatim_seeds_skip_same_indent() {
         new_count: 1,
         section: String::new(),
         rows: vec![
-            Row::Del(DelLine::new(LineNum::new(1).unwrap(), "    x();")),
-            Row::Add(AddLine::new(LineNum::new(1).unwrap(), "    x();")),
+            Row::Del(DelLine::new(1, "    x();")),
+            Row::Add(AddLine::new(1, "    x();")),
         ],
         above_ctx: 0,
         below_ctx: 0,

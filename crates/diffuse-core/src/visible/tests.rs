@@ -1,5 +1,5 @@
 use super::*;
-use crate::parse::{AddLine, CtxLine, DelLine, LineNum};
+use crate::parse::{AddLine, CtxLine, DelLine};
 
 fn hunk(rows: Vec<Row>, old_start: u32, old_count: u32, new_start: u32, new_count: u32) -> Hunk {
     Hunk {
@@ -19,20 +19,9 @@ fn test_build_visible_walks_carried_context() {
     // A single hunk whose rows already carry leading + trailing context.
     let h = hunk(
         vec![
-            Row::Ctx(CtxLine::new(
-                LineNum::new(1).unwrap(),
-                LineNum::new(1).unwrap(),
-                "fn foo() {",
-            )),
-            Row::Mod {
-                old_line: DelLine::new(LineNum::new(2).unwrap(), "let x = 1;"),
-                new_line: AddLine::new(LineNum::new(2).unwrap(), "let x = 2;"),
-            },
-            Row::Ctx(CtxLine::new(
-                LineNum::new(3).unwrap(),
-                LineNum::new(3).unwrap(),
-                "}",
-            )),
+            Row::Ctx(CtxLine::new(1, 1, "fn foo() {")),
+            Row::mod_row(DelLine::new(2, "let x = 1;"), AddLine::new(2, "let x = 2;")),
+            Row::Ctx(CtxLine::new(3, 3, "}")),
         ],
         1,
         3,

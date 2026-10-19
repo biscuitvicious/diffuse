@@ -282,14 +282,14 @@ pub struct AssembledMods {
     pub out: Vec<Row>,
     pub kept_dels: Vec<usize>,
     pub pure_adds: Vec<usize>,
-    pub add_spans: FxHashMap<usize, (Spans, String)>,
+    pub add_spans: FxHashMap<usize, Spans>,
     pub add_groups: FxHashMap<usize, RowGroup>,
     pub add_runs: FxHashMap<usize, Vec<(RunKind, String)>>,
 }
 
 /// Per paired del row: donor text, first del number, word spans, and the
 /// profiled-tape merged runs handed from assemble to render.
-type PrecomputedPair = (String, crate::parse::LineNum, Spans, Vec<(RunKind, String)>);
+type PrecomputedPair = (String, u32, Spans, Vec<(RunKind, String)>);
 
 /// Context holding all pairing maps and sets for assembly.
 pub struct PairingContext<'a> {
@@ -376,12 +376,14 @@ pub fn collapse_hunk_rows(
         res.iter().all(|r| match r {
             Row::Mod {
                 old_line, new_line, ..
-            } => old_line.num.get() > 0 && new_line.num.get() > 0,
-            Row::Ctx(c) => c.old_pos.get() > 0 && c.new_pos.get() > 0,
-            Row::Add(a) => a.num.get() > 0,
-            Row::Del(d) => d.num.get() > 0,
-            Row::MovSrc(d) => d.num.get() > 0,
-            Row::MovTgt(a) => a.num.get() > 0,
+            } => old_line.num > 0 && new_line.num > 0,
+            Row::Ctx(c) => c.old_pos > 0 && c.new_pos > 0,
+            Row::Add(a) => a.num > 0,
+            Row::Del(d) => d.num > 0,
+            Row::MovSrc { line, .. } => line.num > 0,
+            Row::MovTgt { line, .. } => line.num > 0,
+            Row::AuxDel { line, .. } => line.num > 0,
+            Row::AuxAdd { line, .. } => line.num > 0,
             Row::Sep(_) => true,
         }),
         "All collapsed rows must have valid, non-zero line coordinates"
@@ -568,7 +570,7 @@ pub fn pass_assemble_mods(
     let mut out: Vec<Row> = Vec::new();
     let mut kept_dels: Vec<usize> = Vec::new();
     let mut pure_adds: Vec<usize> = Vec::new();
-    let mut add_spans: FxHashMap<usize, (Spans, String)> = FxHashMap::default();
+    let mut add_spans: FxHashMap<usize, Spans> = FxHashMap::default();
     let mut add_groups: FxHashMap<usize, RowGroup> = FxHashMap::default();
     let mut add_runs: FxHashMap<usize, Vec<(RunKind, String)>> = FxHashMap::default();
 
@@ -613,9 +615,9 @@ pub fn pass_assemble_mods(
     };
 
     for (ri, r) in h.rows.iter().enumerate() {
-        if matches!(r, Row::MovTgt(_)) {
+        if matches!(r, Row::MovTgt { .. }) {
             out.push(r.clone());
-        } else if matches!(r, Row::MovSrc(_)) {
+        } else if matches!(r, Row::MovSrc { .. }) {
             kept_dels.push(ri);
         } else if matches!(r, Row::Add(_)) {
             if ctx.pair_of.contains_key(&ri) {
@@ -867,7 +869,7 @@ pub fn pass_assemble_mods(
             };
             let mut anchor_group = None;
             let actually_moved = if !next_adds.is_empty() {
-                let anchor_num = add.new_line_num().unwrap().get();
+                let anchor_num = add.new_line_num().unwrap();
                 anchor_group = Some(RowGroup::Anchor);
 
                 if let Some(full_adds) = full_adds {
@@ -904,7 +906,7 @@ pub fn pass_assemble_mods(
                             add: add_ranges,
                         };
                         add_runs.insert(nxt_i, line_runs);
-                        add_spans.insert(nxt_i, (donor, del_text.clone()));
+                        add_spans.insert(nxt_i, donor);
                     }
                     runs = anchor_runs;
                     aux_moved_ranges
@@ -973,13 +975,13 @@ pub fn pass_assemble_mods(
                         };
                         if is_opening_row && !del_text.trim_end().ends_with(nxt_trim) {
                             let text_len = add_nxt.text().chars().count();
-                            if text_len > 0 {
-                                let spans = Spans {
-                                    del: Vec::new(),
-                                    add: vec![(0, text_len)],
-                                };
-                                add_spans.insert(nxt_i, (spans, del_text.clone()));
-                            }
+                            let spans = Spans {
+                                del: Vec::new(),
+                                add: vec![(0, text_len)],
+                            };
+                            add_spans.insert(nxt_i, spans);
+                            add_runs
+                                .insert(nxt_i, vec![(RunKind::Add, add_nxt.text().to_string())]);
                         } else if has_common_tokens || is_closing_row || is_opening_row {
                             let indent_len = add_nxt
                                 .text()
@@ -1070,13 +1072,13 @@ pub fn pass_assemble_mods(
                             });
                         } else {
                             let text_len = add_nxt.text().chars().count();
-                            if text_len > 0 {
-                                let spans = Spans {
-                                    del: Vec::new(),
-                                    add: vec![(0, text_len)],
-                                };
-                                add_spans.insert(nxt_i, (spans, del_text.clone()));
-                            }
+                            let spans = Spans {
+                                del: Vec::new(),
+                                add: vec![(0, text_len)],
+                            };
+                            add_spans.insert(nxt_i, spans);
+                            add_runs
+                                .insert(nxt_i, vec![(RunKind::Add, add_nxt.text().to_string())]);
                         }
                     }
 
@@ -1518,7 +1520,7 @@ pub fn pass_assemble_mods(
                         let dels = attached_dels.remove(&p.nxt_i).unwrap_or_default();
                         let aux_runs = build_aux_runs(&p.aux_chars, &p.donor.add, &dels);
                         add_runs.insert(p.nxt_i, aux_runs);
-                        add_spans.insert(p.nxt_i, (p.donor, del_text.clone()));
+                        add_spans.insert(p.nxt_i, p.donor);
                     }
                     actually_consumed
                 }
@@ -1526,12 +1528,15 @@ pub fn pass_assemble_mods(
                 moved
             };
 
-            let mut old_line = DelLine::new(first_old_num, del_text);
-            old_line.group = anchor_group;
-            let mut new_line = AddLine::with_spans(add.new_line_num().unwrap(), add.text(), spans)
-                .with_cached_runs(relabel_moved_runs(runs, &actually_moved));
-            new_line.group = anchor_group;
-            let mod_row = Row::Mod { old_line, new_line };
+            let old_line = DelLine::new(first_old_num, del_text);
+            let new_line = AddLine::new(add.new_line_num().unwrap(), add.text());
+            let mod_row = Row::Mod {
+                old_line,
+                new_line,
+                spans,
+                cached_runs: relabel_moved_runs(runs, &actually_moved),
+                is_anchor: anchor_group == Some(RowGroup::Anchor),
+            };
             out.push(mod_row);
         } else if collapse_absorbed_dels.contains(&ri) {
             continue;
@@ -1560,7 +1565,7 @@ pub struct ReflowFilter {
     pub reflow_ctx: Vec<Row>,
 }
 
-use crate::parse::{CtxLine, LineNum};
+use crate::parse::CtxLine;
 
 /// Pass 3: Filter verbatim reflow dels and adds.
 pub fn pass_filter_reflows(
@@ -1609,26 +1614,31 @@ pub fn pass_filter_reflows(
                 used_dels.insert(di);
                 used_adds.insert(ai);
                 reflow_ctx.push(Row::Ctx(CtxLine::new(
-                    h.rows[di].old_line_num().unwrap_or(LineNum::MIN),
-                    a.new_line_num().unwrap_or(LineNum::MIN),
+                    h.rows[di].old_line().expect("old line must be present"),
+                    a.new_line().expect("new line must be present"),
                     a.text().to_string(),
                 )));
                 break;
             } else if h.rows[di].text().trim() == at {
                 used_dels.insert(di);
                 used_adds.insert(ai);
-                let spans =
-                    crate::lcs::word_spans_with_profile(h.rows[di].text(), a.text(), profile);
+                let (spans, runs) = crate::lcs::word_spans_and_runs_with_profile(
+                    h.rows[di].text(),
+                    a.text(),
+                    profile,
+                );
                 reflow_ctx.push(Row::Mod {
                     old_line: crate::parse::DelLine::new(
-                        h.rows[di].old_line_num().unwrap_or(LineNum::MIN),
+                        h.rows[di].old_line().expect("old line must be present"),
                         h.rows[di].text().to_string(),
                     ),
-                    new_line: crate::parse::AddLine::with_spans(
-                        a.new_line_num().unwrap_or(LineNum::MIN),
+                    new_line: crate::parse::AddLine::new(
+                        a.new_line().expect("new line must be present"),
                         a.text(),
-                        spans,
                     ),
+                    spans,
+                    cached_runs: runs,
+                    is_anchor: false,
                 });
                 break;
             }
@@ -1651,15 +1661,6 @@ pub fn pass_filter_reflows(
         .filter(|ai| {
             let a = &h.rows[*ai];
             if a.is_moved() {
-                if a.del_text().is_some_and(|dt| dt != a.text()) {
-                    return true;
-                }
-                // A local same-position move (old line == new line) is an
-                // invisible reshuffle; true moves across
-                // different line numbers survive as Row::Mov.
-                if a.old_line().is_some() && a.old_line() == a.new_line() {
-                    return false;
-                }
                 return true;
             }
             !used_adds.contains(ai)
@@ -1678,7 +1679,7 @@ pub fn pass_sort_ordered_walk(
     h: &Hunk,
     out: Vec<Row>,
     reflow: ReflowFilter,
-    add_spans: &FxHashMap<usize, (Spans, String)>,
+    add_spans: &FxHashMap<usize, Spans>,
     add_groups: &FxHashMap<usize, RowGroup>,
     add_runs: &FxHashMap<usize, Vec<(RunKind, String)>>,
 ) -> Vec<Row> {
@@ -1749,13 +1750,16 @@ pub fn pass_sort_ordered_walk(
         };
         let row = match d {
             Row::Del(del_line) => {
-                let mut line = del_line.clone();
-                if line.group.is_none()
-                    && let Some(grp) = anchor_group
-                {
-                    line.group = Some(grp);
+                if let Some(RowGroup::Aux { anchor }) = anchor_group {
+                    Row::AuxDel {
+                        anchor,
+                        line: del_line.clone(),
+                        spans: Spans::default(),
+                        cached_runs: vec![(RunKind::Del, del_line.text.clone())],
+                    }
+                } else {
+                    Row::Del(del_line.clone())
                 }
-                Row::Del(line)
             }
             other => other.clone(),
         };
@@ -1764,48 +1768,30 @@ pub fn pass_sort_ordered_walk(
     for &ai in &reflow.kept_adds {
         let a = match &h.rows[ai] {
             Row::Add(add_line) => {
-                let mut line = if let Some((spans, del_text)) = add_spans.get(&ai) {
-                    let mut a = AddLine::with_donor(
-                        add_line.num,
-                        add_line.text.clone(),
-                        del_text.clone(),
-                        spans.clone(),
-                    );
-                    if let Some(runs) = add_runs.get(&ai) {
-                        a.cached_runs = runs.clone();
+                if let Some(&RowGroup::Aux { anchor }) = add_groups.get(&ai) {
+                    let spans = add_spans.get(&ai).cloned().unwrap_or_else(|| {
+                        if add_line.text.is_empty() {
+                            Spans {
+                                del: Vec::new(),
+                                add: vec![(0, 0)],
+                            }
+                        } else {
+                            Spans::default()
+                        }
+                    });
+                    let runs = add_runs
+                        .get(&ai)
+                        .cloned()
+                        .unwrap_or_else(|| vec![(RunKind::Add, add_line.text.clone())]);
+                    Row::AuxAdd {
+                        anchor,
+                        line: add_line.clone(),
+                        spans,
+                        cached_runs: runs,
                     }
-                    a
                 } else {
-                    let mut a = add_line.clone();
-                    if let Some(runs) = add_runs.get(&ai) {
-                        a.cached_runs = runs.clone();
-                    }
-                    a
-                };
-                if let Some(&grp) = add_groups.get(&ai) {
-                    line.group = Some(grp);
+                    Row::Add(add_line.clone())
                 }
-                Row::Add(line)
-            }
-            Row::MovTgt(new_line) => {
-                let mut line = if let Some((spans, _)) = add_spans.get(&ai) {
-                    let mut a =
-                        AddLine::with_spans(new_line.num, new_line.text.clone(), spans.clone());
-                    if let Some(runs) = add_runs.get(&ai) {
-                        a.cached_runs = runs.clone();
-                    }
-                    a
-                } else {
-                    let mut a = new_line.clone();
-                    if let Some(runs) = add_runs.get(&ai) {
-                        a.cached_runs = runs.clone();
-                    }
-                    a
-                };
-                if let Some(&grp) = add_groups.get(&ai) {
-                    line.group = Some(grp);
-                }
-                Row::MovTgt(line)
             }
             _ => h.rows[ai].clone(),
         };
@@ -1900,7 +1886,7 @@ fn assert_collapsed_reflow_invariants(
 
     for (&anchor_num, &anchor_idx) in &anchors {
         let anchor_row = &rows[anchor_idx];
-        if anchor_row.del_text().is_none() {
+        if anchor_row.old_text().is_none() {
             continue;
         }
 
@@ -1920,16 +1906,16 @@ fn assert_collapsed_reflow_invariants(
 
         let aux_adds: Vec<&&Row> = group_rows
             .iter()
-            .filter(|r| matches!(r, Row::Add(_)))
+            .filter(|r| matches!(r, Row::AuxAdd { .. }))
             .collect();
         let has_aux_dels = group_rows
             .iter()
-            .any(|r| matches!(r, Row::Del(_) | Row::MovSrc(_)));
+            .any(|r| matches!(r, Row::AuxDel { .. } | Row::MovSrc { .. }));
 
         if !aux_adds.is_empty() && !has_aux_dels {
             let is_import = profile.is_some_and(|p| {
                 anchor_row
-                    .del_text()
+                    .old_text()
                     .is_some_and(|dt| p.is_import_statement(dt))
             });
 
@@ -1961,7 +1947,7 @@ fn assert_collapsed_reflow_invariants(
                                 .filter(|run| run.kind == RunKind::Ctx)
                                 .map(|run| run.text),
                         );
-                    } else if matches!(r, Row::Add(_)) {
+                    } else if matches!(r, Row::AuxAdd { .. }) {
                         reconstructed_old.extend(
                             merged_runs(r)
                                 .into_iter()
@@ -2001,7 +1987,10 @@ fn assert_collapsed_reflow_invariants(
 
             // 3. Suffix aux add line numbers strictly ascending
             let mut last_aux_line = None;
-            for aux in group_rows.iter().filter(|r| matches!(r, Row::Add(_))) {
+            for aux in group_rows
+                .iter()
+                .filter(|r| matches!(r, Row::AuxAdd { .. }))
+            {
                 if let Some(nl) = aux.new_line() {
                     if let Some(prev) = last_aux_line
                         && nl <= prev
@@ -2023,7 +2012,7 @@ fn assert_collapsed_reflow_invariants(
             .enumerate()
             .filter(|(_, r)| {
                 matches!(r.group(), Some(RowGroup::Aux { anchor }) if anchor == anchor_num)
-                    && matches!(r, Row::Add(_) | Row::MovTgt(_))
+                    && matches!(r, Row::AuxAdd { .. } | Row::MovTgt { .. })
             })
             .map(|(i, _)| i)
             .collect();

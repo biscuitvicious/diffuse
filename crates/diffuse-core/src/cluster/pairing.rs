@@ -42,12 +42,12 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
     let mut del_runs: Vec<Vec<usize>> = Vec::new();
     let mut i = 0;
     while i < h.rows.len() {
-        if !matches!(h.rows[i], Row::Del(_) | Row::MovSrc(_)) {
+        if !matches!(h.rows[i], Row::Del(_) | Row::MovSrc { .. }) {
             i += 1;
             continue;
         }
         let mut run = vec![i];
-        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_) | Row::MovSrc(_)) {
+        while i + 1 < h.rows.len() && matches!(h.rows[i + 1], Row::Del(_) | Row::MovSrc { .. }) {
             i += 1;
             run.push(i);
         }
@@ -64,7 +64,7 @@ fn legacy_index_maps(h: &Hunk) -> LegacyIndexMaps {
         .rows
         .iter()
         .enumerate()
-        .filter(|(_, r)| matches!(r, Row::Del(_) | Row::MovSrc(_)))
+        .filter(|(_, r)| matches!(r, Row::Del(_) | Row::MovSrc { .. }))
         .map(|(i, _)| i)
         .collect();
     (del_runs, run_of, del_ids)
@@ -338,7 +338,7 @@ pub(crate) fn classify_dels<'a>(
     if !h
         .rows
         .iter()
-        .any(|r| matches!(r, Row::Del(_) | Row::MovSrc(_)))
+        .any(|r| matches!(r, Row::Del(_) | Row::MovSrc { .. }))
     {
         return DelGuards::default();
     }
@@ -353,7 +353,7 @@ pub(crate) fn classify_dels<'a>(
         .rows
         .iter()
         .filter_map(|a| match a {
-            Row::Add(_) | Row::MovTgt(_) => Some(a.text().trim()),
+            Row::Add(_) | Row::MovTgt { .. } => Some(a.text().trim()),
             _ => None,
         })
         .collect();
@@ -362,7 +362,7 @@ pub(crate) fn classify_dels<'a>(
         h.rows
             .iter()
             .filter_map(|a| match a {
-                Row::Add(_) | Row::MovTgt(_) => p.extract_property_key(a.text()),
+                Row::Add(_) | Row::MovTgt { .. } => p.extract_property_key(a.text()),
                 _ => None,
             })
             .collect()
@@ -398,7 +398,7 @@ pub(crate) fn classify_dels<'a>(
     let mut has_any_add_tail = false;
     let mut add_tail_fns: FxHashSet<&str> = FxHashSet::default();
     for a in &h.rows {
-        if matches!(a, Row::Add(_) | Row::MovTgt(_))
+        if matches!(a, Row::Add(_) | Row::MovTgt { .. })
             && is_tail_before_closing(a.new_line(), false, old_content, new_content, profile)
         {
             has_any_add_tail = true;
@@ -412,7 +412,7 @@ pub(crate) fn classify_dels<'a>(
         // Del and moved-source rows carry old line numbers by construction;
         // everything else skips classification entirely.
         let Some(line_num) = (match r {
-            Row::Del(d) | Row::MovSrc(d) => Some(d.num.get()),
+            Row::Del(d) | Row::MovSrc { line: d, .. } => Some(d.num),
             _ => None,
         }) else {
             continue;
@@ -529,7 +529,7 @@ pub fn dp_pairing(
     let del_by_num: FxHashMap<u32, usize> = {
         let mut m = FxHashMap::with_capacity_and_hasher(h.rows.len(), Default::default());
         m.extend(h.rows.iter().enumerate().filter_map(|(i, r)| match r {
-            Row::Del(d) | Row::MovSrc(d) => Some((d.num.get(), i)),
+            Row::Del(d) | Row::MovSrc { line: d, .. } => Some((d.num, i)),
             _ => None,
         }));
         m
@@ -537,7 +537,7 @@ pub fn dp_pairing(
     let add_by_num: FxHashMap<u32, usize> = {
         let mut m = FxHashMap::with_capacity_and_hasher(h.rows.len(), Default::default());
         m.extend(h.rows.iter().enumerate().filter_map(|(i, r)| match r {
-            Row::Add(a) | Row::MovTgt(a) => Some((a.num.get(), i)),
+            Row::Add(a) | Row::MovTgt { line: a, .. } => Some((a.num, i)),
             _ => None,
         }));
         m
