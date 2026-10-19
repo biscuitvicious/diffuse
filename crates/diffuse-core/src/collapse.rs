@@ -12,7 +12,9 @@ use std::{cmp::Ordering, sync::atomic::AtomicU64, time::Instant};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use diffuse_algo::dyck::{DelimiterCategory, DelimiterClassifier, UniversalDelimiterClassifier};
 use diffuse_syntax::profile::LangProfile;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     lcs::{word_spans_and_runs_with_profile, word_spans_with_profile},
@@ -560,6 +562,74 @@ struct PendingAux {
     donor: Spans,
     aux_chars: Vec<char>,
     claims: Vec<(usize, usize)>,
+}
+
+#[inline]
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn has_opening_affinity(text: &str, profile: Option<&LangProfile>) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if let Some(p) = profile {
+        if p.is_opening_delimiter(t) || p.is_expression_open(t) || p.is_block_open(t) {
+            return true;
+        }
+        if let Some(first_g) = t.graphemes(true).next()
+            && (p.is_opening_delimiter(first_g)
+                || p.is_expression_open(first_g)
+                || p.is_block_open(first_g))
+        {
+            return true;
+        }
+    } else if let Some(first_g) = t.graphemes(true).next()
+        && matches!(
+            UniversalDelimiterClassifier.classify(&first_g),
+            Some(DelimiterCategory::Open(_))
+        )
+    {
+        return true;
+    }
+    false
+}
+
+fn has_closing_affinity(text: &str, profile: Option<&LangProfile>) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if let Some(p) = profile {
+        if p.is_closing_delimiter(t)
+            || p.is_statement_terminator(t)
+            || p.is_expression_close(t)
+            || p.is_block_close(t)
+        {
+            return true;
+        }
+        if let Some(last_g) = t.graphemes(true).next_back()
+            && (p.is_closing_delimiter(last_g)
+                || p.is_statement_terminator(last_g)
+                || p.is_expression_close(last_g)
+                || p.is_block_close(last_g))
+        {
+            return true;
+        }
+    } else if let Some(last_g) = t.graphemes(true).next_back()
+        && matches!(
+            UniversalDelimiterClassifier.classify(&last_g),
+            Some(
+                DelimiterCategory::Close(_)
+                    | DelimiterCategory::LeadingCloser
+                    | DelimiterCategory::Separator
+            )
+        )
+    {
+        return true;
+    }
+    false
 }
 
 pub fn pass_assemble_mods(
@@ -1414,25 +1484,41 @@ pub fn pass_assemble_mods(
                         FxHashMap::default();
                     for &(rs, re) in &unclaimed_residues {
                         let residue_text: String = del_chars[rs..re].iter().collect();
-                        let is_closing_residue = profile.is_some_and(|p| {
-                            p.is_closing_delimiter(&residue_text)
-                                || p.is_statement_terminator(&residue_text)
-                        });
-                        let is_opening_residue =
-                            profile.is_some_and(|p| p.is_opening_delimiter(&residue_text));
+                        let residue_chars = &del_chars[rs..re];
 
-                        let mut best_claim: Option<(usize, usize, usize)> = None;
+                        let has_open = has_opening_affinity(&residue_text, profile);
+                        let has_close = has_closing_affinity(&residue_text, profile);
+                        let is_closing_residue = has_close && !has_open;
+
+                        #[derive(Clone, Copy)]
+                        struct ClaimCandidate {
+                            row_idx: usize,
+                            insert_pos: usize,
+                            score: usize,
+                            del_coord: usize,
+                        }
+
+                        let mut best_left: Option<ClaimCandidate> = None;
+                        let mut best_right: Option<ClaimCandidate> = None;
+
                         for (i, claims) in aux_matched_claims.iter().enumerate() {
                             let p = &pending[i];
                             let is_prefix = p.nxt_i < add_ri;
-                            // Prefix row insulation: prefix companion rows represent content
-                            // strictly before the anchor, so they may
-                            // never claim residues that occur at or
-                            // after the anchor's retained context.
+
+                            // Prefix / Suffix insulation:
+                            // Prefix companion rows represent content strictly before the anchor,
+                            // so they may never claim residues that occur at or after the anchor's
+                            // retained context. Suffix companion rows
+                            // represent content strictly after the anchor,
+                            // so they may never claim residues that occur before or inside the
+                            // anchor's retained context. Prefix row
+                            // insulation: prefix companion rows represent content
+                            // strictly before the anchor, so they may never claim residues that
+                            // occur at or after the anchor's retained context.
                             if is_prefix
                                 && anchor_claims
                                     .first()
-                                    .is_some_and(|&(anchor_s, _)| rs >= anchor_s)
+                                    .is_some_and(|&(anchor_s, _)| rs >= anchor_s || re > anchor_s)
                             {
                                 continue;
                             }
@@ -1440,69 +1526,153 @@ pub fn pass_assemble_mods(
                             // Closing delimiter insulation: closing punctuation residues may only
                             // attach to an explicit closing row or a row at net
                             // zero container depth, never to intermediate items.
-                            if is_closing_residue {
-                                let nxt_trim = p.aux_chars.iter().collect::<String>();
-                                let nxt_trim = nxt_trim.trim();
-                                let is_closing_row = profile.is_some_and(|pr| {
-                                    pr.is_expression_close(nxt_trim)
-                                        || pr.is_block_close(nxt_trim)
-                                        || pr.is_closing_delimiter(nxt_trim)
-                                }) || (!nxt_trim.is_empty()
-                                    && del_text.trim_end().ends_with(nxt_trim));
-                                if !is_closing_row {
-                                    continue;
-                                }
-                            }
+                            let nxt_trim = p.aux_chars.iter().collect::<String>();
+                            let nxt_trim = nxt_trim.trim();
+                            let is_closing_row = profile.is_some_and(|pr| {
+                                pr.is_expression_close(nxt_trim)
+                                    || pr.is_block_close(nxt_trim)
+                                    || pr.is_closing_delimiter(nxt_trim)
+                            }) || (!nxt_trim.is_empty()
+                                && del_text.trim_end().ends_with(nxt_trim));
 
-                            // Opening delimiter insulation: opening delimiters may only attach to
-                            // an explicit opening row, never to intermediate items.
-                            if is_opening_residue {
-                                let nxt_trim = p.aux_chars.iter().collect::<String>();
-                                let nxt_trim = nxt_trim.trim();
-                                let is_opening_row =
-                                    profile.is_some_and(|pr| pr.is_opening_delimiter(nxt_trim));
-                                if !is_opening_row {
-                                    continue;
-                                }
-                            }
-
-                            for &((_aux_s, aux_e), (_del_s, del_e)) in claims {
-                                if del_e <= rs {
-                                    // If the anchor retained context between this claim and the
-                                    // residue, the residue belongs with
-                                    // the anchor by monotonic coordinate ordering.
+                            for &((aux_s, aux_e), (del_s, del_e)) in claims {
+                                // Left Candidate: residue occurs after claim in del_text
+                                if del_e <= rs && (!is_closing_residue || is_closing_row) {
                                     let anchor_intervenes = anchor_claims
                                         .iter()
                                         .any(|&(acs, ace)| acs < rs && ace > del_e);
-                                    if anchor_intervenes {
-                                        continue;
-                                    }
+                                    if !anchor_intervenes {
+                                        let gap = rs - del_e;
+                                        let flush_bonus = if gap == 0 { 200 } else { 0 };
+                                        let proximity = 100usize.saturating_sub(gap);
+                                        let fusion_bonus = if gap == 0
+                                            && del_e > 0
+                                            && is_word_char(del_chars[del_e - 1])
+                                            && is_word_char(residue_chars[0])
+                                        {
+                                            1000
+                                        } else {
+                                            0
+                                        };
+                                        let delim_bonus =
+                                            if has_close && !has_open { 500 } else { 0 };
+                                        let score =
+                                            flush_bonus + proximity + fusion_bonus + delim_bonus;
 
-                                    let is_better = match best_claim {
-                                        None => true,
-                                        Some((_, _, prev_del_e)) => del_e > prev_del_e,
+                                        let is_better = match best_left {
+                                            None => true,
+                                            Some(prev) => {
+                                                score > prev.score
+                                                    || (score == prev.score
+                                                        && del_e > prev.del_coord)
+                                            }
+                                        };
+                                        if is_better {
+                                            best_left = Some(ClaimCandidate {
+                                                row_idx: i,
+                                                insert_pos: aux_e,
+                                                score,
+                                                del_coord: del_e,
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // Right Candidate: residue occurs before claim in del_text.
+                                // A residue may only attach to the left of claim C (at C.aux_s)
+                                // if it has positive structural affinity to C (opening delimiter
+                                // or subword fusion).
+                                if re <= del_s {
+                                    let gap = del_s - re;
+                                    let fusion_bonus = if gap == 0
+                                        && del_s < del_chars.len()
+                                        && is_word_char(residue_chars[residue_chars.len() - 1])
+                                        && is_word_char(del_chars[del_s])
+                                    {
+                                        1000
+                                    } else {
+                                        0
                                     };
-                                    if is_better {
-                                        best_claim = Some((i, aux_e, del_e));
+                                    let delim_bonus = if has_open && !has_close { 500 } else { 0 };
+
+                                    if delim_bonus > 0 || fusion_bonus > 0 {
+                                        let anchor_intervenes = anchor_claims
+                                            .iter()
+                                            .any(|&(acs, ace)| acs < del_s && ace > re);
+                                        if !anchor_intervenes {
+                                            let flush_bonus = if gap == 0 { 200 } else { 0 };
+                                            let proximity = 100usize.saturating_sub(gap);
+                                            let score = flush_bonus
+                                                + proximity
+                                                + fusion_bonus
+                                                + delim_bonus;
+
+                                            let is_better = match best_right {
+                                                None => true,
+                                                Some(prev) => {
+                                                    score > prev.score
+                                                        || (score == prev.score
+                                                            && del_s < prev.del_coord)
+                                                }
+                                            };
+                                            if is_better {
+                                                best_right = Some(ClaimCandidate {
+                                                    row_idx: i,
+                                                    insert_pos: aux_s,
+                                                    score,
+                                                    del_coord: del_s,
+                                                });
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                        if let Some((i, aux_e, _)) = best_claim {
-                            let trailing_delim_idx = profile.and_then(|p| {
-                                pending[i]
-                                    .aux_chars
-                                    .iter()
-                                    .rposition(|&c| p.is_trailing_delimiter(c))
-                            });
-                            let insert_pos = if let Some(delim_pos) = trailing_delim_idx
-                                && aux_e > delim_pos
-                                && !residue_text.trim().is_empty()
-                            {
-                                delim_pos
-                            } else {
-                                aux_e
-                            };
+
+                        let winner = match (best_left, best_right) {
+                            (Some(left), Some(right)) => {
+                                if right.score > left.score {
+                                    Some((right.row_idx, right.insert_pos))
+                                } else {
+                                    let trailing_delim_idx = profile.and_then(|p| {
+                                        pending[left.row_idx]
+                                            .aux_chars
+                                            .iter()
+                                            .rposition(|&c| p.is_trailing_delimiter(c))
+                                    });
+                                    let insert_pos = if let Some(delim_pos) = trailing_delim_idx
+                                        && left.insert_pos > delim_pos
+                                        && !residue_text.trim().is_empty()
+                                    {
+                                        delim_pos
+                                    } else {
+                                        left.insert_pos
+                                    };
+                                    Some((left.row_idx, insert_pos))
+                                }
+                            }
+                            (Some(left), None) => {
+                                let trailing_delim_idx = profile.and_then(|p| {
+                                    pending[left.row_idx]
+                                        .aux_chars
+                                        .iter()
+                                        .rposition(|&c| p.is_trailing_delimiter(c))
+                                });
+                                let insert_pos = if let Some(delim_pos) = trailing_delim_idx
+                                    && left.insert_pos > delim_pos
+                                    && !residue_text.trim().is_empty()
+                                {
+                                    delim_pos
+                                } else {
+                                    left.insert_pos
+                                };
+                                Some((left.row_idx, insert_pos))
+                            }
+                            (None, Some(right)) => Some((right.row_idx, right.insert_pos)),
+                            (None, None) => None,
+                        };
+
+                        if let Some((i, insert_pos)) = winner {
                             attached_dels
                                 .entry(pending[i].nxt_i)
                                 .or_default()
@@ -1985,7 +2155,109 @@ fn assert_collapsed_reflow_invariants(
                 }
             }
 
-            // 3. Suffix aux add line numbers strictly ascending
+            // 3. Monotonicity invariant of old-side runs:
+            // Every old-side span displayed on the anchor row must preserve coordinate
+            // monotonicity with respect to spans moved out to companion aux rows.
+            // Specifically: prefix aux additions receive content preceding the anchor,
+            // while suffix aux additions receive content succeeding the anchor.
+            // Therefore, on the anchor row, no displayed Del run may appear after a
+            // suffix MovedSrc run without intervening anchor context, and no displayed
+            // Del run may appear before a prefix MovedSrc run without intervening anchor
+            // context.
+            let anchor_line = anchor_row.new_line().unwrap_or(0);
+            let prefix_moved_chars: usize = group_rows
+                .iter()
+                .filter(|r| r.new_line().unwrap_or(0) < anchor_line)
+                .flat_map(|r| merged_runs(r))
+                .filter(|run| run.kind == RunKind::MovedTgt || run.kind == RunKind::Del)
+                .map(|run| run.text.chars().count())
+                .sum();
+
+            let anchor_runs = merged_runs(anchor_row);
+            let old_runs: Vec<&crate::merge::Run> = anchor_runs
+                .iter()
+                .filter(|r| !r.kind.is_add_like())
+                .collect();
+
+            let mut moved_chars_seen = 0usize;
+            let mut seen_suffix_moved = false;
+            let mut seen_ctx_after_suffix_moved = false;
+
+            for r in &old_runs {
+                match r.kind {
+                    RunKind::MovedSrc => {
+                        let len = r.text.chars().count();
+                        let is_prefix = moved_chars_seen + len <= prefix_moved_chars;
+                        moved_chars_seen += len;
+                        if !is_prefix {
+                            seen_suffix_moved = true;
+                            seen_ctx_after_suffix_moved = false;
+                        }
+                    }
+                    RunKind::Ctx => {
+                        if seen_suffix_moved {
+                            seen_ctx_after_suffix_moved = true;
+                        }
+                    }
+                    RunKind::Del => {
+                        let is_opening = profile
+                            .is_some_and(|p| p.is_opening_delimiter(r.text.trim()))
+                            || r.text.chars().any(|c| matches!(c, '(' | '[' | '{'));
+                        if seen_suffix_moved && !seen_ctx_after_suffix_moved && is_opening {
+                            return Err(format!(
+                                "Anchor line {anchor_num} monotonicity violation: displayed opening Del run {:?} appears after suffix MovedSrc without intervening context",
+                                r.text
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut rev_moved_chars_seen = 0usize;
+            let mut seen_prefix_moved_from_end = false;
+            let mut seen_ctx_before_prefix_moved = false;
+            let suffix_moved_chars: usize = group_rows
+                .iter()
+                .filter(|r| r.new_line().unwrap_or(0) > anchor_line)
+                .flat_map(|r| merged_runs(r))
+                .filter(|run| run.kind == RunKind::MovedTgt || run.kind == RunKind::Del)
+                .map(|run| run.text.chars().count())
+                .sum();
+
+            for r in old_runs.iter().rev() {
+                match r.kind {
+                    RunKind::MovedSrc => {
+                        let len = r.text.chars().count();
+                        let is_suffix = rev_moved_chars_seen + len <= suffix_moved_chars;
+                        rev_moved_chars_seen += len;
+                        if !is_suffix {
+                            seen_prefix_moved_from_end = true;
+                            seen_ctx_before_prefix_moved = false;
+                        }
+                    }
+                    RunKind::Ctx => {
+                        if seen_prefix_moved_from_end {
+                            seen_ctx_before_prefix_moved = true;
+                        }
+                    }
+                    RunKind::Del => {
+                        let is_closing = profile
+                            .is_some_and(|p| p.is_closing_delimiter(r.text.trim()))
+                            || r.text.chars().any(|c| matches!(c, ')' | ']' | '}'));
+                        if seen_prefix_moved_from_end && !seen_ctx_before_prefix_moved && is_closing
+                        {
+                            return Err(format!(
+                                "Anchor line {anchor_num} monotonicity violation: displayed closing Del run {:?} appears before prefix MovedSrc without intervening context",
+                                r.text
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // 4. Suffix aux add line numbers strictly ascending
             let mut last_aux_line = None;
             for aux in group_rows
                 .iter()

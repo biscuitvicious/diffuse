@@ -2615,3 +2615,99 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
         ]
     );
 }
+
+#[test]
+fn test_multiline_match_arm_expansion_monotonicity() {
+    let old_line = "                Row::Add(add_line) | Row::MovTgt(add_line) => {";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(136)),
+        row(
+            RowKind::Add,
+            "                Row::Add(add_line)",
+            Some(136),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "                | Row::MovTgt { line: add_line, .. }",
+            Some(137),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "                | Row::AuxAdd { line: add_line, .. } => {",
+            Some(138),
+            None,
+        ),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    let anchor = &c[0];
+    let anchor_runs = merged_runs(anchor);
+    let anchor_has_open_paren = anchor_runs
+        .iter()
+        .any(|r| r.kind == RunKind::Del && r.text.contains('('));
+    assert!(
+        !anchor_has_open_paren,
+        "Anchor line 136 must not contain struck '(', but got: {:?}",
+        anchor_runs
+    );
+
+    let aux1 = &c[1];
+    let aux1_runs = merged_runs(aux1);
+    assert_eq!(
+        aux1_runs,
+        vec![
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: "                ",
+            },
+            crate::merge::Run {
+                kind: RunKind::MovedTgt,
+                text: "| Row::MovTgt",
+            },
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: " { line: ",
+            },
+            crate::merge::Run {
+                kind: RunKind::Del,
+                text: "(",
+            },
+            crate::merge::Run {
+                kind: RunKind::MovedTgt,
+                text: "add_line",
+            },
+            crate::merge::Run {
+                kind: RunKind::Del,
+                text: ")",
+            },
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: ", .. }",
+            },
+        ]
+    );
+}
+
+#[test]
+fn test_multiline_expansion_universal_unicode_delimiters_no_profile() {
+    let old_line = "alpha（content）beta";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(1)),
+        row(RowKind::Add, "alpha", Some(1), None),
+        row(RowKind::Add, "prefix content suffix", Some(2), None),
+        row(RowKind::Add, "beta", Some(3), None),
+    ]);
+    let c = collapse_hunk_rows(&h, None, None, None);
+    let aux = &c[1];
+    let aux_runs = merged_runs(aux);
+    assert!(
+        aux_runs
+            .iter()
+            .any(|r| r.kind == RunKind::Del && r.text == "（"),
+        "aux must carry opening unicode bracket '（' right before content, got: {:?}",
+        aux_runs
+    );
+}

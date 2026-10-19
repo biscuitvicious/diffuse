@@ -2025,6 +2025,7 @@ corpus_tests!(review_notes, "review-notes", 14, true, false);
 corpus_tests!(fn_return_tail, "fn-return-tail", 4, true, false);
 corpus_tests!(osc11_query_gate, "osc11-query-gate", 6, true, false);
 corpus_tests!(ansi_optimizer, "ansi-optimizer", 10, true, false);
+corpus_tests!(linenum_u32, "linenum-u32", 20, true, true);
 
 #[test]
 fn test_golden_initialized_detection() {
