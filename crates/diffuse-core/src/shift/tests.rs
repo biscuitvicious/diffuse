@@ -348,3 +348,44 @@ fn test_shift_down_recognizes_python_decorator_boundary() {
         "Should shift down closing delimiter before decorator boundary"
     );
 }
+
+#[test]
+fn test_normalize_context_preserves_pure_context_hunk() {
+    let mut f = DiffFile {
+        path: "test.rs".into(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        is_binary: false,
+        status: crate::parse::FileStatus::Modified,
+        no_content: false,
+        old_content: vec![],
+        new_content: vec![],
+        old_bytes: None,
+        new_bytes: None,
+        old_line_count: 30,
+        new_line_count: 30,
+        raw_hunks: Vec::new(),
+        hunks: vec![Hunk {
+            old_start: 1,
+            old_count: 5,
+            new_start: 1,
+            new_count: 5,
+            section: String::new(),
+            rows: (1..=5)
+                .map(|i| Row::Ctx(CtxLine::new(i, i, format!("line {i}"))))
+                .collect(),
+            above_ctx: 5,
+            below_ctx: 5,
+        }],
+    };
+
+    normalize_context(&mut f, 2);
+
+    assert_eq!(f.hunks.len(), 1);
+    assert_eq!(
+        f.hunks[0].rows.len(),
+        5,
+        "pure context hunk must not be trimmed to zero or below visual"
+    );
+}

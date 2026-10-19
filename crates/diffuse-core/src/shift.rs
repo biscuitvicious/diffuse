@@ -119,6 +119,9 @@ fn count_carried_ctx(h: &Hunk) -> (u32, u32) {
 /// Removes leading/trailing `Ctx` rows beyond the requested visual width.
 fn trim_context(file: &mut DiffFile, visual: usize) {
     for h in &mut file.hunks {
+        if h.rows.iter().all(|r| matches!(r, Row::Ctx(_))) {
+            continue;
+        }
         while (h.above_ctx as usize) > visual {
             let Some(pos) = h.rows.iter().position(|r| matches!(r, Row::Ctx(_))) else {
                 break;
