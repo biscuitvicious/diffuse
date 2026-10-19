@@ -1496,4 +1496,29 @@ fn test_is_opening_delimiter() {
     assert!(rs.is_opening_delimiter("["));
     assert!(!rs.is_opening_delimiter(";"));
     assert!(!rs.is_opening_delimiter("foo"));
+
+    // Unicode opening delimiters
+    assert!(rs.is_opening_delimiter("（"));
+    assert!(rs.is_opening_delimiter("【"));
+    assert!(rs.is_opening_delimiter("«"));
+    assert!(rs.is_opening_delimiter("“"));
+    assert!(rs.is_opening_delimiter("⟦"));
+}
+
+#[test]
+fn test_is_closing_delimiter_unicode() {
+    let rs = lang_profile("rs").unwrap();
+    assert!(rs.is_closing_delimiter(")"));
+    assert!(rs.is_closing_delimiter("}"));
+    assert!(rs.is_closing_delimiter("]"));
+    assert!(rs.is_closing_delimiter(";"));
+
+    // Unicode closing delimiters & statement terminators
+    assert!(rs.is_closing_delimiter("）"));
+    assert!(rs.is_closing_delimiter("】"));
+    assert!(rs.is_closing_delimiter("»"));
+    assert!(rs.is_closing_delimiter("”"));
+    assert!(rs.is_closing_delimiter("⟧"));
+    assert!(rs.is_closing_delimiter("；"));
+    assert!(rs.is_statement_terminator("；"));
 }

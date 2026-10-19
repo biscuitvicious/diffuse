@@ -3,6 +3,7 @@
 //! function signature patterns, and fence/region rules).
 
 use regex::Regex;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// The block boundary delimiter style for a programming language.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -591,21 +592,23 @@ impl LangProfile {
     }
 
     /// Whether a line consists solely of an opening delimiter for blocks or
-    /// expressions (`{`, `(`, `[`).
+    /// expressions (`{`, `(`, `[`, or Unicode paired openers).
     pub fn is_expression_open(&self, line: &str) -> bool {
         let t = line.trim();
-        t == "{" || t == "(" || t == "["
+        t == "{"
+            || t == "("
+            || t == "["
+            || (t.graphemes(true).count() == 1
+                && t.chars().next().is_some_and(is_opening_delimiter_char))
     }
 
     /// Whether a token or text fragment acts as an expression or block
-    /// opening delimiter (e.g. `(`, `{`, `[`).
+    /// opening delimiter (e.g. `(`, `{`, `[`, `（`, `【`, `«`).
     pub fn is_opening_delimiter(&self, text: &str) -> bool {
         let t = text.trim();
         self.is_expression_open(t)
-            || (t.len() == 1
-                && t.chars()
-                    .next()
-                    .is_some_and(|c| c == '(' || c == '{' || c == '['))
+            || (t.graphemes(true).count() == 1
+                && t.chars().next().is_some_and(is_opening_delimiter_char))
     }
 
     /// Whether a line acts as a closing delimiter for expressions or statements
@@ -624,29 +627,35 @@ impl LangProfile {
     }
 
     /// Whether a token or text fragment acts as an expression or statement
-    /// closing delimiter (e.g. `);`, `}`, `;`).
+    /// closing delimiter (e.g. `);`, `}`, `;`, `）`, `】`, `»`, `；`).
     pub fn is_closing_delimiter(&self, text: &str) -> bool {
         let t = text.trim();
         self.classify_exact_close(t) != CloseDelimiter::None
             || self.classify_close_tail(t) != CloseDelimiter::None
-            || (t.len() == 1
-                && t.chars()
-                    .next()
-                    .is_some_and(|c| self.is_trailing_delimiter(c) && c != ':'))
+            || (t.graphemes(true).count() == 1
+                && t.chars().next().is_some_and(|c| {
+                    (self.is_trailing_delimiter(c) && c != ':') || is_closing_delimiter_char(c)
+                }))
     }
 
     /// Whether text represents a statement terminator or closing statement
-    /// delimiter (e.g. `;`, `);`, `};`, `];`, `)`, `}`, `]`).
+    /// delimiter (e.g. `;`, `);`, `};`, `];`, `)`, `}`, `]`, `；`).
     pub fn is_statement_terminator(&self, text: &str) -> bool {
         let t = text.trim();
-        if t.is_empty() || t == "," || t == ":" {
+        if t.is_empty() || t == "," || t == ":" || t == "，" || t == "：" {
             return false;
         }
         t == ";"
+            || t == "；"
+            || t == "؛"
+            || t == ";"
             || (t.ends_with(';') && (self.is_expression_close(t) || self.is_block_close(t)))
+            || (t.ends_with('；') && (self.is_expression_close(t) || self.is_block_close(t)))
             || self.is_block_close(t)
             || self.is_expression_close(t)
             || self.classify_exact_close(t) != CloseDelimiter::None
+            || (t.graphemes(true).count() == 1
+                && t.chars().next().is_some_and(is_statement_terminator_char))
     }
 
     /// Whether a line is an attribute, decorator, or annotation line.
@@ -803,12 +812,12 @@ impl LangProfile {
     /// `:` in indent-colon languages).
     pub fn trim_trailing_delimiters<'a>(&self, line: &'a str) -> &'a str {
         let mut s = line.trim_end();
-        while let Some(last) = s.chars().next_back() {
-            if self.is_trailing_delimiter(last) {
-                if last == ':' && s.ends_with("::") {
+        while let Some(g) = s.graphemes(true).next_back() {
+            if self.is_trailing_delimiter_str(g) {
+                if g == ":" && s.ends_with("::") {
                     break;
                 }
-                s = &s[..s.len() - last.len_utf8()];
+                s = &s[..s.len() - g.len()];
                 s = s.trim_end();
             } else {
                 break;
@@ -822,6 +831,21 @@ impl LangProfile {
     pub fn is_trailing_delimiter(&self, c: char) -> bool {
         self.trailing_delimiters.contains(&c)
     }
+
+    /// Whether a string or grapheme cluster acts as a trailing syntax delimiter
+    /// in this language or universally.
+    pub fn is_trailing_delimiter_str(&self, text: &str) -> bool {
+        let t = text.trim();
+        if t.is_empty() {
+            return false;
+        }
+        if t.chars().count() == 1 {
+            let c = t.chars().next().unwrap();
+            return self.is_trailing_delimiter(c) || is_closing_delimiter_char(c);
+        }
+        self.classify_exact_close(t) != CloseDelimiter::None
+            || self.classify_close_tail(t) != CloseDelimiter::None
+    }
 }
 
 /// The ANSI SGR attributes used in styled runs.
@@ -831,3 +855,85 @@ pub const SGR_ITALIC: u32 = 3;
 pub const SGR_UNDERLINE: u32 = 4;
 pub const SGR_STRIKE: u32 = 9;
 pub const SGR_BOLD_UNDERLINE: u32 = 14;
+
+/// Whether `c` is a recognized opening delimiter (ASCII or Unicode paired
+/// bracket / quote opener).
+#[inline]
+pub fn is_opening_delimiter_char(c: char) -> bool {
+    matches!(
+        c,
+        '(' | '['
+            | '{'
+            | '（'
+            | '［'
+            | '｛'
+            | '〈'
+            | '《'
+            | '【'
+            | '〔'
+            | '〖'
+            | '〘'
+            | '〚'
+            | '「'
+            | '『'
+            | '«'
+            | '‹'
+            | '⟦'
+            | '⟨'
+            | '⟪'
+            | '⦃'
+            | '⦅'
+            | '‘'
+            | '‚'
+            | '“'
+            | '„'
+    )
+}
+
+/// Whether `c` is a recognized closing delimiter (ASCII or Unicode paired
+/// bracket / quote closer).
+#[inline]
+pub fn is_closing_delimiter_char(c: char) -> bool {
+    matches!(
+        c,
+        ')' | ']'
+            | '}'
+            | '）'
+            | '］'
+            | '｝'
+            | '〉'
+            | '》'
+            | '】'
+            | '〕'
+            | '〗'
+            | '〙'
+            | '〛'
+            | '」'
+            | '』'
+            | '»'
+            | '›'
+            | '⟧'
+            | '⟩'
+            | '⟫'
+            | '⦄'
+            | '⦆'
+            | '’'
+            | '”'
+            | ';'
+            | '；'
+            | '؛'
+            | ';'
+            | ','
+            | '，'
+            | '、'
+    )
+}
+
+/// Whether `c` is a statement terminator or closing statement delimiter.
+#[inline]
+pub fn is_statement_terminator_char(c: char) -> bool {
+    matches!(
+        c,
+        ';' | '；' | '؛' | ';' | '。' | '．' | ')' | '）' | '}' | '｝' | ']' | '］' | '】' | '』'
+    )
+}

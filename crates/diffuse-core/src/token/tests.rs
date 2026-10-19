@@ -19,6 +19,13 @@ fn test_token_classification() {
     assert_eq!(classify_token(")", None), TokenClass::Delimiter);
     assert_eq!(classify_token("{", None), TokenClass::Delimiter);
     assert_eq!(classify_token("}", None), TokenClass::Delimiter);
+    assert_eq!(classify_token("（", None), TokenClass::Delimiter);
+    assert_eq!(classify_token("）", None), TokenClass::Delimiter);
+    assert_eq!(classify_token("【", None), TokenClass::Delimiter);
+    assert_eq!(classify_token("】", None), TokenClass::Delimiter);
+    assert_eq!(classify_token("«", None), TokenClass::Delimiter);
+    assert_eq!(classify_token("»", None), TokenClass::Delimiter);
+    assert_eq!(classify_token("；", None), TokenClass::Delimiter);
 
     assert_eq!(classify_token("=", None), TokenClass::Operator);
     assert_eq!(classify_token("=>", rs_profile), TokenClass::Operator);

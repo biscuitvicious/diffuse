@@ -85,7 +85,8 @@ fn is_delim_char(c: char) -> bool {
     matches!(
         c,
         '(' | ')' | '[' | ']' | '{' | '}' | ';' | ',' | '@' | '#' | '`' | '"'
-    )
+    ) || diffuse_syntax::profile::is_opening_delimiter_char(c)
+        || diffuse_syntax::profile::is_closing_delimiter_char(c)
 }
 
 const KIND_WORD: u8 = 0;

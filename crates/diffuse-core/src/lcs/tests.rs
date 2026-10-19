@@ -960,3 +960,16 @@ fn container_delimiter_depth_preference() {
         ]
     );
 }
+
+#[test]
+fn test_unicode_delimiter_tokenization() {
+    let text = "fn foo（x: i32） -> 【bar】；";
+    let tokens: Vec<&str> = tokenize_line(text).collect();
+    assert_eq!(
+        tokens,
+        vec![
+            "fn", " ", "foo", "（", "x", ":", " ", "i", "32", "）", " ", "->", " ", "【", "bar",
+            "】", "；"
+        ]
+    );
+}

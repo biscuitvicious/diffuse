@@ -523,6 +523,7 @@ dependencies = [
  "regex",
  "serde",
  "tracing",
+ "unicode-segmentation",
 ]
 
 [[package]]

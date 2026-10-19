@@ -95,11 +95,20 @@ pub const MIN_PHRASE_ENTROPY: f64 = 2.5;
 
 #[inline]
 fn is_delim(t: &str) -> bool {
-    t.len() == 1
-        && matches!(
-            t.as_bytes()[0],
-            b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';'
-        )
+    if t.is_ascii() {
+        t.len() == 1
+            && matches!(
+                t.as_bytes()[0],
+                b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';'
+            )
+    } else {
+        use unicode_segmentation::UnicodeSegmentation;
+        t.graphemes(true).count() == 1
+            && t.chars().next().is_some_and(|c| {
+                diffuse_syntax::profile::is_opening_delimiter_char(c)
+                    || diffuse_syntax::profile::is_closing_delimiter_char(c)
+            })
+    }
 }
 
 #[inline]
