@@ -1111,8 +1111,27 @@ pub fn pass_assemble_mods(
                                     && t2.first().is_some_and(|c| c.is_alphanumeric() || *c == '_')
                             };
                             let is_closing_punct = |t1: &[char], t2: &[char]| {
-                                t1.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
-                                    && t2.iter().all(|c| matches!(c, '}' | ')' | ']' | ';'))
+                                let is_close = |c: char| {
+                                    c != ','
+                                        && c != '，'
+                                        && c != '、'
+                                        && (matches!(c, '}' | ')' | ']' | ';')
+                                            || diffuse_syntax::profile::is_statement_terminator_char(
+                                                c,
+                                            )
+                                            || diffuse_syntax::profile::is_closing_delimiter_char(
+                                                c,
+                                            ))
+                                };
+                                t1.iter().all(|&c| is_close(c)) && t2.iter().all(|&c| is_close(c))
+                            };
+                            let is_continuation_phrase = |slice: &[char]| {
+                                let s: String = slice.iter().collect();
+                                if let Some(p) = profile {
+                                    p.is_continuation_phrase(&s)
+                                } else {
+                                    diffuse_syntax::profile::default_is_continuation_phrase(&s)
+                                }
                             };
                             let mut claims: Vec<(usize, usize)> = Vec::new();
                             for (ts, te) in toks {
@@ -1125,7 +1144,7 @@ pub fn pass_assemble_mods(
                                         ) || is_closing_punct(
                                             &aux_chars[last.0..last.1],
                                             &aux_chars[ts..te],
-                                        ))
+                                        ) || is_continuation_phrase(&aux_chars[last.0..te]))
                                         && is_contiguous_in_del(&del_chars, &aux_chars, last.0, te)
                                     {
                                         last.1 = te;

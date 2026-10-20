@@ -368,6 +368,27 @@ impl CloseDelimiter {
     }
 }
 
+/// Default continuation phrase check when no language profile is available.
+pub fn default_is_continuation_phrase(text: &str) -> bool {
+    let trim = text.trim();
+    if trim.is_empty() {
+        return false;
+    }
+    let starts_arrow = trim.starts_with("=>") || trim.starts_with("->");
+    let starts_close = trim.starts_with(')')
+        || trim.starts_with(']')
+        || trim.chars().next().is_some_and(is_closing_delimiter_char);
+    let ends_open = trim.ends_with('{')
+        || trim.ends_with('(')
+        || trim.ends_with('[')
+        || trim
+            .chars()
+            .next_back()
+            .is_some_and(is_opening_delimiter_char);
+
+    trim == "=>" || trim == "->" || (starts_arrow && ends_open) || (starts_close && ends_open)
+}
+
 /// A per-language syntax profile.
 #[derive(Debug)]
 pub struct LangProfile {
@@ -656,6 +677,28 @@ impl LangProfile {
             || self.classify_exact_close(t) != CloseDelimiter::None
             || (t.graphemes(true).count() == 1
                 && t.chars().next().is_some_and(is_statement_terminator_char))
+    }
+
+    /// Whether text represents a syntax continuation phrase
+    /// (e.g. `=>`, `->`, `=> {`, `-> {`, `) {`, `] {`).
+    pub fn is_continuation_phrase(&self, text: &str) -> bool {
+        let trim = text.trim();
+        if trim.is_empty() {
+            return false;
+        }
+        let starts_arrow = trim.starts_with("=>") || trim.starts_with("->");
+        let starts_close = trim.starts_with(')')
+            || trim.starts_with(']')
+            || trim.chars().next().is_some_and(is_closing_delimiter_char);
+        let ends_open = trim.ends_with('{')
+            || trim.ends_with('(')
+            || trim.ends_with('[')
+            || trim
+                .chars()
+                .next_back()
+                .is_some_and(is_opening_delimiter_char);
+
+        trim == "=>" || trim == "->" || (starts_arrow && ends_open) || (starts_close && ends_open)
     }
 
     /// Whether a line is an attribute, decorator, or annotation line.

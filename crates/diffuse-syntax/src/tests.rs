@@ -1140,6 +1140,47 @@ fn test_close_delimiter_and_profile_syntax_matching() {
 }
 
 #[test]
+fn test_continuation_phrase_profile_and_default() {
+    let rs = lang_profile("rs").expect("rust profile");
+
+    // Rust profile continuation phrases
+    assert!(rs.is_continuation_phrase("=> {"));
+    assert!(rs.is_continuation_phrase(" => {"));
+    assert!(rs.is_continuation_phrase("-> {"));
+    assert!(rs.is_continuation_phrase(") {"));
+    assert!(rs.is_continuation_phrase("] {"));
+    assert!(rs.is_continuation_phrase("=>"));
+    assert!(rs.is_continuation_phrase("->"));
+
+    // Unicode variants
+    assert!(rs.is_continuation_phrase("=> ｛"));
+    assert!(rs.is_continuation_phrase("） ｛"));
+
+    // Negative tests: delimiters alone or with commas are NOT continuation phrases
+    assert!(!rs.is_continuation_phrase("}"));
+    assert!(!rs.is_continuation_phrase(")"));
+    assert!(!rs.is_continuation_phrase("};"));
+    assert!(!rs.is_continuation_phrase("),"));
+    assert!(!rs.is_continuation_phrase("],"));
+    assert!(!rs.is_continuation_phrase("let"));
+    assert!(!rs.is_continuation_phrase("foo"));
+    assert!(!rs.is_continuation_phrase("\"    let y = 2;\""));
+    assert!(!rs.is_continuation_phrase("| "));
+    assert!(!rs.is_continuation_phrase("::"));
+    assert!(!rs.is_continuation_phrase(""));
+
+    // Universal default fallback (no profile)
+    use crate::profile::default_is_continuation_phrase;
+    assert!(default_is_continuation_phrase("=> {"));
+    assert!(default_is_continuation_phrase(") {"));
+    assert!(default_is_continuation_phrase("=> ｛"));
+    assert!(!default_is_continuation_phrase("};"));
+    assert!(!default_is_continuation_phrase("),"));
+    assert!(!default_is_continuation_phrase("let"));
+    assert!(!default_is_continuation_phrase("foo"));
+}
+
+#[test]
 fn test_json_and_jsonl_syntax_profile() {
     let json_prof = lang_profile("json").expect("json profile");
     let jsonl_prof = lang_profile("jsonl").expect("jsonl profile");

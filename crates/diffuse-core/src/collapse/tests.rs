@@ -2689,6 +2689,21 @@ fn test_multiline_match_arm_expansion_monotonicity() {
             },
         ]
     );
+
+    let aux2 = &c[2];
+    assert_eq!(
+        merged_runs(aux2),
+        vec![
+            crate::merge::Run {
+                kind: RunKind::Add,
+                text: "                | Row::AuxAdd { line: add_line, .. }",
+            },
+            crate::merge::Run {
+                kind: RunKind::MovedTgt,
+                text: " => {",
+            },
+        ]
+    );
 }
 
 #[test]
