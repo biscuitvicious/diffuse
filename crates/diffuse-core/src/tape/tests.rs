@@ -612,3 +612,82 @@ fn test_let_pairs_let_matched_tape() {
         " crate::lcs::lcs_pairs_ids(&ot.ids, nt_ids, ws, alnum);"
     );
 }
+
+#[test]
+fn test_tuple_call_to_struct_literal_not_interleaved() {
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+
+    // Case 1: tuple variant constructor call with literal 3
+    let old = "            state.execute(TuiCommand::MouseScrollDown(3));";
+    let new = "            state.execute(TuiCommand::MouseScrollDown { n: 3, row, col });";
+
+    let tape = AlignmentTape::from_texts(old, new, profile);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    let runs = tape.to_merged_runs();
+
+    let del_runs: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    let add_runs: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Add)
+        .map(|r| r.text)
+        .collect();
+
+    assert_eq!(del_runs, vec!["(3)"]);
+    assert_eq!(add_runs, vec![" { n: 3, row, col }"]);
+
+    // Case 2: tuple pattern match with identifier `n`
+    let old2 = "            TuiCommand::MouseScrollDown(n) => {";
+    let new2 = "            TuiCommand::MouseScrollDown { n, row, col } => {";
+
+    let tape2 = AlignmentTape::from_texts(old2, new2, profile);
+    assert_eq!(tape2.project_old(), old2);
+    assert_eq!(tape2.project_new(), new2);
+    let runs2 = tape2.to_merged_runs();
+
+    let del_runs2: Vec<&str> = runs2
+        .iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    let add_runs2: Vec<&str> = runs2
+        .iter()
+        .filter(|r| r.kind == RunKind::Add)
+        .map(|r| r.text)
+        .collect();
+
+    assert_eq!(del_runs2, vec!["(n)"]);
+    assert_eq!(add_runs2, vec![" { n, row, col }"]);
+}
+
+#[test]
+fn test_tape_uncrosses_interleaved_delimiter_chunks() {
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let old = "    let val = compute(foo[idx]);";
+    let new = "    let val = compute(foo(idx));";
+
+    let tape = AlignmentTape::from_texts(old, new, profile);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    let runs = tape.to_merged_runs();
+
+    // `[idx]` to `(idx)` must be replaced atomically as `-[idx]+(idx)`
+    // without interleaving `[` and `(`.
+    let del_runs: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    let add_runs: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Add)
+        .map(|r| r.text)
+        .collect();
+
+    assert_eq!(del_runs, vec!["[idx]"]);
+    assert_eq!(add_runs, vec!["(idx)"]);
+}

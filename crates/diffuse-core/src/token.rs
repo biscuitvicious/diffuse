@@ -396,7 +396,7 @@ pub fn compute_parenthesis_depth(
     let mut result = Vec::with_capacity(tokens.len());
     let mut depth = 0usize;
     for (idx, &t) in tokens.iter().enumerate() {
-        if containers[idx].is_none() {
+        if !containers[idx].is_some_and(|c| c.is_quoted()) {
             if t == ")" {
                 depth = depth.saturating_sub(1);
                 result.push(depth);
@@ -667,46 +667,60 @@ pub fn multi_token_phrase_anchors(
     result
 }
 
-/// Syntactic container enclosing a token (string literal or code span).
+/// Syntactic container enclosing a token (paired bracket, string literal, or
+/// code span).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ContainerKind {
+    Paren,
+    Bracket,
+    Brace,
+    DoubleQuote,
+    SingleQuote,
     #[default]
     Backtick,
-    DoubleQuote,
+}
+
+impl ContainerKind {
+    #[inline]
+    pub fn is_quoted(&self) -> bool {
+        matches!(self, Self::DoubleQuote | Self::SingleQuote | Self::Backtick)
+    }
+
+    /// Whether two container contexts are structurally compatible for token
+    /// matching. Containers of different bracket types (e.g. `()` vs `{}`)
+    /// or between quoted strings and unquoted code are incompatible. Code
+    /// tokens at top-level (`None`) may match code tokens wrapped in an
+    /// unquoted code container (e.g. `Paren`, `Bracket`, `Brace`).
+    #[inline]
+    pub fn is_compatible_with(a: Option<Self>, b: Option<Self>) -> bool {
+        match (a, b) {
+            (Some(ca), Some(cb)) => ca == cb,
+            (Some(c), None) | (None, Some(c)) => !c.is_quoted(),
+            (None, None) => true,
+        }
+    }
+
+    #[inline]
+    pub fn from_id(id: u8) -> Option<Self> {
+        match id {
+            1 => Some(Self::Paren),
+            2 => Some(Self::Bracket),
+            3 => Some(Self::Brace),
+            10 => Some(Self::DoubleQuote),
+            11 => Some(Self::SingleQuote),
+            12 => Some(Self::Backtick),
+            _ => None,
+        }
+    }
 }
 
 /// Computes the active enclosing container (if any) for each token in a
 /// sequence.
 pub fn compute_token_containers(tokens: &[&str]) -> Vec<Option<ContainerKind>> {
-    let mut result = Vec::with_capacity(tokens.len());
-    let mut stack: diffuse_algo::SmallStack<ContainerKind, 8> = diffuse_algo::SmallStack::new();
-
-    for &t in tokens {
-        match t {
-            "`" => {
-                if stack.last() == Some(&ContainerKind::Backtick) {
-                    let top = stack.pop();
-                    result.push(top);
-                } else {
-                    stack.push(ContainerKind::Backtick);
-                    result.push(stack.last().copied());
-                }
-            }
-            "\"" => {
-                if stack.last() == Some(&ContainerKind::DoubleQuote) {
-                    let top = stack.pop();
-                    result.push(top);
-                } else {
-                    stack.push(ContainerKind::DoubleQuote);
-                    result.push(stack.last().copied());
-                }
-            }
-            _ => {
-                result.push(stack.last().copied());
-            }
-        }
-    }
-    result
+    diffuse_algo::track_enclosing_containers(tokens, &diffuse_algo::AsciiDelimiterClassifier)
+        .into_iter()
+        .map(|opt| opt.and_then(ContainerKind::from_id))
+        .collect()
 }
 
 /// Computes entropy-weighted anchors combining multi-token phrase landmarks
@@ -761,7 +775,7 @@ pub fn entropy_anchors(
             if (is_alnum || is_op)
                 && !is_function_word(t)
                 && is_compatible_with_phrases(idx_a, idx_b)
-                && a_containers[idx_a] == b_containers[idx_b]
+                && ContainerKind::is_compatible_with(a_containers[idx_a], b_containers[idx_b])
             {
                 if is_alnum {
                     let left_sub_a = idx_a > 0 && crate::lcs::is_subword_token(a[idx_a - 1]);

@@ -296,6 +296,87 @@ where
     (start, best_end)
 }
 
+/// Computes enclosing container IDs for each item in `items`, continuing
+/// from the delimiter state established by `prev_items`. Writes into `out`.
+///
+/// Returns 0 for items outside any container, or the delimiter ID of the active
+/// enclosing container (e.g. 1 for `()`, 2 for `[]`, 3 for `{}`).
+pub fn track_enclosing_containers_into<T, C>(
+    prev_items: &[T],
+    items: &[T],
+    classifier: &C,
+    out: &mut [u8],
+) where
+    C: DelimiterClassifier<T>,
+{
+    debug_assert_eq!(items.len(), out.len());
+    let mut stack: SmallStack<(u8, bool), 32> = SmallStack::new();
+
+    for item in prev_items {
+        let cat = classifier.classify(item);
+        if let Some(&(top_id, true)) = stack.last() {
+            if let Some(DelimiterCategory::Symmetric(id)) = cat
+                && id == top_id
+            {
+                stack.pop();
+            }
+            continue;
+        }
+
+        match cat {
+            Some(DelimiterCategory::Open(id)) => {
+                stack.push((id, false));
+            }
+            Some(DelimiterCategory::Close(id)) => {
+                if stack.last() == Some(&(id, false)) {
+                    stack.pop();
+                }
+            }
+            Some(DelimiterCategory::Symmetric(id)) => {
+                stack.push((id, true));
+            }
+            _ => {}
+        }
+    }
+
+    for (item, slot) in items.iter().zip(out.iter_mut()) {
+        let cat = classifier.classify(item);
+        if let Some(&(top_id, true)) = stack.last() {
+            if let Some(DelimiterCategory::Symmetric(id)) = cat
+                && id == top_id
+            {
+                stack.pop();
+                *slot = id;
+            } else {
+                *slot = top_id;
+            }
+            continue;
+        }
+
+        match cat {
+            Some(DelimiterCategory::Open(id)) => {
+                stack.push((id, false));
+                *slot = id;
+            }
+            Some(DelimiterCategory::Close(id)) => {
+                if stack.last() == Some(&(id, false)) {
+                    stack.pop();
+                    *slot = id;
+                } else {
+                    *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+                }
+            }
+            Some(DelimiterCategory::Symmetric(id)) => {
+                stack.push((id, true));
+                *slot = id;
+            }
+            _ => {
+                *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+            }
+        }
+    }
+}
+
 /// Computes the active enclosing container ID for each item in a sequence.
 ///
 /// Returns `None` for items at depth 0, or `Some(id)` representing the top
@@ -304,40 +385,11 @@ pub fn track_enclosing_containers<T, C>(items: &[T], classifier: &C) -> Vec<Opti
 where
     C: DelimiterClassifier<T>,
 {
-    let mut result = Vec::with_capacity(items.len());
-    let mut stack: SmallStack<u8, 32> = SmallStack::new();
-
-    for item in items {
-        let cat = classifier.classify(item);
-        match cat {
-            Some(DelimiterCategory::Open(id)) => {
-                stack.push(id);
-                result.push(stack.last().copied());
-            }
-            Some(DelimiterCategory::Close(id)) => {
-                if stack.last() == Some(&id) {
-                    let top = stack.pop();
-                    result.push(top);
-                } else {
-                    result.push(stack.last().copied());
-                }
-            }
-            Some(DelimiterCategory::Symmetric(id)) => {
-                if stack.last() == Some(&id) {
-                    let top = stack.pop();
-                    result.push(top);
-                } else {
-                    stack.push(id);
-                    result.push(stack.last().copied());
-                }
-            }
-            _ => {
-                result.push(stack.last().copied());
-            }
-        }
-    }
-
-    result
+    let mut out = vec![0u8; items.len()];
+    track_enclosing_containers_into(&[], items, classifier, &mut out);
+    out.into_iter()
+        .map(|id| if id == 0 { None } else { Some(id) })
+        .collect()
 }
 
 /// Computes delimiter nesting depths for each item in `items`, continuing
@@ -359,25 +411,30 @@ pub fn track_nesting_depths_into<T, C>(
     C: DelimiterClassifier<T>,
 {
     debug_assert_eq!(items.len(), out.len());
-    let mut stack: SmallStack<u8, 32> = SmallStack::new();
+    let mut stack: SmallStack<(u8, bool), 32> = SmallStack::new();
 
     for item in prev_items {
         let cat = classifier.classify(item);
+        if let Some(&(top_id, true)) = stack.last() {
+            if let Some(DelimiterCategory::Symmetric(id)) = cat
+                && id == top_id
+            {
+                stack.pop();
+            }
+            continue;
+        }
+
         match cat {
             Some(DelimiterCategory::Open(id)) => {
-                stack.push(id);
+                stack.push((id, false));
             }
             Some(DelimiterCategory::Close(id)) => {
-                if stack.last() == Some(&id) {
+                if stack.last() == Some(&(id, false)) {
                     stack.pop();
                 }
             }
             Some(DelimiterCategory::Symmetric(id)) => {
-                if stack.last() == Some(&id) {
-                    stack.pop();
-                } else {
-                    stack.push(id);
-                }
+                stack.push((id, true));
             }
             _ => {}
         }
@@ -385,13 +442,25 @@ pub fn track_nesting_depths_into<T, C>(
 
     for (item, slot) in items.iter().zip(out.iter_mut()) {
         let cat = classifier.classify(item);
+        if let Some(&(top_id, true)) = stack.last() {
+            if let Some(DelimiterCategory::Symmetric(id)) = cat
+                && id == top_id
+            {
+                stack.pop();
+                *slot = stack.len() as u16;
+            } else {
+                *slot = stack.len() as u16;
+            }
+            continue;
+        }
+
         match cat {
             Some(DelimiterCategory::Open(id)) => {
                 *slot = stack.len() as u16;
-                stack.push(id);
+                stack.push((id, false));
             }
             Some(DelimiterCategory::Close(id)) => {
-                if stack.last() == Some(&id) {
+                if stack.last() == Some(&(id, false)) {
                     stack.pop();
                     *slot = stack.len() as u16;
                 } else {
@@ -399,13 +468,8 @@ pub fn track_nesting_depths_into<T, C>(
                 }
             }
             Some(DelimiterCategory::Symmetric(id)) => {
-                if stack.last() == Some(&id) {
-                    stack.pop();
-                    *slot = stack.len() as u16;
-                } else {
-                    *slot = stack.len() as u16;
-                    stack.push(id);
-                }
+                *slot = stack.len() as u16;
+                stack.push((id, true));
             }
             _ => {
                 *slot = stack.len() as u16;

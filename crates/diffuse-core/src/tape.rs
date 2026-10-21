@@ -655,7 +655,7 @@ impl<'a> AlignmentTape<'a> {
         let mut anchors: Option<Vec<(usize, usize)>> = None;
 
         let span = tracing::Span::current();
-        let sorted_pairs = if is_unambiguous_prefix {
+        let mut sorted_pairs = if is_unambiguous_prefix {
             span.record("strategy", "pure_prefix");
             let mut pairs = Vec::with_capacity(prefix);
             for i in 0..prefix {
@@ -733,6 +733,21 @@ impl<'a> AlignmentTape<'a> {
                 return tape;
             }
         }
+
+        // Level B defense-in-depth: Delimiter Container Invariance.
+        // Purge any matched pair where both tokens sit inside active but
+        // mismatched delimiter containers (e.g. `()` vs `{}` or `[]` vs `()`).
+        // Matching them across mismatched containers would slice the containers
+        // open and interleave their delimiters in the emitted tape.
+        let c_old =
+            diffuse_algo::track_enclosing_containers(&ot, &diffuse_algo::AsciiDelimiterClassifier);
+        let c_new =
+            diffuse_algo::track_enclosing_containers(&nt, &diffuse_algo::AsciiDelimiterClassifier);
+        sorted_pairs.retain(|&(oi, ni)| {
+            let ca = c_old[oi].and_then(crate::token::ContainerKind::from_id);
+            let cb = c_new[ni].and_then(crate::token::ContainerKind::from_id);
+            crate::token::ContainerKind::is_compatible_with(ca, cb)
+        });
 
         let mut old_tok_idx = 0usize;
         let mut new_tok_idx = 0usize;

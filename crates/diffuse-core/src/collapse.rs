@@ -2452,10 +2452,11 @@ pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), 
                     break;
                 }
                 if let Some(ol) = prev.old_line()
-                    && ol <= prev_old {
-                        // Found a non-context row at or before prev_old in the same change cluster.
-                        break;
-                    }
+                    && ol <= prev_old
+                {
+                    // Found a non-context row at or before prev_old in the same change cluster.
+                    break;
+                }
             }
             if ctx_intervened {
                 let prev_was_del_in_hunk = h
@@ -2585,14 +2586,16 @@ pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), Stri
                     for (vj, prev) in res[..vi].iter().enumerate() {
                         if let Some(nl) = prev.new_line()
                             && cluster_adds.contains(&nl)
-                            && matches!(prev, Row::Add(_)) && nl > d_anchor_new {
-                                return Err(format!(
-                                    "Topological del/add inversion: unpaired deletion at visual row {vi} (old line {}, anchor new {d_anchor_new}) appears after pure addition at visual row {vj} (new line {nl}): deletion {:?} after addition {:?}",
-                                    d.num,
-                                    d.text.trim(),
-                                    prev.text().trim()
-                                ));
-                            }
+                            && matches!(prev, Row::Add(_))
+                            && nl > d_anchor_new
+                        {
+                            return Err(format!(
+                                "Topological del/add inversion: unpaired deletion at visual row {vi} (old line {}, anchor new {d_anchor_new}) appears after pure addition at visual row {vj} (new line {nl}): deletion {:?} after addition {:?}",
+                                d.num,
+                                d.text.trim(),
+                                prev.text().trim()
+                            ));
+                        }
                     }
                 }
             }

@@ -858,6 +858,8 @@ pub struct LcsScratchArena {
     tb_y: Vec<u8>,
     depth_a: Vec<u16>,
     depth_b: Vec<u16>,
+    container_a: Vec<u8>,
+    container_b: Vec<u8>,
 }
 
 impl LcsScratchArena {
@@ -884,6 +886,12 @@ impl LcsScratchArena {
         }
         if self.depth_b.len() < m {
             self.depth_b.resize(m, 0);
+        }
+        if self.container_a.len() < n {
+            self.container_a.resize(n, 0);
+        }
+        if self.container_b.len() < m {
+            self.container_b.resize(m, 0);
         }
         self.m_matrix[..total_cells].fill(NEG_INF);
         self.x_matrix[..total_cells].fill(NEG_INF);
@@ -961,6 +969,21 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
     let depth_a = &arena.depth_a[..n];
     let depth_b = &arena.depth_b[..m];
 
+    diffuse_algo::track_enclosing_containers_into(
+        prev_a,
+        a,
+        &diffuse_algo::AsciiDelimiterClassifier,
+        &mut arena.container_a[..n],
+    );
+    diffuse_algo::track_enclosing_containers_into(
+        prev_b,
+        b,
+        &diffuse_algo::AsciiDelimiterClassifier,
+        &mut arena.container_b[..m],
+    );
+    let container_a = &arena.container_a[..n];
+    let container_b = &arena.container_b[..m];
+
     let m_matrix = &mut arena.m_matrix[..total_cells];
     let x_matrix = &mut arena.x_matrix[..total_cells];
     let y_matrix = &mut arena.y_matrix[..total_cells];
@@ -1014,6 +1037,11 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
 
             // State M: match a[i] with b[j]
             if tokens_can_match(a, b, prev_a, prev_b, next_a, next_b, i, j) {
+                let ca = crate::token::ContainerKind::from_id(container_a[i]);
+                let cb = crate::token::ContainerKind::from_id(container_b[j]);
+                if !crate::token::ContainerKind::is_compatible_with(ca, cb) {
+                    continue;
+                }
                 let is_ws = token_is_ws(a[i]);
                 let depth_matched = depth_a[i] == depth_b[j];
                 let next_rl = if is_ws { 0 } else { run_len[idx(i + 1, j + 1)] };

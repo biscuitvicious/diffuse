@@ -48,8 +48,8 @@ pub use block_dp::{
 pub use bounded_dp::BoundedDpLcs;
 pub use dyck::{
     AsciiDelimiterClassifier, DelimiterCategory, DelimiterClassifier, DiffuseDyckExt, DyckBalanced,
-    SmallStack, track_enclosing_containers, track_nesting_depths_into,
-    track_nesting_depths_with_prev, trim_balanced_boundaries,
+    SmallStack, track_enclosing_containers, track_enclosing_containers_into,
+    track_nesting_depths_into, track_nesting_depths_with_prev, trim_balanced_boundaries,
 };
 pub use entropy::{DiffuseEntropyExt, EntropyFiltered, FrequencyRanker};
 pub use hirschberg::HirschbergLcs;

@@ -2669,24 +2669,12 @@ fn test_multiline_match_arm_expansion_monotonicity() {
                 text: "| Row::MovTgt",
             },
             crate::merge::Run {
-                kind: RunKind::Add,
-                text: " { line: ",
-            },
-            crate::merge::Run {
                 kind: RunKind::Del,
-                text: "(",
-            },
-            crate::merge::Run {
-                kind: RunKind::MovedTgt,
-                text: "add_line",
-            },
-            crate::merge::Run {
-                kind: RunKind::Del,
-                text: ")",
+                text: "(add_line)",
             },
             crate::merge::Run {
                 kind: RunKind::Add,
-                text: ", .. }",
+                text: " { line: add_line, .. }",
             },
         ]
     );
