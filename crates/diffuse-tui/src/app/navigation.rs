@@ -388,7 +388,10 @@ impl AppState {
         let starts = geo.starts;
         let counts = geo.counts;
         let nav_counts = geo.nav_counts;
-        let top_vis = self.scroll;
+        let sticky =
+            self.sticky_header_info_from_layout(&starts, &geo.seg_counts, geo.content_width);
+        let sticky_count = sticky.map_or(0, |s| s.total_sticky_lines());
+        let top_vis = self.scroll + sticky_count;
 
         let mut target_row = self.row_idx;
         let mut target_vis_line = 0;
@@ -407,7 +410,10 @@ impl AppState {
             let max_rows = self.viewport_height.max(4);
             let step = ((max_rows * 2 + 3) / 6).max(1);
             self.scroll_to_visual(self.scroll.saturating_sub(step));
-            let new_top_vis = self.scroll;
+            let new_sticky =
+                self.sticky_header_info_from_layout(&starts, &geo.seg_counts, geo.content_width);
+            let new_sticky_count = new_sticky.map_or(0, |s| s.total_sticky_lines());
+            let new_top_vis = self.scroll + new_sticky_count;
             let mut new_target_row = self.row_idx;
             let mut new_target_vis_line = 0;
             for (i, &s) in starts.iter().enumerate() {

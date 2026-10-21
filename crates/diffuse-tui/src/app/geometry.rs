@@ -262,10 +262,17 @@ impl AppState {
         } else if scroll < header_vis {
             0
         } else if span >= 2 {
-            (1.0 + ((scroll - 1) as f64 / (max_scroll - 1) as f64) * (span - 2) as f64).floor()
-                as usize
+            let interior_min = header_vis;
+            let interior_max = max_scroll.saturating_sub(1);
+            if interior_max > interior_min {
+                let t = (scroll.saturating_sub(interior_min) as f64)
+                    / ((interior_max - interior_min) as f64);
+                1 + (t * (span - 2) as f64).round() as usize
+            } else {
+                1
+            }
         } else {
-            ((scroll as f64 / max_scroll as f64) * span as f64).floor() as usize
+            0
         }
         .min(span);
         Some((thumb_offset, thumb_size))

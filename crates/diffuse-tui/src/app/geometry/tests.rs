@@ -351,6 +351,32 @@ fn test_scrollbar_thumb_snaps_only_at_edges() {
         track_h,
         "final line in view must put thumb at the bottom"
     );
+    assert_eq!(
+        off_bottom - off_low,
+        1,
+        "scrolling 1 line up from bottom must move thumb by exactly 1 row, got jump from {off_bottom} to {off_low}"
+    );
+}
+
+#[test]
+fn test_scrollbar_thumb_large_content_smooth_at_bottom() {
+    let (track_h, vh, total) = (25, 20, 4000);
+    let max_scroll = total - vh;
+    let header_vis = 1;
+    let geom = |scroll: usize| {
+        AppState::scrollbar_thumb_for(track_h, vh, total, scroll, header_vis)
+            .expect("scrollbar must apply")
+    };
+
+    let (off_bottom, size) = geom(max_scroll);
+    assert_eq!(off_bottom + size, track_h);
+
+    let (off_prev, _) = geom(max_scroll - 1);
+    assert_eq!(
+        off_bottom - off_prev,
+        1,
+        "scrolling 1 line up in large file must move thumb by exactly 1 row, got jump from {off_bottom} to {off_prev}"
+    );
 }
 
 #[test]

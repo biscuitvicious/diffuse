@@ -200,6 +200,48 @@ index 1111111..2222222 100644
 }
 
 #[test]
+fn test_page_up_with_sticky_header_scrolls_one_third() {
+    let mut lines = String::new();
+    let mut diff_lines = String::new();
+    for i in 1..=100 {
+        lines.push_str(&format!("line {i}\n"));
+        diff_lines.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,100 @@\n{diff_lines}"
+    );
+    let new_content = [("a.rs".to_string(), lines)].into_iter().collect();
+    let mut state = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 20;
+    state.last_content_width = 80;
+
+    // Scroll down into content so sticky header is active (scroll = 30)
+    state.scroll_to_visual(30);
+    state.render_diff_viewport_lines(80, 20, 20);
+    assert_eq!(state.scroll, 30);
+
+    // Place cursor at the bottom of the viewport
+    state.page_down();
+    state.render_diff_viewport_lines(80, 20, 20);
+    assert_eq!(state.scroll, 30);
+
+    // 1st page_up moves cursor to first visible content line (under sticky headers)
+    state.page_up();
+    state.render_diff_viewport_lines(80, 20, 20);
+    assert_eq!(state.scroll, 30, "first page_up must not shift scroll");
+
+    // 2nd page_up must scroll 1/3 viewport (~7 lines), NOT just 1-2 lines
+    state.page_up();
+    state.render_diff_viewport_lines(80, 20, 20);
+    assert_eq!(state.scroll, 23, "second page_up must scroll 1/3 viewport");
+}
+
+#[test]
 fn test_goto_file_lands_on_banner_with_viewport_margin() {
     let mut lines1 = String::new();
     let mut lines2 = String::new();

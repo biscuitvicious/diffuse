@@ -988,3 +988,53 @@ fn test_shift_t_toggles_theme() {
     );
     assert_eq!(s.theme, crate::render::DiffuseTheme::DEFAULT);
 }
+
+#[test]
+fn test_mouse_wheel_scroll_moves_viewport() {
+    let mut lines = String::new();
+    let mut diff_lines = String::new();
+    for i in 1..=50 {
+        lines.push_str(&format!("line {i}\n"));
+        diff_lines.push_str(&format!("+line {i}\n"));
+    }
+    let diff = format!(
+        "diff --git a/a.rs b/a.rs\nindex 000..111 100644\n--- a/a.rs\n+++ b/a.rs\n@@ -0,0 +1,50 @@\n{diff_lines}"
+    );
+    let new_content = [("a.rs".to_string(), lines)].into_iter().collect();
+    let mut s = AppState::new(
+        run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
+        "test".into(),
+        unique_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    s.viewport_height = 10;
+    s.last_content_width = 80;
+    s.render_diff_viewport_lines(80, 10, 10);
+    assert_eq!(s.scroll, 0);
+
+    // ScrollDown should scroll viewport down by 3 lines
+    handle_event(
+        &mut s,
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        }),
+    );
+    s.render_diff_viewport_lines(80, 10, 10);
+    assert_eq!(s.scroll, 3);
+
+    // ScrollUp should scroll viewport back up by 3 lines
+    handle_event(
+        &mut s,
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        }),
+    );
+    s.render_diff_viewport_lines(80, 10, 10);
+    assert_eq!(s.scroll, 0);
+}

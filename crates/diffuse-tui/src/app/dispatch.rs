@@ -43,9 +43,7 @@ impl AppState {
                 }
             }
             TuiCommand::MouseScrollUp(n) => {
-                for _ in 0..n {
-                    self.move_up();
-                }
+                self.scroll_to_visual(self.scroll.saturating_sub(n));
             }
             TuiCommand::MoveDown(n) => {
                 for _ in 0..n {
@@ -53,9 +51,7 @@ impl AppState {
                 }
             }
             TuiCommand::MouseScrollDown(n) => {
-                for _ in 0..n {
-                    self.move_down();
-                }
+                self.scroll_to_visual(self.scroll + n);
             }
             TuiCommand::PageUp => self.page_up(),
             TuiCommand::PageDown => self.page_down(),
