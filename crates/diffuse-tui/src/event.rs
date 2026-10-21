@@ -325,12 +325,14 @@ fn handle_mouse_event(state: &mut AppState, mouse: MouseEvent) {
     let row = mouse.row as usize;
     let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
 
+    tracing::debug!(kind = ?mouse.kind, row, col, shift, "tui raw mouse event");
+
     match mouse.kind {
         MouseEventKind::ScrollDown => {
-            state.execute(TuiCommand::MouseScrollDown(3));
+            state.execute(TuiCommand::MouseScrollDown { n: 3, row, col });
         }
         MouseEventKind::ScrollUp => {
-            state.execute(TuiCommand::MouseScrollUp(3));
+            state.execute(TuiCommand::MouseScrollUp { n: 3, row, col });
         }
         MouseEventKind::Down(MouseButton::Left) => {
             state.execute(TuiCommand::MouseClick { row, col, shift });

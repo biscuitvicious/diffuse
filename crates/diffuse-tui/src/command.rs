@@ -71,8 +71,16 @@ pub enum TuiCommand {
         col: usize,
         shift: bool,
     },
-    MouseScrollUp(usize),
-    MouseScrollDown(usize),
+    MouseScrollUp {
+        n: usize,
+        row: usize,
+        col: usize,
+    },
+    MouseScrollDown {
+        n: usize,
+        row: usize,
+        col: usize,
+    },
     MouseDrag {
         row: usize,
         col: usize,

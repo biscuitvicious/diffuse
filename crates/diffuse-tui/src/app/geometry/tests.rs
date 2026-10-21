@@ -380,26 +380,166 @@ fn test_scrollbar_thumb_large_content_smooth_at_bottom() {
 }
 
 #[test]
+fn test_scrollbar_thumb_minimum_twelve_percent() {
+    // Large document where proportional thumb would be < 1 row:
+    // thumb must occupy at least 12% of track height.
+    let size = AppState::scrollbar_thumb_size(25, 20, 4000).expect("scrollbar must apply");
+    assert_eq!(size, 3, "25-row track must have at least 3-row thumb (12%)");
+
+    let size_50 = AppState::scrollbar_thumb_size(50, 40, 10000).expect("scrollbar must apply");
+    assert_eq!(
+        size_50, 6,
+        "50-row track must have at least 6-row thumb (12%)"
+    );
+
+    // Short track clamps to at least 2 rows:
+    let size_short = AppState::scrollbar_thumb_size(8, 6, 1000).expect("scrollbar must apply");
+    assert!(
+        size_short >= 2,
+        "short track must have at least 2-row thumb"
+    );
+
+    // When content is small, proportional thumb > 12% is preserved:
+    let size_prop = AppState::scrollbar_thumb_size(25, 20, 25).expect("scrollbar must apply");
+    assert_eq!(
+        size_prop, 20,
+        "small document preserves proportional thumb size"
+    );
+
+    // Track too short to fit the minimum thumb plus 1 line of travel returns None:
+    assert!(AppState::scrollbar_thumb_size(2, 1, 10).is_none());
+
+    // Track of height 3 gives thumb of 2 rows (leaving 1 row room to travel):
+    assert_eq!(AppState::scrollbar_thumb_size(3, 2, 10), Some(2));
+}
+
+#[test]
 fn test_scrollbar_scroll_for_row_formula() {
     // Proportional core: row 0 yields 0, the last row yields max_scroll,
     // everything between is exact. Live-log scale: 2672-line content on
     // a 74-row track.
-    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 0), 0);
-    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 73), 2672);
-    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 1), 37);
-    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 72), 2672 - 37);
-    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 2), 73);
+    let (track_h, vh, total, header_vis) = (74, 50, 2722, 1);
+    let max_scroll = total - vh;
+    assert_eq!(
+        AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, 0),
+        0
+    );
+    assert_eq!(
+        AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, 73),
+        max_scroll
+    );
     // Pointer past the end clamps to the last row.
-    assert_eq!(AppState::scrollbar_scroll_for_row(74, 2672, 1000), 2672);
+    assert_eq!(
+        AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, 1000),
+        max_scroll
+    );
     // Degenerate inputs yield 0, never divide by zero.
-    assert_eq!(AppState::scrollbar_scroll_for_row(74, 0, 5), 0);
-    assert_eq!(AppState::scrollbar_scroll_for_row(1, 100, 0), 0);
+    assert_eq!(AppState::scrollbar_scroll_for_row(74, 50, 50, 1, 5), 0);
+    assert_eq!(AppState::scrollbar_scroll_for_row(1, 1, 100, 1, 0), 0);
     // Monotone across the track.
     let mut prev = 0;
     for r in 1..74 {
-        let s = AppState::scrollbar_scroll_for_row(74, 2672, r);
+        let s = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, r);
         assert!(s >= prev, "mapping must not go backwards at row {r}");
         prev = s;
+    }
+}
+
+#[test]
+fn test_scrollbar_scroll_for_row_no_edge_snapping() {
+    // 25-row screen, 20-row viewport, 1000 lines content.
+    let (track_h, vh, total, header_vis) = (25, 20, 1000, 1);
+    let max_scroll = total - vh;
+    let thumb_size = AppState::scrollbar_thumb_size(track_h, vh, total).unwrap();
+    let span = track_h - thumb_size;
+
+    // Row 0 (top track line) -> thumb at 0:
+    let s0 = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, 0);
+    assert_eq!(s0, 0);
+    let (off0, _) = AppState::scrollbar_thumb_for(track_h, vh, total, s0, header_vis).unwrap();
+    assert_eq!(off0, 0);
+
+    // Row 1 (one line down from top) -> thumb moves down by exactly 1 line to
+    // offset 1:
+    let s1 = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, 1);
+    let (off1, _) = AppState::scrollbar_thumb_for(track_h, vh, total, s1, header_vis).unwrap();
+    assert_eq!(
+        off1, 1,
+        "clicking 1 line down from top must yield offset 1, not 2"
+    );
+
+    // Penultimate row (one line up from bottom) -> thumb moves up by exactly 1
+    // line:
+    let s_pen = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, track_h - 2);
+    let (off_pen, _) =
+        AppState::scrollbar_thumb_for(track_h, vh, total, s_pen, header_vis).unwrap();
+    assert_eq!(
+        off_pen,
+        span - 1,
+        "clicking 1 line up from bottom must yield offset span - 1"
+    );
+
+    // Last row (bottom track line) -> thumb at bottom:
+    let s_last = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, track_h - 1);
+    assert_eq!(s_last, max_scroll);
+    let (off_last, _) =
+        AppState::scrollbar_thumb_for(track_h, vh, total, s_last, header_vis).unwrap();
+    assert_eq!(off_last, span);
+
+    // Every pointer row maps monotonically to thumb offsets with step at most 1:
+    let mut prev_off = 0;
+    for r in 0..track_h {
+        let s = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, r);
+        let (off, _) = AppState::scrollbar_thumb_for(track_h, vh, total, s, header_vis).unwrap();
+        assert!(off >= prev_off, "thumb must move monotonically, row {r}");
+        assert!(
+            off - prev_off <= 1,
+            "thumb step must never exceed 1 row, got jump from {prev_off} to {off} at row {r}"
+        );
+        prev_off = off;
+    }
+}
+
+#[test]
+fn test_scrollbar_scroll_wheel_smooth_on_small_screen() {
+    // Phone-sized terminal viewport (e.g. 25-row screen, 20-row viewport)
+    // with typical medium diff (e.g. 80 visual lines).
+    let (track_h, vh, total, header_vis) = (25, 20, 80, 1);
+    let max_scroll = total - vh;
+
+    // Scrolling down by 3 lines (standard mouse wheel tick):
+    let mut prev_off = 0;
+    for scroll in (0..=max_scroll).step_by(3) {
+        let (off, _) =
+            AppState::scrollbar_thumb_for(track_h, vh, total, scroll, header_vis).unwrap();
+        assert!(
+            off >= prev_off,
+            "thumb must move monotonically down, scroll {scroll}"
+        );
+        assert!(
+            off - prev_off <= 1,
+            "wheel tick must never jump by 2, got jump from {prev_off} to {off} at scroll {scroll}"
+        );
+        prev_off = off;
+    }
+
+    // Scrolling up by 3 lines from the bottom:
+    let (mut prev_up_off, _) =
+        AppState::scrollbar_thumb_for(track_h, vh, total, max_scroll, header_vis).unwrap();
+    let mut cur_scroll = max_scroll;
+    while cur_scroll > 0 {
+        cur_scroll = cur_scroll.saturating_sub(3);
+        let (off, _) =
+            AppState::scrollbar_thumb_for(track_h, vh, total, cur_scroll, header_vis).unwrap();
+        assert!(
+            off <= prev_up_off,
+            "thumb must move monotonically up, scroll {cur_scroll}"
+        );
+        assert!(
+            prev_up_off - off <= 1,
+            "wheel tick up must never jump by 2, got jump from {prev_up_off} to {off} at scroll {cur_scroll}"
+        );
+        prev_up_off = off;
     }
 }
 
@@ -459,4 +599,27 @@ fn test_wrapped_line_never_overflows_scrollbar_gutter() {
             "frame row {i} must never exceed terminal width 50"
         );
     }
+}
+
+#[test]
+fn test_scrollbar_step_kinematic_scaling() {
+    // 1. Zero max scroll returns min_step
+    assert_eq!(AppState::scrollbar_step(24, 20, 20, 3), 3);
+    assert_eq!(AppState::scrollbar_step(24, 20, 15, 3), 3);
+
+    // 2. track_h <= 1 returns min_step
+    assert_eq!(AppState::scrollbar_step(1, 20, 100, 3), 3);
+    assert_eq!(AppState::scrollbar_step(0, 20, 100, 3), 3);
+
+    // 3. Medium diff: track_h=24, vh=20, total=100 -> thumb_size=3, span=21,
+    //    max_scroll=80 round(80 / 21) = 4
+    assert_eq!(AppState::scrollbar_step(24, 20, 100, 3), 4);
+
+    // 4. Large diff: track_h=24, vh=20, total=500 -> thumb_size=3, span=21,
+    //    max_scroll=480 round(480 / 21) = 23
+    assert_eq!(AppState::scrollbar_step(24, 20, 500, 3), 23);
+
+    // 5. Short diff with small max_scroll clamps to min_step: track_h=24, vh=20,
+    //    total=25 -> max_scroll=5, span=21, round(5/21)=0 -> clamped to 3
+    assert_eq!(AppState::scrollbar_step(24, 20, 25, 3), 3);
 }

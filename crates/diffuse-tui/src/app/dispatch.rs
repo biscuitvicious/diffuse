@@ -42,16 +42,16 @@ impl AppState {
                     self.move_up_wrap();
                 }
             }
-            TuiCommand::MouseScrollUp(n) => {
-                self.scroll_to_visual(self.scroll.saturating_sub(n));
+            TuiCommand::MouseScrollUp { n, row, col } => {
+                self.on_mouse_scroll(true, n, row, col);
             }
             TuiCommand::MoveDown(n) => {
                 for _ in 0..n {
                     self.move_down_wrap();
                 }
             }
-            TuiCommand::MouseScrollDown(n) => {
-                self.scroll_to_visual(self.scroll + n);
+            TuiCommand::MouseScrollDown { n, row, col } => {
+                self.on_mouse_scroll(false, n, row, col);
             }
             TuiCommand::PageUp => self.page_up(),
             TuiCommand::PageDown => self.page_down(),
@@ -222,149 +222,147 @@ impl AppState {
                 let track_h = self.screen_height;
                 let is_on_scrollbar = col >= cw && row < track_h;
                 let in_viewport = row >= header_offset && row < header_offset + vh;
+                tracing::debug!(
+                    row,
+                    col,
+                    shift,
+                    cw,
+                    track_h,
+                    is_on_scrollbar,
+                    in_viewport,
+                    "MouseClick"
+                );
                 // Divider arrows stay clickable across the row's content
                 // columns via the divider hit-test below.
-                let scrollbar_seek = is_on_scrollbar;
-                if scrollbar_seek {
-                    // Click and drag share one exact mapping from pointer
-                    // row to scroll position.
-                    //
-                    // The scrollbar widget spans the full terminal height
-                    // (screen_height), but the viewport it represents is
-                    // only `vh` rows tall. The mapping must therefore use
-                    // the viewport-relative row and the viewport height so
-                    // the pointer position on the track corresponds to the
-                    // visible content area, not the full screen.
-                    self.is_dragging_scrollbar = true;
-                    let (_starts, _counts, _seg, total_vis) =
-                        self.cached_geometry_tuple(self.last_content_width);
-                    let max_scroll = total_vis.saturating_sub(vh);
-                    let row_relative = row.saturating_sub(header_offset);
-                    let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
-                    tracing::debug!(row, col, target_vis, max_scroll, "scrollbar mousedown");
-                    self.scroll_to_visual(target_vis);
-                } else if in_viewport {
+                if is_on_scrollbar {
+                    self.on_scrollbar_click(row, col);
+                } else {
                     self.is_dragging_scrollbar = false;
-                    let row_in_viewport = row - header_offset;
-                    let target_vis = self.viewport_row_to_visual(row_in_viewport);
-                    let geo = self.cached_geometry(self.last_content_width);
-                    let starts = &geo.starts;
-                    let counts = &geo.counts;
-                    let nav_counts = &geo.nav_counts;
-                    let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
-                        HashMap::new()
-                    } else {
-                        self.hunk_starts
-                            .iter()
-                            .map(|h| (h.flat, (h.file, h.hunk)))
-                            .collect()
-                    };
+                    self.scrollbar_drag_grab = None;
+                    if in_viewport {
+                        let row_in_viewport = row - header_offset;
+                        let target_vis = self.viewport_row_to_visual(row_in_viewport);
+                        let geo = self.cached_geometry(self.last_content_width);
+                        let starts = &geo.starts;
+                        let counts = &geo.counts;
+                        let nav_counts = &geo.nav_counts;
+                        let div_at: HashMap<usize, (usize, usize)> = if self.raw_diff {
+                            HashMap::new()
+                        } else {
+                            self.hunk_starts
+                                .iter()
+                                .map(|h| (h.flat, (h.file, h.hunk)))
+                                .collect()
+                        };
 
-                    for (i, &s) in starts.iter().enumerate() {
-                        if target_vis >= s && target_vis < s + counts[i] {
-                            let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
-                                self.hunk_div_seg_count(div_fi, div_hi, cw)
-                            } else {
-                                0
-                            };
+                        for (i, &s) in starts.iter().enumerate() {
+                            if target_vis >= s && target_vis < s + counts[i] {
+                                let div_lines = if let Some(&(div_fi, div_hi)) = div_at.get(&i) {
+                                    self.hunk_div_seg_count(div_fi, div_hi, cw)
+                                } else {
+                                    0
+                                };
 
-                            if target_vis < s + div_lines
-                                && let Some(&(div_fi, div_hi)) = div_at.get(&i)
-                                && let Some(f) = self.output.files.get(div_fi)
-                                && let Some(hunk) = f.hunks.get(div_hi)
-                            {
-                                let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
-                                if hidden_gap > 0 {
-                                    // The divider may wrap across several
-                                    // visual segments on narrow screens;
-                                    // the
-                                    // hit area is the glyph's screen cells
-                                    // after wrapping.
-                                    let seg_off = target_vis - s;
-                                    let txt = hunk_divider_text(
-                                        crate::render::Badge {
-                                            idx: div_hi,
-                                            total: f.hunks.len(),
-                                        },
-                                        hunk,
-                                        hidden_gap,
-                                    );
+                                if target_vis < s + div_lines
+                                    && let Some(&(div_fi, div_hi)) = div_at.get(&i)
+                                    && let Some(f) = self.output.files.get(div_fi)
+                                    && let Some(hunk) = f.hunks.get(div_hi)
+                                {
+                                    let hidden_gap = self.hunk_leading_gap(div_fi, div_hi);
+                                    if hidden_gap > 0 {
+                                        // The divider may wrap across several
+                                        // visual segments on narrow screens;
+                                        // the
+                                        // hit area is the glyph's screen cells
+                                        // after wrapping.
+                                        let seg_off = target_vis - s;
+                                        let txt = hunk_divider_text(
+                                            crate::render::Badge {
+                                                idx: div_hi,
+                                                total: f.hunks.len(),
+                                            },
+                                            hunk,
+                                            hidden_gap,
+                                        );
 
-                                    let hit =
-                                        |pat: &str| wrapped_glyph_hit(&txt, pat, seg_off, col, cw);
+                                        let hit = |pat: &str| {
+                                            wrapped_glyph_hit(&txt, pat, seg_off, col, cw)
+                                        };
 
-                                    let mut handled = true;
-                                    if div_hi == 0 && hit("▼") {
-                                        self.expand_hunk_above(div_fi, 0);
-                                    } else if div_hi > 0 && hit("⬍") {
-                                        self.expand_hunk_both(div_fi, div_hi - 1);
-                                    } else if div_hi > 0 && hit("▲") {
-                                        self.expand_hunk_below(div_fi, div_hi - 1);
-                                    } else if div_hi > 0 && hit("▼") {
-                                        self.expand_hunk_above(div_fi, div_hi);
-                                    } else {
-                                        handled = false;
+                                        let mut handled = true;
+                                        if div_hi == 0 && hit("▼") {
+                                            self.expand_hunk_above(div_fi, 0);
+                                        } else if div_hi > 0 && hit("⬍") {
+                                            self.expand_hunk_both(div_fi, div_hi - 1);
+                                        } else if div_hi > 0 && hit("▲") {
+                                            self.expand_hunk_below(div_fi, div_hi - 1);
+                                        } else if div_hi > 0 && hit("▼") {
+                                            self.expand_hunk_above(div_fi, div_hi);
+                                        } else {
+                                            handled = false;
+                                        }
+                                        if handled {
+                                            break;
+                                        }
                                     }
-                                    if handled {
+                                }
+
+                                // Clicking the collapse/expand triangle on a file
+                                // header toggles the file — the click is swallowed
+                                // and does not select the row.
+                                if let Some(item) = self.flat.get(i)
+                                    && item.is_file_header()
+                                {
+                                    let is_binary = self
+                                        .output
+                                        .files
+                                        .get(item.file_idx)
+                                        .is_some_and(|f| f.is_binary);
+                                    if !is_binary {
+                                        let seg_off = target_vis - s;
+                                        let eff_col = seg_off * cw + col;
+                                        let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;
+                                        let hit_indicator =
+                                            eff_col >= c.saturating_sub(1) && eff_col <= c + 1;
+                                        if hit_indicator {
+                                            let fi = item.file_idx;
+                                            self.execute(TuiCommand::ToggleCollapseFile(Some(fi)));
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if let Some(item) = self.flat.get(i)
+                                    && !self.raw_diff
+                                    && item.is_bottom_gap_divider()
+                                {
+                                    let seg_off = target_vis - s;
+                                    let gap = self.hunk_trailing_gap(item.file_idx);
+                                    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
+                                    if wrapped_glyph_hit(&txt, "▲", seg_off, col, cw) {
+                                        let last_hi = item.hunk_idx().unwrap_or(0);
+                                        self.expand_hunk_below(item.file_idx, last_hi);
                                         break;
                                     }
                                 }
-                            }
 
-                            // Clicking the collapse/expand triangle on a file
-                            // header toggles the file — the click is swallowed
-                            // and does not select the row.
-                            if let Some(item) = self.flat.get(i)
-                                && item.is_file_header()
-                            {
-                                let is_binary = self
-                                    .output
-                                    .files
-                                    .get(item.file_idx)
-                                    .is_some_and(|f| f.is_binary);
-                                if !is_binary {
-                                    let seg_off = target_vis - s;
-                                    let eff_col = seg_off * cw + col;
-                                    let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;
-                                    let hit_indicator =
-                                        eff_col >= c.saturating_sub(1) && eff_col <= c + 1;
-                                    if hit_indicator {
-                                        let fi = item.file_idx;
-                                        self.execute(TuiCommand::ToggleCollapseFile(Some(fi)));
-                                        break;
-                                    }
+                                let prev_row = self.row_idx;
+                                self.row_idx = i;
+                                self.vis_line =
+                                    (target_vis - s).min(nav_counts[i].saturating_sub(1));
+
+                                if shift {
+                                    let pivot = self.sel_pivot.unwrap_or(prev_row);
+                                    self.anchor = Some(pivot);
+                                    self.confirmed_sel = self.compute_selection();
+                                    self.anchor = None;
+                                } else {
+                                    self.anchor = None;
+                                    self.confirmed_sel = None;
+                                    self.sel_pivot = Some(i);
                                 }
+                                break;
                             }
-
-                            if let Some(item) = self.flat.get(i)
-                                && !self.raw_diff
-                                && item.is_bottom_gap_divider()
-                            {
-                                let seg_off = target_vis - s;
-                                let gap = self.hunk_trailing_gap(item.file_idx);
-                                let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);
-                                if wrapped_glyph_hit(&txt, "▲", seg_off, col, cw) {
-                                    let last_hi = item.hunk_idx().unwrap_or(0);
-                                    self.expand_hunk_below(item.file_idx, last_hi);
-                                    break;
-                                }
-                            }
-
-                            let prev_row = self.row_idx;
-                            self.row_idx = i;
-                            self.vis_line = (target_vis - s).min(nav_counts[i].saturating_sub(1));
-
-                            if shift {
-                                let pivot = self.sel_pivot.unwrap_or(prev_row);
-                                self.anchor = Some(pivot);
-                                self.confirmed_sel = self.compute_selection();
-                                self.anchor = None;
-                            } else {
-                                self.anchor = None;
-                                self.confirmed_sel = None;
-                                self.sel_pivot = Some(i);
-                            }
-                            break;
                         }
                     }
                 }
@@ -372,28 +370,14 @@ impl AppState {
             TuiCommand::MouseDrag { row, col: _, shift } => {
                 let header_offset = self.last_viewport_start;
                 let vh = self.viewport_height;
+                tracing::debug!(
+                    row,
+                    shift,
+                    is_dragging_scrollbar = self.is_dragging_scrollbar,
+                    "MouseDrag"
+                );
                 if self.is_dragging_scrollbar {
-                    // Same exact mapping as click-seek: pointer row to
-                    // scroll, no special cases.
-                    //
-                    // The scrollbar widget spans the full terminal height
-                    // (screen_height), but the viewport it represents is
-                    // only `vh` rows tall. The mapping must therefore use
-                    // the viewport-relative row and the viewport height so
-                    // the pointer position on the track corresponds to the
-                    // visible content area, not the full screen.
-                    let (_, _, _, total_vis) = self.cached_geometry_tuple(self.last_content_width);
-                    let max_scroll = total_vis.saturating_sub(vh);
-                    let row_relative = row.saturating_sub(header_offset);
-                    let target_vis = Self::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
-                    tracing::debug!(
-                        row,
-                        target_vis,
-                        max_scroll,
-                        prev_scroll = self.scroll,
-                        "scrollbar drag"
-                    );
-                    self.scroll_to_visual(target_vis);
+                    self.on_scrollbar_drag(row);
                 } else if row >= header_offset && row < header_offset + vh {
                     let prev_row = self.row_idx;
                     if self.anchor.is_none() {
@@ -419,15 +403,118 @@ impl AppState {
                     }
                 }
             }
-            TuiCommand::EndMouseDrag => {
-                self.is_dragging_scrollbar = false;
-                if let Some(anchor) = self.anchor {
-                    if anchor != self.row_idx {
-                        self.confirmed_sel = self.compute_selection();
-                    }
-                    self.anchor = None;
+            TuiCommand::EndMouseDrag => self.on_mouse_drag_end(),
+        }
+    }
+
+    fn on_mouse_scroll(&mut self, up: bool, n: usize, row: usize, col: usize) {
+        let cw = self.last_content_width;
+        let track_h = self.screen_height;
+        let vh = self.viewport_height;
+        tracing::debug!(
+            up,
+            row,
+            col,
+            n,
+            is_dragging_scrollbar = self.is_dragging_scrollbar,
+            "on_mouse_scroll"
+        );
+        let (_, _, _, total_vis) = self.cached_geometry_tuple(cw);
+        let has_scrollbar = !self.raw_diff && total_vis > vh && vh > 2;
+        if has_scrollbar && col >= cw.saturating_sub(1) && row < track_h {
+            let step = Self::scrollbar_step(track_h, vh, total_vis, n);
+            if up {
+                self.scroll_to_visual(self.scroll + step);
+            } else {
+                self.scroll_to_visual(self.scroll.saturating_sub(step));
+            }
+        } else if up {
+            self.scroll_to_visual(self.scroll.saturating_sub(n));
+        } else {
+            self.scroll_to_visual(self.scroll + n);
+        }
+    }
+
+    fn on_scrollbar_click(&mut self, row: usize, col: usize) {
+        let cw = self.last_content_width;
+        let track_h = self.screen_height;
+        let vh = self.viewport_height;
+        self.is_dragging_scrollbar = true;
+        let (_starts, counts, _seg, total_vis) = self.cached_geometry_tuple(cw);
+        let header_vis = counts.first().copied().unwrap_or(1);
+        if let Some((thumb_off, thumb_size)) =
+            Self::scrollbar_thumb_for(track_h, vh, total_vis, self.scroll, header_vis)
+        {
+            if row >= thumb_off && row < thumb_off + thumb_size {
+                // Clicked directly on the thumb: preserve current scroll position
+                // and record the relative grab offset within the thumb.
+                self.scrollbar_drag_grab = Some(row - thumb_off);
+                tracing::debug!(
+                    row,
+                    col,
+                    thumb_off,
+                    thumb_size,
+                    grab = row - thumb_off,
+                    "scrollbar thumb grab (no snap)"
+                );
+            } else {
+                // Clicked on the track outside the thumb: snap immediately.
+                let target_vis =
+                    Self::scrollbar_scroll_for_row(track_h, vh, total_vis, header_vis, row);
+                tracing::debug!(row, col, target_vis, "scrollbar track seek");
+                self.scroll_to_visual(target_vis);
+                if let Some((new_off, new_size)) =
+                    Self::scrollbar_thumb_for(track_h, vh, total_vis, target_vis, header_vis)
+                {
+                    let grab = row.saturating_sub(new_off).min(new_size.saturating_sub(1));
+                    self.scrollbar_drag_grab = Some(grab);
+                } else {
+                    self.scrollbar_drag_grab = None;
                 }
             }
+        } else {
+            let target_vis =
+                Self::scrollbar_scroll_for_row(track_h, vh, total_vis, header_vis, row);
+            tracing::debug!(row, col, target_vis, "scrollbar mousedown");
+            self.scroll_to_visual(target_vis);
+            self.scrollbar_drag_grab = None;
+        }
+    }
+
+    fn on_scrollbar_drag(&mut self, row: usize) {
+        let cw = self.last_content_width;
+        let track_h = self.screen_height;
+        let vh = self.viewport_height;
+        let (_, counts, _, total_vis) = self.cached_geometry_tuple(cw);
+        let header_vis = counts.first().copied().unwrap_or(1);
+        let target_vis = if let Some(grab) = self.scrollbar_drag_grab {
+            let target_offset = row.saturating_sub(grab);
+            Self::scrollbar_scroll_for_offset(track_h, vh, total_vis, header_vis, target_offset)
+        } else {
+            Self::scrollbar_scroll_for_row(track_h, vh, total_vis, header_vis, row)
+        };
+        tracing::debug!(
+            row,
+            target_vis,
+            grab = self.scrollbar_drag_grab,
+            prev_scroll = self.scroll,
+            "scrollbar drag"
+        );
+        self.scroll_to_visual(target_vis);
+    }
+
+    fn on_mouse_drag_end(&mut self) {
+        tracing::debug!(
+            is_dragging_scrollbar = self.is_dragging_scrollbar,
+            "EndMouseDrag"
+        );
+        self.is_dragging_scrollbar = false;
+        self.scrollbar_drag_grab = None;
+        if let Some(anchor) = self.anchor {
+            if anchor != self.row_idx {
+                self.confirmed_sel = self.compute_selection();
+            }
+            self.anchor = None;
         }
     }
 }

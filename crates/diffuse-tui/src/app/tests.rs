@@ -2134,7 +2134,6 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
     state.render_frame(80, 30);
     let vh = state.viewport_height;
     let track_h = state.screen_height;
-    let header_offset = state.last_viewport_start;
     state.scroll_to_visual(20);
     state.render_frame(80, 30);
     let scrolled = state.scroll;
@@ -2143,16 +2142,18 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
         "must be scrolled into the interior, got {scrolled}"
     );
     let cw = state.last_content_width;
-    let (_, _, _, total) = state.visual_geometry(cw);
+    let (counts, _, _, total) = state.visual_geometry(cw);
+    let header_vis = counts.first().copied().unwrap_or(1);
     let max_scroll = total.saturating_sub(vh);
 
-    // Clicking the thumb row seeks exactly like a track click: the mapping
-    // uses the viewport-relative row and viewport height.
-    let thumb_row = header_offset + vh / 2;
-    let row_relative = thumb_row.saturating_sub(header_offset);
-    let want = AppState::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
+    // Clicking the track seeks exactly according to the formula: the mapping
+    // uses the pointer row on the full-height scrollbar track.
+    let (thumb_off, _) = AppState::scrollbar_thumb_for(track_h, vh, total, scrolled, header_vis)
+        .expect("scrollbar must apply");
+    let track_row = if thumb_off > 2 { 1 } else { track_h - 2 };
+    let want = AppState::scrollbar_scroll_for_row(track_h, vh, total, header_vis, track_row);
     state.execute(TuiCommand::MouseClick {
-        row: thumb_row,
+        row: track_row,
         col: cw,
         shift: false,
     });
@@ -2162,7 +2163,7 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
     );
     assert_eq!(
         state.scroll, want,
-        "bar-column click must seek to the pointer row"
+        "bar-column click on empty track must seek to the pointer row"
     );
 
     state.execute(TuiCommand::MouseClick {
@@ -2184,6 +2185,87 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
 }
 
 #[test]
+fn test_scrollbar_click_on_thumb_does_not_snap() {
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,60 @@\n-old\n");
+    for i in 1..=60 {
+        diff.push_str(&format!("+line {i}\n"));
+    }
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.render_frame(80, 30);
+    let vh = state.viewport_height;
+    let track_h = state.screen_height;
+    state.scroll_to_visual(20);
+    state.render_frame(80, 30);
+    let scrolled = state.scroll;
+    assert_eq!(scrolled, 20);
+    let cw = state.last_content_width;
+    let (counts, _, _, total) = state.visual_geometry(cw);
+    let header_vis = counts.first().copied().unwrap_or(1);
+    let (thumb_off, thumb_size) =
+        AppState::scrollbar_thumb_for(track_h, vh, total, scrolled, header_vis)
+            .expect("scrollbar must apply");
+    assert!(thumb_size >= 3, "need thumb size of at least 3 rows");
+
+    // Click near the bottom of the thumb (low on the thumb)
+    let click_row = thumb_off + thumb_size - 1;
+    state.execute(TuiCommand::MouseClick {
+        row: click_row,
+        col: cw,
+        shift: false,
+    });
+
+    assert!(
+        state.is_dragging_scrollbar,
+        "click must start scrollbar drag"
+    );
+    assert_eq!(
+        state.scrollbar_drag_grab,
+        Some(thumb_size - 1),
+        "grab offset must record distance from thumb top"
+    );
+    assert_eq!(
+        state.scroll, 20,
+        "clicking on the thumb must not adjust scroll position (no snap)"
+    );
+
+    // Dragging down by 1 row moves thumb by 1 offset
+    state.execute(TuiCommand::MouseDrag {
+        row: click_row + 1,
+        col: cw,
+        shift: false,
+    });
+    let want_offset = thumb_off + 1;
+    let want_scroll =
+        AppState::scrollbar_scroll_for_offset(track_h, vh, total, header_vis, want_offset);
+    assert_eq!(
+        state.scroll, want_scroll,
+        "dragging must move relative to grab offset"
+    );
+
+    // Releasing clears drag and grab state
+    state.execute(TuiCommand::EndMouseDrag);
+    assert!(!state.is_dragging_scrollbar);
+    assert_eq!(state.scrollbar_drag_grab, None);
+
+    // Clicking outside the thumb on the track (at top row 0) MUST snap immediately
+    assert!(thumb_off > 0);
+    state.execute(TuiCommand::MouseClick {
+        row: 0,
+        col: cw,
+        shift: false,
+    });
+    assert!(state.is_dragging_scrollbar);
+    assert_eq!(state.scroll, 0, "clicking on empty track must snap");
+}
+
+#[test]
 fn test_scrollbar_drag_follows_formula_monotonically() {
     // Dragging maps pointer rows to scrolls exactly, monotonically, with
     // exact extremes — no flats, no jumps.
@@ -2202,21 +2284,25 @@ fn test_scrollbar_drag_follows_formula_monotonically() {
     state.render_frame(80, 24);
     let vh = state.viewport_height;
     let track_h = state.screen_height;
-    let header_offset = state.last_viewport_start;
     state.scroll_to_visual(20);
     state.render_frame(80, 24);
     assert!(state.scroll > 0, "must be scrolled into the interior");
     let cw = state.last_content_width;
-    let (_, _, _, total) = state.visual_geometry(cw);
+    let (counts, _, _, total) = state.visual_geometry(cw);
+    let header_vis = counts.first().copied().unwrap_or(1);
     let max_scroll = total.saturating_sub(vh);
     assert!(max_scroll >= track_h, "need room for a strict sweep");
 
+    let (thumb_off, _) =
+        AppState::scrollbar_thumb_for(track_h, vh, total, state.scroll, header_vis)
+            .expect("scrollbar must apply");
     state.execute(TuiCommand::MouseClick {
-        row: track_h / 2,
+        row: thumb_off,
         col: cw,
         shift: false,
     });
     assert!(state.is_dragging_scrollbar);
+    assert_eq!(state.scrollbar_drag_grab, Some(0));
 
     let mut prev = usize::MAX;
     let mut first = true;
@@ -2226,8 +2312,7 @@ fn test_scrollbar_drag_follows_formula_monotonically() {
             col: cw,
             shift: false,
         });
-        let row_relative = r.saturating_sub(header_offset);
-        let want = AppState::scrollbar_scroll_for_row(vh, max_scroll, row_relative);
+        let want = AppState::scrollbar_scroll_for_offset(track_h, vh, total, header_vis, r);
         assert_eq!(
             state.scroll, want,
             "drag to row {r} must follow the formula"
@@ -2299,6 +2384,80 @@ fn test_scrollbar_drag_extremes_from_any_grab() {
     assert_eq!(
         state.scroll, max_scroll,
         "last row must yield max scroll from any grab"
+    );
+}
+
+#[test]
+fn test_scrollbar_touch_scroll_inverts_and_scales_speed() {
+    let mut diff =
+        String::from("diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,100 @@\n-old\n");
+    for i in 1..=100 {
+        diff.push_str(&format!("+line {i}\n"));
+    }
+    let out = run_pipeline_full(&diff, None, None, PipelineOptions::default());
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.render_frame(50, 20);
+    let cw = state.last_content_width;
+    let track_h = state.screen_height;
+    let vh = state.viewport_height;
+    let (_, _, _, total_vis) = state.cached_geometry_tuple(cw);
+    let expected_step = AppState::scrollbar_step(track_h, vh, total_vis, 3);
+
+    assert_eq!(state.scroll, 0);
+
+    // In scrollbar column (col >= cw), MouseScrollUp (finger moving down on mobile
+    // touch) scrolls DOWN by the scaled track step:
+    state.execute(TuiCommand::MouseScrollUp {
+        n: 3,
+        row: 10,
+        col: cw,
+    });
+    assert_eq!(state.scroll, expected_step);
+
+    // In penultimate column (col == cw - 1), MouseScrollDown also operates the
+    // scrollbar during drag gestures:
+    state.execute(TuiCommand::MouseScrollDown {
+        n: 3,
+        row: 10,
+        col: cw.saturating_sub(1),
+    });
+    assert_eq!(state.scroll, 0);
+
+    // In content area further in (col < cw - 1), normal viewport scrolling applies:
+    state.execute(TuiCommand::MouseScrollDown {
+        n: 3,
+        row: 10,
+        col: cw.saturating_sub(2),
+    });
+    assert_eq!(state.scroll, 3);
+
+    // Tapping / clicking in the penultimate column (col == cw - 1) must NOT
+    // activate scrollbar dragging:
+    state.execute(TuiCommand::MouseClick {
+        row: 10,
+        col: cw.saturating_sub(1),
+        shift: false,
+    });
+    assert!(
+        !state.is_dragging_scrollbar,
+        "clicking penultimate column must not be treated as scrollbar"
+    );
+
+    // Tapping / clicking in the scrollbar column (col >= cw) DOES activate
+    // scrollbar:
+    state.execute(TuiCommand::MouseClick {
+        row: 10,
+        col: cw,
+        shift: false,
+    });
+    assert!(
+        state.is_dragging_scrollbar,
+        "clicking scrollbar column must activate scrollbar"
     );
 }
 
