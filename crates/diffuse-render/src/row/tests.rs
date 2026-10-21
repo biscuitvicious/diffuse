@@ -100,11 +100,10 @@ fn test_styled_prefix_group_and_non_group() {
     assert_eq!(crate::ansi::strip_ansi(&s_aux_add), " 140~+");
     assert!(s_aux_add.contains(&theme.palette.mod_gutter_icon.fg_code()));
     assert!(s_aux_add.contains(&theme.palette.add_gutter_icon.fg_code()));
-    // Aux numbers carry the anchor's number color so the block reads as
-    // one unit; the ~+ icon (not the number) signals the add.
+    // Aux add numbers use standard add number color (green)
     assert!(
-        s_aux_add.starts_with(&theme.palette.mod_gutter_num.fg_code()),
-        "aux add number must match anchor number color: {s_aux_add:?}"
+        s_aux_add.starts_with(&theme.palette.add_gutter_num.fg_code()),
+        "aux add number must match standard add number color: {s_aux_add:?}"
     );
 
     // Group aux del row has ~- (" 140~-")
@@ -121,13 +120,14 @@ fn test_styled_prefix_group_and_non_group() {
     assert_eq!(crate::ansi::strip_ansi(&s_aux_del), " 140~-");
     assert!(s_aux_del.contains(&theme.palette.mod_gutter_icon.fg_code()));
     assert!(s_aux_del.contains(&theme.palette.del_gutter_icon.fg_code()));
+    // Aux del numbers use standard del number color (red) in italic style
     assert!(
-        s_aux_del.starts_with(&theme.palette.mod_gutter_num.fg_code()),
-        "aux del number must replicate the anchor number style: {s_aux_del:?}"
+        s_aux_del.starts_with(&theme.palette.del_gutter_num.italic_fg_code()),
+        "aux del number must use standard del number color in italic style: {s_aux_del:?}"
     );
     assert!(
-        !s_aux_del.contains("\x1b[3m") && !s_aux_del.contains("\x1b[3;"),
-        "aux del number must not be italic like standalone dels: {s_aux_del:?}"
+        s_aux_del.contains("\x1b[23m"),
+        "aux del must turn off italic after line number: {s_aux_del:?}"
     );
 }
 

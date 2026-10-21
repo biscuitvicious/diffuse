@@ -142,22 +142,17 @@ pub fn styled_prefix(
         Some(RowGroup::Aux { .. }) => match kind {
             RowKind::Add => {
                 let pad = pad4_bytes(new_line, &mut buf);
-                // Aux numbers share the anchor's number color so the block
-                // reads as one unit; the ~+ icons carry the add signal.
-                let num_fg = theme.palette.mod_gutter_num.fg_code();
+                let num_fg = theme.palette.add_gutter_num.fg_code();
                 let mod_fg = theme.palette.mod_gutter_icon.fg_code();
                 let add_fg = theme.palette.add_gutter_icon.fg_code();
                 format!("{num_fg}{pad}{mod_fg}~{add_fg}+{FG_RESET}\x1b[23m")
             }
             RowKind::Del => {
                 let pad = pad4_bytes(old_line, &mut buf);
-                // Aux numbers replicate the anchor number style exactly
-                // (no del italic): the block reads as one unit, with the
-                // ~- icons carrying the del signal.
-                let num_fg = theme.palette.mod_gutter_num.fg_code();
+                let num_fg = theme.palette.del_gutter_num.italic_fg_code();
                 let mod_fg = theme.palette.mod_gutter_icon.fg_code();
                 let del_fg = theme.palette.del_gutter_icon.fg_code();
-                format!("{num_fg}{pad}{mod_fg}~{del_fg}-{FG_RESET}\x1b[23m")
+                format!("{num_fg}{pad}\x1b[23m{mod_fg}~{del_fg}-{FG_RESET}\x1b[23m")
             }
             _ => {
                 let pad = pad4_bytes(new_line.or(old_line), &mut buf);
