@@ -734,19 +734,50 @@ impl<'a> AlignmentTape<'a> {
             }
         }
 
-        // Level B defense-in-depth: Delimiter Container Invariance.
+        // Level B defense-in-depth: Delimiter Container Invariance & Subword Cohesion.
         // Purge any matched pair where both tokens sit inside active but
         // mismatched delimiter containers (e.g. `()` vs `{}` or `[]` vs `()`).
-        // Matching them across mismatched containers would slice the containers
-        // open and interleave their delimiters in the emitted tape.
+        // Also purge any subword match with discordant boundary context across
+        // differing container depths or enclosing containers, which would slice
+        // compound identifiers open across container boundaries.
         let c_old =
             diffuse_algo::track_enclosing_containers(&ot, &diffuse_algo::AsciiDelimiterClassifier);
         let c_new =
             diffuse_algo::track_enclosing_containers(&nt, &diffuse_algo::AsciiDelimiterClassifier);
+        let d_old = diffuse_algo::track_nesting_depths_with_prev(
+            &[],
+            &ot,
+            &diffuse_algo::AsciiDelimiterClassifier,
+        );
+        let d_new = diffuse_algo::track_nesting_depths_with_prev(
+            &[],
+            &nt,
+            &diffuse_algo::AsciiDelimiterClassifier,
+        );
         sorted_pairs.retain(|&(oi, ni)| {
             let ca = c_old[oi].and_then(crate::token::ContainerKind::from_id);
             let cb = c_new[ni].and_then(crate::token::ContainerKind::from_id);
-            crate::token::ContainerKind::is_compatible_with(ca, cb)
+            if !crate::token::ContainerKind::is_compatible_with(ca, cb) {
+                return false;
+            }
+            if crate::lcs::is_subword_token(ot[oi]) {
+                let la = oi > 0
+                    && crate::lcs::is_subword_token(ot[oi - 1])
+                    && crate::lcs::are_contiguous_subwords(ot[oi - 1], ot[oi]);
+                let ra = oi + 1 < ot.len()
+                    && crate::lcs::is_subword_token(ot[oi + 1])
+                    && crate::lcs::are_contiguous_subwords(ot[oi], ot[oi + 1]);
+                let lb = ni > 0
+                    && crate::lcs::is_subword_token(nt[ni - 1])
+                    && crate::lcs::are_contiguous_subwords(nt[ni - 1], nt[ni]);
+                let rb = ni + 1 < nt.len()
+                    && crate::lcs::is_subword_token(nt[ni + 1])
+                    && crate::lcs::are_contiguous_subwords(nt[ni], nt[ni + 1]);
+                if (la != lb || ra != rb) && (d_old[oi] != d_new[ni] || ca != cb) {
+                    return false;
+                }
+            }
+            true
         });
 
         let mut old_tok_idx = 0usize;

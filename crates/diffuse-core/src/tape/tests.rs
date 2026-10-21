@@ -691,3 +691,31 @@ fn test_tape_uncrosses_interleaved_delimiter_chunks() {
     assert_eq!(del_runs, vec!["[idx]"]);
     assert_eq!(add_runs, vec!["(idx)"]);
 }
+
+#[test]
+fn test_subword_not_matched_to_split_identifier() {
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let old = "    self.scroll_to_visual(self.scroll.saturating_sub(n));";
+    let new = "    self.on_mouse_scroll(true, n, row, col);";
+
+    let tape = AlignmentTape::from_texts(old, new, profile);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    let runs = tape.to_merged_runs();
+
+    // `on_mouse_scroll` must remain intact as a whole token, not split into
+    // `on_mouse_` and `scroll`
+    assert!(
+        runs.iter()
+            .any(|r| r.kind == RunKind::Add && r.text == "on_mouse_scroll"),
+        "on_mouse_scroll must remain intact as a complete added identifier: {:#?}",
+        runs
+    );
+    assert!(
+        !runs
+            .iter()
+            .any(|r| r.kind == RunKind::Add && r.text == "on_mouse_"),
+        "on_mouse_scroll must not be split on subword scroll: {:#?}",
+        runs
+    );
+}

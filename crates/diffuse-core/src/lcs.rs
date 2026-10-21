@@ -1042,6 +1042,24 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
                 if !crate::token::ContainerKind::is_compatible_with(ca, cb) {
                     continue;
                 }
+
+                if is_subword_token(a[i]) {
+                    let la = i > 0
+                        && is_subword_token(a[i - 1])
+                        && are_contiguous_subwords(a[i - 1], a[i]);
+                    let ra = i + 1 < n
+                        && is_subword_token(a[i + 1])
+                        && are_contiguous_subwords(a[i], a[i + 1]);
+                    let lb = j > 0
+                        && is_subword_token(b[j - 1])
+                        && are_contiguous_subwords(b[j - 1], b[j]);
+                    let rb = j + 1 < m
+                        && is_subword_token(b[j + 1])
+                        && are_contiguous_subwords(b[j], b[j + 1]);
+                    if (la != lb || ra != rb) && (depth_a[i] != depth_b[j] || ca != cb) {
+                        continue;
+                    }
+                }
                 let is_ws = token_is_ws(a[i]);
                 let depth_matched = depth_a[i] == depth_b[j];
                 let next_rl = if is_ws { 0 } else { run_len[idx(i + 1, j + 1)] };
