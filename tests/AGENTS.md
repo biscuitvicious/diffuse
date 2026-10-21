@@ -43,6 +43,7 @@ discipline for any change in golden output.
 | `fn-return-tail` | ✅ | ✅ | Provisional | Return type slot pairing and trailing delimiter boundary alignment (pending full review) |
 | `osc11-query-gate` | ✅ | ✅ | Provisional | Terminal mode query gating and interactive reflow expansion (pending full review) |
 | `linenum-u32` | ✅ | ✅ | Provisional | Primitive line numbers and non-zero constructor preconditions refactoring (pending full review) |
+| `scrollbar-grab-drag` | ✅ | ✅ | Provisional | Scrollbar grab drag, 12% min size, touch velocity scaling, and dispatch extraction (pending full review) |
 
 The terminal render walk in [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.dark.txt`, `.render.light.txt`, and

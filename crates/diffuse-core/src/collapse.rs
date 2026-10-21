@@ -403,6 +403,36 @@ pub fn collapse_hunk_rows(
         assert_collapsed_reflow_invariants(&res, profile).err()
     );
 
+    crate::invariant!(
+        assert_collapsed_reflow_invariants(&res, profile).is_ok(),
+        "Collapsed rows must satisfy reflow group invariants: {:?}",
+        assert_collapsed_reflow_invariants(&res, profile).err()
+    );
+
+    crate::invariant!(
+        check_no_orphaned_continuation_dels(h, &res).is_ok(),
+        "{}",
+        check_no_orphaned_continuation_dels(h, &res)
+            .err()
+            .unwrap_or_default()
+    );
+
+    crate::invariant!(
+        check_context_old_line_monotonicity(&res).is_ok(),
+        "{}",
+        check_context_old_line_monotonicity(&res)
+            .err()
+            .unwrap_or_default()
+    );
+
+    crate::invariant!(
+        check_del_add_topological_order(h, &res).is_ok(),
+        "{}",
+        check_del_add_topological_order(h, &res)
+            .err()
+            .unwrap_or_default()
+    );
+
     res
 }
 
@@ -1789,6 +1819,20 @@ pub fn pass_filter_reflows(
     let mut used_dels: FxHashSet<usize> = FxHashSet::default();
     let mut used_adds: FxHashSet<usize> = FxHashSet::default();
 
+    // Precompute cluster identifier per row in `h.rows`. Rows separated by
+    // `Row::Ctx` belong to different clusters; reflow pairs must never cross
+    // context boundaries.
+    let mut cluster_id = 0usize;
+    let mut row_cluster: Vec<usize> = Vec::with_capacity(h.rows.len());
+    for r in &h.rows {
+        if matches!(r, Row::Ctx(_)) {
+            cluster_id += 1;
+            row_cluster.push(usize::MAX);
+        } else {
+            row_cluster.push(cluster_id);
+        }
+    }
+
     for &ai in &candidate_adds {
         let a = &h.rows[ai];
         let at = a.text().trim();
@@ -1797,6 +1841,9 @@ pub fn pass_filter_reflows(
         }
         for &di in &candidate_dels {
             if used_dels.contains(&di) {
+                continue;
+            }
+            if row_cluster[ai] != row_cluster[di] || row_cluster[ai] == usize::MAX {
                 continue;
             }
             if h.rows[di].text() == a.text() {
@@ -1856,11 +1903,21 @@ pub fn pass_filter_reflows(
         })
         .collect();
 
-    ReflowFilter {
+    let result = ReflowFilter {
         meaningful_dels: meaningful,
         kept_adds,
         reflow_ctx,
-    }
+    };
+
+    crate::ensure!(
+        check_reflow_cluster_confinement(h, &result).is_ok(),
+        "{}",
+        check_reflow_cluster_confinement(h, &result)
+            .err()
+            .unwrap_or_default()
+    );
+
+    result
 }
 
 /// Pass 4: Keyed anchor sorting into the final visual row stream.
@@ -2331,6 +2388,214 @@ fn assert_collapsed_reflow_invariants(
                 "Orphan aux row {i} (line {:?}) pointing to non-existent anchor {anchor}",
                 r.new_line().or_else(|| r.old_line())
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Contract Invariant 1: Reflow Cluster Confinement.
+///
+/// Standalone del/add pairs synthesized into `reflow_ctx` must come from the
+/// same change cluster in `h`: there must be no intervening `Row::Ctx` in
+/// `h.rows` between the original deletion and addition.
+pub fn check_reflow_cluster_confinement(h: &Hunk, reflow: &ReflowFilter) -> Result<(), String> {
+    for r in &reflow.reflow_ctx {
+        let (Some(d_num), Some(a_num)) = (r.old_line(), r.new_line()) else {
+            continue;
+        };
+        let di = h.rows.iter().position(|row| row.old_line() == Some(d_num));
+        let ai = h.rows.iter().position(|row| row.new_line() == Some(a_num));
+        if let (Some(d_idx), Some(a_idx)) = (di, ai) {
+            let (min_idx, max_idx) = (d_idx.min(a_idx), d_idx.max(a_idx));
+            for i in (min_idx + 1)..max_idx {
+                if matches!(h.rows[i], Row::Ctx(_)) {
+                    return Err(format!(
+                        "Reflow pair (old line {d_num}, new line {a_num}) crosses intervening context line at raw hunk row {i} (old {:?}, new {:?}): {:?}",
+                        h.rows[i].old_line(),
+                        h.rows[i].new_line(),
+                        h.rows[i].text()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Contract Invariant 2: Syntactic Continuation Continuity.
+///
+/// A standalone or orphaned deletion sequence in the visual row stream must
+/// not start with a syntactic continuation operator (e.g. `&&`, `||`, access
+/// `.`, `,`, `)`, `}`) if its syntactic parent line in the old file (`d_old -
+/// 1`) was also deleted in the diff.
+pub fn check_no_orphaned_continuation_dels(h: &Hunk, res: &[Row]) -> Result<(), String> {
+    for (i, r) in res.iter().enumerate() {
+        let Row::Del(d) = r else {
+            continue;
+        };
+        // Only inspect the head of a deletion run
+        if i > 0 && matches!(res[i - 1], Row::Del(_) | Row::AuxDel { .. }) {
+            continue;
+        }
+        let t = d.text.trim_start();
+        let is_continuation = t.starts_with("&&")
+            || t.starts_with("||")
+            || (t.starts_with('.') && !t.starts_with(".."));
+        if is_continuation {
+            let prev_old = d.num.saturating_sub(1);
+            // Walk backwards in res to see if a context line intervened between prev_old
+            // and d.
+            let mut ctx_intervened = false;
+            for prev in res[..i].iter().rev() {
+                if matches!(prev, Row::Ctx(_)) {
+                    ctx_intervened = true;
+                    break;
+                }
+                if let Some(ol) = prev.old_line()
+                    && ol <= prev_old {
+                        // Found a non-context row at or before prev_old in the same change cluster.
+                        break;
+                    }
+            }
+            if ctx_intervened {
+                let prev_was_del_in_hunk = h
+                    .rows
+                    .iter()
+                    .any(|row| matches!(row, Row::Del(d0) if d0.num == prev_old));
+                if prev_was_del_in_hunk {
+                    return Err(format!(
+                        "Orphaned continuation deletion at visual row {i} (old line {}): {:?} (syntactic parent old line {prev_old} was deleted in the hunk but separated across context lines from its continuation)",
+                        d.num,
+                        d.text.trim()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Contract Invariant 3: Context-Relative Old-Line Monotonicity.
+///
+/// Context lines represent immutable checkpoints present in both old and new
+/// files. In the visual stream, for every context row C with old line C_old:
+/// 1. Every row before C with an old line must satisfy old < C_old.
+/// 2. Every row after C with an old line must satisfy old > C_old.
+pub fn check_context_old_line_monotonicity(res: &[Row]) -> Result<(), String> {
+    for (i, r) in res.iter().enumerate() {
+        let Row::Ctx(c) = r else {
+            continue;
+        };
+        let c_old = c.old_pos;
+        for (j, prev) in res[..i].iter().enumerate() {
+            if let Some(old) = prev.old_line()
+                && old >= c_old
+            {
+                return Err(format!(
+                    "Monotonicity violation: row at visual index {j} has old line {old} >= context line at visual index {i} with old line {c_old} (row: {:?}, context: {:?})",
+                    prev.text().trim(),
+                    c.text.trim()
+                ));
+            }
+        }
+        for (j, next) in res[i + 1..].iter().enumerate() {
+            let actual_idx = i + 1 + j;
+            if let Some(old) = next.old_line()
+                && old <= c_old
+            {
+                return Err(format!(
+                    "Monotonicity violation: row at visual index {actual_idx} has old line {old} <= context line at visual index {i} with old line {c_old} (row: {:?}, context: {:?})",
+                    next.text().trim(),
+                    c.text.trim()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Contract Invariant 4: Addition Block Structural Non-Penetration (Topological
+/// Del/Add Invariant).
+///
+/// In a raw diff cluster where deletions precede additions, an unpaired
+/// deletion from that cluster must not be placed after the additions of that
+/// cluster (or inside compound addition statements after opening delimiters).
+pub fn check_del_add_topological_order(h: &Hunk, res: &[Row]) -> Result<(), String> {
+    let segments = crate::cluster::partition_hunk_segments(h, None, None, None);
+    for seg in segments {
+        let crate::cluster::HunkSegment::Cluster(cluster) = seg else {
+            continue;
+        };
+        if cluster.old_rows.is_empty() || cluster.new_rows.is_empty() {
+            continue;
+        }
+        let raw_del_indices: Vec<usize> = cluster
+            .old_rows
+            .iter()
+            .filter_map(|r| r.old_line())
+            .filter_map(|num| h.rows.iter().position(|r| r.old_line() == Some(num)))
+            .collect();
+        let raw_add_indices: Vec<usize> = cluster
+            .new_rows
+            .iter()
+            .filter_map(|r| r.new_line())
+            .filter_map(|num| h.rows.iter().position(|r| r.new_line() == Some(num)))
+            .collect();
+
+        if raw_del_indices.is_empty() || raw_add_indices.is_empty() {
+            continue;
+        }
+        let max_raw_del = *raw_del_indices.iter().max().unwrap();
+        let min_raw_add = *raw_add_indices.iter().min().unwrap();
+
+        if max_raw_del < min_raw_add {
+            let cluster_dels: FxHashSet<u32> =
+                cluster.old_rows.iter().filter_map(Row::old_line).collect();
+            let cluster_adds: FxHashSet<u32> =
+                cluster.new_rows.iter().filter_map(Row::new_line).collect();
+
+            // Find all Mod rows in res that belong to this cluster
+            let cluster_mods: Vec<(u32, u32)> = res
+                .iter()
+                .filter_map(|r| match r {
+                    Row::Mod {
+                        old_line, new_line, ..
+                    } if cluster_dels.contains(&old_line.num)
+                        && cluster_adds.contains(&new_line.num) =>
+                    {
+                        Some((old_line.num, new_line.num))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            for (vi, r) in res.iter().enumerate() {
+                if let Row::Del(d) = r
+                    && cluster_dels.contains(&d.num)
+                {
+                    // Find the anchor new line for deletion d: the new line of the
+                    // latest Mod row in the cluster with old_line <= d.num.
+                    let d_anchor_new = cluster_mods
+                        .iter()
+                        .filter(|&&(old_num, _)| old_num <= d.num)
+                        .map(|&(_, new_num)| new_num)
+                        .max()
+                        .unwrap_or(0);
+
+                    for (vj, prev) in res[..vi].iter().enumerate() {
+                        if let Some(nl) = prev.new_line()
+                            && cluster_adds.contains(&nl)
+                            && matches!(prev, Row::Add(_)) && nl > d_anchor_new {
+                                return Err(format!(
+                                    "Topological del/add inversion: unpaired deletion at visual row {vi} (old line {}, anchor new {d_anchor_new}) appears after pure addition at visual row {vj} (new line {nl}): deletion {:?} after addition {:?}",
+                                    d.num,
+                                    d.text.trim(),
+                                    prev.text().trim()
+                                ));
+                            }
+                    }
+                }
+            }
         }
     }
     Ok(())

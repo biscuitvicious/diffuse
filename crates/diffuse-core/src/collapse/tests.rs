@@ -4,6 +4,7 @@
 
 use std::time::Instant;
 
+use super::*;
 use crate::{
     collapse::collapse_hunk_rows,
     merge::{RunKind, merged_runs},
@@ -2724,5 +2725,134 @@ fn test_multiline_expansion_universal_unicode_delimiters_no_profile() {
             .any(|r| r.kind == RunKind::Del && r.text == "（"),
         "aux must carry opening unicode bracket '（' right before content, got: {:?}",
         aux_runs
+    );
+}
+
+fn load_scrollbar_grab_drag_dispatch_hunk() -> Hunk {
+    let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let patch_path = manifest_dir.join("../../tests/golden/scrollbar-grab-drag/diff.patch");
+    let patch = std::fs::read_to_string(&patch_path).expect("patch must exist");
+    let files = crate::parse::parse_diff(&patch);
+    let dispatch = files
+        .iter()
+        .find(|f| f.path.contains("dispatch.rs"))
+        .expect("dispatch.rs must exist");
+    dispatch.hunks[1].clone()
+}
+
+#[test]
+fn test_dbc_invariant_1_reflow_cluster_confinement() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let p1 = crate::cluster::pairing::dp_pairing(&h, None, None, profile);
+    let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
+    let add_of: FxHashMap<usize, usize> = p1.pair_of.iter().map(|(&a, &d)| (d, a)).collect();
+    let pairing_ctx = PairingContext {
+        pair_of: &p1.pair_of,
+        add_of: &add_of,
+        run_of: &p1.run_of,
+        paired_dels: &paired_dels,
+        collapse_blocks: &p1.collapse_blocks,
+        expand_blocks: &p1.expand_blocks,
+    };
+    let p2 = pass_assemble_mods(&h, &pairing_ctx, profile);
+    let p3 = pass_filter_reflows(&h, &p2.out, &p2.kept_dels, &p2.pure_adds, profile);
+
+    check_reflow_cluster_confinement(&h, &p3).expect("Reflow cluster confinement violated");
+}
+
+#[test]
+fn test_dbc_invariant_2_no_orphaned_continuation_dels() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let res = collapse_hunk_rows(&h, None, None, profile);
+
+    check_no_orphaned_continuation_dels(&h, &res)
+        .expect("No orphaned continuation deletions violated");
+}
+
+#[test]
+fn test_dbc_invariant_3_context_old_line_monotonicity() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let res = collapse_hunk_rows(&h, None, None, profile);
+
+    check_context_old_line_monotonicity(&res).expect("Context old line monotonicity violated");
+}
+
+#[test]
+fn test_dbc_invariant_4_del_add_topological_order() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let res = collapse_hunk_rows(&h, None, None, profile);
+
+    check_del_add_topological_order(&h, &res).expect("Del/add topological order violated");
+}
+
+#[test]
+fn test_dbc_macro_invariant_1_reflow_cluster_confinement() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let p1 = crate::cluster::pairing::dp_pairing(&h, None, None, profile);
+    let paired_dels: FxHashSet<usize> = p1.pair_of.values().copied().collect();
+    let add_of: FxHashMap<usize, usize> = p1.pair_of.iter().map(|(&a, &d)| (d, a)).collect();
+    let pairing_ctx = PairingContext {
+        pair_of: &p1.pair_of,
+        add_of: &add_of,
+        run_of: &p1.run_of,
+        paired_dels: &paired_dels,
+        collapse_blocks: &p1.collapse_blocks,
+        expand_blocks: &p1.expand_blocks,
+    };
+    let p2 = pass_assemble_mods(&h, &pairing_ctx, profile);
+    let p3 = pass_filter_reflows(&h, &p2.out, &p2.kept_dels, &p2.pure_adds, profile);
+    crate::ensure!(
+        check_reflow_cluster_confinement(&h, &p3).is_ok(),
+        "{}",
+        check_reflow_cluster_confinement(&h, &p3)
+            .err()
+            .unwrap_or_default()
+    );
+}
+
+#[test]
+fn test_dbc_macro_invariant_2_no_orphaned_continuation_dels() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let res = collapse_hunk_rows(&h, None, None, profile);
+    crate::invariant!(
+        check_no_orphaned_continuation_dels(&h, &res).is_ok(),
+        "{}",
+        check_no_orphaned_continuation_dels(&h, &res)
+            .err()
+            .unwrap_or_default()
+    );
+}
+
+#[test]
+fn test_dbc_macro_invariant_3_context_old_line_monotonicity() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let res = collapse_hunk_rows(&h, None, None, profile);
+    crate::invariant!(
+        check_context_old_line_monotonicity(&res).is_ok(),
+        "{}",
+        check_context_old_line_monotonicity(&res)
+            .err()
+            .unwrap_or_default()
+    );
+}
+
+#[test]
+fn test_dbc_macro_invariant_4_del_add_topological_order() {
+    let h = load_scrollbar_grab_drag_dispatch_hunk();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let res = collapse_hunk_rows(&h, None, None, profile);
+    crate::invariant!(
+        check_del_add_topological_order(&h, &res).is_ok(),
+        "{}",
+        check_del_add_topological_order(&h, &res)
+            .err()
+            .unwrap_or_default()
     );
 }
