@@ -73,3 +73,27 @@ fn test_syntax_weighted_similarity_prioritizes_identifiers() {
         sim_unrelated
     );
 }
+
+// Keyword tokens — `self`, `true`, `false` included — must never count as
+// salient: salience is `is_al && !is_keyword` straight from `LangProfile`,
+// so keywords cannot inflate a pair's matched salient credit.
+#[test]
+fn keyword_tokens_are_never_salient() {
+    use crate::similarity::TokenInterner;
+
+    let rs = lang_profile("rs").unwrap();
+    let py = lang_profile("py").unwrap();
+    let mut interner = TokenInterner::default();
+
+    for (profile, keyword) in [(&rs, "true"), (&rs, "false"), (&rs, "self"), (&py, "self")] {
+        let id = interner.intern_with_profile(keyword, Some(profile));
+        assert!(
+            !interner.salient[id as usize],
+            "`{keyword}` is in the profile's KEYWORDS, so it must not be salient"
+        );
+    }
+
+    // Positive control: a plain identifier stays salient.
+    let id = interner.intern_with_profile("scrollbar", Some(rs));
+    assert!(interner.salient[id as usize]);
+}

@@ -42,21 +42,22 @@
 //!   much position may outvote text; see `Weights` for the calibration history
 //!   (δ 800→250, ε grid consensus at 500/500).
 //!
-//! Admission gates keep the bonuses honest: below 0.25 token similarity a
+//! Admission gates keep the bonuses honest: below 0.35 salient similarity a
 //! pair needs a structural claim (tail, property, head-word, containment),
 //! and zero-overlap pairs never form (`alpha();` vs `zzzzz = 42;` stays
 //! `Del` + `Add` even beside a `}`).
 //!
 //! Gate profile (see `Weights` threshold fields for detail):
 //!
-//! - **Ratio floors — 0.25 code, 0.35 comment, 0.65 comment-with-offset.** The
-//!   only gate that needs no structural claim at all. Tiers exist because
-//!   coincidence is cheap in prose: two comments share `//` plus ordinary
-//!   words, so a reordered comment pair (offset > 0) must clear 0.65, a
-//!   same-slot comment pair 0.35, while code needs only 0.25. Protects:
-//!   doc-comment truncation still pairs as `Mod`; prevents: rewritten comment
-//!   blocks pairing across offset drift, and the unrelated-tail zero-overlap
-//!   case.
+//! - **Ratio floors — 0.35 code, 0.35 comment, 0.65 comment-with-offset.** The
+//!   only gate that needs no structural claim at all. Salience counts
+//!   `alphanumeric && !keyword` content only, so the floor reads against the
+//!   line's identifier-bearing share: a code pair must agree on roughly a third
+//!   of it (`MIN_RATIO_CODE`); keyword scaffolding and punctuation never vote.
+//!   Coincidence is cheap in prose: a reordered comment pair (offset > 0) must
+//!   clear 0.65, a same-slot comment pair 0.35. Protects: doc-comment
+//!   truncation still pairs as `Mod`; prevents: rewritten comment blocks
+//!   pairing across offset drift, and the unrelated-tail zero-overlap case.
 //! - **Tail floor — 8 matched chars.** The delimiter-equality path and the
 //!   block-candidate pre-filters (`char_bound < 8`) refuse punctuation
 //!   coincidence: two shared quote marks (2 chars, as in the `",`
@@ -112,6 +113,32 @@ use super::{ChangeCluster, SyntaxSectionKind, classify_syntax_section};
 
 /// Maximum block size K for 1-to-K expansions and K-to-1 collapses.
 pub const MAX_BLOCK_K: usize = 10;
+
+/// Admission floors on the *salient* similarity ratio (matched salient chars
+/// over the larger side's salient chars). Salient content is
+/// `alphanumeric && !keyword`: whitespace, punctuation, and keywords never
+/// count, so ratios read higher than the legacy all-char scale and the code
+/// floor is correspondingly steeper. A code pair must clear a third of its
+/// salient content (`MIN_RATIO_CODE`); a comment pair still carries prose
+/// interjections on top of its anchor words, so its same-slot floor is the
+/// legacy 0.35 while a reordered (offset-drift) one must clear 0.65.
+pub const MIN_RATIO_CODE: f64 = 0.35;
+pub const MIN_RATIO_COMMENT: f64 = 0.35;
+pub const MIN_RATIO_COMMENT_OFFSET: f64 = 0.65;
+/// Floor for the char scale — the exact inverse of the salient regime: a
+/// pair where either line carries no salient tokens has no salient ratio,
+/// and is scored on non-whitespace chars instead. Calibrated at 0.20 by a
+/// full-corpus sweep of the frozen corpora:
+/// - 0.30 is inert — no accepted salient-free pair sits in (0.25, 0.30].
+/// - 0.20 admits exactly one reviewed improvement (`diffuse-history-mid`:
+///   `return &s[start_byte..start_byte];` ↔ `return "";` at 7/33) with zero
+///   degenerations.
+/// - 0.15 admits five further row-groups, all bare-brace/paren-shape absorption
+///   with at best neutral quality; 0.10 goes on to absorb structural tails into
+///   struck fill (`.round() as usize;` paired with a call terminator) and
+///   incomplete `import {` heads with full statements — degenerate. 0.20 is the
+///   floor: guard test pins 1/6 as rejection.
+pub const MIN_RATIO_CHAR_SCALE: f64 = 0.20;
 
 pub const DEFAULT_MIN_CONTAINMENT_LEN: usize = 8;
 
@@ -274,15 +301,25 @@ pub struct Weights {
     /// reflow (16 columns ≈ four indent levels): beyond that the two lines
     /// cannot plausibly be the same statement, however similar the tokens.
     pub max_indent_shift: usize,
-    /// Minimum matched-character floor for the delimiter-equality tail path
-    /// and the block-candidate pre-filters (8 chars): shared punctuation
-    /// alone (a `",` pair shares 2) is coincidence, not tail evidence.
-    pub min_tail_matched_chars: usize,
     /// Minimum content-match ratio across a 1-to-K expansion or K-to-1
     /// collapse (0.50): at least half the block's lines must share content
     /// tokens, so one anchor line cannot drag unrelated formatting lines
     /// into a block; unformatted stragglers stay plain adds/dels.
     pub min_block_line_coverage: f64,
+    /// Credit given to a matched salient token whose every occurrence is
+    /// buried inside a longer identifier on BOTH lines (0.6). A token that is
+    /// its identifier's full extent on either line earns full credit — that
+    /// is primary rename evidence — while one reused merely as a snake word
+    /// inside two unrelated identifiers (`is_dragging_scrollbar` vs
+    /// `on_scrollbar_click`) is weak evidence, and the discount pushes those
+    /// pairs back below the ratio floor.
+    ///
+    /// Calibrated by a 0.25–0.80 golden sweep: 0.6 alone revives the
+    /// strongest true-rename family (`MD_SGR_*` vs `SGR_*` imports) with no
+    /// false re-pairings; the first false one re-enters at 0.69, ahead of
+    /// the remaining true revivals (0.70+), and the `scrollbar` pair stays
+    /// demoted up to ~0.85.
+    pub embedded_salient_factor: f64,
 }
 
 impl Default for Weights {
@@ -301,8 +338,8 @@ impl Default for Weights {
             indent_penalty_factor: 5.0,
             min_containment_len: DEFAULT_MIN_CONTAINMENT_LEN,
             max_indent_shift: 16,
-            min_tail_matched_chars: 8,
             min_block_line_coverage: 0.50,
+            embedded_salient_factor: 0.6,
         }
     }
 }
@@ -344,12 +381,41 @@ pub struct DpSolution {
 /// The per-line tokenized form the DP works on: interned token ids, char
 /// lengths, and each content token's byte offset within the raw line (for
 /// later subword-span mapping in Phase 4).
+#[derive(Default)]
 pub struct DpTokens {
     ids: SmallVec<[u32; 16]>,
     chars: usize,
     token_chars: SmallVec<[usize; 16]>,
     token_mask: [u64; 4],
     token_multiset: SmallVec<[(u32, u16); 16]>,
+    salient_chars: usize,
+    salient_token_chars: SmallVec<[usize; 16]>,
+    salient_mask: [u64; 4],
+    salient_multiset: SmallVec<[(u32, u16); 16]>,
+    /// Salient occurrences that ARE their identifier's full extent on this
+    /// line (e.g. `Comment` in `TokenColor::Comment`); `(id, count)` pairs
+    /// sorted by id.
+    salient_anchored_multiset: SmallVec<[(u32, u16); 16]>,
+    /// Buried occurrences keyed by containing identifier: `(salient_id,
+    /// container_id, count)` sorted by `(salient_id, container_id)`. Burial
+    /// inside the SAME identifier on both lines (`Count` inside `CountKind`
+    /// twice) is shared vocabulary and earns full credit; burial inside
+    /// different identifiers (`scrollbar` in `is_dragging_scrollbar` vs
+    /// `on_scrollbar_click`) earns the discount.
+    salient_buried_containers: SmallVec<[(u32, u32, u16); 16]>,
+}
+
+#[inline]
+pub(crate) fn is_statement_head_keyword(word: &str, profile: Option<&LangProfile>) -> bool {
+    if let Some(p) = profile {
+        p.is_keyword(word)
+            && !matches!(
+                word,
+                "self" | "Self" | "this" | "super" | "true" | "false" | "null" | "None" | "nil"
+            )
+    } else {
+        false
+    }
 }
 
 #[inline(always)]
@@ -377,6 +443,94 @@ fn token_intersection_bound(a: &[(u32, u16)], b: &[(u32, u16)], char_lens: &[u32
         }
     }
     bound
+}
+
+/// Matched salient credit graded by identifier extent. `a`/`b` are the two
+/// lines' full salient multisets; `anchored_a`/`anchored_b` count only the
+/// occurrences that are their identifier's full extent on their side;
+/// `containers_a`/`containers_b` key each side's buried occurrences by
+/// containing identifier. Up to `min(count_a, count_b)` pairings of a shared
+/// id earn full credit while either side's anchored occurrences or a pair of
+/// equal containers can cover them; the remainder are occurrences buried
+/// inside DIFFERENT identifiers on the two lines — weak evidence, worth only
+/// `factor` of their chars.
+#[inline(always)]
+fn graded_salient_bound(
+    a: &[(u32, u16)],
+    b: &[(u32, u16)],
+    anchored_a: &[(u32, u16)],
+    anchored_b: &[(u32, u16)],
+    containers_a: &[(u32, u32, u16)],
+    containers_b: &[(u32, u32, u16)],
+    char_lens: &[u32],
+    factor: f64,
+) -> usize {
+    let mut i = 0;
+    let mut j = 0;
+    let mut ca = 0;
+    let mut cb = 0;
+    let mut ka = 0;
+    let mut kb = 0;
+    let mut credit = 0.0_f64;
+    while i < a.len() && j < b.len() {
+        let (id_a, count_a) = a[i];
+        let (id_b, count_b) = b[j];
+        if id_a == id_b {
+            let total = count_a.min(count_b);
+            while ca < anchored_a.len() && anchored_a[ca].0 < id_a {
+                ca += 1;
+            }
+            while cb < anchored_b.len() && anchored_b[cb].0 < id_b {
+                cb += 1;
+            }
+            // The pointer stops at the first entry >= the id: it counts
+            // only when that entry's id actually matches, never a later
+            // id's occurrences.
+            let anchored_count = |arr: &[(u32, u16)], ptr: usize, id: u32| {
+                arr.get(ptr).filter(|p| p.0 == id).map_or(0, |p| p.1)
+            };
+            // Buried occurrences covered by an equal container on the
+            // other side — shared vocabulary, full credit.
+            while ka < containers_a.len() && containers_a[ka].0 < id_a {
+                ka += 1;
+            }
+            while kb < containers_b.len() && containers_b[kb].0 < id_b {
+                kb += 1;
+            }
+            let mut container_full = 0;
+            let mut pa = ka;
+            let mut pb = kb;
+            while pa < containers_a.len()
+                && containers_a[pa].0 == id_a
+                && pb < containers_b.len()
+                && containers_b[pb].0 == id_b
+            {
+                match containers_a[pa].1.cmp(&containers_b[pb].1) {
+                    std::cmp::Ordering::Less => pa += 1,
+                    std::cmp::Ordering::Greater => pb += 1,
+                    std::cmp::Ordering::Equal => {
+                        container_full += containers_a[pa].2.min(containers_b[pb].2);
+                        pa += 1;
+                        pb += 1;
+                    }
+                }
+            }
+            let anchored = (anchored_count(anchored_a, ca, id_a)
+                + anchored_count(anchored_b, cb, id_b)
+                + container_full)
+                .min(total);
+            let buried = total - anchored;
+            let len = char_lens[id_a as usize] as f64;
+            credit += len * (f64::from(anchored) + factor * f64::from(buried));
+            i += 1;
+            j += 1;
+        } else if id_a < id_b {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    credit as usize
 }
 
 /// Strip trailing delimiters for prefix-containment checks, shared by the
@@ -476,7 +630,6 @@ pub(crate) fn mod_pair_needs_scoring(
     old_meta: &[DpRowMeta],
     new_meta: &[DpRowMeta],
     interner: &TokenInterner,
-    profile: Option<&LangProfile>,
     w: &Weights,
 ) -> bool {
     let ot = &old_tokens[i];
@@ -518,51 +671,48 @@ pub(crate) fn mod_pair_needs_scoring(
     let offset_diff = (i as isize - j as isize).unsigned_abs();
 
     let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
-        0.65
+        MIN_RATIO_COMMENT_OFFSET
     } else if om.comment || nm.comment {
-        0.35
+        MIN_RATIO_COMMENT
     } else {
-        0.25
+        MIN_RATIO_CODE
     };
-    let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-        if om.close_tail != CloseDelimiter::None && nm.close_tail != CloseDelimiter::None {
-            if let Some(p) = profile {
-                p.is_direct_tail_match(
-                    om.close_tail,
-                    nm.close_tail,
-                    max_matched,
-                    w.min_tail_matched_chars,
-                )
-            } else {
-                CloseDelimiter::default_is_direct_tail_match(
-                    om.close_tail,
-                    nm.close_tail,
-                    max_matched,
-                    w.min_tail_matched_chars,
-                )
-            }
-        } else if om.is_terminal_return && nm.is_terminal_return {
-            if indent_shift == 0 {
-                let has_common_indent = if om.indent == 0 || nm.indent == 0 {
-                    false
-                } else {
-                    calc_common_indent(cluster.old_rows[i].text(), cluster.new_rows[j].text()) > 0
-                };
-                if has_common_indent {
-                    true
-                } else {
-                    max_matched >= w.min_tail_matched_chars
-                }
-            } else {
-                max_matched >= w.min_tail_matched_chars
-            }
+    // Salient-free pairs score on the non-whitespace char scale, so they
+    // keep the legacy floor instead of the salient one.
+    let min_exact = if (om.comment || nm.comment) && offset_diff > 0 {
+        MIN_RATIO_COMMENT_OFFSET
+    } else if om.comment || nm.comment {
+        MIN_RATIO_COMMENT
+    } else {
+        MIN_RATIO_CHAR_SCALE
+    };
+    // The char scale is the exact inverse of the salient regime: with
+    // either line carrying no salient tokens the salient ratio is
+    // undefined, and the pair is scored on non-whitespace chars.
+    let is_char_scale_pair = ot.salient_chars == 0 || nt.salient_chars == 0;
+    let salient_bound = if mask_overlap(&ot.salient_mask, &nt.salient_mask) {
+        graded_salient_bound(
+            &ot.salient_multiset,
+            &nt.salient_multiset,
+            &ot.salient_anchored_multiset,
+            &nt.salient_anchored_multiset,
+            &ot.salient_buried_containers,
+            &nt.salient_buried_containers,
+            &interner.char_lens,
+            w.embedded_salient_factor,
+        )
+        .min(ot.salient_chars.min(nt.salient_chars))
+    } else {
+        0
+    };
+    let max_salient_similarity_ratio: Option<f64> =
+        if ot.salient_chars == 0 || nt.salient_chars == 0 {
+            None
         } else {
-            false
-        }
-    } else {
-        false
-    };
-    let max_similarity_ratio = max_matched as f64 / total as f64;
+            let total_salient = ot.salient_chars.max(nt.salient_chars);
+            Some(salient_bound as f64 / total_salient as f64)
+        };
+
     let same_indent_head_match = statement_head_match
         && indent_shift == 0
         && !om.comment
@@ -575,10 +725,20 @@ pub(crate) fn mod_pair_needs_scoring(
         && ((om.stripped_len >= w.min_containment_len && nm.stripped_len >= w.min_containment_len)
             || same_indent_head_match);
 
-    let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
-        || is_property_match
-        || statement_head_match
-        || could_be_tail_pair;
+    let is_return_slot = om.is_return_tail
+        && nm.is_return_tail
+        && indent_shift == 0
+        && om.slot_owner.is_some()
+        && om.slot_owner == nm.slot_owner;
+
+    let could_be_valid_mod_fast = if is_char_scale_pair {
+        (char_bound as f64 / total as f64) >= min_exact
+    } else {
+        max_salient_similarity_ratio.is_some_and(|r| r >= min_ratio)
+            || is_property_match
+            || is_return_slot
+            || (same_indent_head_match && om.head_is_keyword && nm.head_is_keyword)
+    };
 
     let mut is_prefix_containment = None;
     if !could_be_valid_mod_fast {
@@ -604,7 +764,7 @@ pub(crate) fn mod_pair_needs_scoring(
     } else {
         0.0
     };
-    let max_close = if could_be_tail_pair {
+    let max_close = if is_return_slot {
         w.slot_continuity_bonus
     } else {
         w.boundary_proximity_bonus * om.prox_close * nm.prox_close
@@ -653,6 +813,7 @@ const PAR_CANDIDATE_CHUNK_SIZE: usize = 256;
 /// Score all candidate pairs, in parallel past [`PAR_CANDIDATE_THRESHOLD`].
 /// Results are written into `matrix_out` (indexed via SkylineMatrix corridor)
 /// and `scores_out`.
+#[allow(clippy::too_many_arguments)]
 fn score_lcs_candidates(
     candidates: &[(usize, usize)],
     old_tokens: &[DpTokens],
@@ -660,18 +821,40 @@ fn score_lcs_candidates(
     interner: &TokenInterner,
     scores_out: &mut Vec<u32>,
     matrix_out: &mut SkylineMatrix<u32>,
+    salient_scores_out: &mut Vec<u32>,
+    salient_matrix_out: &mut SkylineMatrix<u32>,
 ) {
     if candidates.is_empty() {
         return;
     }
     if candidates.len() >= PAR_CANDIDATE_THRESHOLD {
-        score_lcs_candidates_par(candidates, old_tokens, new_tokens, interner, scores_out);
+        score_lcs_candidates_par(
+            candidates,
+            old_tokens,
+            new_tokens,
+            interner,
+            scores_out,
+            salient_scores_out,
+        );
     } else {
-        score_lcs_candidates_seq(candidates, old_tokens, new_tokens, interner, scores_out);
+        score_lcs_candidates_seq(
+            candidates,
+            old_tokens,
+            new_tokens,
+            interner,
+            scores_out,
+            salient_scores_out,
+        );
     }
-    for (&(i, j), &score) in candidates.iter().zip(scores_out.iter()) {
+    for (&(i, j), (&score, &sal_score)) in candidates
+        .iter()
+        .zip(scores_out.iter().zip(salient_scores_out.iter()))
+    {
         if let Some(cell) = matrix_out.get_mut(i, j) {
             *cell = score;
+        }
+        if let Some(cell) = salient_matrix_out.get_mut(i, j) {
+            *cell = sal_score;
         }
     }
 }
@@ -682,9 +865,12 @@ pub(crate) fn score_lcs_candidates_seq(
     new_tokens: &[DpTokens],
     interner: &TokenInterner,
     scores_out: &mut Vec<u32>,
+    salient_scores_out: &mut Vec<u32>,
 ) {
     scores_out.clear();
     scores_out.reserve(candidates.len());
+    salient_scores_out.clear();
+    salient_scores_out.reserve(candidates.len());
     let mut scratch: Vec<u64> = Vec::new();
     let mut curr_i = usize::MAX;
     let mut pat = SuffixPattern::Empty;
@@ -700,7 +886,19 @@ pub(crate) fn score_lcs_candidates_seq(
             &new_tokens[j].token_chars,
             &mut scratch,
         ) as u32;
+        let sal_score = if new_tokens[j].salient_chars > 0 {
+            pat.match_chars(
+                &new_tokens[j].ids,
+                &interner.ws,
+                &interner.alnum,
+                &new_tokens[j].salient_token_chars,
+                &mut scratch,
+            ) as u32
+        } else {
+            0
+        };
         scores_out.push(score);
+        salient_scores_out.push(sal_score);
     }
 }
 
@@ -710,38 +908,76 @@ pub(crate) fn score_lcs_candidates_par(
     new_tokens: &[DpTokens],
     interner: &TokenInterner,
     scores_out: &mut Vec<u32>,
+    salient_scores_out: &mut Vec<u32>,
 ) {
     scores_out.resize(candidates.len(), 0);
+    salient_scores_out.resize(candidates.len(), 0);
     candidates
         .par_chunks(PAR_CANDIDATE_CHUNK_SIZE)
         .zip(scores_out.par_chunks_mut(PAR_CANDIDATE_CHUNK_SIZE))
-        .for_each_init(Vec::<u64>::new, |scratch, (cand_chunk, score_chunk)| {
-            let mut curr_i = usize::MAX;
-            let mut pat = SuffixPattern::Empty;
-            for (&(i, j), score_out) in cand_chunk.iter().zip(score_chunk.iter_mut()) {
-                if i != curr_i {
-                    curr_i = i;
-                    pat = SuffixPattern::new(&old_tokens[i].ids);
+        .zip(salient_scores_out.par_chunks_mut(PAR_CANDIDATE_CHUNK_SIZE))
+        .for_each_init(
+            Vec::<u64>::new,
+            |scratch, ((cand_chunk, score_chunk), sal_chunk)| {
+                let mut curr_i = usize::MAX;
+                let mut pat = SuffixPattern::Empty;
+                for (&(i, j), (score_out, sal_score_out)) in cand_chunk
+                    .iter()
+                    .zip(score_chunk.iter_mut().zip(sal_chunk.iter_mut()))
+                {
+                    if i != curr_i {
+                        curr_i = i;
+                        pat = SuffixPattern::new(&old_tokens[i].ids);
+                    }
+                    *score_out = pat.match_chars(
+                        &new_tokens[j].ids,
+                        &interner.ws,
+                        &interner.alnum,
+                        &new_tokens[j].token_chars,
+                        scratch,
+                    ) as u32;
+                    *sal_score_out = if new_tokens[j].salient_chars > 0 {
+                        pat.match_chars(
+                            &new_tokens[j].ids,
+                            &interner.ws,
+                            &interner.alnum,
+                            &new_tokens[j].salient_token_chars,
+                            scratch,
+                        ) as u32
+                    } else {
+                        0
+                    };
                 }
-                *score_out = pat.match_chars(
-                    &new_tokens[j].ids,
-                    &interner.ws,
-                    &interner.alnum,
-                    &new_tokens[j].token_chars,
-                    scratch,
-                ) as u32;
-            }
-        });
+            },
+        );
 }
 
-pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
+pub fn dp_tokens(
+    interner: &mut TokenInterner,
+    text: &str,
+    profile: Option<&LangProfile>,
+) -> DpTokens {
     let mut ids: SmallVec<[u32; 16]> = SmallVec::new();
     let mut token_chars: SmallVec<[usize; 16]> = SmallVec::new();
     let mut token_mask = [0u64; 4];
     let mut chars = 0;
+
+    let mut salient_chars = 0;
+    let mut salient_token_chars: SmallVec<[usize; 16]> = SmallVec::new();
+    let mut salient_mask = [0u64; 4];
+    let mut salient_anchored_ids: SmallVec<[u32; 16]> = SmallVec::new();
+    let mut salient_buried_container_pairs: SmallVec<[(u32, u32); 16]> = SmallVec::new();
+
+    // Token slices tile the whole line — every byte belongs to exactly one
+    // token — so consumed length is the next token's start offset.
+    let mut offset = 0usize;
+    let continues_ident = |c: char| c.is_alphanumeric() || c == '_';
+
     crate::lcs::for_each_token(text, |t| {
+        let start = offset;
+        offset += t.len();
         if !t.trim().is_empty() {
-            let id = interner.intern(t);
+            let id = interner.intern_with_profile(t, profile);
             ids.push(id);
             let tc = crate::lcs::char_len(t);
             token_chars.push(tc);
@@ -749,6 +985,41 @@ pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
             if !interner.ws[id as usize] {
                 let bit = (id as usize) % 256;
                 token_mask[bit / 64] |= 1u64 << (bit % 64);
+            }
+            if interner.salient[id as usize] {
+                salient_chars += tc;
+                salient_token_chars.push(tc);
+                let bit = (id as usize) % 256;
+                salient_mask[bit / 64] |= 1u64 << (bit % 64);
+                // Identifier-extent anchor: a salient token that IS the
+                // maximal identifier run around it (Unicode alphanumerics
+                // plus `_`, mirroring the tokenizer's word runs) is an
+                // identifier of its own; one sharing that run with
+                // characters on either side is buried inside a longer
+                // identifier (snake/camel interior, stem, or suffix).
+                let end = start + t.len();
+                let mut ext_start = start;
+                while let Some(c) = text[..ext_start].chars().next_back() {
+                    if !continues_ident(c) {
+                        break;
+                    }
+                    ext_start -= c.len_utf8();
+                }
+                let mut ext_end = end;
+                while let Some(c) = text[ext_end..].chars().next() {
+                    if !continues_ident(c) {
+                        break;
+                    }
+                    ext_end += c.len_utf8();
+                }
+                if ext_start == start && ext_end == end {
+                    salient_anchored_ids.push(id);
+                } else {
+                    salient_buried_container_pairs
+                        .push((id, interner.intern(&text[ext_start..ext_end])));
+                }
+            } else {
+                salient_token_chars.push(0);
             }
         }
     });
@@ -768,12 +1039,60 @@ pub fn dp_tokens(interner: &mut TokenInterner, text: &str) -> DpTokens {
             token_multiset.push((id, 1));
         }
     }
+
+    let mut salient_ids: SmallVec<[u32; 16]> = ids
+        .iter()
+        .copied()
+        .filter(|&id| interner.salient[id as usize])
+        .collect();
+    salient_ids.sort_unstable();
+    let mut salient_multiset: SmallVec<[(u32, u16); 16]> = SmallVec::new();
+    for &id in &salient_ids {
+        if let Some(last) = salient_multiset.last_mut()
+            && last.0 == id
+        {
+            last.1 = last.1.saturating_add(1);
+        } else {
+            salient_multiset.push((id, 1));
+        }
+    }
+
+    let mut salient_anchored_multiset: SmallVec<[(u32, u16); 16]> = SmallVec::new();
+    salient_anchored_ids.sort_unstable();
+    for &id in &salient_anchored_ids {
+        if let Some(last) = salient_anchored_multiset.last_mut()
+            && last.0 == id
+        {
+            last.1 = last.1.saturating_add(1);
+        } else {
+            salient_anchored_multiset.push((id, 1));
+        }
+    }
+    let mut salient_buried_containers: SmallVec<[(u32, u32, u16); 16]> = SmallVec::new();
+    salient_buried_container_pairs.sort_unstable();
+    for &(id, container) in &salient_buried_container_pairs {
+        if let Some(last) = salient_buried_containers.last_mut()
+            && last.0 == id
+            && last.1 == container
+        {
+            last.2 = last.2.saturating_add(1);
+        } else {
+            salient_buried_containers.push((id, container, 1));
+        }
+    }
+
     DpTokens {
         ids,
         chars,
         token_chars,
         token_mask,
         token_multiset,
+        salient_chars,
+        salient_token_chars,
+        salient_mask,
+        salient_multiset,
+        salient_anchored_multiset,
+        salient_buried_containers,
     }
 }
 
@@ -1516,7 +1835,6 @@ pub(crate) struct DpRowMeta {
     pub first_word: Option<u32>,
     pub indent: usize,
     pub stripped_len: usize,
-    pub close_dist: usize,
     pub prox_close: f64,
     pub prox_open: f64,
     pub is_reflow: bool,
@@ -1526,16 +1844,20 @@ pub(crate) struct DpRowMeta {
     pub property_key: Option<u32>,
     pub close_tail: CloseDelimiter,
     pub exact_close: CloseDelimiter,
-    pub is_terminal_return: bool,
     /// First word is a language keyword (`use`, `let`, …): the line has a
     /// genuine statement head (prose and macro/identifier heads do not).
     /// Gates the same-indent head bonus.
     pub head_is_keyword: bool,
-    /// Function-tail return position (`) -> T`): pairing two of these at
-    /// equal indent is a structural slot claim, scored with the slot bonus.
-    /// Set from `LangProfile::is_return_tail_position`; silent without a
-    /// profile or for languages that opt out.
+    /// Return-slot tail (`-> T {` opening a function body): pairing two of
+    /// these at equal indent is a structural slot claim, scored with the
+    /// slot bonus. Set from `LangProfile::is_return_tail_position`; silent
+    /// without a profile or for languages that opt out.
     pub is_return_tail: bool,
+    /// The current function in context, interned: the line's own function
+    /// name capture when the signature head sits on the line, else the
+    /// nearest capture in the preceding context (a wrapped signature). The
+    /// slot claim requires both sides to agree on it.
+    pub slot_owner: Option<u32>,
     /// Verbatim twin survives elsewhere with multiplicity intact: pairing
     /// this del as `Mod` pays `Weights::survives_elsewhere_penalty`.
     pub survives_in_new: bool,
@@ -1568,8 +1890,10 @@ pub struct DpScratchArena {
     pub(crate) lcs_scratch: Vec<u64>,
     grid: SkylineMatrix<Cell>,
     precomputed_lcs: SkylineMatrix<u32>,
+    precomputed_salient_lcs: SkylineMatrix<u32>,
     lcs_candidates: Vec<(usize, usize)>,
     lcs_scores: Vec<u32>,
+    lcs_salient_scores: Vec<u32>,
     pub(crate) anchor_token_ids: Vec<u32>,
     pub(crate) old_anchor_ranges: Vec<(usize, usize, usize)>,
     pub(crate) new_anchor_ranges: Vec<(usize, usize, usize)>,
@@ -1631,6 +1955,7 @@ impl DpScratchArena {
         self.new_row_token_starts.clear();
         self.lcs_candidates.clear();
         self.lcs_scores.clear();
+        self.lcs_salient_scores.clear();
         self.anchor_token_ids.clear();
         self.old_anchor_ranges.clear();
         self.new_anchor_ranges.clear();
@@ -2110,7 +2435,7 @@ pub(crate) fn solve_cluster_matrix(
     for (i, r) in cluster.old_rows.iter().enumerate() {
         let text = r.text();
         let trimmed = text.trim();
-        let dt = dp_tokens(&mut arena.interner, text);
+        let dt = dp_tokens(&mut arena.interner, text, profile);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
         let first_word_str = if comment {
@@ -2121,8 +2446,7 @@ pub(crate) fn solve_cluster_matrix(
         } else {
             first_word(text)
         };
-        let head_is_keyword =
-            profile.is_some_and(|p| first_word_str.is_some_and(|w| p.is_keyword(w)));
+        let head_is_keyword = first_word_str.is_some_and(|w| is_statement_head_keyword(w, profile));
         let first_word = first_word_str.map(|w| arena.interner.intern(w));
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.old_close_dist[i];
@@ -2147,13 +2471,14 @@ pub(crate) fn solve_cluster_matrix(
             .map(|w| arena.interner.intern(w));
         let close_tail = classify_close(text);
         let exact_close = classify_exact(text);
-        let is_terminal_return = if let Some(p) = profile {
-            p.is_terminal_return_expr(text)
-        } else {
-            let t = text.trim();
-            !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
-        };
         let is_return_tail = profile.is_some_and(|p| p.is_return_tail_position(trimmed));
+        let slot_owner = is_return_tail
+            .then(|| {
+                profile
+                    .and_then(|p| p.current_fn_name(trimmed, &cluster.preceding_ctx))
+                    .map(|name| arena.interner.intern(name))
+            })
+            .flatten();
         let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
         let delim_delta = crate::collapse::line_delim_delta(text) as i16;
@@ -2166,7 +2491,6 @@ pub(crate) fn solve_cluster_matrix(
             first_word,
             indent,
             stripped_len,
-            close_dist,
             prox_close,
             prox_open,
             is_reflow,
@@ -2176,9 +2500,9 @@ pub(crate) fn solve_cluster_matrix(
             property_key,
             close_tail,
             exact_close,
-            is_terminal_return,
             head_is_keyword,
             is_return_tail,
+            slot_owner,
             survives_in_new: r
                 .old_line()
                 .is_some_and(|n| cluster.del_survival.contains(&n)),
@@ -2189,7 +2513,7 @@ pub(crate) fn solve_cluster_matrix(
     for (j, r) in cluster.new_rows.iter().enumerate() {
         let text = r.text();
         let trimmed = text.trim();
-        let dt = dp_tokens(&mut arena.interner, text);
+        let dt = dp_tokens(&mut arena.interner, text, profile);
         let comment = profile.is_some_and(|p| p.is_comment_line(text));
         let kind = classify_syntax_section(text, profile);
         let first_word_str = if comment {
@@ -2200,8 +2524,7 @@ pub(crate) fn solve_cluster_matrix(
         } else {
             first_word(text)
         };
-        let head_is_keyword =
-            profile.is_some_and(|p| first_word_str.is_some_and(|w| p.is_keyword(w)));
+        let head_is_keyword = first_word_str.is_some_and(|w| is_statement_head_keyword(w, profile));
         let first_word = first_word_str.map(|w| arena.interner.intern(w));
         let indent = text.len() - text.trim_start().len();
         let close_dist = arena.new_close_dist[j];
@@ -2226,13 +2549,14 @@ pub(crate) fn solve_cluster_matrix(
             .map(|w| arena.interner.intern(w));
         let close_tail = classify_close(text);
         let exact_close = classify_exact(text);
-        let is_terminal_return = if let Some(p) = profile {
-            p.is_terminal_return_expr(text)
-        } else {
-            let t = text.trim();
-            !t.is_empty() && (t.starts_with("return ") || t == "return;" || !t.ends_with(';'))
-        };
         let is_return_tail = profile.is_some_and(|p| p.is_return_tail_position(trimmed));
+        let slot_owner = is_return_tail
+            .then(|| {
+                profile
+                    .and_then(|p| p.current_fn_name(trimmed, &cluster.preceding_ctx))
+                    .map(|name| arena.interner.intern(name))
+            })
+            .flatten();
         let stripped_len = trim_trailing_delims(trimmed, profile).len();
         let trimmed_id = arena.interner.intern(trimmed);
         let delim_delta = crate::collapse::line_delim_delta(text) as i16;
@@ -2245,7 +2569,6 @@ pub(crate) fn solve_cluster_matrix(
             first_word,
             indent,
             stripped_len,
-            close_dist,
             prox_close,
             prox_open,
             is_reflow,
@@ -2255,14 +2578,22 @@ pub(crate) fn solve_cluster_matrix(
             property_key,
             close_tail,
             exact_close,
-            is_terminal_return,
             head_is_keyword,
             is_return_tail,
+            slot_owner,
             survives_in_new: false,
             delim_delta,
         });
     }
 
+    // No line-level return-slot affinity: whether a line is a complete
+    // terminal expression or a continuation fragment cannot be decided from
+    // the line and its neighbours alone. A `return` head can be an
+    // initializer, a `)`/`}` close can be an expression continuation, and
+    // multi-line string/comment state is not tracked. Content similarity,
+    // exact-delimiter tails, and the `) -> T` signature slot cover the
+    // structurally sound cases.
+    //
     // Return-tail slot claims require an unambiguous slot: exactly one
     // return tail on each side. Two same-shape tails must not claim each
     // other; they fall back to `Del` + `Add`.
@@ -2293,8 +2624,10 @@ pub(crate) fn solve_cluster_matrix(
             lcs_scratch,
             grid,
             precomputed_lcs,
+            precomputed_salient_lcs,
             lcs_candidates,
             lcs_scores,
+            lcs_salient_scores,
             ..
         } = arena;
 
@@ -2308,6 +2641,7 @@ pub(crate) fn solve_cluster_matrix(
         };
         grid.init_envelope(m, n, bounds, init_cell);
         precomputed_lcs.init_envelope(m, n, bounds, u32::MAX);
+        precomputed_salient_lcs.init_envelope(m, n, bounds, u32::MAX);
         if let Some(cell0) = grid.get_mut(0, 0) {
             cell0.score = 0.0;
         }
@@ -2361,13 +2695,7 @@ pub(crate) fn solve_cluster_matrix(
 
         precompute_valid_blocks(new_tokens, new_meta, new_row_token_starts, new_valid_blocks);
 
-        let dummy_tok = DpTokens {
-            ids: SmallVec::new(),
-            chars: 0,
-            token_chars: SmallVec::new(),
-            token_mask: [0; 4],
-            token_multiset: SmallVec::new(),
-        };
+        let dummy_tok = DpTokens::default();
         let empty_blocks = RowValidBlocks::default();
 
         // Phase A: enumerate mod-pair LCS candidates and score them up front
@@ -2381,7 +2709,7 @@ pub(crate) fn solve_cluster_matrix(
                     continue;
                 }
                 if mod_pair_needs_scoring(
-                    i, j, cluster, old_tokens, new_tokens, old_meta, new_meta, interner, profile, w,
+                    i, j, cluster, old_tokens, new_tokens, old_meta, new_meta, interner, w,
                 ) {
                     lcs_candidates.push((i, j));
                 }
@@ -2394,6 +2722,8 @@ pub(crate) fn solve_cluster_matrix(
             interner,
             lcs_scores,
             precomputed_lcs,
+            lcs_salient_scores,
+            precomputed_salient_lcs,
         );
 
         for i in 0..=m {
@@ -2546,69 +2876,66 @@ pub(crate) fn solve_cluster_matrix(
                                 (om.indent as isize - nm.indent as isize).unsigned_abs();
                             let offset_diff = (i as isize - j as isize).unsigned_abs();
 
-                            // Function-tail return slot: both lines are `) -> T`
-                            // tails at equal indent in a unique-slot cluster.
-                            // Shape rarity (profile-gated) plus indent plus
-                            // uniqueness make this bomb-proof: no other construct
-                            // in these languages produces the shape.
+                            // Return-slot claim: both lines open a function
+                            // body through `-> T` and express the same
+                            // current function (the signature head on the
+                            // line itself, otherwise resolved from the
+                            // preceding context) at equal indent in a
+                            // unique-slot cluster.
                             let is_return_slot = unique_return_slot
                                 && om.is_return_tail
                                 && nm.is_return_tail
-                                && indent_shift == 0;
+                                && indent_shift == 0
+                                && om.slot_owner.is_some()
+                                && om.slot_owner == nm.slot_owner;
 
                             let min_ratio = if (om.comment || nm.comment) && offset_diff > 0 {
-                                0.65
+                                MIN_RATIO_COMMENT_OFFSET
                             } else if om.comment || nm.comment {
-                                0.35
+                                MIN_RATIO_COMMENT
                             } else {
-                                0.25
+                                MIN_RATIO_CODE
                             };
-                            let could_be_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-                                if om.close_tail != CloseDelimiter::None
-                                    && nm.close_tail != CloseDelimiter::None
-                                {
-                                    if let Some(p) = profile {
-                                        p.is_direct_tail_match(
-                                            om.close_tail,
-                                            nm.close_tail,
-                                            max_matched,
-                                            w.min_tail_matched_chars,
-                                        )
-                                    } else {
-                                        CloseDelimiter::default_is_direct_tail_match(
-                                            om.close_tail,
-                                            nm.close_tail,
-                                            max_matched,
-                                            w.min_tail_matched_chars,
-                                        )
-                                    }
-                                } else if om.is_terminal_return && nm.is_terminal_return {
-                                    let has_common_indent = if indent_shift == 0 {
-                                        *common_indent.get_or_insert_with(|| {
-                                            if om.indent == 0 || nm.indent == 0 {
-                                                0
-                                            } else {
-                                                calc_common_indent(
-                                                    cluster.old_rows[i].text(),
-                                                    cluster.new_rows[j].text(),
-                                                )
-                                            }
-                                        }) > 0
-                                    } else {
-                                        false
-                                    };
-                                    if has_common_indent {
-                                        true
-                                    } else {
-                                        max_matched >= w.min_tail_matched_chars
-                                    }
+                            // Salient-free pairs score on the
+                            // non-whitespace char scale, so they keep the
+                            // legacy floor instead of the salient one.
+                            let min_exact = if (om.comment || nm.comment) && offset_diff > 0 {
+                                MIN_RATIO_COMMENT_OFFSET
+                            } else if om.comment || nm.comment {
+                                MIN_RATIO_COMMENT
+                            } else {
+                                MIN_RATIO_CHAR_SCALE
+                            };
+                            // The char scale is the exact inverse of the
+                            // salient regime: with either line carrying no
+                            // salient tokens the salient ratio is undefined,
+                            // and the pair is scored on non-whitespace
+                            // chars.
+                            let is_char_scale_pair = ot.salient_chars == 0 || nt.salient_chars == 0;
+
+                            let salient_bound = if mask_overlap(&ot.salient_mask, &nt.salient_mask)
+                            {
+                                graded_salient_bound(
+                                    &ot.salient_multiset,
+                                    &nt.salient_multiset,
+                                    &ot.salient_anchored_multiset,
+                                    &nt.salient_anchored_multiset,
+                                    &ot.salient_buried_containers,
+                                    &nt.salient_buried_containers,
+                                    &interner.char_lens,
+                                    w.embedded_salient_factor,
+                                )
+                                .min(ot.salient_chars.min(nt.salient_chars))
+                            } else {
+                                0
+                            };
+                            let max_salient_similarity_ratio: Option<f64> =
+                                if ot.salient_chars == 0 || nt.salient_chars == 0 {
+                                    None
                                 } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-                            let max_similarity_ratio = max_matched as f64 / total as f64;
+                                    let total_salient = ot.salient_chars.max(nt.salient_chars);
+                                    Some(salient_bound as f64 / total_salient as f64)
+                                };
                             let can_have_containment = indent_shift <= w.max_indent_shift
                                 && (om.comment == nm.comment)
                                 && ((om.stripped_len >= w.min_containment_len
@@ -2616,11 +2943,16 @@ pub(crate) fn solve_cluster_matrix(
                                     || same_indent_head_match);
 
                             let mut is_prefix_containment = None;
-                            let could_be_valid_mod_fast = max_similarity_ratio >= min_ratio
-                                || is_property_match
-                                || statement_head_match
-                                || could_be_tail_pair
-                                || is_return_slot;
+                            let could_be_valid_mod_fast = if is_char_scale_pair {
+                                (char_bound as f64 / total as f64) >= min_exact
+                            } else {
+                                max_salient_similarity_ratio.is_some_and(|r| r >= min_ratio)
+                                    || is_property_match
+                                    || is_return_slot
+                                    || (same_indent_head_match
+                                        && om.head_is_keyword
+                                        && nm.head_is_keyword)
+                            };
                             if !could_be_valid_mod_fast {
                                 if !can_have_containment {
                                     break 'eval_mod;
@@ -2637,7 +2969,7 @@ pub(crate) fn solve_cluster_matrix(
                                 is_prefix_containment = Some(true);
                             }
 
-                            let max_close = if could_be_tail_pair || is_return_slot {
+                            let max_close = if is_return_slot {
                                 w.slot_continuity_bonus
                             } else {
                                 w.boundary_proximity_bonus * om.prox_close * nm.prox_close
@@ -2678,14 +3010,14 @@ pub(crate) fn solve_cluster_matrix(
                                 break 'eval_mod;
                             }
 
-                            let matched = if ot.ids == nt.ids {
-                                ot.chars
+                            let (matched, matched_salient) = if ot.ids == nt.ids {
+                                (ot.chars, ot.salient_chars)
                             } else if token_overlap && char_bound > 0 {
                                 // Precomputed in parallel up front; recomputed
                                 // inline on a miss so
                                 // output never depends on enumeration
                                 // coverage.
-                                match precomputed_lcs.get(i, j).copied() {
+                                let m_all = match precomputed_lcs.get(i, j).copied() {
                                     Some(m) if m != u32::MAX => m as usize,
                                     _ => lcs_matched_chars_ids(
                                         &ot.ids,
@@ -2695,9 +3027,21 @@ pub(crate) fn solve_cluster_matrix(
                                         &nt.token_chars,
                                         lcs_scratch,
                                     ),
-                                }
+                                };
+                                let m_sal = match precomputed_salient_lcs.get(i, j).copied() {
+                                    Some(m) if m != u32::MAX => m as usize,
+                                    _ => lcs_matched_chars_ids(
+                                        &ot.ids,
+                                        &nt.ids,
+                                        &interner.ws,
+                                        &interner.alnum,
+                                        &nt.salient_token_chars,
+                                        lcs_scratch,
+                                    ),
+                                };
+                                (m_all, m_sal)
                             } else {
-                                0usize
+                                (0usize, 0usize)
                             };
                             if matched == 0 {
                                 let ci = *common_indent.get_or_insert_with(|| {
@@ -2755,87 +3099,53 @@ pub(crate) fn solve_cluster_matrix(
                             let indent_penalty =
                                 w.sprawl_penalty * indent_diff * w.indent_penalty_factor;
 
-                            let similarity_ratio = matched as f64 / total as f64;
-                            let is_direct_tail_pair = if om.close_dist == 1 && nm.close_dist == 1 {
-                                let delim_match = if om.close_tail != CloseDelimiter::None
-                                    && nm.close_tail != CloseDelimiter::None
-                                {
-                                    if let Some(p) = profile {
-                                        p.is_direct_tail_match(
-                                            om.close_tail,
-                                            nm.close_tail,
-                                            matched,
-                                            w.min_tail_matched_chars,
-                                        )
-                                    } else {
-                                        CloseDelimiter::default_is_direct_tail_match(
-                                            om.close_tail,
-                                            nm.close_tail,
-                                            matched,
-                                            w.min_tail_matched_chars,
-                                        )
-                                    }
+                            let salient_similarity_ratio: Option<f64> =
+                                if ot.salient_chars == 0 || nt.salient_chars == 0 {
+                                    None
                                 } else {
-                                    false
+                                    let total_salient = ot.salient_chars.max(nt.salient_chars);
+                                    Some(matched_salient as f64 / total_salient as f64)
                                 };
-                                if delim_match {
-                                    true
-                                } else if om.is_terminal_return && nm.is_terminal_return {
-                                    let has_common_indent = if indent_diff == 0.0 {
-                                        *common_indent.get_or_insert_with(|| {
-                                            if om.indent == 0 || nm.indent == 0 {
-                                                0
-                                            } else {
-                                                calc_common_indent(
-                                                    cluster.old_rows[i].text(),
-                                                    cluster.new_rows[j].text(),
-                                                )
-                                            }
-                                        }) > 0
-                                    } else {
-                                        false
-                                    };
-                                    if has_common_indent {
-                                        true
-                                    } else {
-                                        matched >= w.min_tail_matched_chars
-                                    }
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            };
-
-                            let is_valid_mod_pair = if (om.comment || nm.comment) && offset_diff > 0
-                            {
-                                is_prefix_containment || similarity_ratio >= 0.65
+                            let is_valid_mod_pair = if is_char_scale_pair {
+                                (matched as f64 / total as f64) >= min_exact
+                            } else if (om.comment || nm.comment) && offset_diff > 0 {
+                                is_prefix_containment
+                                    || salient_similarity_ratio.is_some_and(|r| r >= 0.65)
                             } else if om.comment || nm.comment {
-                                similarity_ratio >= 0.35 || is_prefix_containment
+                                is_prefix_containment
+                                    || salient_similarity_ratio.is_some_and(|r| r >= 0.35)
                             } else {
-                                similarity_ratio >= 0.25
-                                    || is_direct_tail_pair
-                                    || is_return_slot
-                                    || is_property_match
-                                    || statement_head_match
+                                salient_similarity_ratio.is_some_and(|r| r >= min_ratio)
                                     || is_prefix_containment
+                                    || is_property_match
+                                    || is_return_slot
+                                    || (same_indent_head_match
+                                        && om.head_is_keyword
+                                        && nm.head_is_keyword)
                             };
 
                             if !is_valid_mod_pair {
                                 break 'eval_mod;
                             }
 
-                            let effective_close_bonus = if is_direct_tail_pair || is_return_slot {
+                            let effective_close_bonus = if is_return_slot {
                                 w.slot_continuity_bonus
                             } else {
                                 close_bonus
                             };
-                            let proximity_gate = if similarity_ratio >= 0.25
-                                || is_direct_tail_pair
-                                || is_return_slot
-                                || is_property_match
-                                || statement_head_match
+                            let proximity_gate = if is_char_scale_pair {
+                                if (matched as f64 / total as f64) >= min_exact {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
+                            } else if salient_similarity_ratio.is_some_and(|r| r >= min_ratio)
                                 || is_prefix_containment
+                                || is_property_match
+                                || is_return_slot
+                                || (same_indent_head_match
+                                    && om.head_is_keyword
+                                    && nm.head_is_keyword)
                             {
                                 1.0
                             } else {

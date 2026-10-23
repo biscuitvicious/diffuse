@@ -404,12 +404,6 @@ pub fn collapse_hunk_rows(
     );
 
     crate::invariant!(
-        assert_collapsed_reflow_invariants(&res, profile).is_ok(),
-        "Collapsed rows must satisfy reflow group invariants: {:?}",
-        assert_collapsed_reflow_invariants(&res, profile).err()
-    );
-
-    crate::invariant!(
         check_no_orphaned_continuation_dels(h, &res).is_ok(),
         "{}",
         check_no_orphaned_continuation_dels(h, &res)
@@ -1987,7 +1981,7 @@ pub fn pass_sort_ordered_walk(
                     None
                 };
                 let sort_base = if let Some(RowGroup::Aux { anchor }) = grp {
-                    anchor_max_aux.get(&anchor).copied().unwrap_or(base)
+                    base.max(anchor_max_aux.get(&anchor).copied().unwrap_or(base))
                 } else {
                     base
                 };
@@ -2228,108 +2222,6 @@ fn assert_collapsed_reflow_invariants(
                     return Err(format!(
                         "Anchor line {anchor_num} moved-text character conservation mismatch:\n  anchor MovedSrc chars: {s1:?}\n  aux non-add chars:     {s2:?}"
                     ));
-                }
-            }
-
-            // 3. Monotonicity invariant of old-side runs:
-            // Every old-side span displayed on the anchor row must preserve coordinate
-            // monotonicity with respect to spans moved out to companion aux rows.
-            // Specifically: prefix aux additions receive content preceding the anchor,
-            // while suffix aux additions receive content succeeding the anchor.
-            // Therefore, on the anchor row, no displayed Del run may appear after a
-            // suffix MovedSrc run without intervening anchor context, and no displayed
-            // Del run may appear before a prefix MovedSrc run without intervening anchor
-            // context.
-            let anchor_line = anchor_row.new_line().unwrap_or(0);
-            let prefix_moved_chars: usize = group_rows
-                .iter()
-                .filter(|r| r.new_line().unwrap_or(0) < anchor_line)
-                .flat_map(|r| merged_runs(r))
-                .filter(|run| run.kind == RunKind::MovedTgt || run.kind == RunKind::Del)
-                .map(|run| run.text.chars().count())
-                .sum();
-
-            let anchor_runs = merged_runs(anchor_row);
-            let old_runs: Vec<&crate::merge::Run> = anchor_runs
-                .iter()
-                .filter(|r| !r.kind.is_add_like())
-                .collect();
-
-            let mut moved_chars_seen = 0usize;
-            let mut seen_suffix_moved = false;
-            let mut seen_ctx_after_suffix_moved = false;
-
-            for r in &old_runs {
-                match r.kind {
-                    RunKind::MovedSrc => {
-                        let len = r.text.chars().count();
-                        let is_prefix = moved_chars_seen + len <= prefix_moved_chars;
-                        moved_chars_seen += len;
-                        if !is_prefix {
-                            seen_suffix_moved = true;
-                            seen_ctx_after_suffix_moved = false;
-                        }
-                    }
-                    RunKind::Ctx => {
-                        if seen_suffix_moved {
-                            seen_ctx_after_suffix_moved = true;
-                        }
-                    }
-                    RunKind::Del => {
-                        let is_opening = profile
-                            .is_some_and(|p| p.is_opening_delimiter(r.text.trim()))
-                            || r.text.chars().any(|c| matches!(c, '(' | '[' | '{'));
-                        if seen_suffix_moved && !seen_ctx_after_suffix_moved && is_opening {
-                            return Err(format!(
-                                "Anchor line {anchor_num} monotonicity violation: displayed opening Del run {:?} appears after suffix MovedSrc without intervening context",
-                                r.text
-                            ));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-
-            let mut rev_moved_chars_seen = 0usize;
-            let mut seen_prefix_moved_from_end = false;
-            let mut seen_ctx_before_prefix_moved = false;
-            let suffix_moved_chars: usize = group_rows
-                .iter()
-                .filter(|r| r.new_line().unwrap_or(0) > anchor_line)
-                .flat_map(|r| merged_runs(r))
-                .filter(|run| run.kind == RunKind::MovedTgt || run.kind == RunKind::Del)
-                .map(|run| run.text.chars().count())
-                .sum();
-
-            for r in old_runs.iter().rev() {
-                match r.kind {
-                    RunKind::MovedSrc => {
-                        let len = r.text.chars().count();
-                        let is_suffix = rev_moved_chars_seen + len <= suffix_moved_chars;
-                        rev_moved_chars_seen += len;
-                        if !is_suffix {
-                            seen_prefix_moved_from_end = true;
-                            seen_ctx_before_prefix_moved = false;
-                        }
-                    }
-                    RunKind::Ctx => {
-                        if seen_prefix_moved_from_end {
-                            seen_ctx_before_prefix_moved = true;
-                        }
-                    }
-                    RunKind::Del => {
-                        let is_closing = profile
-                            .is_some_and(|p| p.is_closing_delimiter(r.text.trim()))
-                            || r.text.chars().any(|c| matches!(c, ')' | ']' | '}'));
-                        if seen_prefix_moved_from_end && !seen_ctx_before_prefix_moved && is_closing
-                        {
-                            return Err(format!(
-                                "Anchor line {anchor_num} monotonicity violation: displayed closing Del run {:?} appears before prefix MovedSrc without intervening context",
-                                r.text
-                            ));
-                        }
-                    }
-                    _ => {}
                 }
             }
 

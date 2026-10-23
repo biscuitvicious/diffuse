@@ -101,6 +101,7 @@ pub struct TokenInterner {
     symbols: SymbolTable<&'static str>,
     pub ws: Vec<bool>,
     pub alnum: Vec<bool>,
+    pub salient: Vec<bool>,
     pub char_lens: Vec<u32>,
 }
 
@@ -113,17 +114,35 @@ impl TokenInterner {
         self.symbols.clear();
         self.ws.clear();
         self.alnum.clear();
+        self.salient.clear();
         self.char_lens.clear();
     }
 
     pub(crate) fn intern(&mut self, token: &str) -> u32 {
+        self.intern_with_profile(token, None)
+    }
+
+    pub(crate) fn intern_with_profile(
+        &mut self,
+        token: &str,
+        profile: Option<&diffuse_syntax::profile::LangProfile>,
+    ) -> u32 {
         let static_token: &'static str = unsafe { mem::transmute(token) };
         if let Some(id) = self.symbols.get_id(&static_token) {
-            return id.as_u32();
+            let u = id.as_u32();
+            if let Some(p) = profile
+                && p.is_keyword(token)
+            {
+                self.salient[u as usize] = false;
+            }
+            return u;
         }
         let id = self.symbols.intern(static_token);
         self.ws.push(token_is_ws(token));
-        self.alnum.push(token_is_alnum(token));
+        let is_al = token_is_alnum(token);
+        self.alnum.push(is_al);
+        let is_kw = profile.is_some_and(|p| p.is_keyword(token));
+        self.salient.push(is_al && !is_kw);
         self.char_lens.push(crate::lcs::char_len(token) as u32);
         id.as_u32()
     }

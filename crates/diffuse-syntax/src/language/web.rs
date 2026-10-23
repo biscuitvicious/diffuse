@@ -74,7 +74,6 @@ pub fn profile() -> LangProfile {
         markdown: false,
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
-        implicit_return: false,
         tail_return_arrow: false,
         fn_decl: Some(
             Regex::new(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z0-9_]+)")
@@ -117,7 +116,7 @@ pub fn profile() -> LangProfile {
         trailing_delimiters: BlockDelimStyle::Braces.default_trailing_delimiters(),
         property_syntax: crate::profile::PropertySyntax::Colon,
         attribute_prefixes: &["@"],
-        continuation_prefixes: &["&&", "||", ".", "?."],
+        continuation_prefixes: &["&&", "||", ".", "?.", "as ", "satisfies "],
         import_prefixes: &["import ", "export {"],
         section_headers: false,
         single_quote: crate::profile::SingleQuoteKind::String,

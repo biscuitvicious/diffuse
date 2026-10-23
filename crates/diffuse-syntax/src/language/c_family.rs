@@ -7,8 +7,8 @@ use crate::profile::{BlockDelimStyle, LangProfile};
 pub const KEYWORDS: &[&str] = &[
     "auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else",
     "enum", "extern", "float", "for", "goto", "if", "inline", "int", "long", "register",
-    "restrict", "return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef",
-    "union", "unsigned", "void", "volatile", "while",
+    "restrict", "return", "short", "signed", "sizeof", "static", "struct", "switch", "this",
+    "typedef", "union", "unsigned", "void", "volatile", "while",
 ];
 
 pub const OPERATORS: &[&str] = &[
@@ -30,7 +30,6 @@ pub fn profile() -> LangProfile {
         markdown: false,
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
-        implicit_return: false,
         tail_return_arrow: true,
         // C/C++ function definitions are hard to distinguish from declarations;
         // capture the name from the last word-token before the opening paren.

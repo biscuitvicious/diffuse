@@ -512,10 +512,10 @@ fn block_anchor_fires_for_use_std_brace() {
     let new_lines = ["use std::{", "    return self.name.clone(); }"];
 
     let mut interner = TokenInterner::new();
-    let old_tokens = dp_tokens(&mut interner, old);
+    let old_tokens = dp_tokens(&mut interner, old, None);
     let new_tokens: Vec<_> = new_lines
         .iter()
-        .map(|s| dp_tokens(&mut interner, s))
+        .map(|s| dp_tokens(&mut interner, s, None))
         .collect();
 
     let bm = block_lcs(&old_tokens, &new_tokens, &interner);
@@ -549,10 +549,10 @@ fn block_anchor_fires_for_fn_signature() {
     ];
 
     let mut interner = TokenInterner::new();
-    let old_tokens = dp_tokens(&mut interner, old);
+    let old_tokens = dp_tokens(&mut interner, old, None);
     let new_tokens: Vec<_> = new_lines
         .iter()
-        .map(|s| dp_tokens(&mut interner, s))
+        .map(|s| dp_tokens(&mut interner, s, None))
         .collect();
 
     let bm = block_lcs(&old_tokens, &new_tokens, &interner);
@@ -934,7 +934,6 @@ fn test_rewritten_comment_block_does_not_pair_across_offset_drift() {
 fn test_weights_phase1_defaults() {
     let w = dp::Weights::default();
     assert_eq!(w.max_indent_shift, 16);
-    assert_eq!(w.min_tail_matched_chars, 8);
     assert!((w.min_block_line_coverage - 0.50).abs() < 1e-6);
 }
 
@@ -1420,10 +1419,10 @@ fn test_block_anchor_prefers_overwhelming_content_over_trivial_prefix_head() {
     ];
 
     let mut interner = TokenInterner::new();
-    let old_tokens = dp_tokens(&mut interner, old);
+    let old_tokens = dp_tokens(&mut interner, old, None);
     let new_tokens: Vec<_> = new_lines
         .iter()
-        .map(|s| dp_tokens(&mut interner, s))
+        .map(|s| dp_tokens(&mut interner, s, None))
         .collect();
 
     let bm = block_lcs(&old_tokens, &new_tokens, &interner);
@@ -1445,10 +1444,10 @@ fn test_use_crate_expand_anchors_on_statement_head() {
     ];
 
     let mut interner = TokenInterner::new();
-    let old_tokens = dp_tokens(&mut interner, old);
+    let old_tokens = dp_tokens(&mut interner, old, None);
     let new_tokens: Vec<_> = new_lines
         .iter()
-        .map(|s| dp_tokens(&mut interner, s))
+        .map(|s| dp_tokens(&mut interner, s, None))
         .collect();
 
     let bm = block_lcs(&old_tokens, &new_tokens, &interner);
@@ -1465,10 +1464,10 @@ fn test_use_crate_expand_anchors_on_statement_head() {
         "    let score_mid =",
         "        semantic_boundary_score(Some(\"        let x = 1;\"), Some(\"        let y = 2;\"), rs);",
     ];
-    let old_score_tok = dp_tokens(&mut interner, old_score);
+    let old_score_tok = dp_tokens(&mut interner, old_score, None);
     let new_score_tok: Vec<_> = new_score_lines
         .iter()
-        .map(|s| dp_tokens(&mut interner, s))
+        .map(|s| dp_tokens(&mut interner, s, None))
         .collect();
     let bm_score = block_lcs(&old_score_tok, &new_score_tok, &interner);
     assert_eq!(
@@ -1482,10 +1481,10 @@ fn test_use_crate_expand_anchors_on_statement_head() {
         "                    let sb_char =",
         "                        if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {",
     ];
-    let old_sb_tok = dp_tokens(&mut interner, old_sb);
+    let old_sb_tok = dp_tokens(&mut interner, old_sb, None);
     let new_sb_tok: Vec<_> = new_sb_lines
         .iter()
-        .map(|s| dp_tokens(&mut interner, s))
+        .map(|s| dp_tokens(&mut interner, s, None))
         .collect();
     let bm_sb = block_lcs(&old_sb_tok, &new_sb_tok, &interner);
     assert_eq!(
@@ -1870,7 +1869,6 @@ fn scoring_meta(trimmed_id: u32, comment: bool) -> DpRowMeta {
         trimmed_id,
         comment,
         kind: SyntaxSectionKind::Code,
-        close_dist: 99,
         ..Default::default()
     }
 }
@@ -1907,11 +1905,11 @@ fn scoring_fixture() -> ScoringFixture {
     let mut interner = crate::similarity::TokenInterner::new();
     let old_tokens: Vec<_> = old_texts
         .iter()
-        .map(|t| dp_tokens(&mut interner, t))
+        .map(|t| dp_tokens(&mut interner, t, None))
         .collect();
     let new_tokens: Vec<_> = new_texts
         .iter()
-        .map(|t| dp_tokens(&mut interner, t))
+        .map(|t| dp_tokens(&mut interner, t, None))
         .collect();
     // Trimmed ids: shared only by the verbatim pair (3, 3); distinct
     // everywhere else, including the whitespace-only-different pair (4, 4).
@@ -1963,7 +1961,6 @@ fn collect_all(fx: &ScoringFixture) -> Vec<(usize, usize)> {
                 &fx.old_meta,
                 &fx.new_meta,
                 &fx.interner,
-                None,
                 &fx.weights,
             ) {
                 out.push((i, j));
@@ -1989,13 +1986,12 @@ fn test_mod_pair_prunes_incompatible_tail_and_high_indent() {
     let weights = Weights::default();
     let old_text = "    let x = foo();";
     let new_text = "                let y = bar();";
-    let ot = vec![dp_tokens(&mut interner, old_text)];
-    let nt = vec![dp_tokens(&mut interner, new_text)];
+    let ot = vec![dp_tokens(&mut interner, old_text, None)];
+    let nt = vec![dp_tokens(&mut interner, new_text, None)];
 
     let om = DpRowMeta {
         trimmed_id: 1,
         indent: 4,
-        close_dist: 1,
         close_tail: CloseDelimiter::Brace,
         ..Default::default()
     };
@@ -2003,7 +1999,6 @@ fn test_mod_pair_prunes_incompatible_tail_and_high_indent() {
     let nm = DpRowMeta {
         trimmed_id: 2,
         indent: 16,
-        close_dist: 1,
         close_tail: CloseDelimiter::Paren, // Different delimiter!
         ..Default::default()
     };
@@ -2017,18 +2012,8 @@ fn test_mod_pair_prunes_incompatible_tail_and_high_indent() {
         section: SyntaxSectionKind::Code,
     };
 
-    let needed = mod_pair_needs_scoring(
-        0,
-        0,
-        &cluster,
-        &ot,
-        &nt,
-        &[om],
-        &[nm],
-        &interner,
-        None,
-        &weights,
-    );
+    let needed =
+        mod_pair_needs_scoring(0, 0, &cluster, &ot, &nt, &[om], &[nm], &interner, &weights);
     assert!(
         !needed,
         "pair with mismatching close tails and heavy indent shift must be pruned"
@@ -2041,13 +2026,16 @@ fn test_parallel_scoring_matches_sequential() {
     let candidates = collect_all(&fx);
     assert!(!candidates.is_empty());
     let mut seq = Vec::new();
+    let mut seq_sal = Vec::new();
     let mut par = Vec::new();
+    let mut par_sal = Vec::new();
     score_lcs_candidates_seq(
         &candidates,
         &fx.old_tokens,
         &fx.new_tokens,
         &fx.interner,
         &mut seq,
+        &mut seq_sal,
     );
     score_lcs_candidates_par(
         &candidates,
@@ -2055,8 +2043,13 @@ fn test_parallel_scoring_matches_sequential() {
         &fx.new_tokens,
         &fx.interner,
         &mut par,
+        &mut par_sal,
     );
     assert_eq!(seq, par, "parallel scoring must match sequential exactly");
+    assert_eq!(
+        seq_sal, par_sal,
+        "parallel salient scoring must match sequential exactly"
+    );
     assert_eq!(seq.len(), candidates.len());
 }
 
@@ -2071,13 +2064,13 @@ fn test_parallel_scoring_multi_row_matches_sequential() {
         let text = format!(
             "fn function_name_{i}(arg_a: usize, arg_b: String) -> Result<i32, Error> {{ val_{i} = {i} * 2; }}"
         );
-        old_tokens.push(dp_tokens(&mut interner, &text));
+        old_tokens.push(dp_tokens(&mut interner, &text, None));
     }
     for j in 0..40 {
         let text = format!(
             "fn function_name_{j}(arg_a: usize, arg_b: String) -> Result<i32, Error> {{ val_{j} = {j} * 3; }}"
         );
-        new_tokens.push(dp_tokens(&mut interner, &text));
+        new_tokens.push(dp_tokens(&mut interner, &text, None));
     }
 
     // Generate 1200 candidate pairs across all rows (well above chunk size 256)
@@ -2090,14 +2083,34 @@ fn test_parallel_scoring_multi_row_matches_sequential() {
     assert_eq!(candidates.len(), 1200);
 
     let mut seq = Vec::new();
+    let mut seq_sal = Vec::new();
     let mut par = Vec::new();
+    let mut par_sal = Vec::new();
 
-    score_lcs_candidates_seq(&candidates, &old_tokens, &new_tokens, &interner, &mut seq);
-    score_lcs_candidates_par(&candidates, &old_tokens, &new_tokens, &interner, &mut par);
+    score_lcs_candidates_seq(
+        &candidates,
+        &old_tokens,
+        &new_tokens,
+        &interner,
+        &mut seq,
+        &mut seq_sal,
+    );
+    score_lcs_candidates_par(
+        &candidates,
+        &old_tokens,
+        &new_tokens,
+        &interner,
+        &mut par,
+        &mut par_sal,
+    );
 
     assert_eq!(
         seq, par,
         "parallel scoring must match sequential scoring across multi-row chunks"
+    );
+    assert_eq!(
+        seq_sal, par_sal,
+        "parallel salient scoring must match sequential scoring across multi-row chunks"
     );
     assert_eq!(seq.len(), 1200);
     // Spot check that identical function signature pairs produce positive
@@ -2344,10 +2357,10 @@ fn test_mod_pair_precomputed_invariants_and_prefix_containment() {
     let weights = Weights::default();
     let old_text = "// compute_primary_record_header";
     let new_text = "// compute_primary_record_header and then do lots of other completely different things in this long line";
-    let ot = vec![dp_tokens(&mut interner, old_text)];
+    let ot = vec![dp_tokens(&mut interner, old_text, None)];
     let nt = vec![
-        dp_tokens(&mut interner, "dummy row for offset"),
-        dp_tokens(&mut interner, new_text),
+        dp_tokens(&mut interner, "dummy row for offset", None),
+        dp_tokens(&mut interner, new_text, None),
     ];
 
     let old_trimmed = old_text.trim();
@@ -2393,7 +2406,6 @@ fn test_mod_pair_precomputed_invariants_and_prefix_containment() {
         &[om],
         &[dummy_nm, nm],
         &interner,
-        None,
         &weights,
     ));
 
@@ -2410,7 +2422,6 @@ fn test_mod_pair_precomputed_invariants_and_prefix_containment() {
         &[om_short],
         &[dummy_nm, nm],
         &interner,
-        None,
         &Weights {
             min_containment_len: 8,
             ..weights
@@ -2520,6 +2531,43 @@ fn test_dissimilar_pair_stays_unpaired() {
     };
     let sol = dp::solve_cluster(&cluster, rs);
     assert_eq!(signature(&sol), ["del", "add"]);
+}
+
+/// Unrelated method calls sharing only receiver `self.` and syntax/delimiters
+/// must not be paired as a modification row.
+#[test]
+fn test_unrelated_method_calls_stay_del_and_add() {
+    let rs = lang_profile("rs");
+    let old_rows = vec![
+        Row::Del(DelLine::new(
+            45,
+            "            TuiCommand::MouseScrollUp(n) => {",
+        )),
+        Row::Del(DelLine::new(
+            46,
+            "                self.scroll_to_visual(self.scroll.saturating_sub(n));",
+        )),
+    ];
+    let new_rows = vec![
+        Row::Add(AddLine::new(
+            45,
+            "            TuiCommand::MouseScrollUp { n, row, col } => {",
+        )),
+        Row::Add(AddLine::new(
+            46,
+            "                self.on_mouse_scroll(true, n, row, col);",
+        )),
+    ];
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["        match cmd {"],
+        old_rows,
+        new_rows,
+        following_ctx: vec!["            }"],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["mod", "del", "add"]);
 }
 
 /// Short closers still pair on content alone: the δ sizing must not break
@@ -2771,13 +2819,17 @@ fn return_cluster(dels: Vec<(&str, u32)>, adds: Vec<(&str, u32)>) -> ChangeClust
 }
 
 /// Changed Rust return types pair as Mod: the slot claim admits the pair
-/// (similarity alone is below the floor) and the bonus elects it.
+/// (similarity alone is below the floor) and the bonus elects it. The slot
+/// claim itself asserts this language's function-name prefix — the two
+/// lines must open with the same `fn name(...` head — and the return-slot
+/// shape, with the return type's *existence* asserted but its spelling
+/// ignored.
 #[test]
 fn test_rust_return_tail_pairs_as_mod() {
     let rs = lang_profile("rs");
     let cluster = return_cluster(
-        vec![(") -> FxHashSet<usize> {", 7)],
-        vec![(") -> DelGuards {", 7)],
+        vec![("fn guard_ids(&self) -> HashMap<String, Vec<u32>> {", 7)],
+        vec![("fn guard_ids(&self) -> BTreeSet<char> {", 7)],
     );
     let sol = dp::solve_cluster(&cluster, rs);
     assert_eq!(signature(&sol), ["mod"]);
@@ -2787,16 +2839,79 @@ fn test_rust_return_tail_pairs_as_mod() {
     }
 }
 
-/// Python `def` tails pair the same way.
+/// Python `def` tails pair the same way: same-name `def` prefix, return
+/// type present on both sides, spelling ignored.
 #[test]
 fn test_python_return_tail_pairs_as_mod() {
     let py = lang_profile("py");
     let cluster = return_cluster(
-        vec![("        ) -> Dict[str, Tuple[int, str]]:", 3)],
-        vec![("        ) -> bool:", 3)],
+        vec![("def load_row(i: int) -> Dict[str, Tuple[int, str]]:", 3)],
+        vec![("def load_row(i: int) -> bool:", 3)],
     );
     let sol = dp::solve_cluster(&cluster, py);
     assert_eq!(signature(&sol), ["mod"]);
+}
+
+/// A wrapped signature resolves the owning name from context: the bare
+/// tail `) -> T {` sits under the `fn name(` line preceding the cluster,
+/// and both sides must share that owner to claim the slot.
+#[test]
+fn test_wrapped_signature_tail_pairs_shared_owner() {
+    let rs = lang_profile("rs");
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["    fn guard_delims(", "        state: &State,"],
+        old_rows: vec![del_row(17, "    ) -> FxHashSet<usize> {")],
+        new_rows: vec![add_row(17, "    ) -> DelGuards {")],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(signature(&sol), ["mod"]);
+}
+
+/// The slot claim asserts the current-function name. A bare tail resolves
+/// its owner from the preceding context; a full-signature tail carries its
+/// own head. When the two disagree — `guard_ids`' tail against
+/// `merge_ids`' signature — the slot must not fire.
+#[test]
+fn test_return_slot_name_assertion_mismatch_stays_unpaired() {
+    let rs = lang_profile("rs");
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["fn guard_ids(", "    state: &State,"],
+        old_rows: vec![del_row(17, "    ) -> FxHashSet<usize> {")],
+        new_rows: vec![add_row(17, "fn merge_ids(&self) -> BTreeSet<char> {")],
+        following_ctx: vec![],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["del", "add"],
+        "slot owners must agree for the return-slot claim to fire"
+    );
+}
+
+/// A bare tail with no function definition at-or-before the cluster has no
+/// resolvable owner: with no name to assert, the slot claim cannot fire.
+#[test]
+fn test_bare_tail_without_owner_context_stays_unpaired() {
+    let rs = lang_profile("rs");
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["        let total = 42;"],
+        old_rows: vec![del_row(17, "    ) -> FxHashSet<usize> {")],
+        new_rows: vec![add_row(17, "    ) -> DelGuards {")],
+        following_ctx: vec!["    }"],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = dp::solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["del", "add"],
+        "bare tails without a resolvable fn owner must not claim slots"
+    );
 }
 
 /// TypeScript `):` tails stay silent: the rule covers arrow tails only.
@@ -3214,6 +3329,183 @@ fn test_let_declaration_head_is_statement_start() {
     );
 }
 
+/// Line-level return-slot affinity used to pair any two return-shaped lines
+/// at equal indentation, even with zero shared tokens. That rule is
+/// deliberately gone: a continuation fragment (`as usize`) and an expression
+/// tail (`1`) are indistinguishable from the line alone, so a statement
+/// boundary before them must not license a Mod.
+#[test]
+fn test_zero_overlap_return_shaped_lines_stay_del_add() {
+    let rs = lang_profile("rs");
+    // The shape the removed rule accepted: both lines are non-empty, have no
+    // trailing semicolon, sit at the same non-zero indent, and are followed
+    // by a block close (close_dist == 1).
+    let cluster = ChangeCluster {
+        preceding_ctx: vec!["    let n = 1;"],
+        old_rows: vec![del_row(10, "                as usize")],
+        new_rows: vec![add_row(10, "                1")],
+        following_ctx: vec!["        } else {"],
+        del_survival: rustc_hash::FxHashSet::default(),
+        section: SyntaxSectionKind::Code,
+    };
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["del", "add"],
+        "zero-overlap return-shaped lines must not pair"
+    );
+}
+
+/// Real-world false `Mod` (the scrollbar corpus, line 54): two unrelated
+/// scroll-interaction lines share the `self.` receiver and short parameter
+/// names, and the `scroll` sub-token of two different method names. The
+/// salient floor demands the majority of a line's salient content to match;
+/// these share only fragmentary common tokens.
+#[test]
+fn test_unrelated_call_lines_stay_del_add_below_salient_floor() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![("    self.scroll_to_visual(self.scroll + n);", 54)],
+        vec![("    self.on_mouse_scroll(false, n, row, col);", 54)],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["del", "add"],
+        "unrelated call lines must not pair on fragmentary salient overlap"
+    );
+}
+
+/// The char scale is the exact inverse of the salient regime: whenever a
+/// line carries no salient tokens, the pair falls out of the salient scale
+/// and is scored on non-whitespace chars instead — on BOTH sides' tokens,
+/// even when only one side is salient-free (`} else {` vs an extended
+/// `} else if … {` head).
+#[test]
+fn test_mixed_salience_keyword_lines_pair_on_char_scale() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![("        } else {", 36)],
+        vec![("            } else if interactive {", 36)],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["mod"],
+        "a salient-free line must be char-compared against a salient line"
+    );
+}
+
+/// Two salient-free lines with matching keyword/delimiter skeletons pair by
+/// char similarity regardless of language classification: `} else {` and a
+/// dedented `else {` share `else` + `{`.
+#[test]
+fn test_both_zero_salient_lines_pair_on_char_scale() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![("        } else {", 36)],
+        vec![("            else {", 36)],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["mod"],
+        "salient-free lines pair on non-whitespace char similarity"
+    );
+}
+
+/// The char floor still bites: `} else {` against `},` shares one
+/// non-whitespace char — a 1/6 ratio, below even the calibrated 0.20 floor.
+#[test]
+fn test_char_scale_low_ratio_stays_del_add() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(vec![("        } else {", 36)], vec![("        },", 36)]);
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["del", "add"],
+        "the char floor rejects near-disjoint salient-free pairs"
+    );
+}
+
+/// The calibrated char floor admits the `diffuse-history-mid` pairing at
+/// 7/33: an empty-slice return rewritten as a literal empty string inside
+/// the same guard branch — the new line carries no salient tokens, so the
+/// pair is judged on non-whitespace chars.
+#[test]
+fn test_empty_slice_return_pairs_empty_literal_return() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![("        return &s[start_byte..start_byte];", 29)],
+        vec![("        return \"\";", 25)],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["mod"],
+        "the 0.20 char floor must admit the calibrated empty-return pair"
+    );
+}
+
+// Salient credit is graded by identifier extent: a matched token buried
+// inside a longer identifier on BOTH sides is weak evidence and counts at a
+// discount, while a token that is its own identifier on either side counts
+// in full. `scrollbar` sits inside `is_dragging_scrollbar` on the del and
+// inside `on_scrollbar_click` on the add — two unrelated identifiers whose
+// only overlap is that one snake word — so the 0.4091 embedded credit that
+// previously paired them must fall below the 0.35 floor.
+#[test]
+fn test_buried_ident_credit_stays_del_add() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![("        self.is_dragging_scrollbar = true;", 238)],
+        vec![("        self.on_scrollbar_click(row, col);", 238)],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["del", "add"],
+        "a snake word reused inside two unrelated identifiers must not pair"
+    );
+}
+
+// The same rule must not bleed the rename-evidence family: `Comment` is a
+// standalone identifier on the add side (`TokenColor::Comment`) and a camel
+// fragment on the del side (`Some("syntaxComment")`) — anchored on one side
+// is full credit, so this continues to pair.
+#[test]
+fn test_standalone_rename_evidence_anchors_salient_credit() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![("        Some(\"syntaxComment\"),", 47)],
+        vec![("        TokenColor::Comment,", 50)],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["mod"],
+        "a token that is its own identifier on one side anchors the pairing"
+    );
+}
+
+// Identifier extents are Unicode-aware: a multibyte snake word reused
+// inside two unrelated identifiers must demote exactly like the ASCII
+// scrollbar case, exercising the UTF-8 extent walk.
+#[test]
+fn test_unicode_buried_ident_credit_stays_del_add() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![("        self.is_dragging_größe = true;", 12)],
+        vec![("        self.on_größe_click(row, col);", 12)],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["del", "add"],
+        "a multibyte snake word reused inside two unrelated identifiers must not pair"
+    );
+}
+
 /// Shell `local`/`export` bindings are statement heads like `let`: an
 /// unfinished `local x=$(...)` still begins a declaration for anchor and
 /// reflow purposes, without becoming a Declaration section.
@@ -3232,4 +3524,31 @@ fn test_shell_local_export_is_statement_start() {
         !dp::is_statement_start("    locality = true;", sh),
         "`locality` prefix must not match"
     );
+}
+
+/// Salience is `is_alphanumeric && !is_keyword` in this language's
+/// `LangProfile`. Boolean literals are language lexemes, not identifiers:
+/// every language that has them must list them as keywords so they never
+/// count as salient content in the pairing gates.
+#[test]
+fn test_boolean_literals_are_not_salient() {
+    let rs = lang_profile("rs");
+    let mut interner = TokenInterner::new();
+    let t = interner.intern_with_profile("true", rs);
+    let f = interner.intern_with_profile("false", rs);
+    let ident = interner.intern_with_profile("field_name", rs);
+    let kw = interner.intern_with_profile("match", rs);
+    assert!(
+        !interner.salient[t as usize],
+        "`true` must not be salient in rust"
+    );
+    assert!(
+        !interner.salient[f as usize],
+        "`false` must not be salient in rust"
+    );
+    assert!(
+        interner.salient[ident as usize],
+        "plain identifiers stay salient"
+    );
+    assert!(!interner.salient[kw as usize], "keywords are never salient");
 }

@@ -356,16 +356,6 @@ impl CloseDelimiter {
         }
         CloseDelimiter::None
     }
-
-    /// Default direct tail matching when no profile is available.
-    pub fn default_is_direct_tail_match(
-        tail_a: Self,
-        tail_b: Self,
-        matched_chars: usize,
-        min_chars: usize,
-    ) -> bool {
-        tail_a != CloseDelimiter::None && tail_a == tail_b && matched_chars >= min_chars
-    }
 }
 
 /// Default continuation phrase check when no language profile is available.
@@ -430,9 +420,6 @@ pub struct LangProfile {
     /// (e.g. Python, YAML). When false, indentation is strictly a soft
     /// cost hint and cannot be used to make semantic assertions.
     pub significant_indent: bool,
-    /// Whether the language supports implicit return expressions without a
-    /// `return` keyword (e.g. Rust, Ruby).
-    pub implicit_return: bool,
     /// Whether multi-line function tails spell the return type as `) -> T`
     /// (Rust, Python, C++ trailing returns). Only these profiles answer
     /// `is_return_tail_position` affirmatively. Shared profiles cover
@@ -487,15 +474,59 @@ pub struct LangProfile {
 }
 
 impl LangProfile {
-    /// Whether a trimmed line is a function-tail return position (`) -> T`,
-    /// as in Rust, Python, and C++ trailing returns. Only profiles that opt
-    /// in via `tail_return_arrow` answer true; every other language — and
-    /// files without a known profile — is silent, so the engine never
-    /// assumes function syntax it has not been told about. The shape is
-    /// deliberately narrow: no other construct in these languages starts a
-    /// stripped line with `)` and continues with `->`.
+    /// Extracts a return-slot tail's return type: the text between the
+    /// last return arrow and the language's own block opener (`-> T {` in
+    /// brace languages, `-> T:` in indent-colon languages). `None` when the
+    /// language opts out of return slots (`tail_return_arrow`), the line
+    /// does not end in the block opener, the return type is absent
+    /// (`-> {`), or the arrow trails the opener. Only the type's existence
+    /// is ever asserted — its spelling is never inspected.
+    pub fn return_slot_type<'a>(&self, trimmed: &'a str) -> Option<&'a str> {
+        if !self.tail_return_arrow {
+            return None;
+        }
+        let opener = match self.block_style {
+            BlockDelimStyle::Braces => '{',
+            BlockDelimStyle::IndentColon => ':',
+            BlockDelimStyle::Keywords => return None,
+        };
+        let head = trimmed.trim_end().strip_suffix(opener)?;
+        let idx = head.rfind("->")?;
+        let body = head[idx + 2..].trim();
+        body.contains(char::is_alphanumeric).then_some(body)
+    }
+
+    /// Whether a trimmed line is a return-slot tail (`-> T {`, `-> T:`): a
+    /// return-arrow line whose return type exists. Language knowledge stays
+    /// in the profile — `Self::return_slot_type` decides the shape, the
+    /// engine only consults the answer. Only profiles that opt in via
+    /// `tail_return_arrow` answer true; every other language — and files
+    /// without a known profile — is silent, so the engine never assumes
+    /// function syntax it has not been told about. The shape is
+    /// deliberately narrow: no other construct in these languages carries
+    /// an arrow followed by a type and the block opener.
     pub fn is_return_tail_position(&self, trimmed: &str) -> bool {
-        self.tail_return_arrow && trimmed.starts_with(')') && trimmed.contains("->")
+        self.return_slot_type(trimmed).is_some()
+    }
+
+    /// The current function name in context for a return-slot line: the
+    /// line's own `fn_decl` capture when the signature head sits on the
+    /// line itself, else the nearest `fn_decl` capture among the preceding
+    /// context lines (a wrapped signature whose head is on an earlier
+    /// line). `None` when no function definition is at-or-before the line.
+    pub fn current_fn_name<'t>(&self, line: &'t str, preceding: &[&'t str]) -> Option<&'t str> {
+        if !self.tail_return_arrow {
+            return None;
+        }
+        let re = self.fn_decl.as_ref()?;
+        if let Some(c) = re.captures(line) {
+            return c.get(1).map(|m| m.as_str());
+        }
+        preceding
+            .iter()
+            .rev()
+            .find_map(|l| re.captures(l))
+            .and_then(|c| c.get(1).map(|m| m.as_str()))
     }
 
     /// Extracts the property or field name from a line if it matches this
@@ -707,28 +738,6 @@ impl LangProfile {
         self.attribute_prefixes.iter().any(|&pf| t.starts_with(pf))
     }
 
-    /// Whether a line is a return statement or (for languages with implicit
-    /// returns like Rust) a terminal return expression.
-    pub fn is_terminal_return_expr(&self, line: &str) -> bool {
-        let t = line.trim();
-        if t.is_empty()
-            || self.is_comment_line(t)
-            || self.is_block_open(t)
-            || self.is_block_close(t)
-            || t.chars().all(|c| matches!(c, '}' | ')' | ']' | ';' | ','))
-        {
-            return false;
-        }
-        if t.starts_with("return ") || t == "return;" || t == "return" || t.starts_with("return\t")
-        {
-            return true;
-        }
-        if self.implicit_return && !t.ends_with(';') {
-            return true;
-        }
-        false
-    }
-
     /// Whether a line is a declaration start or item boundary that breaks a
     /// multi-line continuation.
     pub fn is_decl_break(&self, line: &str) -> bool {
@@ -822,32 +831,6 @@ impl LangProfile {
             }
         }
         CloseDelimiter::None
-    }
-
-    /// Checks whether two closing tails qualify as a direct tail match in this
-    /// language across indentation shifts.
-    pub fn is_direct_tail_match(
-        &self,
-        tail_a: CloseDelimiter,
-        tail_b: CloseDelimiter,
-        matched_chars: usize,
-        min_chars: usize,
-    ) -> bool {
-        if matched_chars < min_chars || tail_a == CloseDelimiter::None || tail_a != tail_b {
-            return false;
-        }
-        match self.block_style {
-            BlockDelimStyle::Braces => true,
-            BlockDelimStyle::IndentColon => {
-                matches!(tail_a, CloseDelimiter::Paren | CloseDelimiter::Bracket)
-            }
-            BlockDelimStyle::Keywords => {
-                matches!(
-                    tail_a,
-                    CloseDelimiter::Keyword | CloseDelimiter::Paren | CloseDelimiter::Bracket
-                )
-            }
-        }
     }
 
     /// Trims trailing syntax delimiters and whitespace from a statement or

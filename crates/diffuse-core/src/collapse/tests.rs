@@ -165,10 +165,12 @@ fn similarity_pairing_and_section_stop() {
     );
 }
 
-// The brace-anchor: the del `None` before the fn's `}` pairs with the new
-// `Some(result)` before the `}` — not the mid-block `return None;`.
+// A preceding `}` is not a sound return-slot signal: it can also close a
+// block inside a continued expression. The del `None` therefore pairs by
+// content with the mid-block `return None;`, and `Some(result)` after the
+// brace remains an add.
 #[test]
-fn brace_anchor_none_some_result() {
+fn brace_close_tail_does_not_claim_slot() {
     let mut old_content: Vec<&str> = vec![""; 130];
     old_content[113] = "    }"; // the fn's closing brace after the del
     let mut new_content: Vec<&str> = vec![""; 320];
@@ -212,8 +214,13 @@ fn brace_anchor_none_some_result() {
         .expect("the None mod");
     assert_eq!(
         none_mod.new_line(),
-        Some(155),
-        "the brace-anchor pairs None with Some(result) despite the verbatim None in the new file"
+        Some(153),
+        "content pairs None with the verbatim `return None;`"
+    );
+    assert!(
+        c.iter()
+            .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(155)),
+        "`Some(result)` after the brace stays an add"
     );
 }
 
@@ -545,10 +552,9 @@ fn subword_diff_token_spans() {
     );
 }
 
-// Tail guard: when the mod's add is the LAST line of a replacement block,
-// the block's earlier lines are + rows (never the mod's unnumbered tail) —
-// and an add matching a MOVED del (shown ≈ elsewhere) is real content, not
-// a reflow, so it survives.
+// Tail guard and reflow corpus: block lines keep new-file order, an add
+// matching a moved del survives, and a trailing expression after a block
+// close does not manufacture a zero-overlap tail pair.
 #[test]
 fn tail_guard_and_reflow_corpus() {
     let h3 = hunk(vec![
@@ -605,10 +611,15 @@ fn tail_guard_and_reflow_corpus() {
         .expect("the mod");
     assert_eq!(
         mod3.new_line(),
-        Some(155),
-        "pairs old None with Some(result)"
+        Some(153),
+        "content pairs old None with the verbatim `return None;`"
     );
     assert_eq!(mod3.old_text(), Some("        None"));
+    assert!(
+        c.iter()
+            .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(155)),
+        "`Some(result)` after the brace stays an add"
+    );
     assert!(
         c.iter()
             .any(|r| r.kind() == RowKind::Add && r.new_line() == Some(151)),

@@ -51,7 +51,6 @@ pub fn profile() -> LangProfile {
         markdown: false,
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
-        implicit_return: false,
         tail_return_arrow: false,
         fn_decl: Some(
             Regex::new(r"^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z0-9_]+)").expect("go fn_decl"),

@@ -42,6 +42,7 @@ use diffuse::{
         lcs::char_len,
         merge::{RunKind, display_text_with_profile, is_wholesale_mod},
         parse::{Row, RowGroup, RowKind},
+        pipeline::{PipelineOptions, process_single_diff_file},
         wire::{MovSide, OutputFile, PipelineOutput},
     },
     render::{
@@ -1589,6 +1590,51 @@ fn init_test_logging() {
     });
 }
 
+fn is_generating() -> bool {
+    ["GEN_GOLDEN", "UPDATE_WIRE", "UPDATE_RENDER", "UPDATE_RAW"]
+        .iter()
+        .any(|key| env::var(key).is_ok())
+}
+
+/// Run the pipeline one file at a time so a panic names the offending path.
+/// Used only as a diagnostic when normal golden generation panics; the
+/// normal path exercises the streaming pipeline.
+fn run_pipeline_for_generation(fixture: &Fixture, opts: PipelineOptions) -> PipelineOutput {
+    let mut new_content = fixture.new_content.clone();
+    let mut old_content = fixture.old_content.clone();
+    let mut files = Vec::new();
+    diffuse::core::parse::parse_diff_for_each(&fixture.diff, |f| {
+        let path = f.path.clone();
+        let new_c = new_content.remove(&path);
+        let old_lookup = f.old_path.clone().unwrap_or_else(|| path.clone());
+        let old_c = old_content
+            .remove(&old_lookup)
+            .or_else(|| old_content.remove(&path));
+        let diff_fallback = Some(Arc::clone(&fixture.diff));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            process_single_diff_file(
+                f,
+                new_c.as_deref().map(|s| s.as_str()),
+                old_c.as_deref().map(|s| s.as_str()),
+                diff_fallback,
+                &opts,
+            )
+        }));
+        match result {
+            Ok(file) => files.push(file),
+            Err(payload) => {
+                eprintln!("PANIC while generating file {path:?}");
+                std::panic::resume_unwind(payload);
+            }
+        }
+    });
+    PipelineOutput {
+        files,
+        branch: String::new(),
+        untracked_skipped: Vec::new(),
+    }
+}
+
 fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     init_test_logging();
     let t0 = Instant::now();
@@ -1608,12 +1654,43 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     if let Some(ref db) = fixture.notes_db {
         opts = opts.with_notes(Some(db.clone()), fixture.repo_key.clone());
     }
-    let output = diffuse::core::pipeline::run_pipeline_arc(
-        Arc::clone(&fixture.diff),
-        new_content,
-        old_content,
-        opts,
-    );
+    let output = if env::var("GEN_GOLDEN_FILE_DIAG").is_ok() {
+        run_pipeline_for_generation(&fixture, opts)
+    } else if is_generating() {
+        let normal_opts = opts.clone();
+        let normal = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            diffuse::core::pipeline::run_pipeline_arc(
+                Arc::clone(&fixture.diff),
+                new_content,
+                old_content,
+                normal_opts,
+            )
+        }));
+        match normal {
+            Ok(output) => output,
+            Err(payload) => {
+                eprintln!("Golden generation panicked for corpus {name:?}; locating the file...");
+                // Re-run one file at a time to name the offending path. The
+                // diagnostic walk panics on the first bad file after printing
+                // its path, so silence the duplicate hook output and resume
+                // the original panic below.
+                let previous_hook = std::panic::take_hook();
+                std::panic::set_hook(Box::new(|_| {}));
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_pipeline_for_generation(&fixture, opts)
+                }));
+                std::panic::set_hook(previous_hook);
+                std::panic::resume_unwind(payload)
+            }
+        }
+    } else {
+        diffuse::core::pipeline::run_pipeline_arc(
+            Arc::clone(&fixture.diff),
+            new_content,
+            old_content,
+            opts,
+        )
+    };
     assert_wire_json_matches(&output, name);
     walk_and_assert(&output, name, min);
     assert_diff_invariants(
@@ -2027,6 +2104,13 @@ corpus_tests!(osc11_query_gate, "osc11-query-gate", 6, true, false);
 corpus_tests!(ansi_optimizer, "ansi-optimizer", 10, true, false);
 corpus_tests!(linenum_u32, "linenum-u32", 20, true, true);
 corpus_tests!(scrollbar_grab_drag, "scrollbar-grab-drag", 6, true, true);
+corpus_tests!(
+    viewport_scroll_boundaries,
+    "viewport-scroll-boundaries",
+    5,
+    true,
+    true
+);
 
 #[test]
 fn test_golden_initialized_detection() {

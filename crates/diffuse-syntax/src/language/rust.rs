@@ -17,6 +17,7 @@ pub const KEYWORDS: &[&str] = &[
     "else",
     "enum",
     "extern",
+    "false",
     "fn",
     "for",
     "if",
@@ -37,6 +38,7 @@ pub const KEYWORDS: &[&str] = &[
     "struct",
     "super",
     "trait",
+    "true",
     "type",
     "unsafe",
     "use",
@@ -73,7 +75,6 @@ pub fn profile() -> LangProfile {
         markdown: false,
         block_style: BlockDelimStyle::Braces,
         significant_indent: false,
-        implicit_return: true,
         tail_return_arrow: true,
         fn_decl: Some(
             Regex::new(r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?fn\s+([A-Za-z0-9_]+)")
@@ -116,7 +117,7 @@ pub fn profile() -> LangProfile {
         trailing_delimiters: &['{', '}', ';', ',', ')', ']'],
         property_syntax: crate::profile::PropertySyntax::Colon,
         attribute_prefixes: &["#[", "#!"],
-        continuation_prefixes: &["&&", "||", "."],
+        continuation_prefixes: &["&&", "||", ".", "as "],
         import_prefixes: &["use ", "pub use "],
         section_headers: false,
         single_quote: crate::profile::SingleQuoteKind::Char(

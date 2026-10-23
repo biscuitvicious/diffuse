@@ -797,6 +797,94 @@ fn test_all_profiles_operators_sorted() {
 }
 
 #[test]
+fn test_all_profiles_keywords_sorted() {
+    for prof in all_registered_profiles() {
+        let mut sorted = prof.keywords.to_vec();
+        sorted.sort();
+        assert_eq!(
+            prof.keywords,
+            sorted.as_slice(),
+            "keywords in profile `{}` not sorted. Expected:\n{:?}",
+            prof.name,
+            sorted
+        );
+    }
+}
+
+/// Boolean literals are language lexemes in Rust: the keyword table must
+/// list them so salience (`alnum && !keyword`) excludes them.
+#[test]
+fn test_rust_boolean_literals_are_keywords() {
+    let rs = lang_profile("rs").unwrap();
+    assert!(rs.is_keyword("true"));
+    assert!(rs.is_keyword("false"));
+    assert!(!rs.is_keyword("None"), "None is a constant, not a keyword");
+    assert!(!rs.is_keyword("truthy"), "prefixes must not match");
+}
+
+/// A return-slot tail line ends in the block opener, holds `->`, and the
+/// arrow's return type must exist (`-> T`) — its spelling is never
+/// inspected. The owning function name resolves from the line's own
+/// `fn_decl` capture first, falling back to the nearest capture in the
+/// preceding context (a wrapped signature), and is absent when neither
+/// exists.
+#[test]
+fn test_return_slot_shape_and_owner_resolution() {
+    let rs = lang_profile("rs").unwrap();
+    let py = lang_profile("py").unwrap();
+    let ts = lang_profile("ts").unwrap();
+
+    // Shape gate: the language itself extracts the return type between the
+    // last arrow and its own block opener.
+    assert_eq!(rs.return_slot_type(") -> bool {"), Some("bool"));
+    assert_eq!(
+        rs.return_slot_type("fn guard_ids(&self) -> DelGuards {"),
+        Some("DelGuards")
+    );
+    assert!(!rs.is_return_tail_position(") -> {"), "typeless arrow");
+    assert!(
+        !rs.is_return_tail_position(") -> bool;"),
+        "a signature closer is not a slot opener"
+    );
+    assert!(
+        !rs.is_return_tail_position(") -> bool"),
+        "an arrow without the trailing opener"
+    );
+    assert!(py.is_return_tail_position("def load_row(i: int) -> bool:"));
+    assert_eq!(
+        py.return_slot_type("def load_row(i: int) -> bool:"),
+        Some("bool")
+    );
+    assert_eq!(
+        ts.return_slot_type("(a, b) => b {"),
+        None,
+        "a language without return arrows extracts nothing"
+    );
+
+    // Owner resolution: own capture wins over context.
+    assert_eq!(
+        rs.current_fn_name("fn guard_ids(&self) -> DelGuards {", &["fn previous("]),
+        Some("guard_ids")
+    );
+    assert_eq!(
+        rs.current_fn_name(
+            ") -> bool {",
+            &["let x = 1;", "    fn guard_delims(", "    state: u32,"]
+        ),
+        Some("guard_delims")
+    );
+    assert_eq!(
+        rs.current_fn_name(") -> bool {", &["let x = 1;"]),
+        None,
+        "no fn declaration, no owner"
+    );
+    assert_eq!(
+        py.current_fn_name("def load_row(i: int) -> bool:", &[]),
+        Some("load_row")
+    );
+}
+
+#[test]
 fn test_registered_extensions_resolve() {
     for &ext in REGISTERED_EXTENSIONS {
         assert!(
@@ -997,113 +1085,10 @@ fn test_close_delimiter_and_profile_syntax_matching() {
         crate::profile::CloseDelimiter::None
     );
 
-    // Direct tail match across indentation shifts parameterized with min_chars
-    assert!(rs.is_direct_tail_match(
-        crate::profile::CloseDelimiter::ParenSemi,
-        crate::profile::CloseDelimiter::ParenSemi,
-        10,
-        8
-    ));
-    assert!(!rs.is_direct_tail_match(
-        crate::profile::CloseDelimiter::ParenSemi,
-        crate::profile::CloseDelimiter::BraceSemi,
-        10,
-        8
-    ));
-    assert!(!rs.is_direct_tail_match(
-        crate::profile::CloseDelimiter::None,
-        crate::profile::CloseDelimiter::None,
-        10,
-        8
-    ));
-    assert!(!rs.is_direct_tail_match(
-        crate::profile::CloseDelimiter::ParenSemi,
-        crate::profile::CloseDelimiter::ParenSemi,
-        5,
-        8
-    ));
-    // Test custom min_chars threshold
-    assert!(rs.is_direct_tail_match(
-        crate::profile::CloseDelimiter::ParenSemi,
-        crate::profile::CloseDelimiter::ParenSemi,
-        5,
-        4
-    ));
-    assert!(!rs.is_direct_tail_match(
-        crate::profile::CloseDelimiter::ParenSemi,
-        crate::profile::CloseDelimiter::ParenSemi,
-        5,
-        6
-    ));
+    // Close tail classification (see separate tests for the return-slot
+    // shape and owner resolution)
 
-    // Python only allows expressions across indentation shifts, not block
-    // delimiters
-    assert!(py.is_direct_tail_match(
-        crate::profile::CloseDelimiter::Paren,
-        crate::profile::CloseDelimiter::Paren,
-        10,
-        8
-    ));
-    assert!(!py.is_direct_tail_match(
-        crate::profile::CloseDelimiter::Brace,
-        crate::profile::CloseDelimiter::Brace,
-        10,
-        8
-    ));
-
-    // Shell allows keywords, paren, bracket
-    assert!(sh.is_direct_tail_match(
-        crate::profile::CloseDelimiter::Keyword,
-        crate::profile::CloseDelimiter::Keyword,
-        10,
-        8
-    ));
-    assert!(sh.is_direct_tail_match(
-        crate::profile::CloseDelimiter::Paren,
-        crate::profile::CloseDelimiter::Paren,
-        10,
-        8
-    ));
-    assert!(sh.is_direct_tail_match(
-        crate::profile::CloseDelimiter::Bracket,
-        crate::profile::CloseDelimiter::Bracket,
-        10,
-        8
-    ));
-    assert!(!sh.is_direct_tail_match(
-        crate::profile::CloseDelimiter::Brace,
-        crate::profile::CloseDelimiter::Brace,
-        10,
-        8
-    ));
-
-    // Default methods on CloseDelimiter
-    assert!(
-        crate::profile::CloseDelimiter::default_is_direct_tail_match(
-            crate::profile::CloseDelimiter::ParenSemi,
-            crate::profile::CloseDelimiter::ParenSemi,
-            10,
-            8
-        )
-    );
-    assert!(
-        !crate::profile::CloseDelimiter::default_is_direct_tail_match(
-            crate::profile::CloseDelimiter::None,
-            crate::profile::CloseDelimiter::None,
-            10,
-            8
-        )
-    );
-    assert!(
-        !crate::profile::CloseDelimiter::default_is_direct_tail_match(
-            crate::profile::CloseDelimiter::ParenSemi,
-            crate::profile::CloseDelimiter::ParenSemi,
-            5,
-            8
-        )
-    );
-
-    // Exact close and direct tail for keywords / indent languages
+    // Exact close and tail for keywords / indent languages
     assert_eq!(
         sh.classify_exact_close("fi"),
         crate::profile::CloseDelimiter::Keyword
@@ -1119,12 +1104,6 @@ fn test_close_delimiter_and_profile_syntax_matching() {
     assert!(!rs.trailing_delimiters.is_empty());
     assert!(rs.trailing_delimiters.contains(&';'));
     assert!(c.trailing_delimiters.contains(&';'));
-    assert!(c.is_direct_tail_match(
-        crate::profile::CloseDelimiter::BraceSemi,
-        crate::profile::CloseDelimiter::BraceSemi,
-        10,
-        8
-    ));
     assert!(py.trailing_delimiters.contains(&':'));
     assert!(!py.trailing_delimiters.contains(&';'));
 
@@ -1321,38 +1300,6 @@ fn test_extract_property_key() {
 }
 
 #[test]
-fn test_terminal_return_expression_rules() {
-    let rs = lang_profile("rs").unwrap();
-    // In Rust, expressions without trailing semicolons are terminal returns
-    assert!(rs.is_terminal_return_expr("None"));
-    assert!(rs.is_terminal_return_expr("Some(result)"));
-    assert!(rs.is_terminal_return_expr("return 42;"));
-    assert!(rs.is_terminal_return_expr("    return None;"));
-    // With trailing semicolon in Rust, it is a statement returning (), NOT a
-    // terminal return value
-    assert!(!rs.is_terminal_return_expr("None;"));
-    assert!(!rs.is_terminal_return_expr("let x = 1;"));
-    assert!(!rs.is_terminal_return_expr("alpha();"));
-    assert!(!rs.is_terminal_return_expr("}"));
-    assert!(!rs.is_terminal_return_expr("})"));
-    assert!(!rs.is_terminal_return_expr("});"));
-    assert!(!rs.is_terminal_return_expr("}),"));
-    assert!(!rs.is_terminal_return_expr(")"));
-    assert!(!rs.is_terminal_return_expr(");"));
-    assert!(!rs.is_terminal_return_expr("]"));
-    assert!(!rs.is_terminal_return_expr("]);"));
-    assert!(!rs.is_terminal_return_expr(""));
-
-    let c = lang_profile("c").unwrap();
-    // In C, returns must be explicit
-    assert!(c.is_terminal_return_expr("return 42;"));
-    assert!(c.is_terminal_return_expr("return;"));
-    assert!(!c.is_terminal_return_expr("None"));
-    assert!(!c.is_terminal_return_expr("42;"));
-    assert!(!c.is_terminal_return_expr("int x = 1;"));
-}
-
-#[test]
 fn test_language_syntax_attributes_and_bypasses() {
     let rs = lang_profile("rs").unwrap();
     let py = lang_profile("py").unwrap();
@@ -1537,6 +1484,14 @@ fn test_is_opening_delimiter() {
     assert!(rs.is_opening_delimiter("["));
     assert!(!rs.is_opening_delimiter(";"));
     assert!(!rs.is_opening_delimiter("foo"));
+
+    // The entire trimmed text must itself be an opening delimiter. Identifier
+    // fragments and multi-token sequences are not.
+    assert!(!rs.is_opening_delimiter("::{"));
+    assert!(!rs.is_opening_delimiter("(("));
+    assert!(!rs.is_opening_delimiter("()"));
+    assert!(!rs.is_opening_delimiter(".clone()"));
+    assert!(!rs.is_opening_delimiter("foo("));
 
     // Unicode opening delimiters
     assert!(rs.is_opening_delimiter("（"));
