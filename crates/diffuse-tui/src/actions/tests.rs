@@ -1,4 +1,6 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
+
+use diffuse_git::testing::{commit_files, init_repo};
 
 use super::*;
 use crate::core::git::load_git_repo;
@@ -15,26 +17,8 @@ fn test_parse_hunk_header() {
 
 fn setup_test_git_repo() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
-
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.path().join("file.rs"), "fn one() {}\nfn two() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
+    let repo = init_repo(dir.path()).unwrap();
+    commit_files(&repo, "init", &[("file.rs", "fn one() {}\nfn two() {}\n")]).unwrap();
 
     // Modify file.rs
     fs::write(

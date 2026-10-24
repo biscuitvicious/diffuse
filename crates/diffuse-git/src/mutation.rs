@@ -22,7 +22,9 @@ pub fn default_signature() -> gix::actor::Signature {
 }
 
 /// Convert a Git index entry mode to a tree entry kind.
-fn index_mode_to_entry_kind(mode: gix::index::entry::Mode) -> gix::object::tree::EntryKind {
+pub(crate) fn index_mode_to_entry_kind(
+    mode: gix::index::entry::Mode,
+) -> gix::object::tree::EntryKind {
     use gix::{index::entry::Mode, object::tree::EntryKind};
     if mode == Mode::FILE_EXECUTABLE {
         EntryKind::BlobExecutable
@@ -163,6 +165,21 @@ fn find_hunk_match(
     None
 }
 
+/// Open the Git index, or initialize a new empty index state if none exists
+/// yet.
+pub(crate) fn open_or_create_index(repo: &gix::Repository) -> Result<gix::index::File, String> {
+    match repo.open_index() {
+        Ok(idx) => Ok(idx),
+        Err(_) => {
+            let index_path = repo.index_path();
+            Ok(gix::index::File::from_state(
+                gix::index::State::new(repo.object_hash()),
+                index_path,
+            ))
+        }
+    }
+}
+
 /// Stage a whole file from the working tree into the Git index (`git add --
 /// <path>`).
 pub fn stage_file(repo: &Repository, file_path: &str) -> Result<(), String> {
@@ -172,10 +189,7 @@ pub fn stage_file(repo: &Repository, file_path: &str) -> Result<(), String> {
     let full_path = work_dir.join(file_path);
     let bpath = BStr::new(file_path.as_bytes());
 
-    let mut index = repo
-        .raw()
-        .open_index()
-        .map_err(|e| format!("failed to open git index: {e}"))?;
+    let mut index = open_or_create_index(repo.raw())?;
 
     if full_path.exists() {
         let bytes =
@@ -234,10 +248,7 @@ pub fn stage_file(repo: &Repository, file_path: &str) -> Result<(), String> {
 pub fn unstage_file(repo: &Repository, file_path: &str) -> Result<(), String> {
     let bpath = BStr::new(file_path.as_bytes());
 
-    let mut index = repo
-        .raw()
-        .open_index()
-        .map_err(|e| format!("failed to open git index: {e}"))?;
+    let mut index = open_or_create_index(repo.raw())?;
 
     let head_entry = {
         let head_commit = repo.raw().head_commit().ok();
@@ -293,10 +304,7 @@ pub fn discard_file(repo: &Repository, file_path: &str) -> Result<Option<String>
     let full_path = work_dir.join(file_path);
     let bpath = BStr::new(file_path.as_bytes());
 
-    let index = repo
-        .raw()
-        .open_index()
-        .map_err(|e| format!("failed to open git index: {e}"))?;
+    let index = open_or_create_index(repo.raw())?;
 
     if let Ok(entry_idx) = index.entry_index_by_path(bpath) {
         let entry = &index.entries()[entry_idx];
@@ -337,10 +345,7 @@ pub fn stage_hunk(repo: &Repository, file_path: &str, hunk: &Hunk) -> Result<(),
         .map_err(|e| format!("failed to write blob: {e}"))?;
 
     let bpath = BStr::new(file_path.as_bytes());
-    let mut index = repo
-        .raw()
-        .open_index()
-        .map_err(|e| format!("failed to open git index: {e}"))?;
+    let mut index = open_or_create_index(repo.raw())?;
 
     let work_dir = repo.work_dir();
     let full_path = work_dir.map(|w| w.join(file_path));
@@ -410,10 +415,7 @@ pub fn unstage_hunk(repo: &Repository, file_path: &str, hunk: &Hunk) -> Result<(
     };
 
     let bpath = BStr::new(file_path.as_bytes());
-    let mut index = repo
-        .raw()
-        .open_index()
-        .map_err(|e| format!("failed to open git index: {e}"))?;
+    let mut index = open_or_create_index(repo.raw())?;
 
     let entry_idx = index
         .entry_index_by_path(bpath)
@@ -481,7 +483,7 @@ pub fn create_stash_checkpoint(repo: &Repository) -> Option<String> {
     let head_tree = head.tree().ok()?;
     let mut editor = head_tree.edit().ok()?;
 
-    let index = repo.raw().open_index().ok()?;
+    let index = open_or_create_index(repo.raw()).ok()?;
     for entry in index.entries() {
         let path_str = entry.path(&index).to_str().ok()?;
         let kind = index_mode_to_entry_kind(entry.mode);

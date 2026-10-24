@@ -6,7 +6,6 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::Path,
-    process::Command,
     string::String,
     sync::Arc,
 };
@@ -29,20 +28,6 @@ pub const DEFAULT_CONTEXT_LINES: usize = 4;
 pub const DEFAULT_EXPAND_LINES: usize = 6;
 
 pub use diffuse_git::RefPair;
-
-/// Run a git command in the target directory and return stdout if successful.
-pub fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .ok()?;
-    if output.status.success() {
-        String::from_utf8(output.stdout).ok()
-    } else {
-        None
-    }
-}
 
 /// Check if the directory is inside a git repository or worktree.
 pub fn is_inside_work_tree(cwd: &Path) -> bool {

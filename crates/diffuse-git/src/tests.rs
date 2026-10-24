@@ -1,45 +1,30 @@
 //! Unit tests for diffuse-git repository operations and types.
 
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 use crate::{
     GitBlob, GitDiffOptions, RefPair, Repo, Repository, ReviewTarget, RevisionRange,
     parse_git_rev_and_pathspecs,
 };
 
-fn run_cmd(cwd: &Path, prog: &str, args: &[&str]) -> Option<String> {
-    let out = Command::new(prog)
-        .current_dir(cwd)
-        .args(args)
-        .output()
-        .ok()?;
-    if out.status.success() {
-        String::from_utf8(out.stdout).ok()
-    } else {
-        None
-    }
-}
-
 fn init_test_git_repo(dir: &Path) -> (String, String, String, String) {
-    run_cmd(dir, "git", &["init"]).unwrap();
-    run_cmd(dir, "git", &["config", "user.name", "Test"]).unwrap();
-    run_cmd(dir, "git", &["config", "user.email", "test@example.com"]).unwrap();
-    run_cmd(dir, "git", &["config", "commit.gpgsign", "false"]).unwrap();
-
-    let write_and_commit = |msg: &str, content: &str| -> String {
-        fs::write(dir.join("file.txt"), content).unwrap();
-        run_cmd(dir, "git", &["add", "file.txt"]).unwrap();
-        run_cmd(dir, "git", &["commit", "-m", msg]).unwrap();
-        run_cmd(dir, "git", &["rev-parse", "HEAD"])
-            .unwrap()
-            .trim()
-            .to_string()
-    };
-
-    let c1 = write_and_commit("c1", "line 1\n");
-    let c2 = write_and_commit("c2", "line 1\nline 2\n");
-    let c3 = write_and_commit("c3", "line 1\nline 2\nline 3\n");
-    let c4 = write_and_commit("c4", "line 1\nline 2\nline 3\nline 4\n");
+    let repo = crate::testing::init_repo(dir).unwrap();
+    let c1 = crate::testing::commit_files(&repo, "c1", &[("file.txt", "line 1\n")])
+        .unwrap()
+        .to_string();
+    let c2 = crate::testing::commit_files(&repo, "c2", &[("file.txt", "line 1\nline 2\n")])
+        .unwrap()
+        .to_string();
+    let c3 = crate::testing::commit_files(&repo, "c3", &[("file.txt", "line 1\nline 2\nline 3\n")])
+        .unwrap()
+        .to_string();
+    let c4 = crate::testing::commit_files(
+        &repo,
+        "c4",
+        &[("file.txt", "line 1\nline 2\nline 3\nline 4\n")],
+    )
+    .unwrap()
+    .to_string();
 
     (c1, c2, c3, c4)
 }
@@ -187,7 +172,7 @@ fn test_review_target_native() {
     let repo = Repo::from_root(dir);
     let target = ReviewTarget::from_repo_args(repo, vec![format!("{c1}..{c2}")], false);
     assert!(target.is_range());
-    assert_eq!(target.branch(), "master".to_string().trim());
+    assert_eq!(target.branch(), "main");
     assert!(target.is_work_tree());
     assert!(!target.is_staged());
     assert_eq!(
@@ -269,11 +254,11 @@ fn test_repository_load_binary_blob() {
 
     // Commit binary file
     let binary_data = vec![0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x01, 0x00, 0x01];
-    fs::write(dir.join("image.gif"), &binary_data).unwrap();
-    run_cmd(dir, "git", &["add", "image.gif"]).unwrap();
-    run_cmd(dir, "git", &["commit", "-m", "add image"]).unwrap();
-
     let repo = Repository::open(dir).unwrap();
+    fs::write(dir.join("image.gif"), &binary_data).unwrap();
+    crate::mutation::stage_file(&repo, "image.gif").unwrap();
+    crate::testing::commit_index(&repo, "add image").unwrap();
+
     let blob = repo.load_blob("HEAD", "image.gif").expect("image blob");
     assert!(blob.is_binary());
     assert_eq!(blob.data, binary_data);
@@ -288,9 +273,9 @@ fn test_repository_load_index_blob() {
 
     // Stage new content in index without committing
     fs::write(dir.join("staged.txt"), "staged content\n").unwrap();
-    run_cmd(dir, "git", &["add", "staged.txt"]).unwrap();
-
     let repo = Repository::open(dir).unwrap();
+    crate::mutation::stage_file(&repo, "staged.txt").unwrap();
+
     let blob = repo.load_blob("", "staged.txt").expect("index blob");
     assert_eq!(blob.as_str(), Some("staged content\n"));
 
@@ -322,15 +307,11 @@ fn test_repository_load_blob_gitattributes_binary() {
     )
     .unwrap();
 
-    run_cmd(
-        dir,
-        "git",
-        &["add", ".gitattributes", "clean.custombin", "clean.fakebin"],
-    )
-    .unwrap();
-    run_cmd(dir, "git", &["commit", "-m", "attributes test"]).unwrap();
-
     let repo = Repository::open(dir).unwrap();
+    crate::mutation::stage_file(&repo, ".gitattributes").unwrap();
+    crate::mutation::stage_file(&repo, "clean.custombin").unwrap();
+    crate::mutation::stage_file(&repo, "clean.fakebin").unwrap();
+    crate::testing::commit_index(&repo, "attributes test").unwrap();
 
     // 1. Check clean.custombin - must be detected as binary via -diff metadata
     let custom_blob = repo
@@ -359,10 +340,11 @@ fn test_repository_untracked_files() {
     let dir = tmp.path();
     init_test_git_repo(dir);
 
+    let repo = Repository::open(dir).unwrap();
     // Add .gitignore
     fs::write(dir.join(".gitignore"), "*.ignored\nignored_dir/\n").unwrap();
-    run_cmd(dir, "git", &["add", ".gitignore"]).unwrap();
-    run_cmd(dir, "git", &["commit", "-m", "add gitignore"]).unwrap();
+    crate::mutation::stage_file(&repo, ".gitignore").unwrap();
+    crate::testing::commit_index(&repo, "add gitignore").unwrap();
 
     // Create untracked text file
     fs::write(dir.join("untracked.txt"), "hello untracked\nsecond line\n").unwrap();
@@ -432,22 +414,18 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    run_cmd(dir, "git", &["init"]).unwrap();
-    run_cmd(dir, "git", &["config", "user.name", "Test"]).unwrap();
-    run_cmd(dir, "git", &["config", "user.email", "test@example.com"]).unwrap();
-    run_cmd(dir, "git", &["config", "commit.gpgsign", "false"]).unwrap();
-
-    fs::write(dir.join("file1.txt"), "hello 1\n").unwrap();
-    fs::write(dir.join("file2.txt"), "hello 2\n").unwrap();
-    fs::write(dir.join("file3.txt"), "hello 3\n").unwrap();
-    run_cmd(dir, "git", &["add", "file1.txt", "file2.txt", "file3.txt"]).unwrap();
-    run_cmd(dir, "git", &["commit", "-m", "initial commit"]).unwrap();
-    let c1 = run_cmd(dir, "git", &["rev-parse", "HEAD"])
-        .unwrap()
-        .trim()
-        .to_string();
-
-    let repo = Repository::open(dir).unwrap();
+    let repo = crate::testing::init_repo(dir).unwrap();
+    let c1 = crate::testing::commit_files(
+        &repo,
+        "initial commit",
+        &[
+            ("file1.txt", "hello 1\n"),
+            ("file2.txt", "hello 2\n"),
+            ("file3.txt", "hello 3\n"),
+        ],
+    )
+    .unwrap()
+    .to_string();
 
     // 1. Unstaged changes in working tree:
     // Modify file1.txt, delete file2.txt
@@ -478,11 +456,13 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
     // 2. Stage changes:
     // Restore file2.txt, stage file1.txt, add added.txt, git mv file3.txt ->
     // renamed3.txt
-    run_cmd(dir, "git", &["checkout", "--", "file2.txt"]).unwrap();
-    run_cmd(dir, "git", &["add", "file1.txt"]).unwrap();
+    crate::mutation::discard_file(&repo, "file2.txt").unwrap();
+    crate::mutation::stage_file(&repo, "file1.txt").unwrap();
     fs::write(dir.join("added.txt"), "brand new\n").unwrap();
-    run_cmd(dir, "git", &["add", "added.txt"]).unwrap();
-    run_cmd(dir, "git", &["mv", "file3.txt", "renamed3.txt"]).unwrap();
+    crate::mutation::stage_file(&repo, "added.txt").unwrap();
+    fs::rename(dir.join("file3.txt"), dir.join("renamed3.txt")).unwrap();
+    crate::mutation::stage_file(&repo, "file3.txt").unwrap();
+    crate::mutation::stage_file(&repo, "renamed3.txt").unwrap();
 
     let staged_target = ReviewTarget {
         repo: Repo::from_root(dir),
@@ -514,10 +494,8 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
     assert_eq!(s_ren.old_path.as_deref(), Some("file3.txt"));
 
     // 3. Commit staged changes to c2 and test commit range
-    run_cmd(dir, "git", &["commit", "-m", "commit c2"]).unwrap();
-    let c2 = run_cmd(dir, "git", &["rev-parse", "HEAD"])
+    let c2 = crate::testing::commit_index(&repo, "commit c2")
         .unwrap()
-        .trim()
         .to_string();
 
     let range_target = ReviewTarget {
@@ -717,17 +695,16 @@ fn test_diff_repository_unstaged_staged_and_range() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    run_cmd(dir, "git", &["init"]).unwrap();
-    run_cmd(dir, "git", &["config", "user.name", "Test"]).unwrap();
-    run_cmd(dir, "git", &["config", "user.email", "test@example.com"]).unwrap();
-    run_cmd(dir, "git", &["config", "commit.gpgsign", "false"]).unwrap();
-
-    std::fs::write(dir.join("file1.txt"), "line1\nline2\nline3\n").unwrap();
-    std::fs::write(dir.join("file2.txt"), "hello world\n").unwrap();
-    run_cmd(dir, "git", &["add", "."]).unwrap();
-    run_cmd(dir, "git", &["commit", "-m", "initial commit"]).unwrap();
-
-    let repo = Repository::open(dir).unwrap();
+    let repo = crate::testing::init_repo(dir).unwrap();
+    crate::testing::commit_files(
+        &repo,
+        "initial commit",
+        &[
+            ("file1.txt", "line1\nline2\nline3\n"),
+            ("file2.txt", "hello world\n"),
+        ],
+    )
+    .unwrap();
 
     // Modify file1: change line2 to line2_mod
     std::fs::write(dir.join("file1.txt"), "line1\nline2_mod\nline3\n").unwrap();
@@ -770,20 +747,11 @@ fn test_diff_repository_unstaged_staged_and_range() {
 #[test]
 fn test_diff_repository_on_cli_setup_repo() {
     let dir = tempfile::tempdir().unwrap();
-    let run = |args: &[&str]| {
-        run_cmd(dir.path(), "git", args).unwrap();
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
+    let repo = crate::testing::init_repo(dir.path()).unwrap();
+    crate::testing::commit_files(&repo, "init", &[("a.txt", "one\ntwo\n")]).unwrap();
     std::fs::write(dir.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
     std::fs::write(dir.path().join("b.txt"), "hello\nworld\n").unwrap();
 
-    let repo = Repository::open(dir.path()).unwrap();
     let target = ReviewTarget {
         repo: Repo::from_root(dir.path()),
         range: None,
@@ -806,51 +774,39 @@ fn test_submodule_gitlink_diff() {
     let parent = tempfile::tempdir().unwrap();
     let sub = tempfile::tempdir().unwrap();
 
-    let run_cmd_in = |dir: &std::path::Path, args: &[&str]| {
-        run_cmd(dir, "git", args).unwrap();
-    };
-
     // Initialize submodule repo
-    run_cmd_in(sub.path(), &["init", "-q"]);
-    run_cmd_in(sub.path(), &["config", "user.name", "Test"]);
-    run_cmd_in(sub.path(), &["config", "user.email", "test@example.com"]);
-    std::fs::write(sub.path().join("sub_file.txt"), "hello sub\n").unwrap();
-    run_cmd_in(sub.path(), &["add", "."]);
-    run_cmd_in(sub.path(), &["commit", "-qm", "sub commit 1"]);
+    let sub_repo = crate::testing::init_repo(sub.path()).unwrap();
+    let sub_c1 = crate::testing::commit_files(
+        &sub_repo,
+        "sub commit 1",
+        &[("sub_file.txt", "hello sub\n")],
+    )
+    .unwrap();
 
-    // Initialize parent repo
-    run_cmd_in(parent.path(), &["init", "-q"]);
-    run_cmd_in(parent.path(), &["config", "user.name", "Test"]);
-    run_cmd_in(parent.path(), &["config", "user.email", "test@example.com"]);
-    run_cmd_in(
-        parent.path(),
-        &[
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "add",
-            sub.path().to_str().unwrap(),
-            "my_sub",
-        ],
-    );
-    run_cmd_in(parent.path(), &["commit", "-qm", "add submodule"]);
+    // Initialize parent repo with submodule gitlink
+    let parent_repo = crate::testing::init_repo(parent.path()).unwrap();
+    crate::testing::commit_tree_entries(
+        &parent_repo,
+        "add submodule",
+        &[("my_sub", gix::object::tree::EntryKind::Commit, sub_c1)],
+    )
+    .unwrap();
 
     // Make second commit in submodule
-    std::fs::write(sub.path().join("sub_file.txt"), "hello sub v2\n").unwrap();
-    run_cmd_in(sub.path(), &["commit", "-qam", "sub commit 2"]);
+    let sub_c2 = crate::testing::commit_files(
+        &sub_repo,
+        "sub commit 2",
+        &[("sub_file.txt", "hello sub v2\n")],
+    )
+    .unwrap();
 
-    // Update parent submodule pointer
-    run_cmd_in(
-        parent.path(),
-        &[
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "update",
-            "--remote",
-        ],
-    );
-    run_cmd_in(parent.path(), &["commit", "-qam", "bump submodule"]);
+    // Bump parent submodule pointer
+    crate::testing::commit_tree_entries(
+        &parent_repo,
+        "bump submodule",
+        &[("my_sub", gix::object::tree::EntryKind::Commit, sub_c2)],
+    )
+    .unwrap();
 
     let repo = Repository::open(parent.path()).unwrap();
     let target = ReviewTarget {
@@ -934,13 +890,7 @@ fn test_mutation_apply_hunk_forward_and_reverse() {
 #[test]
 fn test_mutation_stage_and_unstage_flow() {
     let dir = tempfile::tempdir().unwrap();
-    let run = |args: &[&str]| {
-        run_cmd(dir.path(), "git", args).unwrap();
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
+    let repo = crate::testing::init_repo(dir.path()).unwrap();
     let base_code = "\
 fn one() {}
 // padding 1
@@ -955,9 +905,7 @@ fn one() {}
 // padding 10
 fn two() {}
 ";
-    std::fs::write(dir.path().join("code.rs"), base_code).unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
+    crate::testing::commit_files(&repo, "init", &[("code.rs", base_code)]).unwrap();
 
     // Modify code.rs: two separate functions modified
     let mod_code = "\
@@ -1037,4 +985,59 @@ fn two() {
     assert!(stash2.is_some());
     let worktree_text = std::fs::read_to_string(dir.path().join("code.rs")).unwrap();
     assert_eq!(worktree_text, base_code);
+}
+
+#[test]
+fn test_testing_fixtures_builder() {
+    use crate::testing::{commit_files, create_branch, create_tag, delete_files, init_repo};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo(tmp.path()).expect("init_repo succeeds");
+
+    // Commit 1: add two files
+    let c1 = commit_files(
+        &repo,
+        "initial commit",
+        &[("a.txt", "hello\n"), ("sub/b.txt", "world\n")],
+    )
+    .expect("commit 1 succeeds");
+
+    assert_eq!(repo.head_commit_hash().unwrap(), c1.to_string());
+    assert_eq!(repo.load_blob("HEAD", "a.txt").unwrap().data, b"hello\n");
+    assert_eq!(
+        repo.load_blob("HEAD", "sub/b.txt").unwrap().data,
+        b"world\n"
+    );
+
+    // Create branch & tag at c1
+    create_branch(&repo, "feature", c1).expect("create_branch succeeds");
+    create_tag(&repo, "v1.0", c1).expect("create_tag succeeds");
+
+    // Commit 2: update a.txt and add c.txt
+    let c2 = commit_files(
+        &repo,
+        "second commit",
+        &[("a.txt", "hello modified\n"), ("c.txt", "new file\n")],
+    )
+    .expect("commit 2 succeeds");
+
+    assert_eq!(repo.head_commit_hash().unwrap(), c2.to_string());
+    assert_eq!(repo.rev_to_full_hash("HEAD~1").unwrap(), c1.to_string());
+
+    // Commit 3: delete sub/b.txt
+    let c3 = delete_files(&repo, "delete b", &["sub/b.txt"]).expect("delete succeeds");
+    assert_eq!(repo.head_commit_hash().unwrap(), c3.to_string());
+    assert!(repo.load_blob("HEAD", "sub/b.txt").is_none());
+
+    // Diff commit 1 to commit 2 natively
+    let target = crate::types::ReviewTarget::from_repo_args(
+        crate::types::Repo::from_root(tmp.path()),
+        vec![format!("{c1}..{c2}")],
+        false,
+    );
+    let res = crate::diff::diff_repository(&repo, &target, 3, crate::diff::WhitespaceMode::Exact)
+        .expect("diff succeeds");
+    assert_eq!(res.files.len(), 2);
+    let a_file = res.files.iter().find(|f| f.path == "a.txt").unwrap();
+    assert_eq!(a_file.status, diffuse_parse::FileStatus::Modified);
 }

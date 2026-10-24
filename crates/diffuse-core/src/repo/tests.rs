@@ -1,30 +1,27 @@
-use std::{fs, path::Path};
+use std::path::Path;
 
-use crate::{
-    git::run_git,
-    repo::{Repo, ReviewTarget, ReviewTargetNotesExt, RevisionRange},
-};
+use diffuse_git::testing::{commit_files, init_repo};
+
+use crate::repo::{Repo, ReviewTarget, ReviewTargetNotesExt, RevisionRange};
 
 fn init_test_git_repo(dir: &Path) -> (String, String, String, String) {
-    run_git(dir, &["init"]).unwrap();
-    run_git(dir, &["config", "user.name", "Test"]).unwrap();
-    run_git(dir, &["config", "user.email", "test@example.com"]).unwrap();
-    run_git(dir, &["config", "commit.gpgsign", "false"]).unwrap();
-
-    let write_and_commit = |msg: &str, content: &str| -> String {
-        fs::write(dir.join("file.txt"), content).unwrap();
-        run_git(dir, &["add", "file.txt"]).unwrap();
-        run_git(dir, &["commit", "-m", msg]).unwrap();
-        run_git(dir, &["rev-parse", "HEAD"])
-            .unwrap()
-            .trim()
-            .to_string()
-    };
-
-    let c1 = write_and_commit("c1", "line 1\n");
-    let c2 = write_and_commit("c2", "line 1\nline 2\n");
-    let c3 = write_and_commit("c3", "line 1\nline 2\nline 3\n");
-    let c4 = write_and_commit("c4", "line 1\nline 2\nline 3\nline 4\n");
+    let repo = init_repo(dir).unwrap();
+    let c1 = commit_files(&repo, "c1", &[("file.txt", "line 1\n")])
+        .unwrap()
+        .to_string();
+    let c2 = commit_files(&repo, "c2", &[("file.txt", "line 1\nline 2\n")])
+        .unwrap()
+        .to_string();
+    let c3 = commit_files(&repo, "c3", &[("file.txt", "line 1\nline 2\nline 3\n")])
+        .unwrap()
+        .to_string();
+    let c4 = commit_files(
+        &repo,
+        "c4",
+        &[("file.txt", "line 1\nline 2\nline 3\nline 4\n")],
+    )
+    .unwrap()
+    .to_string();
 
     (c1, c2, c3, c4)
 }

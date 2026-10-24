@@ -11,6 +11,7 @@
 use std::{collections::HashMap, env, fs, process::Command, time::Instant};
 
 use diffuse::core::{PipelineOptions, streaming::stream_diff_pipeline, wire::OutputFile};
+use diffuse_git::testing::{commit_files, init_repo};
 
 fn create_synthetic_multilang_repo(
     file_count: usize,
@@ -21,19 +22,7 @@ fn create_synthetic_multilang_repo(
     HashMap<String, String>,
 ) {
     let dir = tempfile::tempdir().unwrap();
-
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
+    let repo = init_repo(dir.path()).unwrap();
 
     let mut old_contents = HashMap::new();
     let mut new_contents = HashMap::new();
@@ -81,30 +70,31 @@ fn create_synthetic_multilang_repo(
             ),
         };
 
-        let file_path = dir.path().join(&filename);
-        if let Some(parent) = file_path.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        fs::write(&file_path, &old_body).unwrap();
         old_contents.insert(filename.clone(), old_body);
         new_contents.insert(filename, new_body);
     }
 
-    run(&["add", "."]);
-    run(&["commit", "-qm", "initial commit"]);
+    let old_specs: Vec<(&str, &str)> = old_contents
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    commit_files(&repo, "initial commit", &old_specs).unwrap();
 
-    // 2. Apply modifications
+    // 2. Apply modifications to worktree
     for (filename, new_body) in &new_contents {
         let file_path = dir.path().join(filename);
         fs::write(&file_path, new_body).unwrap();
     }
 
-    let out = Command::new("git")
-        .args(["diff", "-U6", "--no-color", "HEAD"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-    let diff = String::from_utf8(out.stdout).unwrap();
+    let target = diffuse_git::ReviewTarget::from_repo_args(
+        diffuse_git::Repo::from_root(dir.path()),
+        vec!["HEAD".into()],
+        false,
+    );
+    let diff_res =
+        diffuse_git::diff_repository(&repo, &target, 6, diffuse_git::WhitespaceMode::Exact)
+            .unwrap();
+    let diff = diff_res.diff;
 
     (dir, diff, new_contents, old_contents)
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, path::Path, process};
+use std::{collections::HashMap, fs, path::Path};
 
 use crate::{
     app::{AppState, temp_notes_path},
@@ -589,28 +589,20 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
 
 #[test]
 fn test_palette_rs_commit_hunk_starts_not_interleaved() {
-    let output = process::Command::new("git")
-        .args([
-            "diff",
-            "7e0caab~..7e0caab",
-            "--",
-            "crates/diffuse-render/src/theme/palette.rs",
-        ])
-        .output();
-    let Ok(output) = output else {
-        return;
-    };
-    if !output.status.success() {
-        return;
-    }
-    let diff_str = String::from_utf8_lossy(&output.stdout);
-    if diff_str.trim().is_empty() {
-        return;
-    }
-    let pipeline_out = run_pipeline_full(&*diff_str, None, None, PipelineOptions::default());
-    if pipeline_out.files.is_empty() {
-        return;
-    }
+    let diff_str = r#"diff --git a/palette.rs b/palette.rs
+--- a/palette.rs
++++ b/palette.rs
+@@ -1,3 +1,3 @@
+-a
++b
+ c
+@@ -10,3 +10,3 @@
+-d
++e
+ f
+"#;
+    let pipeline_out = run_pipeline_full(diff_str, None, None, PipelineOptions::default());
+    assert!(!pipeline_out.files.is_empty());
     let state = AppState::new(
         pipeline_out,
         "test_repo".into(),

@@ -1,4 +1,6 @@
-use std::{fs, process::Command, slice, sync::mpsc};
+use std::{fs, slice, sync::mpsc};
+
+use diffuse_git::testing::{commit_files, init_repo};
 
 use super::*;
 
@@ -41,25 +43,9 @@ fn test_fixed_commit_range_excludes_untracked_files() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed", args);
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit1"]);
-
-    fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit2"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(&repo, "commit1", &[("a.rs", "fn a() {}\n")]).unwrap();
+    commit_files(&repo, "commit2", &[("a.rs", "fn a() { 1 }\n")]).unwrap();
 
     // Untracked file — must NOT appear when diffing a fixed range
     fs::write(dir.join("bogus_untracked.txt"), "I should not appear\n").unwrap();
@@ -97,21 +83,8 @@ fn test_load_git_repo_includes_untracked_files_with_synthetic_diff() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(&repo, "init", &[("tracked.rs", "fn tracked() {}\n")]).unwrap();
 
     // Create untracked file
     fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
@@ -148,26 +121,14 @@ fn test_load_git_blobs_batch() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("f1.txt"), "content 1\n").unwrap();
-    fs::write(dir.join("f2.txt"), "content 2\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit1"]);
-
-    fs::write(dir.join("f1.txt"), "content 1 mod\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit2"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(
+        &repo,
+        "commit1",
+        &[("f1.txt", "content 1\n"), ("f2.txt", "content 2\n")],
+    )
+    .unwrap();
+    commit_files(&repo, "commit2", &[("f1.txt", "content 1 mod\n")]).unwrap();
 
     let specs = vec![
         "HEAD:f1.txt".to_string(),
@@ -197,26 +158,14 @@ fn test_load_git_blobs_native() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("f1.txt"), "hello native\n").unwrap();
-    fs::write(dir.join("f2.txt"), "world native\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "native1"]);
-
-    fs::write(dir.join("f1.txt"), "hello native mod\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "native2"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(
+        &repo,
+        "native1",
+        &[("f1.txt", "hello native\n"), ("f2.txt", "world native\n")],
+    )
+    .unwrap();
+    commit_files(&repo, "native2", &[("f1.txt", "hello native mod\n")]).unwrap();
 
     let specs = vec![
         "HEAD:f1.txt".to_string(),
@@ -246,22 +195,9 @@ fn test_git_diff_additions_only_still_fetches_old_size() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
+    let repo = init_repo(dir).unwrap();
     let initial_content = "# Initial Title\nLine 1\nLine 2\n";
-    fs::write(dir.join("doc.md"), initial_content).unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit1"]);
+    commit_files(&repo, "commit1", &[("doc.md", initial_content)]).unwrap();
 
     // Append a line: only additions (+1), 0 deletions (-0)
     let appended_content = "# Initial Title\nLine 1\nLine 2\nLine 3 added\n";
@@ -299,37 +235,12 @@ fn test_resolve_commit_range_in_repo() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed", args);
-    };
+    let repo = init_repo(dir).unwrap();
+    commit_files(&repo, "c1", &[("a.rs", "fn a() {}\n")]).unwrap();
+    let c1_hash = repo.rev_to_short_hash("HEAD").unwrap();
 
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "c1"]);
-    let c1 = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    let c1_hash = String::from_utf8_lossy(&c1.stdout).trim().to_string();
-
-    fs::write(dir.join("a.rs"), "fn a() { 1 }\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "c2"]);
-    let c2 = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    let c2_hash = String::from_utf8_lossy(&c2.stdout).trim().to_string();
+    commit_files(&repo, "c2", &[("a.rs", "fn a() { 1 }\n")]).unwrap();
+    let c2_hash = repo.rev_to_short_hash("HEAD").unwrap();
 
     // Two-dot range
     let r1 = resolve_commit_range(dir, &["HEAD~1..HEAD".into()]);
@@ -364,26 +275,13 @@ fn test_load_git_repo_staged_excludes_untracked_files() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(&repo, "init", &[("tracked.rs", "fn tracked() {}\n")]).unwrap();
 
     // Create untracked file and stage a change to tracked.rs
     fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
     fs::write(dir.join("tracked.rs"), "fn tracked() { 42 }\n").unwrap();
-    run(&["add", "tracked.rs"]);
+    diffuse_git::stage_file(&repo, "tracked.rs").unwrap();
 
     // 1. With staged param true: excludes untracked files
     let res_staged = load_git_repo(dir, &[], &[], true, 6).unwrap();
@@ -417,26 +315,19 @@ fn test_load_git_repo_unmodified_files_with_notes() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("modified.rs"), "fn modified() { 1 }\n").unwrap();
-    fs::write(
-        dir.join("untouched.rs"),
-        "fn untouched() {\n    println!(\"hello\");\n}\n",
+    let repo = init_repo(dir).unwrap();
+    commit_files(
+        &repo,
+        "init",
+        &[
+            ("modified.rs", "fn modified() { 1 }\n"),
+            (
+                "untouched.rs",
+                "fn untouched() {\n    println!(\"hello\");\n}\n",
+            ),
+        ],
     )
     .unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
 
     // Modify one file
     fs::write(dir.join("modified.rs"), "fn modified() { 2 }\n").unwrap();
@@ -501,21 +392,8 @@ fn ws_only_changed_file_stays_visible_and_paired() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed", args);
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("f.rs"), "fn a() {\n    x();\n}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit1"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(&repo, "commit1", &[("f.rs", "fn a() {\n    x();\n}\n")]).unwrap();
 
     // Whitespace-only change: the line reindents.
     fs::write(dir.join("f.rs"), "fn a() {\n\tx();\n}\n").unwrap();
@@ -552,21 +430,8 @@ fn ws_only_changed_file_pairs_through_single_file_diff() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {:?} failed", args);
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("f.rs"), "fn a() {\n    x();\n}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit1"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(&repo, "commit1", &[("f.rs", "fn a() {\n    x();\n}\n")]).unwrap();
 
     fs::write(dir.join("f.rs"), "fn a() {\n\tx();\n}\n").unwrap();
 

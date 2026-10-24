@@ -5,9 +5,12 @@
 use std::{
     fs::{self, File},
     io::{self, BufRead, BufReader, Write},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
+
+use diffuse_git::testing::{commit_files, init_repo};
 
 /// `diffuse < /dev/null | cat` with no git args and no JSON payload must
 /// route to the standalone reviewer (git repo resolution), never to the
@@ -133,26 +136,8 @@ fn piped_stdout_renders_not_json_and_not_tui() {
 
 fn setup_repo() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
-
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
+    let repo = init_repo(dir.path()).unwrap();
+    commit_files(&repo, "init", &[("a.txt", "one\ntwo\n")]).unwrap();
     fs::write(dir.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
     fs::write(dir.path().join("b.txt"), "hello\nworld\n").unwrap();
     dir
@@ -224,29 +209,22 @@ fn non_tui_mode_handles_broken_pipe_cleanly() {
 fn large_changeset_progressive_streaming_performance() {
     let dir = tempfile::tempdir().unwrap();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
+    let repo = init_repo(dir.path()).unwrap();
 
     // Create 60 files
-    for i in 0..60 {
-        fs::write(
-            dir.path().join(format!("file_{i}.rs")),
-            format!("fn func_{i}() {{\n    println!(\"hello {i}\");\n}}\n"),
-        )
-        .unwrap();
-    }
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init commit"]);
+    let file_contents: Vec<(String, String)> = (0..60)
+        .map(|i| {
+            (
+                format!("file_{i}.rs"),
+                format!("fn func_{i}() {{\n    println!(\"hello {i}\");\n}}\n"),
+            )
+        })
+        .collect();
+    let file_refs: Vec<(&str, &str)> = file_contents
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    commit_files(&repo, "init commit", &file_refs).unwrap();
 
     // Modify all 60 files
     for i in 0..60 {
@@ -322,20 +300,8 @@ fn test_multiple_c_flags_evaluate_sequentially() {
     let child_repo = parent.path().join("sub_repo");
     fs::create_dir_all(&child_repo).unwrap();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(&child_repo)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(child_repo.join("nested.rs"), "fn nested() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "nested init"]);
+    let repo = init_repo(&child_repo).unwrap();
+    commit_files(&repo, "nested init", &[("nested.rs", "fn nested() {}\n")]).unwrap();
     fs::write(child_repo.join("nested.rs"), "fn nested_mod() {}\n").unwrap();
 
     let outside = tempfile::tempdir().unwrap();
@@ -907,21 +873,8 @@ fn diffuse_staged_flag_excludes_untracked_files() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success());
-    };
-
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("tracked.rs"), "fn tracked() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "init"]);
+    let repo = init_repo(dir).unwrap();
+    commit_files(&repo, "init", &[("tracked.rs", "fn tracked() {}\n")]).unwrap();
 
     // Create untracked file
     fs::write(dir.join("untracked.rs"), "fn untracked() {}\n").unwrap();
@@ -1418,41 +1371,28 @@ fn test_notes_list_revisions_and_pathspecs() {
     use diffuse::core::notes::{NoteStatus, ReviewNote, Side, add_note, load_notes, save_notes};
 
     let dir = tempfile::tempdir().unwrap();
-
-    let run_git = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    };
-
-    run_git(&["init", "-q"]);
-    run_git(&["config", "user.email", "test@example.com"]);
-    run_git(&["config", "user.name", "test"]);
-
-    fs::create_dir_all(dir.path().join("src")).unwrap();
-    fs::create_dir_all(dir.path().join("doc")).unwrap();
+    let repo = init_repo(dir.path()).unwrap();
 
     // Commit 1 (c1)
-    fs::write(dir.path().join("src/a.txt"), "hello\nworld\n").unwrap();
-    fs::write(dir.path().join("src/b.txt"), "foo\nbar\n").unwrap();
-    run_git(&["add", "."]);
-    run_git(&["commit", "-qm", "commit 1"]);
-    let c1 = run_git(&["rev-parse", "HEAD"]);
+    let c1 = commit_files(
+        &repo,
+        "commit 1",
+        &[("src/a.txt", "hello\nworld\n"), ("src/b.txt", "foo\nbar\n")],
+    )
+    .unwrap()
+    .to_string();
 
     // Commit 2 (c2)
-    fs::write(dir.path().join("src/a.txt"), "hello\nworld\nextra\n").unwrap();
-    fs::write(dir.path().join("doc/readme.txt"), "documentation\n").unwrap();
-    run_git(&["add", "."]);
-    run_git(&["commit", "-qm", "commit 2"]);
-    let c2 = run_git(&["rev-parse", "HEAD"]);
+    let c2 = commit_files(
+        &repo,
+        "commit 2",
+        &[
+            ("src/a.txt", "hello\nworld\nextra\n"),
+            ("doc/readme.txt", "documentation\n"),
+        ],
+    )
+    .unwrap()
+    .to_string();
 
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
@@ -1724,4 +1664,51 @@ fn pty_one_shot_run_never_emits_osc11_background_query() {
             "one-shot run {extra_args:?} must not emit the OSC 11 query, pty saw: {pty_bytes:?}"
         );
     }
+}
+
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Golden acceptance test suites store historical corpus snapshots
+                // which must not be inspected as live workspace code.
+                if entry.file_name() != "golden" {
+                    collect_rs_files(&path, out);
+                }
+            } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// Regression and architectural guard: verify that zero subprocess git
+/// invocations exist anywhere across any Rust source file in the workspace.
+#[test]
+fn assert_zero_git_subprocess_invocations_in_workspace() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let mut rs_files = Vec::new();
+
+    for dir_name in ["crates", "tests"] {
+        collect_rs_files(&workspace_root.join(dir_name), &mut rs_files);
+    }
+
+    let mut violations = Vec::new();
+    for path in rs_files {
+        let content = fs::read_to_string(&path).unwrap();
+        for (idx, line) in content.lines().enumerate() {
+            if line.contains("Command::new(\"git\")") || line.contains("Command::new(\"git.exe\")")
+            {
+                violations.push(format!("{}:{}: {}", path.display(), idx + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Detected forbidden git subprocess invocations:\n{}",
+        violations.join("\n")
+    );
 }

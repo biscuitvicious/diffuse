@@ -6,6 +6,7 @@ pub mod mutation;
 pub mod objects;
 pub mod repository;
 pub mod status;
+pub mod testing;
 pub mod types;
 
 pub use diff::{

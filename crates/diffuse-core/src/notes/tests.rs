@@ -1,6 +1,6 @@
 //! Unit tests for note persistence, markdown formatting, and querying.
 
-use std::{ffi::OsString, fs, mem, path::PathBuf, process::Command};
+use std::{ffi::OsString, fs, mem, path::PathBuf};
 
 use diffuse_syntax::color::TokenColor;
 
@@ -257,23 +257,11 @@ fn test_head_commit_resolves_temp_repo() {
     // Not a repo yet: no HEAD.
     assert_eq!(head_commit(dir), None);
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?} failed");
-    };
-    run(&["init", "-q"]);
+    let repo = diffuse_git::testing::init_repo(dir).unwrap();
     // No commits yet: no HEAD.
     assert_eq!(head_commit(dir), None);
 
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
-    fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit1"]);
+    diffuse_git::testing::commit_files(&repo, "commit1", &[("a.rs", "fn a() {}\n")]).unwrap();
 
     let head = head_commit(dir).expect("HEAD must resolve after a commit");
     assert_eq!(head.len(), 40);
@@ -292,40 +280,18 @@ fn test_notes_commit_for_ranges() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
 
-    let run = |args: &[&str]| {
-        let out = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {:?}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-    };
-    run(&["init", "-q"]);
-    run(&["config", "user.email", "test@example.com"]);
-    run(&["config", "user.name", "test"]);
+    let repo = diffuse_git::testing::init_repo(dir).unwrap();
 
-    fs::write(dir.join("a.rs"), "1\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit1"]);
+    diffuse_git::testing::commit_files(&repo, "commit1", &[("a.rs", "1\n")]).unwrap();
     let c1 = head_commit(dir).unwrap();
 
-    fs::write(dir.join("a.rs"), "2\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit2"]);
+    diffuse_git::testing::commit_files(&repo, "commit2", &[("a.rs", "2\n")]).unwrap();
     let c2 = head_commit(dir).unwrap();
 
-    fs::write(dir.join("a.rs"), "3\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit3"]);
+    diffuse_git::testing::commit_files(&repo, "commit3", &[("a.rs", "3\n")]).unwrap();
     let c3 = head_commit(dir).unwrap();
 
-    fs::write(dir.join("a.rs"), "4\n").unwrap();
-    run(&["add", "."]);
-    run(&["commit", "-qm", "commit4"]);
+    diffuse_git::testing::commit_files(&repo, "commit4", &[("a.rs", "4\n")]).unwrap();
     let c4 = head_commit(dir).unwrap();
 
     // 1. Working tree / no range -> keys off HEAD (c4)

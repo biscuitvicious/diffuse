@@ -356,59 +356,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, path::Path, process::Command};
-
-    fn git(dir: &Path, args: &[&str]) -> String {
-        let output = Command::new("git")
-            .current_dir(dir)
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(
-            output.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout)
-            .expect("utf8")
-            .trim()
-            .to_string()
-    }
+    use diffuse_git::testing::{commit_files, init_repo};
 
     #[test]
     fn resolves_revision_ranges_to_fixed_commit_ids() {
         let dir = tempfile::tempdir().expect("tempdir");
-        git(dir.path(), &["init"]);
-        fs::write(dir.path().join("a.txt"), "one").expect("write");
-        git(dir.path(), &["add", "."]);
-        git(
-            dir.path(),
-            &[
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "user.name=t",
-                "commit",
-                "-m",
-                "one",
-            ],
-        );
-        let base = git(dir.path(), &["rev-parse", "HEAD"]);
-        fs::write(dir.path().join("a.txt"), "two").expect("write");
-        git(dir.path(), &["add", "."]);
-        git(
-            dir.path(),
-            &[
-                "-c",
-                "user.email=t@t",
-                "-c",
-                "user.name=t",
-                "commit",
-                "-m",
-                "two",
-            ],
-        );
-        let head = git(dir.path(), &["rev-parse", "HEAD"]);
+        let repo = init_repo(dir.path()).expect("init repo");
+        let base = commit_files(&repo, "one", &[("a.txt", "one")])
+            .expect("commit 1")
+            .to_string();
+        let head = commit_files(&repo, "two", &[("a.txt", "two")])
+            .expect("commit 2")
+            .to_string();
 
         assert_eq!(
             resolve_revision(dir.path(), "HEAD~1..HEAD").expect("resolve range"),
