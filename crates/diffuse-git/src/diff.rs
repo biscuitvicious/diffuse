@@ -488,6 +488,19 @@ pub fn diff_repository(
             mode,
         });
 
+        let mode_changed = match (s.old_mode.as_deref(), s.new_mode.as_deref()) {
+            (Some(o), Some(n)) => o != n,
+            _ => false,
+        };
+
+        if res.file.hunks.is_empty()
+            && (s.status == FileStatus::Modified || s.status == FileStatus::Unmodified)
+            && !mode_changed
+            && !is_binary
+        {
+            continue;
+        }
+
         if !diff.is_empty() && !diff.ends_with('\n') {
             diff.push('\n');
         }

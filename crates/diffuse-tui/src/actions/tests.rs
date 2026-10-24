@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, process::Command};
 
 use super::*;
 use crate::core::git::load_git_repo;
@@ -70,7 +70,7 @@ fn test_git_stage_unstage_reload_flow() {
     assert_eq!(state.output.files.len(), 1);
 
     // Stage hunk
-    let res = stage_action(&mut state, &repo_root, &[], false);
+    let res = stage_action(&mut state, &repo_root, false);
     assert!(res.is_ok(), "staging hunk succeeded");
 
     // Reload diff for working directory - should be clean
@@ -90,7 +90,7 @@ fn test_git_stage_unstage_reload_flow() {
     assert_eq!(state.output.files.len(), 1, "staged diff has 1 file");
 
     // Unstage hunk
-    let res = unstage_action(&mut state, &repo_root, &[], false);
+    let res = unstage_action(&mut state, &repo_root, false);
     assert!(res.is_ok(), "unstaging succeeded");
 
     // Reload staged diff - should now be clean
@@ -121,7 +121,7 @@ fn test_git_discard_flow() {
     assert_eq!(state.output.files.len(), 1);
 
     // Discard hunk
-    let res = discard_action(&mut state, &repo_root, &[], false);
+    let res = discard_action(&mut state, &repo_root, false);
     assert!(res.is_ok(), "discard succeeded");
 
     // Reload diff - working tree must now be clean
@@ -160,7 +160,7 @@ fn test_toggle_staged_action_flow() {
     assert!(!state.target.is_staged());
 
     // 2. Stage hunk
-    stage_action(&mut state, &repo_root, &[], false).unwrap();
+    stage_action(&mut state, &repo_root, false).unwrap();
     // After staging, index has staged changes.
     // Toggle to staged:
     let git_args = state.git_args.clone();

@@ -150,11 +150,7 @@ impl Repository {
     /// When reviewing a range, returns the second newest commit in the range
     /// (or the base commit). Otherwise returns HEAD.
     pub fn notes_commit(&self, rev_args: &[String]) -> Option<String> {
-        let ref_pair = crate::types::RefPair::resolve(
-            self.work_dir().unwrap_or_else(|| self.git_dir()),
-            rev_args,
-            false,
-        );
+        let ref_pair = crate::types::RefPair::resolve(rev_args, false);
 
         if !ref_pair.worktree_new
             && let (Some(old), Some(new)) = (ref_pair.old_ref, ref_pair.new_ref)

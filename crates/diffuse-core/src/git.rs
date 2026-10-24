@@ -313,7 +313,7 @@ pub fn stream_git_repo_to_producer(
             git_repo,
             &target,
             context as u32,
-            diffuse_git::WhitespaceMode::TrimEquality,
+            diffuse_git::WhitespaceMode::Exact,
         ) {
             let mut file_idx = 0;
             for f in repo_diff.files {
@@ -720,7 +720,7 @@ pub fn load_git_repo_with_notes(
             git_repo,
             &target,
             context as u32,
-            diffuse_git::WhitespaceMode::TrimEquality,
+            diffuse_git::WhitespaceMode::Exact,
         ) {
             let mut diff = repo_diff.diff;
             let mut files: Vec<GitFileItem> = Vec::with_capacity(repo_diff.files.len());
@@ -1162,7 +1162,7 @@ pub fn load_single_file_diff(
             new_mode: None,
             is_binary,
             context: context as u32,
-            mode: diffuse_git::WhitespaceMode::TrimEquality,
+            mode: diffuse_git::WhitespaceMode::Exact,
         });
 
         let new_content_str = new_bytes.as_ref().and_then(|b| std::str::from_utf8(b).ok());

@@ -7,6 +7,7 @@ description = "Interactive terminal review application for diffuse"
 
 [dependencies]
 diffuse-core = { workspace = true }
+diffuse-git = { workspace = true }
 diffuse-render = { workspace = true }
 diffuse-syntax = { workspace = true }
 crossterm = { workspace = true }

@@ -557,6 +557,7 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "diffuse-core",
+ "diffuse-git",
  "diffuse-render",
  "diffuse-syntax",
  "flate2",

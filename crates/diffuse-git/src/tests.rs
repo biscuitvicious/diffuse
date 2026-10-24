@@ -151,7 +151,7 @@ fn test_revision_range_and_ref_pair() {
     assert_eq!(format!("{range}"), format!("{}..{}", &c1[..7], &c2[..7]));
 
     // RefPair resolution
-    let pair = RefPair::resolve(dir, &[format!("{c1}..{c2}")], false);
+    let pair = RefPair::resolve(&[format!("{c1}..{c2}")], false);
     assert!(!pair.worktree_new);
     assert_eq!(pair.old_ref, Some(c1));
     assert_eq!(pair.new_ref, Some(c2));
@@ -913,4 +913,128 @@ fn other() {
             }
         }
     }
+}
+
+#[test]
+fn test_mutation_apply_hunk_forward_and_reverse() {
+    let old = "fn main() {\n    let a = 1;\n    let b = 2;\n}\n";
+    let new = "fn main() {\n    let a = 10;\n    let b = 2;\n}\n";
+    let (hunks, _) = crate::diff::diff_text(old, new, 3, crate::diff::WhitespaceMode::Exact);
+    assert_eq!(hunks.len(), 1);
+
+    // Forward application to old buffer produces new buffer:
+    let applied = crate::mutation::apply_hunk_to_buffer(old.as_bytes(), &hunks[0], false).unwrap();
+    assert_eq!(String::from_utf8(applied).unwrap(), new);
+
+    // Reverse application to new buffer restores old buffer:
+    let reverted = crate::mutation::apply_hunk_to_buffer(new.as_bytes(), &hunks[0], true).unwrap();
+    assert_eq!(String::from_utf8(reverted).unwrap(), old);
+}
+
+#[test]
+fn test_mutation_stage_and_unstage_flow() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        run_cmd(dir.path(), "git", args).unwrap();
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    let base_code = "\
+fn one() {}
+// padding 1
+// padding 2
+// padding 3
+// padding 4
+// padding 5
+// padding 6
+// padding 7
+// padding 8
+// padding 9
+// padding 10
+fn two() {}
+";
+    std::fs::write(dir.path().join("code.rs"), base_code).unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init"]);
+
+    // Modify code.rs: two separate functions modified
+    let mod_code = "\
+fn one() {
+    println!(\"one\");
+}
+// padding 1
+// padding 2
+// padding 3
+// padding 4
+// padding 5
+// padding 6
+// padding 7
+// padding 8
+// padding 9
+// padding 10
+fn two() {
+    println!(\"two\");
+}
+";
+    std::fs::write(dir.path().join("code.rs"), mod_code).unwrap();
+
+    let repo = Repository::open(dir.path()).unwrap();
+
+    // Generate diff between index and worktree
+    let target = ReviewTarget {
+        repo: Repo::from_root(dir.path()),
+        range: None,
+        git_args: vec![],
+        rev_args: vec![],
+        pathspecs: vec![],
+        staged: false,
+    };
+    let res = crate::diff::diff_repository(&repo, &target, 0, crate::diff::WhitespaceMode::Exact)
+        .unwrap();
+    assert_eq!(res.files.len(), 1);
+    let f = &res.files[0];
+    assert_eq!(f.hunks.len(), 2);
+
+    // 1. Stage only hunk 0
+    crate::mutation::stage_hunk(&repo, "code.rs", &f.hunks[0]).unwrap();
+
+    // Verify index now contains hunk 0 applied, but NOT hunk 1
+    let index_blob = repo.load_index_blob("code.rs").unwrap();
+    let index_text = String::from_utf8(index_blob.data).unwrap();
+    assert!(index_text.contains("println!(\"one\");"));
+    assert!(!index_text.contains("println!(\"two\");"));
+
+    // 2. Unstage hunk 0 back
+    crate::mutation::unstage_hunk(&repo, "code.rs", &f.hunks[0]).unwrap();
+    let index_blob = repo.load_index_blob("code.rs").unwrap();
+    let index_text = String::from_utf8(index_blob.data).unwrap();
+    assert_eq!(index_text, base_code);
+
+    // 3. Stage whole file
+    crate::mutation::stage_file(&repo, "code.rs").unwrap();
+    let index_blob = repo.load_index_blob("code.rs").unwrap();
+    let index_text = String::from_utf8(index_blob.data).unwrap();
+    assert!(index_text.contains("println!(\"one\");"));
+    assert!(index_text.contains("println!(\"two\");"));
+
+    // 4. Unstage whole file
+    crate::mutation::unstage_file(&repo, "code.rs").unwrap();
+    let index_blob = repo.load_index_blob("code.rs").unwrap();
+    let index_text = String::from_utf8(index_blob.data).unwrap();
+    assert_eq!(index_text, base_code);
+
+    // 5. Discard hunk 0 from worktree
+    let stash = crate::mutation::discard_hunk(&repo, "code.rs", &f.hunks[0]).unwrap();
+    assert!(stash.is_some());
+    let worktree_text = std::fs::read_to_string(dir.path().join("code.rs")).unwrap();
+    assert!(!worktree_text.contains("println!(\"one\");"));
+    assert!(worktree_text.contains("println!(\"two\");"));
+
+    // 6. Discard whole file
+    let stash2 = crate::mutation::discard_file(&repo, "code.rs").unwrap();
+    assert!(stash2.is_some());
+    let worktree_text = std::fs::read_to_string(dir.path().join("code.rs")).unwrap();
+    assert_eq!(worktree_text, base_code);
 }

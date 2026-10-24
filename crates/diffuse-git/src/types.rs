@@ -379,7 +379,7 @@ impl RefPair {
     }
 
     /// Resolve old/new git refs from base args.
-    pub fn resolve(_cwd: &Path, base_args: &[String], staged: bool) -> Self {
+    pub fn resolve(base_args: &[String], staged: bool) -> Self {
         let refs: Vec<&str> = base_args
             .iter()
             .map(String::as_str)
