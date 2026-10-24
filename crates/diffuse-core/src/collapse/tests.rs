@@ -2856,3 +2856,18 @@ fn test_dbc_macro_invariant_4_del_add_topological_order() {
             .unwrap_or_default()
     );
 }
+
+#[test]
+fn test_reflow_filter_preserves_context_old_line_monotonicity() {
+    let h = hunk(vec![
+        Row::Ctx(CtxLine::new(1, 1, "context before")),
+        Row::Add(crate::parse::AddLine::new(2, "}")),
+        Row::Del(crate::parse::DelLine::new(2, "files.push(item);")),
+        Row::Add(crate::parse::AddLine::new(3, "files.push(item);")),
+        Row::Del(crate::parse::DelLine::new(3, "}")),
+        Row::Ctx(CtxLine::new(4, 4, "context after")),
+    ]);
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let res = collapse_hunk_rows(&h, None, None, profile);
+    assert!(check_context_old_line_monotonicity(&res).is_ok());
+}

@@ -352,3 +352,195 @@ fn test_repository_load_blob_gitattributes_binary() {
     );
     assert_eq!(fake_blob.as_str(), None);
 }
+
+#[test]
+fn test_repository_untracked_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_test_git_repo(dir);
+
+    // Add .gitignore
+    fs::write(dir.join(".gitignore"), "*.ignored\nignored_dir/\n").unwrap();
+    run_cmd(dir, "git", &["add", ".gitignore"]).unwrap();
+    run_cmd(dir, "git", &["commit", "-m", "add gitignore"]).unwrap();
+
+    // Create untracked text file
+    fs::write(dir.join("untracked.txt"), "hello untracked\nsecond line\n").unwrap();
+
+    // Create nested untracked file
+    fs::create_dir_all(dir.join("nested/deep")).unwrap();
+    fs::write(dir.join("nested/deep/file.txt"), "nested file\n").unwrap();
+
+    // Create ignored files
+    fs::write(dir.join("test.ignored"), "ignore me\n").unwrap();
+    fs::create_dir_all(dir.join("ignored_dir")).unwrap();
+    fs::write(dir.join("ignored_dir/foo.txt"), "ignored foo\n").unwrap();
+
+    // Create untracked binary file with null bytes
+    let binary_bytes = vec![0x00, 0x01, 0x02, 0x00, 0x03];
+    fs::write(dir.join("untracked_binary.bin"), binary_bytes).unwrap();
+
+    let repo = Repository::open(dir).unwrap();
+
+    // 1. Untracked paths enumeration
+    let untracked_paths = repo.untracked_paths(&[]).unwrap();
+    let path_strings: Vec<String> = untracked_paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+
+    assert!(path_strings.contains(&"untracked.txt".to_string()));
+    assert!(path_strings.contains(&"nested/deep/file.txt".to_string()));
+    assert!(path_strings.contains(&"untracked_binary.bin".to_string()));
+    assert!(!path_strings.contains(&"test.ignored".to_string()));
+    assert!(!path_strings.contains(&"ignored_dir/foo.txt".to_string()));
+    assert!(!path_strings.contains(&"file.txt".to_string()));
+    assert!(!path_strings.contains(&".gitignore".to_string()));
+
+    // 2. Untracked DiffFiles with binary detection & skipping
+    let out = repo.untracked_files(&[]).unwrap();
+    assert_eq!(out.files.len(), 2);
+    assert_eq!(out.skipped_binary, vec!["untracked_binary.bin".to_string()]);
+
+    let f1 = out
+        .files
+        .iter()
+        .find(|f| f.path == "untracked.txt")
+        .unwrap();
+    assert_eq!(f1.status, diffuse_parse::FileStatus::Untracked);
+    assert_eq!(f1.hunks.len(), 1);
+    assert_eq!(f1.hunks[0].rows.len(), 2);
+
+    let f2 = out
+        .files
+        .iter()
+        .find(|f| f.path == "nested/deep/file.txt")
+        .unwrap();
+    assert_eq!(f2.status, diffuse_parse::FileStatus::Untracked);
+    assert_eq!(f2.hunks.len(), 1);
+    assert_eq!(f2.hunks[0].rows.len(), 1);
+
+    // 3. Pathspec filter
+    let filtered = repo.untracked_files(&["nested/".to_string()]).unwrap();
+    assert_eq!(filtered.files.len(), 1);
+    assert_eq!(filtered.files[0].path, "nested/deep/file.txt");
+    assert!(filtered.skipped_binary.is_empty());
+}
+
+#[test]
+fn test_repository_file_statuses_unstaged_staged_and_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    run_cmd(dir, "git", &["init"]).unwrap();
+    run_cmd(dir, "git", &["config", "user.name", "Test"]).unwrap();
+    run_cmd(dir, "git", &["config", "user.email", "test@example.com"]).unwrap();
+    run_cmd(dir, "git", &["config", "commit.gpgsign", "false"]).unwrap();
+
+    fs::write(dir.join("file1.txt"), "hello 1\n").unwrap();
+    fs::write(dir.join("file2.txt"), "hello 2\n").unwrap();
+    fs::write(dir.join("file3.txt"), "hello 3\n").unwrap();
+    run_cmd(dir, "git", &["add", "file1.txt", "file2.txt", "file3.txt"]).unwrap();
+    run_cmd(dir, "git", &["commit", "-m", "initial commit"]).unwrap();
+    let c1 = run_cmd(dir, "git", &["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let repo = Repository::open(dir).unwrap();
+
+    // 1. Unstaged changes in working tree:
+    // Modify file1.txt, delete file2.txt
+    fs::write(dir.join("file1.txt"), "hello 1 modified\n").unwrap();
+    fs::remove_file(dir.join("file2.txt")).unwrap();
+
+    let unstaged_target = ReviewTarget {
+        repo: Repo::from_root(dir),
+        range: None,
+        git_args: vec![],
+        rev_args: vec![],
+        pathspecs: vec![],
+        staged: false,
+    };
+    let statuses = repo.file_statuses(&unstaged_target).unwrap();
+    let f1 = statuses
+        .iter()
+        .find(|s| s.path == "file1.txt")
+        .expect("file1.txt status");
+    assert_eq!(f1.status, diffuse_parse::FileStatus::Modified);
+
+    let f2 = statuses
+        .iter()
+        .find(|s| s.path == "file2.txt")
+        .expect("file2.txt status");
+    assert_eq!(f2.status, diffuse_parse::FileStatus::Deleted);
+
+    // 2. Stage changes:
+    // Restore file2.txt, stage file1.txt, add added.txt, git mv file3.txt ->
+    // renamed3.txt
+    run_cmd(dir, "git", &["checkout", "--", "file2.txt"]).unwrap();
+    run_cmd(dir, "git", &["add", "file1.txt"]).unwrap();
+    fs::write(dir.join("added.txt"), "brand new\n").unwrap();
+    run_cmd(dir, "git", &["add", "added.txt"]).unwrap();
+    run_cmd(dir, "git", &["mv", "file3.txt", "renamed3.txt"]).unwrap();
+
+    let staged_target = ReviewTarget {
+        repo: Repo::from_root(dir),
+        range: None,
+        git_args: vec![],
+        rev_args: vec![],
+        pathspecs: vec![],
+        staged: true,
+    };
+    let staged_statuses = repo.file_statuses(&staged_target).unwrap();
+
+    let sf1 = staged_statuses
+        .iter()
+        .find(|s| s.path == "file1.txt")
+        .expect("file1.txt staged");
+    assert_eq!(sf1.status, diffuse_parse::FileStatus::Modified);
+
+    let s_add = staged_statuses
+        .iter()
+        .find(|s| s.path == "added.txt")
+        .expect("added.txt staged");
+    assert_eq!(s_add.status, diffuse_parse::FileStatus::Added);
+
+    let s_ren = staged_statuses
+        .iter()
+        .find(|s| s.path == "renamed3.txt")
+        .expect("renamed3.txt staged");
+    assert_eq!(s_ren.status, diffuse_parse::FileStatus::Renamed);
+    assert_eq!(s_ren.old_path.as_deref(), Some("file3.txt"));
+
+    // 3. Commit staged changes to c2 and test commit range
+    run_cmd(dir, "git", &["commit", "-m", "commit c2"]).unwrap();
+    let c2 = run_cmd(dir, "git", &["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
+
+    let range_target = ReviewTarget {
+        repo: Repo::from_root(dir),
+        range: Some(RevisionRange(c1.clone(), c2.clone())),
+        git_args: vec![],
+        rev_args: vec![],
+        pathspecs: vec![],
+        staged: false,
+    };
+    let range_statuses = repo.file_statuses(&range_target).unwrap();
+    assert_eq!(range_statuses.len(), 3);
+    assert!(
+        range_statuses
+            .iter()
+            .any(|s| s.path == "file1.txt" && s.status == diffuse_parse::FileStatus::Modified)
+    );
+    assert!(
+        range_statuses
+            .iter()
+            .any(|s| s.path == "added.txt" && s.status == diffuse_parse::FileStatus::Added)
+    );
+    assert!(range_statuses.iter().any(|s| s.path == "renamed3.txt"
+        && s.status == diffuse_parse::FileStatus::Renamed
+        && s.old_path.as_deref() == Some("file3.txt")));
+}

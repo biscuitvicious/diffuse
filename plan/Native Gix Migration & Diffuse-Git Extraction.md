@@ -171,36 +171,39 @@ Eliminate `git cat-file --batch` and all subprocesses for historical object and 
 
 ---
 
-## 3. Phase 3 — Native Working Tree Status, Dirwalk & Whitespace Reconciliation
+## 3. Phase 3 — Native Working Tree Status, Dirwalk & Whitespace Reconciliation [Completed]
 
-Replace `git status`, `git diff --name-status`, and `git ls-files --others` with native Gitoxide worktree and index inspection.
+Replaced `git status`, `git diff --name-status`, and `git ls-files --others` with native Gitoxide worktree and index inspection.
 
-### Step 3.1: Native Untracked File Discovery via `gix::dir::walk`
+### Step 3.1: Native Untracked File Discovery via `gix::dir::walk` [Completed]
 - **Location**: `crates/diffuse-git/src/status.rs`
-- Implement untracked file discovery using `gix` directory walk:
+- Implemented untracked file discovery using `gix` directory walk:
   - Load `.gitignore` hierarchically from root to subdirectories, plus `.git/info/exclude` and core.excludesfile.
   - Filter excluded files automatically.
   - Honor pathspecs passed on the command line.
   - Check file contents for null bytes (`\0`) to flag untracked binary files.
   - Construct synthetic `DiffFile` instances using `diffuse_parse::DiffFile`.
-  - Replace `git ls-files --others --exclude-standard` entirely.
+  - Replaced `git ls-files --others --exclude-standard` entirely.
 
-### Step 3.2: Native Working Tree & Index Status
+### Step 3.2: Native Working Tree & Index Status [Completed]
 - **Location**: `crates/diffuse-git/src/status.rs`
-- Implement `status(&self, target: &ReviewTarget) -> Result<Vec<DiffFile>, GitError>`:
+- Implemented `file_statuses(&self, target: &ReviewTarget) -> Result<Vec<GitFileStatus>, GitError>`:
   - Working tree mode (`target.worktree_new == true`):
     - When `target.staged == false`: compare index to working tree (unstaged modifications, deletions, untracked additions).
     - When `target.staged == true`: compare HEAD tree to index (staged modifications, additions, deletions, renames).
   - Commit range mode (`target.range.is_some()`):
-    - Diff old commit tree against new commit tree using `gix::diff::tree`.
+    - Diff old commit tree against new commit tree using `gix::diff::tree` / `diff_tree_to_tree`.
     - Detect renames using `gix-diff` similarity matching with configurable threshold.
 
-### Step 3.3: Native Whitespace-Suppressed File Reconciliation
-- **Location**: `crates/diffuse-git/src/status.rs`
+### Step 3.3: Native Whitespace-Suppressed File Reconciliation [Completed]
+- **Location**: `crates/diffuse-git/src/status.rs`, `crates/diffuse-core/src/git.rs`
 - In commit range and worktree modes with whitespace-ignoring diffs (`-w`):
-  - Identify files that changed between trees or between tree and worktree, but whose non-whitespace characters are identical.
-  - Emit zero-hunk sections directly in memory without executing a secondary `git diff -M --name-only` subprocess.
-- Test criteria: Verify equivalence with git CLI on repositories containing renames, deletions, mode changes, untracked files, and whitespace-only modifications.
+  - Reconcile in-memory file statuses directly against seen paths to identify files whose only changes are whitespace.
+  - Emitted zero-hunk sections directly in memory without executing a secondary `git diff -M --name-only` subprocess.
+- Integrated with `diffuse-core`: eliminated subprocess calls for `ls-files`, `diff --name-status`, and `diff --name-only`.
+- **Defects Discovered & Resolved**:
+  1. *Directory Entries in Tree Diffs* (`pipeline.rs:876` postcondition failure): `status_commit_range` included intermediate directory trees with status `modified` and 0 hunks. Resolved by filtering `if entry_mode.is_tree() { continue; }`.
+  2. *Reflow Monotonicity Inversion* (`collapse.rs:414` DbC invariant failure): `pass_filter_reflows` paired added and deleted delimiters (e.g. `}`) across an edit block into a synthetic `Row::Ctx`, inverting old line monotonicity relative to the edit block. Resolved by enforcing that synthetic `Row::Ctx` and `Row::Mod` in `reflow_ctx` must strictly maintain monotonicity against all other rows. Added targeted contract unit test `test_reflow_filter_preserves_context_old_line_monotonicity`.
 
 ---
 
@@ -227,6 +230,7 @@ Generate unified diff tapes and `DiffFile` ASTs directly in process using `gix-d
   - Enumerate changed files and untracked entries.
   - Progressively emit each file's metadata, diff AST, and pre/post content snapshots.
   - Allow callers in `diffuse-core` or CLI to route streamed files directly into the diffuse analysis worker pool.
+- Eliminate all remaining subprocess diffs in `crates/diffuse-core/src/git.rs` (`load_git_repo_with_notes`, `stream_git_repo_to_producer`).
 
 ---
 
@@ -248,6 +252,67 @@ Eliminate `git apply`, `git add`, `git reset`, `git checkout`, and `git stash` s
   - Read working tree file, hash and store blob into ODB, update or create entry in `gix::index::State`, write `.git/index`.
 - Implement whole-file unstaging (`unstage_file`):
   - Reset index entry from HEAD commit tree.
+- Implement hunk-level staging (`stage_hunk`) and unstaging (`unstage_hunk`):
+  - Apply hunk patch lines in memory to the index blob, write modified blob to ODB, update index entry.
+  - Zero disk tempfiles: no `tempfile::Builder` or `git apply --cached`.
+
+### Step 5.3: Native Discard Action
+- **Location**: `crates/diffuse-git/src/mutation.rs`
+- Implement file and hunk discard:
+  - Capture safety stash checkpoint.
+  - For whole-file discard: write file content from index/HEAD directly to working tree path.
+  - For hunk discard: apply inverse hunk in memory and write updated content to working tree path.
+- Test criteria: Integration tests in `crates/diffuse-git/src/mutation/tests.rs` verifying stage, unstage, discard, and safety stash in test repositories with assertions on file content and index state.
+
+---
+
+## 6. Phase 6 — Harvest Tool & Utility Migration to Pure `gix`
+
+Migrate the golden acceptance harvest binary (`crates/diffuse/src/bin/harvest.rs`) and review note utilities to pure Gitoxide.
+
+### Step 6.1: Native Revision Resolution in `harvest.rs`
+- Replace `run_git` rev-parse invocations with `diffuse_git::Repository::rev_parse_single` and `head_commit_id`.
+- Support ranges (`A..B`, `A...B`) and single refs (`HEAD~3`, tags, SHAs) natively.
+
+### Step 6.2: Native Worktree State & Snapshot Harvesting
+- In worktree harvest mode, obtain HEAD commit id and file snapshots via `diffuse-git` objects and index without calling `git rev-parse HEAD`.
+
+### Step 6.3: Note Utilities Migration in `diffuse-core::notes`
+- Replace `run_git` calls in `crates/diffuse-core/src/notes.rs` (`show HEAD:{path}`, `rev-list -n 2`, `rev-parse`) with native `diffuse-git` object lookups.
+
+---
+
+## 7. Phase 7 — Comprehensive Test Suite Migration to Native `gix` Test Fixtures
+
+Eliminate all `Command::new("git")` subprocesses across the entire test suite.
+
+### Step 7.1: Reusable Gitoxide Test Fixture Builder
+- **Location**: `crates/diffuse-git/src/testing.rs`
+- Provide ergonomic test helpers for unit and integration tests:
+  - `init_repo(path: &Path) -> Repository`: Initialize a new git repository natively.
+  - `commit_files(repo: &Repository, message: &str, files: &[(&str, &str)]) -> gix::ObjectId`: Create a commit with given file tree natively.
+  - `create_branch(repo: &Repository, branch: &str, target: gix::ObjectId)`: Branch creation.
+- Zero reliance on external `git` in test setup.
+
+### Step 7.2: Migrate Integration Test Suites
+- `crates/diffuse/tests/cli.rs`: Replace all `run_git(&["init"])`, `run_git(&["commit"])`, `run_git(&["add"])` with native helpers.
+- `crates/diffuse/tests/harvest_benchmarks.rs`: Replace git CLI invocations with native helpers.
+- `crates/diffuse-core/src/git/tests.rs` & `notes/tests.rs`: Replace subprocess test repos with native test fixture builder.
+- `crates/diffuse-tui/src/actions/tests.rs` & `flat/tests.rs`: Replace subprocess test repos with native test fixture builder.
+- `crates/diffuse/src/bin/harvest.rs` internal tests: Replace `fn git()` subprocess helper with native builder.
+
+---
+
+## 8. Phase 8 — Autonomous Verification & Strict PATH-Isolation Gate
+
+Verify that the entire engine, CLI, TUI, harvest tool, and test suite execute with 100% autonomy without requiring `git` in `PATH`.
+
+### Step 8.1: Subprocess Prohibition Guard
+- Add an automated CI check / test asserting that `grep -rn 'Command::new("git")' crates/ tests/ --exclude-dir=golden` yields zero occurrences.
+
+### Step 8.2: PATH-Isolated Test Suite Execution
+- Execute the full test suite in an isolated environment with `PATH` stripped of the `git` binary.
+- Ensure all unit tests, integration tests, golden tests, and benchmarks succeed with zero errors.
 - Implement hunk-level staging (`stage_hunk`) and unstaging (`unstage_hunk`):
   - Apply hunk patch lines in memory to the index blob, write modified blob to ODB, update index entry.
   - Zero disk tempfiles: no `tempfile::Builder` or `git apply --cached`.

@@ -28,12 +28,7 @@ pub const DEFAULT_CONTEXT_LINES: usize = 4;
 /// separator.
 pub const DEFAULT_EXPAND_LINES: usize = 6;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RefPair {
-    pub worktree_new: bool,
-    pub new_ref: Option<String>,
-    pub old_ref: Option<String>,
-}
+pub use diffuse_git::RefPair;
 
 /// Run a git command in the target directory and return stdout if successful.
 pub fn run_git(cwd: &Path, args: &[&str]) -> Option<String> {
@@ -343,11 +338,12 @@ pub fn stream_git_repo_to_producer(
 
     let get_blob_data = |ref_str: &str, path: &str| -> (Option<String>, Option<usize>) {
         if let Some(ref repo) = repo_git
-            && let Some(blob) = repo.load_blob(ref_str, path) {
-                let size = blob.size();
-                let text = blob.as_str().map(ToString::to_string);
-                return (text, Some(size));
-            }
+            && let Some(blob) = repo.load_blob(ref_str, path)
+        {
+            let size = blob.size();
+            let text = blob.as_str().map(ToString::to_string);
+            return (text, Some(size));
+        }
         (None, None)
     };
 
@@ -442,44 +438,40 @@ pub fn stream_git_repo_to_producer(
     // against the name-only enumeration and push them as zero-hunk files —
     // the resurface pass synthesizes their changes from the content
     // snapshots.
-    {
-        let mut name_cmd = vec![
-            "diff".to_string(),
-            "-M".to_string(),
-            "--name-only".to_string(),
-        ];
-        if staged {
-            name_cmd.push("--staged".to_string());
-        }
-        name_cmd.extend(base_args.iter().cloned());
-        name_cmd.push("--".to_string());
-        name_cmd.extend(paths.iter().cloned());
-        let name_args: Vec<&str> = name_cmd.iter().map(String::as_str).collect();
-        if let Some(names) = run_git(repo_root, &name_args) {
-            for rel in names.lines().filter(|s| !s.is_empty()) {
-                if seen_paths.contains(rel) {
+    if let Some(ref repo) = repo_git {
+        let target = diffuse_git::ReviewTarget {
+            repo: diffuse_git::Repo::from_root(repo_root),
+            range: refs.revision_range(),
+            git_args: base_args.to_vec(),
+            rev_args: base_args.to_vec(),
+            pathspecs: paths.to_vec(),
+            staged,
+        };
+        if let Ok(statuses) = repo.file_statuses(&target) {
+            for s in statuses {
+                if seen_paths.contains(&s.path) {
                     continue;
                 }
-                let mut f = crate::parse::DiffFile::new(rel);
+                let mut f = crate::parse::DiffFile::new(&s.path);
                 f.has_file_headers = true;
                 let mut new_c: Option<String> = None;
                 if refs.worktree_new {
-                    if let Ok(c) = fs::read_to_string(repo_root.join(rel)) {
+                    if let Ok(c) = fs::read_to_string(repo_root.join(&s.path)) {
                         f.new_bytes = Some(c.len());
                         new_c = Some(c);
                     }
                 } else if let Some(ref new_ref) = refs.new_ref {
-                    let (c, sz) = get_blob_data(new_ref, rel);
+                    let (c, sz) = get_blob_data(new_ref, &s.path);
                     new_c = c;
                     if sz.is_some() {
                         f.new_bytes = sz;
                     }
                 }
-                let (old_c, osz) = get_blob_data(old_tree_ref, rel);
+                let (old_c, osz) = get_blob_data(old_tree_ref, &s.path);
                 if osz.is_some() {
                     f.old_bytes = osz;
                 }
-                let synthetic_diff = zero_hunk_section(rel);
+                let synthetic_diff = zero_hunk_section(&s.path);
                 producer.push(crate::streaming::FileJob {
                     idx: file_idx,
                     file: f,
@@ -487,7 +479,7 @@ pub fn stream_git_repo_to_producer(
                     old_content: old_c.map(Into::into),
                     diff_fallback: Some(Arc::new(synthetic_diff)),
                 });
-                seen_paths.insert(rel.to_string());
+                seen_paths.insert(s.path);
                 file_idx += 1;
             }
         }
@@ -496,47 +488,40 @@ pub fn stream_git_repo_to_producer(
     // Untracked files — only relevant when the new side is the working tree.
     // A fixed commit range (worktree_new == false) diffs two historical refs;
     // untracked working-tree files must never appear in those results.
-    if !staged && refs.worktree_new {
-        let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
-        if !paths.is_empty() {
-            ls_args.push("--");
-            ls_args.extend(paths.iter().map(String::as_str));
-        }
-        if let Some(ut) = run_git(repo_root, &ls_args) {
-            for rel in ut.lines().filter(|s| !s.is_empty()) {
-                let abs = repo_root.join(rel);
-                let content = match fs::read_to_string(&abs) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                if content.contains('\0') {
-                    untracked_skipped.push(rel.to_string());
-                    continue;
-                }
-                let line_count = content.lines().count();
-                let mut synthetic_diff = format!(
-                    "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{line_count} @@\n"
+    if !staged
+        && refs.worktree_new
+        && let Some(ref repo) = repo_git
+        && let Ok(ut) = repo.untracked_files(paths)
+    {
+        untracked_skipped.extend(ut.skipped_binary);
+        for f in ut.files {
+            let rel = f.path.clone();
+            seen_paths.insert(rel.clone());
+            let content = fs::read_to_string(repo_root.join(&rel)).ok();
+            let synthetic_diff = {
+                let text = content.as_deref().unwrap_or("");
+                let line_count = text.lines().count();
+                let mut s = format!(
+                    "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n"
                 );
-                for line in content.lines() {
-                    synthetic_diff.push('+');
-                    synthetic_diff.push_str(line);
-                    synthetic_diff.push('\n');
+                if line_count > 0 {
+                    s.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
+                    for line in text.lines() {
+                        s.push('+');
+                        s.push_str(line);
+                        s.push('\n');
+                    }
                 }
-                let parsed_files = crate::parse::parse_diff(&synthetic_diff);
-                let synthetic_arc = Arc::new(synthetic_diff);
-                for mut f in parsed_files {
-                    seen_paths.insert(f.path.clone());
-                    f.status = crate::parse::FileStatus::Untracked;
-                    producer.push(crate::streaming::FileJob {
-                        idx: file_idx,
-                        file: f,
-                        new_content: Some(content.clone().into()),
-                        old_content: None,
-                        diff_fallback: Some(Arc::clone(&synthetic_arc)),
-                    });
-                    file_idx += 1;
-                }
-            }
+                s
+            };
+            producer.push(crate::streaming::FileJob {
+                idx: file_idx,
+                file: f,
+                new_content: content.map(Into::into),
+                old_content: None,
+                diff_fallback: Some(Arc::new(synthetic_diff)),
+            });
+            file_idx += 1;
         }
     }
 
@@ -642,94 +627,79 @@ pub fn load_git_repo_with_notes(
     let diff_args: Vec<&str> = diff_cmd.iter().map(String::as_str).collect();
     let mut diff = run_git(repo_root, &diff_args).unwrap_or_default();
 
-    let mut name_cmd = vec![
-        "diff".to_string(),
-        "-M".to_string(),
-        "--name-status".to_string(),
-    ];
-    if staged {
-        name_cmd.push("--staged".to_string());
-    }
-    name_cmd.extend(base_args.iter().cloned());
-    name_cmd.push("--".to_string());
-    name_cmd.extend(paths.iter().cloned());
-    let name_args: Vec<&str> = name_cmd.iter().map(String::as_str).collect();
-    let name_status = run_git(repo_root, &name_args).unwrap_or_default();
-
     let refs = resolve_refs(repo_root, base_args, staged);
     let mut files: Vec<GitFileItem> = Vec::new();
+    let repo_git = diffuse_git::Repository::open(repo_root).ok();
 
-    for l in name_status.lines() {
-        let parts: Vec<&str> = l.split('\t').collect();
-        if parts.is_empty() || parts[0].is_empty() {
-            continue;
+    if let Some(ref repo) = repo_git {
+        let target = diffuse_git::ReviewTarget {
+            repo: diffuse_git::Repo::from_root(repo_root),
+            range: refs.revision_range(),
+            git_args: base_args.to_vec(),
+            rev_args: base_args.to_vec(),
+            pathspecs: paths.to_vec(),
+            staged,
+        };
+        if let Ok(statuses) = repo.file_statuses(&target) {
+            for s in statuses {
+                let status_str = match s.status {
+                    diffuse_parse::FileStatus::Added => "added",
+                    diffuse_parse::FileStatus::Deleted => "deleted",
+                    diffuse_parse::FileStatus::Renamed => "renamed",
+                    diffuse_parse::FileStatus::ModeChanged => "mode_changed",
+                    _ => "modified",
+                };
+                files.push(GitFileItem {
+                    path: s.path,
+                    status: status_str.to_string(),
+                    old_path: s.old_path,
+                    new_content: None,
+                    old_content: None,
+                    no_content: false,
+                });
+            }
         }
-        let st = parts[0];
-        let mut status = "modified";
-        let mut path = parts.get(1).copied().unwrap_or("").to_string();
-        let mut old_path = None;
-        if st.starts_with('A') {
-            status = "added";
-        } else if st.starts_with('D') {
-            status = "deleted";
-        } else if st.starts_with('R') {
-            status = "renamed";
-            old_path = Some(path);
-            path = parts.get(2).copied().unwrap_or("").to_string();
-        }
-        files.push(GitFileItem {
-            path,
-            status: status.to_string(),
-            old_path,
-            new_content: None,
-            old_content: None,
-            no_content: false,
-        });
     }
 
     let mut untracked_skipped: Vec<String> = Vec::new();
     // Untracked files — only relevant when the new side is the working tree.
     // A fixed commit range (worktree_new == false) diffs two historical refs;
     // untracked working-tree files must never appear in those results.
-    if !staged && refs.worktree_new {
-        let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
-        if !paths.is_empty() {
-            ls_args.push("--");
-            ls_args.extend(paths.iter().map(String::as_str));
-        }
-        let ut_opt = run_git(repo_root, &ls_args);
-        if let Some(ut) = ut_opt {
-            for rel in ut.lines().filter(|s| !s.is_empty()) {
-                let abs = repo_root.join(rel);
-                let content = match fs::read_to_string(&abs) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-                if content.contains('\0') {
-                    untracked_skipped.push(rel.to_string());
-                    continue;
-                }
-                let line_count = content.lines().count();
-                if !diff.is_empty() && !diff.ends_with('\n') {
-                    diff.push('\n');
-                }
-                diff.push_str(&format!(
-                    "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n@@ -0,0 +1,{line_count} @@\n"
-                ));
+    if !staged
+        && refs.worktree_new
+        && let Some(ref repo) = repo_git
+        && let Ok(ut) = repo.untracked_files(paths)
+    {
+        untracked_skipped.extend(ut.skipped_binary);
+        for f in ut.files {
+            let rel = f.path.clone();
+            let content = match fs::read_to_string(repo_root.join(&rel)) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let line_count = content.lines().count();
+            if !diff.is_empty() && !diff.ends_with('\n') {
+                diff.push('\n');
+            }
+            diff.push_str(&format!(
+                "diff --git a/{rel} b/{rel}\nuntracked file mode 100644\n--- /dev/null\n+++ b/{rel}\n"
+            ));
+            if line_count > 0 {
+                diff.push_str(&format!("@@ -0,0 +1,{line_count} @@\n"));
                 for line in content.lines() {
                     diff.push('+');
                     diff.push_str(line);
                     diff.push('\n');
                 }
-                files.push(GitFileItem {
-                    path: rel.to_string(),
-                    status: "untracked".to_string(),
-                    old_path: None,
-                    new_content: Some(content),
-                    old_content: None,
-                    no_content: false,
-                });
             }
+            files.push(GitFileItem {
+                path: rel,
+                status: "untracked".to_string(),
+                old_path: None,
+                new_content: Some(content),
+                old_content: None,
+                no_content: false,
+            });
         }
     }
 
@@ -886,11 +856,12 @@ pub fn load_git_blob(
     path: &str,
 ) -> (Option<String>, Option<usize>) {
     if let Ok(repo) = diffuse_git::Repository::open(repo_root)
-        && let Some(blob) = repo.load_blob(ref_str, path) {
-            let size = blob.size();
-            let text = blob.as_str().map(ToString::to_string);
-            return (text, Some(size));
-        }
+        && let Some(blob) = repo.load_blob(ref_str, path)
+    {
+        let size = blob.size();
+        let text = blob.as_str().map(ToString::to_string);
+        return (text, Some(size));
+    }
     (None, None)
 }
 

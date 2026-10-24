@@ -4,7 +4,7 @@ use std::path::Path;
 
 /// A pure-Gitoxide repository handle.
 pub struct Repository {
-    inner: gix::Repository,
+    pub(crate) inner: gix::Repository,
 }
 
 impl Repository {

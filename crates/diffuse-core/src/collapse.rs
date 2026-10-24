@@ -1783,7 +1783,7 @@ use crate::parse::CtxLine;
 /// Pass 3: Filter verbatim reflow dels and adds.
 pub fn pass_filter_reflows(
     h: &Hunk,
-    _out: &[Row],
+    out: &[Row],
     kept_dels: &[usize],
     pure_adds: &[usize],
     profile: Option<&LangProfile>,
@@ -1840,16 +1840,40 @@ pub fn pass_filter_reflows(
             if row_cluster[ai] != row_cluster[di] || row_cluster[ai] == usize::MAX {
                 continue;
             }
+            let (Some(dold), Some(anew)) = (h.rows[di].old_line(), a.new_line()) else {
+                continue;
+            };
             if h.rows[di].text() == a.text() {
+                // Synthesizing a Ctx row requires strict monotonicity against all
+                // rows with old and new lines in `out` and prior `reflow_ctx`.
+                let crosses_any = out.iter().chain(reflow_ctx.iter()).any(|m| {
+                    if let (Some(m_old), Some(m_new)) = (m.old_line(), m.new_line()) {
+                        (m_new < anew && m_old >= dold) || (m_new > anew && m_old <= dold)
+                    } else {
+                        false
+                    }
+                });
+                if crosses_any {
+                    continue;
+                }
                 used_dels.insert(di);
                 used_adds.insert(ai);
-                reflow_ctx.push(Row::Ctx(CtxLine::new(
-                    h.rows[di].old_line().expect("old line must be present"),
-                    a.new_line().expect("new line must be present"),
-                    a.text().to_string(),
-                )));
+                reflow_ctx.push(Row::Ctx(CtxLine::new(dold, anew, a.text().to_string())));
                 break;
             } else if h.rows[di].text().trim() == at {
+                // Synthesizing a Mod row cannot invert order relative to existing Ctx rows.
+                let crosses_ctx = out.iter().chain(reflow_ctx.iter()).any(|m| {
+                    if matches!(m, Row::Ctx(_))
+                        && let (Some(c_old), Some(c_new)) = (m.old_line(), m.new_line())
+                    {
+                        (c_new < anew && c_old >= dold) || (c_new > anew && c_old <= dold)
+                    } else {
+                        false
+                    }
+                });
+                if crosses_ctx {
+                    continue;
+                }
                 used_dels.insert(di);
                 used_adds.insert(ai);
                 let (spans, runs) = crate::lcs::word_spans_and_runs_with_profile(

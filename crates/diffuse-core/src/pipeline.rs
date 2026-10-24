@@ -881,7 +881,10 @@ pub fn process_single_diff_file(
             || res.status == "mode changed"
             || res.status == "unmodified"
             || res.is_binary,
-        "OutputFile must contain raw hunks or be renamed/untracked/deleted/mode changed/unmodified/binary"
+        "OutputFile must contain raw hunks or be renamed/untracked/deleted/mode changed/unmodified/binary: path='{}', status='{}', is_binary={}",
+        res.path,
+        res.status,
+        res.is_binary
     );
     crate::ensure!(
         f.hunks.iter().all(|h| h

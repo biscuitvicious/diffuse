@@ -28,9 +28,10 @@ pub fn is_blob_binary(
     if platform
         .set_resource(id, mode, b_path, ResourceKind::OldOrSource, repo)
         .is_ok()
-        && let Some(res) = platform.resource(ResourceKind::OldOrSource) {
-            return matches!(res.data, Data::Binary { .. });
-        }
+        && let Some(res) = platform.resource(ResourceKind::OldOrSource)
+    {
+        return matches!(res.data, Data::Binary { .. });
+    }
     false
 }
 
@@ -44,7 +45,10 @@ fn index_mode_to_entry_kind(mode: gix::index::entry::Mode) -> EntryKind {
     }
 }
 
-fn peel_to_tree<'a>(repo: &'a gix::Repository, id: gix::ObjectId) -> Option<gix::Tree<'a>> {
+pub(crate) fn peel_to_tree<'a>(
+    repo: &'a gix::Repository,
+    id: gix::ObjectId,
+) -> Option<gix::Tree<'a>> {
     let obj = repo.find_object(id).ok()?;
     match obj.kind {
         gix::object::Kind::Commit => obj.into_commit().tree().ok(),
