@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use crate::{
     git::run_git,
-    repo::{Repo, ReviewTarget, RevisionRange},
+    repo::{Repo, ReviewTarget, ReviewTargetNotesExt, RevisionRange},
 };
 
 fn init_test_git_repo(dir: &Path) -> (String, String, String, String) {

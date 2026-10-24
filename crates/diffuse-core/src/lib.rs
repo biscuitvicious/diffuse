@@ -9,7 +9,9 @@ pub use lcs::DEFAULT_TOKEN_PRODUCT_CAP;
 pub use notes::{LineHash, NoteStatus, NotesDB, ReviewNote, Side};
 pub use parse::RowGroup;
 pub use pipeline::{PipelineInput, PipelineOptions};
-pub use repo::{Repo, ReviewTarget, RevisionRange, parse_git_rev_and_pathspecs};
+pub use repo::{
+    Repo, ReviewTarget, ReviewTargetNotesExt, RevisionRange, parse_git_rev_and_pathspecs,
+};
 pub use token::{TokenClass, WhitespaceKind};
 pub mod apply;
 pub mod cluster;

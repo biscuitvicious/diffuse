@@ -10,77 +10,7 @@ use crate::{
     parse::{Row, Spans},
 };
 
-/// The semantic classification of a token run in a diff row.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum RunKind {
-    Ctx,
-    Del,
-    Add,
-    /// Reflow-moved source text: characters that left this (anchor) line
-    /// for continuation aux rows in the same Expand block. Old-side
-    /// content, like [`RunKind::Del`], but explicitly *not* deleted — it
-    /// survives verbatim elsewhere in the hunk. Renderers skip it by
-    /// default (the aux rows show where it went); the strike is reserved
-    /// for genuinely deleted text. See `is_del_like`.
-    MovedSrc,
-    /// Reflow-moved target text: characters an aux row shares with its
-    /// anchor donor — moved in, explicitly not novel. Emitted forward for
-    /// aux-grouped additions (the mirror of [`RunKind::MovedSrc`]); also
-    /// the image of `MovedSrc` under reversal, which keeps wire reversal
-    /// an exact involution. Renders exactly as context. See `is_add_like`.
-    MovedTgt,
-}
-
-impl RunKind {
-    #[inline]
-    pub fn sign_char(self) -> char {
-        match self {
-            RunKind::Ctx => '_',
-            RunKind::Del => '-',
-            RunKind::Add => '+',
-            RunKind::MovedSrc => '<',
-            RunKind::MovedTgt => '>',
-        }
-    }
-
-    #[inline]
-    pub fn from_sign_char(c: char) -> Option<Self> {
-        match c {
-            '_' => Some(RunKind::Ctx),
-            '-' => Some(RunKind::Del),
-            '+' => Some(RunKind::Add),
-            '<' => Some(RunKind::MovedSrc),
-            '>' => Some(RunKind::MovedTgt),
-            _ => None,
-        }
-    }
-
-    /// True for old-side change marking: struck-deleted or struck-moved.
-    /// Span derivation, wholesale coverage, and forward-projection filters
-    /// must treat both identically (moved text still left this line); only
-    /// renderers distinguish them.
-    #[inline]
-    pub fn is_del_like(self) -> bool {
-        matches!(self, RunKind::Del | RunKind::MovedSrc)
-    }
-
-    /// True for new-side-only content: filled-novel or moved-in. Reverse
-    /// (old-side) projections must exclude both.
-    #[inline]
-    pub fn is_add_like(self) -> bool {
-        matches!(self, RunKind::Add | RunKind::MovedTgt)
-    }
-
-    pub fn reverse(&self) -> Self {
-        match self {
-            RunKind::Ctx => RunKind::Ctx,
-            RunKind::Del => RunKind::Add,
-            RunKind::Add => RunKind::Del,
-            RunKind::MovedSrc => RunKind::MovedTgt,
-            RunKind::MovedTgt => RunKind::MovedSrc,
-        }
-    }
-}
+pub use diffuse_parse::RunKind;
 
 /// A merged run of a mod row's display.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

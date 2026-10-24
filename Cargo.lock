@@ -484,6 +484,8 @@ version = "0.1.0"
 dependencies = [
  "difflib",
  "diffuse-algo",
+ "diffuse-git",
+ "diffuse-parse",
  "diffuse-syntax",
  "flate2",
  "gix",
@@ -497,6 +499,28 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "diffuse-git"
+version = "0.1.0"
+dependencies = [
+ "diffuse-algo",
+ "diffuse-parse",
+ "gix",
+ "serde",
+ "smallvec",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
+name = "diffuse-parse"
+version = "0.1.0"
+dependencies = [
+ "diffuse-algo",
+ "serde",
+ "smallvec",
 ]
 
 [[package]]

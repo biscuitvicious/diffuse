@@ -8,6 +8,8 @@ description = "Core diff engine, AST parsing, sequence alignment, DP clustering,
 [dependencies]
 diffuse-algo = { workspace = true }
 diffuse-syntax = { workspace = true }
+diffuse-parse = { workspace = true }
+diffuse-git = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 smallvec = { workspace = true }
