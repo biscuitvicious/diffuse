@@ -124,7 +124,7 @@ impl Repository {
                 let right = if new_r.is_empty() { "HEAD" } else { new_r };
                 let h_left = self.rev_to_short_hash(left)?;
                 let h_right = self.rev_to_short_hash(right)?;
-                return Some(format!("{h_left}..{h_right}"));
+                return Some(format!("{h_left}...{h_right}"));
             }
             if let Some((old_r, new_r)) = r.split_once("..")
                 && !old_r.ends_with('.')

@@ -20,6 +20,7 @@ path = "src/bin/harvest.rs"
 [dependencies]
 diffuse-algo = { workspace = true }
 diffuse-core = { workspace = true }
+diffuse-git = { workspace = true }
 diffuse-render = { workspace = true }
 diffuse-syntax = { workspace = true }
 diffuse-tui = { workspace = true }

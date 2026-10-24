@@ -18,10 +18,8 @@ use std::{
 use clap::Parser;
 use serde::Serialize;
 
-use diffuse::{
-    git::{load_git_repo, run_git},
-    prelude::*,
-};
+use diffuse::{git::load_git_repo, prelude::*};
+use diffuse_git::Repository;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -137,15 +135,11 @@ fn resolve_revision(repo_root: &Path, revision: &str) -> Result<String, String> 
     if revision == "WORKTREE" {
         return Ok(revision.to_string());
     }
+    let repo = Repository::open(repo_root).map_err(|e| format!("cannot open repository: {e}"))?;
     let resolve_side = |side: &str| -> Result<String, String> {
         let side = if side.is_empty() { "HEAD" } else { side };
-        run_git(
-            repo_root,
-            &["rev-parse", "--verify", &format!("{side}^{{commit}}")],
-        )
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| format!("cannot resolve revision '{side}'"))
+        repo.rev_to_full_hash(side)
+            .ok_or_else(|| format!("cannot resolve revision '{side}'"))
     };
     let (pos, sep_len) = match (revision.find("..."), revision.find("..")) {
         (Some(i), _) => (i, 3),
@@ -249,10 +243,10 @@ fn main() {
     };
 
     let revision = if worktree {
-        let head = run_git(&repo_root, &["rev-parse", "HEAD"])
-            .unwrap_or_default()
-            .trim()
-            .to_string();
+        let head = Repository::open(&repo_root)
+            .ok()
+            .and_then(|r| r.head_commit_hash())
+            .unwrap_or_default();
         if head.is_empty() {
             "WORKTREE".to_string()
         } else {

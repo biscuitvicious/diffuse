@@ -437,6 +437,7 @@ dependencies = [
  "difflib",
  "diffuse-algo",
  "diffuse-core",
+ "diffuse-git",
  "diffuse-render",
  "diffuse-syntax",
  "diffuse-tui",

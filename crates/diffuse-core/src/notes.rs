@@ -232,10 +232,11 @@ pub fn synthesize_source_lines(
         }
         Side::Old => {
             if let Some(root) = repo_root
-                && let Some(git_out) =
-                    crate::git::run_git(root, &["show", &format!("HEAD:{file_path}")])
+                && let Ok(repo) = diffuse_git::Repository::open(root)
+                && let Some(blob) = repo.load_blob("HEAD", file_path)
+                && let Ok(git_out) = std::str::from_utf8(&blob.data)
             {
-                extract_source_lines(&git_out, start, end)
+                extract_source_lines(git_out, start, end)
             } else {
                 synthesize_source_lines(repo_root, file_path, Side::New, start, end)
             }
@@ -246,9 +247,9 @@ pub fn synthesize_source_lines(
 /// Resolve the HEAD commit hash of the repository containing `repo_root`.
 /// Returns `None` outside a work tree or when the repo has no commits yet.
 pub fn head_commit(repo_root: &Path) -> Option<String> {
-    crate::git::run_git(repo_root, &["rev-parse", "HEAD"])
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+    diffuse_git::Repository::open(repo_root)
+        .ok()
+        .and_then(|r| r.head_commit_hash())
 }
 
 /// Resolve the commit hash to scope review notes to.
@@ -258,47 +259,9 @@ pub fn head_commit(repo_root: &Path) -> Option<String> {
 /// When reviewing uncommitted changes against the working tree (or when the
 /// range has no parent), notes fall back to the live HEAD commit.
 pub fn notes_commit(repo_root: &Path, git_args: &[String]) -> Option<String> {
-    let ref_pair = crate::git::resolve_refs(repo_root, git_args, false);
-    if !ref_pair.worktree_new
-        && let (Some(old), Some(new)) = (ref_pair.old_ref, ref_pair.new_ref)
-    {
-        // Try resolving the second newest commit in the range via git rev-list:
-        let range = format!("{old}..{new}");
-        if let Some(revs) = crate::git::run_git(repo_root, &["rev-list", "-n", "2", &range]) {
-            let lines: Vec<&str> = revs.lines().filter(|l| !l.trim().is_empty()).collect();
-            if lines.len() >= 2 {
-                return Some(lines[1].trim().to_string());
-            }
-        }
-        // Single commit in range: the commit immediately preceding `new` in the
-        // range is `old`.
-        if let Some(h) =
-            crate::git::run_git(repo_root, &["rev-parse", &format!("{old}^{{commit}}")])
-        {
-            let h = h.trim().to_string();
-            if !h.is_empty() {
-                return Some(h);
-            }
-        }
-        if let Some(h) =
-            crate::git::run_git(repo_root, &["rev-parse", &format!("{new}~1^{{commit}}")])
-        {
-            let h = h.trim().to_string();
-            if !h.is_empty() {
-                return Some(h);
-            }
-        }
-        if let Some(h) =
-            crate::git::run_git(repo_root, &["rev-parse", &format!("{new}^{{commit}}")])
-        {
-            let h = h.trim().to_string();
-            if !h.is_empty() {
-                return Some(h);
-            }
-        }
-    }
-
-    head_commit(repo_root)
+    diffuse_git::Repository::open(repo_root)
+        .ok()
+        .and_then(|r| r.notes_commit(git_args))
 }
 
 /// Notes-DB key for a repo at a given HEAD: `{repo}@{head}`.

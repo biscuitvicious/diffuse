@@ -494,6 +494,7 @@ pub fn diff_repository(
         };
 
         if res.file.hunks.is_empty()
+            && old_bytes.as_deref() == new_bytes.as_deref()
             && (s.status == FileStatus::Modified || s.status == FileStatus::Unmodified)
             && !mode_changed
             && !is_binary
