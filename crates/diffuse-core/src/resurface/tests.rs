@@ -1,10 +1,10 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
-    parse::{AddLine, CtxLine, DelLine, Hunk, Row, RowKind},
+    parse::{AddLine, CtxLine, DelLine, Hunk, Row},
     pipeline::{PipelineOptions, run_pipeline_full},
     resurface::resurface_hunks,
-    wire::{MovSide, OutputRow},
+    wire::OutputRow,
 };
 
 // The pristine `scrollbar-grab-drag` dispatch.rs case: the real
@@ -543,19 +543,5 @@ fn dispatch_w_tape_pairs_reindented_blocks_with_true_sources() {
 /// Mod, or as an adjacent MovSrc/MovTgt pair (representation is engine
 /// policy; the pairing is the contract).
 fn pairs_with_output(rows: &[&OutputRow], old: u32, new: u32) -> bool {
-    rows.iter()
-        .any(|r| r.kind == RowKind::Mod && r.old_line == Some(old) && r.new_line == Some(new))
-        || mov_pair(rows, old, new)
-}
-
-/// Whether the row stream contains an adjacent MovSrc(old)/MovTgt(new) pair.
-fn mov_pair(rows: &[&OutputRow], old: u32, new: u32) -> bool {
-    rows.windows(2).any(|w| {
-        w[0].kind == RowKind::Mov
-            && w[0].mov_side == Some(MovSide::Src)
-            && w[0].old_line == Some(old)
-            && w[1].kind == RowKind::Mov
-            && w[1].mov_side == Some(MovSide::Tgt)
-            && w[1].new_line == Some(new)
-    })
+    crate::wire::test_rows_pair_with(rows, old, new)
 }

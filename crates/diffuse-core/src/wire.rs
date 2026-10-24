@@ -1181,6 +1181,28 @@ pub struct OutputRow {
     pub group: Option<RowGroup>,
 }
 
+/// Test support across the engine's row-level tests: whether the rendered
+/// row stream links old line `old` with new line `new` — as a Mod, or as an
+/// adjacent MovSrc/MovTgt pair. Representation is engine policy; the
+/// pairing is the contract.
+#[cfg(test)]
+pub(crate) fn test_rows_pair_with(rows: &[&OutputRow], old: u32, new: u32) -> bool {
+    if rows
+        .iter()
+        .any(|r| r.kind == RowKind::Mod && r.old_line == Some(old) && r.new_line == Some(new))
+    {
+        return true;
+    }
+    rows.windows(2).any(|w| {
+        w[0].kind == RowKind::Mov
+            && w[0].mov_side == Some(MovSide::Src)
+            && w[0].old_line == Some(old)
+            && w[1].kind == RowKind::Mov
+            && w[1].mov_side == Some(MovSide::Tgt)
+            && w[1].new_line == Some(new)
+    })
+}
+
 impl Serialize for OutputRow {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

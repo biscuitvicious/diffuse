@@ -221,6 +221,21 @@ pub struct LoadGitResult {
 /// lists it. The parse layer keeps complete `---`/`+++` sections with no
 /// hunks, and the resurface pass synthesizes their changes from the content
 /// snapshots. Returns how many sections were appended.
+/// The bare zero-hunk content section a suppressed path carries: complete
+/// `---`/`+++` file headers, no hunks. Both reconciliation paths (tape-suffix
+/// append and streamed zero-hunk job) emit exactly this shape, and the parse
+/// layer keeps it as a real file via
+/// [`crate::parse::DiffFile::has_file_headers`].
+pub(crate) fn zero_hunk_section(path: &str) -> String {
+    format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n")
+}
+
+/// Appends zero-hunk content sections for files a whitespace-insensitive
+/// diff suppressed: `git diff -w` omits a file whose only changes are
+/// whitespace from the diff text entirely, while `--name-status` still
+/// lists it. The parse layer keeps complete `---`/`+++` sections with no
+/// hunks, and the resurface pass synthesizes their changes from the content
+/// snapshots. Returns how many sections were appended.
 pub(crate) fn append_ws_suppressed_sections(diff: &mut String, paths: &[String]) -> usize {
     let parsed = crate::parse::parse_diff(diff);
     let seen: HashSet<&str> = parsed.iter().map(|f| f.path.as_str()).collect();
@@ -232,9 +247,7 @@ pub(crate) fn append_ws_suppressed_sections(diff: &mut String, paths: &[String])
         if !diff.is_empty() && !diff.ends_with('\n') {
             diff.push('\n');
         }
-        diff.push_str(&format!(
-            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
-        ));
+        diff.push_str(&zero_hunk_section(path));
         appended += 1;
     }
     appended
@@ -597,8 +610,7 @@ pub fn stream_git_repo_to_producer(
                 if osz.is_some() {
                     f.old_bytes = osz;
                 }
-                let synthetic_diff =
-                    format!("diff --git a/{rel} b/{rel}\n--- a/{rel}\n+++ b/{rel}\n");
+                let synthetic_diff = zero_hunk_section(rel);
                 producer.push(crate::streaming::FileJob {
                     idx: file_idx,
                     file: f,

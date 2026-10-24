@@ -454,6 +454,7 @@ fn token_intersection_bound(a: &[(u32, u16)], b: &[(u32, u16)], char_lens: &[u32
 /// equal containers can cover them; the remainder are occurrences buried
 /// inside DIFFERENT identifiers on the two lines — weak evidence, worth only
 /// `factor` of their chars.
+#[allow(clippy::too_many_arguments)]
 #[inline(always)]
 fn graded_salient_bound(
     a: &[(u32, u16)],
