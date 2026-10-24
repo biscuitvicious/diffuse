@@ -693,6 +693,26 @@ fn test_tape_uncrosses_interleaved_delimiter_chunks() {
 }
 
 #[test]
+fn test_tape_does_not_match_stray_parens_across_bracket_containers() {
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let old = "    let mut result = Vec::with_capacity(items.len());";
+    let new = "    let mut out = vec![0u8; items.len()];";
+
+    let tape = AlignmentTape::from_texts(old, new, profile);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    let runs = tape.to_merged_runs();
+
+    let common_texts: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Ctx)
+        .map(|r| r.text)
+        .collect();
+
+    assert_eq!(common_texts, vec!["    let mut ", " = ", ";"]);
+}
+
+#[test]
 fn test_subword_not_matched_to_split_identifier() {
     let profile = diffuse_syntax::registry::lang_profile("rs");
     let old = "    self.scroll_to_visual(self.scroll.saturating_sub(n));";

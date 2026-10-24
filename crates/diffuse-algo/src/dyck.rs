@@ -87,6 +87,17 @@ impl<T: Copy + Default, const N: usize> SmallStack<T, N> {
         }
     }
 
+    /// Returns a reference to the element at the given 0-based index from the
+    /// bottom.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<&T> {
+        if index < self.len {
+            Some(&self.inline[index])
+        } else {
+            self.spill.get(index - self.len)
+        }
+    }
+
     /// Clears all elements from the stack.
     #[inline]
     pub fn clear(&mut self) {
@@ -375,6 +386,102 @@ pub fn track_enclosing_containers_into<T, C>(
             }
         }
     }
+}
+
+/// Computes the surrounding container ID (the active enclosing container
+/// outside the delimiter boundary) for each item in `items`, continuing from
+/// the delimiter state established by `prev_items`. Writes into `out`.
+///
+/// For standard tokens, this equals the active enclosing container. For opening
+/// and closing delimiter tokens, this returns the container that surrounds the
+/// delimiter pair, rather than the container opened/closed by the delimiter
+/// itself.
+pub fn track_surrounding_containers_into<T, C>(
+    prev_items: &[T],
+    items: &[T],
+    classifier: &C,
+    out: &mut [u8],
+) where
+    C: DelimiterClassifier<T>,
+{
+    debug_assert_eq!(items.len(), out.len());
+    let mut stack: SmallStack<(u8, bool), 32> = SmallStack::new();
+
+    for item in prev_items {
+        let cat = classifier.classify(item);
+        if let Some(&(top_id, true)) = stack.last() {
+            if let Some(DelimiterCategory::Symmetric(id)) = cat
+                && id == top_id
+            {
+                stack.pop();
+            }
+            continue;
+        }
+
+        match cat {
+            Some(DelimiterCategory::Open(id)) => {
+                stack.push((id, false));
+            }
+            Some(DelimiterCategory::Close(id)) => {
+                if stack.last() == Some(&(id, false)) {
+                    stack.pop();
+                }
+            }
+            Some(DelimiterCategory::Symmetric(id)) => {
+                stack.push((id, true));
+            }
+            _ => {}
+        }
+    }
+
+    for (item, slot) in items.iter().zip(out.iter_mut()) {
+        let cat = classifier.classify(item);
+        if let Some(&(top_id, true)) = stack.last() {
+            if let Some(DelimiterCategory::Symmetric(id)) = cat
+                && id == top_id
+            {
+                stack.pop();
+                *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+            } else {
+                *slot = top_id;
+            }
+            continue;
+        }
+
+        match cat {
+            Some(DelimiterCategory::Open(id)) => {
+                *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+                stack.push((id, false));
+            }
+            Some(DelimiterCategory::Close(id)) => {
+                if stack.last() == Some(&(id, false)) {
+                    stack.pop();
+                    *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+                } else {
+                    *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+                }
+            }
+            Some(DelimiterCategory::Symmetric(id)) => {
+                *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+                stack.push((id, true));
+            }
+            _ => {
+                *slot = stack.last().map(|&(id, _)| id).unwrap_or(0);
+            }
+        }
+    }
+}
+
+/// Computes the surrounding container ID for each item in a sequence.
+pub fn track_surrounding_containers<T, C>(items: &[T], classifier: &C) -> Vec<Option<u8>>
+where
+    C: DelimiterClassifier<T>,
+{
+    let mut out = vec![0u8; items.len()];
+    track_surrounding_containers_into(&[], items, classifier, &mut out);
+    out.into_iter()
+        .map(|id| if id == 0 { None } else { Some(id) })
+        .collect()
 }
 
 /// Computes the active enclosing container ID for each item in a sequence.
@@ -706,6 +813,29 @@ mod tests {
                 Some(10), // str
                 Some(10), // " (popped)
             ]
+        );
+    }
+
+    #[test]
+    fn test_track_enclosing_containers_nested_delimiters() {
+        let c = AsciiDelimiterClassifier;
+        // [ foo ( bar ) ]
+        let tokens = vec!["[", "foo", "(", "bar", ")", "]"];
+        let enclosing = track_enclosing_containers(&tokens, &c);
+        assert_eq!(
+            enclosing,
+            vec![Some(2), Some(2), Some(1), Some(1), Some(1), Some(2)]
+        );
+
+        let surrounding = track_surrounding_containers(&tokens, &c);
+        // [ and ] have surrounding None (0)
+        // foo has surrounding Some(2) (Bracket)
+        // ( has surrounding Some(2) (Bracket)
+        // bar has surrounding Some(1) (Paren)
+        // ) has surrounding Some(2) (Bracket)
+        assert_eq!(
+            surrounding,
+            vec![None, Some(2), Some(2), Some(1), Some(2), None]
         );
     }
 

@@ -12,6 +12,7 @@
 
 use std::{slice, str};
 
+use diffuse_algo::DelimiterClassifier;
 use diffuse_syntax::profile::LangProfile;
 
 use crate::{
@@ -760,6 +761,7 @@ impl<'a> AlignmentTape<'a> {
             if !crate::token::ContainerKind::is_compatible_with(ca, cb) {
                 return false;
             }
+
             if crate::lcs::is_subword_token(ot[oi]) {
                 let la = oi > 0
                     && crate::lcs::is_subword_token(ot[oi - 1])
@@ -779,6 +781,56 @@ impl<'a> AlignmentTape<'a> {
             }
             true
         });
+
+        // Purge any empty delimiter pair (e.g. `()`, `[]`) whose caller token
+        // sits inside an incompatible container context. If the caller expression
+        // was in incompatible containers (e.g. Paren in `Vec::with_capacity` vs
+        // Bracket in `vec![...]`), its empty call delimiters cannot match across
+        // that container boundary.
+        let classifier = diffuse_algo::AsciiDelimiterClassifier;
+        let is_empty_dyck_pair = |tok_open: &str, tok_close: &str| -> Option<u8> {
+            match (
+                classifier.classify(&tok_open),
+                classifier.classify(&tok_close),
+            ) {
+                (
+                    Some(diffuse_algo::DelimiterCategory::Open(id1)),
+                    Some(diffuse_algo::DelimiterCategory::Close(id2)),
+                ) if id1 == id2 => Some(id1),
+                _ => None,
+            }
+        };
+
+        let mut pair_idx = 0;
+        while pair_idx + 1 < sorted_pairs.len() {
+            let (o1, n1) = sorted_pairs[pair_idx];
+            let (o2, n2) = sorted_pairs[pair_idx + 1];
+            if o2 == o1 + 1 && n2 == n1 + 1 {
+                let dyck_old = is_empty_dyck_pair(ot[o1], ot[o2]);
+                let dyck_new = is_empty_dyck_pair(nt[n1], nt[n2]);
+                if dyck_old.is_some() && dyck_old == dyck_new {
+                    let prev_caller_a = (0..o1).rev().find(|&idx| !token_is_ws(ot[idx]));
+                    let prev_caller_b = (0..n1).rev().find(|&idx| !token_is_ws(nt[idx]));
+                    if let (Some(pa), Some(pb)) = (prev_caller_a, prev_caller_b)
+                        && crate::lcs::is_subword_token(ot[pa])
+                            && crate::lcs::is_subword_token(nt[pb])
+                        {
+                            let c_caller_a =
+                                c_old[pa].and_then(crate::token::ContainerKind::from_id);
+                            let c_caller_b =
+                                c_new[pb].and_then(crate::token::ContainerKind::from_id);
+                            if !crate::token::ContainerKind::is_compatible_with(
+                                c_caller_a, c_caller_b,
+                            ) {
+                                sorted_pairs.remove(pair_idx + 1);
+                                sorted_pairs.remove(pair_idx);
+                                continue;
+                            }
+                        }
+                }
+            }
+            pair_idx += 1;
+        }
 
         let mut old_tok_idx = 0usize;
         let mut new_tok_idx = 0usize;
