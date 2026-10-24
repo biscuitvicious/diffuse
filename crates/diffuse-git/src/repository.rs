@@ -182,4 +182,25 @@ impl Repository {
 
         self.head_commit_hash()
     }
+
+    /// Load a single blob by reference and path.
+    pub fn load_blob(&self, ref_str: &str, path: &str) -> Option<crate::types::GitBlob> {
+        crate::objects::load_blob(&self.inner, ref_str, path)
+    }
+
+    /// Batch-load blobs by specifiers (e.g. `ref:path`, `:path`, or object id).
+    pub fn load_blobs_batch(
+        &self,
+        specs: &[String],
+    ) -> std::collections::HashMap<String, crate::types::GitBlob> {
+        crate::objects::load_blobs_batch(&self.inner, specs)
+    }
+
+    /// Batch-load blobs as UTF-8 strings.
+    pub fn load_blobs_text_batch(
+        &self,
+        specs: &[String],
+    ) -> std::collections::HashMap<String, String> {
+        crate::objects::load_blobs_text_batch(&self.inner, specs)
+    }
 }

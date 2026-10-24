@@ -9,7 +9,6 @@ use std::{
     process::Command,
     string::String,
     sync::Arc,
-    thread,
 };
 
 /// Fixed unified-diff context width used when generating diffs from git (`-U`).
@@ -254,133 +253,23 @@ pub(crate) fn append_ws_suppressed_sections(diff: &mut String, paths: &[String])
 }
 
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader},
     process::Stdio,
 };
 
-/// Batch-load file blob contents using a single `git cat-file --batch` process.
+/// Batch-load file blob contents using native Gitoxide.
 pub fn load_git_blobs_batch(repo_root: &Path, specs: &[String]) -> HashMap<String, String> {
-    if specs.is_empty() {
-        return HashMap::new();
-    }
-
-    let mut child = match Command::new("git")
-        .args(["cat-file", "--batch"])
-        .current_dir(repo_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return HashMap::new(),
-    };
-
-    let mut stdin = child.stdin.take().expect("child stdin");
-    let mut input_data = Vec::new();
-    for spec in specs {
-        input_data.extend_from_slice(spec.as_bytes());
-        input_data.push(b'\n');
-    }
-
-    let writer = thread::spawn(move || {
-        let _ = stdin.write_all(&input_data);
-        drop(stdin);
-    });
-
-    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout"));
-    let mut results = HashMap::with_capacity(specs.len());
-
-    for spec in specs {
-        let mut header = String::new();
-        if stdout.read_line(&mut header).is_err() || header.is_empty() {
-            break;
-        }
-        let header_str = header.trim_end();
-        if header_str.ends_with("missing") {
-            continue;
-        }
-        let parts: Vec<&str> = header_str.split_whitespace().collect();
-        if parts.len() == 3
-            && let Ok(size) = parts[2].parse::<usize>()
-        {
-            let mut buf = vec![0u8; size];
-            if stdout.read_exact(&mut buf).is_ok() {
-                let mut newline = [0u8; 1];
-                let _ = stdout.read_exact(&mut newline);
-                if let Ok(text) = String::from_utf8(buf) {
-                    results.insert(spec.clone(), text);
-                }
-            }
-        }
-    }
-
-    let _ = writer.join();
-    let _ = child.wait();
-    results
+    load_git_blobs_native(repo_root, specs)
 }
 
-/// Load file blob contents directly using the native `gix` object database,
-/// falling back to `load_git_blobs_batch` on error.
+/// Load file blob contents directly using the native `diffuse-git` object
+/// database.
 pub fn load_git_blobs_native(repo_root: &Path, specs: &[String]) -> HashMap<String, String> {
-    if specs.len() > 1 {
-        return load_git_blobs_batch(repo_root, specs);
+    if let Ok(repo) = diffuse_git::Repository::open(repo_root) {
+        repo.load_blobs_text_batch(specs)
+    } else {
+        HashMap::new()
     }
-    let Ok(repo) = gix::open(repo_root) else {
-        return load_git_blobs_batch(repo_root, specs);
-    };
-
-    let mut results = HashMap::with_capacity(specs.len());
-    let mut tree_cache: HashMap<String, gix::Tree<'_>> = HashMap::new();
-
-    for spec in specs {
-        let Some((ref_str, path)) = spec.split_once(':') else {
-            continue;
-        };
-
-        let tree_opt = if let Some(t) = tree_cache.get(ref_str) {
-            Some(t.clone())
-        } else {
-            let res: Result<gix::Tree<'_>, Box<dyn std::error::Error>> = (|| {
-                let id = repo.rev_parse_single(ref_str)?;
-                let obj = repo.find_object(id)?;
-                let commit = obj.peel_to_commit()?;
-                let tree = commit.tree()?;
-                Ok(tree)
-            })();
-            match res {
-                Ok(tree) => {
-                    tree_cache.insert(ref_str.to_string(), tree.clone());
-                    Some(tree)
-                }
-                Err(_) => None,
-            }
-        };
-
-        if let Some(tree) = tree_opt
-            && let Ok(Some(entry)) = tree.lookup_entry_by_path(path)
-            && let Ok(obj) = entry.object()
-            && let Ok(text) = String::from_utf8(obj.data.to_vec())
-        {
-            results.insert(spec.clone(), text);
-        }
-    }
-
-    // If any specs were not found in the gix ODB (e.g. unreferenced index
-    // blobs), fill in missing ones via batch loader
-    if results.len() < specs.len() {
-        let missing: Vec<String> = specs
-            .iter()
-            .filter(|s| !results.contains_key(*s))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            let fallback_blobs = load_git_blobs_batch(repo_root, &missing);
-            results.extend(fallback_blobs);
-        }
-    }
-
-    results
 }
 
 ///// Progressive streaming producer for git diff and blob retrieval.
@@ -450,36 +339,16 @@ pub fn stream_git_repo_to_producer(
 
     let old_tree_ref = refs.old_ref.as_deref().unwrap_or("HEAD");
 
-    let repo_gix = gix::open(repo_root).ok();
-    let mut tree_cache: HashMap<String, Option<gix::Tree<'_>>> = HashMap::new();
+    let repo_git = diffuse_git::Repository::open(repo_root).ok();
 
-    let mut get_blob_data = |ref_str: &str, path: &str| -> (Option<String>, Option<usize>) {
-        if let Some(ref repo) = repo_gix {
-            let tree_opt = tree_cache.entry(ref_str.to_string()).or_insert_with(|| {
-                let id = repo.rev_parse_single(ref_str).ok()?;
-                let obj = repo.find_object(id).ok()?;
-                let commit = obj.peel_to_commit().ok()?;
-                commit.tree().ok()
-            });
-            if let Some(tree) = tree_opt.as_ref() {
-                if let Ok(Some(entry)) = tree.lookup_entry_by_path(path)
-                    && let Ok(obj) = entry.object()
-                {
-                    let size = obj.data.len();
-                    let text = std::str::from_utf8(&obj.data).ok().map(|s| s.to_string());
-                    return (text, Some(size));
-                }
-                return (None, None);
+    let get_blob_data = |ref_str: &str, path: &str| -> (Option<String>, Option<usize>) {
+        if let Some(ref repo) = repo_git
+            && let Some(blob) = repo.load_blob(ref_str, path) {
+                let size = blob.size();
+                let text = blob.as_str().map(ToString::to_string);
+                return (text, Some(size));
             }
-        }
-        let spec = format!("{ref_str}:{path}");
-        let blobs = load_git_blobs_batch(repo_root, std::slice::from_ref(&spec));
-        let text = blobs.get(&spec).cloned();
-        let size = text.as_ref().map(|t| t.len()).or_else(|| {
-            run_git(repo_root, &["cat-file", "-s", &spec])
-                .and_then(|s| s.trim().parse::<usize>().ok())
-        });
-        (text, size)
+        (None, None)
     };
 
     let mut emit_chunk = |chunk: &str, idx: &mut usize| {
@@ -1016,13 +885,13 @@ pub fn load_git_blob(
     ref_str: &str,
     path: &str,
 ) -> (Option<String>, Option<usize>) {
-    let spec = format!("{ref_str}:{path}");
-    let blobs = load_git_blobs_batch(repo_root, std::slice::from_ref(&spec));
-    let text = blobs.get(&spec).cloned();
-    let size = text.as_ref().map(|t| t.len()).or_else(|| {
-        run_git(repo_root, &["cat-file", "-s", &spec]).and_then(|s| s.trim().parse::<usize>().ok())
-    });
-    (text, size)
+    if let Ok(repo) = diffuse_git::Repository::open(repo_root)
+        && let Some(blob) = repo.load_blob(ref_str, path) {
+            let size = blob.size();
+            let text = blob.as_str().map(ToString::to_string);
+            return (text, Some(size));
+        }
+    (None, None)
 }
 
 /// Load and process the diff for a single file on demand from a git repository.

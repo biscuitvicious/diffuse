@@ -36,20 +36,38 @@ pub struct GitBlob {
     pub id: String,
     /// Raw blob bytes.
     pub data: Vec<u8>,
+    /// Whether the blob is considered binary by gitattributes, entry mode, or
+    /// content inspection.
+    pub is_binary: bool,
 }
 
 impl GitBlob {
     /// Construct a new blob.
-    pub fn new(id: impl Into<String>, data: Vec<u8>) -> Self {
+    pub fn new(id: impl Into<String>, data: Vec<u8>, is_binary: bool) -> Self {
         Self {
             id: id.into(),
             data,
+            is_binary,
         }
     }
 
-    /// View blob data as UTF-8 string if valid.
+    /// View blob data as UTF-8 string if valid and not binary.
     pub fn as_str(&self) -> Option<&str> {
-        std::str::from_utf8(&self.data).ok()
+        if self.is_binary {
+            None
+        } else {
+            std::str::from_utf8(&self.data).ok()
+        }
+    }
+
+    /// Size of blob data in bytes.
+    pub fn size(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Whether this blob is binary.
+    pub fn is_binary(&self) -> bool {
+        self.is_binary
     }
 }
 

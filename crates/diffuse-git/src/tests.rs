@@ -55,13 +55,15 @@ fn test_git_diff_options_defaults() {
 
 #[test]
 fn test_git_blob_constructors() {
-    let blob = GitBlob::new("abc1234", b"hello world".to_vec());
+    let blob = GitBlob::new("abc1234", b"hello world".to_vec(), false);
     assert_eq!(blob.id, "abc1234");
     assert_eq!(blob.data, b"hello world");
     assert_eq!(blob.as_str(), Some("hello world"));
+    assert!(!blob.is_binary());
 
-    let invalid_utf8 = GitBlob::new("xyz", vec![0xFF, 0xFE, 0xFD]);
+    let invalid_utf8 = GitBlob::new("xyz", vec![0xFF, 0xFE, 0xFD], true);
     assert_eq!(invalid_utf8.as_str(), None);
+    assert!(invalid_utf8.is_binary());
 }
 
 #[test]
@@ -195,4 +197,158 @@ fn test_review_target_native() {
 
     // Path matching
     assert!(target.matches_path("src/lib.rs", dir));
+}
+
+#[test]
+fn test_repository_load_blob_and_batch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let (c1, c2, c3, c4) = init_test_git_repo(dir);
+
+    let repo = Repository::open(dir).unwrap();
+
+    // 1. Load single blob by commit:path
+    let blob_c1 = repo.load_blob(&c1, "file.txt").expect("blob c1");
+    assert_eq!(blob_c1.as_str(), Some("line 1\n"));
+    assert!(!blob_c1.is_binary());
+    assert_eq!(blob_c1.size(), 7);
+
+    let blob_c4 = repo.load_blob(&c4, "file.txt").expect("blob c4");
+    assert_eq!(blob_c4.as_str(), Some("line 1\nline 2\nline 3\nline 4\n"));
+
+    // 2. Load blob by ref spec ("HEAD:file.txt")
+    let blob_head = repo.load_blob("HEAD", "file.txt").expect("blob head");
+    assert_eq!(blob_head.as_str(), Some("line 1\nline 2\nline 3\nline 4\n"));
+
+    // 3. Load non-existent file or ref
+    assert!(repo.load_blob(&c1, "does_not_exist.txt").is_none());
+    assert!(repo.load_blob("nonexistent-ref", "file.txt").is_none());
+
+    // 4. Batch blob loading
+    let specs = vec![
+        format!("{c1}:file.txt"),
+        format!("{c2}:file.txt"),
+        format!("{c3}:file.txt"),
+        format!("{c4}:file.txt"),
+        "HEAD:file.txt".to_string(),
+        format!("{c1}:missing.txt"),
+    ];
+    let loaded = repo.load_blobs_batch(&specs);
+    assert_eq!(loaded.len(), 5);
+    assert_eq!(
+        loaded.get(&format!("{c1}:file.txt")).unwrap().as_str(),
+        Some("line 1\n")
+    );
+    assert_eq!(
+        loaded.get(&format!("{c2}:file.txt")).unwrap().as_str(),
+        Some("line 1\nline 2\n")
+    );
+    assert_eq!(
+        loaded.get(&format!("{c4}:file.txt")).unwrap().as_str(),
+        Some("line 1\nline 2\nline 3\nline 4\n")
+    );
+    assert_eq!(
+        loaded.get("HEAD:file.txt").unwrap().as_str(),
+        Some("line 1\nline 2\nline 3\nline 4\n")
+    );
+
+    // 5. Batch text loading
+    let texts = repo.load_blobs_text_batch(&specs);
+    assert_eq!(texts.len(), 5);
+    assert_eq!(
+        texts.get(&format!("{c1}:file.txt")),
+        Some(&"line 1\n".to_string())
+    );
+}
+
+#[test]
+fn test_repository_load_binary_blob() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_test_git_repo(dir);
+
+    // Commit binary file
+    let binary_data = vec![0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x01, 0x00, 0x01];
+    fs::write(dir.join("image.gif"), &binary_data).unwrap();
+    run_cmd(dir, "git", &["add", "image.gif"]).unwrap();
+    run_cmd(dir, "git", &["commit", "-m", "add image"]).unwrap();
+
+    let repo = Repository::open(dir).unwrap();
+    let blob = repo.load_blob("HEAD", "image.gif").expect("image blob");
+    assert!(blob.is_binary());
+    assert_eq!(blob.data, binary_data);
+    assert_eq!(blob.as_str(), None);
+}
+
+#[test]
+fn test_repository_load_index_blob() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_test_git_repo(dir);
+
+    // Stage new content in index without committing
+    fs::write(dir.join("staged.txt"), "staged content\n").unwrap();
+    run_cmd(dir, "git", &["add", "staged.txt"]).unwrap();
+
+    let repo = Repository::open(dir).unwrap();
+    let blob = repo.load_blob("", "staged.txt").expect("index blob");
+    assert_eq!(blob.as_str(), Some("staged content\n"));
+
+    let blob_colon = repo.load_blob(":", "staged.txt").expect("colon index blob");
+    assert_eq!(blob_colon.as_str(), Some("staged content\n"));
+}
+
+#[test]
+fn test_repository_load_blob_gitattributes_binary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init_test_git_repo(dir);
+
+    // Configure .gitattributes to mark text files as binary via -diff and binary
+    // macro
+    fs::write(
+        dir.join(".gitattributes"),
+        "*.custombin -diff\n*.fakebin binary\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("clean.custombin"),
+        "Clean plain text without any null bytes.\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("clean.fakebin"),
+        "Another clean plain text without null bytes.\n",
+    )
+    .unwrap();
+
+    run_cmd(
+        dir,
+        "git",
+        &["add", ".gitattributes", "clean.custombin", "clean.fakebin"],
+    )
+    .unwrap();
+    run_cmd(dir, "git", &["commit", "-m", "attributes test"]).unwrap();
+
+    let repo = Repository::open(dir).unwrap();
+
+    // 1. Check clean.custombin - must be detected as binary via -diff metadata
+    let custom_blob = repo
+        .load_blob("HEAD", "clean.custombin")
+        .expect("custombin blob");
+    assert!(
+        custom_blob.is_binary(),
+        ".gitattributes -diff must force binary status"
+    );
+    assert_eq!(custom_blob.as_str(), None);
+
+    // 2. Check clean.fakebin - must be detected as binary via binary macro metadata
+    let fake_blob = repo
+        .load_blob("HEAD", "clean.fakebin")
+        .expect("fakebin blob");
+    assert!(
+        fake_blob.is_binary(),
+        ".gitattributes binary must force binary status"
+    );
+    assert_eq!(fake_blob.as_str(), None);
 }

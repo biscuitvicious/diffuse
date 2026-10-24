@@ -1,6 +1,7 @@
 //! Pure Gitoxide repository operations, revision resolution, tree diffing,
 //! and index mutation for diffuse.
 
+pub mod objects;
 pub mod repository;
 pub mod types;
 
