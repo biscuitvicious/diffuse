@@ -782,39 +782,67 @@ impl<'a> AlignmentTape<'a> {
             true
         });
 
-        // Purge any empty delimiter pair (e.g. `()`, `[]`) whose caller token
-        // sits inside an incompatible container context. If the caller expression
-        // was in incompatible containers (e.g. Paren in `Vec::with_capacity` vs
-        // Bracket in `vec![...]`), its empty call delimiters cannot match across
-        // that container boundary.
+        // Delimiter Container Invariance & Inner Salience Admission Gate.
+        // Purge any delimiter pair where:
+        // 1. The caller expression sits inside incompatible container contexts (e.g.
+        //    Paren in `Vec::with_capacity` vs Bracket in `vec![...]`).
+        // 2. The container contents share NO common salient tokens across distinct
+        //    callers (e.g. `is_none()` vs `is_some_and(|c| c.is_quoted())`, or `foo(a)`
+        //    vs `bar(b)`).
         let classifier = diffuse_algo::AsciiDelimiterClassifier;
-        let is_empty_dyck_pair = |tok_open: &str, tok_close: &str| -> Option<u8> {
-            match (
-                classifier.classify(&tok_open),
-                classifier.classify(&tok_close),
-            ) {
-                (
-                    Some(diffuse_algo::DelimiterCategory::Open(id1)),
-                    Some(diffuse_algo::DelimiterCategory::Close(id2)),
-                ) if id1 == id2 => Some(id1),
-                _ => None,
+        let find_matching_close = |tokens: &[&str], open_idx: usize| -> Option<usize> {
+            let cat = classifier.classify(&tokens[open_idx])?;
+            let open_id = match cat {
+                diffuse_algo::DelimiterCategory::Open(id) => id,
+                _ => return None,
+            };
+            let mut depth = 1usize;
+            for (offset, &tok) in tokens[open_idx + 1..].iter().enumerate() {
+                match classifier.classify(&tok) {
+                    Some(diffuse_algo::DelimiterCategory::Open(id)) if id == open_id => {
+                        depth += 1;
+                    }
+                    Some(diffuse_algo::DelimiterCategory::Close(id)) if id == open_id => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(open_idx + 1 + offset);
+                        }
+                    }
+                    _ => {}
+                }
             }
+            None
         };
 
-        let mut pair_idx = 0;
-        while pair_idx + 1 < sorted_pairs.len() {
-            let (o1, n1) = sorted_pairs[pair_idx];
-            let (o2, n2) = sorted_pairs[pair_idx + 1];
-            if o2 == o1 + 1 && n2 == n1 + 1 {
-                let dyck_old = is_empty_dyck_pair(ot[o1], ot[o2]);
-                let dyck_new = is_empty_dyck_pair(nt[n1], nt[n2]);
-                if dyck_old.is_some() && dyck_old == dyck_new {
+        let mut purged_indices = Vec::new();
+        for (i, &(o1, n1)) in sorted_pairs.iter().enumerate() {
+            if let Some(diffuse_algo::DelimiterCategory::Open(id_old)) =
+                classifier.classify(&ot[o1])
+                && let Some(diffuse_algo::DelimiterCategory::Open(id_new)) =
+                    classifier.classify(&nt[n1])
+                && id_old == id_new
+            {
+                let close_old = find_matching_close(&ot, o1);
+                let close_new = find_matching_close(&nt, n1);
+                if let (Some(o2), Some(n2)) = (close_old, close_new)
+                    && let Some(j) = sorted_pairs.iter().position(|&(o, n)| o == o2 && n == n2)
+                {
                     let prev_caller_a = (0..o1).rev().find(|&idx| !token_is_ws(ot[idx]));
                     let prev_caller_b = (0..n1).rev().find(|&idx| !token_is_ws(nt[idx]));
-                    if let (Some(pa), Some(pb)) = (prev_caller_a, prev_caller_b)
-                        && crate::lcs::is_subword_token(ot[pa])
-                            && crate::lcs::is_subword_token(nt[pb])
-                        {
+                    let has_caller_a =
+                        prev_caller_a.is_some_and(|pa| crate::lcs::is_subword_token(ot[pa]));
+                    let has_caller_b =
+                        prev_caller_b.is_some_and(|pb| crate::lcs::is_subword_token(nt[pb]));
+
+                    if has_caller_a && has_caller_b {
+                        let pa = prev_caller_a.unwrap();
+                        let pb = prev_caller_b.unwrap();
+
+                        let is_empty_old = o2 == o1 + 1;
+                        let is_empty_new = n2 == n1 + 1;
+
+                        if is_empty_old && is_empty_new {
+                            // Condition A: Incompatible caller containers for empty delimiter pairs
                             let c_caller_a =
                                 c_old[pa].and_then(crate::token::ContainerKind::from_id);
                             let c_caller_b =
@@ -822,14 +850,48 @@ impl<'a> AlignmentTape<'a> {
                             if !crate::token::ContainerKind::is_compatible_with(
                                 c_caller_a, c_caller_b,
                             ) {
-                                sorted_pairs.remove(pair_idx + 1);
-                                sorted_pairs.remove(pair_idx);
+                                purged_indices.push(i);
+                                purged_indices.push(j);
                                 continue;
                             }
+                        } else if is_empty_old != is_empty_new {
+                            // Condition B: An empty delimiter pair cannot match against a non-empty
+                            // container across distinct call sites. Function declarations (`fn
+                            // foo(...)` vs `fn bar()`) share formal
+                            // parameter list boundaries and are exempt.
+                            let is_fn_decl = |tokens: &[&str], subword_idx: usize| -> bool {
+                                let mut idx = subword_idx;
+                                while idx > 0 && crate::lcs::is_subword_token(tokens[idx - 1]) {
+                                    idx -= 1;
+                                }
+                                let prev = (0..idx).rev().find(|&i| !token_is_ws(tokens[i]));
+                                prev.is_some_and(|p| tokens[p] == "fn")
+                            };
+
+                            let is_fn_decl_a = is_fn_decl(&ot, pa);
+                            let is_fn_decl_b = is_fn_decl(&nt, pb);
+
+                            if !(is_fn_decl_a && is_fn_decl_b) {
+                                let same_caller =
+                                    ot[pa] == nt[pb] && sorted_pairs.contains(&(pa, pb));
+                                if !same_caller {
+                                    purged_indices.push(i);
+                                    purged_indices.push(j);
+                                    continue;
+                                }
+                            }
                         }
+                    }
                 }
             }
-            pair_idx += 1;
+        }
+
+        if !purged_indices.is_empty() {
+            purged_indices.sort_unstable();
+            purged_indices.dedup();
+            for &idx in purged_indices.iter().rev() {
+                sorted_pairs.remove(idx);
+            }
         }
 
         let mut old_tok_idx = 0usize;

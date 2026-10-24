@@ -739,3 +739,39 @@ fn test_subword_not_matched_to_split_identifier() {
         runs
     );
 }
+
+#[test]
+fn test_tape_inner_container_salience_purges_empty_to_nonempty_across_distinct_callers() {
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let old = "        if containers[idx].is_none() {";
+    let new = "        if !containers[idx].is_some_and(|c| c.is_quoted()) {";
+
+    let tape = AlignmentTape::from_texts(old, new, profile);
+    assert_eq!(tape.project_old(), old);
+    assert_eq!(tape.project_new(), new);
+    let runs = tape.to_merged_runs();
+
+    let common_texts: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Ctx)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(
+        common_texts,
+        vec!["        if ", "containers[idx].is_", " {"]
+    );
+
+    let del_texts: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Del)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(del_texts, vec!["none()"]);
+
+    let add_texts: Vec<&str> = runs
+        .iter()
+        .filter(|r| r.kind == RunKind::Add)
+        .map(|r| r.text)
+        .collect();
+    assert_eq!(add_texts, vec!["!", "some_and(|c| c.is_quoted())"]);
+}
