@@ -425,6 +425,7 @@ fn test_display_status_unmodified() {
             old_mode: None,
             new_mode: None,
             is_binary: false,
+            has_file_headers: false,
             old_bytes: None,
             new_bytes: None,
             new_line_count: 0,

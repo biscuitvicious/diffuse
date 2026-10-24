@@ -215,6 +215,31 @@ pub struct LoadGitResult {
     pub commit_range: Option<String>,
 }
 
+/// Appends zero-hunk content sections for files a whitespace-insensitive
+/// diff suppressed: `git diff -w` omits a file whose only changes are
+/// whitespace from the diff text entirely, while `--name-status` still
+/// lists it. The parse layer keeps complete `---`/`+++` sections with no
+/// hunks, and the resurface pass synthesizes their changes from the content
+/// snapshots. Returns how many sections were appended.
+pub(crate) fn append_ws_suppressed_sections(diff: &mut String, paths: &[String]) -> usize {
+    let parsed = crate::parse::parse_diff(diff);
+    let seen: HashSet<&str> = parsed.iter().map(|f| f.path.as_str()).collect();
+    let mut appended = 0;
+    for path in paths {
+        if seen.contains(path.as_str()) {
+            continue;
+        }
+        if !diff.is_empty() && !diff.ends_with('\n') {
+            diff.push('\n');
+        }
+        diff.push_str(&format!(
+            "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+        ));
+        appended += 1;
+    }
+    appended
+}
+
 use std::{
     io::{BufRead, BufReader, Read, Write},
     process::Stdio,
@@ -382,6 +407,7 @@ pub fn stream_git_repo_to_producer(
         format!("-U{context}"),
         "-M".to_string(),
         "--no-color".to_string(),
+        "-w".to_string(),
     ];
     if staged {
         diff_cmd.push("--staged".to_string());
@@ -529,6 +555,63 @@ pub fn stream_git_repo_to_producer(
 
     let _ = child.wait();
 
+    // Files whose only changes are whitespace are absent from the
+    // whitespace-insensitive diff stream: reconcile the streamed tape
+    // against the name-only enumeration and push them as zero-hunk files —
+    // the resurface pass synthesizes their changes from the content
+    // snapshots.
+    {
+        let mut name_cmd = vec![
+            "diff".to_string(),
+            "-M".to_string(),
+            "--name-only".to_string(),
+        ];
+        if staged {
+            name_cmd.push("--staged".to_string());
+        }
+        name_cmd.extend(base_args.iter().cloned());
+        name_cmd.push("--".to_string());
+        name_cmd.extend(paths.iter().cloned());
+        let name_args: Vec<&str> = name_cmd.iter().map(String::as_str).collect();
+        if let Some(names) = run_git(repo_root, &name_args) {
+            for rel in names.lines().filter(|s| !s.is_empty()) {
+                if seen_paths.contains(rel) {
+                    continue;
+                }
+                let mut f = crate::parse::DiffFile::new(rel);
+                f.has_file_headers = true;
+                let mut new_c: Option<String> = None;
+                if refs.worktree_new {
+                    if let Ok(c) = fs::read_to_string(repo_root.join(rel)) {
+                        f.new_bytes = Some(c.len());
+                        new_c = Some(c);
+                    }
+                } else if let Some(ref new_ref) = refs.new_ref {
+                    let (c, sz) = get_blob_data(new_ref, rel);
+                    new_c = c;
+                    if sz.is_some() {
+                        f.new_bytes = sz;
+                    }
+                }
+                let (old_c, osz) = get_blob_data(old_tree_ref, rel);
+                if osz.is_some() {
+                    f.old_bytes = osz;
+                }
+                let synthetic_diff =
+                    format!("diff --git a/{rel} b/{rel}\n--- a/{rel}\n+++ b/{rel}\n");
+                producer.push(crate::streaming::FileJob {
+                    idx: file_idx,
+                    file: f,
+                    new_content: new_c.map(Into::into),
+                    old_content: old_c.map(Into::into),
+                    diff_fallback: Some(Arc::new(synthetic_diff)),
+                });
+                seen_paths.insert(rel.to_string());
+                file_idx += 1;
+            }
+        }
+    }
+
     // Untracked files — only relevant when the new side is the working tree.
     // A fixed commit range (worktree_new == false) diffs two historical refs;
     // untracked working-tree files must never appear in those results.
@@ -666,6 +749,7 @@ pub fn load_git_repo_with_notes(
         format!("-U{context}"),
         "-M".to_string(),
         "--no-color".to_string(),
+        "-w".to_string(),
     ];
     if staged {
         diff_cmd.push("--staged".to_string());
@@ -817,6 +901,17 @@ pub fn load_git_repo_with_notes(
     }
 
     let mut specs_to_fetch = Vec::new();
+
+    // Files whose only changes are whitespace are absent from the
+    // whitespace-insensitive diff text: append zero-hunk sections for the
+    // name-status entries the tape suppressed (the resurface pass
+    // synthesizes their changes from the content snapshots).
+    let modified_paths: Vec<String> = files
+        .iter()
+        .filter(|f| f.status == "modified")
+        .map(|f| f.path.clone())
+        .collect();
+    append_ws_suppressed_sections(&mut diff, &modified_paths);
 
     for f in &mut files {
         if f.status == "deleted" || f.status == "untracked" || f.status == "unmodified" {
@@ -970,6 +1065,7 @@ pub fn load_single_file_diff(
         .arg(format!("-U{context}"))
         .arg("-M")
         .arg("--no-color")
+        .arg("-w")
         .args(base_args)
         .arg("--")
         .arg(path);
@@ -1000,6 +1096,7 @@ pub fn load_single_file_diff(
             new_mode: None,
             status: st,
             is_binary: false,
+            has_file_headers: false,
             old_bytes: None,
             new_bytes: None,
             new_line_count: 0,

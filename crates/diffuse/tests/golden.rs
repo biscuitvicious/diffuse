@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use diffuse::{
     core::{
-        apply::{apply_file_diff, apply_hunk_rows},
+        apply::apply_hunk_rows,
         lcs::char_len,
         merge::{RunKind, display_text_with_profile, is_wholesale_mod},
         parse::{Row, RowGroup, RowKind},
@@ -1934,11 +1934,26 @@ fn run_oracle_for_corpus(name: &str, fixture: &Fixture, wire: &PipelineOutput) {
         let slice = file_diff_slice(&fixture.diff, path);
         assert!(!slice.is_empty(), "{name}: no diff slice for {path}");
         let old_vec: Vec<String> = old.split('\n').map(String::from).collect();
-        let applied = apply_file_diff(&slice, &old_vec);
+        // The validity predicate is apply(resurface(tape), old) == new: a
+        // whitespace-insensitive tape suppresses whitespace-only changes
+        // (its context rows carry one side's text), so the tape applies
+        // cleanly only after the resurface pass — a no-op for
+        // default-generated tapes.
+        let mut resurfaced = diffuse::core::parse::parse_diff(&slice);
+        let old_refs: Vec<&str> = old_vec.iter().map(String::as_str).collect();
+        let new_refs: Vec<&str> = new.split('\n').collect();
+        for f in resurfaced.iter_mut() {
+            diffuse::core::resurface::resurface_hunks(&mut f.hunks, &old_refs, &new_refs);
+        }
+        let hunks: Vec<diffuse::core::parse::Hunk> = resurfaced
+            .iter()
+            .flat_map(|f| f.hunks.iter().cloned())
+            .collect();
+        let applied = apply_hunk_rows(&hunks, &old_vec);
         let expected: Vec<String> = new.split('\n').map(String::from).collect();
         assert_eq!(
             applied, expected,
-            "[{name}:{path}] apply(file_diff, old) != new — the fixture's diff is not a valid transformation"
+            "[{name}:{path}] apply(resurface(file_diff), old) != new — the fixture's diff is not a valid transformation"
         );
     }
 

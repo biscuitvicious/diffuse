@@ -95,6 +95,7 @@ fn test_priority_job_queue_order() {
             old_content: Vec::new(),
             no_content: false,
             is_binary: false,
+            has_file_headers: false,
             old_bytes: None,
             new_bytes: None,
         },

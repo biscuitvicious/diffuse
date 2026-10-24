@@ -102,6 +102,31 @@ rename to src/new.rs
 }
 
 #[test]
+fn parse_diff_zero_hunk_modified_section_is_kept() {
+    // A whitespace-insensitive tape (`git diff -w`): a file whose only
+    // changes are whitespace-suppressed carries a complete `---`/`+++`
+    // content section and zero hunks. It must survive parsing — the
+    // resurface pass synthesizes its changes from the content snapshots.
+    let diff = "diff --git a/f.rs b/f.rs
+index 1111111..2222222 100644
+--- a/f.rs
++++ b/f.rs
+";
+    let files = parse_diff(diff);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "f.rs");
+    assert!(files[0].hunks.is_empty());
+}
+
+#[test]
+fn parse_diff_bare_git_header_is_dropped() {
+    // A `diff --git` line without a content section is not a file.
+    let diff = "diff --git a/garbage b/garbage
+";
+    assert!(parse_diff(diff).is_empty());
+}
+
+#[test]
 fn test_diff_components_reverse_involution() {
     let files = parse_diff(DIFF);
     for f in &files {

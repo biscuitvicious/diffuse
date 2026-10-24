@@ -605,6 +605,10 @@ pub struct DiffFile {
     pub new_mode: Option<String>,
     pub status: FileStatus,
     pub is_binary: bool,
+    /// The section carried `---`/`+++` unified-diff file headers: a
+    /// complete content section. Zero-hunk files are real files only when
+    /// this is set (whitespace-suppressed changes, pure renames aside).
+    pub has_file_headers: bool,
     pub old_bytes: Option<usize>,
     pub new_bytes: Option<usize>,
     pub new_line_count: usize,
@@ -628,6 +632,7 @@ impl DiffFile {
             new_mode: None,
             status: FileStatus::Modified,
             is_binary: false,
+            has_file_headers: false,
             old_bytes: None,
             new_bytes: None,
             new_line_count: 0,
@@ -652,6 +657,7 @@ impl DiffFile {
             new_mode: self.old_mode.clone(),
             status: self.status.reverse(),
             is_binary: self.is_binary,
+            has_file_headers: self.has_file_headers,
             old_bytes: self.new_bytes,
             new_bytes: self.old_bytes,
 
@@ -793,6 +799,7 @@ fn parse_diff_git_paths(rest: &str) -> (Option<String>, Option<String>) {
 pub fn is_valid_diff_file(f: &DiffFile) -> bool {
     !f.path.is_empty()
         && (!f.hunks.is_empty()
+            || f.has_file_headers
             || f.status == FileStatus::Renamed
             || f.status == FileStatus::Untracked
             || f.status == FileStatus::ModeChanged
@@ -822,6 +829,7 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 new_mode: None,
                 status: FileStatus::Modified,
                 is_binary: false,
+                has_file_headers: false,
                 old_bytes: None,
                 new_bytes: None,
                 new_line_count: 0,
@@ -901,6 +909,9 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
                 c.raw_hunks.clear();
             }
         } else if line.starts_with("+++ ") || line.starts_with("--- ") {
+            if let Some(c) = cur.as_mut() {
+                c.has_file_headers = true;
+            }
             let is_new = line.starts_with("+++ ");
             let p = hunk_path(if is_new { "+++" } else { "---" }, line);
             if is_new {

@@ -26,6 +26,7 @@ fn file(hunks: Vec<Hunk>) -> DiffFile {
         raw_hunks: Vec::new(),
         no_content: false,
         is_binary: false,
+        has_file_headers: false,
         old_bytes: None,
         new_bytes: None,
     }

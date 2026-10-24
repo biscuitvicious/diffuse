@@ -36,6 +36,7 @@ fn file(hunks: Vec<Hunk>) -> DiffFile {
         new_mode: None,
         status: FileStatus::Modified,
         is_binary: false,
+        has_file_headers: false,
         old_bytes: None,
         new_bytes: None,
         new_line_count: 20,

@@ -419,6 +419,7 @@ impl OutputFile {
             new_mode: self.new_mode.clone(),
             status,
             is_binary: self.is_binary,
+            has_file_headers: false,
             old_bytes: self.old_bytes,
             new_bytes: self.new_bytes,
             new_line_count: self.new_line_count,

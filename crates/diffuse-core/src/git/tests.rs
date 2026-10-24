@@ -490,3 +490,159 @@ fn test_load_git_repo_unmodified_files_with_notes() {
         "synthetic context hunk must be generated around note"
     );
 }
+
+#[test]
+fn ws_only_changed_file_stays_visible_and_paired() {
+    // A file whose only change is a reindent is invisible to a
+    // whitespace-insensitive diff. The loader must keep it visible, and the
+    // pipeline must pair the reindent with its true source (as a Mod
+    // carrying only indent spans, or as a Mov — representation is engine
+    // policy).
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?} failed", args);
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    fs::write(dir.join("f.rs"), "fn a() {\n    x();\n}\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "commit1"]);
+
+    // Whitespace-only change: the line reindents.
+    fs::write(dir.join("f.rs"), "fn a() {\n\tx();\n}\n").unwrap();
+
+    let res = load_git_repo(dir, &[], &[], false, 6).unwrap();
+    assert!(
+        res.diff.contains("+++ b/f.rs"),
+        "a whitespace-only change must stay visible in the loaded diff"
+    );
+    assert!(res.old_content.contains_key("f.rs"), "old snapshot loaded");
+    assert!(res.new_content.contains_key("f.rs"), "new snapshot loaded");
+
+    let out = crate::pipeline::run_pipeline_full(
+        res.diff,
+        Some(res.new_content),
+        Some(res.old_content),
+        crate::pipeline::PipelineOptions::default(),
+    );
+    let rows: Vec<&crate::wire::OutputRow> = out
+        .files
+        .iter()
+        .filter(|f| f.path == "f.rs")
+        .flat_map(|f| f.hunks.iter())
+        .flat_map(|h| h.rows.iter())
+        .collect();
+    assert!(
+        git_rows_pair(&rows, 2, 2),
+        "the reindented line must pair with its source, got {rows:#?}"
+    );
+}
+
+#[test]
+fn ws_only_changed_file_pairs_through_single_file_diff() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    let run = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {:?} failed", args);
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    fs::write(dir.join("f.rs"), "fn a() {\n    x();\n}\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "commit1"]);
+
+    fs::write(dir.join("f.rs"), "fn a() {\n\tx();\n}\n").unwrap();
+
+    let rendered = load_single_file_diff(
+        dir,
+        &[],
+        "f.rs",
+        None,
+        "modified",
+        6,
+        &crate::pipeline::PipelineOptions::default(),
+    )
+    .expect("single-file render");
+    let rows: Vec<&crate::wire::OutputRow> =
+        rendered.hunks.iter().flat_map(|h| h.rows.iter()).collect();
+    assert!(
+        git_rows_pair(&rows, 2, 2),
+        "the reindented line must pair with its source, got {rows:#?}"
+    );
+}
+
+/// Whether rendered rows link old line `old` with new line `new` — as a Mod,
+/// or as an adjacent MovSrc/MovTgt pair (representation is engine policy;
+/// the pairing is the contract).
+fn git_rows_pair(rows: &[&crate::wire::OutputRow], old: u32, new: u32) -> bool {
+    use crate::{parse::RowKind, wire::MovSide};
+    if rows
+        .iter()
+        .any(|r| r.kind == RowKind::Mod && r.old_line == Some(old) && r.new_line == Some(new))
+    {
+        return true;
+    }
+    rows.windows(2).any(|w| {
+        w[0].kind == RowKind::Mov
+            && w[0].mov_side == Some(MovSide::Src)
+            && w[0].old_line == Some(old)
+            && w[1].kind == RowKind::Mov
+            && w[1].mov_side == Some(MovSide::Tgt)
+            && w[1].new_line == Some(new)
+    })
+}
+
+#[test]
+fn ws_suppressed_sections_append_only_missing_paths() {
+    // The reconciliation appends one bare content section per suppressed
+    // path — parseable (has_file_headers), idempotent, and never touching
+    // paths the tape already covers.
+    let mut diff =
+        "diff --git a/seen.rs b/seen.rs\n--- a/seen.rs\n+++ b/seen.rs\n@@ -1,1 +1,1 @@\n-a\n+b\n"
+            .to_string();
+    assert_eq!(
+        append_ws_suppressed_sections(&mut diff, &["seen.rs".to_string(), "hidden.rs".to_string()]),
+        1,
+        "only the suppressed path appends"
+    );
+    let files = crate::parse::parse_diff(&diff);
+    assert_eq!(files.len(), 2);
+    let hidden = files
+        .iter()
+        .find(|f| f.path == "hidden.rs")
+        .expect("suppressed file survives parsing");
+    assert!(hidden.hunks.is_empty());
+    assert!(hidden.has_file_headers);
+    assert_eq!(
+        append_ws_suppressed_sections(&mut diff, &["hidden.rs".to_string()]),
+        0,
+        "reconciliation is idempotent"
+    );
+    let mut empty = String::new();
+    assert_eq!(
+        append_ws_suppressed_sections(&mut empty, &["only.rs".to_string()]),
+        1,
+        "an empty tape accepts the section"
+    );
+    assert_eq!(
+        empty,
+        "diff --git a/only.rs b/only.rs\n--- a/only.rs\n+++ b/only.rs\n"
+    );
+}

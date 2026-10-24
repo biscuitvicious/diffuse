@@ -104,6 +104,7 @@ fn test_inline_hunk_merging() {
         new_content: (1..=50).map(|i| format!("line {i}")).collect(),
         raw_hunks: Vec::new(),
         is_binary: false,
+        has_file_headers: false,
         old_bytes: None,
         new_bytes: None,
         hunks: vec![
@@ -170,6 +171,7 @@ fn test_context_budget_normalization() {
         new_content: (1..=30).map(|i| format!("line {i}")).collect(),
         raw_hunks: Vec::new(),
         is_binary: false,
+        has_file_headers: false,
         old_bytes: None,
         new_bytes: None,
         hunks: vec![Hunk {
@@ -248,6 +250,7 @@ fn test_normalize_and_merge_hunks() {
         new_content: (1..=50).map(|i| format!("line {i}")).collect(),
         raw_hunks: Vec::new(),
         is_binary: false,
+        has_file_headers: false,
         old_bytes: None,
         new_bytes: None,
         hunks: vec![
@@ -357,6 +360,7 @@ fn test_normalize_context_preserves_pure_context_hunk() {
         old_mode: None,
         new_mode: None,
         is_binary: false,
+        has_file_headers: false,
         status: crate::parse::FileStatus::Modified,
         no_content: false,
         old_content: vec![],
@@ -388,4 +392,132 @@ fn test_normalize_context_preserves_pure_context_hunk() {
         5,
         "pure context hunk must not be trimmed to zero or below visual"
     );
+}
+
+#[test]
+fn context_expansion_stops_at_snapshot_disagreement() {
+    // A `-w` tape leaves whitespace-only differences inside "unchanged"
+    // regions: a padding context row over such a pair would render text one
+    // snapshot side contradicts. Expansion must stop at the first
+    // disagreeing pair, in both directions — a no-op where both snapshots
+    // agree everywhere (default tapes).
+    let old_side: Vec<String> = vec![
+        "a".into(),              // 1
+        "b".into(),              // 2
+        "    ws-differs".into(), // 3 (old: 4 spaces)
+        "c".into(),              // 4
+        "d".into(),              // 5
+        "center".into(),         // 6 (hunk anchor row)
+        "\tws-differs".into(),   // 7 (old: tab)
+        "e".into(),              // 8
+        "f".into(),              // 9
+    ];
+    let new_side: Vec<String> = vec![
+        "a".into(),              // 1
+        "b".into(),              // 2
+        "\tws-differs".into(),   // 3 (new: tab)
+        "c".into(),              // 4
+        "d".into(),              // 5
+        "center".into(),         // 6
+        "    ws-differs".into(), // 7 (new: 4 spaces)
+        "e".into(),              // 8
+        "f".into(),              // 9
+    ];
+    let mut f = DiffFile {
+        path: "src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: crate::parse::FileStatus::Modified,
+        no_content: false,
+        new_line_count: old_side.len(),
+        old_line_count: new_side.len(),
+        old_content: old_side,
+        new_content: new_side,
+        raw_hunks: Vec::new(),
+        is_binary: false,
+        has_file_headers: false,
+        old_bytes: None,
+        new_bytes: None,
+        hunks: vec![Hunk {
+            old_start: 6,
+            old_count: 1,
+            new_start: 6,
+            new_count: 1,
+            section: String::new(),
+            rows: vec![Row::mod_row(
+                DelLine::new(6, "center"),
+                AddLine::new(6, "center !"),
+            )],
+            above_ctx: 0,
+            below_ctx: 0,
+        }],
+    };
+    normalize_file_context_budget(&mut f, 4);
+    let h = &f.hunks[0];
+    // Leading: position 5 agrees, position 4 agrees, position 3 differs —
+    // expansion gains exactly the two agreeing rows (5, 4), never 3.
+    assert_eq!(
+        h.above_ctx, 2,
+        "expansion stops before the disagreeing pair"
+    );
+    assert_eq!(h.old_start, 4);
+    // Trailing: position 7 differs immediately — no trailing padding.
+    assert_eq!(h.below_ctx, 0, "expansion stops at the disagreeing pair");
+    assert_eq!(h.old_count, 3);
+    for r in &h.rows {
+        if let Row::Ctx(c) = r {
+            assert_eq!(
+                f.old_content[c.old_pos as usize - 1],
+                f.new_content[c.new_pos as usize - 1],
+                "context rows may only sit at agreeing positions"
+            );
+        }
+    }
+}
+
+#[test]
+fn context_expansion_treats_fallback_unknown_as_agreement() {
+    // The fallback content reconstruction pads unknown lines with empty
+    // strings: a padding position where one side is empty is *unknown*, not
+    // a disagreement — expansion keeps its legacy single-side behavior
+    // (files reviewed with only one snapshot available).
+    let mut f = DiffFile {
+        path: "src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: crate::parse::FileStatus::Modified,
+        no_content: false,
+        new_line_count: 10,
+        old_line_count: 10,
+        // Old side fallback-shaped: "" pads around the tape-covered span.
+        old_content: vec![String::new(); 10],
+        new_content: (1..=10).map(|i| format!("line {i}")).collect(),
+        raw_hunks: Vec::new(),
+        is_binary: false,
+        has_file_headers: false,
+        old_bytes: None,
+        new_bytes: None,
+        hunks: vec![Hunk {
+            old_start: 5,
+            old_count: 1,
+            new_start: 5,
+            new_count: 1,
+            section: String::new(),
+            rows: vec![Row::mod_row(
+                DelLine::new(5, "line 5"),
+                AddLine::new(5, "line 5 changed"),
+            )],
+            above_ctx: 0,
+            below_ctx: 0,
+        }],
+    };
+    normalize_file_context_budget(&mut f, 4);
+    let h = &f.hunks[0];
+    assert_eq!(
+        h.above_ctx, 4,
+        "unknown (empty) old side must not block padding"
+    );
+    assert_eq!(h.below_ctx, 4);
 }

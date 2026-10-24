@@ -3552,3 +3552,167 @@ fn test_boolean_literals_are_not_salient() {
     );
     assert!(!interner.salient[kw as usize], "keywords are never salient");
 }
+
+// ---- Chain-consistency scoring (duplicate-verbatim mangle) ----
+//
+// PRISTINE regression: strands are byte-exact from the `scrollbar-grab-drag`
+// corpus, `tests/golden/scrollbar-grab-drag/files/
+// crates-diffuse-tui-src-app-dispatch.{old,new}.rs` (old lines 314..=337 and
+// 339..=351; new lines 335..=347). A new-side block that is a 13-line
+// reindentation of one old block must pair with its true source, even when a
+// *different* old block earlier in the tape contains a lone trim-equal line and
+// shares if/let/{ scaffold vocabulary. Line-local scores cannot distinguish the
+// two candidates: the winning evidence is the chain the pair belongs to, so the
+// DP must price chain extent into the pairing objective.
+//
+// Old side:
+//   - file-header if-block (old 314..=337, 24 dels) — its lone `if let
+//     Some(item) = self.flat.get(i)` at old 317 is trim-equal to new 335 and is
+//     the rival candidate.
+//   - bottom-gap if-block (old 339..=351, 13 dels) — the true source.
+// New side:
+//   - reindented bottom-gap if-block (new 335..=347, 13 adds).
+#[test]
+fn dp_prefers_long_verbatim_chain_over_duplicate_anchor_rival() {
+    let old_file_header: &[&str] = &[
+        "                            // Clicking the collapse/expand triangle on a file",
+        "                            // header toggles the file — the click is swallowed",
+        "                            // and does not select the row.",
+        "                            if let Some(item) = self.flat.get(i)",
+        "                                && item.is_file_header()",
+        "                            {",
+        "                                let is_binary = self",
+        "                                    .output",
+        "                                    .files",
+        "                                    .get(item.file_idx)",
+        "                                    .is_some_and(|f| f.is_binary);",
+        "                                if !is_binary {",
+        "                                    let seg_off = target_vis - s;",
+        "                                    let eff_col = seg_off * cw + col;",
+        "                                    let c = crate::view::diff_grid::FILE_HEADER_INDICATOR_COL;",
+        "                                    let hit_indicator =",
+        "                                        eff_col >= c.saturating_sub(1) && eff_col <= c + 1;",
+        "                                    if hit_indicator {",
+        "                                        let fi = item.file_idx;",
+        "                                        self.execute(TuiCommand::ToggleCollapseFile(Some(fi)));",
+        "                                        break;",
+        "                                    }",
+        "                                }",
+        "                            }",
+    ];
+    let old_bottom_gap: &[&str] = &[
+        "                            if let Some(item) = self.flat.get(i)",
+        "                                && !self.raw_diff",
+        "                                && item.is_bottom_gap_divider()",
+        "                            {",
+        "                                let seg_off = target_vis - s;",
+        "                                let gap = self.hunk_trailing_gap(item.file_idx);",
+        "                                let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);",
+        "                                if wrapped_glyph_hit(&txt, \"▲\", seg_off, col, cw) {",
+        "                                    let last_hi = item.hunk_idx().unwrap_or(0);",
+        "                                    self.expand_hunk_below(item.file_idx, last_hi);",
+        "                                    break;",
+        "                                }",
+        "                            }",
+    ];
+    let new_bottom_gap: &[&str] = &[
+        "                                if let Some(item) = self.flat.get(i)",
+        "                                    && !self.raw_diff",
+        "                                    && item.is_bottom_gap_divider()",
+        "                                {",
+        "                                    let seg_off = target_vis - s;",
+        "                                    let gap = self.hunk_trailing_gap(item.file_idx);",
+        "                                    let txt = crate::view::diff_grid::bottom_gap_divider_text(gap);",
+        "                                    if wrapped_glyph_hit(&txt, \"▲\", seg_off, col, cw) {",
+        "                                        let last_hi = item.hunk_idx().unwrap_or(0);",
+        "                                        self.expand_hunk_below(item.file_idx, last_hi);",
+        "                                        break;",
+        "                                    }",
+        "                                }",
+    ];
+
+    let mut old_rows: Vec<Row> = old_file_header
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| del_row(314 + i as u32, t))
+        .collect();
+    old_rows.extend(
+        old_bottom_gap
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| del_row(339 + i as u32, t)),
+    );
+    let new_rows: Vec<Row> = new_bottom_gap
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| add_row(335 + i as u32, t))
+        .collect();
+
+    let c = code_cluster(old_rows, new_rows);
+    let rs = lang_profile("rs");
+    let sol = solve_cluster(&c, rs);
+    verify_projection(&sol, &c).expect("projection invariant holds");
+
+    assert!(
+        pairs_with(&sol, 339, 335),
+        "the bottom-gap twin (old 339) must pair with new 335; the lone rival \
+         line at old 317 must not win. Pairings: {}",
+        pairing_summary(&sol)
+    );
+    assert!(
+        pairs_with(&sol, 340, 336),
+        "the chain must continue past the anchor: old 340 (`&& !self.raw_diff`) \
+         must pair with new 336. Pairings: {}",
+        pairing_summary(&sol)
+    );
+}
+
+/// Whether the solution pairs old line `old` with new line `new` — either as a
+/// Mod row or as an adjacent MovSrc/MovTgt pair (the Mov emission convention).
+fn pairs_with(sol: &DpSolution, old: u32, new: u32) -> bool {
+    if sol.rows.iter().any(|r| match r {
+        Row::Mod {
+            old_line, new_line, ..
+        } => old_line.num == old && new_line.num == new,
+        _ => false,
+    }) {
+        return true;
+    }
+    let mut prev_src: Option<u32> = None;
+    sol.rows.iter().any(|r| match r {
+        Row::MovSrc { line, .. } => {
+            prev_src = Some(line.num);
+            false
+        }
+        Row::MovTgt { line, .. } => {
+            let hit = prev_src == Some(old) && line.num == new;
+            prev_src = None;
+            hit
+        }
+        _ => {
+            prev_src = None;
+            false
+        }
+    })
+}
+
+/// Compact old→new pairing map for assertion diagnostics.
+fn pairing_summary(sol: &DpSolution) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut prev_src: Option<u32> = None;
+    for r in &sol.rows {
+        match r {
+            Row::Mod {
+                old_line, new_line, ..
+            } => parts.push(format!("{}→{}", old_line.num, new_line.num)),
+            Row::MovSrc { line, .. } => prev_src = Some(line.num),
+            Row::MovTgt { line, .. } => {
+                if let Some(src) = prev_src.take() {
+                    parts.push(format!("{}→{} (mov)", src, line.num));
+                }
+            }
+            _ => prev_src = None,
+        }
+    }
+    parts.join(" ")
+}

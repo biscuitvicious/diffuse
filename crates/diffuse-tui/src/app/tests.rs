@@ -4011,12 +4011,17 @@ index 1111111..2222222 100644
  // line 4
  // line 5
 "#;
+    // The inserted line shifts new-side numbering by one: new line (i)
+    // carries old line (i-1)'s text below the insertion, keeping the tape's
+    // declared matching consistent (padding positions agree on both sides).
     let new_lines: Vec<String> = (1..=15)
         .map(|i| {
             if i == 3 {
                 "// inserted".to_string()
-            } else {
+            } else if i < 3 {
                 format!("// line {i}")
+            } else {
+                format!("// line {}", i - 1)
             }
         })
         .collect();

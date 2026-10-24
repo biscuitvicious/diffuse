@@ -752,8 +752,11 @@ fn test_hunk_jump_wraps_around_at_edges() {
         "    return 1;".to_string(),
         "}".to_string(),
     ];
+    // The insertion above shifts new-side line numbers by one: new line
+    // (i) carries old line (i-1)'s text, keeping the tape's declared
+    // matching consistent (padding positions agree on both sides).
     for i in 5..=30 {
-        new_lines.push(format!("    // filler {i}"));
+        new_lines.push(format!("    // filler {}", i - 1));
     }
     new_lines.push("fn b() {".to_string());
     new_lines.push("    let y = 2;".to_string());
@@ -813,8 +816,11 @@ fn test_hunk_jump_places_head_line_at_top() {
         "    return 1;".to_string(),
         "}".to_string(),
     ];
+    // The insertion above shifts new-side line numbers by one: new line
+    // (i) carries old line (i-1)'s text, keeping the tape's declared
+    // matching consistent (padding positions agree on both sides).
     for i in 5..=30 {
-        new_lines.push(format!("    // filler {i}"));
+        new_lines.push(format!("    // filler {}", i - 1));
     }
     new_lines.push("fn b() {".to_string());
     new_lines.push("    let y = 2;".to_string());
@@ -1025,8 +1031,11 @@ fn test_hunk_jump_from_banner_counts_as_inside_first_hunk() {
         "    return 1;".to_string(),
         "}".to_string(),
     ];
+    // The insertion above shifts new-side line numbers by one: new line
+    // (i) carries old line (i-1)'s text, keeping the tape's declared
+    // matching consistent (padding positions agree on both sides).
     for i in 5..=30 {
-        new_lines.push(format!("    // filler {i}"));
+        new_lines.push(format!("    // filler {}", i - 1));
     }
     new_lines.push("fn b() {".to_string());
     new_lines.push("    let y = 2;".to_string());

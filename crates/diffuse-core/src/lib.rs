@@ -27,6 +27,7 @@ pub mod parse;
 pub mod pipeline;
 pub mod reflow;
 pub mod repo;
+pub mod resurface;
 pub mod scope;
 pub mod shift;
 pub mod similarity;

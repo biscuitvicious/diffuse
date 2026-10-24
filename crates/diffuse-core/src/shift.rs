@@ -201,9 +201,36 @@ pub fn merge_adjacent_hunks_list(hunks: &mut Vec<Hunk>) {
     *hunks = merged;
 }
 
+/// Whether a would-be padding position may carry a context row: both
+/// snapshots must be known there and agree. A `-w` tape leaves
+/// whitespace-only differences inside "unchanged" regions — a context row
+/// padded over one would render text the other side's snapshot contradicts.
+///
+/// Unknown content never blocks: an absent position keeps expansion's
+/// legacy behavior, and an *empty* line is the fallback reconstruction's
+/// unknown-line sentinel — a genuinely empty side cannot disagree at a
+/// padding position on a valid tape (the pair would be a hunk-covered
+/// change), so empty means unknown, not disagreement.
+fn ctx_pair_agrees(
+    old_content: &[String],
+    new_content: &[String],
+    old_ln: u32,
+    new_ln: u32,
+) -> bool {
+    match (
+        old_content.get((old_ln as usize).saturating_sub(1)),
+        new_content.get((new_ln as usize).saturating_sub(1)),
+    ) {
+        (Some(o), Some(n)) => o == n || o.is_empty() || n.is_empty(),
+        (None, _) | (_, None) => true,
+    }
+}
+
 /// Normalizes leading and trailing context lines for all hunks in a `DiffFile`
 /// to the target `budget` (e.g. standard $N=6$).
 pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
+    let old_content: &[String] = &file.old_content;
+    let new_content: &[String] = &file.new_content;
     for h in &mut file.hunks {
         let new_side = h.rows.iter().any(|r| {
             matches!(
@@ -214,21 +241,30 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
 
         // Expand leading context if needed
         if (h.above_ctx as usize) < budget && h.old_start > 1 && h.new_start > 1 {
-            let needed = (budget - (h.above_ctx as usize))
+            let wanted = (budget - (h.above_ctx as usize))
                 .min((h.old_start as usize) - 1)
                 .min((h.new_start as usize) - 1);
-            if needed > 0 {
-                let mut leading = Vec::with_capacity(needed);
-                for offset in (1..=needed).rev() {
+            let mut added = 0usize;
+            for offset in 1..=wanted {
+                let old_ln = h.old_start - (offset as u32);
+                let new_ln = h.new_start - (offset as u32);
+                if !ctx_pair_agrees(old_content, new_content, old_ln, new_ln) {
+                    break;
+                }
+                added += 1;
+            }
+            if added > 0 {
+                let mut leading = Vec::with_capacity(added);
+                for offset in (1..=added).rev() {
                     let old_ln = h.old_start - (offset as u32);
                     let new_ln = h.new_start - (offset as u32);
                     let text = if new_side {
-                        file.new_content
+                        new_content
                             .get((new_ln as usize).saturating_sub(1))
                             .cloned()
                             .unwrap_or_default()
                     } else {
-                        file.old_content
+                        old_content
                             .get((old_ln as usize).saturating_sub(1))
                             .cloned()
                             .unwrap_or_default()
@@ -237,11 +273,11 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
                 }
                 leading.extend(mem::take(&mut h.rows));
                 h.rows = leading;
-                h.old_start -= needed as u32;
-                h.new_start -= needed as u32;
-                h.old_count += needed as u32;
-                h.new_count += needed as u32;
-                h.above_ctx += needed as u32;
+                h.old_start -= added as u32;
+                h.new_start -= added as u32;
+                h.old_count += added as u32;
+                h.new_count += added as u32;
+                h.above_ctx += added as u32;
             }
         }
 
@@ -253,29 +289,34 @@ pub fn normalize_file_context_budget(file: &mut DiffFile, budget: usize) {
             let new_total = file.new_line_count;
             let avail_old = old_total.saturating_sub(cur_old_end as usize);
             let avail_new = new_total.saturating_sub(cur_new_end as usize);
-            let needed = (budget - (h.below_ctx as usize))
+            let wanted = (budget - (h.below_ctx as usize))
                 .min(avail_old)
                 .min(avail_new);
-            if needed > 0 {
-                for offset in 1..=needed {
-                    let old_ln = cur_old_end + (offset as u32);
-                    let new_ln = cur_new_end + (offset as u32);
-                    let text = if new_side {
-                        file.new_content
-                            .get((new_ln as usize).saturating_sub(1))
-                            .cloned()
-                            .unwrap_or_default()
-                    } else {
-                        file.old_content
-                            .get((old_ln as usize).saturating_sub(1))
-                            .cloned()
-                            .unwrap_or_default()
-                    };
-                    h.rows.push(Row::Ctx(CtxLine::new(old_ln, new_ln, text)));
+            let mut added = 0usize;
+            for offset in 1..=wanted {
+                let old_ln = cur_old_end + (offset as u32);
+                let new_ln = cur_new_end + (offset as u32);
+                if !ctx_pair_agrees(old_content, new_content, old_ln, new_ln) {
+                    break;
                 }
-                h.old_count += needed as u32;
-                h.new_count += needed as u32;
-                h.below_ctx += needed as u32;
+                let text = if new_side {
+                    new_content
+                        .get((new_ln as usize).saturating_sub(1))
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    old_content
+                        .get((old_ln as usize).saturating_sub(1))
+                        .cloned()
+                        .unwrap_or_default()
+                };
+                h.rows.push(Row::Ctx(CtxLine::new(old_ln, new_ln, text)));
+                added += 1;
+            }
+            if added > 0 {
+                h.old_count += added as u32;
+                h.new_count += added as u32;
+                h.below_ctx += added as u32;
             }
         }
     }

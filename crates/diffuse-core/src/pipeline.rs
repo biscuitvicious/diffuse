@@ -429,6 +429,16 @@ pub fn process_single_diff_file(
     };
     f.old_content = old_lines.iter().map(|s| s.to_string()).collect();
 
+    // Surface whitespace-suppressed changes (see `resurface`): requires both
+    // content snapshots and is a strict no-op on default-generated tapes.
+    if old_content.is_some_and(|c| !c.is_empty())
+        && new_content.is_some_and(|c| !c.is_empty())
+        && !f.is_binary
+        && crate::resurface::resurface_hunks(&mut f.hunks, &old_lines, &new_lines)
+    {
+        f.raw_hunks = f.hunks.clone();
+    }
+
     let new_bytes: Option<usize> = if f.status == crate::parse::FileStatus::Deleted {
         None
     } else if let Some(b) = f.new_bytes {
@@ -1605,6 +1615,7 @@ pub fn markdown_file_rows(text: &str) -> Vec<OutputRow> {
         new_mode: None,
         status: crate::parse::FileStatus::Unmodified,
         is_binary: false,
+        has_file_headers: false,
         hunks: vec![],
         raw_hunks: vec![],
         new_line_count: 0,
