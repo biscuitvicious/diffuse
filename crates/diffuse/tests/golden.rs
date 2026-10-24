@@ -2126,6 +2126,13 @@ corpus_tests!(
     true,
     true
 );
+corpus_tests!(
+    container_compatibility,
+    "container-compatibility",
+    5,
+    true,
+    true
+);
 
 #[test]
 fn test_golden_initialized_detection() {

@@ -320,6 +320,13 @@ pub struct Weights {
     /// the remaining true revivals (0.70+), and the `scrollbar` pair stays
     /// demoted up to ~0.85.
     pub embedded_salient_factor: f64,
+    /// Multiplier on matched salient tokens occurring in a contiguous (trimmed)
+    /// prefix or suffix of the token sequence. Gives boundary-anchored tokens
+    /// stronger structural correspondence than scattered interior matches.
+    pub boundary_salient_multiplier: f64,
+    /// Score bonus for pairs sharing a contiguous (trimmed) prefix or suffix
+    /// containing at least `min_containment_len` salient characters.
+    pub contiguous_boundary_bonus: f64,
 }
 
 impl Default for Weights {
@@ -340,6 +347,8 @@ impl Default for Weights {
             max_indent_shift: 16,
             min_block_line_coverage: 0.50,
             embedded_salient_factor: 0.6,
+            boundary_salient_multiplier: 1.5,
+            contiguous_boundary_bonus: 0.0,
         }
     }
 }
@@ -421,6 +430,34 @@ pub(crate) fn is_statement_head_keyword(word: &str, profile: Option<&LangProfile
 #[inline(always)]
 fn mask_overlap(a: &[u64; 4], b: &[u64; 4]) -> bool {
     ((a[0] & b[0]) | (a[1] & b[1]) | (a[2] & b[2]) | (a[3] & b[3])) != 0
+}
+
+/// Calculate the number of matched salient characters residing in a contiguous
+/// (trimmed) prefix or suffix between two token sequences.
+#[inline]
+pub(crate) fn boundary_salient_chars(ot: &DpTokens, nt: &DpTokens) -> usize {
+    let min_len = ot.ids.len().min(nt.ids.len());
+    let mut prefix_tokens = 0;
+    let mut prefix_salient = 0;
+    while prefix_tokens < min_len && ot.ids[prefix_tokens] == nt.ids[prefix_tokens] {
+        prefix_salient += nt.salient_token_chars[prefix_tokens];
+        prefix_tokens += 1;
+    }
+
+    let mut suffix_tokens = 0;
+    let mut suffix_salient = 0;
+    let max_suffix = min_len.saturating_sub(prefix_tokens);
+    let m = ot.ids.len();
+    let n = nt.ids.len();
+    while suffix_tokens < max_suffix
+        && ot.ids[m - 1 - suffix_tokens] == nt.ids[n - 1 - suffix_tokens]
+    {
+        let nt_idx = n - 1 - suffix_tokens;
+        suffix_salient += nt.salient_token_chars[nt_idx];
+        suffix_tokens += 1;
+    }
+
+    prefix_salient + suffix_salient
 }
 
 #[inline(always)]
@@ -691,6 +728,13 @@ pub(crate) fn mod_pair_needs_scoring(
     // either line carrying no salient tokens the salient ratio is
     // undefined, and the pair is scored on non-whitespace chars.
     let is_char_scale_pair = ot.salient_chars == 0 || nt.salient_chars == 0;
+    let boundary_salient =
+        if w.boundary_salient_multiplier > 1.0 || w.contiguous_boundary_bonus > 0.0 {
+            let bs = boundary_salient_chars(ot, nt);
+            if bs >= w.min_containment_len { bs } else { 0 }
+        } else {
+            0
+        };
     let salient_bound = if mask_overlap(&ot.salient_mask, &nt.salient_mask) {
         graded_salient_bound(
             &ot.salient_multiset,
@@ -711,7 +755,9 @@ pub(crate) fn mod_pair_needs_scoring(
             None
         } else {
             let total_salient = ot.salient_chars.max(nt.salient_chars);
-            Some(salient_bound as f64 / total_salient as f64)
+            let effective_bound = salient_bound as f64
+                + (w.boundary_salient_multiplier - 1.0) * boundary_salient as f64;
+            Some((effective_bound / total_salient as f64).min(1.0))
         };
 
     let same_indent_head_match = statement_head_match
@@ -772,13 +818,20 @@ pub(crate) fn mod_pair_needs_scoring(
     };
     let max_open = w.boundary_proximity_bonus * om.prox_open * nm.prox_open;
     let indent_penalty = w.sprawl_penalty * (indent_shift as f64) * w.indent_penalty_factor;
+    let boundary_bonus =
+        if w.contiguous_boundary_bonus > 0.0 && boundary_salient >= w.min_containment_len {
+            w.contiguous_boundary_bonus
+        } else {
+            0.0
+        };
     let base_delta = w.matched_char_reward * max_matched as f64
         - w.sprawl_penalty * (total - max_matched) as f64
         - w.row_cost
         - indent_penalty
         + max_syn
         + max_close
-        + max_open;
+        + max_open
+        + boundary_bonus;
 
     if base_delta <= -2.0 * w.row_cost {
         if is_prefix_containment == Some(false)
@@ -2914,6 +2967,14 @@ pub(crate) fn solve_cluster_matrix(
                             // chars.
                             let is_char_scale_pair = ot.salient_chars == 0 || nt.salient_chars == 0;
 
+                            let boundary_salient = if w.boundary_salient_multiplier > 1.0
+                                || w.contiguous_boundary_bonus > 0.0
+                            {
+                                let bs = boundary_salient_chars(ot, nt);
+                                if bs >= w.min_containment_len { bs } else { 0 }
+                            } else {
+                                0
+                            };
                             let salient_bound = if mask_overlap(&ot.salient_mask, &nt.salient_mask)
                             {
                                 graded_salient_bound(
@@ -2935,7 +2996,10 @@ pub(crate) fn solve_cluster_matrix(
                                     None
                                 } else {
                                     let total_salient = ot.salient_chars.max(nt.salient_chars);
-                                    Some(salient_bound as f64 / total_salient as f64)
+                                    let effective_bound = salient_bound as f64
+                                        + (w.boundary_salient_multiplier - 1.0)
+                                            * boundary_salient as f64;
+                                    Some((effective_bound / total_salient as f64).min(1.0))
                                 };
                             let can_have_containment = indent_shift <= w.max_indent_shift
                                 && (om.comment == nm.comment)
@@ -3100,12 +3164,23 @@ pub(crate) fn solve_cluster_matrix(
                             let indent_penalty =
                                 w.sprawl_penalty * indent_diff * w.indent_penalty_factor;
 
+                            let boundary_salient = if w.boundary_salient_multiplier > 1.0
+                                || w.contiguous_boundary_bonus > 0.0
+                            {
+                                let bs = boundary_salient_chars(ot, nt);
+                                if bs >= w.min_containment_len { bs } else { 0 }
+                            } else {
+                                0
+                            };
                             let salient_similarity_ratio: Option<f64> =
                                 if ot.salient_chars == 0 || nt.salient_chars == 0 {
                                     None
                                 } else {
                                     let total_salient = ot.salient_chars.max(nt.salient_chars);
-                                    Some(matched_salient as f64 / total_salient as f64)
+                                    let effective_matched = matched_salient as f64
+                                        + (w.boundary_salient_multiplier - 1.0)
+                                            * boundary_salient as f64;
+                                    Some((effective_matched / total_salient as f64).min(1.0))
                                 };
                             let is_valid_mod_pair = if is_char_scale_pair {
                                 (matched as f64 / total as f64) >= min_exact
@@ -3163,12 +3238,21 @@ pub(crate) fn solve_cluster_matrix(
                                 0.0
                             };
 
+                            let boundary_bonus = if w.contiguous_boundary_bonus > 0.0
+                                && boundary_salient >= w.min_containment_len
+                            {
+                                w.contiguous_boundary_bonus
+                            } else {
+                                0.0
+                            };
+
                             let s = base + w.matched_char_reward * matched as f64
                                 - penalty
                                 - w.row_cost
                                 - indent_penalty
                                 - survives_penalty
                                 + syntax
+                                + boundary_bonus
                                 + (effective_close_bonus + open_bonus) * proximity_gate;
                             if let Some(target) = grid.get_mut(i + 1, j + 1)
                                 && s > target.score

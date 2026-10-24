@@ -3376,6 +3376,27 @@ fn test_unrelated_call_lines_stay_del_add_below_salient_floor() {
     );
 }
 
+#[test]
+fn test_subproject_commit_boundary_salient_pairs_as_mod() {
+    let rs = lang_profile("rs");
+    let cluster = return_cluster(
+        vec![(
+            "Subproject commit 8221b8a8167824cb77953cb4786427db93ea49e3",
+            1,
+        )],
+        vec![(
+            "Subproject commit 68cb7708569527cf68ab7f84949b29cb25a4d619",
+            1,
+        )],
+    );
+    let sol = solve_cluster(&cluster, rs);
+    assert_eq!(
+        signature(&sol),
+        ["mod"],
+        "subproject commit changes with identical prefix must pair as mod"
+    );
+}
+
 /// The char scale is the exact inverse of the salient regime: whenever a
 /// line carries no salient tokens, the pair falls out of the salient scale
 /// and is scored on non-whitespace chars instead — on BOTH sides' tokens,
