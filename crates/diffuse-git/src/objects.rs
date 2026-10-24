@@ -35,11 +35,37 @@ pub fn is_blob_binary(
     false
 }
 
+/// Check if a working-tree or in-memory buffer is binary via attributes or
+/// content.
+pub fn is_path_binary(repo: &gix::Repository, path: &str, data: &[u8]) -> bool {
+    let mut platform = repo.diff_resource_cache_for_tree_diff().ok();
+    if let Some(ref mut p) = platform {
+        let b_path = path.as_bytes().as_bstr();
+        let null_id = gix::hash::Kind::Sha1.null();
+        if p.set_resource(
+            null_id,
+            EntryKind::Blob,
+            b_path,
+            ResourceKind::OldOrSource,
+            repo,
+        )
+        .is_ok()
+            && let Some(res) = p.resource(ResourceKind::OldOrSource)
+            && matches!(res.data, Data::Binary { .. })
+        {
+            return true;
+        }
+    }
+    data.iter().take(8000).any(|&b| b == 0)
+}
+
 fn index_mode_to_entry_kind(mode: gix::index::entry::Mode) -> EntryKind {
     if mode == gix::index::entry::Mode::FILE_EXECUTABLE {
         EntryKind::BlobExecutable
     } else if mode == gix::index::entry::Mode::SYMLINK {
         EntryKind::Link
+    } else if mode == gix::index::entry::Mode::COMMIT {
+        EntryKind::Commit
     } else {
         EntryKind::Blob
     }
@@ -76,14 +102,20 @@ pub fn load_blob(repo: &gix::Repository, ref_str: &str, path: &str) -> Option<Gi
     let tree = peel_to_tree(repo, id.detach())?;
 
     let entry = tree.lookup_entry_by_path(clean_path).ok()??;
+    if entry.mode() == EntryKind::Commit.into() {
+        let text = format!("Subproject commit {}\n", entry.object_id());
+        return Some(GitBlob::new(
+            entry.object_id().to_string(),
+            text.into_bytes(),
+            false,
+        ));
+    }
     let obj = entry.object().ok()?;
     if obj.kind == gix::object::Kind::Blob {
         let mut platform = repo.diff_resource_cache_for_tree_diff().ok();
-        let is_binary = if let Some(ref mut p) = platform {
+        let is_binary = platform.as_mut().is_some_and(|p| {
             is_blob_binary(p, entry.object_id(), entry.mode().into(), clean_path, repo)
-        } else {
-            obj.data.iter().take(8000).any(|&b| b == 0)
-        };
+        });
         Some(GitBlob::new(
             entry.object_id().to_string(),
             obj.data.to_vec(),
@@ -99,15 +131,17 @@ pub fn load_blob_from_index(repo: &gix::Repository, path: &str) -> Option<GitBlo
     let clean_path = path.trim_start_matches("./");
     let index = repo.index().ok()?;
     let entry = index.entry_by_path(clean_path.as_bytes().as_bstr())?;
+    if entry.mode == gix::index::entry::Mode::COMMIT {
+        let text = format!("Subproject commit {}\n", entry.id);
+        return Some(GitBlob::new(entry.id.to_string(), text.into_bytes(), false));
+    }
     let obj = repo.find_object(entry.id).ok()?;
     if obj.kind == gix::object::Kind::Blob {
         let mut platform = repo.diff_resource_cache_for_tree_diff().ok();
         let mode = index_mode_to_entry_kind(entry.mode);
-        let is_binary = if let Some(ref mut p) = platform {
-            is_blob_binary(p, entry.id, mode, clean_path, repo)
-        } else {
-            obj.data.iter().take(8000).any(|&b| b == 0)
-        };
+        let is_binary = platform
+            .as_mut()
+            .is_some_and(|p| is_blob_binary(p, entry.id, mode, clean_path, repo));
         Some(GitBlob::new(
             entry.id.to_string(),
             obj.data.to_vec(),
@@ -197,18 +231,27 @@ pub fn load_blobs_batch(repo: &gix::Repository, specs: &[String]) -> HashMap<Str
 
         for (spec, path) in entries {
             let clean_path = path.trim_start_matches("./");
-            if let Ok(Some(entry)) = tree.lookup_entry_by_path(clean_path)
-                && let Ok(obj) = entry.object()
+            let entry = match tree.lookup_entry_by_path(clean_path).ok().flatten() {
+                Some(e) => e,
+                None => continue,
+            };
+            if entry.mode() == EntryKind::Commit.into() {
+                let text = format!("Subproject commit {}\n", entry.object_id());
+                results.insert(
+                    spec,
+                    GitBlob::new(entry.object_id().to_string(), text.into_bytes(), false),
+                );
+                continue;
+            }
+            if let Ok(obj) = entry.object()
                 && obj.kind == gix::object::Kind::Blob
             {
-                let is_binary = if let Some(ref mut p) = platform {
+                let is_binary = platform.as_mut().is_some_and(|p| {
                     let binary =
                         is_blob_binary(p, entry.object_id(), entry.mode().into(), clean_path, repo);
                     p.clear_resource_cache_keep_allocation();
                     binary
-                } else {
-                    obj.data.iter().take(8000).any(|&b| b == 0)
-                };
+                });
                 results.insert(
                     spec,
                     GitBlob::new(entry.object_id().to_string(), obj.data.to_vec(), is_binary),

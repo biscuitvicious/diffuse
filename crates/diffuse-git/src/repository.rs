@@ -183,6 +183,16 @@ impl Repository {
         self.head_commit_hash()
     }
 
+    /// Load a single blob from the index by path.
+    pub fn load_index_blob(&self, path: &str) -> Option<crate::types::GitBlob> {
+        crate::objects::load_blob_from_index(&self.inner, path)
+    }
+
+    /// Check if a path is considered binary by gitattributes or content.
+    pub fn is_path_binary(&self, path: &str, data: &[u8]) -> bool {
+        crate::objects::is_path_binary(&self.inner, path, data)
+    }
+
     /// Load a single blob by reference and path.
     pub fn load_blob(&self, ref_str: &str, path: &str) -> Option<crate::types::GitBlob> {
         crate::objects::load_blob(&self.inner, ref_str, path)

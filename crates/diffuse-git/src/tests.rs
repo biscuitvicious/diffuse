@@ -544,3 +544,373 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
         && s.status == diffuse_parse::FileStatus::Renamed
         && s.old_path.as_deref() == Some("file3.txt")));
 }
+
+#[test]
+fn test_diff_text_identical() {
+    let text = "fn foo() {\n    println!(\"hello\");\n}\n";
+    let (hunks, patch) =
+        crate::diff::diff_text(text, text, 3, crate::diff::WhitespaceMode::TrimEquality);
+    assert!(hunks.is_empty());
+    assert!(patch.is_empty());
+}
+
+#[test]
+fn test_diff_text_trim_equality_leading_trailing() {
+    let old = "fn foo() {\n    let a = 1;\n    let b = 2;\n}\n";
+    let new = "fn foo() {\n        let a = 1;\n        let b = 2;\n}\n";
+
+    // Exact mode catches indentation difference
+    let (exact_hunks, exact_patch) =
+        crate::diff::diff_text(old, new, 3, crate::diff::WhitespaceMode::Exact);
+    assert_eq!(exact_hunks.len(), 1);
+    assert!(exact_patch.contains("-    let a = 1;"));
+    assert!(exact_patch.contains("+        let a = 1;"));
+
+    // TrimEquality mode treats re-indented lines as equivalent (0 hunks)
+    let (trim_hunks, trim_patch) =
+        crate::diff::diff_text(old, new, 3, crate::diff::WhitespaceMode::TrimEquality);
+    assert!(trim_hunks.is_empty());
+    assert!(trim_patch.is_empty());
+}
+
+#[test]
+fn test_diff_text_trim_equality_internal_whitespace_preserved() {
+    let old = "let a = 1;\n";
+    let new = "let  a = 1;\n";
+
+    // Internal whitespace differences are preserved under TrimEquality
+    let (hunks, patch) =
+        crate::diff::diff_text(old, new, 3, crate::diff::WhitespaceMode::TrimEquality);
+    assert_eq!(hunks.len(), 1);
+    assert!(patch.contains("-let a = 1;\n"));
+    assert!(patch.contains("+let  a = 1;\n"));
+}
+
+#[test]
+fn test_diff_text_structure_and_context() {
+    let old = "c1\nc2\nold_mid\nc3\nc4\n";
+    let new = "c1\nc2\nnew_mid\nc3\nc4\n";
+
+    let (hunks, patch) =
+        crate::diff::diff_text(old, new, 2, crate::diff::WhitespaceMode::TrimEquality);
+    assert_eq!(hunks.len(), 1);
+    let h = &hunks[0];
+    assert_eq!(h.old_start, 1);
+    assert_eq!(h.old_count, 5);
+    assert_eq!(h.new_start, 1);
+    assert_eq!(h.new_count, 5);
+    assert_eq!(h.rows.len(), 6); // c1, c2, -old_mid, +new_mid, c3, c4
+
+    assert!(
+        matches!(&h.rows[0], diffuse_parse::Row::Ctx(c) if c.old_pos == 1 && c.new_pos == 1 && c.text == "c1")
+    );
+    assert!(
+        matches!(&h.rows[1], diffuse_parse::Row::Ctx(c) if c.old_pos == 2 && c.new_pos == 2 && c.text == "c2")
+    );
+    assert!(matches!(&h.rows[2], diffuse_parse::Row::Del(d) if d.num == 3 && d.text == "old_mid"));
+    assert!(matches!(&h.rows[3], diffuse_parse::Row::Add(a) if a.num == 3 && a.text == "new_mid"));
+    assert!(
+        matches!(&h.rows[4], diffuse_parse::Row::Ctx(c) if c.old_pos == 4 && c.new_pos == 4 && c.text == "c3")
+    );
+    assert!(
+        matches!(&h.rows[5], diffuse_parse::Row::Ctx(c) if c.old_pos == 5 && c.new_pos == 5 && c.text == "c4")
+    );
+
+    assert!(patch.starts_with("@@ -1,5 +1,5 @@\n"));
+}
+
+#[test]
+fn test_generate_file_diff_scenarios() {
+    use crate::diff::{FileDiffParams, WhitespaceMode, generate_file_diff};
+    use diffuse_parse::FileStatus;
+
+    // 1. Added text file
+    let added = generate_file_diff(FileDiffParams {
+        path: "added.rs",
+        old_path: None,
+        old_bytes: None,
+        new_bytes: Some(b"fn new_func() {}\n"),
+        status: FileStatus::Added,
+        old_mode: None,
+        new_mode: Some("100644"),
+        is_binary: false,
+        context: 3,
+        mode: WhitespaceMode::TrimEquality,
+    });
+    assert_eq!(added.file.status, FileStatus::Added);
+    assert_eq!(added.file.hunks.len(), 1);
+    assert!(
+        added
+            .patch
+            .contains("new file mode 100644\n--- /dev/null\n+++ b/added.rs\n")
+    );
+    assert!(added.patch.contains("+fn new_func() {}\n"));
+
+    // 2. Deleted text file
+    let deleted = generate_file_diff(FileDiffParams {
+        path: "deleted.rs",
+        old_path: None,
+        old_bytes: Some(b"fn old_func() {}\n"),
+        new_bytes: None,
+        status: FileStatus::Deleted,
+        old_mode: Some("100644"),
+        new_mode: None,
+        is_binary: false,
+        context: 3,
+        mode: WhitespaceMode::TrimEquality,
+    });
+    assert_eq!(deleted.file.status, FileStatus::Deleted);
+    assert_eq!(deleted.file.hunks.len(), 1);
+    assert!(
+        deleted
+            .patch
+            .contains("deleted file mode 100644\n--- a/deleted.rs\n+++ /dev/null\n")
+    );
+    assert!(deleted.patch.contains("-fn old_func() {}\n"));
+
+    // 3. Renamed file
+    let renamed = generate_file_diff(FileDiffParams {
+        path: "new_name.rs",
+        old_path: Some("old_name.rs"),
+        old_bytes: Some(b"same content\n"),
+        new_bytes: Some(b"same content\n"),
+        status: FileStatus::Renamed,
+        old_mode: Some("100644"),
+        new_mode: Some("100644"),
+        is_binary: false,
+        context: 3,
+        mode: WhitespaceMode::TrimEquality,
+    });
+    assert_eq!(renamed.file.status, FileStatus::Renamed);
+    assert_eq!(renamed.file.old_path.as_deref(), Some("old_name.rs"));
+    assert!(renamed.file.hunks.is_empty());
+    assert!(
+        renamed
+            .patch
+            .contains("rename from old_name.rs\nrename to new_name.rs\n")
+    );
+
+    // 4. Binary file
+    let binary = generate_file_diff(FileDiffParams {
+        path: "image.png",
+        old_path: None,
+        old_bytes: Some(b"\0\0PNG"),
+        new_bytes: Some(b"\0\0PNG2"),
+        status: FileStatus::Modified,
+        old_mode: Some("100644"),
+        new_mode: Some("100644"),
+        is_binary: true,
+        context: 3,
+        mode: WhitespaceMode::TrimEquality,
+    });
+    assert!(binary.file.is_binary);
+    assert!(binary.file.hunks.is_empty());
+    assert!(
+        binary
+            .patch
+            .contains("Binary files a/image.png and b/image.png differ\n")
+    );
+}
+
+#[test]
+fn test_diff_repository_unstaged_staged_and_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+
+    run_cmd(dir, "git", &["init"]).unwrap();
+    run_cmd(dir, "git", &["config", "user.name", "Test"]).unwrap();
+    run_cmd(dir, "git", &["config", "user.email", "test@example.com"]).unwrap();
+    run_cmd(dir, "git", &["config", "commit.gpgsign", "false"]).unwrap();
+
+    std::fs::write(dir.join("file1.txt"), "line1\nline2\nline3\n").unwrap();
+    std::fs::write(dir.join("file2.txt"), "hello world\n").unwrap();
+    run_cmd(dir, "git", &["add", "."]).unwrap();
+    run_cmd(dir, "git", &["commit", "-m", "initial commit"]).unwrap();
+
+    let repo = Repository::open(dir).unwrap();
+
+    // Modify file1: change line2 to line2_mod
+    std::fs::write(dir.join("file1.txt"), "line1\nline2_mod\nline3\n").unwrap();
+    // Untracked file
+    std::fs::write(dir.join("untracked.txt"), "new content\n").unwrap();
+
+    let target = ReviewTarget {
+        repo: Repo::from_root(dir),
+        range: None,
+        git_args: vec![],
+        rev_args: vec![],
+        pathspecs: vec![],
+        staged: false,
+    };
+
+    let res =
+        crate::diff::diff_repository(&repo, &target, 3, crate::diff::WhitespaceMode::TrimEquality)
+            .unwrap();
+    assert_eq!(res.files.len(), 2);
+    assert!(res.diff.contains("--- a/file1.txt\n+++ b/file1.txt\n"));
+    assert!(res.diff.contains("-line2\n+line2_mod\n"));
+    assert!(
+        res.diff
+            .contains("untracked file mode 100644\n--- /dev/null\n+++ b/untracked.txt\n")
+    );
+    assert_eq!(
+        res.old_content.get("file1.txt").map(String::as_str),
+        Some("line1\nline2\nline3\n")
+    );
+    assert_eq!(
+        res.new_content.get("file1.txt").map(String::as_str),
+        Some("line1\nline2_mod\nline3\n")
+    );
+    assert_eq!(
+        res.new_content.get("untracked.txt").map(String::as_str),
+        Some("new content\n")
+    );
+}
+
+#[test]
+fn test_diff_repository_on_cli_setup_repo() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        run_cmd(dir.path(), "git", args).unwrap();
+    };
+
+    run(&["init", "-q"]);
+    run(&["config", "user.email", "test@example.com"]);
+    run(&["config", "user.name", "test"]);
+    std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+    run(&["add", "."]);
+    run(&["commit", "-qm", "init"]);
+    std::fs::write(dir.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "hello\nworld\n").unwrap();
+
+    let repo = Repository::open(dir.path()).unwrap();
+    let target = ReviewTarget {
+        repo: Repo::from_root(dir.path()),
+        range: None,
+        git_args: vec![],
+        rev_args: vec![],
+        pathspecs: vec![],
+        staged: false,
+    };
+
+    let res =
+        crate::diff::diff_repository(&repo, &target, 3, crate::diff::WhitespaceMode::TrimEquality)
+            .unwrap();
+    assert_eq!(res.files.len(), 2);
+    let a_file = res.files.iter().find(|f| f.path == "a.txt").unwrap();
+    assert!(!a_file.hunks.is_empty(), "a.txt must have hunks");
+}
+
+#[test]
+fn test_submodule_gitlink_diff() {
+    let parent = tempfile::tempdir().unwrap();
+    let sub = tempfile::tempdir().unwrap();
+
+    let run_cmd_in = |dir: &std::path::Path, args: &[&str]| {
+        run_cmd(dir, "git", args).unwrap();
+    };
+
+    // Initialize submodule repo
+    run_cmd_in(sub.path(), &["init", "-q"]);
+    run_cmd_in(sub.path(), &["config", "user.name", "Test"]);
+    run_cmd_in(sub.path(), &["config", "user.email", "test@example.com"]);
+    std::fs::write(sub.path().join("sub_file.txt"), "hello sub\n").unwrap();
+    run_cmd_in(sub.path(), &["add", "."]);
+    run_cmd_in(sub.path(), &["commit", "-qm", "sub commit 1"]);
+
+    // Initialize parent repo
+    run_cmd_in(parent.path(), &["init", "-q"]);
+    run_cmd_in(parent.path(), &["config", "user.name", "Test"]);
+    run_cmd_in(parent.path(), &["config", "user.email", "test@example.com"]);
+    run_cmd_in(
+        parent.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            sub.path().to_str().unwrap(),
+            "my_sub",
+        ],
+    );
+    run_cmd_in(parent.path(), &["commit", "-qm", "add submodule"]);
+
+    // Make second commit in submodule
+    std::fs::write(sub.path().join("sub_file.txt"), "hello sub v2\n").unwrap();
+    run_cmd_in(sub.path(), &["commit", "-qam", "sub commit 2"]);
+
+    // Update parent submodule pointer
+    run_cmd_in(
+        parent.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--remote",
+        ],
+    );
+    run_cmd_in(parent.path(), &["commit", "-qam", "bump submodule"]);
+
+    let repo = Repository::open(parent.path()).unwrap();
+    let target = ReviewTarget {
+        repo: Repo::from_root(parent.path()),
+        range: Some(crate::types::RevisionRange(
+            "HEAD~1".to_string(),
+            "HEAD".to_string(),
+        )),
+        git_args: vec!["HEAD~1..HEAD".to_string()],
+        rev_args: vec!["HEAD~1..HEAD".to_string()],
+        pathspecs: vec![],
+        staged: false,
+    };
+
+    let res =
+        crate::diff::diff_repository(&repo, &target, 3, crate::diff::WhitespaceMode::TrimEquality)
+            .unwrap();
+    assert_eq!(res.files.len(), 1);
+    let sub_file = &res.files[0];
+    assert_eq!(sub_file.path, "my_sub");
+    assert!(!sub_file.hunks.is_empty());
+    assert!(!sub_file.raw_hunks.is_empty());
+    assert!(res.diff.contains("Subproject commit"));
+}
+
+#[test]
+fn test_trim_equality_preserves_indentation() {
+    let old = "\
+fn outer() {
+    fn inner() {
+        // level 2
+    }
+}
+fn other() {
+    let x = 1;
+}
+";
+    let new = "\
+fn outer() {
+    fn inner() {
+        // level 2 modified
+    }
+}
+fn other() {
+    let x = 2;
+}
+";
+    let (hunks, patch) =
+        crate::diff::diff_text(old, new, 3, crate::diff::WhitespaceMode::TrimEquality);
+    assert!(!hunks.is_empty());
+    // Verify that the indentation of closing braces at different indentation levels
+    // is preserved accurately without interning bleed. In a unified diff, context
+    // lines are prefixed with ' ', so 4 leading spaces becomes 5 leading spaces.
+    assert!(patch.contains("     }\n }\n"));
+    for hunk in &hunks {
+        for row in &hunk.rows {
+            if row.text().trim() == "}" {
+                // Must be either "    }" (4 spaces) or "}" (0 spaces), not corrupted
+                assert!(row.text() == "    }" || row.text() == "}");
+            }
+        }
+    }
+}
