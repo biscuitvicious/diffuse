@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use crate::GitError;
+
 /// A pure-Gitoxide repository handle.
 pub struct Repository {
     pub(crate) inner: gix::Repository,
@@ -9,14 +11,14 @@ pub struct Repository {
 
 impl Repository {
     /// Open a repository at the specified directory.
-    pub fn open(path: &Path) -> Result<Self, Box<gix::open::Error>> {
-        let inner = gix::open(path).map_err(Box::new)?;
+    pub fn open(path: &Path) -> Result<Self, GitError> {
+        let inner = gix::open(path)?;
         Ok(Self { inner })
     }
 
     /// Discover a repository searching upwards from `path`.
-    pub fn discover(path: &Path) -> Result<Self, Box<gix::discover::Error>> {
-        let inner = gix::discover(path).map_err(Box::new)?;
+    pub fn discover(path: &Path) -> Result<Self, GitError> {
+        let inner = gix::discover(path)?;
         Ok(Self { inner })
     }
 

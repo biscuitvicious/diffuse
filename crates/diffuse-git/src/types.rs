@@ -9,50 +9,8 @@ use std::{
 /// from Gitoxide and I/O.
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
-    #[error("Failed to open repository: {0}")]
-    Open(#[source] Box<gix::open::Error>),
-
-    #[error("Failed to discover repository: {0}")]
-    Discover(#[source] Box<gix::discover::Error>),
-
-    #[error("Failed to open index: {0}")]
-    Index(#[source] Box<gix::worktree::open_index::Error>),
-
-    #[error("Directory traversal failed: {0}")]
-    Dirwalk(#[source] Box<gix::dirwalk::Error>),
-
-    #[error("Configuration error: {0}")]
-    Config(#[source] Box<gix::config::boolean::Error>),
-
-    #[error("Status operation failed: {0}")]
-    Status(#[source] Box<gix::status::Error>),
-
-    #[error("Status iterator error: {0}")]
-    StatusIter(#[source] Box<gix::status::into_iter::Error>),
-
-    #[error("Index worktree error: {0}")]
-    IndexWorktree(#[source] Box<gix::status::index_worktree::Error>),
-
-    #[error("Tree-index diff failed: {0}")]
-    TreeIndex(#[source] Box<gix::status::tree_index::Error>),
-
-    #[error("Tree diff failed: {0}")]
-    TreeDiff(#[source] Box<gix::diff::tree_with_rewrites::Error>),
-
-    #[error("Diff tree to tree failed: {0}")]
-    DiffTreeToTree(#[source] Box<gix::repository::diff_tree_to_tree::Error>),
-
-    #[error("Diff resource cache error: {0}")]
-    DiffResourceCache(#[source] Box<gix::repository::diff_resource_cache::Error>),
-
-    #[error("Failed to parse revision: {0}")]
-    RevParse(#[source] Box<gix::revision::spec::parse::single::Error>),
-
-    #[error("Object not found: {0}")]
-    FindObject(#[source] Box<gix::object::find::existing::Error>),
-
-    #[error("Object peel error: {0}")]
-    Peel(#[source] Box<gix::object::peel::to_kind::Error>),
+    #[error("Git error: {0}")]
+    Gix(#[from] gix::Error),
 
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
@@ -66,40 +24,6 @@ pub enum GitError {
     #[error("Invalid reference: {0}")]
     InvalidRef(String),
 }
-
-macro_rules! impl_from_boxed_error {
-    ($err_type:ty, $variant:ident) => {
-        impl From<$err_type> for GitError {
-            fn from(err: $err_type) -> Self {
-                Self::$variant(Box::new(err))
-            }
-        }
-        impl From<Box<$err_type>> for GitError {
-            fn from(err: Box<$err_type>) -> Self {
-                Self::$variant(err)
-            }
-        }
-    };
-}
-
-impl_from_boxed_error!(gix::open::Error, Open);
-impl_from_boxed_error!(gix::discover::Error, Discover);
-impl_from_boxed_error!(gix::worktree::open_index::Error, Index);
-impl_from_boxed_error!(gix::dirwalk::Error, Dirwalk);
-impl_from_boxed_error!(gix::config::boolean::Error, Config);
-impl_from_boxed_error!(gix::status::Error, Status);
-impl_from_boxed_error!(gix::status::into_iter::Error, StatusIter);
-impl_from_boxed_error!(gix::status::index_worktree::Error, IndexWorktree);
-impl_from_boxed_error!(gix::status::tree_index::Error, TreeIndex);
-impl_from_boxed_error!(gix::diff::tree_with_rewrites::Error, TreeDiff);
-impl_from_boxed_error!(gix::repository::diff_tree_to_tree::Error, DiffTreeToTree);
-impl_from_boxed_error!(
-    gix::repository::diff_resource_cache::Error,
-    DiffResourceCache
-);
-impl_from_boxed_error!(gix::revision::spec::parse::single::Error, RevParse);
-impl_from_boxed_error!(gix::object::find::existing::Error, FindObject);
-impl_from_boxed_error!(gix::object::peel::to_kind::Error, Peel);
 
 /// Options configuring git diff generation.
 #[derive(Debug, Clone, PartialEq, Eq)]

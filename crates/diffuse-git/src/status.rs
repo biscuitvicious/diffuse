@@ -3,6 +3,7 @@
 
 use std::{
     fs,
+    ops::ControlFlow,
     path::{Path, PathBuf},
     sync::atomic::AtomicBool,
 };
@@ -378,7 +379,7 @@ impl Repository {
                     });
                 }
 
-                Ok::<_, std::convert::Infallible>(std::ops::ControlFlow::Continue(()))
+                Ok(ControlFlow::Continue(()))
             },
         )?;
 
