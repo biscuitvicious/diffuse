@@ -217,17 +217,6 @@ impl<S: AsRef<str>> DelimiterClassifier<S> for UniversalDelimiterClassifier {
     }
 }
 
-/// Default classifier for ASCII and standard code token strings.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct AsciiDelimiterClassifier;
-
-impl<S: AsRef<str>> DelimiterClassifier<S> for AsciiDelimiterClassifier {
-    #[inline]
-    fn classify(&self, item: &S) -> Option<DelimiterCategory> {
-        UniversalDelimiterClassifier.classify(item)
-    }
-}
-
 /// Computes matching delimiter partner indices into `out`.
 ///
 /// For an opening delimiter at index `i`, sets `out[i] = Some(j)` where `j` is
@@ -809,8 +798,8 @@ mod tests {
     }
 
     #[test]
-    fn test_ascii_delimiter_classifier() {
-        let c = AsciiDelimiterClassifier;
+    fn test_universal_delimiter_classifier_ascii() {
+        let c = UniversalDelimiterClassifier;
         assert_eq!(c.classify(&"("), Some(DelimiterCategory::Open(1)));
         assert_eq!(c.classify(&")"), Some(DelimiterCategory::Close(1)));
         assert_eq!(c.classify(&"["), Some(DelimiterCategory::Open(2)));
@@ -827,7 +816,7 @@ mod tests {
 
     #[test]
     fn test_trim_balanced_boundaries_empty_and_whitespace() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         let empty: Vec<&str> = vec![];
         assert_eq!(trim_balanced_boundaries(&empty, &c), (0, 0));
 
@@ -837,7 +826,7 @@ mod tests {
 
     #[test]
     fn test_trim_balanced_boundaries_simple_and_nested() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         let tokens = vec!["(", "foo", ")"];
         assert_eq!(trim_balanced_boundaries(&tokens, &c), (0, 3));
 
@@ -850,7 +839,7 @@ mod tests {
 
     #[test]
     fn test_trim_balanced_boundaries_with_whitespace_and_separators() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         // Leading whitespace, leading separator and closing delimiter
         let tokens = vec![" ", ".", ")", "(", "foo", ")", ";", " "];
         // start should be index 3 ("("), best_end should be index 6 (after ")")
@@ -859,7 +848,7 @@ mod tests {
 
     #[test]
     fn test_trim_balanced_boundaries_mismatch_stops() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         // Mismatched closing bracket stops matching
         let tokens = vec!["(", "foo", ")", "]", "bar"];
         assert_eq!(trim_balanced_boundaries(&tokens, &c), (0, 3));
@@ -867,7 +856,7 @@ mod tests {
 
     #[test]
     fn test_track_enclosing_containers() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         let tokens = vec!["`", "code", "`", "plain", "\"", "str", "\""];
         let containers = track_enclosing_containers(&tokens, &c);
         assert_eq!(
@@ -886,7 +875,7 @@ mod tests {
 
     #[test]
     fn test_track_enclosing_containers_nested_delimiters() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         // [ foo ( bar ) ]
         let tokens = vec!["[", "foo", "(", "bar", ")", "]"];
         let enclosing = track_enclosing_containers(&tokens, &c);
@@ -909,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_compute_delimiter_partners() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         // [ foo ( bar ) ]
         let tokens = vec!["[", "foo", "(", "bar", ")", "]"];
         let partners = compute_delimiter_partners(&tokens, &c);
@@ -926,7 +915,7 @@ mod tests {
 
     #[test]
     fn test_dyck_balanced_iterator() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         let tokens = vec!["(", "a", ")", "+", "[", "b", "]", "+", "\"", "c", "\""];
         let ranges: Vec<(usize, usize)> = tokens.into_iter().dyck_balanced(c).collect();
         assert_eq!(ranges, vec![(0, 3), (4, 7), (8, 11)]);
@@ -966,7 +955,7 @@ mod tests {
         let default_stack: SmallStack<u8, 8> = SmallStack::default();
         assert!(default_stack.is_empty());
 
-        let default_classifier = AsciiDelimiterClassifier;
+        let default_classifier = UniversalDelimiterClassifier;
         assert_eq!(
             default_classifier.classify(&">"),
             Some(DelimiterCategory::LeadingCloser)
@@ -995,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_track_nesting_depths() {
-        let c = AsciiDelimiterClassifier;
+        let c = UniversalDelimiterClassifier;
         let tokens = vec!["path", "::", "{", "Path", ",", "PathBuf", "}", ","];
         let depths = track_nesting_depths_with_prev(&[], &tokens, &c);
         assert_eq!(depths, vec![0, 0, 0, 1, 1, 1, 0, 0]);

@@ -957,13 +957,13 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
     diffuse_algo::track_nesting_depths_into(
         prev_a,
         a,
-        &diffuse_algo::AsciiDelimiterClassifier,
+        &diffuse_algo::UniversalDelimiterClassifier,
         &mut arena.depth_a[..n],
     );
     diffuse_algo::track_nesting_depths_into(
         prev_b,
         b,
-        &diffuse_algo::AsciiDelimiterClassifier,
+        &diffuse_algo::UniversalDelimiterClassifier,
         &mut arena.depth_b[..m],
     );
     let depth_a = &arena.depth_a[..n];
@@ -972,13 +972,13 @@ pub fn raw_lcs_pairs_with_arena_and_weights(
     diffuse_algo::track_enclosing_containers_into(
         prev_a,
         a,
-        &diffuse_algo::AsciiDelimiterClassifier,
+        &diffuse_algo::UniversalDelimiterClassifier,
         &mut arena.container_a[..n],
     );
     diffuse_algo::track_enclosing_containers_into(
         prev_b,
         b,
-        &diffuse_algo::AsciiDelimiterClassifier,
+        &diffuse_algo::UniversalDelimiterClassifier,
         &mut arena.container_b[..m],
     );
     let container_a = &arena.container_a[..n];

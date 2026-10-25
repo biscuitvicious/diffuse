@@ -693,7 +693,7 @@ impl<'a> AlignmentTape<'a> {
         // Also purge any subword match with discordant boundary context across
         // differing container depths or enclosing containers, which would slice
         // compound identifiers open across container boundaries.
-        let classifier = diffuse_algo::AsciiDelimiterClassifier;
+        let classifier = diffuse_algo::UniversalDelimiterClassifier;
         let c_old = diffuse_algo::track_enclosing_containers(&ot, &classifier);
         let c_new = diffuse_algo::track_enclosing_containers(&nt, &classifier);
         let d_old = diffuse_algo::track_nesting_depths_with_prev(&[], &ot, &classifier);

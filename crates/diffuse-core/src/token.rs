@@ -416,7 +416,7 @@ pub fn compute_parenthesis_depth(
 
 #[inline]
 fn trim_to_balanced_boundaries(tokens: &[&str]) -> (usize, usize) {
-    diffuse_algo::trim_balanced_boundaries(tokens, &diffuse_algo::AsciiDelimiterClassifier)
+    diffuse_algo::trim_balanced_boundaries(tokens, &diffuse_algo::UniversalDelimiterClassifier)
 }
 
 #[inline]
@@ -443,7 +443,7 @@ fn is_dangling_suffix_token(t: &str, profile: Option<&LangProfile>) -> bool {
 
 #[inline]
 pub(crate) fn get_enclosing_caller<'a>(tokens: &[&'a str], idx: usize) -> Option<&'a str> {
-    let classifier = diffuse_algo::AsciiDelimiterClassifier;
+    let classifier = diffuse_algo::UniversalDelimiterClassifier;
     let mut depth = 0usize;
     for i in (0..idx).rev() {
         if let Some(diffuse_algo::DelimiterCategory::Close(_)) = classifier.classify(&tokens[i]) {
@@ -478,7 +478,7 @@ pub fn multi_token_phrase_anchors(
     let a_containers = compute_token_containers(a);
     let b_containers = compute_token_containers(b);
 
-    let classifier = diffuse_algo::AsciiDelimiterClassifier;
+    let classifier = diffuse_algo::UniversalDelimiterClassifier;
     let mut a_depths_buf = [0u16; 64];
     let mut a_depths_vec;
     let a_depths: &mut [u16] = if a.len() <= 64 {
@@ -791,7 +791,7 @@ impl ContainerKind {
 /// Computes the active enclosing container (if any) for each token in a
 /// sequence.
 pub fn compute_token_containers(tokens: &[&str]) -> Vec<Option<ContainerKind>> {
-    diffuse_algo::track_enclosing_containers(tokens, &diffuse_algo::AsciiDelimiterClassifier)
+    diffuse_algo::track_enclosing_containers(tokens, &diffuse_algo::UniversalDelimiterClassifier)
         .into_iter()
         .map(|opt| opt.and_then(ContainerKind::from_id))
         .collect()
@@ -808,7 +808,7 @@ pub fn entropy_anchors(
     let a_containers = compute_token_containers(a);
     let b_containers = compute_token_containers(b);
 
-    let classifier = diffuse_algo::AsciiDelimiterClassifier;
+    let classifier = diffuse_algo::UniversalDelimiterClassifier;
     let mut a_depths_buf = [0u16; 64];
     let mut a_depths_vec;
     let a_depths: &mut [u16] = if a.len() <= 64 {
