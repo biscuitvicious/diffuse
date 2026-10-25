@@ -396,3 +396,32 @@ fn test_compute_parenthesis_depth() {
     let unmatched_depths = compute_parenthesis_depth(&unmatched, &unmatched_containers);
     assert_eq!(unmatched_depths, vec![0, 0, 0, 0]);
 }
+
+#[test]
+fn test_entropy_anchors_rejects_discordant_dyck_depths() {
+    let rs = diffuse_syntax::registry::lang_profile("rs");
+    let old = "        if stack.last() == Some(&ContainerKind::Backtick) {";
+    let new = "        .map(|opt| opt.and_then(ContainerKind::from_id))";
+    let ot: Vec<&str> = crate::lcs::tokenize_line(old).collect();
+    let nt: Vec<&str> = crate::lcs::tokenize_line(new).collect();
+    let anchors = entropy_anchors(&ot, &nt, rs);
+    assert!(
+        anchors.is_empty(),
+        "ContainerKind must not be anchored across discordant Dyck container depths: {:?}",
+        anchors
+    );
+}
+
+#[test]
+fn test_entropy_anchors_rejects_bilaterally_ungrounded_single_token() {
+    let old = "The quick brown fox jumps over the lazy dog.";
+    let new = "In the morning, hunters know that fox hunting is dangerous.";
+    let ot: Vec<&str> = crate::lcs::tokenize_line(old).collect();
+    let nt: Vec<&str> = crate::lcs::tokenize_line(new).collect();
+    let anchors = entropy_anchors(&ot, &nt, None);
+    assert!(
+        anchors.is_empty(),
+        "fox must not be anchored when bilaterally ungrounded across disjoint contexts: {:?}",
+        anchors
+    );
+}

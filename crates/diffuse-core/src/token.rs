@@ -4,6 +4,7 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use diffuse_algo::DelimiterClassifier;
 use diffuse_syntax::profile::LangProfile;
 
 use crate::lcs::{char_len, token_is_ws};
@@ -183,7 +184,7 @@ fn is_builtin_keyword(t: &str) -> bool {
 }
 
 #[inline]
-fn is_function_word(t: &str) -> bool {
+pub(crate) fn is_function_word(t: &str) -> bool {
     matches!(
         t,
         "the"
@@ -440,6 +441,28 @@ fn is_dangling_suffix_token(t: &str, profile: Option<&LangProfile>) -> bool {
     !is_anchor_content_token(t, profile) && !matches!(t, ")" | "]" | "}" | "\"" | "'" | "`")
 }
 
+#[inline]
+pub(crate) fn get_enclosing_caller<'a>(tokens: &[&'a str], idx: usize) -> Option<&'a str> {
+    let classifier = diffuse_algo::AsciiDelimiterClassifier;
+    let mut depth = 0usize;
+    for i in (0..idx).rev() {
+        if let Some(diffuse_algo::DelimiterCategory::Close(_)) = classifier.classify(&tokens[i]) {
+            depth += 1;
+        } else if let Some(diffuse_algo::DelimiterCategory::Open(_)) =
+            classifier.classify(&tokens[i])
+        {
+            if depth == 0 {
+                return (0..i)
+                    .rev()
+                    .find(|&k| !token_is_ws(tokens[k]))
+                    .map(|k| tokens[k]);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
 /// Identifies maximal multi-token phrase landmarks ($k \ge 2$) shared between
 /// token slices `a` and `b`. Returns pairs of matching token indices `(a_idx,
 /// b_idx)`.
@@ -454,8 +477,27 @@ pub fn multi_token_phrase_anchors(
 
     let a_containers = compute_token_containers(a);
     let b_containers = compute_token_containers(b);
-    let a_depths = compute_parenthesis_depth(a, &a_containers);
-    let b_depths = compute_parenthesis_depth(b, &b_containers);
+
+    let classifier = diffuse_algo::AsciiDelimiterClassifier;
+    let mut a_depths_buf = [0u16; 64];
+    let mut a_depths_vec;
+    let a_depths: &mut [u16] = if a.len() <= 64 {
+        &mut a_depths_buf[..a.len()]
+    } else {
+        a_depths_vec = vec![0u16; a.len()];
+        &mut a_depths_vec
+    };
+    diffuse_algo::track_nesting_depths_into(&[], a, &classifier, a_depths);
+
+    let mut b_depths_buf = [0u16; 64];
+    let mut b_depths_vec;
+    let b_depths: &mut [u16] = if b.len() <= 64 {
+        &mut b_depths_buf[..b.len()]
+    } else {
+        b_depths_vec = vec![0u16; b.len()];
+        &mut b_depths_vec
+    };
+    diffuse_algo::track_nesting_depths_into(&[], b, &classifier, b_depths);
 
     #[derive(Clone, Copy, Debug)]
     struct PhraseCandidate {
@@ -629,6 +671,38 @@ pub fn multi_token_phrase_anchors(
                 continue;
             }
 
+            // Information symmetry / bilateral ungroundedness check for phrases:
+            // An isolated phrase flanked by edits on both sides must share
+            // context with at least one side and match Dyck nesting depth.
+            let a_end = a_start + trimmed_len;
+            let b_end = b_start + trimmed_len;
+            let left_content_a = a[..a_start].iter().any(|&x| !token_is_ws(x));
+            let left_content_b = b[..b_start].iter().any(|&x| !token_is_ws(x));
+            let right_content_a = a[a_end..].iter().any(|&x| !token_is_ws(x));
+            let right_content_b = b[b_end..].iter().any(|&x| !token_is_ws(x));
+
+            if left_content_a && left_content_b && right_content_a && right_content_b {
+                let depth_discordant = a_depths[a_start] != b_depths[b_start]
+                    && a_depths[a_start] >= 1
+                    && b_depths[b_start] >= 1
+                    && get_enclosing_caller(a, a_start) != get_enclosing_caller(b, b_start);
+                let left_supported = a[..a_start].iter().any(|&x| {
+                    !token_is_ws(x)
+                        && crate::lcs::token_is_alnum(x)
+                        && !is_function_word(x)
+                        && b[..b_start].contains(&x)
+                });
+                let right_supported = a[a_end..].iter().any(|&x| {
+                    !token_is_ws(x)
+                        && crate::lcs::token_is_alnum(x)
+                        && !is_function_word(x)
+                        && b[b_end..].contains(&x)
+                });
+                if depth_discordant && !left_supported && !right_supported {
+                    continue;
+                }
+            }
+
             // Verify cumulative information entropy meets landmark threshold
             let mut entropy = 0.0;
             for &tok in phrase_slice {
@@ -734,6 +808,27 @@ pub fn entropy_anchors(
     let a_containers = compute_token_containers(a);
     let b_containers = compute_token_containers(b);
 
+    let classifier = diffuse_algo::AsciiDelimiterClassifier;
+    let mut a_depths_buf = [0u16; 64];
+    let mut a_depths_vec;
+    let a_depths: &mut [u16] = if a.len() <= 64 {
+        &mut a_depths_buf[..a.len()]
+    } else {
+        a_depths_vec = vec![0u16; a.len()];
+        &mut a_depths_vec
+    };
+    diffuse_algo::track_nesting_depths_into(&[], a, &classifier, a_depths);
+
+    let mut b_depths_buf = [0u16; 64];
+    let mut b_depths_vec;
+    let b_depths: &mut [u16] = if b.len() <= 64 {
+        &mut b_depths_buf[..b.len()]
+    } else {
+        b_depths_vec = vec![0u16; b.len()];
+        &mut b_depths_vec
+    };
+    diffuse_algo::track_nesting_depths_into(&[], b, &classifier, b_depths);
+
     let mut a_counts: FxHashMap<&str, (usize, usize)> = FxHashMap::default();
     for (i, &t) in a.iter().enumerate() {
         if !token_is_ws(t) && !is_delim(t) {
@@ -777,6 +872,70 @@ pub fn entropy_anchors(
                 && is_compatible_with_phrases(idx_a, idx_b)
                 && ContainerKind::is_compatible_with(a_containers[idx_a], b_containers[idx_b])
             {
+                // Information symmetry / bilateral ungroundedness & depth concordance check:
+                // An isolated single token flanked by edits on both sides
+                // must share context with at least one side.
+                let mut left_bound_a = idx_a;
+                while left_bound_a > 0
+                    && (crate::lcs::is_subword_token(a[left_bound_a - 1])
+                        || a[left_bound_a - 1] == "::")
+                {
+                    left_bound_a -= 1;
+                }
+                let mut left_bound_b = idx_b;
+                while left_bound_b > 0
+                    && (crate::lcs::is_subword_token(b[left_bound_b - 1])
+                        || b[left_bound_b - 1] == "::")
+                {
+                    left_bound_b -= 1;
+                }
+
+                let mut right_bound_a = idx_a + 1;
+                while right_bound_a < a.len()
+                    && (crate::lcs::is_subword_token(a[right_bound_a]) || a[right_bound_a] == "::")
+                {
+                    right_bound_a += 1;
+                }
+                let mut right_bound_b = idx_b + 1;
+                while right_bound_b < b.len()
+                    && (crate::lcs::is_subword_token(b[right_bound_b]) || b[right_bound_b] == "::")
+                {
+                    right_bound_b += 1;
+                }
+
+                let left_content_a = a[..left_bound_a].iter().any(|&x| !token_is_ws(x));
+                let left_content_b = b[..left_bound_b].iter().any(|&x| !token_is_ws(x));
+                let right_content_a = a[right_bound_a..].iter().any(|&x| !token_is_ws(x));
+                let right_content_b = b[right_bound_b..].iter().any(|&x| !token_is_ws(x));
+
+                if left_content_a && left_content_b && right_content_a && right_content_b {
+                    let depth_discordant = a_depths[idx_a] != b_depths[idx_b]
+                        && a_depths[idx_a] >= 1
+                        && b_depths[idx_b] >= 1
+                        && get_enclosing_caller(a, idx_a) != get_enclosing_caller(b, idx_b);
+
+                    let is_support_token = |tok: &str| {
+                        !token_is_ws(tok)
+                            && !is_delim(tok)
+                            && (crate::lcs::token_is_alnum(tok)
+                                || profile.is_some_and(|p| p.is_operator_anchor(tok)))
+                            && !is_function_word(tok)
+                    };
+                    let left_supported = a[..left_bound_a]
+                        .iter()
+                        .any(|&x| is_support_token(x) && b[..left_bound_b].contains(&x));
+                    let right_supported = a[right_bound_a..]
+                        .iter()
+                        .any(|&x| is_support_token(x) && b[right_bound_b..].contains(&x));
+
+                    if depth_discordant && !left_supported && !right_supported {
+                        continue;
+                    }
+                    if profile.is_none() && !left_supported && !right_supported {
+                        continue;
+                    }
+                }
+
                 if is_alnum {
                     let left_sub_a = idx_a > 0 && crate::lcs::is_subword_token(a[idx_a - 1]);
                     let left_sub_b = idx_b > 0 && crate::lcs::is_subword_token(b[idx_b - 1]);

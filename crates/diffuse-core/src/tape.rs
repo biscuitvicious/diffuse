@@ -687,74 +687,18 @@ impl<'a> AlignmentTape<'a> {
             pairs
         };
 
-        let token_weight = |tokens: &[&str], idx: usize| -> f64 {
-            let t = tokens[idx];
-            if !token_is_ws(t) {
-                char_len(t) as f64
-            } else {
-                classify_whitespace(tokens, idx).token_weight(char_len(t))
-            }
-        };
-        let matched_chars: f64 = sorted_pairs
-            .iter()
-            .map(|&(i, j)| {
-                let w_old = token_weight(&ot, i);
-                let w_new = token_weight(&nt, j);
-                w_old.min(w_new)
-            })
-            .sum();
-        let new_weight: f64 = (0..nt.len()).map(|j| token_weight(&nt, j)).sum();
-        let ratio = if new_weight > 0.0 {
-            matched_chars / new_weight
-        } else {
-            0.0
-        };
-        span.record("matched_chars", matched_chars);
-        span.record("ratio", ratio);
-
-        if ratio < 0.25 && old_text.trim() != new_text.trim() {
-            // Anchors were skipped on the pure-prefix/suffix fast paths;
-            // compute them only now that the fallback test actually needs
-            // `has_anchors` (reordered short-circuit, identical outcome).
-            let has_anchors = match anchors {
-                Some(ref computed) => !computed.is_empty(),
-                None => !unique_token_anchors(&ot, &nt, profile).is_empty(),
-            };
-            if !has_anchors {
-                tracing::debug!(
-                    ratio,
-                    "Subword match ratio below threshold, falling back to whole-line diff"
-                );
-                if !old_text.is_empty() {
-                    tape.push(TapeChunk::Strike(old_text));
-                }
-                if !new_text.is_empty() {
-                    tape.push(TapeChunk::Fill(new_text));
-                }
-                return tape;
-            }
-        }
-
         // Level B defense-in-depth: Delimiter Container Invariance & Subword Cohesion.
         // Purge any matched pair where both tokens sit inside active but
         // mismatched delimiter containers (e.g. `()` vs `{}` or `[]` vs `()`).
         // Also purge any subword match with discordant boundary context across
         // differing container depths or enclosing containers, which would slice
         // compound identifiers open across container boundaries.
-        let c_old =
-            diffuse_algo::track_enclosing_containers(&ot, &diffuse_algo::AsciiDelimiterClassifier);
-        let c_new =
-            diffuse_algo::track_enclosing_containers(&nt, &diffuse_algo::AsciiDelimiterClassifier);
-        let d_old = diffuse_algo::track_nesting_depths_with_prev(
-            &[],
-            &ot,
-            &diffuse_algo::AsciiDelimiterClassifier,
-        );
-        let d_new = diffuse_algo::track_nesting_depths_with_prev(
-            &[],
-            &nt,
-            &diffuse_algo::AsciiDelimiterClassifier,
-        );
+        let classifier = diffuse_algo::AsciiDelimiterClassifier;
+        let c_old = diffuse_algo::track_enclosing_containers(&ot, &classifier);
+        let c_new = diffuse_algo::track_enclosing_containers(&nt, &classifier);
+        let d_old = diffuse_algo::track_nesting_depths_with_prev(&[], &ot, &classifier);
+        let d_new = diffuse_algo::track_nesting_depths_with_prev(&[], &nt, &classifier);
+
         sorted_pairs.retain(|&(oi, ni)| {
             let ca = c_old[oi].and_then(crate::token::ContainerKind::from_id);
             let cb = c_new[ni].and_then(crate::token::ContainerKind::from_id);
@@ -789,7 +733,6 @@ impl<'a> AlignmentTape<'a> {
         // 2. The container contents share NO common salient tokens across distinct
         //    callers (e.g. `is_none()` vs `is_some_and(|c| c.is_quoted())`, or `foo(a)`
         //    vs `bar(b)`).
-        let classifier = diffuse_algo::AsciiDelimiterClassifier;
         let find_matching_close = |tokens: &[&str], open_idx: usize| -> Option<usize> {
             let cat = classifier.classify(&tokens[open_idx])?;
             let open_id = match cat {
@@ -886,11 +829,134 @@ impl<'a> AlignmentTape<'a> {
             }
         }
 
+        // Depth Discordance & Bilateral Grounding Gate.
+        // Purge any matched pair at discordant Dyck container depths across
+        // distinct enclosing callers that lacks external supporting matches.
+        for (i, &(oi, ni)) in sorted_pairs.iter().enumerate() {
+            if token_is_ws(ot[oi]) || classifier.classify(&ot[oi]).is_some() {
+                continue;
+            }
+            let is_quoted = c_old[oi]
+                .and_then(crate::token::ContainerKind::from_id)
+                .is_some_and(|c| c.is_quoted())
+                || c_new[ni]
+                    .and_then(crate::token::ContainerKind::from_id)
+                    .is_some_and(|c| c.is_quoted());
+            if is_quoted {
+                continue;
+            }
+
+            let depth_discordant = d_old[oi] != d_new[ni]
+                && d_old[oi] >= 1
+                && d_new[ni] >= 1
+                && crate::token::get_enclosing_caller(&ot, oi)
+                    != crate::token::get_enclosing_caller(&nt, ni);
+
+            if depth_discordant {
+                let mut left_bound_a = oi;
+                while left_bound_a > 0
+                    && (crate::lcs::is_subword_token(ot[left_bound_a - 1])
+                        || ot[left_bound_a - 1] == "::")
+                {
+                    left_bound_a -= 1;
+                }
+                let mut left_bound_b = ni;
+                while left_bound_b > 0
+                    && (crate::lcs::is_subword_token(nt[left_bound_b - 1])
+                        || nt[left_bound_b - 1] == "::")
+                {
+                    left_bound_b -= 1;
+                }
+
+                let mut right_bound_a = oi + 1;
+                while right_bound_a < ot.len()
+                    && (crate::lcs::is_subword_token(ot[right_bound_a])
+                        || ot[right_bound_a] == "::")
+                {
+                    right_bound_a += 1;
+                }
+                let mut right_bound_b = ni + 1;
+                while right_bound_b < nt.len()
+                    && (crate::lcs::is_subword_token(nt[right_bound_b])
+                        || nt[right_bound_b] == "::")
+                {
+                    right_bound_b += 1;
+                }
+
+                let is_support_token = |tok: &str| {
+                    !token_is_ws(tok)
+                        && classifier.classify(&tok).is_none()
+                        && (crate::lcs::token_is_alnum(tok)
+                            || profile.is_some_and(|p| p.is_operator_anchor(tok)))
+                        && !crate::token::is_function_word(tok)
+                };
+
+                let left_supported = sorted_pairs
+                    .iter()
+                    .any(|&(o, n)| o < left_bound_a && n < left_bound_b && is_support_token(ot[o]));
+                let right_supported = sorted_pairs.iter().any(|&(o, n)| {
+                    o >= right_bound_a && n >= right_bound_b && is_support_token(ot[o])
+                });
+
+                if !left_supported && !right_supported {
+                    purged_indices.push(i);
+                }
+            }
+        }
+
         if !purged_indices.is_empty() {
             purged_indices.sort_unstable();
             purged_indices.dedup();
             for &idx in purged_indices.iter().rev() {
                 sorted_pairs.remove(idx);
+            }
+        }
+
+        let token_weight = |tokens: &[&str], idx: usize| -> f64 {
+            let t = tokens[idx];
+            if !token_is_ws(t) {
+                char_len(t) as f64
+            } else {
+                classify_whitespace(tokens, idx).token_weight(char_len(t))
+            }
+        };
+        let matched_chars: f64 = sorted_pairs
+            .iter()
+            .map(|&(i, j)| {
+                let w_old = token_weight(&ot, i);
+                let w_new = token_weight(&nt, j);
+                w_old.min(w_new)
+            })
+            .sum();
+        let new_weight: f64 = (0..nt.len()).map(|j| token_weight(&nt, j)).sum();
+        let ratio = if new_weight > 0.0 {
+            matched_chars / new_weight
+        } else {
+            0.0
+        };
+        span.record("matched_chars", matched_chars);
+        span.record("ratio", ratio);
+
+        if ratio < 0.25 && old_text.trim() != new_text.trim() {
+            // Anchors were skipped on the pure-prefix/suffix fast paths;
+            // compute them only now that the fallback test actually needs
+            // `has_anchors` (reordered short-circuit, identical outcome).
+            let has_anchors = match anchors {
+                Some(ref computed) => !computed.is_empty(),
+                None => !unique_token_anchors(&ot, &nt, profile).is_empty(),
+            };
+            if !has_anchors {
+                tracing::debug!(
+                    ratio,
+                    "Subword match ratio below threshold, falling back to whole-line diff"
+                );
+                if !old_text.is_empty() {
+                    tape.push(TapeChunk::Strike(old_text));
+                }
+                if !new_text.is_empty() {
+                    tape.push(TapeChunk::Fill(new_text));
+                }
+                return tape;
             }
         }
 

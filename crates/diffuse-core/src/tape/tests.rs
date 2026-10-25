@@ -775,3 +775,15 @@ fn test_tape_inner_container_salience_purges_empty_to_nonempty_across_distinct_c
         .collect();
     assert_eq!(add_texts, vec!["!", "some_and(|c| c.is_quoted())"]);
 }
+
+#[test]
+fn test_line_722_chunks() {
+    let rs = diffuse_syntax::registry::lang_profile("rs");
+    let old = "        if stack.last() == Some(&ContainerKind::Backtick) {";
+    let new = "        .map(|opt| opt.and_then(ContainerKind::from_id))";
+    let tape = AlignmentTape::from_texts(old, new, rs);
+    assert_eq!(
+        tape.chunks,
+        vec![TapeChunk::Strike(old), TapeChunk::Fill(new),]
+    );
+}
