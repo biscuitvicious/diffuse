@@ -93,7 +93,7 @@ pub(crate) fn peel_to_tree<'a>(
 pub fn load_blob(repo: &gix::Repository, ref_str: &str, path: &str) -> Option<GitBlob> {
     let clean_ref = ref_str.trim();
     if clean_ref.is_empty() || clean_ref == ":" || clean_ref == ":0" {
-        return load_blob_from_index(repo, path);
+        return load_index_blob(repo, path);
     }
 
     let clean_path = path.trim_start_matches("./");
@@ -127,9 +127,9 @@ pub fn load_blob(repo: &gix::Repository, ref_str: &str, path: &str) -> Option<Gi
 }
 
 /// Load a blob directly from the index (staged file).
-pub fn load_blob_from_index(repo: &gix::Repository, path: &str) -> Option<GitBlob> {
+pub fn load_index_blob(repo: &gix::Repository, path: &str) -> Option<GitBlob> {
     let clean_path = path.trim_start_matches("./");
-    let index = repo.index().ok()?;
+    let index = repo.open_index().ok()?;
     let entry = index.entry_by_path(clean_path.as_bytes().as_bstr())?;
     if entry.mode == gix::index::entry::Mode::COMMIT {
         let text = format!("Subproject commit {}\n", entry.id);
@@ -195,7 +195,7 @@ pub fn load_blobs_batch(repo: &gix::Repository, specs: &[String]) -> HashMap<Str
     for (ref_str, entries) in grouped_by_ref {
         let clean_ref = ref_str.trim();
         if clean_ref.is_empty() || clean_ref == ":" || clean_ref == ":0" {
-            if let Ok(index) = repo.index() {
+            if let Ok(index) = repo.open_index() {
                 for (spec, path) in entries {
                     let clean_path = path.trim_start_matches("./");
                     if let Some(entry) = index.entry_by_path(clean_path.as_bytes().as_bstr())

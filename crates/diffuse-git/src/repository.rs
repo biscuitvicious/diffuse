@@ -183,7 +183,7 @@ impl Repository {
 
     /// Load a single blob from the index by path.
     pub fn load_index_blob(&self, path: &str) -> Option<crate::types::GitBlob> {
-        crate::objects::load_blob_from_index(&self.inner, path)
+        crate::objects::load_index_blob(&self.inner, path)
     }
 
     /// Check if a path is considered binary by gitattributes or content.
