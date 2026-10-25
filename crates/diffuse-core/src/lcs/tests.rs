@@ -973,3 +973,29 @@ fn test_unicode_delimiter_tokenization() {
         ]
     );
 }
+
+#[test]
+fn test_token_is_salient_profile_literals_and_keywords() {
+    let go = diffuse_syntax::registry::lang_profile("go");
+    let rs = diffuse_syntax::registry::lang_profile("rs");
+
+    // Rust: keywords
+    assert!(!crate::lcs::token_is_salient("true", rs));
+    assert!(!crate::lcs::token_is_salient("false", rs));
+    assert!(!crate::lcs::token_is_salient("match", rs));
+    assert!(crate::lcs::token_is_salient("my_var", rs));
+
+    // Go: literals vs keywords vs identifiers
+    assert!(!crate::lcs::token_is_salient("true", go));
+    assert!(!crate::lcs::token_is_salient("false", go));
+    assert!(!crate::lcs::token_is_salient("nil", go));
+    assert!(!crate::lcs::token_is_salient("func", go));
+    assert!(crate::lcs::token_is_salient("myVar", go));
+
+    // Without profile fallback: all alphanumerics are salient
+    assert!(crate::lcs::token_is_salient("true", None));
+    assert!(crate::lcs::token_is_salient("false", None));
+    assert!(crate::lcs::token_is_salient("ident", None));
+    assert!(!crate::lcs::token_is_salient("   ", None));
+    assert!(!crate::lcs::token_is_salient("==", None));
+}

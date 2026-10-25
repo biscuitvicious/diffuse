@@ -16,10 +16,13 @@ pub const OPERATORS: &[&str] = &[
     "==", ">=", ">>", ">>=", "^=", "|=", "||",
 ];
 
+pub const LITERALS: &[&str] = &["NULL", "false", "nullptr", "true"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "c_family",
         keywords: KEYWORDS,
+        literals: LITERALS,
         line_comment: true,
         block_comment: true,
         types_by_case: true,

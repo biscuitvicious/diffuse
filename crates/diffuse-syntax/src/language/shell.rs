@@ -16,6 +16,7 @@ pub fn profile() -> LangProfile {
     LangProfile {
         name: "shell",
         keywords: KEYWORDS,
+        literals: &[],
         hash_comment: true,
         line_comment: false,
         types_by_case: false,

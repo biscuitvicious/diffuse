@@ -428,10 +428,11 @@ pub fn token_is_alnum(t: &str) -> bool {
     t.chars().any(|c| c.is_alphanumeric())
 }
 
-/// The salient test: alphanumeric, not a keyword in `profile`, and not a
-/// boolean literal.
+/// The salient test: alphanumeric, not a keyword or literal in `profile`.
+/// Falls back to counting all alphanumerics as salient when no profile is
+/// available.
 pub fn token_is_salient(t: &str, profile: Option<&LangProfile>) -> bool {
-    token_is_alnum(t) && !profile.is_some_and(|p| p.is_keyword(t)) && !matches!(t, "true" | "false")
+    token_is_alnum(t) && !profile.is_some_and(|p| p.is_keyword(t) || p.is_literal(t))
 }
 
 /// Checks whether `text` contains at least one salient token.

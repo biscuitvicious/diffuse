@@ -3547,10 +3547,11 @@ fn test_shell_local_export_is_statement_start() {
     );
 }
 
-/// Salience is `is_alphanumeric && !is_keyword` in this language's
-/// `LangProfile`. Boolean literals are language lexemes, not identifiers:
-/// every language that has them must list them as keywords so they never
-/// count as salient content in the pairing gates.
+/// Salience is `is_alphanumeric && !is_keyword && !is_literal` in this
+/// language's `LangProfile`. Boolean and null/nil literals are language
+/// lexemes, not identifiers: every language that has them lists them as
+/// keywords or literals so they never count as salient content in the pairing
+/// gates.
 #[test]
 fn test_boolean_literals_are_not_salient() {
     let rs = lang_profile("rs");
@@ -3572,6 +3573,31 @@ fn test_boolean_literals_are_not_salient() {
         "plain identifiers stay salient"
     );
     assert!(!interner.salient[kw as usize], "keywords are never salient");
+
+    // Go: `true`, `false`, `nil` are literals, not keywords, but must not be
+    // salient.
+    let go = lang_profile("go");
+    let mut go_interner = TokenInterner::new();
+    let gt = go_interner.intern_with_profile("true", go);
+    let gf = go_interner.intern_with_profile("false", go);
+    let gn = go_interner.intern_with_profile("nil", go);
+    let gi = go_interner.intern_with_profile("myVar", go);
+    assert!(
+        !go_interner.salient[gt as usize],
+        "`true` literal must not be salient in Go"
+    );
+    assert!(
+        !go_interner.salient[gf as usize],
+        "`false` literal must not be salient in Go"
+    );
+    assert!(
+        !go_interner.salient[gn as usize],
+        "`nil` literal must not be salient in Go"
+    );
+    assert!(
+        go_interner.salient[gi as usize],
+        "Go identifier stays salient"
+    );
 }
 
 // ---- Chain-consistency scoring (duplicate-verbatim mangle) ----

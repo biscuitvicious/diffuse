@@ -22,7 +22,6 @@ pub const KEYWORDS: &[&str] = &[
     "enum",
     "export",
     "extends",
-    "false",
     "finally",
     "for",
     "from",
@@ -35,7 +34,6 @@ pub const KEYWORDS: &[&str] = &[
     "interface",
     "let",
     "new",
-    "null",
     "of",
     "return",
     "set",
@@ -44,7 +42,6 @@ pub const KEYWORDS: &[&str] = &[
     "switch",
     "this",
     "throw",
-    "true",
     "try",
     "typeof",
     "var",
@@ -53,6 +50,8 @@ pub const KEYWORDS: &[&str] = &[
     "with",
     "yield",
 ];
+
+pub const LITERALS: &[&str] = &["false", "null", "true"];
 
 pub const OPERATORS: &[&str] = &[
     "!=", "!==", "%=", "&&", "&&=", "&=", "**", "**=", "*=", "++", "+=", "--", "-=", "->", "/=",
@@ -64,6 +63,7 @@ pub fn profile() -> LangProfile {
     LangProfile {
         name: "web",
         keywords: KEYWORDS,
+        literals: LITERALS,
         line_comment: true,
         block_comment: true,
         types_by_case: true,

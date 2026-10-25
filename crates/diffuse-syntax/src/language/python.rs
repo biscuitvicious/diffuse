@@ -20,6 +20,7 @@ pub fn profile() -> LangProfile {
     LangProfile {
         name: "python",
         keywords: KEYWORDS,
+        literals: &[],
         hash_comment: true,
         line_comment: false,
         types_by_case: true,

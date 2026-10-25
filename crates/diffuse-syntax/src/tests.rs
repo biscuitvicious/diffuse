@@ -1180,11 +1180,12 @@ fn test_json_and_jsonl_syntax_profile() {
     assert!(json_prof.is_operator_anchor(":"));
     assert!(!json_prof.is_operator_anchor("="));
 
-    // Keyword detection
-    assert!(json_prof.is_keyword("true"));
-    assert!(json_prof.is_keyword("false"));
-    assert!(json_prof.is_keyword("null"));
-    assert!(!json_prof.is_keyword("undefined"));
+    // Literal detection
+    assert!(json_prof.is_literal("true"));
+    assert!(json_prof.is_literal("false"));
+    assert!(json_prof.is_literal("null"));
+    assert!(!json_prof.is_literal("undefined"));
+    assert!(!json_prof.is_keyword("true"));
 
     // Closing delimiter classification
     assert_eq!(
@@ -1216,8 +1217,8 @@ fn test_json_and_jsonl_syntax_profile() {
     assert!(
         tokens
             .iter()
-            .any(|t| t.color == TokenColor::Keyword && t.text == "true"),
-        "boolean literal must be kwd"
+            .any(|t| t.color == TokenColor::Literal && t.text == "true"),
+        "boolean literal must be lit"
     );
 
     // Token classification for JSONL row
@@ -1232,14 +1233,14 @@ fn test_json_and_jsonl_syntax_profile() {
     assert!(
         tokens_l
             .iter()
-            .any(|t| t.color == TokenColor::Keyword && t.text == "false"),
-        "false must be kwd"
+            .any(|t| t.color == TokenColor::Literal && t.text == "false"),
+        "false must be lit"
     );
     assert!(
         tokens_l
             .iter()
-            .any(|t| t.color == TokenColor::Keyword && t.text == "null"),
-        "null must be kwd"
+            .any(|t| t.color == TokenColor::Literal && t.text == "null"),
+        "null must be lit"
     );
     assert!(
         tokens_l
@@ -1517,4 +1518,56 @@ fn test_is_closing_delimiter_unicode() {
     assert!(rs.is_closing_delimiter("⟧"));
     assert!(rs.is_closing_delimiter("；"));
     assert!(rs.is_statement_terminator("；"));
+}
+
+#[test]
+fn test_literal_token_classification_and_wire_code() {
+    assert_eq!(TokenColor::Literal.wire_code(), Some("lit"));
+    assert_eq!(TokenColor::from_wire_code("lit"), TokenColor::Literal);
+
+    let go = lang_profile("go").unwrap();
+    assert!(go.is_literal("true"));
+    assert!(go.is_literal("false"));
+    assert!(go.is_literal("nil"));
+    assert!(!go.is_keyword("true"));
+    assert!(!go.is_keyword("false"));
+
+    let go_tokens = classify_tokens("ok := true && ptr != nil", Some(go));
+    assert!(
+        go_tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Literal && t.text == "true"),
+        "Go 'true' must be classified as TokenColor::Literal"
+    );
+    assert!(
+        go_tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Literal && t.text == "nil"),
+        "Go 'nil' must be classified as TokenColor::Literal"
+    );
+
+    let rs = lang_profile("rs").unwrap();
+    assert!(rs.is_keyword("true"));
+    assert!(rs.is_keyword("false"));
+    assert!(!rs.is_literal("true"));
+    let rs_tokens = classify_tokens("let x = true;", Some(rs));
+    assert!(
+        rs_tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Keyword && t.text == "true"),
+        "Rust 'true' must be classified as TokenColor::Keyword"
+    );
+
+    let ts = lang_profile("ts").unwrap();
+    assert!(ts.is_literal("true"));
+    assert!(ts.is_literal("false"));
+    assert!(ts.is_literal("null"));
+    assert!(!ts.is_keyword("true"));
+    let ts_tokens = classify_tokens("const x = null;", Some(ts));
+    assert!(
+        ts_tokens
+            .iter()
+            .any(|t| t.color == TokenColor::Literal && t.text == "null"),
+        "TS 'null' must be classified as TokenColor::Literal"
+    );
 }

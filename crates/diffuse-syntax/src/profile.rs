@@ -386,6 +386,9 @@ pub struct LangProfile {
     pub name: &'static str,
     /// Sorted keyword slice for `O(log n)` binary-search lookup.
     pub keywords: &'static [&'static str],
+    /// Sorted literal token slice for `O(log n)` binary-search lookup (e.g.
+    /// `true`, `false`, `nil`, `null`).
+    pub literals: &'static [&'static str],
     /// `#` to end of line is a comment (python/shell/yaml/toml/markdown).
     pub hash_comment: bool,
     /// `//` to end of line.
@@ -613,6 +616,13 @@ impl LangProfile {
     /// slice).
     pub fn is_keyword(&self, word: &str) -> bool {
         self.keywords.binary_search(&word).is_ok()
+    }
+
+    /// Whether the literal slice contains `word` (binary search on sorted
+    /// slice).
+    #[inline]
+    pub fn is_literal(&self, word: &str) -> bool {
+        self.literals.binary_search(&word).is_ok()
     }
 
     /// Whether `t` is a recognized multi-character operator in this language.

@@ -12,6 +12,7 @@ pub fn toml_profile() -> LangProfile {
     LangProfile {
         name: "toml",
         keywords: &[],
+        literals: &["false", "true"],
         hash_comment: true,
         line_comment: false,
         types_by_case: false,
@@ -45,6 +46,7 @@ pub fn yaml_profile() -> LangProfile {
     LangProfile {
         name: "yaml",
         keywords: &[],
+        literals: &["false", "null", "true"],
         hash_comment: true,
         line_comment: false,
         types_by_case: false,
@@ -78,13 +80,14 @@ pub fn toml_yaml_profile() -> LangProfile {
     toml_profile()
 }
 
-pub const JSON_KEYWORDS: &[&str] = &["false", "null", "true"];
+pub const JSON_LITERALS: &[&str] = &["false", "null", "true"];
 
 /// JSON & JSON Lines (JSONL) — brace structure, no comments.
 pub fn json_profile() -> LangProfile {
     LangProfile {
         name: "json",
-        keywords: JSON_KEYWORDS,
+        keywords: &[],
+        literals: JSON_LITERALS,
         hash_comment: false,
         line_comment: false,
         types_by_case: false,

@@ -32,6 +32,8 @@ pub enum TokenColor {
     CharLiteral,
     /// Number / numeric literal (`num`)
     Number,
+    /// Literal value token (`lit`)
+    Literal,
     /// Comment (`com`)
     Comment,
 
@@ -83,6 +85,7 @@ impl TokenColor {
             Self::String => Some("str"),
             Self::CharLiteral => Some("chr"),
             Self::Number => Some("num"),
+            Self::Literal => Some("lit"),
             Self::Comment => Some("com"),
             Self::Bold => Some("bld"),
             Self::Italic => Some("ita"),
@@ -111,6 +114,7 @@ impl TokenColor {
             "str" => Self::String,
             "chr" => Self::CharLiteral,
             "num" => Self::Number,
+            "lit" => Self::Literal,
             "com" => Self::Comment,
             "bld" => Self::Bold,
             "ita" => Self::Italic,

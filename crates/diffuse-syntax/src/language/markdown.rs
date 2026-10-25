@@ -8,6 +8,7 @@ pub fn profile() -> LangProfile {
     LangProfile {
         name: "markdown",
         keywords: &[],
+        literals: &[],
         hash_comment: true,
         line_comment: false,
         types_by_case: false,

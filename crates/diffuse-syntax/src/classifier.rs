@@ -123,6 +123,8 @@ fn for_each_classified_token_dyn<'a>(
         {
             if profile.is_keyword(tok) {
                 TokenColor::Keyword
+            } else if profile.is_literal(tok) {
+                TokenColor::Literal
             } else if profile.types_by_case && tok.chars().next().is_some_and(|c| c.is_uppercase())
             {
                 TokenColor::Type

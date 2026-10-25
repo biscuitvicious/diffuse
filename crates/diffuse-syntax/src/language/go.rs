@@ -32,6 +32,8 @@ pub const KEYWORDS: &[&str] = &[
     "var",
 ];
 
+pub const LITERALS: &[&str] = &["false", "nil", "true"];
+
 pub const OPERATORS: &[&str] = &[
     "!=", "%=", "&&", "&=", "*=", "++", "+=", "--", "-=", "->", "/=", ":=", "<<", "<<=", "<=",
     "==", "=>", ">=", ">>", ">>=", "^=", "|=", "||",
@@ -41,6 +43,7 @@ pub fn profile() -> LangProfile {
     LangProfile {
         name: "go",
         keywords: KEYWORDS,
+        literals: LITERALS,
         line_comment: true,
         block_comment: true,
         types_by_case: true,

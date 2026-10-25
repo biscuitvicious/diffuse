@@ -56,6 +56,7 @@ pub fn profile() -> LangProfile {
     LangProfile {
         name: "rust",
         keywords: KEYWORDS,
+        literals: &[],
         line_comment: true,
         block_comment: true,
         types_by_case: true,
