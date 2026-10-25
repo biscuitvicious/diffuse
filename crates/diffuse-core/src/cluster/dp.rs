@@ -1951,6 +1951,7 @@ pub struct DpScratchArena {
     pub(crate) anchor_token_ids: Vec<u32>,
     pub(crate) old_anchor_ranges: Vec<(usize, usize, usize)>,
     pub(crate) new_anchor_ranges: Vec<(usize, usize, usize)>,
+    pub(crate) forbidden_pairs: FxHashSet<(usize, usize)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -2013,6 +2014,7 @@ impl DpScratchArena {
         self.anchor_token_ids.clear();
         self.old_anchor_ranges.clear();
         self.new_anchor_ranges.clear();
+        self.forbidden_pairs.clear();
     }
 }
 
@@ -2067,6 +2069,61 @@ pub fn solve_cluster_with(
 
 pub(crate) const ANCHOR_DECOMPOSITION_MIN_ROWS: usize = 256;
 
+pub(crate) fn is_admissible_mod_pair(
+    del_text: &str,
+    add_text: &str,
+    profile: Option<&LangProfile>,
+) -> bool {
+    if del_text == add_text {
+        return true;
+    }
+    // Fast path: if the non-whitespace prefixes or suffixes match, common
+    // non-whitespace context is guaranteed to survive alignment tape without
+    // needing full LCS runs.
+    let d_trim = del_text.trim_start();
+    let a_trim = add_text.trim_start();
+    let mut has_non_ws_prefix = false;
+    for ((_, c1), (_, c2)) in d_trim.char_indices().zip(a_trim.char_indices()) {
+        if c1 == c2 {
+            if !c1.is_whitespace() {
+                has_non_ws_prefix = true;
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    if has_non_ws_prefix {
+        return true;
+    }
+    let d_trim_end = del_text.trim_end();
+    let a_trim_end = add_text.trim_end();
+    let mut has_non_ws_suffix = false;
+    for (c1, c2) in d_trim_end.chars().rev().zip(a_trim_end.chars().rev()) {
+        if c1 == c2 {
+            if !c1.is_whitespace() {
+                has_non_ws_suffix = true;
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    if has_non_ws_suffix {
+        return true;
+    }
+
+    let (_spans, runs) = crate::lcs::word_spans_and_runs_with_profile(del_text, add_text, profile);
+    // Context must not be purely whitespace
+    let has_non_ws_ctx = runs
+        .iter()
+        .any(|(kind, text)| *kind == crate::merge::RunKind::Ctx && !text.trim().is_empty());
+    if !has_non_ws_ctx && (!del_text.trim().is_empty() || !add_text.trim().is_empty()) {
+        return false;
+    }
+    true
+}
+
 /// Solves a cluster using a reusable scratch arena for zero-allocation
 /// buffers.
 pub(crate) fn solve_cluster_with_arena(
@@ -2078,14 +2135,79 @@ pub(crate) fn solve_cluster_with_arena(
     let m = cluster.old_rows.len();
     let n = cluster.new_rows.len();
 
-    if m >= ANCHOR_DECOMPOSITION_MIN_ROWS
+    if arena.forbidden_pairs.is_empty()
+        && m >= ANCHOR_DECOMPOSITION_MIN_ROWS
         && n >= ANCHOR_DECOMPOSITION_MIN_ROWS
         && let Some(sol) = solve_cluster_with_anchors(cluster, profile, w, arena)
     {
         return sol;
     }
 
-    solve_cluster_matrix(cluster, profile, w, arena)
+    arena.forbidden_pairs.clear();
+    let mut sol = solve_cluster_matrix(cluster, profile, w, arena);
+
+    // DP Feedback Loop: validate proposed Mod and block Anchor pairings.
+    // If any proposed pair degraded to all-whitespace context, forbid it and
+    // re-solve.
+    for _ in 0..m.min(n).min(16) {
+        let mut invalid_pair = None;
+        let mut oi = 0usize;
+        let mut ni = 0usize;
+        for t in &sol.transitions {
+            match t {
+                DpOp::Del => oi += 1,
+                DpOp::Add => ni += 1,
+                DpOp::Mod { .. } | DpOp::Mov => {
+                    let cur_oi = oi;
+                    let cur_ni = ni;
+                    oi += 1;
+                    ni += 1;
+                    if let (Some(r), Some(a)) =
+                        (cluster.old_rows.get(cur_oi), cluster.new_rows.get(cur_ni))
+                        && !is_admissible_mod_pair(r.text(), a.text(), profile)
+                    {
+                        invalid_pair = Some((cur_oi, cur_ni));
+                        break;
+                    }
+                }
+                DpOp::Expand { anchor, k, .. } => {
+                    let cur_oi = oi;
+                    let cur_ni = ni + anchor;
+                    oi += 1;
+                    ni += k;
+                    if let (Some(r), Some(a)) =
+                        (cluster.old_rows.get(cur_oi), cluster.new_rows.get(cur_ni))
+                        && !is_admissible_mod_pair(r.text(), a.text(), profile)
+                    {
+                        invalid_pair = Some((cur_oi, cur_ni));
+                        break;
+                    }
+                }
+                DpOp::Collapse { anchor, k, .. } => {
+                    let cur_oi = oi + anchor;
+                    let cur_ni = ni;
+                    oi += k;
+                    ni += 1;
+                    if let (Some(r), Some(a)) =
+                        (cluster.old_rows.get(cur_oi), cluster.new_rows.get(cur_ni))
+                        && !is_admissible_mod_pair(r.text(), a.text(), profile)
+                    {
+                        invalid_pair = Some((cur_oi, cur_ni));
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some((bad_oi, bad_ni)) = invalid_pair {
+            arena.forbidden_pairs.insert((bad_oi, bad_ni));
+            sol = solve_cluster_matrix(cluster, profile, w, arena);
+        } else {
+            break;
+        }
+    }
+
+    sol
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -2834,6 +2956,9 @@ pub(crate) fn solve_cluster_matrix(
                         && om.comment == nm.comment
                         && om.kind.is_compatible(nm.kind)
                     {
+                        if arena.forbidden_pairs.contains(&(i, j)) {
+                            break 'eval_mod;
+                        }
                         let nt = &new_tokens[j];
                         if ot.ids.is_empty() && nt.ids.is_empty() {
                             // blank ↔ blank: a trivial full match in one row.
@@ -3337,6 +3462,9 @@ pub(crate) fn solve_cluster_matrix(
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
                             continue;
                         }
+                        if arena.forbidden_pairs.contains(&(i, j + anchor)) {
+                            continue;
+                        }
                         if pblock.opens_container && (bm_matched as f64 / ot.chars as f64) < 0.50 {
                             continue;
                         }
@@ -3446,6 +3574,9 @@ pub(crate) fn solve_cluster_matrix(
                             lcs_scratch,
                         );
                         if bm_matched < 8 || (bm_matched as f64 / total as f64) < 0.35 {
+                            continue;
+                        }
+                        if arena.forbidden_pairs.contains(&(i, j + anchor)) {
                             continue;
                         }
                         let syntax = if nm.first_word.is_some()

@@ -584,7 +584,7 @@ fn test_is_wholesale_replacement_branches() {
     );
     assert!(!is_wholesale_replacement(&r_partial));
 
-    // Common indent returns false
+    // Common indent alone without non-whitespace context returns true (wholesale)
     let r_indent = Row::mod_with_spans(
         DelLine::new(1, "  foo"),
         AddLine::new(1, "  bar"),
@@ -593,7 +593,18 @@ fn test_is_wholesale_replacement_branches() {
             add: vec![(0, 5)],
         },
     );
-    assert!(!is_wholesale_replacement(&r_indent));
+    assert!(is_wholesale_replacement(&r_indent));
+
+    // Common non-whitespace context returns false
+    let r_non_ws = Row::mod_with_spans(
+        DelLine::new(1, "  foo(a);"),
+        AddLine::new(1, "  foo(b);"),
+        Spans {
+            del: vec![(6, 7)],
+            add: vec![(6, 7)],
+        },
+    );
+    assert!(!is_wholesale_replacement(&r_non_ws));
 
     // Completely struck out and added returns true
     let r_wholesale = Row::mod_with_spans(

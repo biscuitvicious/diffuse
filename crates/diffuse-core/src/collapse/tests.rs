@@ -2871,3 +2871,45 @@ fn test_reflow_filter_preserves_context_old_line_monotonicity() {
     let res = collapse_hunk_rows(&h, None, None, profile);
     assert!(check_context_old_line_monotonicity(&res).is_ok());
 }
+
+#[test]
+fn test_token_rs_line_722_not_wholesale_mod() {
+    let old = std::fs::read_to_string(
+        "../../tests/golden/container-compatibility/files/crates-diffuse-core-src-token.old.rs",
+    )
+    .or_else(|_| {
+        std::fs::read_to_string(
+            "tests/golden/container-compatibility/files/crates-diffuse-core-src-token.old.rs",
+        )
+    })
+    .unwrap();
+    let new = std::fs::read_to_string(
+        "../../tests/golden/container-compatibility/files/crates-diffuse-core-src-token.new.rs",
+    )
+    .or_else(|_| {
+        std::fs::read_to_string(
+            "tests/golden/container-compatibility/files/crates-diffuse-core-src-token.new.rs",
+        )
+    })
+    .unwrap();
+    let profile = diffuse_syntax::registry::lang_profile("rs");
+    let (hunks, _) = diffuse_git::diff_text(&old, &new, 3, diffuse_git::WhitespaceMode::Exact);
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let collapsed =
+        crate::collapse::collapse_hunk_rows(&hunks[1], Some(&old_lines), Some(&new_lines), profile);
+
+    // Line 722 must not pair with line 687 as a Mod row!
+    for r in &collapsed {
+        if let Row::Mod {
+            old_line, new_line, ..
+        } = r
+        {
+            assert!(
+                !(old_line.num == 687 && new_line.num == 722),
+                "Line 687 and 722 must not pair as Mod row; got: {:?}",
+                crate::merge::merged_runs(r)
+            );
+        }
+    }
+}

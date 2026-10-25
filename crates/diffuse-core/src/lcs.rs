@@ -428,6 +428,26 @@ pub fn token_is_alnum(t: &str) -> bool {
     t.chars().any(|c| c.is_alphanumeric())
 }
 
+/// The salient test: alphanumeric, not a keyword in `profile`, and not a
+/// boolean literal.
+pub fn token_is_salient(t: &str, profile: Option<&LangProfile>) -> bool {
+    token_is_alnum(t) && !profile.is_some_and(|p| p.is_keyword(t)) && !matches!(t, "true" | "false")
+}
+
+/// Checks whether `text` contains at least one salient token.
+pub fn line_has_salient_token(text: &str, profile: Option<&LangProfile>) -> bool {
+    let mut has = false;
+    for_each_token(text, |t| {
+        if has {
+            return;
+        }
+        if token_is_salient(t, profile) {
+            has = true;
+        }
+    });
+    has
+}
+
 /// Computes unambiguous unique token anchors (Patience diff pre-pass).
 pub fn unique_token_anchors(
     a: &[&str],

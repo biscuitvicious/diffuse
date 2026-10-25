@@ -68,24 +68,31 @@ pub fn is_wholesale_mod(r: &Row) -> bool {
 }
 
 /// Returns true when a mod row consists of entirely struck-out spans followed
-/// by entirely added spans with zero common anchor or context tokens (100% of
-/// old line deleted, 100% of new line added).
+/// by entirely added spans with zero non-whitespace common anchor or context
+/// tokens (100% of non-whitespace characters in old line deleted, 100% of
+/// non-whitespace characters in new line added).
 pub fn is_wholesale_replacement_spans(del_text: &str, add_text: &str, spans: &Spans) -> bool {
     let old_len = crate::lcs::char_len(del_text);
     let new_len = crate::lcs::char_len(add_text);
-    let del_chars: usize = spans.del.iter().map(|(s, e)| e.saturating_sub(*s)).sum();
-    let add_chars: usize = spans.add.iter().map(|(s, e)| e.saturating_sub(*s)).sum();
-    if del_chars == old_len && add_chars == new_len && (old_len > 0 || new_len > 0) {
-        let runs = merged_runs_from_texts(del_text, add_text, spans);
-        !runs.iter().any(|run| run.kind == RunKind::Ctx)
-    } else {
-        false
+    if old_len == 0 && new_len == 0 {
+        return false;
     }
+    let runs = merged_runs_from_texts(del_text, add_text, spans);
+    let has_non_ws_ctx = runs
+        .iter()
+        .any(|run| run.kind == RunKind::Ctx && !run.text.trim().is_empty());
+    if !has_non_ws_ctx {
+        return !del_text.trim().is_empty() || !add_text.trim().is_empty();
+    }
+    false
 }
 
 /// True when a Row::Mod is a wholesale replacement (completely struck out and
 /// re-added).
 pub fn is_wholesale_replacement(r: &Row) -> bool {
+    if !matches!(r, Row::Mod { .. }) {
+        return false;
+    }
     let Some(del_text) = r.old_text() else {
         return false;
     };
