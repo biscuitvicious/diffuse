@@ -22,12 +22,12 @@ discipline for any change in golden output.
 
 > [!IMPORTANT]
 > **Validated vs. Provisional Goldens**:
-> - **Validated Goldens (`theme-scrollbar-palette`, `opt-4-manual-scanner-prefilter`, `container-compatibility`)**: Fully hand-reviewed and verified as a clean rendering baseline. Serves as a strict hard gate against regression.
-> - **Unvalidated / Provisional Goldens (all others)**: Captured from earlier engine runs and not yet fully audited for ideal rendering quality. They guard against unintended regressions, but should be taken as **less of a hard gate** when algorithmic improvements produce demonstrably cleaner, strictly better diffs.
+> - **Validated Goldens (`theme-scrollbar-palette`, `opt-4-manual-scanner-prefilter`, `container-compatibility`)**: Fully hand-reviewed and verified as a clean rendering baseline. Serves as a strong signal against unintended changes and regressions, while allowing room for deliberate refinements, visual preferences, and demonstrable improvements.
+> - **Unvalidated / Provisional Goldens (all others)**: Captured from earlier engine runs and not yet fully audited for ideal rendering quality. They guard against unintended regressions, but carry lower inertia when algorithmic improvements produce demonstrably cleaner, strictly better diffs.
 
 | corpus | rust walk | render golden | status | notes |
 |---|---|---|---|---|
-| `theme-scrollbar-palette` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline; strict hard gate |
+| `theme-scrollbar-palette` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline; strong signal against changes |
 | `theme-light-toggle` | ✅ | ✅ | Provisional | Light theme, terminal luminance, and import alignment fixture (pending full review) |
 | `row-groups-contrast` | ✅ | ✅ | Provisional | Row groups, dark theme context contrast & goto buffer navigation (pending full review) |
 | `rust-lifetime-char` | ✅ | ✅ | Provisional | Rust lifetimes distinction and language-specific char literal parsing (pending full review) |
@@ -35,7 +35,7 @@ discipline for any change in golden output.
 | `opt-1-cache-regex-window-slice` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
 | `opt-2-cache-markdown-regex` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
 | `opt-3-cache-lang-profile` | ✅ | ✅ | Provisional | Perf commit captured as fixture (pending full review) |
-| `opt-4-manual-scanner-prefilter` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (reflow atomicity & delimiter alignment); strict hard gate |
+| `opt-4-manual-scanner-prefilter` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (reflow atomicity & delimiter alignment); strong signal against changes |
 | `diffuse-history-mid` | ✅ | ✅ | Provisional | Pinned 100-commit window, absolute ids (pending full review) |
 | `untracked-files` | ✅ | ✅ | Provisional | Untracked additions & status representation (pending full review) |
 | `review-notes` | ✅ | ✅ | Provisional | Review notes anchoring, commit scoping isolation, and callouts (pending full review) |
@@ -45,7 +45,7 @@ discipline for any change in golden output.
 | `linenum-u32` | ✅ | ✅ | Provisional | Primitive line numbers and non-zero constructor preconditions refactoring (pending full review) |
 | `scrollbar-grab-drag` | ✅ | ✅ | Provisional | Scrollbar grab drag, 12% min size, touch velocity scaling, and dispatch extraction (pending full review) |
 | `viewport-scroll-boundaries` | ✅ | ✅ | Provisional | Viewport scroll boundaries and reflow expansion (pending full review) |
-| `container-compatibility` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (container compatibility in Gotoh alignment and submodule commit pairing); strict hard gate |
+| `container-compatibility` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (container compatibility in Gotoh alignment and submodule commit pairing); strong signal against changes |
 
 The terminal render walk in [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.dark.txt`, `.render.light.txt`, and
