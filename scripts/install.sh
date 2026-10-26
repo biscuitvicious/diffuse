@@ -40,7 +40,7 @@ if [ "${INSTALL_HARVEST:-}" = "1" ]; then
 fi
 
 PROFILE="${PROFILE:-release}"
-CARGO_INSTALL_ARGS=(install --quiet --locked --path crates/diffuse "${BINS[@]}" --force)
+CARGO_INSTALL_ARGS=(install --quiet --locked --offline --path crates/diffuse "${BINS[@]}" --force)
 if [ -n "$TARGET" ]; then
     CARGO_INSTALL_ARGS+=(--target "$TARGET")
 fi
