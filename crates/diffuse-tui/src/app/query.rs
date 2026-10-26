@@ -23,13 +23,9 @@ impl AppState {
         let FlatRowKind::DiffRow { hunk_idx, row_idx } = fr.kind else {
             return None;
         };
-        let file = output.files.get(fr.file_idx).unwrap_or_else(|| {
-            panic!(
-                "FlatRow file_idx {} out of bounds (output has {} files)",
-                fr.file_idx,
-                output.files.len()
-            )
-        });
+        let Some(file) = output.files.get(fr.file_idx) else {
+            return None;
+        };
         if raw_diff {
             let hunks = if !file.raw_hunks.is_empty() {
                 &file.raw_hunks
