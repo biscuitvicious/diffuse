@@ -131,3 +131,125 @@ fn test_streaming_append_file_multi_hunk_with_gap() {
         "streaming render must contain H2 divider"
     );
 }
+
+#[test]
+fn test_reset_for_streaming_reload() {
+    let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n-fn one() {}\n+fn one_mod() {}\n";
+    let new_content = [("a.rs".to_string(), "fn one_mod() {}\n".to_string())]
+        .into_iter()
+        .collect();
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        None,
+        PipelineOptions::default(),
+    );
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    assert_eq!(state.output.files.len(), 1);
+    assert!(!state.flat.is_empty());
+    assert!(!state.hunk_starts.is_empty());
+
+    state.reset_for_streaming_reload();
+
+    assert!(state.output.files.is_empty());
+    assert!(state.flat.is_empty());
+    assert!(state.hunk_starts.is_empty());
+    assert!(state.hunk_meta.is_empty());
+    assert!(state.collapsed_files.is_empty());
+    assert_eq!(state.row_idx, 0);
+    assert_eq!(state.vis_line, 0);
+    assert_eq!(state.scroll, 0);
+    assert_eq!(state.col_offset, 0);
+    assert!(state.is_streaming);
+    assert!(state.last_stream_activity.is_some());
+}
+
+#[test]
+fn test_reload_files_preserves_cursor_and_screen_position() {
+    let diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,2 +1,2 @@\n-fn one() {}\n+fn one_mod() {}\ndiff --git a/file2.rs b/file2.rs\n--- a/file2.rs\n+++ b/file2.rs\n@@ -1,2 +1,2 @@\n-fn two() {}\n+fn two_mod() {}\n";
+    let new_content = [
+        ("file1.rs".to_string(), "fn one_mod() {}\n".to_string()),
+        ("file2.rs".to_string(), "fn two_mod() {}\n".to_string()),
+    ]
+    .into_iter()
+    .collect();
+
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        None,
+        PipelineOptions::default(),
+    );
+    let mut state = AppState::new(
+        out,
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.viewport_height = 3;
+    state.terminal_width = 80;
+    state.last_content_width = 80;
+
+    // Navigate to file2.rs and set cursor and scroll
+    state.next_file();
+    assert_eq!(state.current_file().unwrap().path, "file2.rs");
+    state.scroll = 2; // Simulate being scrolled down 2 lines
+
+    let snapshot = state.capture_cursor_snapshot();
+    assert_eq!(snapshot.file_path, "file2.rs");
+
+    // Simulate reloading file1.rs only
+    let updated_file1_diff = "diff --git a/file1.rs b/file1.rs\n--- a/file1.rs\n+++ b/file1.rs\n@@ -1,2 +1,2 @@\n-fn one() {}\n+fn one_v2() {}\n";
+    let updated_file1_content = [("file1.rs".to_string(), "fn one_v2() {}\n".to_string())]
+        .into_iter()
+        .collect();
+    let updated_out = crate::core::pipeline::run_pipeline_full(
+        updated_file1_diff,
+        Some(updated_file1_content),
+        None,
+        PipelineOptions::default(),
+    );
+
+    state.reload_files(updated_out.files, &["file1.rs".to_string()]);
+
+    // Cursor must still be on file2.rs at the same screen Y position!
+    assert_eq!(state.current_file().unwrap().path, "file2.rs");
+    let current_screen_y = state.cursor_visual_line().saturating_sub(state.scroll);
+    assert_eq!(
+        current_screen_y, snapshot.screen_y,
+        "screen Y position must be preserved after reload"
+    );
+}
+
+#[test]
+fn test_replace_or_insert_file_preserves_cursor() {
+    let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n-fn one() {}\n+fn one_mod() {}\n";
+    let new_content = [("a.rs".to_string(), "fn one_mod() {}\n".to_string())]
+        .into_iter()
+        .collect();
+    let out = crate::core::pipeline::run_pipeline_full(
+        diff,
+        Some(new_content),
+        None,
+        PipelineOptions::default(),
+    );
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.row_idx = 1;
+    let snapshot = state.capture_cursor_snapshot();
+
+    // Replace file in-place
+    let same_file = state.output.files[0].clone();
+    state.replace_or_insert_file(same_file, &snapshot);
+    assert_eq!(state.row_idx, 1);
+    assert_eq!(state.output.files.len(), 1);
+}

@@ -10,6 +10,20 @@ pub struct Selection {
     pub side_is_new: bool,
 }
 
+/// Snapshot of cursor position, coordinate anchor, and vertical screen offset
+/// used to retain exact viewport position across full or granular diff reloads.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CursorSnapshot {
+    pub file_path: String,
+    pub file_idx: usize,
+    pub is_file_header: bool,
+    pub is_hunk_divider: bool,
+    pub hunk_idx: Option<usize>,
+    pub target_new: Option<u32>,
+    pub target_old: Option<u32>,
+    pub screen_y: usize,
+}
+
 /// The first flat row of a hunk's content region (the jump target for hunk
 /// navigation, mirroring the reference `hunkStarts`).
 #[derive(Clone, Copy, Debug)]

@@ -88,6 +88,7 @@ pub struct AppState {
     pub scrollbar_drag_grab: Option<usize>,
     pub last_viewport_start: usize,
     pub is_streaming: bool,
+    pub pending_force_reload: bool,
     pub commit_range: Option<String>,
     pub last_stream_activity: Option<Instant>,
     pub start_time: Instant,
@@ -190,6 +191,7 @@ impl AppState {
             scrollbar_drag_grab: None,
             last_viewport_start: 2,
             is_streaming: false,
+            pending_force_reload: false,
             commit_range: None,
             last_stream_activity: None,
             start_time: Instant::now(),
@@ -255,6 +257,18 @@ impl AppState {
             staged,
         );
         self.with_target(target)
+    }
+
+    /// Returns true if the user is in an active interaction modal or drafting
+    /// state where reloading would disrupt ongoing user input.
+    #[must_use]
+    pub fn is_reload_deferred(&self) -> bool {
+        self.note_draft.is_some()
+            || self.file_finder.is_some()
+            || self.show_help
+            || self.is_dragging_scrollbar
+            || self.anchor.is_some()
+            || self.pending_editor.is_some()
     }
 
     /// Scope note storage/lookup to the live HEAD of `repo_root`

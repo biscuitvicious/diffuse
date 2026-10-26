@@ -95,6 +95,9 @@ impl AppState {
                     Err(e) => self.set_status_message(e, false),
                 }
             }
+            TuiCommand::ForceReload => {
+                self.pending_force_reload = true;
+            }
             TuiCommand::ExpandAllHidden => {
                 self.expand_all_hidden();
             }

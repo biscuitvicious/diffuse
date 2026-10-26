@@ -5555,3 +5555,60 @@ fn test_tui_frames_emit_optimal_ansi() {
         state.move_down();
     }
 }
+
+#[test]
+fn test_is_reload_deferred_guards_active_interactions() {
+    let mut state = AppState::new(
+        sample_output(),
+        "repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+
+    // Initial state: not deferred
+    assert!(!state.is_reload_deferred());
+
+    // 1. Note draft
+    state.note_draft = Some("Drafting...".into());
+    assert!(state.is_reload_deferred());
+    state.note_draft = None;
+    assert!(!state.is_reload_deferred());
+
+    // 2. Help modal
+    state.show_help = true;
+    assert!(state.is_reload_deferred());
+    state.show_help = false;
+    assert!(!state.is_reload_deferred());
+
+    // 3. File finder
+    state.file_finder = Some(crate::finder::FileFinderState::new(
+        &state.output.files,
+        0,
+        0,
+    ));
+    assert!(state.is_reload_deferred());
+    state.file_finder = None;
+    assert!(!state.is_reload_deferred());
+
+    // 4. Scrollbar drag
+    state.is_dragging_scrollbar = true;
+    assert!(state.is_reload_deferred());
+    state.is_dragging_scrollbar = false;
+    assert!(!state.is_reload_deferred());
+
+    // 5. Selection anchor
+    state.anchor = Some(2);
+    assert!(state.is_reload_deferred());
+    state.anchor = None;
+    assert!(!state.is_reload_deferred());
+
+    // 6. Pending editor
+    state.pending_editor = Some(crate::editor::EditorRequest {
+        file: "a.rs".into(),
+        line: 1,
+        range: None,
+    });
+    assert!(state.is_reload_deferred());
+    state.pending_editor = None;
+    assert!(!state.is_reload_deferred());
+}

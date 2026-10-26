@@ -146,6 +146,47 @@ pub fn reload_diff(
     Ok(())
 }
 
+/// Reload a specific subset of files in the git repository diff and re-anchor
+/// state. Returns the number of files checked/reloaded.
+pub fn reload_specific_files(
+    state: &mut AppState,
+    repo_root: &Path,
+    git_args: &[String],
+    paths: &[String],
+) -> Result<usize, String> {
+    if paths.is_empty() {
+        return Ok(0);
+    }
+    let staged = state.target.is_staged();
+    let git_res = load_git_repo_with_notes(
+        repo_root,
+        git_args,
+        paths,
+        staged,
+        ENGINE_CONTEXT,
+        Some(&state.notes),
+        Some(&state.notes_key),
+    )
+    .map_err(|e| format!("failed to reload git repo: {e}"))?;
+
+    let pipeline_opts = PipelineOptions::default()
+        .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
+        .with_expand_lines(state.expand_lines);
+    let mut new_out = run_pipeline_full(
+        &git_res.diff,
+        Some(git_res.new_content),
+        Some(git_res.old_content),
+        pipeline_opts,
+    );
+    new_out.branch = git_res.branch;
+    new_out.untracked_skipped = git_res.untracked_skipped;
+    state.commit_range = git_res.commit_range;
+
+    let checked_count = paths.len();
+    state.reload_files(new_out.files, paths);
+    Ok(checked_count)
+}
+
 /// Toggle between viewing staged changes and unstaged working tree changes.
 /// Returns an error if viewing a commit range, or if the target view has no
 /// changes.

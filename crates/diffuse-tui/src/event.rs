@@ -248,6 +248,9 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         (KeyModifiers::NONE, KeyCode::Char('R')) | (KeyModifiers::SHIFT, KeyCode::Char('R')) => {
             state.execute(TuiCommand::ToggleRawDiff);
         }
+        (KeyModifiers::NONE, KeyCode::Char('r')) | (KeyModifiers::CONTROL, KeyCode::Char('r')) => {
+            state.execute(TuiCommand::ForceReload);
+        }
         (KeyModifiers::NONE, KeyCode::Char('?')) => {
             state.execute(TuiCommand::ToggleHelp);
         }

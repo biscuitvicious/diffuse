@@ -33,6 +33,7 @@ pub enum TuiCommand {
     ToggleHelp,
     ToggleTheme,
     ToggleStaged,
+    ForceReload,
 
     ToggleCollapseFile(Option<usize>),
     ExpandAllHidden,

@@ -773,3 +773,12 @@ fn test_pager_routing_and_detect_terminal_width() {
     let term_width = detect_terminal_width();
     assert!(term_width > 0);
 }
+
+#[test]
+fn test_no_watch_flag() {
+    let args_default = Args::try_parse_from(["diffuse"]).unwrap();
+    assert!(!args_default.no_watch);
+
+    let args_no_watch = Args::try_parse_from(["diffuse", "--no-watch"]).unwrap();
+    assert!(args_no_watch.no_watch);
+}

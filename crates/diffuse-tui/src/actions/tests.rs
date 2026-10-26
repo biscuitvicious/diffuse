@@ -178,3 +178,109 @@ fn test_toggle_staged_action_flow() {
     let err3 = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
     assert!(err3.contains("commit range"));
 }
+
+#[test]
+fn test_reload_specific_files() {
+    use crate::actions::reload_specific_files;
+    use std::fs;
+
+    let (repo_dir, notes_path) = setup_test_git_repo();
+    let repo_root = repo_dir.path().to_path_buf();
+
+    // Create a second file in git repo
+    fs::write(repo_root.join("b.txt"), "original b\n").unwrap();
+    let repo = diffuse_git::Repository::open(&repo_root).unwrap();
+    diffuse_git::testing::commit_files(&repo, "commit b", &[("b.txt", "original b\n")]).unwrap();
+
+    // Modify both file.rs and b.txt
+    fs::write(
+        repo_root.join("file.rs"),
+        "fn one() {\n    println!(\"modified\");\n}\n",
+    )
+    .unwrap();
+    fs::write(repo_root.join("b.txt"), "modified b\n").unwrap();
+
+    let git_res = load_git_repo(&repo_root, &[], &[], false, ENGINE_CONTEXT).unwrap();
+    let out = run_pipeline_full(
+        &git_res.diff,
+        Some(git_res.new_content),
+        Some(git_res.old_content),
+        PipelineOptions::default(),
+    );
+
+    let mut state = AppState::new(
+        out,
+        "test".into(),
+        notes_path,
+        crate::render::DiffuseTheme::DEFAULT,
+    )
+    .with_repo_context(repo_root.clone(), Vec::new(), false);
+
+    assert_eq!(state.output.files.len(), 2);
+    let original_b_hunk = state
+        .output
+        .files
+        .iter()
+        .find(|f| f.path == "b.txt")
+        .unwrap()
+        .hunks[0]
+        .clone();
+
+    // 1. Modify only file.rs on disk again
+    fs::write(
+        repo_root.join("file.rs"),
+        "fn one() {\n    println!(\"modified v2\");\n}\n",
+    )
+    .unwrap();
+
+    // Reload only file.rs
+    let count =
+        reload_specific_files(&mut state, &repo_root, &[], &["file.rs".to_string()]).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(state.output.files.len(), 2);
+
+    let updated_file_rs = state
+        .output
+        .files
+        .iter()
+        .find(|f| f.path == "file.rs")
+        .unwrap();
+    let all_text = updated_file_rs.hunks[0]
+        .rows
+        .iter()
+        .map(|r| r.text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        all_text.contains("modified v2"),
+        "file.rs must have v2 content"
+    );
+
+    let untouched_b = state
+        .output
+        .files
+        .iter()
+        .find(|f| f.path == "b.txt")
+        .unwrap();
+    assert_eq!(
+        untouched_b.hunks[0].rows, original_b_hunk.rows,
+        "b.txt must be untouched"
+    );
+
+    // 2. Revert b.txt back to original
+    fs::write(repo_root.join("b.txt"), "original b\n").unwrap();
+
+    // Reload b.txt -> since it has no diff hunks, it must be removed from
+    // output.files
+    let count2 =
+        reload_specific_files(&mut state, &repo_root, &[], &["b.txt".to_string()]).unwrap();
+    assert_eq!(count2, 1);
+    assert_eq!(state.output.files.len(), 1, "clean b.txt must be removed");
+    assert_eq!(state.output.files[0].path, "file.rs");
+
+    // 3. Reload empty list
+    assert_eq!(
+        reload_specific_files(&mut state, &repo_root, &[], &[]).unwrap(),
+        0
+    );
+}

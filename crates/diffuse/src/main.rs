@@ -270,6 +270,17 @@ unstaged working tree changes."
     )]
     staged: bool,
 
+    /// Disable automatic filesystem watching for live working tree changes.
+    #[arg(
+        long,
+        global = true,
+        help_heading = "Execution Modes",
+        help = "Disable automatic filesystem watching for live working tree changes",
+        long_help = "Disable the background filesystem watcher. By default, diffuse continuously \
+monitors the repository for changes and refreshes the display automatically."
+    )]
+    no_watch: bool,
+
     // Output Formats
     /// Emit raw token-stream JSON (for machine/extension integration).
     #[arg(
@@ -1537,6 +1548,7 @@ fn main() -> io::Result<()> {
                 theme,
                 show_resolved,
                 show_source,
+                !args.no_watch,
             )?;
         } else if is_markdown {
             // One-shot render: resolve query-free so no terminal response

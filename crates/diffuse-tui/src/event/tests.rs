@@ -1038,3 +1038,24 @@ fn test_mouse_wheel_scroll_moves_viewport() {
     s.render_diff_viewport_lines(80, 10, 10);
     assert_eq!(s.scroll, 0);
 }
+
+#[test]
+fn test_force_reload_keybinding() {
+    let mut s = state_with_rows();
+    assert!(!s.pending_force_reload);
+
+    // Press 'r'
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)),
+    );
+    assert!(s.pending_force_reload);
+    s.pending_force_reload = false;
+
+    // Press Ctrl+r
+    handle_event(
+        &mut s,
+        Event::Key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)),
+    );
+    assert!(s.pending_force_reload);
+}
