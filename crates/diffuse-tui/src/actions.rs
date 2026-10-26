@@ -227,17 +227,17 @@ pub fn toggle_staged_action(
     new_out.branch = git_res.branch;
     new_out.untracked_skipped = git_res.untracked_skipped;
 
-    if new_out.files.is_empty() {
+    state.target.staged = target_staged;
+    state.commit_range = git_res.commit_range;
+    state.reload(new_out);
+
+    if state.output.files.is_empty() {
         return Err(if target_staged {
             "no staged changes".into()
         } else {
             "no unstaged changes".into()
         });
     }
-
-    state.target.staged = target_staged;
-    state.commit_range = git_res.commit_range;
-    state.reload(new_out);
 
     Ok(())
 }

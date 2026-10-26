@@ -137,11 +137,18 @@ fn test_toggle_staged_action_flow() {
     .with_repo_context(repo_root.clone(), Vec::new(), false);
 
     // 1. Initially unstaged: toggle when staged has NO changes -> Err("no staged
-    //    changes")
+    //    changes"), but still switches to staged view (empty).
     let git_args = state.git_args.clone();
     let err = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
     assert_eq!(err, "no staged changes");
+    assert!(state.target.is_staged());
+    assert!(state.output.files.is_empty());
+
+    // Toggle back to unstaged (working tree still has changes) -> success.
+    let git_args = state.git_args.clone();
+    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
     assert!(!state.target.is_staged());
+    assert_eq!(state.output.files.len(), 1, "unstaged view has 1 file");
 
     // 2. Stage hunk
     stage_action(&mut state, &repo_root, false).unwrap();
@@ -153,11 +160,12 @@ fn test_toggle_staged_action_flow() {
     assert_eq!(state.output.files.len(), 1, "staged view has 1 file");
 
     // 3. Now in staged view: toggle back to unstaged (which is now clean) ->
-    //    Err("no unstaged changes")
+    //    Err("no unstaged changes"), but still switches to unstaged view (empty).
     let git_args = state.git_args.clone();
     let err2 = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
     assert_eq!(err2, "no unstaged changes");
-    assert!(state.target.is_staged(), "must remain in staged view");
+    assert!(!state.target.is_staged(), "must switch to unstaged view");
+    assert!(state.output.files.is_empty());
 
     // 4. Add new unstaged change to working tree
     fs::write(
@@ -166,9 +174,9 @@ fn test_toggle_staged_action_flow() {
     )
     .unwrap();
 
-    // Now toggle back to unstaged:
+    // Reload to pick up the new unstaged change.
     let git_args = state.git_args.clone();
-    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
+    reload_diff(&mut state, &repo_root, &git_args).unwrap();
     assert!(!state.target.is_staged());
     assert_eq!(state.output.files.len(), 1, "unstaged view has 1 file");
 
