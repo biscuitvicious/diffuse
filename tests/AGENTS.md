@@ -88,17 +88,25 @@ Always harvest with **absolute ranges** (`harvest` resolves any
 expression to short commit ids or `<ref>^!`, so the recorded revision can never
 re-resolve to a different window) and exclude the golden tree itself
 (`--exclude tests/golden`) — a corpus must not ingest its own history.
+When harvesting from the `diffuse` repository itself, always pass `--tag` to
+record a lightweight git tag at the harvested commit; this provides direct
+reference parity and enables rendering the golden changeset via
+`diffuse <name>^!`.
 
 ### 2. Harvest the corpus
 
 ```sh
-harvest --exclude tests/golden -o tests/golden/<name> <base>..<head>
+harvest --exclude tests/golden --tag -o tests/golden/<name> <base>..<head>
 ```
 
 The harvester writes `diff.patch`, the old/new side snapshots under
 `files/`, and `meta.json` (the pinned revision plus the path→snapshot
-mapping). The old-side snapshots are what `apply_oracle` needs to
-mechanically prove `apply(diff, old) == new` — a range harvest always
+mapping). Harvesting out of the `diffuse` repository mandates passing `--tag`,
+which creates a lightweight git tag at the harvested commit in the source
+repository (named after the corpus directory, or a custom name if specified
+via `--tag <name>`). This ensures immediate visual verification and review
+via `diffuse <name>^!`. The old-side snapshots are what `apply_oracle`
+needs to mechanically prove `apply(diff, old) == new` — a range harvest always
 carries them.
 
 ### 3. Probe before wiring

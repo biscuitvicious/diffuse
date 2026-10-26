@@ -79,6 +79,19 @@ struct Args {
     )]
     output: Option<PathBuf>,
 
+    /// Create a git tag in the source repository at the harvested commit.
+    /// If passed without a value (e.g. `--tag`), uses the corpus directory
+    /// name from `--output`.
+    #[arg(
+        long,
+        value_name = "TAG",
+        num_args = 0..=1,
+        default_missing_value = "",
+        help_heading = "Output",
+        help = "Create a git tag in the source repository at the harvested commit (defaults to corpus name if --output is specified)"
+    )]
+    tag: Option<String>,
+
     /// Lines of context around changes
     #[arg(
         short,
@@ -214,8 +227,57 @@ fn snapshot_filename(path: &str, side: &str) -> String {
     )
 }
 
+/// Resolves the tag name to create: either explicit `--tag <NAME>` or derived
+/// from `--output`.
+fn resolve_tag_name(
+    tag_arg: Option<&str>,
+    output: Option<&Path>,
+) -> Result<Option<String>, String> {
+    let Some(tag_val) = tag_arg else {
+        return Ok(None);
+    };
+    if !tag_val.is_empty() {
+        return Ok(Some(tag_val.to_string()));
+    }
+    let name = output
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            "--tag requires a tag name or an --output directory path from which to derive one"
+                .to_string()
+        })?;
+    Ok(Some(name.to_string()))
+}
+
+/// Extracts the target commit endpoint (new/head side) of a revision or range
+/// specifier.
+fn target_revision_endpoint(revision: &str) -> &str {
+    if revision == "WORKTREE" {
+        "HEAD"
+    } else if let Some(c) = revision.strip_suffix("^!") {
+        if c.is_empty() { "HEAD" } else { c }
+    } else if let Some(pos) = revision.find("...") {
+        let right = &revision[pos + 3..];
+        if right.is_empty() { "HEAD" } else { right }
+    } else if let Some(pos) = revision.find("..") {
+        let right = &revision[pos + 2..];
+        if right.is_empty() { "HEAD" } else { right }
+    } else if revision.is_empty() {
+        "HEAD"
+    } else {
+        revision
+    }
+}
+
 fn main() {
     let args = Args::parse();
+
+    let tag_name =
+        resolve_tag_name(args.tag.as_deref(), args.output.as_deref()).unwrap_or_else(|e| {
+            eprintln!("harvest: {e}");
+            process::exit(1);
+        });
 
     for dir in &args.directory {
         if let Err(e) = env::set_current_dir(dir) {
@@ -371,6 +433,25 @@ fn main() {
     } else {
         let json = serde_json::to_string_pretty(&fixture).expect("serialize fixture");
         println!("{json}");
+    }
+
+    if let Some(ref name) = tag_name {
+        let target_endpoint = target_revision_endpoint(&args.revision);
+        let repo = Repository::open(&repo_root).unwrap_or_else(|e| {
+            eprintln!("harvest: cannot open repository to tag: {e}");
+            process::exit(1);
+        });
+        repo.create_tag(name, target_endpoint).unwrap_or_else(|e| {
+            eprintln!("harvest: cannot create tag '{name}': {e}");
+            process::exit(1);
+        });
+        let short = repo
+            .rev_to_short_hash(target_endpoint)
+            .unwrap_or_else(|| target_endpoint.to_string());
+        eprintln!(
+            "Tagged commit {short} as '{name}' in {}",
+            repo_root.display()
+        );
     }
 }
 
@@ -547,5 +628,41 @@ mod tests {
         assert!(help.contains("Output:"));
         assert!(help.contains("Diff Options:"));
         assert!(help.contains("TYPICAL USAGE & EXAMPLES:"));
+    }
+
+    #[test]
+    fn test_resolve_tag_name() {
+        // No tag flag
+        assert_eq!(resolve_tag_name(None, None).unwrap(), None);
+
+        // Explicit tag name
+        assert_eq!(
+            resolve_tag_name(Some("my-tag"), None).unwrap(),
+            Some("my-tag".to_string())
+        );
+
+        // Implicit tag name derived from output path
+        let out = Path::new("tests/golden/scrollbar-grab-drag");
+        assert_eq!(
+            resolve_tag_name(Some(""), Some(out)).unwrap(),
+            Some("scrollbar-grab-drag".to_string())
+        );
+
+        // Implicit tag name without output path fails
+        assert!(resolve_tag_name(Some(""), None).is_err());
+    }
+
+    #[test]
+    fn test_target_revision_endpoint() {
+        assert_eq!(target_revision_endpoint("WORKTREE"), "HEAD");
+        assert_eq!(target_revision_endpoint("HEAD~1..HEAD"), "HEAD");
+        assert_eq!(target_revision_endpoint("c1..c2"), "c2");
+        assert_eq!(target_revision_endpoint("c2^!"), "c2");
+        assert_eq!(target_revision_endpoint("HEAD^!"), "HEAD");
+        assert_eq!(target_revision_endpoint("HEAD~2...HEAD"), "HEAD");
+        assert_eq!(target_revision_endpoint("..HEAD"), "HEAD");
+        assert_eq!(target_revision_endpoint("HEAD.."), "HEAD");
+        assert_eq!(target_revision_endpoint("c1"), "c1");
+        assert_eq!(target_revision_endpoint(""), "HEAD");
     }
 }

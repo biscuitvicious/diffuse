@@ -196,6 +196,21 @@ impl Repository {
         parents[0] == left_commit_id
     }
 
+    /// Create or update a lightweight tag pointing to `target` (e.g. revision
+    /// specifier or commit ID). If `target` is empty, points to `HEAD`.
+    pub fn create_tag(&self, tag_name: &str, target: &str) -> Result<(), GitError> {
+        let target = if target.is_empty() { "HEAD" } else { target };
+        let id = self.inner.rev_parse_single(target)?.detach();
+        let full_name = format!("refs/tags/{tag_name}");
+        self.inner.reference(
+            full_name,
+            id,
+            gix::refs::transaction::PreviousValue::Any,
+            format!("tag: created {tag_name}"),
+        )?;
+        Ok(())
+    }
+
     /// Resolve the commit hash to scope review notes to.
     ///
     /// When reviewing a range, returns the second newest commit in the range

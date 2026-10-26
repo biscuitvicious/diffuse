@@ -181,14 +181,7 @@ pub fn create_tag(
     tag_name: &str,
     target: gix::ObjectId,
 ) -> Result<(), GitError> {
-    let full_name = format!("refs/tags/{tag_name}");
-    repo.raw().reference(
-        full_name,
-        target,
-        PreviousValue::Any,
-        format!("tag: created {tag_name}"),
-    )?;
-    Ok(())
+    repo.create_tag(tag_name, &target.to_string())
 }
 
 /// Create a commit with explicit tree entries (e.g. blobs,

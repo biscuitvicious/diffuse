@@ -1089,3 +1089,36 @@ fn test_is_single_commit_range() {
     assert!(!repo.is_single_commit_range(&blob.id, "HEAD"));
     assert!(!repo.is_single_commit_range("HEAD", &blob.id));
 }
+
+#[test]
+fn test_repository_create_tag() {
+    use crate::testing::{commit_files, init_repo};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo(tmp.path()).expect("init_repo succeeds");
+    let c1 = commit_files(&repo, "c1", &[("a.txt", "1\n")]).expect("c1");
+    let c2 = commit_files(&repo, "c2", &[("a.txt", "2\n")]).expect("c2");
+
+    // Tag commit 1
+    repo.create_tag("tag-c1", &c1.to_string())
+        .expect("create tag-c1");
+    assert_eq!(repo.rev_to_full_hash("tag-c1").unwrap(), c1.to_string());
+
+    // Tag commit 2 (default HEAD)
+    repo.create_tag("tag-head", "").expect("create tag-head");
+    assert_eq!(repo.rev_to_full_hash("tag-head").unwrap(), c2.to_string());
+
+    // Diff using tag^!
+    let target = crate::types::ReviewTarget::from_repo_args(
+        crate::types::Repo::from_root(tmp.path()),
+        vec!["tag-head^!".to_string()],
+        false,
+    );
+    let res = crate::diff::diff_repository(&repo, &target, 3, crate::diff::WhitespaceMode::Exact)
+        .expect("diff with tag^!");
+    assert_eq!(res.files.len(), 1);
+    assert_eq!(res.files[0].path, "a.txt");
+
+    // Invalid target fails
+    assert!(repo.create_tag("invalid", "no-such-ref").is_err());
+}

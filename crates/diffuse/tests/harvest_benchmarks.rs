@@ -351,6 +351,7 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
         .arg(dir.path())
         .arg("--output")
         .arg(&range_dir)
+        .arg("--tag")
         .output()
         .unwrap();
     assert!(
@@ -370,6 +371,16 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
         range_rev.len(),
         9,
         "7-char short sha + ^! is 9 chars: {range_rev}"
+    );
+
+    // Verify git tag was created in repository pointing to the harvested commit
+    assert!(
+        repo_handle.rev_to_full_hash("range_corpus").is_some(),
+        "tag 'range_corpus' must exist in repo"
+    );
+    assert_eq!(
+        repo_handle.rev_to_short_hash("range_corpus").unwrap(),
+        range_rev.strip_suffix("^!").unwrap()
     );
 }
 
