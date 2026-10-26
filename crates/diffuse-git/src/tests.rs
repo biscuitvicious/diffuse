@@ -1041,3 +1041,51 @@ fn test_testing_fixtures_builder() {
     let a_file = res.files.iter().find(|f| f.path == "a.txt").unwrap();
     assert_eq!(a_file.status, diffuse_parse::FileStatus::Modified);
 }
+
+#[test]
+fn test_is_single_commit_range() {
+    use crate::testing::{commit_files, commit_index_with_parents, create_tag, init_repo};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo(tmp.path()).expect("init_repo succeeds");
+
+    let c1 = commit_files(&repo, "c1", &[("a.txt", "1\n")]).expect("c1");
+    create_tag(&repo, "v1.0", c1).expect("tag v1.0");
+    let c2 = commit_files(&repo, "c2", &[("a.txt", "2\n")]).expect("c2");
+    let c3 = commit_files(&repo, "c3", &[("a.txt", "3\n")]).expect("c3");
+
+    // Exactly one commit
+    assert!(repo.is_single_commit_range(&c1.to_string(), &c2.to_string()));
+    assert!(repo.is_single_commit_range(&c2.to_string(), &c3.to_string()));
+    assert!(repo.is_single_commit_range("HEAD~1", "HEAD"));
+    assert!(repo.is_single_commit_range("HEAD~2", "HEAD~1"));
+    assert!(repo.is_single_commit_range("v1.0", "HEAD~1"));
+    assert!(repo.is_single_commit_range("HEAD~1", ""));
+
+    // Multi-commit ranges (>= 2 commits)
+    assert!(!repo.is_single_commit_range(&c1.to_string(), &c3.to_string()));
+    assert!(!repo.is_single_commit_range("HEAD~2", "HEAD"));
+
+    // Zero-commit ranges
+    assert!(!repo.is_single_commit_range("HEAD", "HEAD"));
+    assert!(!repo.is_single_commit_range(&c2.to_string(), &c2.to_string()));
+    assert!(!repo.is_single_commit_range("", "HEAD"));
+
+    // Root commit (c1 has 0 parents)
+    assert!(!repo.is_single_commit_range("HEAD", &c1.to_string()));
+
+    // Merge commit (has multiple parents)
+    let merge_commit =
+        commit_index_with_parents(&repo, "merge", &[c1, c2]).expect("create merge commit");
+    assert!(!repo.is_single_commit_range(&c1.to_string(), &merge_commit.to_string()));
+    assert!(!repo.is_single_commit_range(&c2.to_string(), &merge_commit.to_string()));
+
+    // Invalid / unresolvable
+    assert!(!repo.is_single_commit_range("no-such-ref", "HEAD"));
+    assert!(!repo.is_single_commit_range("HEAD", "no-such-ref"));
+
+    // Non-commit objects (e.g. blob)
+    let blob = repo.load_blob("HEAD", "a.txt").expect("blob");
+    assert!(!repo.is_single_commit_range(&blob.id, "HEAD"));
+    assert!(!repo.is_single_commit_range("HEAD", &blob.id));
+}

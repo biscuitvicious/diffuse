@@ -147,6 +147,55 @@ impl Repository {
         None
     }
 
+    /// Check whether the commit range `left..right` contains exactly one
+    /// commit.
+    ///
+    /// In a git DAG, `left..right` contains exactly one commit (`right`) if and
+    /// only if `right` is a single-parent commit whose parent resolves to
+    /// `left`.
+    pub fn is_single_commit_range(&self, left: &str, right: &str) -> bool {
+        let left = if left.is_empty() { "HEAD" } else { left };
+        let right = if right.is_empty() { "HEAD" } else { right };
+
+        let Ok(right_id) = self.inner.rev_parse_single(right) else {
+            return false;
+        };
+        let Ok(right_obj) = self.inner.find_object(right_id) else {
+            return false;
+        };
+        let right_commit_obj = match right_obj.kind {
+            gix::object::Kind::Commit => right_obj,
+            _ => match right_obj.peel_to_kind(gix::object::Kind::Commit) {
+                Ok(peeled) => peeled,
+                Err(_) => return false,
+            },
+        };
+        let Ok(right_commit) = right_commit_obj.try_into_commit() else {
+            return false;
+        };
+        let parents: Vec<_> = right_commit.parent_ids().collect();
+        if parents.len() != 1 {
+            return false;
+        }
+
+        let Ok(left_id) = self.inner.rev_parse_single(left) else {
+            return false;
+        };
+        let left_commit_id = if let Ok(left_obj) = self.inner.find_object(left_id) {
+            match left_obj.kind {
+                gix::object::Kind::Commit => left_id.detach(),
+                _ => match left_obj.peel_to_kind(gix::object::Kind::Commit) {
+                    Ok(peeled) => peeled.id,
+                    Err(_) => return false,
+                },
+            }
+        } else {
+            return false;
+        };
+
+        parents[0] == left_commit_id
+    }
+
     /// Resolve the commit hash to scope review notes to.
     ///
     /// When reviewing a range, returns the second newest commit in the range

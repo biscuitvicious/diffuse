@@ -96,7 +96,16 @@ pub fn commit_index(repo: &Repository, message: &str) -> Result<gix::ObjectId, G
         Some(ref head) => vec![head.id().detach()],
         None => Vec::new(),
     };
+    commit_index_with_parents(repo, message, &parent_ids)
+}
 
+/// Write the current index as a tree and create a commit with specific parents.
+pub fn commit_index_with_parents(
+    repo: &Repository,
+    message: &str,
+    parent_ids: &[gix::ObjectId],
+) -> Result<gix::ObjectId, GitError> {
+    let raw = repo.raw();
     let mut editor = raw.edit_tree(gix::hash::ObjectId::empty_tree(raw.object_hash()))?;
 
     let index = crate::mutation::open_or_create_index(raw).map_err(GitError::OperationFailed)?;
@@ -119,7 +128,7 @@ pub fn commit_index(repo: &Repository, message: &str) -> Result<gix::ObjectId, G
 
     let commit = gix::objs::Commit {
         tree: tree_id.detach(),
-        parents: parent_ids.into(),
+        parents: parent_ids.to_vec().into(),
         author: sig.clone(),
         committer: sig,
         encoding: None,

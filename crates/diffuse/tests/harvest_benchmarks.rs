@@ -286,12 +286,12 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
     let revision = meta["revision"].as_str().expect("revision recorded");
     assert_eq!(
         revision.len(),
-        40,
-        "revision must be pinned to a full commit id: {revision}"
+        7,
+        "revision must be pinned to a short sha1 hash: {revision}"
     );
     assert!(
         revision.chars().all(|c| c.is_ascii_hexdigit()),
-        "revision must be an absolute sha: {revision}"
+        "revision must be a short sha1 hash: {revision}"
     );
     let files = meta["files"].as_array().unwrap();
     assert_eq!(files.len(), 8, "every changed path is recorded");
@@ -334,6 +334,42 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
     assert!(
         val.get("oldContent").is_none(),
         "old contents must not be embedded"
+    );
+
+    // Single commit range: HEAD~1..HEAD records as <short_sha>^!
+    let repo_handle = diffuse_git::Repository::open(dir.path()).unwrap();
+    commit_files(
+        &repo_handle,
+        "second commit",
+        &[("src/kernel/driver_0.c", "int main() {}\n")],
+    )
+    .unwrap();
+    let range_dir = dir.path().join("range_corpus");
+    let out = Command::new(env!("CARGO_BIN_EXE_harvest"))
+        .arg("HEAD~1..HEAD")
+        .arg("--repo")
+        .arg(dir.path())
+        .arg("--output")
+        .arg(&range_dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "harvest range failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let range_meta_text = fs::read_to_string(range_dir.join("meta.json")).unwrap();
+    let range_meta: serde_json::Value =
+        serde_json::from_str(&range_meta_text).expect("valid range meta.json");
+    let range_rev = range_meta["revision"].as_str().expect("revision recorded");
+    assert!(
+        range_rev.ends_with("^!"),
+        "1-commit range must be formatted as <ref>^!: {range_rev}"
+    );
+    assert_eq!(
+        range_rev.len(),
+        9,
+        "7-char short sha + ^! is 9 chars: {range_rev}"
     );
 }
 
