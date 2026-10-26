@@ -640,19 +640,34 @@ pub fn del_count(h: &Hunk) -> u32 {
     h.rows.iter().filter(|r| matches!(r, Row::Del(_))).count() as u32
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileStatus {
     Added,
     Deleted,
+    #[default]
     Modified,
     Renamed,
     Untracked,
+    #[serde(rename = "mode changed")]
     ModeChanged,
     Unmodified,
 }
 
 impl FileStatus {
+    #[inline]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            FileStatus::Added => "added",
+            FileStatus::Deleted => "deleted",
+            FileStatus::Modified => "modified",
+            FileStatus::Renamed => "renamed",
+            FileStatus::Untracked => "untracked",
+            FileStatus::ModeChanged => "mode changed",
+            FileStatus::Unmodified => "unmodified",
+        }
+    }
+
     pub fn reverse(&self) -> FileStatus {
         match self {
             FileStatus::Added => FileStatus::Deleted,
@@ -663,6 +678,64 @@ impl FileStatus {
             FileStatus::ModeChanged => FileStatus::ModeChanged,
             FileStatus::Unmodified => FileStatus::Unmodified,
         }
+    }
+}
+
+impl std::fmt::Display for FileStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for FileStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "added" => Ok(FileStatus::Added),
+            "deleted" => Ok(FileStatus::Deleted),
+            "modified" => Ok(FileStatus::Modified),
+            "renamed" => Ok(FileStatus::Renamed),
+            "untracked" => Ok(FileStatus::Untracked),
+            "mode changed" | "modechanged" => Ok(FileStatus::ModeChanged),
+            "unmodified" => Ok(FileStatus::Unmodified),
+            _ => Err(format!("unknown file status: {s}")),
+        }
+    }
+}
+
+impl PartialEq<&str> for FileStatus {
+    #[inline]
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<FileStatus> for &str {
+    #[inline]
+    fn eq(&self, other: &FileStatus) -> bool {
+        *self == other.as_str()
+    }
+}
+
+impl PartialEq<str> for FileStatus {
+    #[inline]
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<FileStatus> for str {
+    #[inline]
+    fn eq(&self, other: &FileStatus) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl From<&str> for FileStatus {
+    #[inline]
+    fn from(s: &str) -> Self {
+        s.parse().unwrap_or(FileStatus::Modified)
     }
 }
 

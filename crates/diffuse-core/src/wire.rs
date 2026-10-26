@@ -17,10 +17,10 @@ use crate::{
     counts::FileCounts,
     merge::RunKind,
     notes::{LineHash, NoteStatus, Side as NoteSide},
-    parse::{AddLine, CtxLine, DelLine, DiffFile, FileStatus, Hunk, Row, RowKind, Spans},
+    parse::{AddLine, CtxLine, DelLine, DiffFile, Hunk, Row, RowKind, Spans},
 };
 
-pub use crate::parse::RowGroup;
+pub use crate::parse::{FileStatus, RowGroup};
 
 pub mod jsonl;
 pub use jsonl::{WireRecord, decode_jsonl_records, emit_file_jsonl};
@@ -200,6 +200,7 @@ pub const ARROW_SYMBOL: &str = "➞";
 /// The engine's complete, rendered output for a single changed file.
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[derive(Default)]
 pub struct OutputFile {
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -208,7 +209,7 @@ pub struct OutputFile {
     pub old_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_mode: Option<String>,
-    pub status: String,
+    pub status: FileStatus,
     #[serde(default, skip_serializing_if = "Not::not")]
     pub is_binary: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -268,33 +269,6 @@ pub enum RawFileSource {
     },
 }
 
-impl Default for OutputFile {
-    fn default() -> Self {
-        Self {
-            path: String::new(),
-            old_path: None,
-            old_mode: None,
-            new_mode: None,
-            status: "modified".to_string(),
-            is_binary: false,
-            old_bytes: None,
-            new_bytes: None,
-            new_line_count: 0,
-            old_line_count: 0,
-            new_content: Vec::new(),
-            old_content: Vec::new(),
-            hunks: Vec::new(),
-            raw_hunks: Vec::new(),
-            counts: FileCounts::default(),
-            fences: Vec::new(),
-            notes: Vec::new(),
-            content_runs: Vec::new(),
-            rows: Vec::new(),
-            raw_source: None,
-        }
-    }
-}
-
 impl OutputFile {
     /// Create a lightweight collapsed stub that skips pipeline execution.
     pub fn collapsed_stub(
@@ -302,21 +276,12 @@ impl OutputFile {
         counts: FileCounts,
         raw_source: Option<RawFileSource>,
     ) -> Self {
-        let status = match f.status {
-            FileStatus::Added => "added".to_string(),
-            FileStatus::Deleted => "deleted".to_string(),
-            FileStatus::Modified => "modified".to_string(),
-            FileStatus::Renamed => "renamed".to_string(),
-            FileStatus::Untracked => "untracked".to_string(),
-            FileStatus::ModeChanged => "mode changed".to_string(),
-            FileStatus::Unmodified => "unmodified".to_string(),
-        };
         Self {
             path: f.path.clone(),
             old_path: f.old_path.clone(),
             old_mode: f.old_mode.clone(),
             new_mode: f.new_mode.clone(),
-            status,
+            status: f.status,
             is_binary: f.is_binary,
             old_bytes: f.old_bytes,
             new_bytes: f.new_bytes,
@@ -364,12 +329,6 @@ impl OutputFile {
     }
 
     pub fn reverse(&self) -> Self {
-        let status = match self.status.as_str() {
-            "added" => "deleted",
-            "deleted" => "added",
-            "untracked" => "deleted",
-            s => s,
-        };
         OutputFile {
             path: self.old_path.clone().unwrap_or_else(|| self.path.clone()),
             old_path: if self.old_path.is_some() {
@@ -379,7 +338,7 @@ impl OutputFile {
             },
             old_mode: self.new_mode.clone(),
             new_mode: self.old_mode.clone(),
-            status: status.to_string(),
+            status: self.status.reverse(),
             is_binary: self.is_binary,
             old_bytes: self.new_bytes,
             new_bytes: self.old_bytes,
@@ -403,21 +362,12 @@ impl OutputFile {
     }
 
     pub fn reconstruct(&self) -> DiffFile {
-        let status = match self.status.as_str() {
-            "added" => FileStatus::Added,
-            "deleted" => FileStatus::Deleted,
-            "renamed" => FileStatus::Renamed,
-            "untracked" => FileStatus::Untracked,
-            "mode changed" => FileStatus::ModeChanged,
-            "unmodified" | "note" => FileStatus::Unmodified,
-            _ => FileStatus::Modified,
-        };
         DiffFile {
             path: self.path.clone(),
             old_path: self.old_path.clone(),
             old_mode: self.old_mode.clone(),
             new_mode: self.new_mode.clone(),
-            status,
+            status: self.status,
             is_binary: self.is_binary,
             has_file_headers: false,
             old_bytes: self.old_bytes,
@@ -444,7 +394,7 @@ impl OutputFile {
 
     #[inline]
     pub fn byte_size(&self) -> Option<usize> {
-        if self.status == "deleted" {
+        if self.status == "deleted" || (self.status == "untracked" && self.new_bytes.is_none()) {
             self.old_bytes
         } else {
             self.new_bytes
@@ -460,10 +410,14 @@ impl OutputFile {
         }
         let new_fmt = self.new_bytes.map(format_byte_size);
         let old_fmt = self.old_bytes.map(format_byte_size);
-        if self.status == "added" || self.status == "untracked" {
+        if self.status == "added" {
             new_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
         } else if self.status == "deleted" {
             old_fmt.unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
+        } else if self.status == "untracked" {
+            new_fmt
+                .or(old_fmt)
+                .unwrap_or_else(|| UNKNOWN_SYMBOL.to_string())
         } else {
             match (old_fmt, new_fmt) {
                 (Some(o), Some(n)) if o != n => format!("{o} {ARROW_SYMBOL} {n}"),
@@ -520,7 +474,7 @@ impl OutputFile {
             }
             ("modified" | "unmodified", None) => {
                 if size_str.is_empty() {
-                    self.status.clone()
+                    self.status.to_string()
                 } else {
                     size_str
                 }

@@ -113,9 +113,8 @@ signal.
 ### 4. Wire it in
 
 - [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) → `corpus_tests!`: add
-  `(<mod_name>, "<name>", <min_files>, <has_render>, <has_oracle>)` — the
-  floor is a sanity assertion that the corpus actually loaded; pick the
-  real file count minus a little slack.
+  `(<mod_name>, "<name>", <num_files>)` — asserts that the corpus parses into
+  the exact expected number of files.
 
 ### 5. Generate the expected outputs
 

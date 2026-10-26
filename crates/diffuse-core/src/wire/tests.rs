@@ -402,3 +402,63 @@ fn test_output_file_counts_and_fence_invariants() {
     ];
     assert!(file.validate_invariants().is_err());
 }
+
+#[test]
+fn test_output_file_untracked_reverse_involution() {
+    let file = OutputFile {
+        path: "src/untracked.rs".to_string(),
+        status: FileStatus::Untracked,
+        new_bytes: Some(42),
+        old_bytes: None,
+        new_line_count: 2,
+        old_line_count: 0,
+        counts: FileCounts {
+            adds: 2,
+            dels: 0,
+            mods: 0,
+            movs: 0,
+            ..Default::default()
+        },
+        hunks: vec![OutputHunk {
+            old_start: 0,
+            old_count: 0,
+            new_start: 1,
+            new_count: 2,
+            rows: vec![
+                OutputRow {
+                    kind: RowKind::Add,
+                    mov_side: None,
+                    new_line: Some(1),
+                    old_line: None,
+                    runs: vec![make_run(RunKind::Add, "line 1")],
+                    wholesale: false,
+                    group: None,
+                },
+                OutputRow {
+                    kind: RowKind::Add,
+                    mov_side: None,
+                    new_line: Some(2),
+                    old_line: None,
+                    runs: vec![make_run(RunKind::Add, "line 2")],
+                    wholesale: false,
+                    group: None,
+                },
+            ],
+        }],
+        new_content: vec!["line 1".to_string(), "line 2".to_string()],
+        ..Default::default()
+    };
+
+    assert_eq!(file.byte_size(), Some(42));
+    assert_eq!(file.display_size(), "42B");
+
+    let rev = file.reverse();
+    assert_eq!(rev.status, "untracked");
+    assert_eq!(rev.byte_size(), Some(42));
+    assert_eq!(rev.display_size(), "42B");
+    assert_eq!(rev.counts.adds, 0);
+    assert_eq!(rev.counts.dels, 2);
+
+    let rev_rev = rev.reverse();
+    assert_eq!(rev_rev, file);
+}

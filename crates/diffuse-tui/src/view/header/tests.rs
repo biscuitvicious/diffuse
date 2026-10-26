@@ -90,7 +90,7 @@ fn test_ratatui_header_and_status_lines() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -132,7 +132,7 @@ fn test_ratatui_header_and_status_lines() {
         old_path: Some("crates/diffuse-core/src/algo/mod.rs".to_string()),
         old_mode: None,
         new_mode: None,
-        status: "renamed".to_string(),
+        status: diffuse_core::FileStatus::Renamed,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -269,7 +269,7 @@ fn test_header_bar_zero_notes_suppressed() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 0,
         old_line_count: 0,
         new_content: vec![],
@@ -356,7 +356,7 @@ fn test_header_bar_nonzero_notes_shown() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 0,
         old_line_count: 0,
         new_content: vec![],
@@ -577,7 +577,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -651,7 +651,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
     );
 
     // Now test with added status
-    file.status = "added".to_string();
+    file.status = diffuse_core::FileStatus::Added;
     let ansi_add = render_status_bar(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -698,7 +698,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
     );
 
     // Test with deleted status
-    file.status = "deleted".to_string();
+    file.status = diffuse_core::FileStatus::Deleted;
     let ansi_del = render_status_bar(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -801,7 +801,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -944,7 +944,7 @@ fn test_header_bar_global_mod_counts_ansi() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -1054,7 +1054,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -1403,7 +1403,7 @@ fn test_status_bar_shows_file_and_hunk_stats() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -1485,7 +1485,7 @@ fn status_test_file(path: &str) -> OutputFile {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -1676,17 +1676,17 @@ fn test_status_bar_background_styled() {
 #[test]
 fn test_file_status_tag_unmodified_is_empty() {
     let mut file = OutputFile {
-        status: "unmodified".to_string(),
+        status: diffuse_core::FileStatus::Unmodified,
         ..Default::default()
     };
     assert_eq!(file_status_tag(&file), "");
 
-    file.status = "modified".to_string();
+    file.status = diffuse_core::FileStatus::Modified;
     assert_eq!(file_status_tag(&file), "");
 
-    file.status = "renamed".to_string();
+    file.status = diffuse_core::FileStatus::Renamed;
     assert_eq!(file_status_tag(&file), "");
 
-    file.status = "deleted".to_string();
+    file.status = diffuse_core::FileStatus::Deleted;
     assert_eq!(file_status_tag(&file), " (deleted)");
 }

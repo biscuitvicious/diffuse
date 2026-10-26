@@ -7,7 +7,7 @@ fn sample_file(path: &str) -> OutputFile {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: Vec::new(),

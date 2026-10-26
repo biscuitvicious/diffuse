@@ -336,3 +336,42 @@ fn test_row_aux_add_zero_anchor_precondition() {
 fn test_row_aux_del_zero_anchor_precondition() {
     let _ = Row::aux_del(0, DelLine::new(1, "text"), Spans::default(), Vec::new());
 }
+
+#[test]
+fn test_file_status_methods_and_string_equality() {
+    let cases = [
+        (FileStatus::Added, "added", FileStatus::Deleted),
+        (FileStatus::Deleted, "deleted", FileStatus::Added),
+        (FileStatus::Modified, "modified", FileStatus::Modified),
+        (FileStatus::Renamed, "renamed", FileStatus::Renamed),
+        (FileStatus::Untracked, "untracked", FileStatus::Untracked),
+        (
+            FileStatus::ModeChanged,
+            "mode changed",
+            FileStatus::ModeChanged,
+        ),
+        (FileStatus::Unmodified, "unmodified", FileStatus::Unmodified),
+    ];
+
+    for (status, str_repr, reversed) in cases {
+        assert_eq!(status.as_str(), str_repr);
+        assert_eq!(status.to_string(), str_repr);
+        assert_eq!(status.reverse(), reversed);
+        assert_eq!(status, str_repr);
+        assert_eq!(str_repr, status);
+        assert_eq!(&status, &str_repr);
+        assert_eq!(&str_repr, &status);
+
+        let parsed: FileStatus = str_repr.parse().unwrap();
+        assert_eq!(parsed, status);
+
+        let json = serde_json::to_string(&status).unwrap();
+        assert_eq!(json, format!("\"{str_repr}\""));
+        let deserialized: FileStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, status);
+    }
+
+    assert_eq!(FileStatus::default(), FileStatus::Modified);
+    assert!("modechanged".parse::<FileStatus>().unwrap() == FileStatus::ModeChanged);
+    assert!("invalid".parse::<FileStatus>().is_err());
+}

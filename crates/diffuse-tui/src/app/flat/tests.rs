@@ -111,7 +111,7 @@ index 1111111..2222222 100644
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "untracked".to_string(),
+        status: diffuse_core::FileStatus::Untracked,
         new_line_count: 1,
         old_line_count: 0,
         new_content: vec!["fn new_untracked() {}".to_string()],

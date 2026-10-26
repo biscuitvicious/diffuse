@@ -735,15 +735,7 @@ pub fn process_single_diff_file(
         })
         .collect();
 
-    let status = match f.status {
-        crate::parse::FileStatus::Added => "added".to_string(),
-        crate::parse::FileStatus::Deleted => "deleted".to_string(),
-        crate::parse::FileStatus::Modified => "modified".to_string(),
-        crate::parse::FileStatus::Renamed => "renamed".to_string(),
-        crate::parse::FileStatus::Untracked => "untracked".to_string(),
-        crate::parse::FileStatus::ModeChanged => "mode changed".to_string(),
-        crate::parse::FileStatus::Unmodified => "unmodified".to_string(),
-    };
+    let status = f.status;
 
     let t_rows_start = Instant::now();
     let rows: Vec<OutputRow> = if is_plain_common_context {

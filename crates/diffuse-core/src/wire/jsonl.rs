@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     counts::FileCounts,
+    parse::FileStatus,
     wire::{OutputFence, OutputFile, OutputHunk, OutputNote, OutputRow},
 };
 
@@ -96,7 +97,7 @@ pub struct FileHeader {
     pub old_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_mode: Option<String>,
-    pub status: String,
+    pub status: FileStatus,
     #[serde(default, skip_serializing_if = "ops::Not::not")]
     pub is_binary: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,7 +143,7 @@ pub fn emit_file_jsonl<W: Write>(file: &OutputFile, writer: &mut W) -> io::Resul
         old_path: file.old_path.clone(),
         old_mode: file.old_mode.clone(),
         new_mode: file.new_mode.clone(),
-        status: file.status.clone(),
+        status: file.status,
         is_binary: file.is_binary,
         old_bytes: file.old_bytes,
         new_bytes: file.new_bytes,

@@ -87,7 +87,7 @@ fn test_render_renamed_file_diff() {
         old_path: Some("src/old.rs".to_string()),
         old_mode: None,
         new_mode: None,
-        status: "renamed".to_string(),
+        status: diffuse_core::FileStatus::Renamed,
         new_line_count: 0,
         old_line_count: 0,
         new_content: vec![],
@@ -153,7 +153,7 @@ fn test_nonzero_notes_still_rendered() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 1,
         old_line_count: 1,
         new_content: vec![],
@@ -201,7 +201,7 @@ fn test_write_file_header_bar_direct_buffer() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 1,
         old_line_count: 1,
         new_content: vec![],
@@ -239,7 +239,7 @@ fn test_write_file_header_bar_direct_buffer() {
     assert!(plain.contains("src/lib.rs −2 +5 ~3 ≈1"));
 
     // And with added status:
-    file.status = "added".to_string();
+    file.status = diffuse_core::FileStatus::Added;
     let mut buf_added = String::new();
     write_file_header_bar(&mut buf_added, &file, None, &DiffuseTheme::DEFAULT).unwrap();
     assert!(buf_added.contains("(added)"));
@@ -311,7 +311,7 @@ fn test_render_file_diff_light_theme() {
 fn test_status_suffix_unmodified_unadorned() {
     let file = diffuse_core::wire::OutputFile {
         path: "src/untouched.rs".to_string(),
-        status: "unmodified".to_string(),
+        status: diffuse_core::FileStatus::Unmodified,
         ..Default::default()
     };
 
@@ -327,7 +327,7 @@ fn test_render_file_diff_renders_inline_note_callouts() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 2,
         old_line_count: 1,
         new_content: vec!["line 1".to_string(), "line 2".to_string()],
@@ -433,7 +433,7 @@ fn test_render_file_diff_wraps_notes_at_specified_width() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 1,
         old_line_count: 1,
         new_content: vec!["hello world".to_string()],
@@ -668,7 +668,7 @@ fn test_write_file_header_bar_without_width_has_no_trailing_space() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 1,
         old_line_count: 1,
         new_content: vec![],

@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    parse::{RowGroup, RowKind},
+    parse::{FileStatus, RowGroup, RowKind},
     wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput, TokenColor},
 };
 
@@ -14,7 +14,7 @@ fn sample_output_file() -> OutputFile {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: FileStatus::Modified,
         new_line_count: 3,
         old_line_count: 3,
         new_content: vec![],
@@ -148,7 +148,7 @@ fn test_jsonl_roundtrip_renamed_file() {
     let mut file = sample_output_file();
     file.path = "src/new.rs".to_string();
     file.old_path = Some("src/old.rs".to_string());
-    file.status = "renamed".to_string();
+    file.status = FileStatus::Renamed;
     let mut buffer = Vec::new();
     emit_file_jsonl(&file, &mut buffer).expect("emit jsonl");
 
@@ -212,7 +212,7 @@ fn test_common_directory_prefix_and_display() {
         old_path: Some("crates/diffuse-core/src/algo/mod.rs".to_string()),
         old_mode: None,
         new_mode: None,
-        status: "renamed".to_string(),
+        status: FileStatus::Renamed,
         new_line_count: 0,
         old_line_count: 0,
         new_content: vec![],
@@ -234,7 +234,7 @@ fn test_common_directory_prefix_and_display() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: FileStatus::Modified,
         new_line_count: 0,
         old_line_count: 0,
         new_content: vec![],
@@ -277,7 +277,7 @@ fn test_common_directory_prefix_and_display() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: FileStatus::Modified,
         new_line_count: 0,
         old_line_count: 0,
         new_content: vec![],
@@ -329,7 +329,7 @@ fn test_display_status_mode_change_and_renames() {
         old_path: None,
         old_mode: Some("100644".to_string()),
         new_mode: Some("100755".to_string()),
-        status: "mode changed".to_string(),
+        status: FileStatus::ModeChanged,
         new_line_count: 5,
         old_line_count: 5,
         new_content: vec![],
@@ -350,7 +350,7 @@ fn test_display_status_mode_change_and_renames() {
 
     // Renamed + mode change
     file.old_path = Some("old_script.sh".to_string());
-    file.status = "renamed".to_string();
+    file.status = FileStatus::Renamed;
     assert_eq!(file.display_status(), "renamed, mode 100644 ➞ 100755, 1kB");
 
     // Renamed only
@@ -360,7 +360,7 @@ fn test_display_status_mode_change_and_renames() {
 
     // Standard modified file
     file.old_path = None;
-    file.status = "modified".to_string();
+    file.status = FileStatus::Modified;
     assert_eq!(file.display_status(), "1kB");
 
     // Size changes between old and new
@@ -369,13 +369,13 @@ fn test_display_status_mode_change_and_renames() {
     assert_eq!(file.display_status(), "1kB ➞ 2kB");
 
     // Added file
-    file.status = "added".to_string();
+    file.status = FileStatus::Added;
     file.old_bytes = None;
     file.new_bytes = Some(1024);
     assert_eq!(file.display_status(), "added, 1kB");
 
     // Deleted file
-    file.status = "deleted".to_string();
+    file.status = FileStatus::Deleted;
     file.old_bytes = Some(1024);
     file.new_bytes = None;
     assert_eq!(file.display_status(), "deleted, 1kB");
@@ -384,19 +384,19 @@ fn test_display_status_mode_change_and_renames() {
     file.old_bytes = None;
     file.new_bytes = None;
 
-    file.status = "added".to_string();
+    file.status = FileStatus::Added;
     assert_eq!(file.display_size(), "");
     assert_eq!(file.display_status(), "added");
 
-    file.status = "deleted".to_string();
+    file.status = FileStatus::Deleted;
     assert_eq!(file.display_size(), "");
     assert_eq!(file.display_status(), "deleted");
 
-    file.status = "untracked".to_string();
+    file.status = FileStatus::Untracked;
     assert_eq!(file.display_size(), "");
     assert_eq!(file.display_status(), "untracked");
 
-    file.status = "modified".to_string();
+    file.status = FileStatus::Modified;
     assert_eq!(file.display_size(), "");
     assert_eq!(file.display_status(), "modified");
 
@@ -408,7 +408,7 @@ fn test_display_status_mode_change_and_renames() {
 #[test]
 fn test_display_status_unmodified() {
     let mut file = OutputFile {
-        status: "unmodified".to_string(),
+        status: FileStatus::Unmodified,
         ..Default::default()
     };
     assert_eq!(file.display_status(), "unmodified");

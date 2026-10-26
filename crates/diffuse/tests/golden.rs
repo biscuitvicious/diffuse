@@ -659,7 +659,7 @@ fn assert_diff_invariants(
         }
     }
 }
-fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
+fn walk_and_assert(out: &PipelineOutput, corpus: &str, num_files: usize) {
     let mut failures = 0usize;
     macro_rules! check {
         ($cond:expr, $($arg:tt)*) => {
@@ -670,8 +670,8 @@ fn walk_and_assert(out: &PipelineOutput, corpus: &str, min_files: usize) {
         };
     }
     check!(
-        out.files.len() >= min_files,
-        "corpus parses into {min_files}+ files, got {}",
+        out.files.len() == num_files,
+        "corpus parses into exactly {num_files} files, got {}",
         out.files.len()
     );
     check!(
@@ -1635,7 +1635,7 @@ fn run_pipeline_for_generation(fixture: &Fixture, opts: PipelineOptions) -> Pipe
     }
 }
 
-fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
+fn run_lib_leg(name: &str, num_files: usize) -> (Arc<Fixture>, PipelineOutput) {
     init_test_logging();
     let t0 = Instant::now();
     let fixture = load_fixture(name);
@@ -1692,7 +1692,7 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
         )
     };
     assert_wire_json_matches(&output, name);
-    walk_and_assert(&output, name, min);
+    walk_and_assert(&output, name, num_files);
     assert_diff_invariants(
         &fixture.diff,
         &output,
@@ -1703,7 +1703,7 @@ fn run_lib_leg(name: &str, min: usize) -> (Arc<Fixture>, PipelineOutput) {
     (fixture, output)
 }
 
-fn run_bin_leg(name: &str, min: usize) {
+fn run_bin_leg(name: &str, num_files: usize) {
     if env::var("GEN_GOLDEN").is_ok() || env::var("UPDATE_WIRE").is_ok() {
         // Regenerate the wire golden from the binary's actual output so that
         // the golden always reflects what the compiled binary emits, not the
@@ -1888,7 +1888,7 @@ fn run_bin_leg(name: &str, min: usize) {
         branch: String::new(),
         untracked_skipped: vec![],
     };
-    walk_and_assert(&decoded, name, min);
+    walk_and_assert(&decoded, name, num_files);
     let bin_fixture = load_fixture(name);
     assert_diff_invariants(
         &bin_fixture.diff,
@@ -2004,66 +2004,54 @@ fn run_oracle_for_corpus(name: &str, fixture: &Fixture, wire: &PipelineOutput) {
     }
 }
 
-fn run_acceptance_test_impl(
-    is_inited: bool,
-    name: &str,
-    min: usize,
-    has_render: bool,
-    has_oracle: bool,
-) -> bool {
+fn run_acceptance_test_impl(is_inited: bool, name: &str, num_files: usize) -> bool {
     if !is_inited {
         eprintln!("tests/golden submodule is not initialized; skipping {name} golden_acceptance");
         return false;
     }
-    let (fixture, output) = run_lib_leg(name, min);
-    if has_render {
-        assert_render_matches(&output, name);
-        assert_markdown_matches(&output, name);
-    }
-    if has_oracle {
-        run_oracle_for_corpus(name, &fixture, &output);
-    }
+    let (fixture, output) = run_lib_leg(name, num_files);
+    assert_render_matches(&output, name);
+    assert_markdown_matches(&output, name);
+    run_oracle_for_corpus(name, &fixture, &output);
     true
 }
 
-fn run_acceptance_test(name: &str, min: usize, has_render: bool, has_oracle: bool) {
-    run_acceptance_test_impl(is_golden_initialized(), name, min, has_render, has_oracle);
+fn run_acceptance_test(name: &str, num_files: usize) {
+    run_acceptance_test_impl(is_golden_initialized(), name, num_files);
 }
 
-fn run_binary_test_impl(is_inited: bool, name: &str, min: usize, has_render: bool) -> bool {
+fn run_binary_test_impl(is_inited: bool, name: &str, num_files: usize) -> bool {
     if !is_inited {
         eprintln!("tests/golden submodule is not initialized; skipping {name} bin_leg");
         return false;
     }
-    run_bin_leg(name, min);
-    if has_render {
-        run_bin_markdown_leg(name);
-        run_bin_raw_leg(name);
-    }
+    run_bin_leg(name, num_files);
+    run_bin_markdown_leg(name);
+    run_bin_raw_leg(name);
     true
 }
 
-fn run_binary_test(name: &str, min: usize, has_render: bool) {
-    run_binary_test_impl(is_golden_initialized(), name, min, has_render);
+fn run_binary_test(name: &str, num_files: usize) {
+    run_binary_test_impl(is_golden_initialized(), name, num_files);
 }
 
 macro_rules! corpus_tests {
-    ($mod_name:ident, $name:expr, $min:expr, $has_render:expr, $has_oracle:expr) => {
+    ($mod_name:ident, $name:expr, $num_files:expr) => {
         mod $mod_name {
             use super::*;
 
             #[test]
             fn golden_acceptance() {
-                run_acceptance_test($name, $min, $has_render, $has_oracle);
+                run_acceptance_test($name, $num_files);
             }
 
             #[test]
             fn bin_leg() {
-                run_binary_test($name, $min, $has_render);
+                run_binary_test($name, $num_files);
             }
         }
     };
-    (ignored $mod_name:ident, $name:expr, $min:expr) => {
+    (ignored $mod_name:ident, $name:expr, $num_files:expr) => {
         mod $mod_name {
             use super::*;
 
@@ -2077,7 +2065,7 @@ macro_rules! corpus_tests {
                     );
                     return;
                 }
-                run_lib_leg($name, $min);
+                run_lib_leg($name, $num_files);
             }
 
             #[test]
@@ -2090,49 +2078,31 @@ macro_rules! corpus_tests {
                     );
                     return;
                 }
-                run_bin_leg($name, $min);
+                run_bin_leg($name, $num_files);
             }
         }
     };
 }
 
-corpus_tests!(diffuse_2026_08, "diffuse-2026-08", 15, true, false);
-corpus_tests!(opt_1, "opt-1-cache-regex-window-slice", 5, true, true);
-corpus_tests!(opt_2, "opt-2-cache-markdown-regex", 2, true, true);
-corpus_tests!(opt_3, "opt-3-cache-lang-profile", 3, true, true);
-corpus_tests!(opt_4, "opt-4-manual-scanner-prefilter", 4, true, true);
-corpus_tests!(diffuse_history_mid, "diffuse-history-mid", 45, true, false);
-corpus_tests!(untracked_files, "untracked-files", 2, true, false);
-corpus_tests!(
-    theme_scrollbar_palette,
-    "theme-scrollbar-palette",
-    30,
-    true,
-    true
-);
-corpus_tests!(theme_light_toggle, "theme-light-toggle", 40, true, true);
-corpus_tests!(row_groups_contrast, "row-groups-contrast", 20, true, true);
-corpus_tests!(rust_lifetime_char, "rust-lifetime-char", 90, true, true);
-corpus_tests!(review_notes, "review-notes", 14, true, false);
-corpus_tests!(fn_return_tail, "fn-return-tail", 4, true, false);
-corpus_tests!(osc11_query_gate, "osc11-query-gate", 6, true, false);
-corpus_tests!(ansi_optimizer, "ansi-optimizer", 10, true, false);
-corpus_tests!(linenum_u32, "linenum-u32", 20, true, true);
-corpus_tests!(scrollbar_grab_drag, "scrollbar-grab-drag", 6, true, true);
-corpus_tests!(
-    viewport_scroll_boundaries,
-    "viewport-scroll-boundaries",
-    5,
-    true,
-    true
-);
-corpus_tests!(
-    container_compatibility,
-    "container-compatibility",
-    5,
-    true,
-    true
-);
+corpus_tests!(diffuse_2026_08, "diffuse-2026-08", 17);
+corpus_tests!(opt_1, "opt-1-cache-regex-window-slice", 5);
+corpus_tests!(opt_2, "opt-2-cache-markdown-regex", 2);
+corpus_tests!(opt_3, "opt-3-cache-lang-profile", 3);
+corpus_tests!(opt_4, "opt-4-manual-scanner-prefilter", 4);
+corpus_tests!(diffuse_history_mid, "diffuse-history-mid", 203);
+corpus_tests!(untracked_files, "untracked-files", 2);
+corpus_tests!(theme_scrollbar_palette, "theme-scrollbar-palette", 34);
+corpus_tests!(theme_light_toggle, "theme-light-toggle", 42);
+corpus_tests!(row_groups_contrast, "row-groups-contrast", 29);
+corpus_tests!(rust_lifetime_char, "rust-lifetime-char", 100);
+corpus_tests!(review_notes, "review-notes", 16);
+corpus_tests!(fn_return_tail, "fn-return-tail", 4);
+corpus_tests!(osc11_query_gate, "osc11-query-gate", 6);
+corpus_tests!(ansi_optimizer, "ansi-optimizer", 10);
+corpus_tests!(linenum_u32, "linenum-u32", 26);
+corpus_tests!(scrollbar_grab_drag, "scrollbar-grab-drag", 7);
+corpus_tests!(viewport_scroll_boundaries, "viewport-scroll-boundaries", 6);
+corpus_tests!(container_compatibility, "container-compatibility", 9);
 
 #[test]
 fn test_golden_initialized_detection() {
@@ -2159,12 +2129,6 @@ fn test_golden_initialized_detection() {
     let _ = fs::remove_dir_all(&tmp);
 
     // Verify uninitialized skip logic executes cleanly without panic
-    assert!(!run_acceptance_test_impl(
-        false,
-        "test-corpus",
-        1,
-        false,
-        false
-    ));
-    assert!(!run_binary_test_impl(false, "test-corpus", 1, false));
+    assert!(!run_acceptance_test_impl(false, "test-corpus", 1));
+    assert!(!run_binary_test_impl(false, "test-corpus", 1));
 }

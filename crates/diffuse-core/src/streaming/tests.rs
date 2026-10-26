@@ -12,7 +12,7 @@ fn test_file_sequencer_in_order_reassembly() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: crate::parse::FileStatus::Modified,
         new_line_count: 0,
         old_line_count: 0,
         new_content: Vec::new(),

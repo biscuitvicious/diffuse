@@ -13,7 +13,7 @@ fn dummy_file() -> OutputFile {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -533,7 +533,7 @@ fn test_ratatui_diff_grid_lines() {
         old_path: None,
         old_mode: None,
         new_mode: None,
-        status: "modified".to_string(),
+        status: diffuse_core::FileStatus::Modified,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -593,7 +593,7 @@ fn test_render_file_header_segment_narrow_width() {
         old_path: Some("crates/diffuse-tui/src/view/modals.rs".to_string()),
         old_mode: None,
         new_mode: None,
-        status: "renamed".to_string(),
+        status: diffuse_core::FileStatus::Renamed,
         new_line_count: 10,
         old_line_count: 10,
         new_content: vec![],
@@ -666,7 +666,7 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
         old_path: Some("crates/diffuse-core/src/algo/mod.rs".to_string()),
         old_mode: None,
         new_mode: None,
-        status: "renamed".to_string(),
+        status: diffuse_core::FileStatus::Renamed,
         counts: FileCounts::default(),
         hunks: vec![],
         raw_hunks: vec![],
@@ -815,7 +815,7 @@ fn test_wrapped_glyph_hit_never_touches_scrollbar_column() {
 #[test]
 fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
     let mut f = dummy_file();
-    f.status = "modified".to_string();
+    f.status = diffuse_core::FileStatus::Modified;
     let banner = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
         !banner.contains("(modified)"),
@@ -826,21 +826,21 @@ fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
         "file header banner should directly show path and counts without '(modified)', got: {banner}"
     );
 
-    f.status = "added".to_string();
+    f.status = diffuse_core::FileStatus::Added;
     let banner_added = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
         banner_added.contains("(added)"),
         "file header banner must display '(added)', got: {banner_added}"
     );
 
-    f.status = "deleted".to_string();
+    f.status = diffuse_core::FileStatus::Deleted;
     let banner_del = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
         banner_del.contains("(deleted)"),
         "file header banner must display '(deleted)', got: {banner_del}"
     );
 
-    f.status = "modified".to_string();
+    f.status = diffuse_core::FileStatus::Modified;
     f.is_binary = true;
     let banner_bin = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
     assert!(
