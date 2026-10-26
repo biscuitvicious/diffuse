@@ -65,6 +65,31 @@ pub fn is_relevant_repo_path(path: &Path, repo_root: &Path) -> bool {
     true
 }
 
+/// Check whether `path` modified on disk points to the review notes database
+/// file.
+#[must_use]
+pub fn is_notes_path(path: &Path, notes_path: &Path) -> bool {
+    if path == notes_path {
+        return true;
+    }
+    if let (Ok(c1), Ok(c2)) = (path.canonicalize(), notes_path.canonicalize())
+        && c1 == c2 {
+            return true;
+        }
+    if let (Some(n1), Some(n2)) = (path.file_name(), notes_path.file_name())
+        && n1 == n2
+            && let (Some(p1), Some(p2)) = (path.parent(), notes_path.parent()) {
+                if p1 == p2 {
+                    return true;
+                }
+                if let (Ok(cp1), Ok(cp2)) = (p1.canonicalize(), p2.canonicalize())
+                    && cp1 == cp2 {
+                        return true;
+                    }
+            }
+    false
+}
+
 /// Classification of a single raw filesystem mutation event.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FsChange {
@@ -72,6 +97,8 @@ pub enum FsChange {
     File(String),
     /// Repository-level metadata change (.git/index, .git/HEAD, refs).
     Global,
+    /// Review notes database file mutation.
+    Notes,
 }
 
 /// Classify a path modification into a working tree file change or global git
@@ -90,6 +117,17 @@ pub fn classify_repo_path(path: &Path, repo_root: &Path) -> Option<FsChange> {
     }
 }
 
+/// Sub-classification of diff-related reloads in a consolidated event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FsDiffEvent {
+    /// Changes localized to specific working tree source paths (relative to
+    /// repo root).
+    Paths(Vec<String>),
+    /// Repository-level metadata change requiring global reload (.git/index,
+    /// .git/HEAD, refs).
+    Global,
+}
+
 /// Consolidated, debounced event ready for execution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FsEvent {
@@ -99,6 +137,10 @@ pub enum FsEvent {
     /// Repository-level metadata change requiring global reload (.git/index,
     /// .git/HEAD, refs).
     Global,
+    /// Review notes database file modified on disk.
+    Notes,
+    /// Both diff files and review notes changed within the quiet window.
+    DiffAndNotes { diff: FsDiffEvent },
 }
 
 /// Collector that aggregates and debounces incoming `FsChange` events over a
@@ -107,6 +149,7 @@ pub enum FsEvent {
 pub struct FsChangeCollector {
     pub pending_files: HashSet<String>,
     pub pending_global: bool,
+    pub pending_notes: bool,
     pub last_activity: Option<Instant>,
 }
 
@@ -125,6 +168,9 @@ impl FsChangeCollector {
             FsChange::File(path) => {
                 self.pending_files.insert(path);
             }
+            FsChange::Notes => {
+                self.pending_notes = true;
+            }
         }
     }
 
@@ -137,15 +183,25 @@ impl FsChangeCollector {
         }
 
         self.last_activity = None;
-        if self.pending_global {
+        let notes = std::mem::take(&mut self.pending_notes);
+
+        let diff = if self.pending_global {
             self.pending_global = false;
             self.pending_files.clear();
-            Some(FsEvent::Global)
+            Some(FsDiffEvent::Global)
         } else if !self.pending_files.is_empty() {
             let files = std::mem::take(&mut self.pending_files);
-            Some(FsEvent::Paths(files.into_iter().collect()))
+            Some(FsDiffEvent::Paths(files.into_iter().collect()))
         } else {
             None
+        };
+
+        match (diff, notes) {
+            (Some(diff), true) => Some(FsEvent::DiffAndNotes { diff }),
+            (Some(FsDiffEvent::Global), false) => Some(FsEvent::Global),
+            (Some(FsDiffEvent::Paths(paths)), false) => Some(FsEvent::Paths(paths)),
+            (None, true) => Some(FsEvent::Notes),
+            (None, false) => None,
         }
     }
 }
@@ -160,22 +216,57 @@ impl RepoWatcher {
     /// Spawn a background filesystem watcher on `repo_root` that sends
     /// classified changes to `tx`.
     pub fn spawn(repo_root: PathBuf, tx: mpsc::Sender<FsChange>) -> Result<Self, notify::Error> {
+        Self::spawn_with_notes(Some(repo_root), None, tx)
+    }
+
+    /// Spawn a background filesystem watcher on optional `repo_root` and
+    /// optional `notes_path` that sends classified changes to `tx`.
+    pub fn spawn_with_notes(
+        repo_root: Option<PathBuf>,
+        notes_path: Option<PathBuf>,
+        tx: mpsc::Sender<FsChange>,
+    ) -> Result<Self, notify::Error> {
         let root_for_filter = repo_root.clone();
+        let notes_for_filter = notes_path.clone();
+
         let event_handler = move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
                 if !is_mutation_event(&event.kind) {
                     return;
                 }
                 for p in &event.paths {
-                    if let Some(change) = classify_repo_path(p, &root_for_filter) {
-                        let _ = tx.send(change);
-                    }
+                    if let Some(ref np) = notes_for_filter
+                        && is_notes_path(p, np) {
+                            let _ = tx.send(FsChange::Notes);
+                            continue;
+                        }
+                    if let Some(ref root) = root_for_filter
+                        && let Some(change) = classify_repo_path(p, root) {
+                            let _ = tx.send(change);
+                        }
                 }
             }
         };
 
         let mut watcher = RecommendedWatcher::new(event_handler, Config::default())?;
-        watcher.watch(&repo_root, RecursiveMode::Recursive)?;
+
+        if let Some(ref root) = repo_root
+            && root.exists() {
+                watcher.watch(root, RecursiveMode::Recursive)?;
+            }
+
+        if let Some(ref np) = notes_path {
+            if let Some(parent) = np.parent() {
+                let _ = std::fs::create_dir_all(parent);
+                if parent.exists() {
+                    let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
+                } else if np.exists() {
+                    let _ = watcher.watch(np, RecursiveMode::NonRecursive);
+                }
+            } else if np.exists() {
+                let _ = watcher.watch(np, RecursiveMode::NonRecursive);
+            }
+        }
 
         Ok(Self { _watcher: watcher })
     }

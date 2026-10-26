@@ -1456,3 +1456,286 @@ diff --git a/test.rs b/test.rs
         "callout must be placed at target row"
     );
 }
+
+#[test]
+fn test_diff_notes_db_resolved_and_unresolved() {
+    let mut old_db = HashMap::new();
+    let note1 = ReviewNote {
+        id: "note-1".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "Please fix this".into(),
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut old_db, "repo", note1.clone());
+
+    let mut new_db = old_db.clone();
+    let n = new_db
+        .get_mut("repo")
+        .unwrap()
+        .get_mut("src/lib.rs")
+        .unwrap()
+        .get_mut(0)
+        .unwrap();
+    n.status = NoteStatus::Resolved;
+
+    let summary = AppState::diff_notes_db(&old_db, &new_db, "repo");
+    assert_eq!(summary.active_delta, -1);
+    assert_eq!(summary.resolved_delta, 1);
+    assert_eq!(
+        summary.format_message(),
+        "↻ notes updated (-1 active, +1 resolved)"
+    );
+
+    // And back: un-resolving note
+    let rev_summary = AppState::diff_notes_db(&new_db, &old_db, "repo");
+    assert_eq!(rev_summary.active_delta, 1);
+    assert_eq!(rev_summary.resolved_delta, -1);
+    assert_eq!(
+        rev_summary.format_message(),
+        "↻ notes updated (+1 active, -1 resolved)"
+    );
+}
+
+#[test]
+fn test_diff_notes_db_add_delete_edit() {
+    let mut db1 = HashMap::new();
+    let note1 = ReviewNote {
+        id: "note-1".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "Original text".into(),
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut db1, "repo", note1);
+
+    // Addition
+    let mut db2 = db1.clone();
+    let note2 = ReviewNote {
+        id: "note-2".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 20,
+        end: 20,
+        text: "New note".into(),
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut db2, "repo", note2);
+
+    let summary_add = AppState::diff_notes_db(&db1, &db2, "repo");
+    assert_eq!(summary_add.added, 1);
+    assert_eq!(summary_add.format_message(), "↻ notes updated (+1 note)");
+
+    // Deletion
+    let summary_del = AppState::diff_notes_db(&db2, &db1, "repo");
+    assert_eq!(summary_del.deleted, 1);
+    assert_eq!(summary_del.format_message(), "↻ notes updated (-1 note)");
+
+    // Edit
+    let mut db3 = db1.clone();
+    db3.get_mut("repo")
+        .unwrap()
+        .get_mut("src/lib.rs")
+        .unwrap()
+        .get_mut(0)
+        .unwrap()
+        .text = "Updated text".into();
+    let summary_edit = AppState::diff_notes_db(&db1, &db3, "repo");
+    assert_eq!(summary_edit.edited, 1);
+    assert_eq!(
+        summary_edit.format_message(),
+        "↻ notes updated (1 note edited)"
+    );
+}
+
+#[test]
+fn test_reload_notes_from_disk_updates_counts_and_hides_resolved() {
+    use diffuse_core::notes::save_notes;
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = tmp.path().to_path_buf();
+
+    let mut db = HashMap::new();
+    let note = ReviewNote {
+        id: "n1".into(),
+        file: "filesystem.rs".into(),
+        side: Side::New,
+        start: 1025,
+        end: 1025,
+        text: "Review feedback".into(),
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut db, "test_repo", note);
+    save_notes(&notes_path, &db).unwrap();
+
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path.clone(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.notes = db.clone();
+    state.sync_all_notes();
+
+    assert_eq!(state.output.files[0].counts.notes, 1);
+    assert_eq!(state.output.files[0].counts.resolved_notes, 0);
+    assert_eq!(state.output.total_counts().notes, 1);
+
+    // Callout visible when not resolved
+    let callouts = state.note_callouts(80);
+    assert!(!callouts.is_empty());
+
+    // No change on disk -> reload returns None
+    assert_eq!(state.reload_notes_from_disk(), None);
+
+    // Now resolve note on disk
+    let mut resolved_db = db.clone();
+    resolved_db
+        .get_mut("test_repo")
+        .unwrap()
+        .get_mut("filesystem.rs")
+        .unwrap()
+        .get_mut(0)
+        .unwrap()
+        .status = NoteStatus::Resolved;
+    save_notes(&notes_path, &resolved_db).unwrap();
+
+    // Reload from disk
+    let msg = state.reload_notes_from_disk();
+    assert_eq!(
+        msg,
+        Some("↻ notes updated (-1 active, +1 resolved)".to_string())
+    );
+
+    // Verify file counts updated correctly (-1 active, +1 resolved)
+    assert_eq!(state.output.files[0].counts.notes, 0);
+    assert_eq!(state.output.files[0].counts.resolved_notes, 1);
+
+    // When show_resolved_notes is false (default), resolved note is hidden/removed
+    assert!(!state.show_resolved_notes);
+    let callouts_after = state.note_callouts(80);
+    assert!(
+        callouts_after.is_empty(),
+        "resolved note must be hidden when show_resolved_notes is false"
+    );
+
+    // When show_resolved_notes is true, resolved note appears
+    state.show_resolved_notes = true;
+    let callouts_resolved = state.note_callouts(80);
+    assert!(
+        !callouts_resolved.is_empty(),
+        "resolved note must appear when show_resolved_notes is true"
+    );
+}
+
+#[test]
+fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
+    use diffuse_core::notes::save_notes;
+
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let notes_path = tmp.path().to_path_buf();
+
+    let mut db = HashMap::new();
+    let note = ReviewNote {
+        id: "n1".into(),
+        file: "filesystem.rs".into(),
+        side: Side::New,
+        start: 1025,
+        end: 1025,
+        text: "Line 1\nLine 2".into(),
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut db, "test_repo", note);
+    save_notes(&notes_path, &db).unwrap();
+
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        notes_path.clone(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    state.notes = db.clone();
+    state.sync_all_notes();
+
+    let target_row = state.note_target_row(0, &state.notes["test_repo"]["filesystem.rs"][0]);
+    state.row_idx = target_row;
+    state.vis_line = 1;
+
+    // Resolve note on disk
+    let mut resolved_db = db.clone();
+    resolved_db
+        .get_mut("test_repo")
+        .unwrap()
+        .get_mut("filesystem.rs")
+        .unwrap()
+        .get_mut(0)
+        .unwrap()
+        .status = NoteStatus::Resolved;
+    save_notes(&notes_path, &resolved_db).unwrap();
+
+    // Reload from disk (show_resolved_notes is false)
+    let _ = state.reload_notes_from_disk();
+
+    // vis_line must be clamped back to 0 (parent row), without out-of-bounds index
+    assert_eq!(state.vis_line, 0);
+}
+
+#[test]
+fn test_diff_notes_db_in_progress_and_plural_formatting() {
+    let mut db1 = HashMap::new();
+    let note1 = ReviewNote {
+        id: "note-1".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 10,
+        end: 10,
+        text: "Note 1".into(),
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    let note2 = ReviewNote {
+        id: "note-2".into(),
+        file: "src/lib.rs".into(),
+        side: Side::New,
+        start: 20,
+        end: 20,
+        text: "Note 2".into(),
+        status: NoteStatus::Open,
+        ..Default::default()
+    };
+    add_note(&mut db1, "repo", note1);
+    add_note(&mut db1, "repo", note2);
+
+    // Transition note1 from Open -> InProgress
+    let mut db2 = db1.clone();
+    db2.get_mut("repo")
+        .unwrap()
+        .get_mut("src/lib.rs")
+        .unwrap()
+        .get_mut(0)
+        .unwrap()
+        .status = NoteStatus::InProgress;
+
+    let summary = AppState::diff_notes_db(&db1, &db2, "repo");
+    assert_eq!(summary.in_progress_delta, 1);
+    assert_eq!(summary.format_message(), "↻ notes updated (+1 in progress)");
+
+    // Plural additions and deletions
+    let empty_db = HashMap::new();
+    let add_two = AppState::diff_notes_db(&empty_db, &db1, "repo");
+    assert_eq!(add_two.added, 2);
+    assert_eq!(add_two.format_message(), "↻ notes updated (+2 notes)");
+
+    let del_two = AppState::diff_notes_db(&db1, &empty_db, "repo");
+    assert_eq!(del_two.deleted, 2);
+    assert_eq!(del_two.format_message(), "↻ notes updated (-2 notes)");
+}

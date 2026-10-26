@@ -260,3 +260,62 @@ fn test_read_operations_do_not_trigger_fs_change() {
         "Read operations must NOT produce FsChange events, but got: {events:?}"
     );
 }
+
+#[test]
+fn test_is_notes_path() {
+    use super::is_notes_path;
+
+    let dir = tempfile::tempdir().unwrap();
+    let notes_path = dir.path().join("notes.json");
+    let other_path = dir.path().join("other.json");
+    let nested_notes = dir.path().join("sub/notes.json");
+
+    assert!(is_notes_path(&notes_path, &notes_path));
+    assert!(!is_notes_path(&other_path, &notes_path));
+    assert!(!is_notes_path(&nested_notes, &notes_path));
+
+    // When file exists on disk
+    std::fs::write(&notes_path, "{}").unwrap();
+    assert!(is_notes_path(&notes_path, &notes_path));
+    assert!(!is_notes_path(&other_path, &notes_path));
+}
+
+#[test]
+fn test_collector_notes_and_mixed_events() {
+    use super::{FsChange, FsChangeCollector, FsDiffEvent, FsEvent};
+    use std::time::{Duration, Instant};
+
+    let mut collector = FsChangeCollector::new();
+    let t0 = Instant::now();
+    let window = Duration::from_millis(150);
+
+    // Only notes change
+    collector.record(FsChange::Notes, t0);
+    assert_eq!(
+        collector.take_debounced(t0 + Duration::from_millis(160), window),
+        Some(FsEvent::Notes)
+    );
+
+    // Mixed notes + file change
+    let t1 = Instant::now();
+    collector.record(FsChange::File("file.rs".into()), t1);
+    collector.record(FsChange::Notes, t1);
+    match collector.take_debounced(t1 + Duration::from_millis(160), window) {
+        Some(FsEvent::DiffAndNotes { diff }) => {
+            assert_eq!(diff, FsDiffEvent::Paths(vec!["file.rs".into()]));
+        }
+        other => panic!("expected DiffAndNotes, got {other:?}"),
+    }
+
+    // Mixed notes + global change
+    let t2 = Instant::now();
+    collector.record(FsChange::File("file.rs".into()), t2);
+    collector.record(FsChange::Global, t2);
+    collector.record(FsChange::Notes, t2);
+    match collector.take_debounced(t2 + Duration::from_millis(160), window) {
+        Some(FsEvent::DiffAndNotes { diff }) => {
+            assert_eq!(diff, FsDiffEvent::Global);
+        }
+        other => panic!("expected DiffAndNotes with Global, got {other:?}"),
+    }
+}

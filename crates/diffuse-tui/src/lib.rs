@@ -56,6 +56,7 @@ fn trigger_streaming_reload(
     let repo_root = state.repo_root.clone();
     let git_args = state.git_args.clone();
     let staged = state.target.is_staged();
+    let _ = state.reload_notes_from_disk();
     let pipeline_opts = diffuse_core::PipelineOptions::default()
         .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
         .with_expand_lines(state.expand_lines)
@@ -120,8 +121,19 @@ pub fn run_tui(
     state.enable_async_on_demand();
 
     let (fs_tx, fs_rx) = mpsc::channel();
-    let _watcher = if watch && !state.target.is_range() && !repo_root.as_os_str().is_empty() {
-        crate::watcher::RepoWatcher::spawn(repo_root, fs_tx).ok()
+    let watch_repo = !state.target.is_range() && !repo_root.as_os_str().is_empty();
+    let watch_notes = !state.notes_path.as_os_str().is_empty();
+    let _watcher = if watch && (watch_repo || watch_notes) {
+        crate::watcher::RepoWatcher::spawn_with_notes(
+            if watch_repo { Some(repo_root) } else { None },
+            if watch_notes {
+                Some(state.notes_path.clone())
+            } else {
+                None
+            },
+            fs_tx,
+        )
+        .ok()
     } else {
         None
     };
@@ -153,48 +165,87 @@ pub fn run_tui(
             if let Some(event) = fs_collector.take_debounced(Instant::now(), FS_DEBOUNCE_WINDOW) {
                 if state.is_reload_deferred() {
                     match event {
+                        crate::watcher::FsEvent::Notes => {
+                            fs_collector.pending_notes = true;
+                        }
                         crate::watcher::FsEvent::Global => {
                             fs_collector.pending_global = true;
-                            fs_collector.last_activity = Some(Instant::now() - FS_DEBOUNCE_WINDOW);
                         }
                         crate::watcher::FsEvent::Paths(paths) => {
                             for p in paths {
                                 fs_collector.pending_files.insert(p);
                             }
-                            fs_collector.last_activity = Some(Instant::now() - FS_DEBOUNCE_WINDOW);
                         }
-                    }
-                } else {
-                    match event {
-                        crate::watcher::FsEvent::Paths(paths) => {
-                            let rr = state.repo_root.clone();
-                            let ga = state.git_args.clone();
-                            match actions::reload_specific_files(&mut state, &rr, &ga, &paths) {
-                                Ok(n) => {
-                                    let msg = format!(
-                                        "↻ live reload ({} file{})",
-                                        n,
-                                        if n == 1 { "" } else { "s" }
-                                    );
-                                    state.set_status_message(msg, true);
-                                    dirty = true;
+                        crate::watcher::FsEvent::DiffAndNotes { diff } => {
+                            fs_collector.pending_notes = true;
+                            match diff {
+                                crate::watcher::FsDiffEvent::Global => {
+                                    fs_collector.pending_global = true;
                                 }
-                                Err(e) => {
-                                    state.set_status_message(e, false);
-                                    dirty = true;
+                                crate::watcher::FsDiffEvent::Paths(paths) => {
+                                    for p in paths {
+                                        fs_collector.pending_files.insert(p);
+                                    }
                                 }
                             }
                         }
+                    }
+                    fs_collector.last_activity = Some(Instant::now() - FS_DEBOUNCE_WINDOW);
+                } else {
+                    let mut reload_notes = false;
+                    let mut diff_action = None;
+                    match event {
+                        crate::watcher::FsEvent::Notes => {
+                            reload_notes = true;
+                        }
+                        crate::watcher::FsEvent::Paths(paths) => {
+                            diff_action = Some(crate::watcher::FsDiffEvent::Paths(paths));
+                        }
                         crate::watcher::FsEvent::Global => {
-                            trigger_streaming_reload(
-                                &mut state,
-                                &mut streaming_rx,
-                                &mut meta_rx,
-                                &mut streaming_active,
-                                &mut reload_snapshot,
-                                &mut reload_seen_paths,
-                                &mut dirty,
-                            );
+                            diff_action = Some(crate::watcher::FsDiffEvent::Global);
+                        }
+                        crate::watcher::FsEvent::DiffAndNotes { diff } => {
+                            reload_notes = true;
+                            diff_action = Some(diff);
+                        }
+                    }
+
+                    if reload_notes && state.reload_notes_from_disk().is_some() {
+                        dirty = true;
+                    }
+
+                    if let Some(diff) = diff_action {
+                        match diff {
+                            crate::watcher::FsDiffEvent::Paths(paths) => {
+                                let rr = state.repo_root.clone();
+                                let ga = state.git_args.clone();
+                                match actions::reload_specific_files(&mut state, &rr, &ga, &paths) {
+                                    Ok(n) => {
+                                        let msg = format!(
+                                            "↻ live reload ({} file{})",
+                                            n,
+                                            if n == 1 { "" } else { "s" }
+                                        );
+                                        state.set_status_message(msg, true);
+                                        dirty = true;
+                                    }
+                                    Err(e) => {
+                                        state.set_status_message(e, false);
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                            crate::watcher::FsDiffEvent::Global => {
+                                trigger_streaming_reload(
+                                    &mut state,
+                                    &mut streaming_rx,
+                                    &mut meta_rx,
+                                    &mut streaming_active,
+                                    &mut reload_snapshot,
+                                    &mut reload_seen_paths,
+                                    &mut dirty,
+                                );
+                            }
                         }
                     }
                 }

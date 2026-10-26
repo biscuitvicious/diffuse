@@ -231,3 +231,21 @@ fn test_reloading_diff_status_clears_when_streaming_disconnects() {
     }
     assert!(state.status_message.is_none());
 }
+
+#[test]
+fn test_live_notes_mutation_detection() {
+    let (repo_dir, notes_path) = setup_repo();
+    let root = repo_dir.path().to_path_buf();
+
+    let (tx, rx) = mpsc::channel();
+    let _watcher = RepoWatcher::spawn_with_notes(Some(root), Some(notes_path.clone()), tx).unwrap();
+
+    // Write to notes.json
+    fs::write(&notes_path, "{}").unwrap();
+
+    let change = rx
+        .recv_timeout(Duration::from_millis(500))
+        .expect("must detect mutation on notes.json");
+
+    assert_eq!(change, FsChange::Notes);
+}
