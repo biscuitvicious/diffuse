@@ -73,7 +73,9 @@ impl AppState {
         };
         match item.kind {
             FlatRowKind::FileHeader => {
-                let file_obj = &self.output.files[item.file_idx];
+                let Some(file_obj) = self.output.files.get(item.file_idx) else {
+                    return 1;
+                };
                 let is_collapsed = self.collapsed_files.contains(&item.file_idx);
                 let txt = crate::view::diff_grid::file_header_text_with_prefix(
                     file_obj,
@@ -89,10 +91,13 @@ impl AppState {
                 if len == 0 { 1 } else { len.div_ceil(text_cols) }
             }
             FlatRowKind::HunkDivider { hunk_idx } => {
-                let hunks = if !self.output.files[item.file_idx].raw_hunks.is_empty() {
-                    &self.output.files[item.file_idx].raw_hunks
+                let Some(file) = self.output.files.get(item.file_idx) else {
+                    return 1;
+                };
+                let hunks = if !file.raw_hunks.is_empty() {
+                    &file.raw_hunks
                 } else {
-                    &self.output.files[item.file_idx].hunks
+                    &file.hunks
                 };
                 let h = &hunks[hunk_idx];
                 let sep_text = format!(
