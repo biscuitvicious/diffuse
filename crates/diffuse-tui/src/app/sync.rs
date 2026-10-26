@@ -244,7 +244,6 @@ impl AppState {
             self.flat.clear();
             self.hunk_starts.clear();
             self.hunk_meta.clear();
-            self.should_quit = true;
             return;
         }
 
@@ -278,7 +277,6 @@ impl AppState {
             self.flat.clear();
             self.hunk_starts.clear();
             self.hunk_meta.clear();
-            self.should_quit = true;
             return;
         }
 

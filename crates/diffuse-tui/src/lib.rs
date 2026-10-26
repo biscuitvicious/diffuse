@@ -310,7 +310,12 @@ pub fn run_tui(
                         {
                             state.output.files.retain(|f| seen.contains(&f.path));
                             if state.output.files.is_empty() {
-                                state.should_quit = true;
+                                let empty_out = diffuse_core::wire::PipelineOutput {
+                                    files: Vec::new(),
+                                    branch: state.output.branch.clone(),
+                                    untracked_skipped: state.output.untracked_skipped.clone(),
+                                };
+                                state.reload(empty_out);
                             } else {
                                 state.rebuild_flat_preserving_snapshot(&snapshot);
                             }

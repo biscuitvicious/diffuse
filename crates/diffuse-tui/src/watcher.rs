@@ -73,20 +73,23 @@ pub fn is_notes_path(path: &Path, notes_path: &Path) -> bool {
         return true;
     }
     if let (Ok(c1), Ok(c2)) = (path.canonicalize(), notes_path.canonicalize())
-        && c1 == c2 {
-            return true;
-        }
+        && c1 == c2
+    {
+        return true;
+    }
     if let (Some(n1), Some(n2)) = (path.file_name(), notes_path.file_name())
         && n1 == n2
-            && let (Some(p1), Some(p2)) = (path.parent(), notes_path.parent()) {
-                if p1 == p2 {
-                    return true;
-                }
-                if let (Ok(cp1), Ok(cp2)) = (p1.canonicalize(), p2.canonicalize())
-                    && cp1 == cp2 {
-                        return true;
-                    }
-            }
+        && let (Some(p1), Some(p2)) = (path.parent(), notes_path.parent())
+    {
+        if p1 == p2 {
+            return true;
+        }
+        if let (Ok(cp1), Ok(cp2)) = (p1.canonicalize(), p2.canonicalize())
+            && cp1 == cp2
+        {
+            return true;
+        }
+    }
     false
 }
 
@@ -236,14 +239,16 @@ impl RepoWatcher {
                 }
                 for p in &event.paths {
                     if let Some(ref np) = notes_for_filter
-                        && is_notes_path(p, np) {
-                            let _ = tx.send(FsChange::Notes);
-                            continue;
-                        }
+                        && is_notes_path(p, np)
+                    {
+                        let _ = tx.send(FsChange::Notes);
+                        continue;
+                    }
                     if let Some(ref root) = root_for_filter
-                        && let Some(change) = classify_repo_path(p, root) {
-                            let _ = tx.send(change);
-                        }
+                        && let Some(change) = classify_repo_path(p, root)
+                    {
+                        let _ = tx.send(change);
+                    }
                 }
             }
         };
@@ -251,9 +256,10 @@ impl RepoWatcher {
         let mut watcher = RecommendedWatcher::new(event_handler, Config::default())?;
 
         if let Some(ref root) = repo_root
-            && root.exists() {
-                watcher.watch(root, RecursiveMode::Recursive)?;
-            }
+            && root.exists()
+        {
+            watcher.watch(root, RecursiveMode::Recursive)?;
+        }
 
         if let Some(ref np) = notes_path {
             if let Some(parent) = np.parent() {

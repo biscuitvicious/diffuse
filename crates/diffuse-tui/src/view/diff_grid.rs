@@ -169,8 +169,9 @@ fn render_banner_piece(
     let mut open: Option<usize> = None;
     let mut open_emitted = false;
     for g in plain.graphemes(true) {
+        let gw = grapheme_width(g);
         let gs = col;
-        col += grapheme_width(g);
+        col += gw;
         // Latest-starting match wins, so nested ranges (rename underline
         // inside the white path) resolve innermost.
         let active = runs.iter().rposition(|r| gs >= r.start && gs < r.end);
@@ -183,7 +184,12 @@ fn render_banner_piece(
             }
             open = active;
         }
-        if gs < seg_start || gs >= seg_start + width {
+        // A grapheme belongs to this segment when it starts inside it and
+        // fully fits, OR when it straddles the segment's left edge (i.e. it
+        // did not fit at the tail of the previous segment and wraps here).
+        let in_segment = (gs >= seg_start && gs + gw <= seg_start + width)
+            || (gs < seg_start && gs + gw > seg_start);
+        if !in_segment {
             continue;
         }
         if let Some(idx) = open
@@ -193,7 +199,7 @@ fn render_banner_piece(
             open_emitted = true;
         }
         out.push_str(g);
-        visible += grapheme_width(g);
+        visible += gw;
     }
     if open_emitted && let Some(idx) = open {
         out.push_str(&runs[idx].close);
@@ -296,7 +302,13 @@ pub fn render_file_header_segment(
 
     let bar_str = if piece_w < content_width {
         let ruler_len = content_width - piece_w;
-        format!("{styled_piece}{}", "═".repeat(ruler_len))
+        let fills_with_ruler = seg_start + content_width >= total_prefix_w;
+        let pad = if fills_with_ruler {
+            "═".repeat(ruler_len)
+        } else {
+            " ".repeat(ruler_len)
+        };
+        format!("{styled_piece}{pad}")
     } else {
         styled_piece
     };
