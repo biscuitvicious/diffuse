@@ -136,11 +136,10 @@ fn test_toggle_staged_action_flow() {
     )
     .with_repo_context(repo_root.clone(), Vec::new(), false);
 
-    // 1. Initially unstaged: toggle when staged has NO changes -> Err("no staged
-    //    changes"), but still switches to staged view (empty).
+    // 1. Initially unstaged: toggle when staged has NO changes -> switches to
+    //    staged view (empty) without an error message.
     let git_args = state.git_args.clone();
-    let err = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
-    assert_eq!(err, "no staged changes");
+    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
     assert!(state.target.is_staged());
     assert!(state.output.files.is_empty());
 
@@ -160,10 +159,9 @@ fn test_toggle_staged_action_flow() {
     assert_eq!(state.output.files.len(), 1, "staged view has 1 file");
 
     // 3. Now in staged view: toggle back to unstaged (which is now clean) ->
-    //    Err("no unstaged changes"), but still switches to unstaged view (empty).
+    //    switches to unstaged view (empty) without an error message.
     let git_args = state.git_args.clone();
-    let err2 = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
-    assert_eq!(err2, "no unstaged changes");
+    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
     assert!(!state.target.is_staged(), "must switch to unstaged view");
     assert!(state.output.files.is_empty());
 

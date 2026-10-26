@@ -231,14 +231,6 @@ pub fn toggle_staged_action(
     state.commit_range = git_res.commit_range;
     state.reload(new_out);
 
-    if state.output.files.is_empty() {
-        return Err(if target_staged {
-            "no staged changes".into()
-        } else {
-            "no unstaged changes".into()
-        });
-    }
-
     Ok(())
 }
 
