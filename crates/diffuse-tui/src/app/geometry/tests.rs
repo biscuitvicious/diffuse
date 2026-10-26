@@ -623,3 +623,196 @@ fn test_scrollbar_step_kinematic_scaling() {
     //    total=25 -> max_scroll=5, span=21, round(5/21)=0 -> clamped to 3
     assert_eq!(AppState::scrollbar_step(24, 20, 25, 3), 3);
 }
+
+#[test]
+fn test_scrollbar_subcell_geometry_conservation() {
+    let (track_h, vh, total, header_vis) = (24, 20, 100, 1);
+    let max_scroll = total - vh;
+
+    for scroll in 0..=max_scroll {
+        let sub = AppState::scrollbar_subcell_for(track_h, vh, total, scroll, header_vis)
+            .expect("must produce subcell thumb");
+        let mut total_eighths = 0;
+        for r in 0..track_h {
+            match sub.cell_at(r) {
+                super::ScrollbarCell::Track => {}
+                super::ScrollbarCell::Full => total_eighths += 8,
+                super::ScrollbarCell::TopEdge { eighths } => total_eighths += eighths as usize,
+                super::ScrollbarCell::BottomEdge { eighths } => total_eighths += eighths as usize,
+            }
+        }
+        assert_eq!(
+            total_eighths, sub.size_eighths,
+            "total eighths must exactly equal size_eighths at scroll {scroll}"
+        );
+    }
+}
+
+#[test]
+fn test_scrollbar_subcell_boundary_conditions() {
+    let (track_h, vh, total, header_vis) = (24, 20, 100, 1);
+    let max_scroll = total - vh;
+    let thumb_size = AppState::scrollbar_thumb_size(track_h, vh, total).unwrap();
+    let span = track_h - thumb_size;
+
+    // 1. Top boundary (scroll = 0):
+    let top = AppState::scrollbar_subcell_for(track_h, vh, total, 0, header_vis).unwrap();
+    assert_eq!(top.start_eighths, 0);
+    assert_eq!(top.cell_at(0), super::ScrollbarCell::Full);
+    assert_eq!(top.cell_at(thumb_size - 1), super::ScrollbarCell::Full);
+    assert_eq!(top.cell_at(thumb_size), super::ScrollbarCell::Track);
+
+    // 2. Immediate scroll feedback (scroll = 1):
+    let sc1 = AppState::scrollbar_subcell_for(track_h, vh, total, 1, header_vis).unwrap();
+    assert!(sc1.start_eighths >= 1);
+    match sc1.cell_at(0) {
+        super::ScrollbarCell::TopEdge { eighths } => {
+            assert_eq!(eighths, 7);
+        }
+        other => panic!("expected TopEdge at row 0, got {other:?}"),
+    }
+    match sc1.cell_at(thumb_size) {
+        super::ScrollbarCell::BottomEdge { eighths } => {
+            assert_eq!(eighths, 1);
+        }
+        other => panic!("expected BottomEdge at row {thumb_size}, got {other:?}"),
+    }
+
+    // 3. Penultimate scroll (scroll = max_scroll - 1):
+    let pen =
+        AppState::scrollbar_subcell_for(track_h, vh, total, max_scroll - 1, header_vis).unwrap();
+    assert!(pen.start_eighths < span * 8);
+    match pen.cell_at(track_h - 1) {
+        super::ScrollbarCell::BottomEdge { eighths } => {
+            assert!(eighths < 8, "bottom row must not be full");
+        }
+        super::ScrollbarCell::Track => {}
+        other => panic!("expected BottomEdge or Track at bottom row, got {other:?}"),
+    }
+
+    // 4. Bottom boundary (scroll = max_scroll):
+    let bot = AppState::scrollbar_subcell_for(track_h, vh, total, max_scroll, header_vis).unwrap();
+    assert_eq!(bot.start_eighths, span * 8);
+    assert_eq!(bot.cell_at(track_h - 1), super::ScrollbarCell::Full);
+    assert_eq!(bot.cell_at(span), super::ScrollbarCell::Full);
+    if span > 0 {
+        assert_eq!(bot.cell_at(span - 1), super::ScrollbarCell::Track);
+    }
+}
+
+#[test]
+fn test_scrollbar_subcell_glyphs_and_inversion() {
+    use super::ScrollbarCell;
+    use crate::render::{ColorExt, DiffuseTheme};
+
+    let p = &DiffuseTheme::DEFAULT.palette;
+
+    // Track
+    let track = ScrollbarCell::Track;
+    assert_eq!(track.glyph(), '│');
+    let ansi_track = track.render_ansi(p);
+    assert!(ansi_track.contains('│'));
+
+    // Full
+    let full = ScrollbarCell::Full;
+    assert_eq!(full.glyph(), '█');
+    let ansi_full = full.render_ansi(p);
+    assert!(ansi_full.contains('█'));
+    assert!(ansi_full.contains(&p.scrollbar_thumb.fg_code()));
+
+    // TopEdge (bottom is thumb, top is track)
+    for frac in 1..=7 {
+        let cell = ScrollbarCell::TopEdge { eighths: frac };
+        let ch = cell.glyph();
+        let ansi = cell.render_ansi(p);
+        assert!(ansi.contains(ch));
+        // FG is thumb, BG is track
+        assert!(ansi.contains(&p.scrollbar_thumb.fg_code()));
+        assert!(ansi.contains(&p.scrollbar_track.bg_code()));
+    }
+
+    // BottomEdge (top is thumb, bottom is track)
+    // When eighths == 4: '▀' with FG = thumb, BG = track
+    let half = ScrollbarCell::BottomEdge { eighths: 4 };
+    assert_eq!(half.glyph(), '▀');
+    let ansi_half = half.render_ansi(p);
+    assert!(ansi_half.contains('▀'));
+    assert!(ansi_half.contains(&p.scrollbar_thumb.fg_code()));
+    assert!(ansi_half.contains(&p.scrollbar_track.bg_code()));
+
+    // Other BottomEdge eighths: lower block 8 - frac with FG = track, BG = thumb
+    // (inverted)
+    for frac in [1, 2, 3, 5, 6, 7] {
+        let cell = ScrollbarCell::BottomEdge { eighths: frac };
+        let ch = cell.glyph();
+        let ansi = cell.render_ansi(p);
+        assert!(ansi.contains(ch));
+        // Inverted: FG is track, BG is thumb
+        assert!(ansi.contains(&p.scrollbar_track.fg_code()));
+        assert!(ansi.contains(&p.scrollbar_thumb.bg_code()));
+    }
+}
+
+#[test]
+fn test_scrollbar_subcell_to_ratatui_line_and_edge_branches() {
+    use super::{ScrollbarCell, lower_block_glyph};
+    use ratatui::style::Color;
+
+    // Out-of-range lower block glyph falls back to space
+    assert_eq!(lower_block_glyph(0), ' ');
+    assert_eq!(lower_block_glyph(9), ' ');
+    assert_eq!(lower_block_glyph(8), '█');
+
+    let thumb_c = Color::White;
+    let track_c = Color::Black;
+
+    // 1. Track
+    let l_track = ScrollbarCell::Track.to_ratatui_line(thumb_c, track_c);
+    assert_eq!(l_track.spans[0].content, "│");
+    assert_eq!(l_track.spans[0].style.fg, Some(track_c));
+    assert_eq!(l_track.spans[0].style.bg, Some(track_c));
+
+    // 2. Full
+    let l_full = ScrollbarCell::Full.to_ratatui_line(thumb_c, track_c);
+    assert_eq!(l_full.spans[0].content, "█");
+    assert_eq!(l_full.spans[0].style.fg, Some(thumb_c));
+    assert_eq!(l_full.spans[0].style.bg, Some(thumb_c));
+
+    // 3. TopEdge
+    for f in 1..=7 {
+        let l_top = ScrollbarCell::TopEdge { eighths: f }.to_ratatui_line(thumb_c, track_c);
+        assert_eq!(l_top.spans[0].content, lower_block_glyph(f).to_string());
+        assert_eq!(l_top.spans[0].style.fg, Some(thumb_c));
+        assert_eq!(l_top.spans[0].style.bg, Some(track_c));
+    }
+
+    // 4. BottomEdge: half (4)
+    let l_half = ScrollbarCell::BottomEdge { eighths: 4 }.to_ratatui_line(thumb_c, track_c);
+    assert_eq!(l_half.spans[0].content, "▀");
+    assert_eq!(l_half.spans[0].style.fg, Some(thumb_c));
+    assert_eq!(l_half.spans[0].style.bg, Some(track_c));
+
+    // 5. BottomEdge: other eighths (inverted)
+    for f in [1, 2, 3, 5, 6, 7] {
+        let l_bot = ScrollbarCell::BottomEdge { eighths: f }.to_ratatui_line(thumb_c, track_c);
+        assert_eq!(l_bot.spans[0].content, lower_block_glyph(8 - f).to_string());
+        assert_eq!(l_bot.spans[0].style.fg, Some(track_c));
+        assert_eq!(l_bot.spans[0].style.bg, Some(thumb_c));
+    }
+
+    // 6. Geometry edge branches:
+    // None when max_scroll == 0
+    assert!(AppState::scrollbar_subcell_for(20, 20, 20, 0, 1).is_none());
+    // None when track_h <= 1
+    assert!(AppState::scrollbar_subcell_for(1, 10, 100, 0, 1).is_none());
+
+    // Minimal max_scroll == 1: falls through to else branch
+    let sub_single = AppState::scrollbar_subcell_for(10, 5, 6, 1, 1).unwrap();
+    assert_eq!(
+        sub_single.start_eighths,
+        (10 - sub_single.size_eighths / 8) * 8
+    );
+
+    // Track cell way past track height
+    assert_eq!(sub_single.cell_at(99), ScrollbarCell::Track);
+}

@@ -139,16 +139,26 @@ impl AppState {
                 );
                 *gline = clamp_or_pad_ansi(gline, content_width);
                 if has_scrollbar && !self.raw_diff {
+                    let (_, counts, _, total_vis_lines) = self.cached_geometry_tuple(content_width);
+                    let header_vis = counts.first().copied().unwrap_or(1);
+                    let subcell = Self::scrollbar_subcell_for(
+                        height,
+                        vh,
+                        total_vis_lines,
+                        self.scroll,
+                        header_vis,
+                    );
                     // Thumb geometry is full-track based: grid row i sits
                     // at track row viewport_start_line + i.
                     let track_row = viewport_start_line + row_i;
-                    let sb_char =
-                        if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {
-                            "\x1b[38;5;248m█\x1b[0m"
-                        } else {
-                            "\x1b[38;5;236m│\x1b[0m"
-                        };
-                    gline.push_str(sb_char);
+                    let sb_char = if let Some(sub) = subcell {
+                        sub.cell_at(track_row).render_ansi(&self.theme.palette)
+                    } else if track_row >= thumb_offset && track_row < thumb_offset + thumb_size {
+                        "\x1b[38;5;248m█\x1b[0m".to_string()
+                    } else {
+                        "\x1b[38;5;236m│\x1b[0m".to_string()
+                    };
+                    gline.push_str(&sb_char);
                 }
             }
 
@@ -607,22 +617,33 @@ impl AppState {
         if let Some(bar) = bar_area
             && has_scrollbar
         {
-            let thumb_fg = self.theme.palette.scrollbar_thumb.fg_code();
-            let track_fg = self.theme.palette.scrollbar_track.fg_code();
-            let thumb_str = format!("{thumb_fg}█\x1b[0m");
-            let track_str = format!("{track_fg}│\x1b[0m");
-            let bar_strings: Vec<String> = (0..track_h)
+            let thumb_color = crate::view::to_color(self.theme.palette.scrollbar_thumb);
+            let track_color = crate::view::to_color(self.theme.palette.scrollbar_track);
+            let (_, counts, _, total_vis_lines) = self.cached_geometry_tuple(content_width);
+            let header_vis = counts.first().copied().unwrap_or(1);
+            let subcell = Self::scrollbar_subcell_for(
+                track_h,
+                diff_area.height as usize,
+                total_vis_lines,
+                self.scroll,
+                header_vis,
+            );
+            let bar_lines: Vec<ratatui::text::Line> = (0..track_h)
                 .map(|r| {
-                    if r >= thumb_offset && r < thumb_offset + thumb_size {
-                        thumb_str.clone()
+                    if let Some(sub) = subcell {
+                        sub.cell_at(r).to_ratatui_line(thumb_color, track_color)
+                    } else if r >= thumb_offset && r < thumb_offset + thumb_size {
+                        ratatui::text::Line::from(ratatui::text::Span::styled(
+                            "█",
+                            Style::default().fg(thumb_color).bg(thumb_color),
+                        ))
                     } else {
-                        track_str.clone()
+                        ratatui::text::Line::from(ratatui::text::Span::styled(
+                            "│",
+                            Style::default().fg(track_color).bg(track_color),
+                        ))
                     }
                 })
-                .collect();
-            let bar_lines: Vec<ratatui::text::Line> = bar_strings
-                .iter()
-                .map(|l| crate::view::ansi_to_ratatui_line(l))
                 .collect();
             let track_bg = crate::view::to_color(self.theme.palette.scrollbar_track);
             f.render_widget(

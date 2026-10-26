@@ -314,6 +314,44 @@ impl AppState {
         Some((thumb_offset, thumb_size))
     }
 
+    /// Continuous eighth-block subcell thumb geometry over a scrollbar track
+    /// of height `track_h` for `scroll` within `total_vis_lines`.
+    pub(crate) fn scrollbar_subcell_for(
+        track_h: usize,
+        vh: usize,
+        total_vis_lines: usize,
+        scroll: usize,
+        _header_vis: usize,
+    ) -> Option<ScrollbarSubcellThumb> {
+        let thumb_size = Self::scrollbar_thumb_size(track_h, vh, total_vis_lines)?;
+        let max_scroll = total_vis_lines.saturating_sub(vh);
+        let span = track_h.saturating_sub(thumb_size);
+        let span_eighths = span * 8;
+        let size_eighths = thumb_size * 8;
+
+        let start_eighths = if max_scroll == 0 || span_eighths == 0 {
+            0
+        } else if scroll >= max_scroll {
+            span_eighths
+        } else if scroll == 0 {
+            0
+        } else if span_eighths >= 2 && max_scroll > 1 {
+            let t = (scroll - 1) as f64 / (max_scroll - 1) as f64;
+            let num_interior = span_eighths - 2;
+            let step = (t * num_interior as f64).round() as usize;
+            1 + step
+        } else {
+            1
+        }
+        .min(span_eighths);
+
+        Some(ScrollbarSubcellThumb {
+            start_eighths,
+            size_eighths,
+            track_h,
+        })
+    }
+
     /// Scroll position for a target thumb offset in `0..=span`.
     pub(crate) fn scrollbar_scroll_for_offset(
         track_h: usize,
@@ -573,6 +611,158 @@ impl AppState {
             .files
             .get(fi)
             .map_or(0, crate::app::flat::file_trailing_gap)
+    }
+}
+
+/// Standard Unicode lower block character for fraction `eighths` in 1..=8.
+#[inline]
+pub(crate) fn lower_block_glyph(eighths: u8) -> char {
+    match eighths {
+        1 => ' ', // U+2581 LOWER ONE EIGHTH BLOCK
+        2 => '▂', // U+2582 LOWER ONE QUARTER BLOCK
+        3 => '▃', // U+2583 LOWER THREE EIGHTHS BLOCK
+        4 => '▄', // U+2584 LOWER HALF BLOCK
+        5 => '▅', // U+2585 LOWER FIVE EIGHTHS BLOCK
+        6 => '▆', // U+2586 LOWER THREE QUARTERS BLOCK
+        7 => '▇', // U+2587 LOWER SEVEN EIGHTHS BLOCK
+        8 => '█', // U+2588 FULL BLOCK
+        _ => ' ',
+    }
+}
+
+/// Visual classification and fractional decomposition of a single scrollbar
+/// track cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ScrollbarCell {
+    /// Empty track cell (no thumb present).
+    Track,
+    /// Solid full thumb cell (all 8 eighths occupied).
+    Full,
+    /// Top edge of thumb entering from the bottom of this cell.
+    /// `eighths` (1..=7) is the fraction filled by thumb at the cell bottom.
+    TopEdge { eighths: u8 },
+    /// Bottom edge of thumb exiting at the top of this cell.
+    /// `eighths` (1..=7) is the fraction filled by thumb at the cell top.
+    BottomEdge { eighths: u8 },
+}
+
+impl ScrollbarCell {
+    /// Return the primary Unicode glyph representing this cell.
+    #[must_use]
+    pub(crate) fn glyph(self) -> char {
+        match self {
+            Self::Track => '│',
+            Self::Full => '█',
+            Self::TopEdge { eighths } => lower_block_glyph(eighths),
+            Self::BottomEdge { eighths } => {
+                if eighths == 4 {
+                    '▀' // U+2580 UPPER HALF BLOCK
+                } else {
+                    lower_block_glyph(8 - eighths)
+                }
+            }
+        }
+    }
+
+    /// Render this scrollbar cell into an ANSI SGR escape sequence string.
+    pub(crate) fn render_ansi(self, palette: &crate::render::ThemePalette) -> String {
+        use crate::render::ColorExt;
+        let thumb_fg = palette.scrollbar_thumb.fg_code();
+        let thumb_bg = palette.scrollbar_thumb.bg_code();
+        let track_fg = palette.scrollbar_track.fg_code();
+        let track_bg = palette.scrollbar_track.bg_code();
+        let ch = self.glyph();
+
+        match self {
+            Self::Track => format!("{track_fg}{track_bg}{ch}\x1b[0m"),
+            Self::Full => format!("{thumb_fg}{thumb_bg}{ch}\x1b[0m"),
+            Self::TopEdge { .. } => format!("{thumb_fg}{track_bg}{ch}\x1b[0m"),
+            Self::BottomEdge { eighths } => {
+                if eighths == 4 {
+                    format!("{thumb_fg}{track_bg}{ch}\x1b[0m")
+                } else {
+                    format!("{track_fg}{thumb_bg}{ch}\x1b[0m")
+                }
+            }
+        }
+    }
+
+    /// Convert this cell into a styled Ratatui `Line`.
+    pub(crate) fn to_ratatui_line(
+        self,
+        thumb_color: ratatui::style::Color,
+        track_color: ratatui::style::Color,
+    ) -> ratatui::text::Line<'static> {
+        use ratatui::{
+            style::Style,
+            text::{Line, Span},
+        };
+        let ch = self.glyph().to_string();
+        match self {
+            Self::Track => Line::from(Span::styled(
+                ch,
+                Style::default().fg(track_color).bg(track_color),
+            )),
+            Self::Full => Line::from(Span::styled(
+                ch,
+                Style::default().fg(thumb_color).bg(thumb_color),
+            )),
+            Self::TopEdge { .. } => Line::from(Span::styled(
+                ch,
+                Style::default().fg(thumb_color).bg(track_color),
+            )),
+            Self::BottomEdge { eighths } => {
+                if eighths == 4 {
+                    Line::from(Span::styled(
+                        ch,
+                        Style::default().fg(thumb_color).bg(track_color),
+                    ))
+                } else {
+                    Line::from(Span::styled(
+                        ch,
+                        Style::default().fg(track_color).bg(thumb_color),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+/// Continuous fractional geometry of the scrollbar thumb in eighths of a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ScrollbarSubcellThumb {
+    /// Start position in eighths of a row (0 ..= span * 8).
+    pub start_eighths: usize,
+    /// Size of the thumb in eighths of a row (thumb_size * 8).
+    pub size_eighths: usize,
+    /// Total track height in terminal rows.
+    pub track_h: usize,
+}
+
+impl ScrollbarSubcellThumb {
+    /// Classify the scrollbar state for track row `r` (0 .. track_h).
+    #[must_use]
+    pub(crate) fn cell_at(&self, r: usize) -> ScrollbarCell {
+        let c_start = r * 8;
+        let c_end = (r + 1) * 8;
+        let thumb_end = self.start_eighths + self.size_eighths;
+
+        let ov_start = c_start.max(self.start_eighths);
+        let ov_end = c_end.min(thumb_end);
+
+        if ov_start >= ov_end {
+            ScrollbarCell::Track
+        } else if ov_start == c_start && ov_end == c_end {
+            ScrollbarCell::Full
+        } else if self.start_eighths > c_start {
+            // Thumb begins inside this cell: thumb is in bottom fraction
+            let frac = (c_end - self.start_eighths) as u8;
+            ScrollbarCell::TopEdge { eighths: frac }
+        } else {
+            // Thumb ends inside this cell: thumb is in top fraction
+            let frac = (thumb_end - c_start) as u8;
+            ScrollbarCell::BottomEdge { eighths: frac }
+        }
     }
 }
 
