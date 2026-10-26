@@ -1324,6 +1324,38 @@ fn test_scope_restricted_deletion_pairing() {
 }
 
 #[test]
+fn test_declaration_disqualifies_unrelated_variable_bindings() {
+    use crate::cluster::pairing::dp_pairing;
+    let rs = lang_profile("rs");
+    let h = Hunk {
+        old_start: 307,
+        old_count: 1,
+        new_start: 388,
+        new_count: 1,
+        section: String::new(),
+        rows: vec![
+            Row::Del(DelLine::new(
+                307,
+                "    let mut result = Vec::with_capacity(items.len());",
+            )),
+            Row::Add(AddLine::new(
+                388,
+                "    let mut out = vec![0u8; items.len()];",
+            )),
+        ],
+        above_ctx: 0,
+        below_ctx: 0,
+    };
+    let results = dp_pairing(&h, None, None, rs);
+    // Sharing only "let mut = ;" without salient context must de-pair into Del +
+    // Add
+    assert!(
+        results.pair_of.is_empty(),
+        "unrelated let-bindings sharing only keywords must not pair into Mod"
+    );
+}
+
+#[test]
 fn test_dp_pairing_disqualifies_zero_common_substitutions_upstream() {
     let rs = lang_profile("rs");
     let h = Hunk {

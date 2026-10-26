@@ -52,11 +52,21 @@ pub const OPERATORS: &[&str] = &[
     "<=", "==", "=>", ">=", ">>", ">>=", "^=", "|=", "||",
 ];
 
+pub const CONTROL_FLOW: &[&str] = &[
+    "break", "continue", "else", "for", "if", "loop", "match", "return", "while", "yield",
+];
+
+pub const DECLARATIONS: &[&str] = &[
+    "const", "enum", "fn", "impl", "let", "mod", "static", "struct", "trait", "type",
+];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "rust",
         keywords: KEYWORDS,
         literals: &[],
+        control_flow_keywords: CONTROL_FLOW,
+        declaration_keywords: DECLARATIONS,
         line_comment: true,
         block_comment: true,
         types_by_case: true,

@@ -12,11 +12,20 @@ pub const KEYWORDS: &[&str] = &[
 
 pub const OPERATORS: &[&str] = &["!=", "&&", "++", "--", "<<", "<=", "==", ">=", ">>", "||"];
 
+pub const CONTROL_FLOW: &[&str] = &[
+    "break", "case", "continue", "do", "done", "elif", "else", "esac", "fi", "for", "if", "return",
+    "then", "until", "while",
+];
+
+pub const DECLARATIONS: &[&str] = &["export", "function", "local"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "shell",
         keywords: KEYWORDS,
         literals: &[],
+        control_flow_keywords: CONTROL_FLOW,
+        declaration_keywords: DECLARATIONS,
         hash_comment: true,
         line_comment: false,
         types_by_case: false,

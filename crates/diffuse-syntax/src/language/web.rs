@@ -59,11 +59,29 @@ pub const OPERATORS: &[&str] = &[
     "|=", "||", "||=",
 ];
 
+pub const CONTROL_FLOW: &[&str] = &[
+    "break", "case", "catch", "continue", "default", "do", "else", "finally", "for", "if",
+    "return", "switch", "throw", "try", "while", "yield",
+];
+
+pub const DECLARATIONS: &[&str] = &[
+    "class",
+    "const",
+    "enum",
+    "function",
+    "interface",
+    "let",
+    "type",
+    "var",
+];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "web",
         keywords: KEYWORDS,
         literals: LITERALS,
+        control_flow_keywords: CONTROL_FLOW,
+        declaration_keywords: DECLARATIONS,
         line_comment: true,
         block_comment: true,
         types_by_case: true,

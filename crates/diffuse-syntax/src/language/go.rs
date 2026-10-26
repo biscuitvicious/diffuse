@@ -34,6 +34,25 @@ pub const KEYWORDS: &[&str] = &[
 
 pub const LITERALS: &[&str] = &["false", "nil", "true"];
 
+pub const CONTROL_FLOW: &[&str] = &[
+    "break",
+    "case",
+    "continue",
+    "default",
+    "defer",
+    "else",
+    "fallthrough",
+    "for",
+    "go",
+    "goto",
+    "if",
+    "return",
+    "select",
+    "switch",
+];
+
+pub const DECLARATIONS: &[&str] = &["const", "func", "type", "var"];
+
 pub const OPERATORS: &[&str] = &[
     "!=", "%=", "&&", "&=", "*=", "++", "+=", "--", "-=", "->", "/=", ":=", "<<", "<<=", "<=",
     "==", "=>", ">=", ">>", ">>=", "^=", "|=", "||",
@@ -44,6 +63,8 @@ pub fn profile() -> LangProfile {
         name: "go",
         keywords: KEYWORDS,
         literals: LITERALS,
+        control_flow_keywords: CONTROL_FLOW,
+        declaration_keywords: DECLARATIONS,
         line_comment: true,
         block_comment: true,
         types_by_case: true,

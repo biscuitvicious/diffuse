@@ -808,6 +808,26 @@ fn test_all_profiles_keywords_sorted() {
             prof.name,
             sorted
         );
+
+        let mut sorted_cf = prof.control_flow_keywords.to_vec();
+        sorted_cf.sort();
+        assert_eq!(
+            prof.control_flow_keywords,
+            sorted_cf.as_slice(),
+            "control_flow_keywords in profile `{}` not sorted. Expected:\n{:?}",
+            prof.name,
+            sorted_cf
+        );
+
+        let mut sorted_decl = prof.declaration_keywords.to_vec();
+        sorted_decl.sort();
+        assert_eq!(
+            prof.declaration_keywords,
+            sorted_decl.as_slice(),
+            "declaration_keywords in profile `{}` not sorted. Expected:\n{:?}",
+            prof.name,
+            sorted_decl
+        );
     }
 }
 

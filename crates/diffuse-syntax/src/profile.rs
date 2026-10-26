@@ -389,6 +389,12 @@ pub struct LangProfile {
     /// Sorted literal token slice for `O(log n)` binary-search lookup (e.g.
     /// `true`, `false`, `nil`, `null`).
     pub literals: &'static [&'static str],
+    /// Sorted control-flow keyword slice for `O(log n)` binary-search lookup
+    /// (e.g. `if`, `else`, `match`, `for`, `while`, `return`).
+    pub control_flow_keywords: &'static [&'static str],
+    /// Sorted declaration keyword slice for `O(log n)` binary-search lookup
+    /// (e.g. `let`, `const`, `var`, `fn`, `def`, `class`, `struct`).
+    pub declaration_keywords: &'static [&'static str],
     /// `#` to end of line is a comment (python/shell/yaml/toml/markdown).
     pub hash_comment: bool,
     /// `//` to end of line.
@@ -623,6 +629,29 @@ impl LangProfile {
     #[inline]
     pub fn is_literal(&self, word: &str) -> bool {
         self.literals.binary_search(&word).is_ok()
+    }
+
+    /// Whether the control-flow keyword slice contains `word` (binary search on
+    /// sorted slice).
+    #[inline]
+    pub fn is_control_flow(&self, word: &str) -> bool {
+        self.control_flow_keywords.binary_search(&word).is_ok()
+    }
+
+    /// Whether the declaration keyword slice contains `word` (binary search on
+    /// sorted slice).
+    #[inline]
+    pub fn is_declaration_keyword(&self, word: &str) -> bool {
+        self.declaration_keywords.binary_search(&word).is_ok()
+    }
+
+    /// Whether `word` represents an import statement head in this language
+    /// (e.g. `use`, `import`, `from`).
+    #[inline]
+    pub fn is_import(&self, word: &str) -> bool {
+        self.import_prefixes
+            .iter()
+            .any(|prefix| prefix.trim() == word)
     }
 
     /// Whether `t` is a recognized multi-character operator in this language.

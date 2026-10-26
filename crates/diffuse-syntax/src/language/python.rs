@@ -16,11 +16,20 @@ pub const OPERATORS: &[&str] = &[
     "<=", "==", ">=", ">>", ">>=", "^=", "|=",
 ];
 
+pub const CONTROL_FLOW: &[&str] = &[
+    "break", "case", "continue", "elif", "else", "except", "finally", "for", "if", "match", "pass",
+    "raise", "return", "try", "while", "yield",
+];
+
+pub const DECLARATIONS: &[&str] = &["class", "def"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "python",
         keywords: KEYWORDS,
         literals: &[],
+        control_flow_keywords: CONTROL_FLOW,
+        declaration_keywords: DECLARATIONS,
         hash_comment: true,
         line_comment: false,
         types_by_case: true,

@@ -418,10 +418,8 @@ pub struct DpTokens {
 pub(crate) fn is_statement_head_keyword(word: &str, profile: Option<&LangProfile>) -> bool {
     if let Some(p) = profile {
         p.is_keyword(word)
-            && !matches!(
-                word,
-                "self" | "Self" | "this" | "super" | "true" | "false" | "null" | "None" | "nil"
-            )
+            && !p.is_literal(word)
+            && !matches!(word, "self" | "Self" | "this" | "super")
     } else {
         false
     }
@@ -2014,7 +2012,6 @@ impl DpScratchArena {
         self.anchor_token_ids.clear();
         self.old_anchor_ranges.clear();
         self.new_anchor_ranges.clear();
-        self.forbidden_pairs.clear();
     }
 }
 
@@ -2077,49 +2074,53 @@ pub(crate) fn is_admissible_mod_pair(
     if del_text == add_text {
         return true;
     }
-    // Fast path: if the non-whitespace prefixes or suffixes match, common
-    // non-whitespace context is guaranteed to survive alignment tape without
-    // needing full LCS runs.
-    let d_trim = del_text.trim_start();
-    let a_trim = add_text.trim_start();
-    let mut has_non_ws_prefix = false;
-    for ((_, c1), (_, c2)) in d_trim.char_indices().zip(a_trim.char_indices()) {
-        if c1 == c2 {
-            if !c1.is_whitespace() {
-                has_non_ws_prefix = true;
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    if has_non_ws_prefix {
-        return true;
-    }
-    let d_trim_end = del_text.trim_end();
-    let a_trim_end = add_text.trim_end();
-    let mut has_non_ws_suffix = false;
-    for (c1, c2) in d_trim_end.chars().rev().zip(a_trim_end.chars().rev()) {
-        if c1 == c2 {
-            if !c1.is_whitespace() {
-                has_non_ws_suffix = true;
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-    if has_non_ws_suffix {
-        return true;
-    }
 
     let (_spans, runs) = crate::lcs::word_spans_and_runs_with_profile(del_text, add_text, profile);
-    // Context must not be purely whitespace
-    let has_non_ws_ctx = runs
-        .iter()
-        .any(|(kind, text)| *kind == crate::merge::RunKind::Ctx && !text.trim().is_empty());
-    if !has_non_ws_ctx && (!del_text.trim().is_empty() || !add_text.trim().is_empty()) {
-        return false;
+    let del_has_salient = crate::lcs::line_has_salient_token(del_text, profile);
+    let add_has_salient = crate::lcs::line_has_salient_token(add_text, profile);
+
+    if del_has_salient && add_has_salient {
+        let has_salient_ctx = runs.iter().any(|(kind, text)| {
+            *kind == crate::merge::RunKind::Ctx && crate::lcs::line_has_salient_token(text, profile)
+        });
+        if !has_salient_ctx {
+            // Safety fallback: if neither line shares any salient context, check whether
+            // this is an entity declaration statement (let, fn, const, def, struct, …).
+            // Declaration keywords do not confer statement identity when both the declared
+            // entity name and value expressions are replaced, unless common context
+            // accounts for the majority (>= 50%) of the line.
+            let is_decl_head = runs.first().is_some_and(|(kind, text)| {
+                if *kind != crate::merge::RunKind::Ctx {
+                    return false;
+                }
+                let mut found = false;
+                crate::lcs::for_each_token(text, |t| {
+                    if !found && profile.is_some_and(|p| p.is_declaration_keyword(t)) {
+                        found = true;
+                    }
+                });
+                found
+            });
+            if is_decl_head {
+                let ctx_chars: usize = runs
+                    .iter()
+                    .filter(|(k, _)| *k == crate::merge::RunKind::Ctx)
+                    .map(|(_, t)| t.chars().count())
+                    .sum();
+                let total_chars = del_text.chars().count().max(add_text.chars().count());
+                if ctx_chars * 2 < total_chars {
+                    return false;
+                }
+            }
+        }
+    } else {
+        // Context must not be purely whitespace
+        let has_non_ws_ctx = runs
+            .iter()
+            .any(|(kind, text)| *kind == crate::merge::RunKind::Ctx && !text.trim().is_empty());
+        if !has_non_ws_ctx && (!del_text.trim().is_empty() || !add_text.trim().is_empty()) {
+            return false;
+        }
     }
     true
 }
@@ -2170,31 +2171,13 @@ pub(crate) fn solve_cluster_with_arena(
                         break;
                     }
                 }
-                DpOp::Expand { anchor, k, .. } => {
-                    let cur_oi = oi;
-                    let cur_ni = ni + anchor;
+                DpOp::Expand { k, .. } => {
                     oi += 1;
                     ni += k;
-                    if let (Some(r), Some(a)) =
-                        (cluster.old_rows.get(cur_oi), cluster.new_rows.get(cur_ni))
-                        && !is_admissible_mod_pair(r.text(), a.text(), profile)
-                    {
-                        invalid_pair = Some((cur_oi, cur_ni));
-                        break;
-                    }
                 }
-                DpOp::Collapse { anchor, k, .. } => {
-                    let cur_oi = oi + anchor;
-                    let cur_ni = ni;
+                DpOp::Collapse { k, .. } => {
                     oi += k;
                     ni += 1;
-                    if let (Some(r), Some(a)) =
-                        (cluster.old_rows.get(cur_oi), cluster.new_rows.get(cur_ni))
-                        && !is_admissible_mod_pair(r.text(), a.text(), profile)
-                    {
-                        invalid_pair = Some((cur_oi, cur_ni));
-                        break;
-                    }
                 }
             }
         }

@@ -18,11 +18,20 @@ pub const OPERATORS: &[&str] = &[
 
 pub const LITERALS: &[&str] = &["NULL", "false", "nullptr", "true"];
 
+pub const CONTROL_FLOW: &[&str] = &[
+    "break", "case", "catch", "continue", "default", "do", "else", "for", "goto", "if", "return",
+    "switch", "throw", "try", "while",
+];
+
+pub const DECLARATIONS: &[&str] = &["class", "enum", "struct", "typedef", "using"];
+
 pub fn profile() -> LangProfile {
     LangProfile {
         name: "c_family",
         keywords: KEYWORDS,
         literals: LITERALS,
+        control_flow_keywords: CONTROL_FLOW,
+        declaration_keywords: DECLARATIONS,
         line_comment: true,
         block_comment: true,
         types_by_case: true,
