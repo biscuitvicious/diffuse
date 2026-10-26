@@ -2913,3 +2913,49 @@ fn test_token_rs_line_722_not_wholesale_mod() {
         }
     }
 }
+
+#[test]
+fn test_aux_opening_delimiter_matches_trailing_delimiter_from_reflowed_anchor() {
+    let old_line =
+        "                            && matches!(prev, Row::Add(_)) && nl > d_anchor_new {";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(2588)),
+        row(
+            RowKind::Add,
+            "                            && matches!(prev, Row::Add(_))",
+            Some(2589),
+            None,
+        ),
+        row(
+            RowKind::Add,
+            "                            && nl > d_anchor_new",
+            Some(2590),
+            None,
+        ),
+        row(RowKind::Add, "                        {", Some(2591), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    // Row 1 (aux for 2590: && nl > d_anchor_new) must NOT contain struck '{'
+    let aux1 = &c[1];
+    let aux1_runs = merged_runs(aux1);
+    assert!(
+        !aux1_runs
+            .iter()
+            .any(|r| r.kind == RunKind::Del && r.text.contains('{')),
+        "Line 2590 must not contain struck '{{', got: {:?}",
+        aux1_runs
+    );
+
+    // Row 2 (aux for 2591: {) must match '{' as MovedTgt
+    let aux2 = &c[2];
+    let aux2_runs = merged_runs(aux2);
+    assert!(
+        aux2_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedTgt && r.text == "{"),
+        "Line 2591 must have MovedTgt '{{', got: {:?}",
+        aux2_runs
+    );
+}

@@ -1082,20 +1082,35 @@ pub fn pass_assemble_mods(
                                 .chars()
                                 .take_while(|c| c.is_whitespace())
                                 .count();
-                            donor_spans.add = donor_spans
-                                .add
-                                .into_iter()
-                                .map(|(as_, ae)| {
-                                    let start = as_;
-                                    let mut end = ae;
-                                    let chars: Vec<char> = add_nxt.text().chars().collect();
-                                    if as_ <= indent_len && end < chars.len() && chars[end] == ' ' {
-                                        end += 1;
-                                    }
-                                    (start, end)
-                                })
-                                .filter(|(s, e)| s < e)
-                                .collect();
+                            let text_len = add_nxt.text().chars().count();
+                            if (is_opening_row || is_closing_row)
+                                && del_text.trim_end().ends_with(nxt_trim)
+                                && donor_spans.add == vec![(0, text_len)]
+                            {
+                                donor_spans.add = if indent_len > 0 {
+                                    vec![(0, indent_len)]
+                                } else {
+                                    Vec::new()
+                                };
+                            } else {
+                                donor_spans.add = donor_spans
+                                    .add
+                                    .into_iter()
+                                    .map(|(as_, ae)| {
+                                        let start = as_;
+                                        let mut end = ae;
+                                        let chars: Vec<char> = add_nxt.text().chars().collect();
+                                        if as_ <= indent_len
+                                            && end < chars.len()
+                                            && chars[end] == ' '
+                                        {
+                                            end += 1;
+                                        }
+                                        (start, end)
+                                    })
+                                    .filter(|(s, e)| s < e)
+                                    .collect();
+                            }
 
                             // Companion addition rows never carry deletions from
                             // the donor line. The anchor
