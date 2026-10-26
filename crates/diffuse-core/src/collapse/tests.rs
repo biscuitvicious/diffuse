@@ -2959,3 +2959,120 @@ fn test_aux_opening_delimiter_matches_trailing_delimiter_from_reflowed_anchor() 
         aux2_runs
     );
 }
+
+#[test]
+fn test_aux_single_delimiter_reflow_without_alphanumeric_deletion() {
+    let old_line = "                    && ol <= prev_old {";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(2455)),
+        row(
+            RowKind::Add,
+            "                    && ol <= prev_old",
+            Some(2455),
+            None,
+        ),
+        row(RowKind::Add, "                {", Some(2456), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    assert_eq!(c.len(), 2);
+    let anchor = &c[0];
+    let anchor_runs = merged_runs(anchor);
+    assert_eq!(anchor.group(), Some(RowGroup::Anchor));
+    assert!(
+        anchor_runs
+            .iter()
+            .any(|r| r.kind == RunKind::Del && r.text == " "),
+        "Preceding space must be struck, got: {:?}",
+        anchor_runs
+    );
+    assert!(
+        anchor_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedSrc && r.text == "{"),
+        "Anchor must have MovedSrc for '{{', got: {:?}",
+        anchor_runs
+    );
+
+    let aux = &c[1];
+    let aux_runs = merged_runs(aux);
+    assert_eq!(aux.group(), Some(RowGroup::Aux { anchor: 2455 }));
+    assert!(
+        aux_runs
+            .iter()
+            .any(|r| r.kind == RunKind::Add && r.text.contains("                ")),
+        "Aux row must have added indentation, got: {:?}",
+        aux_runs
+    );
+    assert!(
+        aux_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedTgt && r.text == "{"),
+        "Aux row must have MovedTgt for '{{', got: {:?}",
+        aux_runs
+    );
+}
+
+#[test]
+fn test_aux_delimiter_run_with_whitespace_variation() {
+    let old_line = "    let foo = bar [ (";
+    let h = hunk(vec![
+        row(RowKind::Del, old_line, None, Some(10)),
+        row(RowKind::Add, "    let foo = bar", Some(10), None),
+        row(RowKind::Add, "        [(", Some(11), None),
+    ]);
+    let rs = lang_profile("rs");
+    let c = collapse_hunk_rows(&h, None, None, rs);
+
+    assert_eq!(c.len(), 2);
+    let anchor = &c[0];
+    let anchor_runs = merged_runs(anchor);
+    assert_eq!(anchor.group(), Some(RowGroup::Anchor));
+    assert!(
+        anchor_runs
+            .iter()
+            .any(|r| r.kind == RunKind::Del && r.text.contains(' ')),
+        "Preceding whitespace must show as struck Del, got: {:?}",
+        anchor_runs
+    );
+    assert!(
+        anchor_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedSrc && r.text.contains('[')),
+        "Anchor must have MovedSrc for '[', got: {:?}",
+        anchor_runs
+    );
+    assert!(
+        anchor_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedSrc && r.text.contains('(')),
+        "Anchor must have MovedSrc for '(', got: {:?}",
+        anchor_runs
+    );
+
+    let aux = &c[1];
+    let aux_runs = merged_runs(aux);
+    assert_eq!(aux.group(), Some(RowGroup::Aux { anchor: 10 }));
+    assert!(
+        aux_runs
+            .iter()
+            .any(|r| r.kind == RunKind::Add && r.text.contains("        ")),
+        "Indentation must show as Add, got: {:?}",
+        aux_runs
+    );
+    assert!(
+        aux_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedTgt && r.text.contains('[')),
+        "Aux must have MovedTgt for '[', got: {:?}",
+        aux_runs
+    );
+    assert!(
+        aux_runs
+            .iter()
+            .any(|r| r.kind == RunKind::MovedTgt && r.text.contains('(')),
+        "Aux must have MovedTgt for '(', got: {:?}",
+        aux_runs
+    );
+}

@@ -510,6 +510,39 @@ fn normalize_ranges(ranges: &mut Vec<(usize, usize)>) {
     *ranges = out;
 }
 
+/// Extracts the character indices `(start, end)` and sequence of delimiter
+/// characters of the trailing delimiter run in `text` (skipping trailing
+/// whitespace). `start` is the index of the first delimiter in the run
+/// (excluding any leading whitespace).
+fn trailing_delimiters(
+    text: &str,
+    profile: Option<&LangProfile>,
+) -> Option<(usize, usize, Vec<char>)> {
+    let chars: Vec<char> = text.chars().collect();
+    let last_idx = chars.iter().rposition(|c| !c.is_whitespace())?;
+    let mut first_delim_idx = None;
+    let mut delims = Vec::new();
+    let mut i = last_idx;
+    loop {
+        let c = chars[i];
+        if diffuse_syntax::profile::is_delimiter_char(c, profile) {
+            first_delim_idx = Some(i);
+            delims.push(c);
+        } else if c.is_whitespace() {
+            // Whitespace between delimiters is allowed.
+        } else {
+            break;
+        }
+        if i == 0 {
+            break;
+        }
+        i -= 1;
+    }
+    delims.reverse();
+    let start = first_delim_idx?;
+    Some((start, last_idx + 1, delims))
+}
+
 /// First occurrence of `needle` chars in `hay` fully covered by `supply`
 /// ranges (all char coordinates). Deterministic: earliest del position.
 fn supplied_occurrence(
@@ -845,6 +878,52 @@ pub fn pass_assemble_mods(
                     }
                 }
             }
+            let mut relocated_delimiter_adds = Vec::new();
+            if next_adds.is_empty()
+                && !ctx.collapse_blocks.contains_key(&add_ri)
+                && let Some((_, _, del_delims)) = trailing_delimiters(&del_text, profile)
+            {
+                let add_delims = trailing_delimiters(add.text(), profile)
+                    .map(|(_, _, d)| d)
+                    .unwrap_or_default();
+                let dropped_delims: &[char] = if del_delims.starts_with(&add_delims) {
+                    &del_delims[add_delims.len()..]
+                } else if del_delims.ends_with(&add_delims) {
+                    &del_delims[..del_delims.len() - add_delims.len()]
+                } else {
+                    &del_delims[..]
+                };
+                if !dropped_delims.is_empty() {
+                    let mut k = max_scanned + 1;
+                    let mut rem_dropped = dropped_delims;
+                    let mut candidate_adds = Vec::new();
+                    while k < h.rows.len()
+                        && matches!(h.rows[k], Row::Add(_))
+                        && !ctx.pair_of.contains_key(&k)
+                        && !rem_dropped.is_empty()
+                    {
+                        let nxt_trim = h.rows[k].text().trim();
+                        if !diffuse_syntax::profile::is_delimiter_run(nxt_trim, profile) {
+                            break;
+                        }
+                        let row_delims: Vec<char> = nxt_trim
+                            .chars()
+                            .filter(|&c| diffuse_syntax::profile::is_delimiter_char(c, profile))
+                            .collect();
+                        if rem_dropped.starts_with(&row_delims) {
+                            rem_dropped = &rem_dropped[row_delims.len()..];
+                            candidate_adds.push(k);
+                            k += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if rem_dropped.is_empty() && !candidate_adds.is_empty() {
+                        next_adds.extend(&candidate_adds);
+                        relocated_delimiter_adds = candidate_adds;
+                    }
+                }
+            }
             next_adds.sort_unstable();
             next_adds.dedup();
 
@@ -959,6 +1038,17 @@ pub fn pass_assemble_mods(
                 if pos < old_len {
                     moved.push((pos, old_len));
                 }
+                if !relocated_delimiter_adds.is_empty()
+                    && let Some((delim_start, delim_end, _)) =
+                        trailing_delimiters(&del_text, profile)
+                    && !moved
+                        .iter()
+                        .any(|&(s, e)| s <= delim_start && delim_end <= e)
+                {
+                    moved.push((delim_start, delim_end));
+                }
+                moved.sort_unstable();
+                normalize_ranges(&mut moved);
                 (moved, full_adds, full_runs)
             };
             let mut anchor_group = None;
@@ -1021,6 +1111,34 @@ pub fn pass_assemble_mods(
                             && del_text.trim_end().ends_with(nxt_trim));
                         let is_opening_row =
                             profile.is_some_and(|p| p.is_opening_delimiter(nxt_trim));
+                        let is_relocated_delim =
+                            diffuse_syntax::profile::is_delimiter_run(nxt_trim, profile)
+                                && trailing_delimiters(&del_text, profile).is_some_and(
+                                    |(_, _, del_delims)| {
+                                        let add_delims = trailing_delimiters(add.text(), profile)
+                                            .map(|(_, _, d)| d)
+                                            .unwrap_or_default();
+                                        let dropped_delims: &[char] =
+                                            if del_delims.starts_with(&add_delims) {
+                                                &del_delims[add_delims.len()..]
+                                            } else if del_delims.ends_with(&add_delims) {
+                                                &del_delims[..del_delims.len() - add_delims.len()]
+                                            } else {
+                                                &del_delims[..]
+                                            };
+                                        let row_delims: Vec<char> = nxt_trim
+                                            .chars()
+                                            .filter(|&c| {
+                                                diffuse_syntax::profile::is_delimiter_char(
+                                                    c, profile,
+                                                )
+                                            })
+                                            .collect();
+                                        !row_delims.is_empty()
+                                            && (dropped_delims.starts_with(&row_delims)
+                                                || dropped_delims.ends_with(&row_delims))
+                                    },
+                                );
 
                         let has_common_tokens = {
                             let aux_chars: Vec<char> = add_nxt.text().chars().collect();
@@ -1067,7 +1185,10 @@ pub fn pass_assemble_mods(
                             }
                             has_content
                         };
-                        if is_opening_row && !del_text.trim_end().ends_with(nxt_trim) {
+                        if is_opening_row
+                            && !del_text.trim_end().ends_with(nxt_trim)
+                            && !is_relocated_delim
+                        {
                             let text_len = add_nxt.text().chars().count();
                             let spans = Spans {
                                 del: Vec::new(),
@@ -1076,16 +1197,21 @@ pub fn pass_assemble_mods(
                             add_spans.insert(nxt_i, spans);
                             add_runs
                                 .insert(nxt_i, vec![(RunKind::Add, add_nxt.text().to_string())]);
-                        } else if has_common_tokens || is_closing_row || is_opening_row {
+                        } else if has_common_tokens
+                            || is_closing_row
+                            || is_opening_row
+                            || is_relocated_delim
+                        {
                             let indent_len = add_nxt
                                 .text()
                                 .chars()
                                 .take_while(|c| c.is_whitespace())
                                 .count();
                             let text_len = add_nxt.text().chars().count();
-                            if (is_opening_row || is_closing_row)
-                                && del_text.trim_end().ends_with(nxt_trim)
-                                && donor_spans.add == vec![(0, text_len)]
+                            if is_relocated_delim
+                                || (((is_opening_row || is_closing_row)
+                                    && del_text.trim_end().ends_with(nxt_trim))
+                                    && donor_spans.add == vec![(0, text_len)])
                             {
                                 donor_spans.add = if indent_len > 0 {
                                     vec![(0, indent_len)]

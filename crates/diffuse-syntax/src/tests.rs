@@ -1541,6 +1541,24 @@ fn test_is_closing_delimiter_unicode() {
 }
 
 #[test]
+fn test_is_delimiter_run() {
+    let rs = lang_profile("rs").unwrap();
+    assert!(is_delimiter_run("{", Some(rs)));
+    assert!(is_delimiter_run("}", Some(rs)));
+    assert!(is_delimiter_run(");", Some(rs)));
+    assert!(is_delimiter_run("};", Some(rs)));
+    assert!(is_delimiter_run(") {", Some(rs)));
+    assert!(is_delimiter_run(" [ (", Some(rs)));
+    assert!(is_delimiter_run("[ (", Some(rs)));
+    assert!(is_delimiter_run("[(", Some(rs)));
+    assert!(is_delimiter_run("\n    [ (", Some(rs)));
+    assert!(!is_delimiter_run("", Some(rs)));
+    assert!(!is_delimiter_run("foo", Some(rs)));
+    assert!(!is_delimiter_run("&&", Some(rs)));
+    assert!(!is_delimiter_run("let x = 1;", Some(rs)));
+}
+
+#[test]
 fn test_literal_token_classification_and_wire_code() {
     assert_eq!(TokenColor::Literal.wire_code(), Some("lit"));
     assert_eq!(TokenColor::from_wire_code("lit"), TokenColor::Literal);

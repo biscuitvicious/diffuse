@@ -22,7 +22,7 @@ discipline for any change in golden output.
 
 > [!IMPORTANT]
 > **Validated vs. Provisional Goldens**:
-> - **Validated Goldens (`theme-scrollbar-palette`)**: Fully hand-reviewed and verified as a clean rendering baseline. Serves as a strict hard gate against regression.
+> - **Validated Goldens (`theme-scrollbar-palette`, `opt-4-manual-scanner-prefilter`, `container-compatibility`)**: Fully hand-reviewed and verified as a clean rendering baseline. Serves as a strict hard gate against regression.
 > - **Unvalidated / Provisional Goldens (all others)**: Captured from earlier engine runs and not yet fully audited for ideal rendering quality. They guard against unintended regressions, but should be taken as **less of a hard gate** when algorithmic improvements produce demonstrably cleaner, strictly better diffs.
 
 | corpus | rust walk | render golden | status | notes |
@@ -45,7 +45,7 @@ discipline for any change in golden output.
 | `linenum-u32` | ✅ | ✅ | Provisional | Primitive line numbers and non-zero constructor preconditions refactoring (pending full review) |
 | `scrollbar-grab-drag` | ✅ | ✅ | Provisional | Scrollbar grab drag, 12% min size, touch velocity scaling, and dispatch extraction (pending full review) |
 | `viewport-scroll-boundaries` | ✅ | ✅ | Provisional | Viewport scroll boundaries and reflow expansion (pending full review) |
-| `container-compatibility` | ✅ | ✅ | Provisional | Container compatibility in Gotoh alignment and submodule commit pairing (pending full review) |
+| `container-compatibility` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (container compatibility in Gotoh alignment and submodule commit pairing); strict hard gate |
 
 The terminal render walk in [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.dark.txt`, `.render.light.txt`, and

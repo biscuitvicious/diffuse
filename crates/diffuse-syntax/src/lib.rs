@@ -42,7 +42,8 @@ pub mod prelude {
         profile::{
             BlockDelimStyle, CharLiteralProfile, CloseDelimiter, LangProfile, PropertySyntax,
             SGR_BOLD, SGR_BOLD_UNDERLINE, SGR_DIM, SGR_ITALIC, SGR_STRIKE, SGR_UNDERLINE,
-            SingleQuoteKind, UnicodeEscapeStyle,
+            SingleQuoteKind, UnicodeEscapeStyle, is_closing_delimiter_char, is_delimiter_char,
+            is_delimiter_run, is_opening_delimiter_char,
         },
         registry::{
             REGISTERED_EXTENSIONS, all_registered_profiles, fence_lang_ext, first_word,

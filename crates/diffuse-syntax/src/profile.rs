@@ -911,6 +911,15 @@ impl LangProfile {
         self.classify_exact_close(t) != CloseDelimiter::None
             || self.classify_close_tail(t) != CloseDelimiter::None
     }
+
+    /// Whether `c` is a syntax delimiter in this language (paired bracket,
+    /// statement terminator, or trailing syntax delimiter).
+    #[inline]
+    pub fn is_delimiter_char(&self, c: char) -> bool {
+        is_opening_delimiter_char(c)
+            || is_closing_delimiter_char(c)
+            || self.is_trailing_delimiter(c)
+    }
 }
 
 /// The ANSI SGR attributes used in styled runs.
@@ -1001,4 +1010,23 @@ pub fn is_statement_terminator_char(c: char) -> bool {
         c,
         ';' | '；' | '؛' | ';' | '。' | '．' | ')' | '）' | '}' | '｝' | ']' | '］' | '】' | '』'
     )
+}
+
+/// Whether `c` is a syntax delimiter, consulting `profile` when present or
+/// checking universal paired brackets and terminators otherwise.
+#[inline]
+pub fn is_delimiter_char(c: char, profile: Option<&LangProfile>) -> bool {
+    profile.map_or_else(
+        || is_opening_delimiter_char(c) || is_closing_delimiter_char(c),
+        |p| p.is_delimiter_char(c),
+    )
+}
+
+/// Whether `text` consists solely of delimiter characters and optional
+/// whitespace.
+pub fn is_delimiter_run(text: &str, profile: Option<&LangProfile>) -> bool {
+    let t = text.trim();
+    !t.is_empty()
+        && t.chars()
+            .all(|c| c.is_whitespace() || is_delimiter_char(c, profile))
 }
