@@ -118,13 +118,15 @@ pub fn reload_diff(
     git_args: &[String],
 ) -> Result<(), String> {
     let staged = state.target.is_staged();
+    let notes_db = state.visible_notes_db();
+
     let git_res = load_git_repo_with_notes(
         repo_root,
         git_args,
         &[],
         staged,
         ENGINE_CONTEXT,
-        Some(&state.notes),
+        Some(&notes_db),
         Some(&state.notes_key),
     )
     .map_err(|e| format!("failed to reload git repo: {e}"))?;
@@ -158,13 +160,15 @@ pub fn reload_specific_files(
         return Ok(0);
     }
     let staged = state.target.is_staged();
+    let notes_db = state.visible_notes_db();
+
     let git_res = load_git_repo_with_notes(
         repo_root,
         git_args,
         paths,
         staged,
         ENGINE_CONTEXT,
-        Some(&state.notes),
+        Some(&notes_db),
         Some(&state.notes_key),
     )
     .map_err(|e| format!("failed to reload git repo: {e}"))?;
@@ -188,8 +192,9 @@ pub fn reload_specific_files(
 }
 
 /// Toggle between viewing staged changes and unstaged working tree changes.
-/// Returns an error if viewing a commit range, or if the target view has no
-/// changes.
+/// Always switches the view, even when the target side has no changes (the
+/// empty view then follows the filesystem watcher). Returns an error only when
+/// viewing a commit range, or if the git repository cannot be loaded.
 pub fn toggle_staged_action(
     state: &mut AppState,
     repo_root: &Path,
@@ -204,13 +209,15 @@ pub fn toggle_staged_action(
 
     let target_staged = !state.target.is_staged();
 
+    let notes_db = state.visible_notes_db();
+
     let git_res = load_git_repo_with_notes(
         repo_root,
         git_args,
         &[],
         target_staged,
         ENGINE_CONTEXT,
-        Some(&state.notes),
+        Some(&notes_db),
         Some(&state.notes_key),
     )
     .map_err(|e| format!("failed to reload git repo: {e}"))?;

@@ -44,6 +44,56 @@ use crate::core::{
     wire::{OutputFile, PipelineOutput},
 };
 
+/// Collect the paths that must be re-streamed after a notes change: every file
+/// that currently carries notes (visible or not), plus `previously` noted paths
+/// so note removal can drop a synthetic file from the view.
+fn affected_notes_files(state: &AppState, previously: &[String]) -> Vec<String> {
+    let mut affected: HashSet<String> =
+        diffuse_core::notes::note_files_for_repo(&state.notes, Some(&state.repo))
+            .into_iter()
+            .collect();
+    for p in previously {
+        affected.insert(p.clone());
+    }
+    for f in &state.output.files {
+        if f.counts.notes > 0 || f.counts.resolved_notes > 0 || f.counts.in_progress_notes > 0 {
+            affected.insert(f.path.clone());
+        }
+    }
+    affected.into_iter().collect()
+}
+
+/// Re-stream exactly the files affected by a notes change and reflect the
+/// outcome in the status bar. Assumes the notes database in `state` already
+/// contains the post-change state. Returns whether the view changed.
+fn apply_targeted_notes_reload(state: &mut AppState, previously: &[String]) -> bool {
+    let paths = affected_notes_files(state, previously);
+    if paths.is_empty() {
+        return false;
+    }
+    let repo_root = state.repo_root.clone();
+    let git_args = state.git_args.clone();
+    match crate::actions::reload_specific_files(state, &repo_root, &git_args, &paths) {
+        Ok(n) => {
+            if n > 0 {
+                state.set_status_message(
+                    format!(
+                        "↻ notes updated ({} file{})",
+                        n,
+                        if n == 1 { "" } else { "s" }
+                    ),
+                    true,
+                );
+            }
+            true
+        }
+        Err(e) => {
+            state.set_status_message(e, false);
+            true
+        }
+    }
+}
+
 fn trigger_streaming_reload(
     state: &mut AppState,
     streaming_rx: &mut Option<Receiver<OutputFile>>,
@@ -57,8 +107,9 @@ fn trigger_streaming_reload(
     let git_args = state.git_args.clone();
     let staged = state.target.is_staged();
     let _ = state.reload_notes_from_disk();
+    let notes_db = state.visible_notes_db();
     let pipeline_opts = diffuse_core::PipelineOptions::default()
-        .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
+        .with_notes(Some(notes_db), Some(state.notes_key.clone()))
         .with_expand_lines(state.expand_lines)
         .with_lazy_collapsed(true)
         .with_show_resolved(true);
@@ -210,8 +261,22 @@ pub fn run_tui(
                         }
                     }
 
-                    if reload_notes && state.reload_notes_from_disk().is_some() {
+                    let old_note_files: Vec<String> = if reload_notes {
+                        diffuse_core::notes::note_files_for_repo(&state.notes, Some(&state.repo))
+                    } else {
+                        Vec::new()
+                    };
+                    let notes_reloaded = if reload_notes {
+                        state.reload_notes_from_disk()
+                    } else {
+                        None
+                    };
+                    if notes_reloaded.is_some() {
                         dirty = true;
+                        // Re-stream only the files touched by added/removed
+                        // notes (including unchanged files that gained or lost
+                        // a note) instead of reloading the whole repository.
+                        let _ = apply_targeted_notes_reload(&mut state, &old_note_files);
                     }
 
                     if let Some(diff) = diff_action {
@@ -263,6 +328,12 @@ pub fn run_tui(
                 &mut reload_seen_paths,
                 &mut dirty,
             );
+        }
+
+        if let Some(previously) = state.pending_notes_reload.take()
+            && apply_targeted_notes_reload(&mut state, &previously)
+        {
+            dirty = true;
         }
 
         if let Some(ref mrx) = meta_rx {

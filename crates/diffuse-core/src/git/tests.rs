@@ -354,8 +354,8 @@ fn test_load_git_repo_unmodified_files_with_notes() {
         "diff must contain unmodified untouched.rs"
     );
     assert!(
-        res.new_content.contains_key("untouched.rs"),
-        "new_content must contain untouched.rs"
+        !res.new_content.contains_key("untouched.rs"),
+        "unanchored note must not load untouched.rs content"
     );
 
     let out = crate::pipeline::run_pipeline_full(
@@ -377,8 +377,8 @@ fn test_load_git_repo_unmodified_files_with_notes() {
     assert_eq!(untouched.counts.mods, 0);
     assert_eq!(untouched.counts.notes, 1);
     assert!(
-        !untouched.hunks.is_empty(),
-        "synthetic context hunk must be generated around note"
+        untouched.hunks.is_empty(),
+        "unanchored note must not generate a synthetic context hunk"
     );
 }
 

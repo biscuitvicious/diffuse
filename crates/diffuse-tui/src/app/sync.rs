@@ -365,6 +365,11 @@ impl AppState {
         self.confirmed_sel = None;
         self.bump_content();
 
+        let file_removed = !self
+            .output
+            .files
+            .iter()
+            .any(|f| f.path == snapshot.file_path);
         let target_fi = self
             .output
             .files
@@ -376,12 +381,29 @@ impl AppState {
                     .min(self.output.files.len().saturating_sub(1))
             });
 
+        // When the snapshot file was removed, cursor should land on the next
+        // file's header if there is one, otherwise on the previous file's
+        // bottom gap divider (last row).
         let mut idx = None;
-        if snapshot.is_file_header {
+        if file_removed {
+            if snapshot.file_idx < self.output.files.len() {
+                idx = Some(self.first_row_of_file(snapshot.file_idx));
+            } else {
+                idx = self
+                    .flat
+                    .iter()
+                    .enumerate()
+                    .rfind(|(_, item)| item.file_idx == target_fi)
+                    .map(|(i, _)| i);
+            }
+        }
+
+        if !file_removed && snapshot.is_file_header {
             idx = Some(self.first_row_of_file(target_fi));
         }
 
         if idx.is_none()
+            && !file_removed
             && snapshot.is_hunk_divider
             && let Some(hi) = snapshot.hunk_idx
         {

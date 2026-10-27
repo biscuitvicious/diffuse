@@ -621,6 +621,24 @@ pub fn all_notes<'a>(db: &'a NotesDB, repo: &str) -> impl Iterator<Item = &'a Re
         .flat_map(|repo_map| repo_map.values().flatten())
 }
 
+/// Return a copy of the database restricted to non-resolved notes.
+///
+/// Callers that load content only for notes the user can currently see (for
+/// example, synthesizing context around an anchoring note) use this to derive
+/// a content-scoped view; the authoritative source database is never modified.
+/// Empty per-file and per-repo maps are pruned after removal.
+#[must_use]
+pub fn without_resolved(db: &NotesDB) -> NotesDB {
+    let mut out = db.clone();
+    for repo_map in out.values_mut() {
+        for notes in repo_map.values_mut() {
+            notes.retain(|n| !n.status.is_resolved());
+        }
+        repo_map.retain(|_, notes| !notes.is_empty());
+    }
+    out
+}
+
 /// Add a note to the database for a given repo.
 pub fn add_note(db: &mut NotesDB, repo: &str, note: ReviewNote) {
     db.entry(repo.to_string())

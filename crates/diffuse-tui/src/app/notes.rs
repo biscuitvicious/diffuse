@@ -5,7 +5,7 @@ use std::{collections::HashMap, process};
 use crate::{render::ColorExt, types::FlatRowKind};
 
 use crate::core::notes::{
-    LineHash, ReviewNote, Side, add_note, note_anchors_in_file, note_runs, notes_for_file,
+    LineHash, NotesDB, ReviewNote, Side, add_note, note_anchors_in_file, note_runs, notes_for_file,
     now_millis, remove_note_by_id, remove_notes, save_notes, update_note_text,
 };
 
@@ -222,6 +222,7 @@ impl AppState {
                         self.sync_file_notes(fi);
                     }
                     self.bump_notes();
+                    self.pending_notes_reload = Some(vec![file.clone()]);
                     self.set_status_message("updated note".to_string(), true);
                 }
             }
@@ -324,6 +325,7 @@ impl AppState {
             self.sync_file_notes(fi);
         }
         self.bump_notes();
+        self.pending_notes_reload = Some(vec![note_file]);
         self.confirmed_sel = None;
         self.anchor = None;
     }
@@ -361,6 +363,7 @@ impl AppState {
                 self.sync_file_notes(fi);
             }
             self.bump_notes();
+            self.pending_notes_reload = Some(vec![file_path.clone()]);
             let (note_msg, note_ok) = if removed > 0 {
                 (
                     format!(
@@ -386,6 +389,7 @@ impl AppState {
                         self.sync_file_notes(fi);
                     }
                     self.bump_notes();
+                    self.pending_notes_reload = Some(vec![file.clone()]);
                     let cw = if self.last_content_width > 0 {
                         self.last_content_width
                     } else {
@@ -470,6 +474,7 @@ impl AppState {
                 self.sync_file_notes(fi);
             }
             self.bump_notes();
+            self.pending_notes_reload = Some(vec![file_path.clone()]);
             let label = match next_status {
                 diffuse_core::notes::NoteStatus::Open => "open",
                 diffuse_core::notes::NoteStatus::InProgress => "in progress",
@@ -486,12 +491,27 @@ impl AppState {
     pub fn toggle_show_resolved_notes(&mut self) {
         self.show_resolved_notes = !self.show_resolved_notes;
         self.bump_notes();
+        self.pending_notes_reload = Some(Vec::new());
         let msg = if self.show_resolved_notes {
             "showing resolved notes"
         } else {
             "hiding resolved notes"
         };
         self.set_status_message(msg.to_string(), true);
+    }
+
+    /// Notes database scoped to the notes that are currently visible.
+    ///
+    /// Resolved notes are present only when resolved-note display is enabled;
+    /// reload paths use this to avoid loading content for notes that would
+    /// render behind a hidden resolved-note callout.
+    #[must_use]
+    pub fn visible_notes_db(&self) -> NotesDB {
+        if self.show_resolved_notes {
+            self.notes.clone()
+        } else {
+            crate::core::notes::without_resolved(&self.notes)
+        }
     }
 
     /// Toggle displaying original source lines in note callouts.

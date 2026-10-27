@@ -89,6 +89,11 @@ pub struct AppState {
     pub last_viewport_start: usize,
     pub is_streaming: bool,
     pub pending_force_reload: bool,
+    /// Targeted notes re-stream requested by an in-process note mutation, with
+    /// the file paths noted *before* the mutation (so deleting the last note on
+    /// a synthetic file still re-streams it for removal). The event loop
+    /// consumes it to re-stream only the affected files.
+    pub pending_notes_reload: Option<Vec<String>>,
     pub commit_range: Option<String>,
     pub last_stream_activity: Option<Instant>,
     pub start_time: Instant,
@@ -192,6 +197,7 @@ impl AppState {
             last_viewport_start: 2,
             is_streaming: false,
             pending_force_reload: false,
+            pending_notes_reload: None,
             commit_range: None,
             last_stream_activity: None,
             start_time: Instant::now(),

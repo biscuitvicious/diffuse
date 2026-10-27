@@ -34,6 +34,15 @@ pub fn is_inside_work_tree(cwd: &Path) -> bool {
     gix::discover(cwd).is_ok()
 }
 
+/// Bare unified-diff header (no hunks) for a file surfaced solely so review
+/// notes can be attached to it; used for unmodified reference files that carry
+/// review notes without an anchorable hunk.
+fn synthetic_unmodified_diff(file_path: &str) -> String {
+    format!(
+        "diff --git a/{file_path} b/{file_path}\nunmodified file mode 100644\n--- a/{file_path}\n+++ b/{file_path}\n"
+    )
+}
+
 /// Get current repository branch name via native gix.
 pub fn get_current_branch(cwd: &Path) -> String {
     diffuse_git::Repository::discover(cwd)
@@ -203,20 +212,38 @@ pub fn stream_git_repo_to_producer(
             if let Some(c) = content {
                 let file_lines = crate::pipeline::split_content_lines(&c);
                 let file_notes = crate::notes::query_notes_for_file(db, repo, &file_path);
-                if !file_notes
-                    .iter()
-                    .any(|n| crate::notes::note_anchors_in_file(n, &file_lines))
-                {
+                if file_notes.is_empty() {
                     continue;
                 }
+                let has_anchor = file_notes
+                    .iter()
+                    .any(|n| crate::notes::note_anchors_in_file(n, &file_lines));
+
+                if !has_anchor {
+                    // No anchoring notes: show the file header and any
+                    // unanchored notes, but do not load the file contents as
+                    // context.
+                    let mut f = crate::parse::DiffFile::new(&file_path);
+                    f.status = crate::parse::FileStatus::Unmodified;
+                    f.has_file_headers = true;
+                    producer.push(crate::streaming::FileJob {
+                        idx: file_idx,
+                        file: f,
+                        new_content: None,
+                        old_content: None,
+                        diff_fallback: Some(Arc::new(synthetic_unmodified_diff(&file_path))),
+                    });
+                    seen_paths.insert(file_path);
+                    file_idx += 1;
+                    continue;
+                }
+
                 let mut f = crate::parse::DiffFile::new(&file_path);
                 f.status = crate::parse::FileStatus::Unmodified;
                 f.has_file_headers = true;
                 f.new_bytes = Some(c.len());
                 f.old_bytes = Some(c.len());
-                let synthetic_diff = format!(
-                    "diff --git a/{file_path} b/{file_path}\nunmodified file mode 100644\n--- a/{file_path}\n+++ b/{file_path}\n"
-                );
+                let synthetic_diff = synthetic_unmodified_diff(&file_path);
                 let arc_c = Arc::new(c);
                 producer.push(crate::streaming::FileJob {
                     idx: file_idx,
@@ -336,14 +363,22 @@ pub fn load_git_repo_with_notes(
             };
 
             if let Some(c) = content {
+                let file_lines = crate::pipeline::split_content_lines(&c);
+                let file_notes = crate::notes::query_notes_for_file(db, repo, &file_path);
+                if file_notes.is_empty() {
+                    continue;
+                }
+                let has_anchor = file_notes
+                    .iter()
+                    .any(|n| crate::notes::note_anchors_in_file(n, &file_lines));
                 if !diff.is_empty() && !diff.ends_with('\n') {
                     diff.push('\n');
                 }
-                diff.push_str(&format!(
-                    "diff --git a/{file_path} b/{file_path}\nunmodified file mode 100644\n--- a/{file_path}\n+++ b/{file_path}\n"
-                ));
-                new_content.insert(file_path.clone(), c.clone());
-                old_content.insert(file_path.clone(), c);
+                diff.push_str(&synthetic_unmodified_diff(&file_path));
+                if has_anchor {
+                    new_content.insert(file_path.clone(), c.clone());
+                    old_content.insert(file_path.clone(), c);
+                }
                 seen_paths.insert(file_path);
             }
         }
