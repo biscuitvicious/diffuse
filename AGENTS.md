@@ -68,7 +68,7 @@ Every modification, bug fix, or feature must expand the automated test suite und
 3. **Verification gate**: Execute `scripts/check.sh` after every change (applies nightly `rustfmt`, runs `clippy --fix`, and executes all cargo tests). All checks must pass with zero warnings. Do not run `cargo fmt` or `cargo clippy` separately — `scripts/check.sh` already applies both to the maximum extent.
 4. **Golden review**: If golden outputs change, review diffs per [`tests/AGENTS.md`](tests/AGENTS.md) to confirm that changes are strictly improvements or equivalent.
 5. **Installation**: `scripts/check.sh` installs the development binary (`~/.cargo/bin/diffuse`) and synchronizes the dev extension automatically. Release builds are compiled via `scripts/install.sh`.
-6. **Review and sign-off**: Present changes and diff summaries for review. Do not commit changes without explicit instruction.
+6. **Pre-commit review, cleanup & sign-off**: At the end of each task, perform a code review and cleanup pass of the changes, and perform any refactorings motivated by the changes so code quality does not deteriorate. Present the result together with the change summary, always pausing before committing to allow for user testing. Do not commit changes without explicit instruction.
 
 ## Conventions and standards
 

@@ -128,6 +128,42 @@ fn test_cli_args_theme_flag() {
 }
 
 #[test]
+fn test_cli_args_split_revisions_from_pathspecs() {
+    // Revisions and pathspecs are separate semantic inputs: everything before
+    // `--` is a revision/range, everything after `--` is a pathspec.
+    let args = Args::try_parse_from([
+        "diffuse",
+        "-p",
+        "68cb770..6613139",
+        "--",
+        "crates/diffuse/src/main.rs",
+    ])
+    .unwrap();
+    assert_eq!(args.revision.git_revs, ["68cb770..6613139"]);
+    assert_eq!(
+        args.revision.pathspecs,
+        ["crates/diffuse/src/main.rs"],
+        "pathspecs after `--` must parse into their own field, never into git_revs"
+    );
+
+    // Without `--`, revision args stay verbatim and pathspecs stay empty.
+    let args = Args::try_parse_from(["diffuse", "-p", "HEAD~1"]).unwrap();
+    assert_eq!(args.revision.git_revs, ["HEAD~1"]);
+    assert!(args.revision.pathspecs.is_empty());
+}
+
+#[test]
+fn test_cli_args_split_revisions_from_pathspecs_review_subcommand() {
+    let args =
+        Args::try_parse_from(["diffuse", "review", "main..feature", "--", "src/lib.rs"]).unwrap();
+    let SubCommand::Review { revision } = args.command.unwrap() else {
+        panic!("expected review subcommand");
+    };
+    assert_eq!(revision.git_revs, ["main..feature"]);
+    assert_eq!(revision.pathspecs, ["src/lib.rs"]);
+}
+
+#[test]
 fn test_resolve_theme_prefers_cli_flag() {
     let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::remove_var("DIFFUSE_THEME") };
@@ -703,7 +739,7 @@ fn test_notes_cli_args_revisions_and_staged() {
     if let Some(SubCommand::Notes(notes)) = args.command {
         assert!(matches!(
             notes.action,
-            Some(NotesAction::List { ref revision, .. }) if revision.git_args == ["HEAD~1"]
+            Some(NotesAction::List { ref revision, .. }) if revision.git_revs == ["HEAD~1"]
         ));
     } else {
         panic!("expected Notes");
@@ -714,7 +750,7 @@ fn test_notes_cli_args_revisions_and_staged() {
     if let Some(SubCommand::Notes(notes)) = args.command {
         assert!(matches!(
             notes.action,
-            Some(NotesAction::List { ref revision, .. }) if revision.git_args == ["HEAD~1", "src/lib.rs"]
+            Some(NotesAction::List { ref revision, .. }) if revision.git_revs == ["HEAD~1", "src/lib.rs"]
         ));
     } else {
         panic!("expected Notes");
@@ -724,7 +760,7 @@ fn test_notes_cli_args_revisions_and_staged() {
     let args = Args::try_parse_from(["diffuse", "notes", "HEAD~1"]).unwrap();
     if let Some(SubCommand::Notes(notes)) = args.command {
         assert!(notes.action.is_none());
-        assert_eq!(notes.revision.git_args, vec!["HEAD~1"]);
+        assert_eq!(notes.revision.git_revs, vec!["HEAD~1"]);
     } else {
         panic!("expected Notes");
     }
@@ -733,7 +769,7 @@ fn test_notes_cli_args_revisions_and_staged() {
     let args = Args::try_parse_from(["diffuse", "notes", "src/lib.rs"]).unwrap();
     if let Some(SubCommand::Notes(notes)) = args.command {
         assert!(notes.action.is_none());
-        assert_eq!(notes.revision.git_args, vec!["src/lib.rs"]);
+        assert_eq!(notes.revision.git_revs, vec!["src/lib.rs"]);
     } else {
         panic!("expected Notes");
     }
@@ -748,11 +784,11 @@ fn test_notes_cli_args_revisions_and_staged() {
 
     // 7. `diffuse HEAD~1` and `diffuse review HEAD~1` sharing RevisionArgs
     let args_root = Args::try_parse_from(["diffuse", "HEAD~1"]).unwrap();
-    assert_eq!(args_root.revision.git_args, vec!["HEAD~1"]);
+    assert_eq!(args_root.revision.git_revs, vec!["HEAD~1"]);
 
     let args_review = Args::try_parse_from(["diffuse", "review", "HEAD~1"]).unwrap();
     if let Some(SubCommand::Review { revision }) = args_review.command {
-        assert_eq!(revision.git_args, vec!["HEAD~1"]);
+        assert_eq!(revision.git_revs, vec!["HEAD~1"]);
     } else {
         panic!("expected Review");
     }
@@ -762,7 +798,7 @@ fn test_notes_cli_args_revisions_and_staged() {
     assert!(!r1.is_empty());
     let r2 = RevisionArgs::new(vec!["src/main.rs".into()]);
     let combined = r1.combined(&r2);
-    assert_eq!(combined.git_args, vec!["HEAD~1", "src/main.rs"]);
+    assert_eq!(combined.git_revs, vec!["HEAD~1", "src/main.rs"]);
 }
 
 #[test]

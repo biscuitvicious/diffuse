@@ -72,8 +72,8 @@ fn apply_targeted_notes_reload(state: &mut AppState, previously: &[String]) -> b
         return false;
     }
     let repo_root = state.repo_root.clone();
-    let git_args = state.git_args.clone();
-    match crate::actions::reload_specific_files(state, &repo_root, &git_args, &paths) {
+    let git_revs = state.git_revs.clone();
+    match crate::actions::reload_specific_files(state, &repo_root, &git_revs, &paths) {
         Ok(n) => {
             if n > 0 {
                 state.set_status_message(
@@ -104,7 +104,7 @@ fn trigger_streaming_reload(
     dirty: &mut bool,
 ) {
     let repo_root = state.repo_root.clone();
-    let git_args = state.git_args.clone();
+    let git_revs = state.git_revs.clone();
     let staged = state.target.is_staged();
     let _ = state.reload_notes_from_disk();
     let notes_db = state.visible_notes_db();
@@ -116,7 +116,7 @@ fn trigger_streaming_reload(
 
     let (consumer, new_meta_rx) = diffuse_core::streaming::spawn_git_stream_pipeline(
         repo_root,
-        git_args,
+        git_revs,
         Vec::new(),
         staged,
         diffuse_core::git::ENGINE_CONTEXT,
@@ -149,7 +149,7 @@ pub fn run_tui(
     repo: String,
     notes_path: PathBuf,
     repo_root: PathBuf,
-    git_args: Vec<String>,
+    git_revs: Vec<String>,
     staged: bool,
     expand_lines: usize,
     theme: crate::render::DiffuseTheme,
@@ -160,12 +160,12 @@ pub fn run_tui(
     let mut guard = TerminalGuard::enter()?;
     let target = diffuse_core::ReviewTarget::from_repo_args(
         diffuse_core::Repo::from_root(repo_root.clone()).with_name(repo.clone()),
-        git_args.clone(),
+        git_revs.clone(),
         staged,
     );
     let mut state = AppState::new(initial_output, repo, notes_path, theme)
         .with_target(target)
-        .with_repo_context(repo_root.clone(), git_args, staged)
+        .with_repo_context(repo_root.clone(), git_revs, staged)
         .with_expand_lines(expand_lines)
         .with_show_resolved_notes(show_resolved)
         .with_show_source_lines(show_source);
@@ -283,7 +283,7 @@ pub fn run_tui(
                         match diff {
                             crate::watcher::FsDiffEvent::Paths(paths) => {
                                 let rr = state.repo_root.clone();
-                                let ga = state.git_args.clone();
+                                let ga = state.git_revs.clone();
                                 match actions::reload_specific_files(&mut state, &rr, &ga, &paths) {
                                     Ok(n) => {
                                         let msg = format!(
@@ -445,11 +445,11 @@ pub fn run_tui(
 
         if let Some(req) = state.pending_editor.take() {
             let repo_root = state.repo_root.clone();
-            let git_args = state.git_args.clone();
+            let git_revs = state.git_revs.clone();
             let _ = guard.suspend();
             let _ = editor::open_editor(&req.file, req.line, req.range, &repo_root);
             let _ = guard.resume();
-            let _ = actions::reload_diff(&mut state, &repo_root, &git_args);
+            let _ = actions::reload_diff(&mut state, &repo_root, &git_revs);
             dirty = true;
         }
     }
@@ -463,7 +463,7 @@ pub fn run_interactive_tui(
     repo: String,
     notes_path: PathBuf,
     repo_root: PathBuf,
-    git_args: Vec<String>,
+    git_revs: Vec<String>,
     staged: bool,
     theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
@@ -474,7 +474,7 @@ pub fn run_interactive_tui(
         repo,
         notes_path,
         repo_root,
-        git_args,
+        git_revs,
         staged,
         DEFAULT_EXPAND_LINES,
         theme,

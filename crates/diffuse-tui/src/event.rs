@@ -289,11 +289,11 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         }
         (KeyModifiers::SHIFT, KeyCode::Char('U')) => {
             let repo_root = state.repo_root.clone();
-            let git_args = state.git_args.clone();
+            let git_revs = state.git_revs.clone();
             match super::actions::unstage_action(state, &repo_root, true) {
                 Ok(()) => {
                     state.set_status_message("unstaged file".into(), true);
-                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_revs);
                 }
                 Err(e) => state.set_status_message(e, false),
             }
@@ -305,7 +305,7 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         }
         (KeyModifiers::SHIFT, KeyCode::Char('X')) => {
             let repo_root = state.repo_root.clone();
-            let git_args = state.git_args.clone();
+            let git_revs = state.git_revs.clone();
             match super::actions::discard_action(state, &repo_root, true) {
                 Ok(stash_ref) => {
                     let msg = if let Some(sr) = stash_ref {
@@ -314,7 +314,7 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
                         "discarded file".into()
                     };
                     state.set_status_message(msg, true);
-                    let _ = super::actions::reload_diff(state, &repo_root, &git_args);
+                    let _ = super::actions::reload_diff(state, &repo_root, &git_revs);
                 }
                 Err(e) => state.set_status_message(e, false),
             }

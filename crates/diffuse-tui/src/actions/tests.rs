@@ -138,14 +138,14 @@ fn test_toggle_staged_action_flow() {
 
     // 1. Initially unstaged: toggle when staged has NO changes -> switches to
     //    staged view (empty) without an error message.
-    let git_args = state.git_args.clone();
-    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
+    let git_revs = state.git_revs.clone();
+    toggle_staged_action(&mut state, &repo_root, &git_revs).unwrap();
     assert!(state.target.is_staged());
     assert!(state.output.files.is_empty());
 
     // Toggle back to unstaged (working tree still has changes) -> success.
-    let git_args = state.git_args.clone();
-    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
+    let git_revs = state.git_revs.clone();
+    toggle_staged_action(&mut state, &repo_root, &git_revs).unwrap();
     assert!(!state.target.is_staged());
     assert_eq!(state.output.files.len(), 1, "unstaged view has 1 file");
 
@@ -153,15 +153,15 @@ fn test_toggle_staged_action_flow() {
     stage_action(&mut state, &repo_root, false).unwrap();
     // After staging, index has staged changes.
     // Toggle to staged:
-    let git_args = state.git_args.clone();
-    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
+    let git_revs = state.git_revs.clone();
+    toggle_staged_action(&mut state, &repo_root, &git_revs).unwrap();
     assert!(state.target.is_staged());
     assert_eq!(state.output.files.len(), 1, "staged view has 1 file");
 
     // 3. Now in staged view: toggle back to unstaged (which is now clean) ->
     //    switches to unstaged view (empty) without an error message.
-    let git_args = state.git_args.clone();
-    toggle_staged_action(&mut state, &repo_root, &git_args).unwrap();
+    let git_revs = state.git_revs.clone();
+    toggle_staged_action(&mut state, &repo_root, &git_revs).unwrap();
     assert!(!state.target.is_staged(), "must switch to unstaged view");
     assert!(state.output.files.is_empty());
 
@@ -173,15 +173,15 @@ fn test_toggle_staged_action_flow() {
     .unwrap();
 
     // Reload to pick up the new unstaged change.
-    let git_args = state.git_args.clone();
-    reload_diff(&mut state, &repo_root, &git_args).unwrap();
+    let git_revs = state.git_revs.clone();
+    reload_diff(&mut state, &repo_root, &git_revs).unwrap();
     assert!(!state.target.is_staged());
     assert_eq!(state.output.files.len(), 1, "unstaged view has 1 file");
 
     // 5. Viewing a commit range -> Err
     state.commit_range = Some("HEAD~1..HEAD".into());
-    let git_args = state.git_args.clone();
-    let err3 = toggle_staged_action(&mut state, &repo_root, &git_args).unwrap_err();
+    let git_revs = state.git_revs.clone();
+    let err3 = toggle_staged_action(&mut state, &repo_root, &git_revs).unwrap_err();
     assert!(err3.contains("commit range"));
 }
 

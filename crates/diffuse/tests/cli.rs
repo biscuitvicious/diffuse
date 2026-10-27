@@ -1490,8 +1490,8 @@ fn test_notes_list_revisions_and_pathspecs() {
     assert!(!stdout_c1.contains("Note on c2 file a"));
     assert!(!stdout_c1.contains("Note on c2 doc"));
 
-    // 3. `diffuse notes list src/a.txt`: scoped to working tree HEAD (c2), filtered
-    //    to src/a.txt
+    // 3. `diffuse notes list -- src/a.txt`: scoped to working tree HEAD (c2),
+    //    filtered to src/a.txt
     let out_file = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(dir.path())
         .arg("--notes-file")
@@ -1500,6 +1500,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .arg("test-repo")
         .arg("notes")
         .arg("list")
+        .arg("--")
         .arg("src/a.txt")
         .output()
         .unwrap();
@@ -1508,8 +1509,7 @@ fn test_notes_list_revisions_and_pathspecs() {
     assert!(stdout_file.contains("Note on c2 file a"));
     assert!(!stdout_file.contains("Note on c2 doc"));
     assert!(!stdout_file.contains("Note on c1 file a"));
-
-    // 4. `diffuse notes list HEAD~1 src/b.txt`: scoped to c1 and filtered to
+    // 4. `diffuse notes list HEAD~1 -- src/b.txt`: scoped to c1 and filtered to
     //    src/b.txt
     let out_c1_b = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(dir.path())
@@ -1520,6 +1520,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .arg("notes")
         .arg("list")
         .arg("HEAD~1")
+        .arg("--")
         .arg("src/b.txt")
         .output()
         .unwrap();
@@ -1565,7 +1566,7 @@ fn test_notes_list_revisions_and_pathspecs() {
     assert!(stdout_short_rev.contains("Note on c1 file b"));
     assert!(!stdout_short_rev.contains("Note on c2 file a"));
 
-    // 7. Shorthand `diffuse notes doc/readme.txt`: defaults to list with path
+    // 7. Shorthand `diffuse notes -- doc/readme.txt`: defaults to list with path
     //    filter
     let out_short_path = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(dir.path())
@@ -1574,6 +1575,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .arg("--repo")
         .arg("test-repo")
         .arg("notes")
+        .arg("--")
         .arg("doc/readme.txt")
         .output()
         .unwrap();

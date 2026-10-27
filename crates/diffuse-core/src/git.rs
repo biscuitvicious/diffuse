@@ -146,8 +146,7 @@ pub fn stream_git_repo_to_producer(
     let target = diffuse_git::ReviewTarget {
         repo: diffuse_git::Repo::from_root(repo_root),
         range: refs.revision_range(),
-        git_args: base_args.to_vec(),
-        rev_args: base_args.to_vec(),
+        git_revs: base_args.to_vec(),
         pathspecs: paths.to_vec(),
         staged,
     };
@@ -294,8 +293,7 @@ pub fn load_git_repo_with_notes(
     let target = diffuse_git::ReviewTarget {
         repo: diffuse_git::Repo::from_root(repo_root),
         range: refs.revision_range(),
-        git_args: base_args.to_vec(),
-        rev_args: base_args.to_vec(),
+        git_revs: base_args.to_vec(),
         pathspecs: paths.to_vec(),
         staged,
     };

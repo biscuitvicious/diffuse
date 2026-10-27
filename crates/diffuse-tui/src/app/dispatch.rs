@@ -89,8 +89,8 @@ impl AppState {
             }
             TuiCommand::ToggleStaged => {
                 let repo_root = self.repo_root.clone();
-                let git_args = self.git_args.clone();
-                match crate::actions::toggle_staged_action(self, &repo_root, &git_args) {
+                let git_revs = self.git_revs.clone();
+                match crate::actions::toggle_staged_action(self, &repo_root, &git_revs) {
                     Ok(()) => self.status_message = None,
                     Err(e) => self.set_status_message(e, false),
                 }
@@ -166,29 +166,29 @@ impl AppState {
             }
             TuiCommand::Stage => {
                 let repo_root = self.repo_root.clone();
-                let git_args = self.git_args.clone();
+                let git_revs = self.git_revs.clone();
                 match crate::actions::stage_action(self, &repo_root, false) {
                     Ok(()) => {
                         self.set_status_message("staged hunk".into(), true);
-                        let _ = crate::actions::reload_diff(self, &repo_root, &git_args);
+                        let _ = crate::actions::reload_diff(self, &repo_root, &git_revs);
                     }
                     Err(e) => self.set_status_message(e, false),
                 }
             }
             TuiCommand::Unstage => {
                 let repo_root = self.repo_root.clone();
-                let git_args = self.git_args.clone();
+                let git_revs = self.git_revs.clone();
                 match crate::actions::unstage_action(self, &repo_root, false) {
                     Ok(()) => {
                         self.set_status_message("unstaged hunk".into(), true);
-                        let _ = crate::actions::reload_diff(self, &repo_root, &git_args);
+                        let _ = crate::actions::reload_diff(self, &repo_root, &git_revs);
                     }
                     Err(e) => self.set_status_message(e, false),
                 }
             }
             TuiCommand::Discard => {
                 let repo_root = self.repo_root.clone();
-                let git_args = self.git_args.clone();
+                let git_revs = self.git_revs.clone();
                 match crate::actions::discard_action(self, &repo_root, false) {
                     Ok(stash_ref) => {
                         let msg = if let Some(sr) = stash_ref {
@@ -197,7 +197,7 @@ impl AppState {
                             "discarded hunk".into()
                         };
                         self.set_status_message(msg, true);
-                        let _ = crate::actions::reload_diff(self, &repo_root, &git_args);
+                        let _ = crate::actions::reload_diff(self, &repo_root, &git_revs);
                     }
                     Err(e) => self.set_status_message(e, false),
                 }

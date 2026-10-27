@@ -258,10 +258,10 @@ pub fn head_commit(repo_root: &Path) -> Option<String> {
 /// notes are keyed off the second-to-last (next newest) commit in the range.
 /// When reviewing uncommitted changes against the working tree (or when the
 /// range has no parent), notes fall back to the live HEAD commit.
-pub fn notes_commit(repo_root: &Path, git_args: &[String]) -> Option<String> {
+pub fn notes_commit(repo_root: &Path, git_revs: &[String]) -> Option<String> {
     diffuse_git::Repository::open(repo_root)
         .ok()
-        .and_then(|r| r.notes_commit(git_args))
+        .and_then(|r| r.notes_commit(git_revs))
 }
 
 /// Notes-DB key for a repo at a given HEAD: `{repo}@{head}`.
@@ -278,10 +278,10 @@ pub fn notes_key(repo: &str, head: Option<&str>) -> String {
 }
 
 /// Convenience wrapper: resolve the target notes commit for `repo_root` under
-/// `git_args` (second-to-last commit when reviewing a range, otherwise HEAD)
+/// `git_revs` (second-to-last commit when reviewing a range, otherwise HEAD)
 /// and build the notes-DB key for `repo`.
-pub fn notes_key_for_repo_args(repo_root: &Path, repo: &str, git_args: &[String]) -> String {
-    notes_key(repo, notes_commit(repo_root, git_args).as_deref())
+pub fn notes_key_for_repo_args(repo_root: &Path, repo: &str, git_revs: &[String]) -> String {
+    notes_key(repo, notes_commit(repo_root, git_revs).as_deref())
 }
 
 /// Convenience wrapper: resolve the live HEAD under `repo_root` and build

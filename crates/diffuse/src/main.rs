@@ -369,30 +369,42 @@ Overrides the DIFFUSE_THEME environment variable."
 /// Reusable git diff arguments (revisions, commit ranges, or file pathspecs).
 #[derive(clap::Args, Debug, Clone, Default, PartialEq, Eq)]
 pub struct RevisionArgs {
-    /// Git diff arguments (revisions, commit ranges, or file pathspecs)
+    /// Git revision arguments (revisions or commit ranges)
     #[arg(
-        value_name = "GIT_ARG",
-        trailing_var_arg = true,
-        allow_hyphen_values = true,
+        value_name = "GIT_REV",
         help_heading = "Revision & Path Controls",
-        help = "Git diff arguments (revisions, commit ranges, or file pathspecs)",
-        long_help = "Arguments specifying commits (e.g. HEAD~1), ranges (e.g. main..feat), \
-or file pathspecs (e.g. src/lib.rs)."
+        help = "Git revision arguments (revisions or commit ranges)",
+        long_help = "Arguments specifying commits (e.g. HEAD~1) or ranges (e.g. main..feat)."
     )]
-    pub git_args: Vec<String>,
+    pub git_revs: Vec<String>,
+
+    /// File pathspecs scoping the diff (after `--`)
+    #[arg(
+        value_name = "PATHSPEC",
+        last = true,
+        help_heading = "Revision & Path Controls",
+        help = "File pathspecs scoping the diff (after `--`)",
+        long_help = "File pathspecs (e.g. src/lib.rs) scoping the review. Everything after `--` \
+is treated as a pathspec, mirroring `git diff [revs] -- [paths]`."
+    )]
+    pub pathspecs: Vec<String>,
 }
 
 impl RevisionArgs {
-    pub fn new(git_args: Vec<String>) -> Self {
-        Self { git_args }
+    pub fn new(git_revs: Vec<String>) -> Self {
+        Self {
+            git_revs,
+            pathspecs: Vec::new(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.git_args.is_empty()
+        self.git_revs.is_empty() && self.pathspecs.is_empty()
     }
 
     pub fn extend(&mut self, other: &RevisionArgs) {
-        self.git_args.extend(other.git_args.iter().cloned());
+        self.git_revs.extend(other.git_revs.iter().cloned());
+        self.pathspecs.extend(other.pathspecs.iter().cloned());
     }
 
     pub fn combined(&self, other: &RevisionArgs) -> Self {
@@ -643,8 +655,8 @@ Can filter by status, revision, or pathspecs, or export to JSON and Markdown.",
     diffuse notes list
     diffuse notes list HEAD~1
     diffuse notes list --staged
-    diffuse notes list src/lib.rs
-    diffuse notes list HEAD~1 src/lib.rs
+    diffuse notes list -- src/lib.rs
+    diffuse notes list HEAD~1 -- src/lib.rs
     diffuse notes list --all
     diffuse notes list --resolved
     diffuse notes list --in-progress
@@ -1292,13 +1304,13 @@ fn route_mode(
     json: bool,
     jsonl: bool,
     diff: Option<&str>,
-    git_args: &[String],
+    git_revs: &[String],
     stdin_tty: bool,
     piped_stdin: &str,
 ) -> bool {
     json || jsonl
         || diff.is_some()
-        || (git_args.is_empty() && !stdin_tty && !piped_stdin.trim().is_empty())
+        || (git_revs.is_empty() && !stdin_tty && !piped_stdin.trim().is_empty())
 }
 
 /// Resolve the active [`DiffuseTheme`] from the `--theme` CLI flag,
@@ -1372,16 +1384,19 @@ fn main() -> io::Result<()> {
         .max(1);
     streaming::init_thread_pool(workers);
 
-    let (explicit_cmd, git_args, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
+    let (explicit_cmd, git_revs, pathspecs, is_json, is_jsonl, is_markdown, is_raw, diff_opt) =
         match &args.command {
             Some(SubCommand::Review {
                 revision: sub_revision,
             }) => {
-                let mut ga = args.revision.git_args.clone();
-                ga.extend(sub_revision.git_args.iter().cloned());
+                let mut ga = args.revision.git_revs.clone();
+                ga.extend(sub_revision.git_revs.iter().cloned());
+                let mut ps = args.revision.pathspecs.clone();
+                ps.extend(sub_revision.pathspecs.iter().cloned());
                 (
                     Some("review"),
                     ga,
+                    ps,
                     args.json,
                     args.jsonl,
                     args.markdown,
@@ -1410,6 +1425,7 @@ fn main() -> io::Result<()> {
                 (
                     Some("parse"),
                     Vec::new(),
+                    Vec::new(),
                     j,
                     jl,
                     md,
@@ -1419,7 +1435,8 @@ fn main() -> io::Result<()> {
             }
             None => (
                 None,
-                args.revision.git_args.clone(),
+                args.revision.git_revs.clone(),
+                args.revision.pathspecs.clone(),
                 args.json,
                 args.jsonl,
                 args.markdown,
@@ -1448,7 +1465,7 @@ fn main() -> io::Result<()> {
     let mut piped_stdin = String::new();
     if explicit_cmd.is_none()
         && !stdin_tty
-        && git_args.is_empty()
+        && git_revs.is_empty()
         && !is_json
         && !is_jsonl
         && diff_opt.is_none()
@@ -1463,7 +1480,7 @@ fn main() -> io::Result<()> {
             is_json,
             is_jsonl,
             diff_opt.as_deref(),
-            &git_args,
+            &git_revs,
             stdin_tty,
             &piped_stdin,
         ),
@@ -1490,9 +1507,10 @@ fn main() -> io::Result<()> {
             .unwrap_or_else(default_notes_path);
         let loaded_db = load_notes(&notes_path);
 
-        let target = ReviewTarget::from_repo_args(
+        let target = ReviewTarget::from_parts(
             Repo::from_root(&repo_root).with_name_opt(args.repo.clone()),
-            git_args.clone(),
+            git_revs.clone(),
+            pathspecs.clone(),
             args.staged,
         );
 
@@ -1521,8 +1539,8 @@ fn main() -> io::Result<()> {
             let theme = resolve_theme(args.theme.as_deref(), true);
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
-                git_args.clone(),
-                Vec::new(),
+                git_revs.clone(),
+                pathspecs.clone(),
                 staged,
                 ENGINE_CONTEXT,
                 pipeline_opts
@@ -1542,7 +1560,7 @@ fn main() -> io::Result<()> {
                 target.repo_name().to_string(),
                 notes_path,
                 repo_root.clone(),
-                git_args.clone(),
+                git_revs.clone(),
                 args.staged,
                 args.expand_lines,
                 theme,
@@ -1556,7 +1574,7 @@ fn main() -> io::Result<()> {
             let theme = resolve_theme(args.theme.as_deref(), false);
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
-                git_args.clone(),
+                git_revs.clone(),
                 Vec::new(),
                 staged,
                 ENGINE_CONTEXT,
@@ -1603,7 +1621,7 @@ fn main() -> io::Result<()> {
             let theme = resolve_theme(args.theme.as_deref(), false);
             let (consumer, meta_rx) = spawn_git_stream_pipeline(
                 repo_root.clone(),
-                git_args.clone(),
+                git_revs.clone(),
                 Vec::new(),
                 staged,
                 ENGINE_CONTEXT,
@@ -1671,7 +1689,7 @@ fn main() -> io::Result<()> {
         let loaded_db = load_notes(&notes_path);
         let target = ReviewTarget::from_repo_args(
             Repo::from_root(&repo_root).with_name_opt(args.repo.clone()),
-            git_args.clone(),
+            git_revs.clone(),
             args.staged,
         );
         let pipeline_opts = PipelineOptions::default()
@@ -1689,7 +1707,7 @@ fn main() -> io::Result<()> {
         let theme = resolve_theme(args.theme.as_deref(), false);
         let (consumer, meta_rx) = spawn_git_stream_pipeline(
             repo_root,
-            git_args,
+            git_revs,
             Vec::new(),
             args.staged,
             ENGINE_CONTEXT,

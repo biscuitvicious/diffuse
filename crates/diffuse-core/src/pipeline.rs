@@ -899,7 +899,7 @@ pub fn process_single_diff_file(
 pub fn render_file_from_source(
     source: &crate::wire::RawFileSource,
     repo_root: Option<&Path>,
-    git_args: &[String],
+    git_revs: &[String],
     context: usize,
     opts: &PipelineOptions,
 ) -> Option<OutputFile> {
@@ -913,7 +913,7 @@ pub fn render_file_from_source(
             if let Some(root) = repo_root {
                 crate::git::load_single_file_diff(
                     root,
-                    git_args,
+                    git_revs,
                     path,
                     old_path.as_deref(),
                     status,

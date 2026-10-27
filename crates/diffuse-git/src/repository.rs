@@ -104,9 +104,9 @@ impl Repository {
         }
     }
 
-    /// Resolve commit range string (e.g. `c1..c2`) from `rev_args`.
-    pub fn resolve_commit_range(&self, rev_args: &[String]) -> Option<String> {
-        let refs: Vec<&str> = rev_args
+    /// Resolve commit range string (e.g. `c1..c2`) from `git_revs`.
+    pub fn resolve_commit_range(&self, git_revs: &[String]) -> Option<String> {
+        let refs: Vec<&str> = git_revs
             .iter()
             .map(String::as_str)
             .filter(|t| !t.starts_with('-'))
@@ -215,8 +215,8 @@ impl Repository {
     ///
     /// When reviewing a range, returns the second newest commit in the range
     /// (or the base commit). Otherwise returns HEAD.
-    pub fn notes_commit(&self, rev_args: &[String]) -> Option<String> {
-        let ref_pair = crate::types::RefPair::resolve(rev_args, false);
+    pub fn notes_commit(&self, git_revs: &[String]) -> Option<String> {
+        let ref_pair = crate::types::RefPair::resolve(git_revs, false);
 
         if !ref_pair.worktree_new
             && let (Some(old), Some(new)) = (ref_pair.old_ref, ref_pair.new_ref)

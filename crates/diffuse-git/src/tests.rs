@@ -435,8 +435,7 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
     let unstaged_target = ReviewTarget {
         repo: Repo::from_root(dir),
         range: None,
-        git_args: vec![],
-        rev_args: vec![],
+        git_revs: vec![],
         pathspecs: vec![],
         staged: false,
     };
@@ -467,8 +466,7 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
     let staged_target = ReviewTarget {
         repo: Repo::from_root(dir),
         range: None,
-        git_args: vec![],
-        rev_args: vec![],
+        git_revs: vec![],
         pathspecs: vec![],
         staged: true,
     };
@@ -501,8 +499,7 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
     let range_target = ReviewTarget {
         repo: Repo::from_root(dir),
         range: Some(RevisionRange(c1.clone(), c2.clone())),
-        git_args: vec![],
-        rev_args: vec![],
+        git_revs: vec![],
         pathspecs: vec![],
         staged: false,
     };
@@ -714,8 +711,7 @@ fn test_diff_repository_unstaged_staged_and_range() {
     let target = ReviewTarget {
         repo: Repo::from_root(dir),
         range: None,
-        git_args: vec![],
-        rev_args: vec![],
+        git_revs: vec![],
         pathspecs: vec![],
         staged: false,
     };
@@ -755,8 +751,7 @@ fn test_diff_repository_on_cli_setup_repo() {
     let target = ReviewTarget {
         repo: Repo::from_root(dir.path()),
         range: None,
-        git_args: vec![],
-        rev_args: vec![],
+        git_revs: vec![],
         pathspecs: vec![],
         staged: false,
     };
@@ -815,8 +810,7 @@ fn test_submodule_gitlink_diff() {
             "HEAD~1".to_string(),
             "HEAD".to_string(),
         )),
-        git_args: vec!["HEAD~1..HEAD".to_string()],
-        rev_args: vec!["HEAD~1..HEAD".to_string()],
+        git_revs: vec!["HEAD~1..HEAD".to_string()],
         pathspecs: vec![],
         staged: false,
     };
@@ -934,8 +928,7 @@ fn two() {
     let target = ReviewTarget {
         repo: Repo::from_root(dir.path()),
         range: None,
-        git_args: vec![],
-        rev_args: vec![],
+        git_revs: vec![],
         pathspecs: vec![],
         staged: false,
     };

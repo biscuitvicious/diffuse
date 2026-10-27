@@ -33,7 +33,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
         Repo::from_name(args.repo.clone().unwrap_or_else(|| "diffuse".to_string()))
     };
     let target =
-        ReviewTarget::from_repo_args(repo.clone(), args.revision.git_args.clone(), args.staged);
+        ReviewTarget::from_repo_args(repo.clone(), args.revision.git_revs.clone(), args.staged);
     let repo_name = Some(target.repo_name().to_string());
     let notes_key = target.notes_key();
 
@@ -75,8 +75,12 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             combined_revision.extend(&notes_args.revision);
             combined_revision.extend(&sub_revision);
 
-            let list_target =
-                ReviewTarget::from_repo_args(repo, combined_revision.git_args, args.staged);
+            let list_target = ReviewTarget::from_parts(
+                repo,
+                combined_revision.git_revs,
+                combined_revision.pathspecs,
+                args.staged,
+            );
             let keys = list_target.matched_notes_db_keys(&db);
 
             let mut all_notes: Vec<(&str, &ReviewNote)> = Vec::new();

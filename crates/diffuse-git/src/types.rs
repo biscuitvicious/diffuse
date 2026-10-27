@@ -200,10 +200,10 @@ impl Repo {
     pub fn with_target(
         self,
         range: Option<RevisionRange>,
-        git_args: Vec<String>,
+        git_revs: Vec<String>,
         staged: bool,
     ) -> ReviewTarget {
-        ReviewTarget::new(self, range, git_args, staged)
+        ReviewTarget::new(self, range, git_revs, Vec::new(), staged)
     }
 }
 
@@ -379,8 +379,7 @@ impl RefPair {
 pub struct ReviewTarget {
     pub repo: Repo,
     pub range: Option<RevisionRange>,
-    pub git_args: Vec<String>,
-    pub rev_args: Vec<String>,
+    pub git_revs: Vec<String>,
     pub pathspecs: Vec<String>,
     pub staged: bool,
 }
@@ -391,31 +390,48 @@ impl ReviewTarget {
     pub fn new(
         repo: Repo,
         range: Option<RevisionRange>,
-        git_args: Vec<String>,
+        git_revs: Vec<String>,
+        pathspecs: Vec<String>,
         staged: bool,
     ) -> Self {
-        let (rev_args, pathspecs) = parse_git_rev_and_pathspecs(repo.root(), &git_args);
         Self {
             repo,
             range,
-            git_args,
-            rev_args,
+            git_revs,
             pathspecs,
             staged,
         }
     }
 
     /// Create a review target from a repo, git arguments, and staged flag.
-    pub fn from_repo_args(repo: Repo, git_args: Vec<String>, staged: bool) -> Self {
-        let (rev_args, pathspecs) = parse_git_rev_and_pathspecs(repo.root(), &git_args);
+    pub fn from_repo_args(repo: Repo, git_revs: Vec<String>, staged: bool) -> Self {
+        let (revs, paths) = parse_git_rev_and_pathspecs(repo.root(), &git_revs);
         let range = repo
             .root()
-            .and_then(|root| RevisionRange::resolve(root, &rev_args));
+            .and_then(|root| RevisionRange::resolve(root, &revs));
         Self {
             repo,
             range,
-            git_args,
-            rev_args,
+            git_revs: revs,
+            pathspecs: paths,
+            staged,
+        }
+    }
+
+    /// Create a review target from explicit revision arguments and pathspecs.
+    pub fn from_parts(
+        repo: Repo,
+        git_revs: Vec<String>,
+        pathspecs: Vec<String>,
+        staged: bool,
+    ) -> Self {
+        let range = repo
+            .root()
+            .and_then(|root| RevisionRange::resolve(root, &git_revs));
+        Self {
+            repo,
+            range,
+            git_revs,
             pathspecs,
             staged,
         }
@@ -426,8 +442,7 @@ impl ReviewTarget {
         Self {
             repo,
             range: None,
-            git_args: Vec::new(),
-            rev_args: Vec::new(),
+            git_revs: Vec::new(),
             pathspecs: Vec::new(),
             staged: false,
         }
@@ -464,17 +479,17 @@ impl ReviewTarget {
     pub fn commit_range(&self) -> Option<String> {
         if let Some(root) = self.repo.root()
             && let Ok(repo) = crate::repository::Repository::open(root)
-            && let Some(r) = repo.resolve_commit_range(&self.rev_args)
+            && let Some(r) = repo.resolve_commit_range(&self.git_revs)
         {
             return Some(r);
         }
         self.range.as_ref().map(ToString::to_string)
     }
 
-    /// Resolves the single commit hash if `rev_args` targets a single commit.
+    /// Resolves the single commit hash if `git_revs` targets a single commit.
     pub fn single_commit(&self) -> Option<String> {
-        if self.rev_args.len() == 1 {
-            let r = &self.rev_args[0];
+        if self.git_revs.len() == 1 {
+            let r = &self.git_revs[0];
             if !r.contains("..")
                 && !r.contains("...")
                 && !r.ends_with("^!")
@@ -491,11 +506,11 @@ impl ReviewTarget {
     pub fn notes_commit(&self) -> Option<String> {
         let root = self.repo.root()?;
         let repo = crate::repository::Repository::open(root).ok()?;
-        if !self.rev_args.is_empty() {
+        if !self.git_revs.is_empty() {
             if let Some(single) = self.single_commit() {
                 return Some(single);
             }
-            repo.notes_commit(&self.rev_args)
+            repo.notes_commit(&self.git_revs)
         } else {
             self.repo.head_commit()
         }

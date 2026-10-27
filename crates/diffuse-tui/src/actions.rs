@@ -115,14 +115,14 @@ pub fn discard_action(
 pub fn reload_diff(
     state: &mut AppState,
     repo_root: &Path,
-    git_args: &[String],
+    git_revs: &[String],
 ) -> Result<(), String> {
     let staged = state.target.is_staged();
     let notes_db = state.visible_notes_db();
 
     let git_res = load_git_repo_with_notes(
         repo_root,
-        git_args,
+        git_revs,
         &[],
         staged,
         ENGINE_CONTEXT,
@@ -153,7 +153,7 @@ pub fn reload_diff(
 pub fn reload_specific_files(
     state: &mut AppState,
     repo_root: &Path,
-    git_args: &[String],
+    git_revs: &[String],
     paths: &[String],
 ) -> Result<usize, String> {
     if paths.is_empty() {
@@ -164,7 +164,7 @@ pub fn reload_specific_files(
 
     let git_res = load_git_repo_with_notes(
         repo_root,
-        git_args,
+        git_revs,
         paths,
         staged,
         ENGINE_CONTEXT,
@@ -198,11 +198,11 @@ pub fn reload_specific_files(
 pub fn toggle_staged_action(
     state: &mut AppState,
     repo_root: &Path,
-    git_args: &[String],
+    git_revs: &[String],
 ) -> Result<(), String> {
     if state.commit_range.is_some()
         || state.target.is_range()
-        || diffuse_core::repo::RevisionRange::resolve(repo_root, git_args).is_some()
+        || diffuse_core::repo::RevisionRange::resolve(repo_root, git_revs).is_some()
     {
         return Err("cannot switch between staged and unstaged when viewing a commit range".into());
     }
@@ -213,7 +213,7 @@ pub fn toggle_staged_action(
 
     let git_res = load_git_repo_with_notes(
         repo_root,
-        git_args,
+        git_revs,
         &[],
         target_staged,
         ENGINE_CONTEXT,

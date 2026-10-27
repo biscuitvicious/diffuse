@@ -75,7 +75,7 @@ pub struct AppState {
     hunk_meta: Vec<Vec<HunkMeta>>,
     note_id_counter: u64,
     pub repo_root: PathBuf,
-    pub git_args: Vec<String>,
+    pub git_revs: Vec<String>,
     pub pending_editor: Option<crate::editor::EditorRequest>,
     pub file_finder: Option<crate::finder::FileFinderState>,
     pub collapsed_files: HashSet<usize>,
@@ -183,7 +183,7 @@ impl AppState {
             hunk_meta,
             note_id_counter: 0,
             repo_root: PathBuf::from("."),
-            git_args: Vec::new(),
+            git_revs: Vec::new(),
             pending_editor: None,
             file_finder: None,
             collapsed_files,
@@ -236,7 +236,7 @@ impl AppState {
     }
 
     /// Set the review target, synchronizing repo, notes_key, repo_root,
-    /// commit_range, and git_args fields.
+    /// commit_range, and git_revs fields.
     pub fn with_target(mut self, target: diffuse_core::ReviewTarget) -> Self {
         self.repo = target.repo_name().to_string();
         self.notes_key = target.notes_key();
@@ -244,7 +244,7 @@ impl AppState {
             self.repo_root = root.to_path_buf();
         }
         self.commit_range = target.commit_range();
-        self.git_args = target.git_args.clone();
+        self.git_revs = target.git_revs.clone();
         self.target = target;
         self.sync_all_notes();
         self
@@ -253,13 +253,13 @@ impl AppState {
     pub fn with_repo_context(
         self,
         repo_root: PathBuf,
-        git_args: Vec<String>,
+        git_revs: Vec<String>,
         staged: bool,
     ) -> Self {
         let repo_name = self.repo.clone();
         let target = diffuse_core::ReviewTarget::from_repo_args(
             diffuse_core::Repo::from_root(repo_root).with_name(repo_name),
-            git_args,
+            git_revs,
             staged,
         );
         self.with_target(target)
@@ -396,7 +396,7 @@ impl AppState {
         diffuse_core::pipeline::render_file_from_source(
             source,
             Some(&self.repo_root),
-            &self.git_args,
+            &self.git_revs,
             diffuse_core::ENGINE_CONTEXT,
             &opts,
         )
@@ -441,7 +441,7 @@ impl AppState {
             self.record_stream_activity();
 
             let repo_root = self.repo_root.clone();
-            let git_args = self.git_args.clone();
+            let git_revs = self.git_revs.clone();
             let notes = self.notes.clone();
             let repo = self.notes_key.clone();
             let expand_lines = self.expand_lines;
@@ -454,7 +454,7 @@ impl AppState {
                 if let Some(rendered) = diffuse_core::pipeline::render_file_from_source(
                     &source,
                     Some(&repo_root),
-                    &git_args,
+                    &git_revs,
                     diffuse_core::ENGINE_CONTEXT,
                     &opts,
                 ) {

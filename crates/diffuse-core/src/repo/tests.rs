@@ -204,20 +204,20 @@ fn test_review_target_revisions_and_pathspecs() {
     let repo = Repo::from_root(dir).with_name("myrepo");
 
     // 1. Single commit argument `c1`:
-    //    - rev_args = [c1], pathspecs = []
+    //    - git_revs = [c1], pathspecs = []
     //    - notes_commit = c1, notes_key = myrepo@c1
     let target_c1 = ReviewTarget::from_repo_args(repo.clone(), vec![c1.clone()], false);
-    assert_eq!(target_c1.rev_args, vec![c1.clone()]);
+    assert_eq!(target_c1.git_revs, vec![c1.clone()]);
     assert!(target_c1.pathspecs.is_empty());
     assert_eq!(target_c1.single_commit(), Some(c1.clone()));
     assert_eq!(target_c1.notes_commit(), Some(c1.clone()));
     assert_eq!(target_c1.notes_key(), format!("myrepo@{c1}"));
 
     // 2. Pathspec argument `file.txt` only:
-    //    - rev_args = [], pathspecs = [file.txt]
+    //    - git_revs = [], pathspecs = [file.txt]
     //    - notes_commit = c4 (live HEAD), notes_key = myrepo@c4
     let target_path = ReviewTarget::from_repo_args(repo.clone(), vec!["file.txt".into()], false);
-    assert!(target_path.rev_args.is_empty());
+    assert!(target_path.git_revs.is_empty());
     assert_eq!(target_path.pathspecs, vec!["file.txt"]);
     assert_eq!(target_path.notes_commit(), Some(c4.clone()));
     assert_eq!(target_path.notes_key(), format!("myrepo@{c4}"));
@@ -227,7 +227,7 @@ fn test_review_target_revisions_and_pathspecs() {
     // 3. Commit + pathspec `c1 file.txt`:
     let target_both =
         ReviewTarget::from_repo_args(repo.clone(), vec![c1.clone(), "file.txt".into()], false);
-    assert_eq!(target_both.rev_args, vec![c1.clone()]);
+    assert_eq!(target_both.git_revs, vec![c1.clone()]);
     assert_eq!(target_both.pathspecs, vec!["file.txt"]);
     assert_eq!(target_both.notes_commit(), Some(c1.clone()));
     assert!(target_both.matches_path("file.txt", dir));
@@ -238,7 +238,7 @@ fn test_review_target_revisions_and_pathspecs() {
         vec![c1.clone(), "--".into(), "file.txt".into()],
         false,
     );
-    assert_eq!(target_sep.rev_args, vec![c1.clone()]);
+    assert_eq!(target_sep.git_revs, vec![c1.clone()]);
     assert_eq!(target_sep.pathspecs, vec!["file.txt"]);
 
     // 5. Database keys matching:
