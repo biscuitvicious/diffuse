@@ -338,9 +338,7 @@ fn test_load_git_repo_unmodified_files_with_notes() {
     let note = crate::notes::ReviewNote {
         id: "n1".into(),
         file: "untouched.rs".into(),
-        side: crate::notes::Side::New,
-        start: 2,
-        end: 2,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 2),
         text: "note on untouched file".into(),
         created_at: 1000,
         line_hash: None,

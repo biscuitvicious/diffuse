@@ -5,7 +5,7 @@ use crate::{
     core::{
         PipelineOptions,
         notes::{
-            LineHash, NoteStatus, ReviewNote, Side, add_note, hash_line_content, load_notes,
+            LineHash, NoteStatus, ReviewNote, add_note, hash_line_content, load_notes,
             notes_for_file,
         },
         pipeline::run_pipeline_full,
@@ -121,7 +121,7 @@ fn test_note_commit_persists_and_deletes() {
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].text, "check this **carefully**");
     assert!(
-        notes[0].start > 0,
+        notes[0].start() > 0,
         "note must anchor to a real row coordinate"
     );
 
@@ -199,9 +199,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
     let valid_note = ReviewNote {
         id: "valid".into(),
         file: file.clone(),
-        side: Side::New,
-        start: 1025,
-        end: 1025,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
         text: "valid note".into(),
         created_at: 100,
         line_hash: Some(matching_hash),
@@ -224,9 +222,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
     let mismatch_note = ReviewNote {
         id: "mismatch".into(),
         file: file.clone(),
-        side: Side::New,
-        start: 1025,
-        end: 1025,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
         text: "mismatch note".into(),
         created_at: 101,
         line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
@@ -249,9 +245,11 @@ fn test_note_callout_anchoring_and_banner_placement() {
     let nonexistent_line_note = ReviewNote {
         id: "nonexistent".into(),
         file: file.clone(),
-        side: Side::New,
-        start: 99999,
-        end: 99999,
+        location: crate::core::notes::NoteLocation::line(
+            crate::core::notes::Side::New,
+            99999,
+            99999,
+        ),
         text: "orphan note".into(),
         created_at: 102,
         line_hash: Some(LineHash::from_hex("87654321").unwrap()),
@@ -274,9 +272,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
     let legacy_note = ReviewNote {
         id: "legacy".into(),
         file: file.clone(),
-        side: Side::New,
-        start: 1025,
-        end: 1025,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
         text: "legacy note".into(),
         created_at: 103,
         line_hash: None,
@@ -317,9 +313,7 @@ fn test_multiline_note_anchors_to_last_line() {
     let valid_multiline = ReviewNote {
         id: "multi-valid".into(),
         file: file.clone(),
-        side: Side::New,
-        start: 1025,
-        end: 1027,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1027),
         text: "multiline note".into(),
         created_at: 100,
         line_hash: Some(compound_hash),
@@ -344,9 +338,7 @@ fn test_multiline_note_anchors_to_last_line() {
     let mismatch_multiline = ReviewNote {
         id: "multi-mismatch".into(),
         file,
-        side: Side::New,
-        start: 1025,
-        end: 1027,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1027),
         text: "first line hash note".into(),
         created_at: 101,
         line_hash: Some(first_line_hash),
@@ -392,9 +384,11 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
         ReviewNote {
             id: "banner-note".into(),
             file: file.clone(),
-            side: Side::New,
-            start: 99999,
-            end: 99999,
+            location: crate::core::notes::NoteLocation::line(
+                crate::core::notes::Side::New,
+                99999,
+                99999,
+            ),
             text: "unanchored note".into(),
             created_at: 104,
             line_hash: None,
@@ -446,9 +440,11 @@ fn test_note_callouts_render_across_all_files_and_banners() {
         ReviewNote {
             id: "note-file-1".into(),
             file: "second.rs".into(),
-            side: Side::New,
-            start: 999,
-            end: 999,
+            location: crate::core::notes::NoteLocation::line(
+                crate::core::notes::Side::New,
+                999,
+                999,
+            ),
             text: "second file banner note".into(),
             created_at: 200,
             line_hash: None,
@@ -494,9 +490,7 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
         ReviewNote {
             id: "inline-note-file-1".into(),
             file: "second.rs".into(),
-            side: Side::New,
-            start: 2,
-            end: 2,
+            location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 2, 2),
             text: "inline note on second.rs".into(),
             created_at: 201,
             line_hash: Some(matching_hash),
@@ -550,9 +544,11 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
         ReviewNote {
             id: "md-note".into(),
             file: "first.rs".into(),
-            side: Side::New,
-            start: 9999,
-            end: 9999,
+            location: crate::core::notes::NoteLocation::line(
+                crate::core::notes::Side::New,
+                9999,
+                9999,
+            ),
             text: note_text.into(),
             created_at: 300,
             line_hash: None,
@@ -659,9 +655,11 @@ fn test_note_callout_gutter_band_and_terminal_line() {
         ReviewNote {
             id: "gutter-note".into(),
             file: "first.rs".into(),
-            side: Side::New,
-            start: 9999,
-            end: 9999,
+            location: crate::core::notes::NoteLocation::line(
+                crate::core::notes::Side::New,
+                9999,
+                9999,
+            ),
             text: "This is\na 4-line\nnote:\n`let a = 17;`".into(),
             created_at: 301,
             line_hash: None,
@@ -734,9 +732,11 @@ fn test_note_callout_empty_text_renders_one_line() {
         ReviewNote {
             id: "empty-note".into(),
             file: "first.rs".into(),
-            side: Side::New,
-            start: 9999,
-            end: 9999,
+            location: crate::core::notes::NoteLocation::line(
+                crate::core::notes::Side::New,
+                9999,
+                9999,
+            ),
             text: String::new(),
             created_at: 302,
             line_hash: None,
@@ -775,9 +775,11 @@ fn test_note_callout_long_line_wrapping() {
         ReviewNote {
             id: "wrap-test".into(),
             file: "first.rs".into(),
-            side: Side::New,
-            start: 9999,
-            end: 9999,
+            location: crate::core::notes::NoteLocation::line(
+                crate::core::notes::Side::New,
+                9999,
+                9999,
+            ),
             text: note_text,
             created_at: 400,
             line_hash: None,
@@ -831,9 +833,11 @@ fn test_table_note_width_at_narrow_content_width() {
         ReviewNote {
             id: "table-note".into(),
             file: "filesystem.rs".into(),
-            side: Side::New,
-            start: 1025,
-            end: 1025,
+            location: crate::core::notes::NoteLocation::line(
+                crate::core::notes::Side::New,
+                1025,
+                1025,
+            ),
             text: table.to_string(),
             created_at: 0,
             line_hash: None,
@@ -1294,9 +1298,7 @@ fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
     let note = ReviewNote {
         id: "banner-multi".into(),
         file: file.clone(),
-        side: Side::New,
-        start: 9999, // out of range -> unanchored, on file banner
-        end: 9999,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 9999, 9999),
         text: "Ambiguity guard test: line content matches but chunk is not unique across the file. The uniqueness check prevents false re-anchoring and safely places the note onto the file header banner.".into(),
         created_at: 100,
         ..Default::default()
@@ -1406,9 +1408,7 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "cross-hunk".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 11,
-        end: 31,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 11, 31),
         text: "Spans across hunk 1 and hunk 2".into(),
         line_hash: Some(hash),
         ..Default::default()
@@ -1463,9 +1463,7 @@ fn test_diff_notes_db_resolved_and_unresolved() {
     let note1 = ReviewNote {
         id: "note-1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 10, 10),
         text: "Please fix this".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1506,9 +1504,7 @@ fn test_diff_notes_db_add_delete_edit() {
     let note1 = ReviewNote {
         id: "note-1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 10, 10),
         text: "Original text".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1520,9 +1516,7 @@ fn test_diff_notes_db_add_delete_edit() {
     let note2 = ReviewNote {
         id: "note-2".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 20,
-        end: 20,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 20, 20),
         text: "New note".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1566,9 +1560,7 @@ fn test_reload_notes_from_disk_updates_counts_and_hides_resolved() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "filesystem.rs".into(),
-        side: Side::New,
-        start: 1025,
-        end: 1025,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
         text: "Review feedback".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1647,9 +1639,7 @@ fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "filesystem.rs".into(),
-        side: Side::New,
-        start: 1025,
-        end: 1025,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
         text: "Line 1\nLine 2".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1695,9 +1685,7 @@ fn test_diff_notes_db_in_progress_and_plural_formatting() {
     let note1 = ReviewNote {
         id: "note-1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 10, 10),
         text: "Note 1".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1705,9 +1693,7 @@ fn test_diff_notes_db_in_progress_and_plural_formatting() {
     let note2 = ReviewNote {
         id: "note-2".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 20,
-        end: 20,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 20, 20),
         text: "Note 2".into(),
         status: NoteStatus::Open,
         ..Default::default()

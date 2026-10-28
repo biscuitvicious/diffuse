@@ -723,9 +723,7 @@ pub fn process_single_diff_file(
         .map(|n| OutputNote {
             id: n.id.clone(),
             file: n.file.clone(),
-            side: n.side,
-            start: n.start,
-            end: n.end,
+            location: n.location,
             text: n.text.clone(),
             created_at: n.created_at,
             runs: note_runs(&n.text),
@@ -1330,30 +1328,32 @@ pub fn synthesize_note_context_hunks(
 
     let n = visual_context as u32;
 
-    // 1. Identify notes whose target span [start..=end] is uncovered by existing
-    //    diff hunks.
-    let uncovered: Vec<&ReviewNote> = notes
+    // 1. Identify line notes whose target span [start..=end] is uncovered by
+    //    existing diff hunks (file notes never anchor to hunk spans).
+    let uncovered: Vec<(&ReviewNote, Side, u32, u32)> = notes
         .into_iter()
-        .filter(|note| {
-            let content_lines = match note.side {
+        .filter_map(|note| {
+            let (side, start, end) = note.location.as_line()?;
+            let content_lines = match side {
                 Side::New => &f.new_content,
                 Side::Old => &f.old_content,
             };
             if !crate::notes::note_anchors_in_file(note, content_lines) {
-                return false;
+                return None;
             }
-            !f.hunks.iter().any(|h| match note.side {
+            let covered = f.hunks.iter().any(|h| match side {
                 Side::New => {
                     let h_start = h.new_start;
                     let h_end = h.new_start + h.new_count.saturating_sub(1);
-                    h.new_count > 0 && note.start >= h_start && note.end <= h_end
+                    h.new_count > 0 && start >= h_start && end <= h_end
                 }
                 Side::Old => {
                     let h_start = h.old_start;
                     let h_end = h.old_start + h.old_count.saturating_sub(1);
-                    h.old_count > 0 && note.start >= h_start && note.end <= h_end
+                    h.old_count > 0 && start >= h_start && end <= h_end
                 }
-            })
+            });
+            (!covered).then_some((note, side, start, end))
         })
         .collect();
 
@@ -1381,16 +1381,13 @@ pub fn synthesize_note_context_hunks(
 
     let mut spans: Vec<NoteSpan> = Vec::new();
 
-    for note in uncovered {
-        let (n_start, n_end) = (
-            note.start.min(note.end).max(1),
-            note.start.max(note.end).max(1),
-        );
+    for (_note, note_side, raw_start, raw_end) in uncovered {
+        let (n_start, n_end) = (raw_start.min(raw_end).max(1), raw_start.max(raw_end).max(1));
 
         let gap_idx = if m == 0 {
             0
         } else {
-            match note.side {
+            match note_side {
                 Side::New => {
                     let mut found = m;
                     for (i, h) in f.hunks.iter().enumerate() {
@@ -1416,7 +1413,7 @@ pub fn synthesize_note_context_hunks(
 
         let delta = gap_delta(gap_idx);
 
-        let (new_s, new_e) = match note.side {
+        let (new_s, new_e) = match note_side {
             Side::New => (n_start, n_end),
             Side::Old => {
                 let ns = ((n_start as i64) + delta).max(1) as u32;

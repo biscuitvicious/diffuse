@@ -125,7 +125,6 @@ pub fn render_output_note_callout(
 mod tests {
     use super::*;
     use crate::ansi::strip_ansi;
-    use diffuse_core::notes::Side as NoteSide;
 
     #[test]
     fn test_render_note_callout_statuses() {
@@ -248,9 +247,7 @@ mod tests {
         let out_note = OutputNote {
             id: "test-note".to_string(),
             file: "foo.rs".to_string(),
-            side: NoteSide::New,
-            start: 1,
-            end: 1,
+            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 1, 1),
             text: "test note content".to_string(),
             created_at: 100,
             runs: vec![],

@@ -392,8 +392,8 @@ fn test_note_commit_on_range_selection() {
         .and_then(|m| m.get("filesystem.rs"))
         .unwrap_or(&empty);
     assert_eq!(notes.len(), 1, "note must be saved");
-    assert_eq!(notes[0].start, 1025);
-    assert_eq!(notes[0].end, 1027);
+    assert_eq!(notes[0].start(), 1025);
+    assert_eq!(notes[0].end(), 1027);
     assert_eq!(notes[0].text, "Range note test");
 }
 

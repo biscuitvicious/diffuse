@@ -1,10 +1,6 @@
 use super::*;
 use crate::{
-    core::{
-        counts::FileCounts,
-        notes::{NoteStatus, Side as NoteSide},
-        wire::OutputNote,
-    },
+    core::{counts::FileCounts, notes::NoteStatus, wire::OutputNote},
     render::DiffuseTheme,
 };
 use ratatui::style::Color;
@@ -376,9 +372,11 @@ fn test_header_bar_nonzero_notes_shown() {
             OutputNote {
                 id: "n1".to_string(),
                 file: "src/main.rs".to_string(),
-                side: NoteSide::New,
-                start: 1,
-                end: 1,
+                location: crate::core::notes::NoteLocation::line(
+                    crate::core::notes::Side::New,
+                    1,
+                    1,
+                ),
                 text: "note one".to_string(),
                 created_at: 0,
                 runs: vec![],
@@ -389,9 +387,11 @@ fn test_header_bar_nonzero_notes_shown() {
             OutputNote {
                 id: "n2".to_string(),
                 file: "src/main.rs".to_string(),
-                side: NoteSide::New,
-                start: 2,
-                end: 2,
+                location: crate::core::notes::NoteLocation::line(
+                    crate::core::notes::Side::New,
+                    2,
+                    2,
+                ),
                 text: "note two".to_string(),
                 created_at: 0,
                 runs: vec![],
@@ -1428,9 +1428,7 @@ fn test_status_bar_shows_file_and_hunk_stats() {
         notes: vec![OutputNote {
             id: "n1".to_string(),
             file: "AGENTS.md".to_string(),
-            side: NoteSide::New,
-            start: 1,
-            end: 1,
+            location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1, 1),
             text: "hunk note".to_string(),
             created_at: 0,
             runs: vec![],

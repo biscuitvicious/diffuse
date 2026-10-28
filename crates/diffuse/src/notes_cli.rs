@@ -10,7 +10,7 @@ use std::{
 use diffuse::{
     git::is_inside_work_tree,
     notes::{
-        LineHash, find_note_in_db, generate_note_id, now_millis, reply_to_note_text,
+        LineHash, NoteLocation, find_note_in_db, generate_note_id, now_millis, reply_to_note_text,
         synthesize_source_lines, update_note_in_db,
     },
     prelude::*,
@@ -97,7 +97,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 }
             }
             all_notes
-                .sort_by(|(f1, n1), (f2, n2)| f1.cmp(f2).then_with(|| n1.start.cmp(&n2.start)));
+                .sort_by(|(f1, n1), (f2, n2)| f1.cmp(f2).then_with(|| n1.start().cmp(&n2.start())));
 
             let total_resolved = all_notes
                 .iter()
@@ -141,10 +141,10 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
 
                 for (file, note) in &filtered {
                     let glyph = note.status.glyph();
-                    let lines = if note.start == note.end {
-                        format!("{}", note.start)
-                    } else {
-                        format!("{}-{}", note.start, note.end)
+                    let lines = match note.location.as_line() {
+                        Some((_, start, end)) if start == end => format!("{}", start),
+                        Some((_, start, end)) => format!("{}-{}", start, end),
+                        None => "file".to_string(),
                     };
                     println!("### {glyph} `{file}:{lines}` (`{}`)\n", note.id);
                     if show_source && let Some(ref src) = note.source_lines {
@@ -170,10 +170,10 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             }
 
             for (file, note) in &filtered {
-                let lines = if note.start == note.end {
-                    format!("{}", note.start)
-                } else {
-                    format!("{}-{}", note.start, note.end)
+                let lines = match note.location.as_line() {
+                    Some((_, start, end)) if start == end => format!("{}", start),
+                    Some((_, start, end)) => format!("{}-{}", start, end),
+                    None => "file".to_string(),
                 };
                 if use_color {
                     let glyph_color = match note.status {
@@ -402,9 +402,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             let note = ReviewNote {
                 id: note_id.clone(),
                 file: file_path.clone(),
-                side: side_val,
-                start: start_line,
-                end: end_line,
+                location: NoteLocation::line(side_val, start_line, end_line),
                 text: msg,
                 created_at: now_millis(),
                 line_hash: line_hash_val,
@@ -457,14 +455,14 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
 
             if *markdown {
                 let glyph = note.status.glyph();
-                let lines = if note.start == note.end {
-                    format!("{}", note.start)
-                } else {
-                    format!("{}-{}", note.start, note.end)
+                let lines = match note.location.as_line() {
+                    Some((_, start, end)) if start == end => format!("{}", start),
+                    Some((_, start, end)) => format!("{}-{}", start, end),
+                    None => "file".to_string(),
                 };
                 println!("### {glyph} `{file}:{lines}` (`{}`)\n", note.id);
                 println!("- **Status**: {glyph} {:?}", note.status);
-                println!("- **Side**: {:?}", note.side);
+                println!("- **Location**: {:?}", note.location);
                 println!("- **Created**: {}", note.created_at);
                 if *show_source && let Some(ref src) = note.source_lines {
                     println!("\n```\n{src}\n```\n");
@@ -473,14 +471,14 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 return Ok(());
             }
 
-            let lines = if note.start == note.end {
-                format!("{}", note.start)
-            } else {
-                format!("{}-{}", note.start, note.end)
+            let lines = match note.location.as_line() {
+                Some((_, start, end)) if start == end => format!("{}", start),
+                Some((_, start, end)) => format!("{}-{}", start, end),
+                None => "file".to_string(),
             };
             println!("Note:     {}", note.id);
             println!("Status:   {} {:?}", note.status.glyph(), note.status);
-            println!("File:     {file}:{lines} ({:?})", note.side);
+            println!("File:     {file}:{lines} ({:?})", note.location);
             println!("Created:  {}", note.created_at);
             if *show_source && let Some(ref src) = note.source_lines {
                 println!("Source:");

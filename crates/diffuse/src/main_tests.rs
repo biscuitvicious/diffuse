@@ -6,6 +6,8 @@ use diffuse::prelude::*;
 
 use super::{Args, SubCommand, route_mode};
 
+use diffuse::core::notes::{NoteLocation, Side};
+
 #[test]
 fn extension_json_payload_is_json_mode() {
     // The pi extension pipes a JSON payload with no git args.
@@ -261,9 +263,7 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "note-1".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 2,
-        end: 2,
+        location: NoteLocation::line(Side::New, 2, 2),
         text: "piped note".into(),
         created_at: 1000,
         line_hash: None,
@@ -300,9 +300,7 @@ diff --git a/test.rs b/test.rs
     let new_note = ReviewNote {
         id: "note-2".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 3,
-        end: 3,
+        location: NoteLocation::line(Side::New, 3, 3),
         text: "another note".into(),
         created_at: 1002,
         line_hash: None,
@@ -361,9 +359,7 @@ fn test_json_protocol_note_status_and_reply_actions() {
     let note = ReviewNote {
         id: "note-abc".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 5,
-        end: 5,
+        location: NoteLocation::line(Side::New, 5, 5),
         text: "Please refactor".into(),
         created_at: 1000,
         line_hash: None,

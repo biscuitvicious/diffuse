@@ -174,7 +174,7 @@ fn test_note_commit_persists_and_deletes() {
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].text, "check this **carefully**");
     assert!(
-        notes[0].start > 0,
+        notes[0].start() > 0,
         "note must anchor to a real row coordinate"
     );
 

@@ -246,9 +246,7 @@ fn test_review_target_revisions_and_pathspecs() {
     let note = crate::notes::ReviewNote {
         id: "n1".into(),
         file: "file.txt".into(),
-        side: crate::notes::Side::New,
-        start: 1,
-        end: 1,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
         text: "Note".into(),
         ..Default::default()
     };

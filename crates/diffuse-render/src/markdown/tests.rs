@@ -4,7 +4,7 @@ use super::*;
 use crate::core::{
     counts::FileCounts,
     merge::RunKind,
-    notes::{NoteStatus, Side},
+    notes::NoteStatus,
     wire::{OutputHunk, OutputNote, OutputRow, OutputRun},
 };
 
@@ -97,9 +97,11 @@ fn sample_output() -> PipelineOutput {
                 notes: vec![OutputNote {
                     id: "n1".to_string(),
                     file: "src/main.rs".to_string(),
-                    side: Side::New,
-                    start: 2,
-                    end: 2,
+                    location: diffuse_core::notes::NoteLocation::line(
+                        diffuse_core::notes::Side::New,
+                        2,
+                        2,
+                    ),
                     text: "Great greeting update!".to_string(),
                     created_at: 123456789,
                     runs: vec![],
@@ -361,9 +363,11 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                 notes: vec![OutputNote {
                     id: "n2".to_string(),
                     file: "src/lib.rs".to_string(),
-                    side: Side::Old,
-                    start: 10,
-                    end: 15,
+                    location: diffuse_core::notes::NoteLocation::line(
+                        diffuse_core::notes::Side::Old,
+                        10,
+                        15,
+                    ),
                     text: "Multi-line removal comment".to_string(),
                     created_at: 987654321,
                     runs: vec![],
@@ -1004,9 +1008,7 @@ fn test_render_markdown_note_statuses() {
         OutputNote {
             id: "n_open".to_string(),
             file: "src/main.rs".to_string(),
-            side: Side::New,
-            start: 2,
-            end: 2,
+            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 2, 2),
             text: "Open comment".to_string(),
             created_at: 100,
             runs: vec![],
@@ -1017,9 +1019,7 @@ fn test_render_markdown_note_statuses() {
         OutputNote {
             id: "n_in_progress".to_string(),
             file: "src/main.rs".to_string(),
-            side: Side::New,
-            start: 5,
-            end: 5,
+            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 5, 5),
             text: "In progress comment".to_string(),
             created_at: 200,
             runs: vec![],
@@ -1030,9 +1030,7 @@ fn test_render_markdown_note_statuses() {
         OutputNote {
             id: "n_resolved".to_string(),
             file: "src/main.rs".to_string(),
-            side: Side::New,
-            start: 8,
-            end: 8,
+            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 8, 8),
             text: "Resolved comment".to_string(),
             created_at: 300,
             runs: vec![],
@@ -1067,9 +1065,7 @@ fn test_render_markdown_resolved_notes_omitted_summary() {
     output.files[0].notes = vec![OutputNote {
         id: "n_open".to_string(),
         file: "src/main.rs".to_string(),
-        side: Side::New,
-        start: 2,
-        end: 2,
+        location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 2, 2),
         text: "Open comment".to_string(),
         created_at: 100,
         runs: vec![],
@@ -1097,9 +1093,7 @@ fn test_render_markdown_source_lines_code_block() {
     output.files[0].notes = vec![OutputNote {
         id: "n_src".to_string(),
         file: "src/main.rs".to_string(),
-        side: Side::New,
-        start: 2,
-        end: 3,
+        location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 2, 3),
         text: "Quoted review note".to_string(),
         created_at: 100,
         runs: vec![],

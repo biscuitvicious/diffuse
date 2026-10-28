@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     counts::FileCounts,
     merge::RunKind,
-    notes::{LineHash, NoteStatus, Side as NoteSide},
+    notes::{LineHash, NoteStatus},
     parse::{AddLine, CtxLine, DelLine, DiffFile, Hunk, Row, RowKind, Spans},
 };
 
@@ -1598,15 +1598,13 @@ where
         .collect()
 }
 
-/// A review note attached to a file location.
+/// A review note attached to a file location (see [`NoteLocation`]).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OutputNote {
     pub id: String,
     pub file: String,
-    pub side: NoteSide,
-    pub start: u32,
-    pub end: u32,
+    pub location: crate::notes::NoteLocation,
     pub text: String,
     pub created_at: u64,
     pub runs: Vec<OutputRun>,
@@ -1623,9 +1621,7 @@ impl OutputNote {
         OutputNote {
             id: self.id.clone(),
             file: self.file.clone(),
-            side: self.side.reverse(),
-            start: self.start,
-            end: self.end,
+            location: self.location.reverse(),
             text: self.text.clone(),
             created_at: self.created_at,
             runs: self.runs.iter().map(OutputRun::reverse).collect(),
@@ -1641,9 +1637,7 @@ impl From<&OutputNote> for crate::notes::ReviewNote {
         crate::notes::ReviewNote {
             id: n.id.clone(),
             file: n.file.clone(),
-            side: n.side,
-            start: n.start,
-            end: n.end,
+            location: n.location,
             text: n.text.clone(),
             created_at: n.created_at,
             line_hash: n.line_hash,

@@ -203,7 +203,10 @@ impl AppState {
                 }
             }
             TuiCommand::StartNoteDraft => self.start_note_draft(),
-            TuiCommand::CommitNoteDraft => self.commit_note_draft(),
+            TuiCommand::CommitNoteDraft => match self.commit_note_draft() {
+                Ok(_) => {}
+                Err(e) => self.set_status_message(e.to_string(), false),
+            },
             TuiCommand::CancelNoteDraft => {
                 self.note_draft = None;
                 self.note_editor = None;

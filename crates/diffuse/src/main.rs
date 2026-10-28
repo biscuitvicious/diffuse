@@ -19,7 +19,9 @@ use serde::Deserialize;
 use diffuse::{
     git::{is_inside_work_tree, load_git_repo_with_notes},
     init_logging,
-    notes::{remove_notes, reply_to_note_text, set_note_status_in_repo, update_note_in_db},
+    notes::{
+        remove_notes_in_range, reply_to_note_text, set_note_status_in_repo, update_note_in_db,
+    },
     prelude::*,
     streaming::{self, spawn_git_stream_pipeline, stream_diff_pipeline},
     wire::emit_file_jsonl,
@@ -1081,6 +1083,7 @@ Resolved notes are hidden from active views by default and summarized in footer 
 
 #[derive(Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
 struct Input {
     #[serde(default)]
     action: Option<String>,
@@ -1173,16 +1176,15 @@ fn process_input(input: Input, args: &Args) -> PipelineOutput {
         }
 
         if let Some("removeNotes") = input.action.as_deref()
-            && let (Some(r), Some(f), Some(s), Some(st), Some(en)) = (
+            && let (Some(r), Some(f), Some(st), Some(en)) = (
                 input.repo.as_deref(),
                 input.file.as_deref(),
-                input.side,
                 input.start,
                 input.end,
             )
         {
             let mut db = load_notes(path);
-            remove_notes(&mut db, &notes_key_for_input(&input, r), f, s, st, en);
+            remove_notes_in_range(&mut db, &notes_key_for_input(&input, r), f, st, en);
             let _ = save_notes(path, &db);
         }
 

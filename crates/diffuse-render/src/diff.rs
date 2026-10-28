@@ -12,7 +12,7 @@ use crate::{
     Badge,
     ansi::{ColorExt, FG_RESET, SGR_RESET, optimize_ansi, strip_ansi},
     core::{
-        notes::{ReviewNote, Side as NoteSide, note_anchors_in_file},
+        notes::{ReviewNote, Side, note_anchors_in_file},
         parse::RowKind,
         wire::{OutputFile, OutputHunk, OutputNote, OutputRow, PipelineOutput},
     },
@@ -179,19 +179,22 @@ fn partition_file_notes<'a>(
     let mut row_notes: HashMap<usize, Vec<&'a OutputNote>> = HashMap::new();
 
     for note in &file.notes {
-        let content_lines = match note.side {
-            NoteSide::New => &file.new_content,
-            NoteSide::Old => &file.old_content,
+        let Some((side, _start, end)) = note.location.as_line() else {
+            banner_notes.push(note);
+            continue;
+        };
+        let content_lines = match side {
+            Side::New => &file.new_content,
+            Side::Old => &file.old_content,
         };
         let rn = ReviewNote::from(note);
         if !content_lines.is_empty() && note_anchors_in_file(&rn, content_lines) {
-            let target_coord = note.start.max(note.end);
             let target_row = rows.iter().position(|r| {
-                let coord = match note.side {
-                    NoteSide::New => r.new_line,
-                    NoteSide::Old => r.old_line,
+                let coord = match side {
+                    Side::New => r.new_line,
+                    Side::Old => r.old_line,
                 };
-                coord == Some(target_coord)
+                coord == Some(end)
             });
             if let Some(idx) = target_row {
                 row_notes.entry(idx).or_default().push(note);

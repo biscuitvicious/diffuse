@@ -1063,7 +1063,7 @@ untracked file mode 100644
 
 #[test]
 fn test_pipeline_notes_counts_with_resolved_repo() {
-    use crate::notes::{ReviewNote, Side, add_note};
+    use crate::notes::{ReviewNote, add_note};
 
     let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
     let mut db = crate::notes::NotesDB::new();
@@ -1074,9 +1074,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
             ReviewNote {
                 id: format!("n{i}"),
                 file: "a.txt".to_string(),
-                side: Side::New,
-                start: 1,
-                end: 1,
+                location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
                 text: text.to_string(),
                 created_at: 0,
                 line_hash: None,
@@ -1091,9 +1089,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
         ReviewNote {
             id: "other".to_string(),
             file: "unrelated.rs".to_string(),
-            side: Side::New,
-            start: 1,
-            end: 1,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
             text: "other".to_string(),
             created_at: 0,
             line_hash: None,
@@ -1126,7 +1122,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
 
 #[test]
 fn test_pipeline_note_status_filtering_and_counts() {
-    use crate::notes::{NoteStatus, ReviewNote, Side, add_note};
+    use crate::notes::{NoteStatus, ReviewNote, add_note};
 
     let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
     let mut db = crate::notes::NotesDB::new();
@@ -1136,9 +1132,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
         ReviewNote {
             id: "n_open".to_string(),
             file: "a.txt".to_string(),
-            side: Side::New,
-            start: 1,
-            end: 1,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
             text: "open note".to_string(),
             status: NoteStatus::Open,
             source_lines: Some("new one".to_string()),
@@ -1151,9 +1145,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
         ReviewNote {
             id: "n_in_progress".to_string(),
             file: "a.txt".to_string(),
-            side: Side::New,
-            start: 1,
-            end: 1,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
             text: "in progress note".to_string(),
             status: NoteStatus::InProgress,
             ..Default::default()
@@ -1165,9 +1157,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
         ReviewNote {
             id: "n_resolved".to_string(),
             file: "a.txt".to_string(),
-            side: Side::New,
-            start: 1,
-            end: 1,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
             text: "resolved note".to_string(),
             status: NoteStatus::Resolved,
             ..Default::default()
@@ -1215,7 +1205,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
 
 #[test]
 fn test_pipeline_preserves_all_notes_in_counts() {
-    use crate::notes::{LineHash, ReviewNote, Side, add_note, hash_line_content};
+    use crate::notes::{LineHash, ReviewNote, add_note, hash_line_content};
 
     let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
     let mut db = crate::notes::NotesDB::new();
@@ -1227,9 +1217,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
         ReviewNote {
             id: "clean".into(),
             file: "a.txt".into(),
-            side: Side::New,
-            start: 1,
-            end: 1,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
             text: "clean note".into(),
             created_at: 0,
             line_hash: Some(hash_line_content("new one")),
@@ -1244,9 +1232,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
         ReviewNote {
             id: "mismatch".into(),
             file: "a.txt".into(),
-            side: Side::New,
-            start: 1,
-            end: 1,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
             text: "mismatched note".into(),
             created_at: 0,
             line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
@@ -1261,9 +1247,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
         ReviewNote {
             id: "orphan".into(),
             file: "a.txt".into(),
-            side: Side::New,
-            start: 9999,
-            end: 9999,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 9999, 9999),
             text: "orphan note".into(),
             created_at: 0,
             line_hash: Some(hash_line_content("some content")),
@@ -1279,9 +1263,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
         ReviewNote {
             id: "legacy".into(),
             file: "a.txt".into(),
-            side: Side::New,
-            start: 2,
-            end: 2,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 2),
             text: "legacy note".into(),
             created_at: 0,
             line_hash: None,
@@ -1702,7 +1684,7 @@ new file mode 100644
 
 #[test]
 fn test_isolated_note_hunk_synthesis() {
-    use crate::notes::{LineHash, ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, add_note};
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1727,9 +1709,7 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "note-isolated".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 80,
-        end: 80,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 80, 80),
         text: "isolated review note".into(),
         created_at: 1000,
         line_hash: Some(LineHash::from_content("line 80")),
@@ -1763,7 +1743,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_boundary_adjacent_note_merging() {
-    use crate::notes::{LineHash, ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, add_note};
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1790,9 +1770,7 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "note-adjacent".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 20,
-        end: 20,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 20),
         text: "boundary adjacent note".into(),
         created_at: 1000,
         line_hash: Some(LineHash::from_content("line 20")),
@@ -1829,7 +1807,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_multi_note_clustering_in_gap() {
-    use crate::notes::{LineHash, ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, add_note};
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1856,9 +1834,7 @@ diff --git a/test.rs b/test.rs
     let note1 = ReviewNote {
         id: "note-cluster-1".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 60,
-        end: 60,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 60, 60),
         text: "cluster 1".into(),
         created_at: 1000,
         line_hash: Some(LineHash::from_content("line 60")),
@@ -1867,9 +1843,7 @@ diff --git a/test.rs b/test.rs
     let note2 = ReviewNote {
         id: "note-cluster-2".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 65,
-        end: 65,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 65, 65),
         text: "cluster 2".into(),
         created_at: 1001,
         line_hash: Some(LineHash::from_content("line 65")),
@@ -1905,7 +1879,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_missing_snapshot_content_fallback() {
-    use crate::notes::{LineHash, ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, add_note};
 
     let diff = "\
 diff --git a/test.rs b/test.rs
@@ -1921,9 +1895,7 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "note-no-snap".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 80,
-        end: 80,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 80, 80),
         text: "note without snapshot".into(),
         created_at: 1000,
         line_hash: Some(LineHash::from_content("line 80")),
@@ -1947,7 +1919,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_note_on_old_side_gap_line_mapping() {
-    use crate::notes::{LineHash, ReviewNote, Side, add_note};
+    use crate::notes::{LineHash, ReviewNote, add_note};
 
     // Old file: 100 lines
     let mut old_lines = Vec::new();
@@ -1992,9 +1964,7 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "note-old-side".into(),
         file: "test.rs".into(),
-        side: Side::Old,
-        start: 50,
-        end: 50,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::Old, 50, 50),
         text: "old side note".into(),
         created_at: 1000,
         line_hash: Some(LineHash::from_content("old line 50")),
@@ -2053,9 +2023,7 @@ fn test_synthetic_note_hunk_anchoring() {
     let note_matching = ReviewNote {
         id: "note-unique".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 50,
-        end: 52,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 50, 52),
         text: "clean match".into(),
         line_hash: Some(hash),
         ..Default::default()
@@ -2087,9 +2055,7 @@ fn test_synthetic_note_hunk_anchoring() {
     let note_mismatched = ReviewNote {
         id: "note-mismatched".into(),
         file: "test.rs".into(),
-        side: Side::New,
-        start: 50,
-        end: 52,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 50, 52),
         text: "mismatch".into(),
         line_hash: Some(wrong_hash),
         ..Default::default()

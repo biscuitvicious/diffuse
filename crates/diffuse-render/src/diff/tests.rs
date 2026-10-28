@@ -7,7 +7,6 @@ use crate::{
         wire::{OutputHunk, OutputNote, OutputRun},
     },
 };
-use diffuse_core::notes::Side as NoteSide;
 
 #[test]
 fn test_output_ends_with_terminal_reset() {
@@ -165,9 +164,7 @@ fn test_nonzero_notes_still_rendered() {
         notes: vec![OutputNote {
             id: "n1".to_string(),
             file: "src/lib.rs".to_string(),
-            side: NoteSide::New,
-            start: 1,
-            end: 1,
+            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 1, 1),
             text: "a note".to_string(),
             created_at: 0,
             runs: vec![],
@@ -365,9 +362,11 @@ fn test_render_file_diff_renders_inline_note_callouts() {
             OutputNote {
                 id: "banner-note".to_string(),
                 file: "src/lib.rs".to_string(),
-                side: NoteSide::New,
-                start: 999,
-                end: 999,
+                location: diffuse_core::notes::NoteLocation::line(
+                    diffuse_core::notes::Side::New,
+                    999,
+                    999,
+                ),
                 text: "Unanchored banner note".to_string(),
                 created_at: 0,
                 runs: vec![],
@@ -378,9 +377,11 @@ fn test_render_file_diff_renders_inline_note_callouts() {
             OutputNote {
                 id: "line-note".to_string(),
                 file: "src/lib.rs".to_string(),
-                side: NoteSide::New,
-                start: 2,
-                end: 2,
+                location: diffuse_core::notes::NoteLocation::line(
+                    diffuse_core::notes::Side::New,
+                    2,
+                    2,
+                ),
                 text: "Anchored line note".to_string(),
                 created_at: 0,
                 runs: vec![],
@@ -445,9 +446,7 @@ fn test_render_file_diff_wraps_notes_at_specified_width() {
         notes: vec![OutputNote {
             id: "wrap-note".to_string(),
             file: "src/lib.rs".to_string(),
-            side: NoteSide::New,
-            start: 1,
-            end: 1,
+            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 1, 1),
             text: "This is a long review note with enough content that it will definitely wrap differently at narrow versus wide widths.".to_string(),
             created_at: 0,
             runs: vec![],

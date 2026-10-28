@@ -6,7 +6,7 @@ use crate::{render::ColorExt, types::FlatRowKind};
 
 use crate::core::notes::{
     LineHash, NotesDB, ReviewNote, Side, add_note, note_anchors_in_file, note_runs, notes_for_file,
-    now_millis, remove_note_by_id, remove_notes, save_notes, update_note_text,
+    now_millis, remove_note_by_id, remove_notes_in_range, save_notes, update_note_text,
 };
 
 use super::AppState;
@@ -186,7 +186,7 @@ impl AppState {
     /// Commit the note draft onto the current row (or active selection) and
     /// persist it through the notes DB. Mirrors the reference
     /// `commitNoteAction`.
-    pub fn commit_note_draft(&mut self) {
+    pub fn commit_note_draft(&mut self) -> Result<crate::core::notes::NoteLocation, &'static str> {
         let text = if let Some(ref draft) = self.note_draft {
             if let Some(ref ed) = self.note_editor {
                 if draft != &ed.text() {
@@ -206,27 +206,35 @@ impl AppState {
             Some(t) => t.trim().to_string(),
             None => {
                 self.editing_note_id = None;
-                return;
+                return Err("no draft text");
             }
         };
         let editing_id = self.editing_note_id.take();
         if text.is_empty() {
-            return;
+            return Err("empty note");
         }
         if let Some(id) = editing_id {
             if let Some(file) = self.current_file().map(|f| f.path.clone()) {
-                let updated = update_note_text(&mut self.notes, &self.notes_key, &file, &id, text);
-                if updated {
-                    let _ = save_notes(&self.notes_path, &self.notes);
-                    if let Some(fi) = self.output.files.iter().position(|f| f.path == file) {
-                        self.sync_file_notes(fi);
+                let loc = {
+                    let mut notes_iter = notes_for_file(&self.notes, &self.notes_key, &file);
+                    notes_iter.find(|n| n.id == id).map(|n| n.location)
+                };
+                if let Some(loc) = loc {
+                    let updated =
+                        update_note_text(&mut self.notes, &self.notes_key, &file, &id, text);
+                    if updated {
+                        let _ = save_notes(&self.notes_path, &self.notes);
+                        if let Some(fi) = self.output.files.iter().position(|f| f.path == file) {
+                            self.sync_file_notes(fi);
+                        }
+                        self.bump_notes();
+                        self.pending_notes_reload = Some(vec![file.clone()]);
+                        self.set_status_message("updated note".to_string(), true);
                     }
-                    self.bump_notes();
-                    self.pending_notes_reload = Some(vec![file.clone()]);
-                    self.set_status_message("updated note".to_string(), true);
+                    return Ok(loc);
                 }
             }
-            return;
+            return Err("note to edit not found");
         }
         let (file, start, end, is_new, selected_lines, source_lines) =
             if let Some(sel) = self.compute_selection() {
@@ -270,27 +278,32 @@ impl AppState {
                 )
             } else {
                 let Some(file) = self.current_file() else {
-                    return;
+                    return Err("no current file");
                 };
                 let Some(row) = self.current_flat_row() else {
-                    return;
+                    return Err("no current row");
                 };
-                let Some(r) = self.row_of(row) else {
-                    return;
-                };
-                let Some(c) = Self::row_coord(r) else {
-                    return;
-                };
-                let is_new = r.new_line.is_some();
-                let text = if is_new { r.new_text() } else { r.old_text() };
-                (
-                    file.path.clone(),
-                    c,
-                    c,
-                    is_new,
-                    vec![text.clone()],
-                    Some(text),
-                )
+                if let crate::types::FlatRowKind::FileHeader = row.kind {
+                    // File-level note
+                    (file.path.clone(), 0, 0, true, Vec::new(), None)
+                } else {
+                    let Some(r) = self.row_of(row) else {
+                        return Err("row not found");
+                    };
+                    let Some(c) = Self::row_coord(r) else {
+                        return Err("row has no line coordinate");
+                    };
+                    let is_new = r.new_line.is_some();
+                    let text = if is_new { r.new_text() } else { r.old_text() };
+                    (
+                        file.path.clone(),
+                        c,
+                        c,
+                        is_new,
+                        vec![text.clone()],
+                        Some(text),
+                    )
+                }
             };
         self.note_id_counter += 1;
         let created_at = now_millis();
@@ -302,6 +315,15 @@ impl AppState {
             None
         };
         let note_file = file.clone();
+        let location = if start == 0 && end == 0 && selected_lines.is_empty() {
+            crate::core::notes::NoteLocation::File
+        } else {
+            crate::core::notes::NoteLocation::line(
+                if is_new { Side::New } else { Side::Old },
+                start,
+                end,
+            )
+        };
         let note = ReviewNote {
             id: format!(
                 "{:x}-{:x}-{:x}",
@@ -310,9 +332,7 @@ impl AppState {
                 self.note_id_counter
             ),
             file,
-            side: if is_new { Side::New } else { Side::Old },
-            start,
-            end,
+            location,
             text,
             created_at,
             line_hash,
@@ -328,6 +348,7 @@ impl AppState {
         self.pending_notes_reload = Some(vec![note_file]);
         self.confirmed_sel = None;
         self.anchor = None;
+        Ok(location)
     }
 
     /// Delete note focused under the cursor or across the active selection
@@ -341,23 +362,13 @@ impl AppState {
                 .get(sel.file_idx)
                 .expect("selection file_idx out of bounds in output.files");
             let file_path = file.path.clone();
-            let new_removed = remove_notes(
+            let removed = remove_notes_in_range(
                 &mut self.notes,
                 &self.notes_key,
                 &file_path,
-                Side::New,
                 sel.start,
                 sel.end,
             );
-            let old_removed = remove_notes(
-                &mut self.notes,
-                &self.notes_key,
-                &file_path,
-                Side::Old,
-                sel.start,
-                sel.end,
-            );
-            let removed = new_removed + old_removed;
             let _ = save_notes(&self.notes_path, &self.notes);
             if let Some(fi) = self.output.files.iter().position(|f| f.path == file_path) {
                 self.sync_file_notes(fi);
@@ -430,7 +441,7 @@ impl AppState {
         } else if let Some(sel) = self.compute_selection() {
             let file = &self.output.files[sel.file_idx];
             if let Some(n) = notes_for_file(&self.notes, &self.notes_key, &file.path)
-                .find(|n| n.start <= sel.end && n.end >= sel.start)
+                .find(|n| n.start() <= sel.end && n.end() >= sel.start)
             {
                 (n.file.clone(), n.id.clone())
             } else {
@@ -441,7 +452,7 @@ impl AppState {
             && let Some(c) = self.flat_row_coord(row)
         {
             if let Some(n) = notes_for_file(&self.notes, &self.notes_key, &file.path)
-                .find(|n| n.start <= c && n.end >= c)
+                .find(|n| n.start() <= c && n.end() >= c)
             {
                 (n.file.clone(), n.id.clone())
             } else {
@@ -535,9 +546,7 @@ impl AppState {
                     .map(|n| crate::core::wire::OutputNote {
                         id: n.id.clone(),
                         file: n.file.clone(),
-                        side: n.side,
-                        start: n.start,
-                        end: n.end,
+                        location: n.location,
                         text: n.text.clone(),
                         created_at: n.created_at,
                         runs: note_runs(&n.text),
@@ -685,14 +694,17 @@ impl AppState {
         let Some(f) = self.output.files.get(file_idx) else {
             return banner_idx;
         };
-        let content_lines = match note.side {
+        let Some(side) = note.side() else {
+            return banner_idx;
+        };
+        let content_lines = match side {
             Side::New => &f.new_content,
             Side::Old => &f.old_content,
         };
         if !note_anchors_in_file(note, content_lines) {
             return banner_idx;
         }
-        let target_coord = note.start.max(note.end);
+        let target_coord = note.start().max(note.end());
         for (i, item) in self.flat.iter().enumerate() {
             if item.file_idx != file_idx {
                 continue;
@@ -700,7 +712,7 @@ impl AppState {
             let Some(r) = self.row_of(item) else {
                 continue;
             };
-            let coord = match note.side {
+            let coord = match side {
                 Side::New => r.new_line,
                 Side::Old => r.old_line,
             };

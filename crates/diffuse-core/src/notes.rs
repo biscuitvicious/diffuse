@@ -24,10 +24,100 @@ pub enum Side {
 }
 
 impl Side {
-    pub fn reverse(&self) -> Side {
+    #[inline]
+    pub const fn reverse(self) -> Side {
         match self {
             Side::New => Side::Old,
             Side::Old => Side::New,
+        }
+    }
+}
+
+/// Where a review note is anchored.
+///
+/// File notes attach to the file as a whole and render on the file header
+/// banner; line notes attach to a 1-indexed line range on one side of the
+/// diff and re-anchor by content hash across reloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum NoteLocation {
+    /// The file as a whole; rendered on the file header banner.
+    File,
+    /// A line range `[start..=end]` on one side of the diff.
+    Line {
+        /// Diff side the line numbers belong to.
+        side: Side,
+        /// First line of the range (1-indexed).
+        start: u32,
+        /// Last line of the range (1-indexed, inclusive).
+        end: u32,
+    },
+}
+
+impl Default for NoteLocation {
+    fn default() -> Self {
+        Self::line(Side::New, 1, 1)
+    }
+}
+
+impl NoteLocation {
+    /// Construct a line location covering `[start..=end]` on `side`.
+    ///
+    /// Reversed input is normalized, so `start <= end` always holds for
+    /// stored line locations.
+    #[inline]
+    pub const fn line(side: Side, start: u32, end: u32) -> Self {
+        Self::Line {
+            side,
+            start: if start <= end { start } else { end },
+            end: if start <= end { end } else { start },
+        }
+    }
+
+    /// Whether this note targets the file as a whole.
+    #[inline]
+    pub const fn is_file(&self) -> bool {
+        matches!(self, Self::File)
+    }
+
+    /// The `(side, normalized start, normalized end)` coordinates of a line
+    /// location; `None` for file notes.
+    #[inline]
+    pub fn as_line(&self) -> Option<(Side, u32, u32)> {
+        match *self {
+            Self::Line { side, start, end } => Some((side, start.min(end), start.max(end))),
+            Self::File => None,
+        }
+    }
+
+    /// The line range of a line location on the new-side numbering, or `None`.
+    ///
+    /// Line notes on the old side translate their range by the diff delta of
+    /// an output row (see `reverse`); this helper is only meaningful for
+    /// new-side line locations and file-level counting.
+    #[inline]
+    pub fn as_line_range(&self) -> Option<(u32, u32)> {
+        match *self {
+            Self::Line {
+                side: Side::New,
+                start,
+                end,
+            } => Some((start.min(end), start.max(end))),
+            _ => None,
+        }
+    }
+
+    /// The location of the same side-swapped note context (delta-free
+    /// standalone line translation).
+    #[inline]
+    pub const fn reverse(self) -> Self {
+        match self {
+            Self::Line { side, start, end } => Self::line(side.reverse(), start, end),
+            Self::File => Self::File,
         }
     }
 }
@@ -94,9 +184,7 @@ impl NoteStatus {
 pub struct ReviewNote {
     pub id: String,
     pub file: String,
-    pub side: Side,
-    pub start: u32,
-    pub end: u32,
+    pub location: NoteLocation,
     pub text: String,
     pub created_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -114,15 +202,28 @@ impl Default for ReviewNote {
         Self {
             id: String::new(),
             file: String::new(),
-            side: Side::New,
-            start: 1,
-            end: 1,
+            location: NoteLocation::default(),
             text: String::new(),
             created_at: 0,
             line_hash: None,
             status: NoteStatus::Open,
             source_lines: None,
         }
+    }
+}
+
+impl ReviewNote {
+    #[inline]
+    pub fn side(&self) -> Option<Side> {
+        self.location.as_line().map(|(s, _, _)| s)
+    }
+    #[inline]
+    pub fn start(&self) -> u32 {
+        self.location.as_line().map(|(_, s, _)| s).unwrap_or(0)
+    }
+    #[inline]
+    pub fn end(&self) -> u32 {
+        self.location.as_line().map(|(_, _, e)| e).unwrap_or(0)
     }
 }
 
@@ -451,34 +552,39 @@ where
 /// 4. The matching text chunk is unique across the entire file (appears exactly
 ///    once).
 pub fn note_anchors_in_file<S: AsRef<str>>(note: &ReviewNote, file_lines: &[S]) -> bool {
-    if note.line_hash.is_none() && note.source_lines.is_none() {
+    let Some((_, start, end)) = note.location.as_line() else {
         return false;
-    }
-    let (start, end) = (note.start.min(note.end), note.start.max(note.end));
-    if start == 0 {
+    };
+    if start == 0 || end == 0 {
         return false;
     }
     let start_idx = (start - 1) as usize;
     let end_idx = end as usize;
-    if end_idx > file_lines.len() || start_idx >= end_idx {
+    if end_idx == 0 || end_idx > file_lines.len() || start_idx >= end_idx {
         return false;
     }
     let slice = &file_lines[start_idx..end_idx];
-    let len = (end - start + 1) as usize;
-    if !note_anchors_cleanly_lines(note, slice.iter().map(|s| s.as_ref())) {
+    // Anchor by direct coordinate lookup. If the note carries a hash, the
+    // hash of the current file content at the recorded coordinate must match.
+    // If the note carries source_lines, the literal source must match.
+    if let Some(hash) = note.line_hash {
+        let current_hash = LineHash::from_lines(slice.iter().map(|s| s.as_ref()));
+        if current_hash != hash {
+            return false;
+        }
+    } else if let Some(source) = &note.source_lines {
+        let joined = slice
+            .iter()
+            .map(|s| s.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if joined != *source {
+            return false;
+        }
+    } else {
         return false;
     }
-
-    let mut match_count = 0;
-    for window in file_lines.windows(len) {
-        if note_anchors_cleanly_lines(note, window.iter().map(|s| s.as_ref())) {
-            match_count += 1;
-            if match_count > 1 {
-                return false;
-            }
-        }
-    }
-    match_count == 1
+    true
 }
 
 /// Load notes from disk. Returns an empty DB if the file does not exist or
@@ -648,13 +754,12 @@ pub fn add_note(db: &mut NotesDB, repo: &str, note: ReviewNote) {
         .push(note);
 }
 
-/// Remove notes matching the repo, file, side, and overlapping line range
-/// [start, end]. Returns the number of removed notes.
-pub fn remove_notes(
+/// Remove line notes overlapping the line range `[start, end]` on either
+/// diff side. Returns the number of removed notes.
+pub fn remove_notes_in_range(
     db: &mut NotesDB,
     repo: &str,
     file: &str,
-    side: Side,
     start: u32,
     end: u32,
 ) -> usize {
@@ -665,7 +770,29 @@ pub fn remove_notes(
         return 0;
     };
     let before = list.len();
-    list.retain(|n| !(n.side == side && n.start <= end && n.end >= start));
+    list.retain(|n| {
+        n.location
+            .as_line()
+            .is_none_or(|(_, n_start, n_end)| n_end < start || n_start > end)
+    });
+    let removed = before - list.len();
+    if list.is_empty() {
+        repo_map.remove(file);
+    }
+    removed
+}
+
+/// Remove all file-level notes for a file (notes whose location is
+/// [`NoteLocation::File`]). Returns the number of removed notes.
+pub fn remove_file_notes(db: &mut NotesDB, repo: &str, file: &str) -> usize {
+    let Some(repo_map) = db.get_mut(repo) else {
+        return 0;
+    };
+    let Some(list) = repo_map.get_mut(file) else {
+        return 0;
+    };
+    let before = list.len();
+    list.retain(|n| !n.location.is_file());
     let removed = before - list.len();
     if list.is_empty() {
         repo_map.remove(file);

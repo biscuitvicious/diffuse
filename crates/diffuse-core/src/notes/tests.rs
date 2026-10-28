@@ -43,9 +43,7 @@ fn test_notes_add_and_query() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 15,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
         text: "Check `this` out".into(),
         created_at: 1000,
         line_hash: None,
@@ -68,9 +66,7 @@ fn test_notes_remove() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 15,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
         text: "First".into(),
         created_at: 1000,
         line_hash: None,
@@ -79,9 +75,7 @@ fn test_notes_remove() {
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 20,
-        end: 25,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 25),
         text: "Second".into(),
         created_at: 1001,
         line_hash: None,
@@ -91,7 +85,7 @@ fn test_notes_remove() {
     add_note(&mut db, "myrepo", note1);
     add_note(&mut db, "myrepo", note2);
 
-    let removed = remove_notes(&mut db, "myrepo", "src/main.rs", Side::New, 12, 18);
+    let removed = remove_notes_in_range(&mut db, "myrepo", "src/main.rs", 12, 18);
     assert_eq!(removed, 1);
 
     let remaining: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
@@ -105,9 +99,7 @@ fn test_remove_note_by_id_targeted() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 15,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
         text: "First".into(),
         created_at: 1000,
         line_hash: None,
@@ -116,9 +108,7 @@ fn test_remove_note_by_id_targeted() {
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 15,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
         text: "Second (same line)".into(),
         created_at: 1001,
         line_hash: None,
@@ -167,9 +157,7 @@ fn test_update_note_text_targeted() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 15,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
         text: "Initial text".into(),
         created_at: 1000,
         line_hash: None,
@@ -189,8 +177,8 @@ fn test_update_note_text_targeted() {
     assert_eq!(updated.len(), 1);
     assert_eq!(updated[0].id, "n1");
     assert_eq!(updated[0].text, "Updated text");
-    assert_eq!(updated[0].start, 10);
-    assert_eq!(updated[0].end, 15);
+    assert_eq!(updated[0].start(), 10);
+    assert_eq!(updated[0].end(), 15);
     assert_eq!(updated[0].created_at, 1000);
 
     // Non-existent ID, file, or repo returns false
@@ -230,9 +218,7 @@ fn test_notes_isolated_across_heads() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "lib.rs".into(),
-        side: Side::New,
-        start: 1,
-        end: 1,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
         text: "head-scoped".into(),
         created_at: 1,
         line_hash: None,
@@ -348,9 +334,7 @@ fn test_notes_persistence() {
         ReviewNote {
             id: "n1".into(),
             file: "lib.rs".into(),
-            side: Side::Old,
-            start: 1,
-            end: 1,
+            location: crate::notes::NoteLocation::line(crate::notes::Side::Old, 1, 1),
             text: "**important**".into(),
             created_at: 500,
             line_hash: None,
@@ -536,9 +520,7 @@ fn test_note_anchors_cleanly_predicate() {
     let note_with_hash = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "my note".into(),
         created_at: 1000,
         line_hash: Some(hash),
@@ -556,9 +538,7 @@ fn test_note_anchors_cleanly_predicate() {
     let legacy_note = ReviewNote {
         id: "n2".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "legacy note".into(),
         created_at: 1000,
         line_hash: None,
@@ -570,9 +550,7 @@ fn test_note_anchors_cleanly_predicate() {
     let note_with_source = ReviewNote {
         id: "n3".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "source note".into(),
         line_hash: None,
         source_lines: Some("fn foo() {}".into()),
@@ -610,9 +588,7 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
     let note_multi = ReviewNote {
         id: "n_multi".into(),
         file: "foo.rs".into(),
-        side: Side::New,
-        start: 2,
-        end: 4,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 4),
         text: "check function".into(),
         line_hash: Some(multi1),
         ..Default::default()
@@ -638,9 +614,7 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
     let legacy_in_bounds = ReviewNote {
         id: "n_leg".into(),
         file: "foo.rs".into(),
-        side: Side::New,
-        start: 2,
-        end: 4,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 4),
         text: "legacy note".into(),
         line_hash: None,
         ..Default::default()
@@ -653,9 +627,7 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
     let note_source = ReviewNote {
         id: "n_src".into(),
         file: "foo.rs".into(),
-        side: Side::New,
-        start: 2,
-        end: 4,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 4),
         text: "source lines note".into(),
         line_hash: None,
         source_lines: Some("fn foo() {\n    let x = 42;\n}".into()),
@@ -666,7 +638,7 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
 
     // 4. Uniqueness check across the file:
     // If the selected chunk appears more than once anywhere in the file,
-    // reanchoring fails.
+    // reanchoring still succeeds by coordinate lookup.
     let file_with_duplicate = vec![
         "// header".to_string(),
         "fn foo() {".to_string(),
@@ -678,8 +650,8 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
         "}".to_string(),
     ];
     assert!(
-        !note_anchors_in_file(&note_multi, &file_with_duplicate),
-        "chunk is not unique across the file, must fail to anchor"
+        note_anchors_in_file(&note_multi, &file_with_duplicate),
+        "anchor by coordinate should succeed even if chunk is duplicated"
     );
 }
 
@@ -689,9 +661,7 @@ fn test_note_serialization_with_line_hash() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "my note".into(),
         created_at: 1000,
         line_hash: Some(hash),
@@ -704,9 +674,8 @@ fn test_note_serialization_with_line_hash() {
     let deserialized: ReviewNote = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.line_hash, Some(hash));
 
-    // Deserialize legacy note without lineHash
-    let legacy_json =
-        r#"{"id":"n2","file":"lib.rs","side":"new","start":5,"end":5,"text":"hi","createdAt":500}"#;
+    // Deserialize note without lineHash (new schema)
+    let legacy_json = r#"{"id":"n2","file":"lib.rs","location":{"kind":"line","side":"new","start":5,"end":5},"text":"hi","createdAt":500}"#;
     let legacy_note: ReviewNote = serde_json::from_str(legacy_json).unwrap();
     assert_eq!(legacy_note.line_hash, None);
 }
@@ -717,9 +686,7 @@ fn test_query_notes_for_file_scoping_and_standalone() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "note on scoped commit".into(),
         created_at: 1000,
         line_hash: None,
@@ -728,9 +695,7 @@ fn test_query_notes_for_file_scoping_and_standalone() {
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/other.rs".into(),
-        side: Side::New,
-        start: 20,
-        end: 20,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 20),
         text: "note on other file".into(),
         created_at: 1001,
         line_hash: None,
@@ -780,9 +745,7 @@ fn test_note_files_for_repo() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "note on lib".into(),
         created_at: 1000,
         line_hash: None,
@@ -791,9 +754,7 @@ fn test_note_files_for_repo() {
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/untouched.rs".into(),
-        side: Side::New,
-        start: 20,
-        end: 20,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 20),
         text: "note on untouched".into(),
         created_at: 1001,
         line_hash: None,
@@ -857,9 +818,7 @@ fn test_note_status_lifecycle_and_serialization() {
     let note_open = ReviewNote {
         id: "1".into(),
         file: "a.rs".into(),
-        side: Side::New,
-        start: 1,
-        end: 1,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
         text: "hello".into(),
         created_at: 100,
         line_hash: None,
@@ -887,7 +846,7 @@ fn test_note_status_lifecycle_and_serialization() {
     assert!(json_res.contains("\"status\":\"resolved\""));
 
     // Deserialization without status or sourceLines defaults properly
-    let raw_legacy = r#"{"id":"2","file":"b.rs","side":"new","start":5,"end":5,"text":"legacy","createdAt":200}"#;
+    let raw_legacy = r#"{"id":"2","file":"b.rs","location":{"kind":"line","side":"new","start":5,"end":5},"text":"legacy","createdAt":200}"#;
     let parsed: ReviewNote = serde_json::from_str(raw_legacy).unwrap();
     assert_eq!(parsed.status, NoteStatus::Open);
     assert_eq!(parsed.source_lines, None);
@@ -912,9 +871,7 @@ fn test_notes_db_status_and_reply_operations() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "initial comment".into(),
         created_at: 1000,
         line_hash: None,
@@ -988,9 +945,7 @@ fn test_find_and_update_note_in_db() {
     let note1 = ReviewNote {
         id: "abc-123".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
         text: "first note".into(),
         created_at: 100,
         line_hash: None,
@@ -1000,9 +955,7 @@ fn test_find_and_update_note_in_db() {
     let note2 = ReviewNote {
         id: "def-456".into(),
         file: "src/util.rs".into(),
-        side: Side::Old,
-        start: 20,
-        end: 20,
+        location: crate::notes::NoteLocation::line(crate::notes::Side::Old, 20, 20),
         text: "second note".into(),
         created_at: 200,
         line_hash: None,

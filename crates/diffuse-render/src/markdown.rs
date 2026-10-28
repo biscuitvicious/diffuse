@@ -297,10 +297,10 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
                 out.push('\n');
             }
             rendered_notes += 1;
-            let line_info = if note.start == note.end {
-                format!("**Line {}**", note.start)
-            } else {
-                format!("**Lines {}-{}**", note.start, note.end)
+            let line_info = match note.location.as_line() {
+                Some((_, start, end)) if start == end => format!("**Line {}**", start),
+                Some((_, start, end)) => format!("**Lines {}-{}**", start, end),
+                None => "**File**".to_string(),
             };
             let glyph = note.status.glyph();
             push_md_line(&mut out, "> [!NOTE]", options.colorize, &theme);

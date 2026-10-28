@@ -963,9 +963,7 @@ fn diffuse_staged_flag_excludes_untracked_files() {
 
 #[test]
 fn test_cli_notes_subcommand_suite() {
-    use diffuse::core::notes::{
-        NoteStatus, NotesDB, ReviewNote, Side, add_note, load_notes, save_notes,
-    };
+    use diffuse::core::notes::{NoteStatus, NotesDB, ReviewNote, add_note, load_notes, save_notes};
 
     let dir = tempfile::tempdir().unwrap();
     let notes_path = dir.path().join("notes.json");
@@ -974,9 +972,7 @@ fn test_cli_notes_subcommand_suite() {
     let note_open = ReviewNote {
         id: "note-open".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 10,
-        end: 10,
+        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 10, 10),
         text: "Fix this issue".into(),
         created_at: 1000,
         line_hash: None,
@@ -986,9 +982,7 @@ fn test_cli_notes_subcommand_suite() {
     let note_prog = ReviewNote {
         id: "note-prog".into(),
         file: "src/lib.rs".into(),
-        side: Side::New,
-        start: 20,
-        end: 20,
+        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 20, 20),
         text: "Working on refactor".into(),
         created_at: 1001,
         line_hash: None,
@@ -998,9 +992,7 @@ fn test_cli_notes_subcommand_suite() {
     let note_res = ReviewNote {
         id: "note-res".into(),
         file: "src/main.rs".into(),
-        side: Side::New,
-        start: 30,
-        end: 30,
+        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 30, 30),
         text: "Already resolved".into(),
         created_at: 1002,
         line_hash: None,
@@ -1263,8 +1255,8 @@ fn test_cli_notes_add_subcommand() {
     assert_eq!(notes.len(), 1);
     let n1 = &notes[0];
     assert_eq!(n1.file, "foo.rs");
-    assert_eq!(n1.start, 1);
-    assert_eq!(n1.end, 2);
+    assert_eq!(n1.start(), 1);
+    assert_eq!(n1.end(), 2);
     assert_eq!(n1.status, NoteStatus::Open);
     assert_eq!(n1.text, "First two functions");
     assert_eq!(
@@ -1297,8 +1289,8 @@ fn test_cli_notes_add_subcommand() {
     let notes = db.get("test-repo").unwrap().get("foo.rs").unwrap();
     assert_eq!(notes.len(), 2);
     let n2 = &notes[1];
-    assert_eq!(n2.start, 3);
-    assert_eq!(n2.end, 4);
+    assert_eq!(n2.start(), 3);
+    assert_eq!(n2.end(), 4);
     assert_eq!(n2.status, NoteStatus::InProgress);
     assert_eq!(n2.source_lines, Some("custom source lines".to_string()));
 
@@ -1362,13 +1354,13 @@ fn test_cli_notes_add_subcommand() {
     assert_eq!(out5.status.code(), Some(0));
     let v: serde_json::Value = serde_json::from_slice(&out5.stdout).unwrap();
     assert_eq!(v["file"], "foo.rs");
-    assert_eq!(v["start"], 1);
+    assert_eq!(v["location"]["start"], 1);
     assert_eq!(v["text"], "JSON create");
 }
 
 #[test]
 fn test_notes_list_revisions_and_pathspecs() {
-    use diffuse::core::notes::{NoteStatus, ReviewNote, Side, add_note, load_notes, save_notes};
+    use diffuse::core::notes::{NoteStatus, ReviewNote, add_note, load_notes, save_notes};
 
     let dir = tempfile::tempdir().unwrap();
     let repo = init_repo(dir.path()).unwrap();
@@ -1402,9 +1394,7 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c1_a = ReviewNote {
         id: "c1-a".into(),
         file: "src/a.txt".into(),
-        side: Side::New,
-        start: 1,
-        end: 1,
+        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
         text: "Note on c1 file a".into(),
         created_at: 100,
         status: NoteStatus::Open,
@@ -1413,9 +1403,7 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c1_b = ReviewNote {
         id: "c1-b".into(),
         file: "src/b.txt".into(),
-        side: Side::New,
-        start: 1,
-        end: 1,
+        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
         text: "Note on c1 file b".into(),
         created_at: 101,
         status: NoteStatus::Open,
@@ -1428,9 +1416,7 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c2_a = ReviewNote {
         id: "c2-a".into(),
         file: "src/a.txt".into(),
-        side: Side::New,
-        start: 1,
-        end: 1,
+        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
         text: "Note on c2 file a".into(),
         created_at: 200,
         status: NoteStatus::Open,
@@ -1439,9 +1425,7 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c2_doc = ReviewNote {
         id: "c2-doc".into(),
         file: "doc/readme.txt".into(),
-        side: Side::New,
-        start: 1,
-        end: 1,
+        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
         text: "Note on c2 doc".into(),
         created_at: 201,
         status: NoteStatus::Open,

@@ -714,12 +714,15 @@ impl AppState {
                 } else {
                     format!("{file_path}:{}-{}", sel.start, sel.end)
                 }
+            } else if let Some(fr) = self.current_flat_row() {
+                if let crate::types::FlatRowKind::FileHeader = fr.kind {
+                    file_path.clone()
+                } else {
+                    let line = self.flat_row_coord(fr).unwrap_or(0);
+                    format!("{file_path}:{line}")
+                }
             } else {
-                let line = self
-                    .current_flat_row()
-                    .and_then(|fr| self.flat_row_coord(fr))
-                    .unwrap_or(0);
-                format!("{file_path}:{line}")
+                file_path.clone()
             };
             let note_area = if !self.raw_diff && has_scrollbar {
                 main_area
