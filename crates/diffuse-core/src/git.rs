@@ -27,7 +27,7 @@ pub const DEFAULT_CONTEXT_LINES: usize = 4;
 /// separator.
 pub const DEFAULT_EXPAND_LINES: usize = 6;
 
-pub use diffuse_git::RefPair;
+pub use diffuse_git::{RefPair, WhitespaceMode, diff_paths, diff_repository, generate_file_diff};
 
 /// Check if the directory is inside a git repository or worktree.
 pub fn is_inside_work_tree(cwd: &Path) -> bool {

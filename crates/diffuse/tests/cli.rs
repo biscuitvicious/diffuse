@@ -828,15 +828,11 @@ fn test_cli_diffuse_log_file() {
     assert!(log_path.exists());
 }
 
-/// The JSON payload stdin contract (`{diff, contents, oldContents}` → wire
-/// JSON) — the shape the pi extension's backend pipes into `diffuse --json`.
+/// Raw diff stream stdin contract (diff → wire JSON) piped into `diffuse
+/// --json`.
 #[test]
-fn test_json_payload_stdin_wire_contract() {
-    let payload = r#"{
-        "diff": "diff --git a/test.rs b/test.rs\nindex 0000000..1111111 100644\n--- a/test.rs\n+++ b/test.rs\n@@ -1 +1 @@\n-old\n+new\n",
-        "contents": { "test.rs": "new\n" },
-        "oldContents": { "test.rs": "old\n" }
-    }"#;
+fn test_diff_stream_stdin_wire_contract() {
+    let diff = "diff --git a/test.rs b/test.rs\nindex 0000000..1111111 100644\n--- a/test.rs\n+++ b/test.rs\n@@ -1 +1 @@\n-old\n+new\n";
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .arg("--json")
@@ -850,7 +846,7 @@ fn test_json_payload_stdin_wire_contract() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(payload.as_bytes())
+        .write_all(diff.as_bytes())
         .unwrap();
     drop(child.stdin.take());
 

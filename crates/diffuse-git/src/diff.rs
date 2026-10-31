@@ -569,3 +569,192 @@ pub fn diff_repository(
         untracked_skipped,
     })
 }
+
+/// Compute unified diff between two files or two directory trees directly on
+/// disk.
+pub fn diff_paths(
+    old_path: &std::path::Path,
+    new_path: &std::path::Path,
+    context: u32,
+    mode: WhitespaceMode,
+) -> std::io::Result<RepoDiffResult> {
+    use diffuse_parse::FileStatus;
+    use std::{fs, path::PathBuf};
+
+    if !old_path.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path not found: {}", old_path.display()),
+        ));
+    }
+    if !new_path.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("path not found: {}", new_path.display()),
+        ));
+    }
+
+    if old_path.is_file() && new_path.is_file() {
+        let old_bytes = fs::read(old_path)?;
+        let new_bytes = fs::read(new_path)?;
+        let is_binary = old_bytes.contains(&0) || new_bytes.contains(&0);
+        let path_str = new_path.to_string_lossy();
+        let old_path_str = old_path.to_string_lossy();
+
+        let res = generate_file_diff(FileDiffParams {
+            path: &path_str,
+            old_path: Some(&old_path_str),
+            old_bytes: Some(&old_bytes),
+            new_bytes: Some(&new_bytes),
+            status: FileStatus::Modified,
+            old_mode: None,
+            new_mode: None,
+            is_binary,
+            context,
+            mode,
+        });
+
+        let mut new_content_map = std::collections::HashMap::new();
+        let mut old_content_map = std::collections::HashMap::new();
+        if !is_binary {
+            if let Ok(text) = String::from_utf8(new_bytes) {
+                new_content_map.insert(path_str.to_string(), text);
+            }
+            if let Ok(text) = String::from_utf8(old_bytes) {
+                old_content_map.insert(old_path_str.to_string(), text);
+            }
+        }
+
+        return Ok(RepoDiffResult {
+            diff: res.patch,
+            files: vec![res.file],
+            new_content: new_content_map,
+            old_content: old_content_map,
+            branch: None,
+            untracked_skipped: Vec::new(),
+        });
+    }
+
+    if old_path.is_dir() && new_path.is_dir() {
+        fn collect_rel_files(
+            root: &std::path::Path,
+            cur: &std::path::Path,
+            acc: &mut Vec<PathBuf>,
+        ) -> std::io::Result<()> {
+            for entry in fs::read_dir(cur)? {
+                let entry = entry?;
+                let path = entry.path();
+                let file_name = entry.file_name();
+                if file_name == ".git" {
+                    continue;
+                }
+                if path.is_dir() {
+                    collect_rel_files(root, &path, acc)?;
+                } else if path.is_file()
+                    && let Ok(rel) = path.strip_prefix(root)
+                {
+                    acc.push(rel.to_path_buf());
+                }
+            }
+            Ok(())
+        }
+
+        let mut old_files = Vec::new();
+        let mut new_files = Vec::new();
+        collect_rel_files(old_path, old_path, &mut old_files)?;
+        collect_rel_files(new_path, new_path, &mut new_files)?;
+
+        let mut all_paths: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        all_paths.extend(old_files);
+        all_paths.extend(new_files);
+
+        let mut files = Vec::new();
+        let mut diff = String::new();
+        let mut new_content_map = std::collections::HashMap::new();
+        let mut old_content_map = std::collections::HashMap::new();
+
+        for rel in all_paths {
+            let rel_str = rel.to_string_lossy().to_string();
+            let p_old = old_path.join(&rel);
+            let p_new = new_path.join(&rel);
+
+            let has_old = p_old.is_file();
+            let has_new = p_new.is_file();
+
+            let old_bytes = if has_old {
+                Some(fs::read(&p_old)?)
+            } else {
+                None
+            };
+            let new_bytes = if has_new {
+                Some(fs::read(&p_new)?)
+            } else {
+                None
+            };
+
+            let (status, is_binary) = match (&old_bytes, &new_bytes) {
+                (Some(o), Some(n)) => {
+                    if o == n {
+                        // Unmodified, skip from diff
+                        continue;
+                    }
+                    (FileStatus::Modified, o.contains(&0) || n.contains(&0))
+                }
+                (None, Some(n)) => (FileStatus::Added, n.contains(&0)),
+                (Some(o), None) => (FileStatus::Deleted, o.contains(&0)),
+                (None, None) => continue,
+            };
+
+            let res = generate_file_diff(FileDiffParams {
+                path: &rel_str,
+                old_path: None,
+                old_bytes: old_bytes.as_deref(),
+                new_bytes: new_bytes.as_deref(),
+                status,
+                old_mode: None,
+                new_mode: None,
+                is_binary,
+                context,
+                mode,
+            });
+
+            if !diff.is_empty() && !diff.ends_with('\n') {
+                diff.push('\n');
+            }
+            diff.push_str(&res.patch);
+
+            if !is_binary {
+                if let Some(nb) = new_bytes
+                    && let Ok(text) = String::from_utf8(nb)
+                {
+                    new_content_map.insert(rel_str.clone(), text);
+                }
+                if let Some(ob) = old_bytes
+                    && let Ok(text) = String::from_utf8(ob)
+                {
+                    old_content_map.insert(rel_str, text);
+                }
+            }
+
+            files.push(res.file);
+        }
+
+        return Ok(RepoDiffResult {
+            diff,
+            files,
+            new_content: new_content_map,
+            old_content: old_content_map,
+            branch: None,
+            untracked_skipped: Vec::new(),
+        });
+    }
+
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        format!(
+            "cannot diff file with directory: '{}' and '{}'",
+            old_path.display(),
+            new_path.display()
+        ),
+    ))
+}

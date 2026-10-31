@@ -3,5 +3,4 @@
 
 pub mod args;
 pub mod dispatch;
-pub mod input;
 pub mod theme;

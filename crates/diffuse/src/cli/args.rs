@@ -60,6 +60,32 @@ spawning git or reading standard input."
     )]
     pub diff: Option<String>,
 
+    /// Root directory of old pre-image files (for diff hydration).
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_hint = clap::ValueHint::DirPath,
+        global = true,
+        help_heading = "Repository & Input",
+        help = "Root directory of old pre-image files for context hydration",
+        long_help = "Root directory containing original pre-image files used to \
+hydrate context, token classification, and function boundary pairing."
+    )]
+    pub old_dir: Option<PathBuf>,
+
+    /// Root directory of new post-image files (for diff hydration).
+    #[arg(
+        long,
+        value_name = "DIR",
+        value_hint = clap::ValueHint::DirPath,
+        global = true,
+        help_heading = "Repository & Input",
+        help = "Root directory of new post-image files for context hydration",
+        long_help = "Root directory containing modified post-image files used to \
+hydrate context, token classification, and function boundary pairing."
+    )]
+    pub new_dir: Option<PathBuf>,
+
     // Review Notes
     /// Path to notes database file (default:
     /// ~/.local/state/diffuse/notes.json).

@@ -60,6 +60,10 @@ struct Fixture {
     /// (PLAN.md §4 Phase 6) uses it to prove `apply(diff, old) == new`
     /// mechanically — the diff is a semantic program, not just a render).
     old_content: HashMap<String, Arc<String>>,
+    old_dir: Option<PathBuf>,
+    new_dir: Option<PathBuf>,
+    #[serde(skip)]
+    _temp_dir: Option<Arc<tempfile::TempDir>>,
     #[serde(skip)]
     notes_file: Option<PathBuf>,
     #[serde(skip)]
@@ -188,14 +192,41 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         })
         .collect();
 
-    for (path, new_str, old_str) in loaded {
+    for (path, new_str, old_str) in &loaded {
         if let Some(new_c) = new_str {
-            new_content.insert(path.clone(), Arc::new(new_c));
+            new_content.insert(path.clone(), Arc::new(new_c.clone()));
         }
         if let Some(old_c) = old_str {
-            old_content.insert(path, Arc::new(old_c));
+            old_content.insert(path.clone(), Arc::new(old_c.clone()));
         }
     }
+
+    let (old_dir, new_dir, temp_dir) = if !new_content.is_empty() || !old_content.is_empty() {
+        let td = tempfile::tempdir().expect("create tempdir for golden fixture");
+        let od = td.path().join("old");
+        let nd = td.path().join("new");
+        fs::create_dir_all(&od).expect("create old dir");
+        fs::create_dir_all(&nd).expect("create new dir");
+        for (path, new_str, old_str) in loaded {
+            if let Some(o) = old_str {
+                let target = od.join(&path);
+                if let Some(p) = target.parent() {
+                    let _ = fs::create_dir_all(p);
+                }
+                let _ = fs::write(&target, o.as_bytes());
+            }
+            if let Some(n) = new_str {
+                let target = nd.join(&path);
+                if let Some(p) = target.parent() {
+                    let _ = fs::create_dir_all(p);
+                }
+                let _ = fs::write(&target, n.as_bytes());
+            }
+        }
+        (Some(od), Some(nd), Some(Arc::new(td)))
+    } else {
+        (None, None, None)
+    };
 
     let notes_json_path = corpus_dir.join("notes.json");
     let (notes_file, notes_db, repo_key, rev_key) = if notes_json_path.is_file() {
@@ -219,6 +250,9 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         diff: Arc::new(diff),
         new_content,
         old_content,
+        old_dir,
+        new_dir,
+        _temp_dir: temp_dir,
         notes_file,
         notes_db,
         repo_key,
@@ -1456,9 +1490,9 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
 
 fn run_bin_markdown_leg(name: &str) {
     let fixture = load_fixture(name);
-    let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
+    let input = fixture.diff.as_bytes();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
-    cmd.arg("-m").arg("--color=never");
+    cmd.arg("parse").arg("-m").arg("--color=never");
     if let Some(ref notes_path) = fixture.notes_file {
         cmd.arg("--notes-file").arg(notes_path);
     }
@@ -1467,6 +1501,12 @@ fn run_bin_markdown_leg(name: &str) {
     }
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
+    }
+    if let Some(ref old_dir) = fixture.old_dir {
+        cmd.arg("--old-dir").arg(old_dir);
+    }
+    if let Some(ref new_dir) = fixture.new_dir {
+        cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1478,8 +1518,8 @@ fn run_bin_markdown_leg(name: &str) {
             .stdin
             .take()
             .expect("stdin")
-            .write_all(&input)
-            .expect("write the fixture");
+            .write_all(input)
+            .expect("write the diff");
     }
     let out = child.wait_with_output().expect("wait for the bin");
     assert!(
@@ -1536,9 +1576,9 @@ fn run_bin_raw_leg(name: &str) {
         return;
     }
     let fixture = load_fixture(name);
-    let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
+    let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
-    cmd.arg("--raw").arg("--color=always");
+    cmd.arg("parse").arg("--raw").arg("--color=always");
     if let Some(ref notes_path) = fixture.notes_file {
         cmd.arg("--notes-file").arg(notes_path);
     }
@@ -1547,6 +1587,12 @@ fn run_bin_raw_leg(name: &str) {
     }
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
+    }
+    if let Some(ref old_dir) = fixture.old_dir {
+        cmd.arg("--old-dir").arg(old_dir);
+    }
+    if let Some(ref new_dir) = fixture.new_dir {
+        cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1557,7 +1603,7 @@ fn run_bin_raw_leg(name: &str) {
 
     let mut stdin = child.stdin.take().expect("stdin");
     let writer_thread = thread::spawn(move || {
-        let _ = stdin.write_all(&input);
+        let _ = stdin.write_all(diff_text.as_bytes());
         let _ = stdin.flush();
         drop(stdin);
     });
@@ -1718,9 +1764,9 @@ fn run_bin_leg(name: &str, num_files: usize) {
         // library leg.  Bailing out here (as before) left the golden written
         // by the library leg, which diverges whenever the two differ.
         let fixture = load_fixture(name);
-        let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
+        let diff_text = Arc::clone(&fixture.diff);
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
-        cmd.arg("--jsonl");
+        cmd.arg("parse").arg("--jsonl");
         if let Some(ref notes_path) = fixture.notes_file {
             cmd.arg("--notes-file").arg(notes_path);
         }
@@ -1739,7 +1785,7 @@ fn run_bin_leg(name: &str, num_files: usize) {
 
         let mut stdin = child.stdin.take().expect("stdin");
         let writer_thread = thread::spawn(move || {
-            let _ = stdin.write_all(&input);
+            let _ = stdin.write_all(diff_text.as_bytes());
             let _ = stdin.flush();
             drop(stdin);
         });
@@ -1767,9 +1813,9 @@ fn run_bin_leg(name: &str, num_files: usize) {
         return;
     }
     let fixture = load_fixture(name);
-    let input = serde_json::to_vec(fixture.as_ref()).expect("serialize fixture");
+    let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
-    cmd.arg("--jsonl");
+    cmd.arg("parse").arg("--jsonl");
     if let Some(ref notes_path) = fixture.notes_file {
         cmd.arg("--notes-file").arg(notes_path);
     }
@@ -1778,6 +1824,12 @@ fn run_bin_leg(name: &str, num_files: usize) {
     }
     if let Some(ref rev_key) = fixture.rev_key {
         cmd.arg("--rev-key").arg(rev_key);
+    }
+    if let Some(ref old_dir) = fixture.old_dir {
+        cmd.arg("--old-dir").arg(old_dir);
+    }
+    if let Some(ref new_dir) = fixture.new_dir {
+        cmd.arg("--new-dir").arg(new_dir);
     }
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1788,7 +1840,7 @@ fn run_bin_leg(name: &str, num_files: usize) {
 
     let mut stdin = child.stdin.take().expect("stdin");
     let writer_thread = thread::spawn(move || {
-        let _ = stdin.write_all(&input);
+        let _ = stdin.write_all(diff_text.as_bytes());
         let _ = stdin.flush();
         drop(stdin);
     });

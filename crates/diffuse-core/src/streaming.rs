@@ -389,6 +389,83 @@ pub fn stream_diff_pipeline(
     stream_diff_pipeline_arc(diff_arc, new_arc, old_arc, opts, worker_count)
 }
 
+/// Spawns a streaming pipeline reading raw unified diff lines directly from an
+/// `io::BufRead` (such as `stdin` or a file stream).
+///
+/// A background reader thread parses files progressively as lines arrive and
+/// pushes each `FileJob` directly to the priority worker queue.
+pub fn stream_diff_reader<R: std::io::BufRead + Send + 'static>(
+    reader: R,
+    opts: PipelineOptions,
+    worker_count: Option<usize>,
+    old_dir: Option<PathBuf>,
+    new_dir: Option<PathBuf>,
+) -> StreamingConsumer {
+    let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
+
+    std::thread::spawn(move || {
+        let mut idx = 0;
+        diffuse_parse::parse_diff_from_reader(reader, |f| {
+            let new_content = new_dir.as_ref().and_then(|dir| {
+                std::fs::read_to_string(dir.join(&f.path))
+                    .ok()
+                    .map(Arc::new)
+            });
+            let old_lookup = f.old_path.as_deref().unwrap_or(&f.path);
+            let old_content = old_dir.as_ref().and_then(|dir| {
+                std::fs::read_to_string(dir.join(old_lookup))
+                    .ok()
+                    .map(Arc::new)
+            });
+            producer.push(FileJob {
+                idx,
+                file: f,
+                new_content,
+                old_content,
+                diff_fallback: None,
+            });
+            idx += 1;
+        });
+        producer.finish();
+    });
+
+    consumer
+}
+
+/// Spawns a streaming pipeline for pre-parsed `DiffFile` ASTs (e.g. from direct
+/// path diffing).
+pub fn stream_parsed_files(
+    files: Vec<crate::parse::DiffFile>,
+    new_content: Option<HashMap<String, String>>,
+    old_content: Option<HashMap<String, String>>,
+    opts: PipelineOptions,
+    worker_count: Option<usize>,
+) -> StreamingConsumer {
+    let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
+    let mut new_arc: Option<HashMap<String, Arc<String>>> =
+        new_content.map(|m| m.into_iter().map(|(k, v)| (k, Arc::new(v))).collect());
+    let mut old_arc: Option<HashMap<String, Arc<String>>> =
+        old_content.map(|m| m.into_iter().map(|(k, v)| (k, Arc::new(v))).collect());
+
+    for (idx, f) in files.into_iter().enumerate() {
+        let new_c = new_arc.as_mut().and_then(|nc| nc.remove(&f.path));
+        let old_lookup = f.old_path.as_deref().unwrap_or(&f.path);
+        let old_c = old_arc
+            .as_mut()
+            .and_then(|oc| oc.remove(old_lookup).or_else(|| oc.remove(&f.path)));
+        producer.push(FileJob {
+            idx,
+            file: f,
+            new_content: new_c,
+            old_content: old_c,
+            diff_fallback: None,
+        });
+    }
+    producer.finish();
+
+    consumer
+}
+
 /// Metadata discovered asynchronously from the git repository.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GitRepoMeta {

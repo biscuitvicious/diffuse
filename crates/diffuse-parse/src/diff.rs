@@ -14,14 +14,19 @@ pub fn zero_hunk_section(path: &str) -> String {
     format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n")
 }
 
-/// Parse a `git diff` progressively, yielding each `DiffFile` to a callback
+/// Parse a sequence of diff lines progressively, yielding each `DiffFile`
 /// as soon as it has been completely parsed.
-pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
+pub fn parse_diff_lines<I, S>(lines: I, mut on_file: impl FnMut(DiffFile))
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     let mut cur: Option<DiffFile> = None;
     let mut oi: u32 = 1;
     let mut ni: u32 = 1;
 
-    for line in raw.split('\n') {
+    for line_ref in lines {
+        let line = line_ref.as_ref();
         if let Some(rest) = line.strip_prefix("diff --git ") {
             if let Some(c) = cur.take()
                 && is_valid_diff_file(&c)
@@ -222,6 +227,19 @@ pub fn parse_diff_for_each(raw: &str, mut on_file: impl FnMut(DiffFile)) {
     {
         on_file(c);
     }
+}
+
+/// Parse a `git diff` progressively, yielding each `DiffFile` to a callback
+/// as soon as it has been completely parsed.
+pub fn parse_diff_for_each(raw: &str, on_file: impl FnMut(DiffFile)) {
+    parse_diff_lines(raw.split('\n'), on_file);
+}
+
+/// Parse a `git diff` progressively from any `io::BufRead` (such as `stdin`),
+/// yielding each `DiffFile` to a callback as soon as it has been completely
+/// parsed.
+pub fn parse_diff_from_reader<R: std::io::BufRead>(reader: R, on_file: impl FnMut(DiffFile)) {
+    parse_diff_lines(reader.lines().map_while(Result::ok), on_file);
 }
 
 /// Parse a `git diff` into files, hunks, and rows.

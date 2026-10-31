@@ -10,8 +10,8 @@ pub mod testing;
 pub mod types;
 
 pub use diff::{
-    FileDiffParams, FileDiffResult, RepoDiffResult, WhitespaceMode, diff_buffers, diff_repository,
-    diff_text, generate_file_diff,
+    FileDiffParams, FileDiffResult, RepoDiffResult, WhitespaceMode, diff_buffers, diff_paths,
+    diff_repository, diff_text, generate_file_diff,
 };
 pub use mutation::{
     apply_hunk_to_buffer, create_stash_checkpoint, discard_file, discard_hunk, stage_file,

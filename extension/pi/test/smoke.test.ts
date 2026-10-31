@@ -35,12 +35,7 @@ index 0000000..1111111 100644
 -old
 +new
 `;
-	const payload = {
-		diff,
-		contents: { "test.rs": "new\n" },
-		oldContents: { "test.rs": "old\n" },
-	};
-	const wire = await runDiffuseBin(bin, JSON.stringify(payload));
+	const wire = await runDiffuseBin(bin, diff);
 	strictEqual(wire.files.length, 1);
 	strictEqual(wire.files[0].path, "test.rs");
 	strictEqual(wire.files[0].hunks.length, 1);

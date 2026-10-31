@@ -24,12 +24,7 @@ pub use cli::{
 };
 
 #[cfg(test)]
-pub use cli::{
-    args::SubCommand,
-    dispatch::route_mode,
-    input::{Input, process_input},
-    theme::resolve_theme,
-};
+pub use cli::{args::SubCommand, dispatch::route_mode, theme::resolve_theme};
 
 fn main() -> io::Result<()> {
     let _ = init_logging();

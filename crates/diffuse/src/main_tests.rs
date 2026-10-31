@@ -6,71 +6,40 @@ use diffuse::prelude::*;
 
 use super::{Args, SubCommand, route_mode};
 
-use diffuse::core::notes::NoteLocation;
-
 #[test]
-fn extension_json_payload_is_json_mode() {
-    // The pi extension pipes a JSON payload with no git args.
-    assert!(route_mode(
-        false,
-        false,
-        None,
-        &[],
-        false,
-        "{\"diff\":\"x\"}"
-    ));
+fn piped_diff_is_stream_mode() {
+    assert!(route_mode(false, false, None, &[], false, true));
 }
 
 #[test]
-fn piped_raw_diff_stays_json_mode() {
-    // `git diff | diffuse` — a raw (non-JSON) payload piped in.
-    assert!(route_mode(
-        false,
-        false,
-        None,
-        &[],
-        false,
-        "diff --git a b\n"
-    ));
+fn interactive_stdin_is_git_mode() {
+    assert!(!route_mode(false, false, None, &[], true, false));
 }
 
 #[test]
-fn empty_piped_stdin_is_standalone() {
-    // `diffuse < /dev/null | cat` — no payload, must route to the
-    // standalone reviewer, never the JSON contract.
-    assert!(!route_mode(false, false, None, &[], false, ""));
+fn explicit_json_flag_is_diff_stream_mode() {
+    assert!(route_mode(true, false, None, &[], true, false));
 }
 
 #[test]
-fn interactive_stdin_is_standalone() {
-    assert!(!route_mode(false, false, None, &[], true, ""));
+fn explicit_jsonl_flag_is_diff_stream_mode() {
+    assert!(route_mode(false, true, None, &[], true, false));
 }
 
 #[test]
-fn explicit_json_flag_is_json_mode() {
-    assert!(route_mode(true, false, None, &[], true, ""));
+fn diff_file_flag_is_diff_stream_mode() {
+    assert!(route_mode(false, false, Some("x.diff"), &[], true, false));
 }
 
 #[test]
-fn explicit_jsonl_flag_is_json_mode() {
-    assert!(route_mode(false, true, None, &[], true, ""));
-}
-
-#[test]
-fn diff_file_flag_is_json_mode() {
-    assert!(route_mode(false, false, Some("x.diff"), &[], true, ""));
-}
-
-#[test]
-fn git_args_are_always_standalone() {
-    // `diffuse HEAD < file` — git args win over piped stdin content.
+fn git_args_are_always_git_mode() {
     assert!(!route_mode(
         false,
         false,
         None,
         &["HEAD".into()],
         false,
-        "noise"
+        false
     ));
 }
 
@@ -245,230 +214,43 @@ fn test_cli_args_jobs_flags() {
 }
 
 #[test]
-fn test_standalone_piped_notes_inactivity_and_explicit_file() {
-    let diff = "\
-diff --git a/test.rs b/test.rs
---- a/test.rs
-+++ b/test.rs
-@@ -1,3 +1,3 @@
- line 1
--line 2
-+line 2 modified
- line 3
-";
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    let notes_path = tmp.path().to_path_buf();
+fn test_diff_paths_files_and_directories() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old_dir = tmp.path().join("old");
+    let new_dir = tmp.path().join("new");
+    std::fs::create_dir_all(&old_dir).unwrap();
+    std::fs::create_dir_all(&new_dir).unwrap();
 
-    let mut db = std::collections::HashMap::new();
-    let note = ReviewNote {
-        id: "note-1".into(),
-        file: "test.rs".into(),
-        location: NoteLocation::line(diffuse::core::notes::DiffCoord::new_side(2)),
-        text: "piped note".into(),
-        created_at: 1000,
-        ..Default::default()
-    };
-    add_note(&mut db, "some_repo", "", note);
-    save_notes(&notes_path, &db).unwrap();
+    let f_old = old_dir.join("test.txt");
+    let f_new = new_dir.join("test.txt");
+    std::fs::write(&f_old, "line 1\nline 2\n").unwrap();
+    std::fs::write(&f_new, "line 1\nline 2 modified\n").unwrap();
 
-    let base_args = Args::try_parse_from(["diffuse"]).unwrap();
-
-    // 1. Standalone piped diff with NO notes_file -> notes are inactive (0 notes)
-    let input_no_notes = super::Input {
-        diff: diff.to_string(),
-        ..Default::default()
-    };
-    let out_no_notes = super::process_input(input_no_notes.clone(), &base_args);
-    assert_eq!(out_no_notes.files.len(), 1);
-    assert_eq!(out_no_notes.files[0].counts.notes, 0);
-    assert!(out_no_notes.files[0].notes.is_empty());
-
-    // 2. Standalone piped diff WITH explicit notes_file and repo_key -> notes are
-    //    active and matched by path
-    let input_with_notes = super::Input {
-        notes_file: Some(notes_path.to_str().unwrap().to_string()),
-        repo_key: Some("some_repo".into()),
-        ..input_no_notes.clone()
-    };
-    let out_with_notes = super::process_input(input_with_notes, &base_args);
-    assert_eq!(out_with_notes.files.len(), 1);
-    assert_eq!(out_with_notes.files[0].counts.notes, 1);
-    assert_eq!(out_with_notes.files[0].notes.len(), 1);
-    assert_eq!(out_with_notes.files[0].notes[0].id, "note-1");
-
-    // 3. addNote in standalone mode without notes_file is a no-op
-    let new_note = ReviewNote {
-        id: "note-2".into(),
-        file: "test.rs".into(),
-        location: NoteLocation::line(diffuse::core::notes::DiffCoord::new_side(3)),
-        text: "another note".into(),
-        created_at: 1002,
-        ..Default::default()
-    };
-    let input_add_no_file = super::Input {
-        action: Some("addNote".into()),
-        note: Some(new_note.clone()),
-        repo_key: Some("standalone_repo".into()),
-        notes_file: None,
-        ..input_no_notes.clone()
-    };
-    let _ = super::process_input(input_add_no_file, &base_args);
-    // db on disk was NOT modified
-    let reloaded = load_notes(&notes_path);
+    // 1. Direct file diffing
+    let file_diff = diffuse::git::diff_paths(
+        &f_old,
+        &f_new,
+        3,
+        diffuse::git::WhitespaceMode::TrimEquality,
+    )
+    .unwrap();
+    assert_eq!(file_diff.files.len(), 1);
     assert_eq!(
-        reloaded
-            .get("some_repo")
-            .unwrap()
-            .get("")
-            .unwrap()
-            .get("test.rs")
-            .unwrap()
-            .len(),
-        1
+        file_diff.files[0].status,
+        diffuse::core::FileStatus::Modified
     );
+    assert_eq!(file_diff.files[0].hunks.len(), 1);
 
-    // 4. addNote in standalone mode WITH notes_file saves to that file
-    let input_add_with_file = super::Input {
-        action: Some("addNote".into()),
-        note: Some(new_note),
-        repo_key: Some("standalone_repo".into()),
-        notes_file: Some(notes_path.to_str().unwrap().to_string()),
-        ..input_no_notes
-    };
-    let _ = super::process_input(input_add_with_file, &base_args);
-    let reloaded_after = diffuse::core::notes::load_notes(&notes_path);
-    assert!(reloaded_after.contains_key("standalone_repo"));
-    assert_eq!(
-        reloaded_after
-            .get("standalone_repo")
-            .unwrap()
-            .get("")
-            .unwrap()
-            .get("test.rs")
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-#[test]
-fn test_json_protocol_note_status_and_reply_actions() {
-    use diffuse::core::notes::{NoteStatus, ReviewNote, load_notes, save_notes};
-
-    let tmp = tempfile::NamedTempFile::new().unwrap();
-    let notes_path = tmp.path().to_path_buf();
-
-    let mut db = std::collections::HashMap::new();
-    let note = ReviewNote {
-        id: "note-abc".into(),
-        file: "src/main.rs".into(),
-        location: NoteLocation::line(diffuse::core::notes::DiffCoord::new_side(5)),
-        text: "Please refactor".into(),
-        created_at: 1000,
-        status: NoteStatus::Open,
-        ..Default::default()
-    };
-    diffuse::core::notes::add_note(&mut db, "repo1", "", note);
-    save_notes(&notes_path, &db).unwrap();
-
-    let base_args = Args::try_parse_from(["diffuse"]).unwrap();
-    let base_input = super::Input {
-        action: None,
-        note: None,
-        file: None,
-        start: None,
-        end: None,
-        diff: "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n".into(),
-        new_content: None,
-        old_content: None,
-        repo_root: None,
-        base_args: vec![],
-        paths: vec![],
-        staged: false,
-        context: None,
-        notes: None,
-        notes_file: Some(notes_path.to_str().unwrap().to_string()),
-        repo_key: Some("repo1".into()),
-        token_product_cap: None,
-        cluster_budget: None,
-        cluster_bandwidth_min: None,
-        cluster_bandwidth_slack: None,
-        note_id: Some("note-abc".into()),
-        status: None,
-        reply_text: None,
-        ..Default::default()
-    };
-
-    // 1. setNoteStatus to InProgress
-    let mut input_progress = base_input.clone();
-    input_progress.action = Some("setNoteStatus".into());
-    input_progress.status = Some(NoteStatus::InProgress);
-    let _ = super::process_input(input_progress, &base_args);
-    let db = load_notes(&notes_path);
-    assert_eq!(
-        db.get("repo1")
-            .unwrap()
-            .get("")
-            .unwrap()
-            .get("src/main.rs")
-            .unwrap()[0]
-            .status,
-        NoteStatus::InProgress
-    );
-
-    // 2. replyNote with Resolved status
-    let mut input_reply = base_input.clone();
-    input_reply.action = Some("replyNote".into());
-    input_reply.reply_text = Some("Refactored into helper function".into());
-    input_reply.status = Some(NoteStatus::Resolved);
-    let _ = super::process_input(input_reply, &base_args);
-    let db = load_notes(&notes_path);
-    let note = &db
-        .get("repo1")
-        .unwrap()
-        .get("")
-        .unwrap()
-        .get("src/main.rs")
-        .unwrap()[0];
-    assert_eq!(note.status, NoteStatus::Resolved);
-    assert_eq!(
-        note.text,
-        "Refactored into helper function\n\n> Please refactor"
-    );
-
-    // 3. reopenNote
-    let mut input_reopen = base_input.clone();
-    input_reopen.action = Some("reopenNote".into());
-    input_reopen.reply_text = None;
-    let _ = super::process_input(input_reopen, &base_args);
-    let db = load_notes(&notes_path);
-    assert_eq!(
-        db.get("repo1")
-            .unwrap()
-            .get("")
-            .unwrap()
-            .get("src/main.rs")
-            .unwrap()[0]
-            .status,
-        NoteStatus::Open
-    );
-
-    // 4. resolveNote
-    let mut input_resolve = base_input.clone();
-    input_resolve.action = Some("resolveNote".into());
-    input_resolve.reply_text = None;
-    let _ = super::process_input(input_resolve, &base_args);
-    let db = load_notes(&notes_path);
-    assert_eq!(
-        db.get("repo1")
-            .unwrap()
-            .get("")
-            .unwrap()
-            .get("src/main.rs")
-            .unwrap()[0]
-            .status,
-        NoteStatus::Resolved
-    );
+    // 2. Direct directory diffing
+    let dir_diff = diffuse::git::diff_paths(
+        &old_dir,
+        &new_dir,
+        3,
+        diffuse::git::WhitespaceMode::TrimEquality,
+    )
+    .unwrap();
+    assert_eq!(dir_diff.files.len(), 1);
+    assert_eq!(dir_diff.files[0].path, "test.txt");
 }
 
 #[test]
