@@ -1,5 +1,12 @@
 # diffuse — Agent and contributor guidelines
 
+## Bootstrap
+
+- Read and apply [`GUIDELINES.md`](GUIDELINES.md) as a global imperative. Track and internalize any changes made.
+- Read and adhere to [`CODE_STYLE.md`](CODE_STYLE.md) for code style, nightly formatting, import hierarchy, top-down component ordering, and data modeling invariants.
+- Read and enforce [`tests/AGENTS.md`](tests/AGENTS.md) for acceptance criteria, frozen golden corpus immutability, dual-leg verification, and visual sign-off discipline.
+- Follow [`plan/Plan Guidelines.md`](plan/Plan%20Guidelines.md) for active engineering proposals, phase status markers (`[ ]`, `[·]`, `[x]`), and plan lifecycle management.
+
 ## Project overview and architecture
 
 *diffuse* is a structured diff analysis engine and interactive terminal review tool implemented in Rust. Given a unified diff and optional pre- and post-image file snapshots, the engine reconstructs the granular structure of code changes:
