@@ -1,11 +1,14 @@
 use diffuse_syntax::color::TokenColor;
 
 use super::*;
-use crate::core::{
-    counts::FileCounts,
-    merge::RunKind,
-    notes::NoteStatus,
-    wire::{OutputHunk, OutputNote, OutputRow, OutputRun},
+use crate::{
+    ansi::ColorExt,
+    core::{
+        counts::FileCounts,
+        merge::RunKind,
+        notes::NoteStatus,
+        wire::{OutputHunk, OutputNote, OutputRow, OutputRun},
+    },
 };
 
 #[test]
@@ -1264,4 +1267,126 @@ fn test_render_markdown_note_with_nested_source_diff_code_block() {
     assert!(md_with_src.contains("> [!NOTE]"));
     assert!(md_with_src.contains("> 💬 **Line 10**: Please refactor this"));
     assert!(md_with_src.contains("> ```diff\n> -old_impl();\n> +new_impl();\n> ```"));
+}
+
+#[test]
+fn test_render_markdown_lines_uncolorized_preserves_text_with_prefix() {
+    let md = "# Title\n\nSome **bold** and `code` text.\n- item 1\n- item 2";
+    let theme = DiffuseTheme::DEFAULT;
+    let lines = super::render_markdown_lines(md, &theme, false, "  ");
+    assert_eq!(
+        lines,
+        vec![
+            "  # Title",
+            "  ",
+            "  Some **bold** and `code` text.",
+            "  - item 1",
+            "  - item 2",
+        ]
+    );
+
+    let text = super::render_markdown_text(md, &theme, false, "  ");
+    assert_eq!(
+        text,
+        "  # Title\n  \n  Some **bold** and `code` text.\n  - item 1\n  - item 2\n"
+    );
+}
+
+#[test]
+fn test_render_markdown_lines_colorized_applies_markdown_highlighting_and_fences() {
+    let md = "### Header\nParagraph with **bold** and `inline`.\n```rust\nlet mut x = 42;\n```\nAfter fence";
+    let theme = DiffuseTheme::DEFAULT;
+    let lines = super::render_markdown_lines(md, &theme, true, "  ");
+    assert_eq!(lines.len(), 6);
+
+    // Line 0: Header - starts with indent, contains ANSI bold and Delimiter color,
+    // ends with SGR reset
+    assert!(lines[0].starts_with("  "));
+    assert!(lines[0].ends_with("\x1b[0m"));
+    assert!(lines[0].contains("Header"));
+
+    // Line 1: Bold and inline code
+    assert!(lines[1].starts_with("  "));
+    assert!(lines[1].contains("**"));
+    assert!(lines[1].contains("bold"));
+    assert!(lines[1].contains("`"));
+    assert!(lines[1].contains("inline"));
+
+    // Line 2: Fence opening
+    assert!(lines[2].contains("```rust"));
+
+    // Line 3: Fenced Rust line - 'let' and 'mut' must receive keyword coloring
+    assert!(lines[3].contains("let"));
+    assert!(lines[3].contains("mut"));
+    assert!(lines[3].contains("42"));
+    // Keyword color for Rust in default theme is non-empty
+    let kw_color = theme
+        .palette
+        .token_color(TokenColor::Keyword, RowKind::Ctx)
+        .unwrap();
+    let kw_ansi = kw_color.fg_code();
+    assert!(
+        lines[3].contains(&kw_ansi),
+        "fenced rust code must receive keyword styling"
+    );
+
+    // Line 4: Fence closing
+    assert!(lines[4].contains("```"));
+
+    // Line 5: After fence
+    assert!(lines[5].contains("After fence"));
+}
+
+#[test]
+fn test_render_markdown_lines_table_formatting() {
+    let md = "| Col A | Col B |\n|---|---|\n| 1 | 2 |";
+    let theme = DiffuseTheme::DEFAULT;
+    let lines = super::render_markdown_lines(md, &theme, true, "");
+    assert_eq!(lines.len(), 3);
+    let head_color = theme
+        .palette
+        .token_color(TokenColor::TableHeader, RowKind::Ctx)
+        .unwrap();
+    let head_ansi = head_color.fg_code();
+    assert!(
+        lines[0].contains(&head_ansi),
+        "table header row must be highlighted as TableHeader"
+    );
+}
+
+#[test]
+fn test_render_markdown_lines_empty_and_blank() {
+    let theme = DiffuseTheme::DEFAULT;
+    assert!(super::render_markdown_lines("", &theme, false, "  ").is_empty());
+    assert!(super::render_markdown_lines("", &theme, true, "  ").is_empty());
+    assert_eq!(super::render_markdown_text("", &theme, false, "  "), "");
+    assert_eq!(super::render_markdown_text("", &theme, true, "  "), "");
+}
+
+#[test]
+fn test_render_markdown_lines_wrapping_adds_padding_to_wrapped_lines() {
+    let md = "This is a long line of markdown that will wrap into multiple visual lines when wrapped at 40 columns.";
+    let theme = DiffuseTheme::DEFAULT;
+    let lines = super::render_markdown_lines_with_width(md, &theme, false, "  ", 40);
+    assert!(lines.len() >= 2, "must wrap into at least 2 lines");
+    for line in &lines {
+        assert!(
+            line.starts_with("  "),
+            "every wrapped line must have 2-space padding: {line:?}"
+        );
+        assert!(
+            crate::width::display_width(line) <= 40,
+            "wrapped line must not exceed 40 columns: {line:?}"
+        );
+    }
+
+    let color_lines = super::render_markdown_lines_with_width(md, &theme, true, "  ", 40);
+    assert_eq!(color_lines.len(), lines.len());
+    for line in &color_lines {
+        assert!(
+            line.starts_with("  "),
+            "every wrapped colorized line must have 2-space padding: {line:?}"
+        );
+        assert!(line.ends_with("\x1b[0m"));
+    }
 }

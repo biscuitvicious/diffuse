@@ -66,9 +66,11 @@ pub use diffuse_render::{
     DiffuseTheme, MarkdownOptions,
     ansi::{SGR_RESET, strip_ansi},
     default_theme, detect_terminal_width, render_file_diff, render_file_diff_with_width,
-    render_file_markdown, render_markdown_output, render_pipeline_output,
-    render_pipeline_output_with_width, render_raw_file_diff, render_raw_file_diff_with_width,
-    render_raw_pipeline_output, render_raw_pipeline_output_with_width,
+    render_file_markdown, render_markdown_lines, render_markdown_lines_with_width,
+    render_markdown_output, render_markdown_text, render_markdown_text_with_width,
+    render_pipeline_output, render_pipeline_output_with_width, render_raw_file_diff,
+    render_raw_file_diff_with_width, render_raw_pipeline_output,
+    render_raw_pipeline_output_with_width,
 };
 pub use diffuse_syntax::{TokenColor, profile::LangProfile, registry::lang_profile};
 pub use diffuse_tui::{run_interactive_tui, run_tui};
@@ -91,9 +93,11 @@ pub mod prelude {
         DiffuseTheme, MarkdownOptions,
         ansi::{SGR_RESET, strip_ansi},
         default_theme, detect_terminal_width, render_file_diff, render_file_diff_with_width,
-        render_file_markdown, render_markdown_output, render_pipeline_output,
-        render_pipeline_output_with_width, render_raw_file_diff, render_raw_file_diff_with_width,
-        render_raw_pipeline_output, render_raw_pipeline_output_with_width, render_source_rows,
+        render_file_markdown, render_markdown_lines, render_markdown_lines_with_width,
+        render_markdown_output, render_markdown_text, render_markdown_text_with_width,
+        render_pipeline_output, render_pipeline_output_with_width, render_raw_file_diff,
+        render_raw_file_diff_with_width, render_raw_pipeline_output,
+        render_raw_pipeline_output_with_width, render_source_rows,
     };
     pub use diffuse_syntax::{TokenColor, profile::LangProfile, registry::lang_profile};
     pub use diffuse_tui::{run_interactive_tui, run_tui};

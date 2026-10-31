@@ -1764,6 +1764,95 @@ fn test_notes_list_revisions_and_pathspecs() {
     assert!(!stdout_staged.contains("Note on c1"));
 }
 
+#[test]
+fn test_cli_notes_markdown_highlighting() {
+    use diffuse::core::notes::{NoteStatus, NotesDB, ReviewNote, add_note, save_notes};
+
+    let dir = tempfile::tempdir().unwrap();
+    let notes_path = dir.path().join("notes.json");
+    let mut db = NotesDB::new();
+    let note = ReviewNote {
+        id: "note-md".into(),
+        file: "src/main.rs".into(),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(42),
+        ),
+        text:
+            "# Important\nPlease inspect **this** change and `call_fn()`:\n```rust\nlet x = 1;\n```"
+                .into(),
+        created_at: 1000,
+        content_hash: None,
+        status: NoteStatus::Open,
+        original_source_rows: Vec::new(),
+    };
+    add_note(&mut db, "repo1", "", note);
+    save_notes(&notes_path, &db).unwrap();
+
+    let notes_file_arg = notes_path.to_str().unwrap();
+
+    // 1. Without color: plain markdown preserved verbatim with 2-space indentation
+    let out_plain = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo-key")
+        .arg("repo1")
+        .arg("--color=never")
+        .arg("notes")
+        .arg("list")
+        .output()
+        .unwrap();
+    assert_eq!(out_plain.status.code(), Some(0));
+    let stdout_plain = String::from_utf8_lossy(&out_plain.stdout);
+    assert!(stdout_plain.contains("  # Important"));
+    assert!(stdout_plain.contains("  Please inspect **this** change and `call_fn()`:"));
+    assert!(stdout_plain.contains("  ```rust"));
+    assert!(stdout_plain.contains("  let x = 1;"));
+    assert!(stdout_plain.contains("  ```"));
+    assert!(!stdout_plain.contains("\x1b["));
+
+    // 2. With --color=always: ANSI SGR highlighting applied to markdown tokens and
+    //    fences
+    let out_color = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo-key")
+        .arg("repo1")
+        .arg("--color=always")
+        .arg("notes")
+        .arg("list")
+        .output()
+        .unwrap();
+    assert_eq!(out_color.status.code(), Some(0));
+    let stdout_color = String::from_utf8_lossy(&out_color.stdout);
+    assert!(stdout_color.contains("  "));
+    assert!(stdout_color.contains("Important"));
+    assert!(stdout_color.contains("\x1b[1m"));
+    assert!(stdout_color.contains("this"));
+    assert!(stdout_color.contains("call_fn()"));
+    assert!(stdout_color.contains("let"));
+
+    // 3. With show command and --color=always
+    let out_show = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(dir.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo-key")
+        .arg("repo1")
+        .arg("--color=always")
+        .arg("notes")
+        .arg("show")
+        .arg("note-md")
+        .output()
+        .unwrap();
+    assert_eq!(out_show.status.code(), Some(0));
+    let stdout_show = String::from_utf8_lossy(&out_show.stdout);
+    assert!(stdout_show.contains("Text:\n"));
+    assert!(stdout_show.contains("Important"));
+    assert!(stdout_show.contains("\x1b[1m"));
+}
+
 /// Regression: one-shot runs must never emit the OSC 11 background query
 /// (`ESC ] 11 ; ?`). The terminal answers with its background color as
 /// *input*; when the 30ms read times out, the late response leaks into the

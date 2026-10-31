@@ -193,6 +193,25 @@ fn print_rows_with_context(rows: &[OutputRow], use_color: bool) {
     }
 }
 
+/// Formats a note's text lines with markdown syntax highlighting (or plain text
+/// when color is disabled), indented by two spaces, wrapped at the given width
+/// (or unconstrained when width is 0), with two-space padding on wrapped
+/// continuation lines.
+pub fn format_note_text(text: &str, use_color: bool, width: usize) -> Vec<String> {
+    let theme = DiffuseTheme::DEFAULT;
+    diffuse::render::render_markdown_lines_with_width(text, &theme, use_color, "  ", width)
+}
+
+/// Print a note's text lines with markdown syntax highlighting (or plain text
+/// when color is disabled), indented by two spaces and wrapped at terminal
+/// width.
+fn print_note_text(text: &str, use_color: bool) {
+    let width = detect_terminal_width();
+    for l in format_note_text(text, use_color, width) {
+        println!("{l}");
+    }
+}
+
 pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> {
     let notes_path = args
         .notes_file
@@ -380,9 +399,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                     print_rows_with_context(&note.original_source_rows, use_color);
                 }
 
-                for l in note.text.lines() {
-                    println!("  {l}");
-                }
+                print_note_text(&note.text, use_color);
                 println!();
             }
 
@@ -737,19 +754,17 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             }
 
             let lines = note.location.label();
+            let use_color = init_color_mode(&args.color, args.no_color);
             println!("Note:     {}", note.id);
             println!("Status:   {} {:?}", note.status.glyph(), note.status);
             println!("File:     {file}:{lines}");
             println!("Created:  {}", note.created_at);
             if *show_source && !note.original_source_rows.is_empty() {
                 println!("Source:");
-                let use_color = init_color_mode(&args.color, args.no_color);
                 print_rows_with_context(&note.original_source_rows, use_color);
             }
             println!("Text:");
-            for l in note.text.lines() {
-                println!("  {l}");
-            }
+            print_note_text(&note.text, use_color);
         }
         Some(NotesAction::Reply {
             id,
@@ -937,5 +952,64 @@ mod tests {
         );
         assert!(!formatted_120[0].contains('│'));
         assert!(formatted_120[0].contains(" 392 +"));
+    }
+
+    #[test]
+    fn test_format_note_text_markdown_highlighting_and_uncolored() {
+        use diffuse::ansi::ColorExt;
+
+        let text = "# Issue title\n\nPlease check **important** and `code` details:\n- item 1\n```rust\nlet x = 1;\n```";
+        let uncolored = format_note_text(text, false, 0);
+        assert_eq!(
+            uncolored,
+            vec![
+                "  # Issue title",
+                "  ",
+                "  Please check **important** and `code` details:",
+                "  - item 1",
+                "  ```rust",
+                "  let x = 1;",
+                "  ```",
+            ]
+        );
+
+        let colorized = format_note_text(text, true, 0);
+        assert_eq!(colorized.len(), 7);
+        for line in &colorized {
+            assert!(line.starts_with("  "));
+        }
+        assert!(colorized[0].contains("Issue title"));
+        assert!(colorized[0].contains("\x1b[1m"));
+        assert!(colorized[0].ends_with("\x1b[0m"));
+        assert!(colorized[2].contains("important"));
+        assert!(colorized[2].contains("\x1b[1m"));
+
+        let kw_color = DiffuseTheme::DEFAULT
+            .palette
+            .token_color(diffuse_syntax::TokenColor::Keyword, RowKind::Ctx)
+            .unwrap();
+        assert!(colorized[5].contains(&kw_color.fg_code()));
+    }
+
+    #[test]
+    fn test_format_note_text_wrapping_adds_two_space_padding_to_continuation_lines() {
+        let text = "This is a single long line of note text that will exceed forty columns and wrap into multiple lines.";
+        let wrapped = format_note_text(text, false, 40);
+        assert!(wrapped.len() >= 2);
+        for line in &wrapped {
+            assert!(
+                line.starts_with("  "),
+                "every wrapped line must have 2-space padding: {line:?}"
+            );
+        }
+
+        let wrapped_color = format_note_text(text, true, 40);
+        assert_eq!(wrapped_color.len(), wrapped.len());
+        for line in &wrapped_color {
+            assert!(
+                line.starts_with("  "),
+                "every wrapped color line must have 2-space padding: {line:?}"
+            );
+        }
     }
 }
