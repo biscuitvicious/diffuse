@@ -113,6 +113,17 @@ struct Args {
         help = "Pathspec patterns to exclude from harvested diff"
     )]
     exclude: Vec<String>,
+
+    /// Path to review-notes database (defaults to
+    /// ~/.local/state/diffuse/notes.json)
+    #[arg(
+        long,
+        value_name = "PATH",
+        value_hint = clap::ValueHint::FilePath,
+        help_heading = "Notes",
+        help = "Path to the review-notes database (defaults to ~/.local/state/diffuse/notes.json)"
+    )]
+    notes_file: Option<PathBuf>,
 }
 
 /// Maps exclusion patterns to git exclude-pathspecs.
@@ -138,6 +149,10 @@ struct FixtureOutput {
     /// corpus files (`diff.patch`, `files/*.old.*`, `files/*.new.*`) — never
     /// inside the JSON.
     revision: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repo_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notes: Option<diffuse::core::notes::NotesDB>,
 }
 
 /// Resolves a git revision or range expression to absolute short commit ids or
@@ -227,27 +242,71 @@ fn snapshot_filename(path: &str, side: &str) -> String {
     )
 }
 
-/// Resolves the tag name to create: either explicit `--tag <NAME>` or derived
-/// from `--output`.
-fn resolve_tag_name(
+/// Detects whether `repo_root` is the diffuse codebase using Cargo metadata /
+/// manifests.
+fn is_diffuse_repo(repo_root: &Path) -> bool {
+    let manifest = repo_root.join("Cargo.toml");
+    if !manifest.is_file() {
+        return false;
+    }
+    // Fast path: inspect root or cli manifest directly
+    if let Ok(content) = fs::read_to_string(&manifest)
+        && (content.contains("diffuse-core") || content.contains("name = \"diffuse\""))
+    {
+        return true;
+    }
+    let cli_manifest = repo_root.join("crates/diffuse/Cargo.toml");
+    if let Ok(content) = fs::read_to_string(&cli_manifest)
+        && content.contains("name = \"diffuse\"")
+    {
+        return true;
+    }
+    // Fallback: query cargo metadata
+    if let Ok(out) = process::Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version=1")
+        .arg("--no-deps")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .output()
+        && out.status.success()
+        && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout)
+        && let Some(pkgs) = val["packages"].as_array()
+    {
+        return pkgs.iter().any(|p| p["name"] == "diffuse");
+    }
+    false
+}
+
+/// Resolves the golden fixture name for tagging: either explicit `--tag <NAME>`
+/// or derived from `--output`.
+fn resolve_golden_name(
     tag_arg: Option<&str>,
     output: Option<&Path>,
+    in_diffuse: bool,
 ) -> Result<Option<String>, String> {
-    let Some(tag_val) = tag_arg else {
-        return Ok(None);
-    };
-    if !tag_val.is_empty() {
-        return Ok(Some(tag_val.to_string()));
+    if let Some(tag_val) = tag_arg {
+        if !tag_val.is_empty() {
+            return Ok(Some(tag_val.to_string()));
+        }
+        let name = output
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                "--tag requires a tag name or an --output directory path from which to derive one"
+                    .to_string()
+            })?;
+        return Ok(Some(name.to_string()));
     }
-    let name = output
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            "--tag requires a tag name or an --output directory path from which to derive one"
-                .to_string()
-        })?;
-    Ok(Some(name.to_string()))
+    if in_diffuse {
+        return Ok(output
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string()));
+    }
+    Ok(None)
 }
 
 /// Extracts the target commit endpoint (new/head side) of a revision or range
@@ -273,12 +332,6 @@ fn target_revision_endpoint(revision: &str) -> &str {
 fn main() {
     let args = Args::parse();
 
-    let tag_name =
-        resolve_tag_name(args.tag.as_deref(), args.output.as_deref()).unwrap_or_else(|e| {
-            eprintln!("harvest: {e}");
-            process::exit(1);
-        });
-
     for dir in &args.directory {
         if let Err(e) = env::set_current_dir(dir) {
             eprintln!(
@@ -292,6 +345,22 @@ fn main() {
     let repo_root = args
         .repo
         .unwrap_or_else(|| env::current_dir().expect("valid current dir"));
+
+    let in_diffuse = is_diffuse_repo(&repo_root);
+    let golden_name = resolve_golden_name(args.tag.as_deref(), args.output.as_deref(), in_diffuse)
+        .unwrap_or_else(|e| {
+            eprintln!("harvest: {e}");
+            process::exit(1);
+        });
+
+    let mut exclude = args.exclude.clone();
+    if in_diffuse
+        && !exclude
+            .iter()
+            .any(|p| p == "tests/golden" || p == "tests/golden/")
+    {
+        exclude.push("tests/golden".to_string());
+    }
 
     // `WORKTREE` diffs the (uncommitted) working tree against HEAD; any
     // other revision expression is pinned to absolute commit ids up front so
@@ -314,7 +383,7 @@ fn main() {
     let git_res = match load_git_repo(
         &repo_root,
         &base_args,
-        &exclude_pathspecs(&args.exclude),
+        &exclude_pathspecs(&exclude),
         false,
         args.context,
     ) {
@@ -336,7 +405,42 @@ fn main() {
             head
         }
     } else {
-        resolved_revision
+        resolved_revision.clone()
+    };
+
+    let notes_path = args
+        .notes_file
+        .unwrap_or_else(diffuse::core::notes::default_notes_path);
+
+    let (harvested_notes, repo_key) = if notes_path.is_file() {
+        use diffuse::core::repo::ReviewTargetNotesExt;
+        let db = diffuse::core::notes::load_notes(&notes_path);
+        let repo = diffuse::core::repo::Repo::from_root(&repo_root);
+        let target =
+            diffuse::core::repo::ReviewTarget::from_repo_args(repo, base_args.clone(), false);
+        let matched_keys = target.matched_notes_db_keys(&db);
+        let mut notes_map: diffuse::core::notes::NotesDB = HashMap::new();
+        for key in &matched_keys {
+            if let Some(file_notes) = db.get(*key)
+                && !file_notes.is_empty()
+            {
+                notes_map.insert((*key).to_string(), file_notes.clone());
+            }
+        }
+        if notes_map.is_empty() {
+            (None, None)
+        } else {
+            let key = if matched_keys.len() == 1 {
+                matched_keys[0].to_string()
+            } else if matched_keys.contains(&target.notes_key().as_str()) {
+                target.notes_key()
+            } else {
+                matched_keys[0].to_string()
+            };
+            (Some(notes_map), Some(key))
+        }
+    } else {
+        (None, None)
     };
 
     let fixture = FixtureOutput {
@@ -344,6 +448,8 @@ fn main() {
         new_content: git_res.new_content,
         old_content: git_res.old_content,
         revision,
+        repo_key: repo_key.clone(),
+        notes: harvested_notes.clone(),
     };
 
     if let Some(out_path) = args.output {
@@ -394,6 +500,8 @@ fn main() {
             #[derive(Serialize)]
             struct MetaOutput {
                 revision: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                repo_key: Option<String>,
                 files: Vec<MetaRecord>,
             }
 
@@ -419,10 +527,26 @@ fn main() {
 
             let meta = MetaOutput {
                 revision: fixture.revision,
+                repo_key,
                 files: meta_records,
             };
             let meta_json = serde_json::to_string_pretty(&meta).expect("serialize meta.json");
             fs::write(corpus_dir.join("meta.json"), meta_json).expect("write meta.json");
+
+            if let Some(ref notes) = harvested_notes {
+                let notes_json = serde_json::to_string_pretty(notes).expect("serialize notes.json");
+                fs::write(corpus_dir.join("notes.json"), notes_json).expect("write notes.json");
+                let note_count: usize = notes
+                    .values()
+                    .flat_map(|files| files.values())
+                    .map(Vec::len)
+                    .sum();
+                eprintln!(
+                    "Harvested {} review notes to {}",
+                    note_count,
+                    corpus_dir.join("notes.json").display()
+                );
+            }
 
             eprintln!(
                 "Harvested {} files to {}",
@@ -435,23 +559,54 @@ fn main() {
         println!("{json}");
     }
 
-    if let Some(ref name) = tag_name {
-        let target_endpoint = target_revision_endpoint(&args.revision);
+    if (in_diffuse || args.tag.is_some())
+        && let Some(ref golden) = golden_name
+    {
         let repo = Repository::open(&repo_root).unwrap_or_else(|e| {
             eprintln!("harvest: cannot open repository to tag: {e}");
             process::exit(1);
         });
-        repo.create_tag(name, target_endpoint).unwrap_or_else(|e| {
-            eprintln!("harvest: cannot create tag '{name}': {e}");
-            process::exit(1);
-        });
-        let short = repo
-            .rev_to_short_hash(target_endpoint)
-            .unwrap_or_else(|| target_endpoint.to_string());
-        eprintln!(
-            "Tagged commit {short} as '{name}' in {}",
-            repo_root.display()
-        );
+
+        // Determine single vs multi-commit range
+        if let Some((left, right)) = resolved_revision
+            .split_once("...")
+            .or_else(|| resolved_revision.split_once(".."))
+        {
+            let beg_tag = format!("{golden}-beg");
+            let end_tag = format!("{golden}-end");
+            repo.create_tag(&beg_tag, left).unwrap_or_else(|e| {
+                eprintln!("harvest: cannot create tag '{beg_tag}': {e}");
+                process::exit(1);
+            });
+            repo.create_tag(&end_tag, right).unwrap_or_else(|e| {
+                eprintln!("harvest: cannot create tag '{end_tag}': {e}");
+                process::exit(1);
+            });
+            let short_left = repo
+                .rev_to_short_hash(left)
+                .unwrap_or_else(|| left.to_string());
+            let short_right = repo
+                .rev_to_short_hash(right)
+                .unwrap_or_else(|| right.to_string());
+            eprintln!(
+                "Tagged range {short_left}..{short_right} as '{beg_tag}' and '{end_tag}' in {}",
+                repo_root.display()
+            );
+        } else {
+            let target_endpoint = target_revision_endpoint(&resolved_revision);
+            repo.create_tag(golden, target_endpoint)
+                .unwrap_or_else(|e| {
+                    eprintln!("harvest: cannot create tag '{golden}': {e}");
+                    process::exit(1);
+                });
+            let short = repo
+                .rev_to_short_hash(target_endpoint)
+                .unwrap_or_else(|| target_endpoint.to_string());
+            eprintln!(
+                "Tagged commit {short} as '{golden}' in {}",
+                repo_root.display()
+            );
+        }
     }
 }
 
@@ -631,25 +786,44 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_tag_name() {
-        // No tag flag
-        assert_eq!(resolve_tag_name(None, None).unwrap(), None);
+    fn test_resolve_golden_name() {
+        // No tag and not diffuse
+        assert_eq!(resolve_golden_name(None, None, false).unwrap(), None);
 
         // Explicit tag name
         assert_eq!(
-            resolve_tag_name(Some("my-tag"), None).unwrap(),
+            resolve_golden_name(Some("my-tag"), None, false).unwrap(),
             Some("my-tag".to_string())
         );
 
-        // Implicit tag name derived from output path
+        // In diffuse repo, automatically derives from output path
         let out = Path::new("tests/golden/scrollbar-grab-drag");
         assert_eq!(
-            resolve_tag_name(Some(""), Some(out)).unwrap(),
+            resolve_golden_name(None, Some(out), true).unwrap(),
             Some("scrollbar-grab-drag".to_string())
         );
 
-        // Implicit tag name without output path fails
-        assert!(resolve_tag_name(Some(""), None).is_err());
+        // Not in diffuse repo without explicit tag
+        assert_eq!(resolve_golden_name(None, Some(out), false).unwrap(), None);
+
+        // Explicit empty tag flag (--tag without value)
+        assert_eq!(
+            resolve_golden_name(Some(""), Some(out), false).unwrap(),
+            Some("scrollbar-grab-drag".to_string())
+        );
+
+        // Explicit empty tag flag without output path returns error
+        assert!(resolve_golden_name(Some(""), None, false).is_err());
+    }
+
+    #[test]
+    fn test_is_diffuse_repo() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir.parent().unwrap().parent().unwrap();
+        assert!(is_diffuse_repo(root));
+
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!is_diffuse_repo(tmp.path()));
     }
 
     #[test]

@@ -18,15 +18,45 @@ pub fn is_binary_buf(buf: &[u8]) -> bool {
     check.contains(&0)
 }
 
-/// Helper to test if a relative path matches command-line pathspecs.
-fn pathspecs_match(path: &str, pathspecs: &[String]) -> bool {
+/// Helper to test if a relative path matches command-line pathspecs,
+/// honoring exclusion patterns (e.g. `:(exclude)<pat>`, `:!<pat>`, `^<pat>`).
+pub(crate) fn pathspecs_match(path: &str, pathspecs: &[String]) -> bool {
     if pathspecs.is_empty() {
         return true;
     }
-    pathspecs.iter().any(|ps| {
-        let clean = ps.strip_suffix('/').unwrap_or(ps);
-        path == clean || path.starts_with(&format!("{clean}/"))
-    })
+
+    let file_clean = path.trim_start_matches("./");
+
+    let path_matches_pattern = |pat: &str| -> bool {
+        let clean = pat.trim_start_matches("./").trim_end_matches('/');
+        file_clean == clean || file_clean.starts_with(&format!("{clean}/"))
+    };
+
+    let mut has_includes = false;
+    let mut matched_include = false;
+
+    for ps in pathspecs {
+        if let Some(pat) = ps.strip_prefix(":(exclude)") {
+            if path_matches_pattern(pat) {
+                return false;
+            }
+        } else if let Some(pat) = ps.strip_prefix(":!") {
+            if path_matches_pattern(pat) {
+                return false;
+            }
+        } else if let Some(pat) = ps.strip_prefix('^') {
+            if path_matches_pattern(pat) {
+                return false;
+            }
+        } else {
+            has_includes = true;
+            if !matched_include && path_matches_pattern(ps) {
+                matched_include = true;
+            }
+        }
+    }
+
+    !has_includes || matched_include
 }
 
 /// Result of untracked file discovery.

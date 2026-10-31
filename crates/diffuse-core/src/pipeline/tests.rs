@@ -2110,6 +2110,32 @@ fn test_synthetic_note_hunk_anchoring() {
     );
 }
 
+#[test]
+fn test_collapse_block_wholesale_rejection_preserves_absorbed_dels() {
+    let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,1 @@\n-let mut selected_lines = Vec::new();\n-for fr in &self.flat {\n-    if fr.file_idx != sel.file_idx {\n+let selected_rows: Vec<_> = self\n";
+    let old_content = "let mut selected_lines = Vec::new();\nfor fr in &self.flat {\n    if fr.file_idx != sel.file_idx {\n";
+    let new_content = "let selected_rows: Vec<_> = self\n";
+
+    let mut old_map = HashMap::new();
+    old_map.insert("test.rs".to_string(), old_content.to_string());
+    let mut new_map = HashMap::new();
+    new_map.insert("test.rs".to_string(), new_content.to_string());
+
+    let out = PipelineInput::new(diff)
+        .with_new_content(new_map)
+        .with_old_content(old_map)
+        .run();
+
+    let f = &out.files[0];
+    let old_lines: Vec<Option<u32>> = f.hunks[0].rows.iter().map(|r| r.old_line).collect();
+    assert!(old_lines.contains(&Some(1)), "old line 1 must render");
+    assert!(
+        old_lines.contains(&Some(2)),
+        "old line 2 must render even when wholesale collapse block is rejected"
+    );
+    assert!(old_lines.contains(&Some(3)), "old line 3 must render");
+}
+
 /// Expand anchors must mark reflow-moved source text as moved-out instead
 /// of struck: the old tail survives verbatim in the aux rows, so striking
 /// it claims a deletion that never happened (struck + context implies the

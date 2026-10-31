@@ -1115,3 +1115,43 @@ fn test_repository_create_tag() {
     // Invalid target fails
     assert!(repo.create_tag("invalid", "no-such-ref").is_err());
 }
+
+#[test]
+fn test_pathspecs_match_with_excludes() {
+    use crate::status::pathspecs_match;
+
+    // Empty pathspecs matches everything
+    assert!(pathspecs_match("src/lib.rs", &[]));
+
+    // Plain inclusion pattern
+    let inc = vec!["src/".to_string()];
+    assert!(pathspecs_match("src/lib.rs", &inc));
+    assert!(pathspecs_match("src/sub/mod.rs", &inc));
+    assert!(!pathspecs_match("tests/main.rs", &inc));
+
+    // Plain exclusion pattern with :(exclude)
+    let exc1 = vec![":(exclude)tests/golden".to_string()];
+    assert!(pathspecs_match("src/lib.rs", &exc1));
+    assert!(pathspecs_match("tests/unit.rs", &exc1));
+    assert!(!pathspecs_match("tests/golden/patch.diff", &exc1));
+    assert!(!pathspecs_match("tests/golden", &exc1));
+
+    // Exclusion pattern with :!
+    let exc2 = vec![":!tests/golden/".to_string()];
+    assert!(pathspecs_match("src/lib.rs", &exc2));
+    assert!(!pathspecs_match("tests/golden/patch.diff", &exc2));
+
+    // Exclusion pattern with ^
+    let exc3 = vec!["^tests/golden".to_string()];
+    assert!(pathspecs_match("src/lib.rs", &exc3));
+    assert!(!pathspecs_match("tests/golden/patch.diff", &exc3));
+
+    // Combined include and exclude
+    let combo = vec![
+        "crates/".to_string(),
+        ":(exclude)crates/ignored".to_string(),
+    ];
+    assert!(pathspecs_match("crates/diffuse/src/main.rs", &combo));
+    assert!(!pathspecs_match("crates/ignored/file.rs", &combo));
+    assert!(!pathspecs_match("README.md", &combo));
+}

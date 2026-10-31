@@ -2103,6 +2103,7 @@ corpus_tests!(linenum_u32, "linenum-u32", 26);
 corpus_tests!(scrollbar_grab_drag, "scrollbar-grab-drag", 7);
 corpus_tests!(viewport_scroll_boundaries, "viewport-scroll-boundaries", 6);
 corpus_tests!(container_compatibility, "container-compatibility", 9);
+corpus_tests!(diffcoord_anchoring, "diffcoord-anchoring", 38);
 
 #[test]
 fn test_golden_initialized_detection() {

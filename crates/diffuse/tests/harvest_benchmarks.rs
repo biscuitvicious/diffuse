@@ -385,6 +385,123 @@ fn test_harvest_cli_tool_generates_valid_fixture() {
 }
 
 #[test]
+fn test_harvest_cli_tool_harvests_associated_notes() {
+    let (dir, _, _, _) = create_synthetic_multilang_repo(4);
+    let repo_handle = diffuse_git::Repository::open(dir.path()).unwrap();
+
+    // Commit a change to a file
+    commit_files(
+        &repo_handle,
+        "commit with notes",
+        &[(
+            "src/kernel/driver_0.c",
+            "int init_driver_0(void) {\n    return 42;\n}\n",
+        )],
+    )
+    .unwrap();
+
+    // Create notes DB with a note attached to c2
+    let notes_path = dir.path().join("test_notes.json");
+    let mut db: diffuse::core::notes::NotesDB = HashMap::new();
+    let note = diffuse::core::notes::ReviewNote {
+        id: "note-1".to_string(),
+        file: "src/kernel/driver_0.c".to_string(),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(2),
+        ),
+        text: "Harvested note text".to_string(),
+        created_at: 1700000000,
+        content_hash: diffuse::core::notes::LineHash::from_hex("abcd1234").ok(),
+        original_source_rows: vec![],
+        status: diffuse::core::notes::NoteStatus::Open,
+    };
+    let target = diffuse::core::repo::ReviewTarget::from_repo_args(
+        diffuse::core::repo::Repo::from_root(dir.path()),
+        vec!["HEAD^!".to_string()],
+        false,
+    );
+    let note_key = target.notes_key();
+    diffuse::core::notes::add_note(&mut db, &note_key, note);
+    diffuse::core::notes::save_notes(&notes_path, &db).unwrap();
+
+    // 1. Harvest commit with --notes-file
+    let corpus_dir = dir.path().join("notes_corpus");
+    let out = Command::new(env!("CARGO_BIN_EXE_harvest"))
+        .arg("HEAD^!")
+        .arg("--repo")
+        .arg(dir.path())
+        .arg("--notes-file")
+        .arg(&notes_path)
+        .arg("--output")
+        .arg(&corpus_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        out.status.success(),
+        "harvest failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Verify notes.json exists and has the note
+    assert!(
+        corpus_dir.join("notes.json").exists(),
+        "notes.json must be written"
+    );
+    let harvested_notes = diffuse::core::notes::load_notes(&corpus_dir.join("notes.json"));
+    assert!(harvested_notes.contains_key(&note_key));
+    let file_notes = harvested_notes
+        .get(&note_key)
+        .unwrap()
+        .get("src/kernel/driver_0.c")
+        .unwrap();
+    assert_eq!(file_notes.len(), 1);
+    assert_eq!(file_notes[0].id, "note-1");
+
+    // Verify meta.json records repo_key
+    let meta_text = fs::read_to_string(corpus_dir.join("meta.json")).unwrap();
+    let meta: serde_json::Value = serde_json::from_str(&meta_text).unwrap();
+    assert_eq!(meta["repo_key"], note_key);
+
+    // Commit a third change without any notes
+    commit_files(
+        &repo_handle,
+        "commit without notes",
+        &[(
+            "src/kernel/driver_0.c",
+            "int init_driver_0(void) {\n    return 100;\n}\n",
+        )],
+    )
+    .unwrap();
+
+    // 2. Harvest without notes on a commit that has no notes
+    let empty_dir = dir.path().join("empty_corpus");
+    let out_empty = Command::new(env!("CARGO_BIN_EXE_harvest"))
+        .arg("HEAD^!")
+        .arg("--repo")
+        .arg(dir.path())
+        .arg("--notes-file")
+        .arg(&notes_path)
+        .arg("--output")
+        .arg(&empty_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        out_empty.status.success(),
+        "harvest without notes failed: {}",
+        String::from_utf8_lossy(&out_empty.stderr)
+    );
+    assert!(
+        !empty_dir.join("notes.json").exists(),
+        "notes.json should not exist when no notes"
+    );
+    let empty_meta: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(empty_dir.join("meta.json")).unwrap()).unwrap();
+    assert!(empty_meta.get("repo_key").is_none());
+}
+
+#[test]
 fn test_harvest_and_stream_scale_10000_files() {
     let t_setup = Instant::now();
     let (diff, new_content, old_content) = create_synthetic_diff_in_memory(10000);

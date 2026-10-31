@@ -426,15 +426,11 @@ pub fn diff_repository(
     let repo_root = repo.work_dir().unwrap_or_else(|| repo.git_dir());
 
     for s in statuses {
-        if !target.pathspecs.is_empty()
-            && !target.pathspecs.iter().any(|p| {
-                let clean = p.strip_suffix('/').unwrap_or(p);
-                s.path == clean
-                    || s.path.starts_with(&format!("{clean}/"))
-                    || s.old_path
-                        .as_deref()
-                        .is_some_and(|op| op == clean || op.starts_with(&format!("{clean}/")))
-            })
+        if !crate::status::pathspecs_match(&s.path, &target.pathspecs)
+            && !s
+                .old_path
+                .as_deref()
+                .is_some_and(|op| crate::status::pathspecs_match(op, &target.pathspecs))
         {
             continue;
         }

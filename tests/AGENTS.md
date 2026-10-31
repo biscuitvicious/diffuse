@@ -46,6 +46,7 @@ discipline for any change in golden output.
 | `scrollbar-grab-drag` | ✅ | ✅ | Provisional | Scrollbar grab drag, 12% min size, touch velocity scaling, and dispatch extraction (pending full review) |
 | `viewport-scroll-boundaries` | ✅ | ✅ | Provisional | Viewport scroll boundaries and reflow expansion (pending full review) |
 | `container-compatibility` | ✅ | ✅ | **Validated** | Fully hand-reviewed clean rendering baseline (container compatibility in Gotoh alignment and submodule commit pairing); strong signal against changes |
+| `diffcoord-anchoring` | ✅ | ✅ | Provisional | Two-sided coordinate anchoring, multi-line ranges, rich markdown formatting, and unanchored source line preservation (pending full review) |
 
 The terminal render walk in [`crates/diffuse/tests/golden.rs`](../crates/diffuse/tests/golden.rs) (`terminal_render_golden_walk`)
 covers the corpora; it locks `.render.dark.txt`, `.render.light.txt`, and
@@ -86,22 +87,22 @@ single canonical copy of the Rust acceptance.
 
 Always harvest with **absolute ranges** (`harvest` resolves any
 expression to short commit ids or `<ref>^!`, so the recorded revision can never
-re-resolve to a different window) and exclude the golden tree itself
-(`--exclude tests/golden`) — a corpus must not ingest its own history.
-When harvesting from the `diffuse` repository itself, always pass `--tag` to
-record a lightweight git tag at the harvested commit; this provides direct
-reference parity and enables rendering the golden changeset via
-`diffuse <name>^!`.
+re-resolve to a different window).
+When harvesting from the `diffuse` repository itself, `harvest` automatically
+excludes `tests/golden` from the diff and creates lightweight git tags (`<name>`
+for single commits, or `<name>-beg` and `<name>-end` for multi-commit ranges)
+pointing to the harvested revisions. This provides direct reference parity and
+enables rendering the golden changeset via `diffuse <name>^!`.
 
 ### 2. Harvest the corpus
 
 ```sh
-harvest --exclude tests/golden --tag -o tests/golden/<name> <base>..<head>
+harvest -o tests/golden/<name> <base>..<head>
 ```
 
 The harvester writes `diff.patch`, the old/new side snapshots under
-`files/`, and `meta.json` (the pinned revision plus the path→snapshot
-mapping). Harvesting out of the `diffuse` repository mandates passing `--tag`,
+`files/`, `meta.json` (the pinned revision plus the path→snapshot
+mapping), and `notes.json` when review notes are present.
 which creates a lightweight git tag at the harvested commit in the source
 repository (named after the corpus directory, or a custom name if specified
 via `--tag <name>`). This ensures immediate visual verification and review

@@ -781,8 +781,20 @@ pub fn pass_assemble_mods(
                 };
 
             if crate::merge::is_wholesale_replacement_spans(&del_text, add.text(), &spans) {
-                kept_dels.push(ri);
-                pure_adds.push(add_ri);
+                if let Some(block_dels) = ctx.collapse_blocks.get(&add_ri) {
+                    for &di in block_dels {
+                        kept_dels.push(di);
+                    }
+                } else {
+                    kept_dels.push(ri);
+                }
+                if let Some(block_adds) = ctx.expand_blocks.get(&add_ri) {
+                    for &ai in block_adds {
+                        pure_adds.push(ai);
+                    }
+                } else {
+                    pure_adds.push(add_ri);
+                }
                 continue;
             }
 
@@ -1898,6 +1910,11 @@ pub fn pass_assemble_mods(
             kept_dels.push(ri);
         }
     }
+
+    kept_dels.sort_unstable();
+    kept_dels.dedup();
+    pure_adds.sort_unstable();
+    pure_adds.dedup();
 
     AssembledMods {
         out,
