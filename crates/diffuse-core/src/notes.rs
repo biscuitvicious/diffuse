@@ -6,76 +6,119 @@ use std::{
     env,
     ffi::OsString,
     fmt, fs, io,
-    num::{NonZero, ParseIntError},
+    num::{NonZero, NonZeroU32, ParseIntError},
     path::{Path, PathBuf},
     process,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::hash::{Hash, Hasher};
 
 pub use crate::pipeline::note_runs;
 
+/// Line number, 1-indexed, optional.
+pub type LineNum = Option<std::num::NonZeroU32>;
+
+/// Coordinate in a diff row identified by optional old/new line numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Side {
-    New,
-    Old,
+#[serde(rename_all = "camelCase")]
+pub struct DiffCoord {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_line_num: LineNum,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_line_num: LineNum,
 }
 
-impl Side {
+impl DiffCoord {
+    /// Construct a coordinate directly from `LineNum` values.
+    ///
+    /// # Preconditions
+    /// At least one of `old` or `new` must be `Some` (DbC fail-fast
+    /// precondition).
     #[inline]
-    pub const fn reverse(self) -> Side {
-        match self {
-            Side::New => Side::Old,
-            Side::Old => Side::New,
+    #[must_use]
+    pub fn new(old: LineNum, new: LineNum) -> Self {
+        crate::require!(
+            old.is_some() || new.is_some(),
+            "DiffCoord requires at least one line number (old, new) = ({old:?}, {new:?})"
+        );
+        Self {
+            old_line_num: old,
+            new_line_num: new,
         }
+    }
+
+    /// Construct a coordinate on the new side.
+    #[inline]
+    #[must_use]
+    pub fn new_side(new: u32) -> Self {
+        Self::from_numbers(None, Some(new)).expect("new line number must be non-zero")
+    }
+
+    /// Construct a coordinate on the old side.
+    #[inline]
+    #[must_use]
+    pub fn old_side(old: u32) -> Self {
+        Self::from_numbers(Some(old), None).expect("old line number must be non-zero")
+    }
+
+    /// Construct a coordinate on both sides.
+    #[inline]
+    #[must_use]
+    pub fn both(old: u32, new: u32) -> Self {
+        Self::from_numbers(Some(old), Some(new)).expect("line numbers must be non-zero")
+    }
+
+    /// Construct a coordinate from raw line numbers, capturing both sides
+    /// when available. Zero (0-indexed sentinel) values are dropped. Returns
+    /// `None` when both sides are absent — the not-both-`None` invariant is
+    /// upheld by construction.
+    #[inline]
+    #[must_use]
+    pub fn from_numbers(old: Option<u32>, new: Option<u32>) -> Option<Self> {
+        fn nz(v: Option<u32>) -> LineNum {
+            v.filter(|v| *v > 0).and_then(NonZeroU32::new)
+        }
+        let (old, new) = (nz(old), nz(new));
+        (old.is_some() || new.is_some()).then_some(Self {
+            old_line_num: old,
+            new_line_num: new,
+        })
     }
 }
 
 /// Where a review note is anchored.
 ///
 /// File notes attach to the file as a whole and render on the file header
-/// banner; line notes attach to a 1-indexed line range on one side of the
-/// diff and re-anchor by content hash across reloads.
+/// banner; line notes attach to a diff row coordinate and re-anchor by content
+/// hash across reloads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+#[derive(Default)]
 pub enum NoteLocation {
     /// The file as a whole; rendered on the file header banner.
+    #[default]
     File,
-    /// A line range `[start..=end]` on one side of the diff.
-    Line {
-        /// Diff side the line numbers belong to.
-        side: Side,
-        /// First line of the range (1-indexed).
-        start: u32,
-        /// Last line of the range (1-indexed, inclusive).
-        end: u32,
-    },
-}
-
-impl Default for NoteLocation {
-    fn default() -> Self {
-        Self::line(Side::New, 1, 1)
-    }
+    /// Single diff row anchor.
+    Line { coord: DiffCoord },
+    /// Multi-row range anchor.
+    Range { start: DiffCoord, end: DiffCoord },
 }
 
 impl NoteLocation {
-    /// Construct a line location covering `[start..=end]` on `side`.
-    ///
-    /// Reversed input is normalized, so `start <= end` always holds for
-    /// stored line locations.
+    /// Construct a single-row line location from a coordinate.
     #[inline]
-    pub const fn line(side: Side, start: u32, end: u32) -> Self {
-        Self::Line {
-            side,
-            start: if start <= end { start } else { end },
-            end: if start <= end { end } else { start },
-        }
+    #[must_use]
+    pub const fn line(coord: DiffCoord) -> Self {
+        Self::Line { coord }
+    }
+
+    /// Construct a multi-row range location from start and end coordinates.
+    #[inline]
+    #[must_use]
+    pub const fn range(start: DiffCoord, end: DiffCoord) -> Self {
+        Self::Range { start, end }
     }
 
     /// Whether this note targets the file as a whole.
@@ -84,40 +127,52 @@ impl NoteLocation {
         matches!(self, Self::File)
     }
 
-    /// The `(side, normalized start, normalized end)` coordinates of a line
-    /// location; `None` for file notes.
+    /// The coordinate anchoring this location on its primary side: the line
+    /// coordinate, or the range start for ranges.
     #[inline]
-    pub fn as_line(&self) -> Option<(Side, u32, u32)> {
-        match *self {
-            Self::Line { side, start, end } => Some((side, start.min(end), start.max(end))),
-            Self::File => None,
-        }
-    }
-
-    /// The line range of a line location on the new-side numbering, or `None`.
-    ///
-    /// Line notes on the old side translate their range by the diff delta of
-    /// an output row (see `reverse`); this helper is only meaningful for
-    /// new-side line locations and file-level counting.
-    #[inline]
-    pub fn as_line_range(&self) -> Option<(u32, u32)> {
-        match *self {
-            Self::Line {
-                side: Side::New,
-                start,
-                end,
-            } => Some((start.min(end), start.max(end))),
-            _ => None,
-        }
-    }
-
-    /// The location of the same side-swapped note context (delta-free
-    /// standalone line translation).
-    #[inline]
-    pub const fn reverse(self) -> Self {
+    #[must_use]
+    pub const fn primary_coord(&self) -> Option<DiffCoord> {
         match self {
-            Self::Line { side, start, end } => Self::line(side.reverse(), start, end),
+            Self::File => None,
+            Self::Line { coord } | Self::Range { start: coord, .. } => Some(*coord),
+        }
+    }
+
+    /// Reverse old/new line numbers for the location.
+    #[inline]
+    pub fn reverse(self) -> Self {
+        match self {
             Self::File => Self::File,
+            Self::Line { coord } => Self::Line {
+                coord: DiffCoord {
+                    old_line_num: coord.new_line_num,
+                    new_line_num: coord.old_line_num,
+                },
+            },
+            Self::Range { start, end } => Self::Range {
+                start: DiffCoord {
+                    old_line_num: start.new_line_num,
+                    new_line_num: start.old_line_num,
+                },
+                end: DiffCoord {
+                    old_line_num: end.new_line_num,
+                    new_line_num: end.old_line_num,
+                },
+            },
+        }
+    }
+
+    /// Human-readable location label: `old 12` for a pre-image-only line,
+    /// plain `12` or `1-3` for post-image numbers, or `12-old 15`
+    /// spanning a cross-side coordinate pair. File-level notes label as
+    /// `file`.
+    #[inline]
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::File => "file".to_string(),
+            Self::Line { coord } => coord.label(),
+            Self::Range { start, end } => format!("{}-{}", start.label(), end.label()),
         }
     }
 }
@@ -188,13 +243,15 @@ pub struct ReviewNote {
     pub text: String,
     pub created_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub line_hash: Option<LineHash>,
+    pub content_hash: Option<LineHash>,
     /// Note lifecycle status: Open (default), InProgress, or Resolved.
     #[serde(default, skip_serializing_if = "NoteStatus::is_open")]
     pub status: NoteStatus,
-    /// Exact original source lines selected when the note was created.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_lines: Option<String>,
+    /// The output rows captured at note creation time — the original source
+    /// the note was written against, preserved for display and hashed into
+    /// the content hash.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub original_source_rows: Vec<crate::wire::OutputRow>,
 }
 
 impl Default for ReviewNote {
@@ -205,25 +262,72 @@ impl Default for ReviewNote {
             location: NoteLocation::default(),
             text: String::new(),
             created_at: 0,
-            line_hash: None,
+            content_hash: None,
             status: NoteStatus::Open,
-            source_lines: None,
+            original_source_rows: Vec::new(),
         }
     }
 }
 
 impl ReviewNote {
-    #[inline]
-    pub fn side(&self) -> Option<Side> {
-        self.location.as_line().map(|(s, _, _)| s)
-    }
+    /// First line number of the location (preferring the new side), 0 for
+    /// file notes or empty coordinates.
     #[inline]
     pub fn start(&self) -> u32 {
-        self.location.as_line().map(|(_, s, _)| s).unwrap_or(0)
+        match &self.location {
+            NoteLocation::Line { coord } => coord
+                .new_line_num
+                .or(coord.old_line_num)
+                .map_or(0, NonZeroU32::get),
+            NoteLocation::Range { start, .. } => start
+                .new_line_num
+                .or(start.old_line_num)
+                .map_or(0, NonZeroU32::get),
+            NoteLocation::File => 0,
+        }
     }
+
+    /// Last line number of the location (preferring the new side), 0 for
+    /// file notes or empty coordinates.
     #[inline]
     pub fn end(&self) -> u32 {
-        self.location.as_line().map(|(_, _, e)| e).unwrap_or(0)
+        match &self.location {
+            NoteLocation::Line { coord } => coord
+                .new_line_num
+                .or(coord.old_line_num)
+                .map_or(0, NonZeroU32::get),
+            NoteLocation::Range { end, .. } => end
+                .new_line_num
+                .or(end.old_line_num)
+                .map_or(0, NonZeroU32::get),
+            NoteLocation::File => 0,
+        }
+    }
+}
+
+/// Resolve the `(side, start, end)` line span of a note location for hunk
+/// synthesis and row targeting. Prefers new-side numbering when a new line
+/// number exists on the coordinate; falls back to old-side numbering.
+/// `None` for file notes or coordinates with no line number at all.
+pub fn note_line_span(location: &NoteLocation) -> Option<(crate::visible::Side, u32, u32)> {
+    let coord_num = |c: &DiffCoord| -> Option<(crate::visible::Side, u32)> {
+        if let Some(n) = c.new_line_num {
+            Some((crate::visible::Side::New, n.get()))
+        } else {
+            c.old_line_num.map(|n| (crate::visible::Side::Old, n.get()))
+        }
+    };
+    match *location {
+        NoteLocation::File => None,
+        NoteLocation::Line { coord } => coord_num(&coord).map(|(side, n)| (side, n, n)),
+        NoteLocation::Range { start, end } => {
+            let (side_a, n_a) = coord_num(&start)?;
+            let (side_b, n_b) = coord_num(&end)?;
+            if side_a != side_b {
+                return None;
+            }
+            Some((side_a, n_a.min(n_b), n_a.max(n_b)))
+        }
     }
 }
 
@@ -285,66 +389,6 @@ pub fn generate_note_id() -> String {
     format!("{:x}-{:x}-{:x}", now_millis(), process::id(), count)
 }
 
-/// Extract a 1-indexed line range `[start, end]` from text content.
-/// Returns `None` if `start == 0`, `start > end`, or the range is out of
-/// bounds.
-pub fn extract_source_lines(content: &str, start: u32, end: u32) -> Option<String> {
-    if start == 0 || end < start {
-        return None;
-    }
-    let lines: Vec<&str> = content.lines().collect();
-    let s = (start as usize).saturating_sub(1);
-    let e = (end as usize).min(lines.len());
-    if s >= lines.len() || s >= e {
-        return None;
-    }
-    Some(lines[s..e].join("\n"))
-}
-
-/// Synthesize source lines for a given file and coordinate range.
-///
-/// For [`Side::New`], attempts to read the file directly on disk (or relative
-/// to `repo_root`). For [`Side::Old`], queries git for `HEAD:<file_path>` if
-/// inside a repository, falling back to disk. Returns `None` if the file cannot
-/// be accessed or the range is invalid.
-pub fn synthesize_source_lines(
-    repo_root: Option<&Path>,
-    file_path: &str,
-    side: Side,
-    start: u32,
-    end: u32,
-) -> Option<String> {
-    match side {
-        Side::New => {
-            let path = Path::new(file_path);
-            let content = if path.is_file() {
-                fs::read_to_string(path).ok()
-            } else if let Some(root) = repo_root {
-                let candidate = root.join(file_path);
-                if candidate.is_file() {
-                    fs::read_to_string(candidate).ok()
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            content.and_then(|c| extract_source_lines(&c, start, end))
-        }
-        Side::Old => {
-            if let Some(root) = repo_root
-                && let Ok(repo) = diffuse_git::Repository::open(root)
-                && let Some(blob) = repo.load_blob("HEAD", file_path)
-                && let Ok(git_out) = std::str::from_utf8(&blob.data)
-            {
-                extract_source_lines(git_out, start, end)
-            } else {
-                synthesize_source_lines(repo_root, file_path, Side::New, start, end)
-            }
-        }
-    }
-}
-
 /// Resolve the HEAD commit hash of the repository containing `repo_root`.
 /// Returns `None` outside a work tree or when the repo has no commits yet.
 pub fn head_commit(repo_root: &Path) -> Option<String> {
@@ -401,40 +445,92 @@ pub fn notes_key_for_repo(repo_root: &Path, repo: &str) -> String {
 #[repr(transparent)]
 pub struct LineHash(pub NonZero<u32>);
 
-impl LineHash {
-    /// Compute a deterministic line hash from trimmed line content.
-    pub fn from_content(content: &str) -> Self {
-        Self::from_lines([content])
+/// A stable FNV-1a 64-bit [`std::hash::Hasher`].
+///
+/// std's `DefaultHasher` (SipHash-1-3) carries no cross-compiler-version
+/// stability guarantee; persisted content hashes must remain valid across
+/// toolchain updates, so derived [`Hash`] streams are folded through this
+/// fixed implementation instead. Integer writes use fixed little-endian
+/// encodings for platform independence.
+#[derive(Default)]
+struct StableHasher(u64);
+
+impl Hasher for StableHasher {
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
     }
 
-    /// Compute a deterministic compound hash across all lines in an iterator.
-    ///
-    /// Trims each line individually before hashing with FNV-1a. Between lines,
-    /// a newline byte delimiter is mixed in so distinct line boundaries cannot
-    /// accidentally collide. If the hash evaluates to 0, wraps to 1 to maintain
-    /// the non-zero niche invariant.
-    pub fn from_lines<'a, I>(lines: I) -> Self
-    where
-        I: IntoIterator<Item = &'a str>,
-    {
-        let mut hash: u32 = 0x811c9dc5;
-        let mut first = true;
-        for line in lines {
-            if !first {
-                hash ^= b'\n' as u32;
-                hash = hash.wrapping_mul(0x01000193);
-            }
-            first = false;
-            for byte in line.trim().as_bytes() {
-                hash ^= *byte as u32;
-                hash = hash.wrapping_mul(0x01000193);
-            }
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 ^= u64::from(b);
+            self.0 = self.0.wrapping_mul(0x0000_0100_0000_01b3);
         }
-        let val = if hash == 0 { 1 } else { hash };
-        // SAFETY: val is guaranteed non-zero.
-        Self(unsafe { NonZero::new_unchecked(val) })
     }
 
+    #[inline]
+    fn write_u8(&mut self, i: u8) {
+        self.write(&[i]);
+    }
+
+    #[inline]
+    fn write_u16(&mut self, i: u16) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_u32(&mut self, i: u32) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_u64(&mut self, i: u64) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_u128(&mut self, i: u128) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_usize(&mut self, i: usize) {
+        self.write(&(i as u64).to_le_bytes());
+    }
+
+    #[inline]
+    fn write_i8(&mut self, i: i8) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_i16(&mut self, i: i16) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_i32(&mut self, i: i32) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_i64(&mut self, i: i64) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_i128(&mut self, i: i128) {
+        self.write(&i.to_le_bytes());
+    }
+
+    #[inline]
+    fn write_isize(&mut self, i: isize) {
+        self.write(&(i as i64).to_le_bytes());
+    }
+}
+
+impl LineHash {
     /// Parse a line hash from a hexadecimal string (up to 8 hex chars).
     pub fn from_hex(hex: &str) -> Result<Self, ParseIntError> {
         let val = u32::from_str_radix(hex.trim(), 16)?;
@@ -443,14 +539,34 @@ impl LineHash {
         Ok(Self(unsafe { NonZero::new_unchecked(val) }))
     }
 
+    /// Complete structural content hash over a value's derived [`Hash`]
+    /// stream.
+    ///
+    /// Every field, enum discriminant, and sequence length prefix of the
+    /// value participates, so structurally distinct values cannot collide
+    /// by encoding ambiguity. The stream is folded through a
+    /// [`StableHasher`], whose digest is identical across compiler versions
+    /// and platforms, keeping persisted hashes valid across toolchain
+    /// updates.
+    pub fn of_hashable<H: Hash>(value: &H) -> Self {
+        let mut hasher = StableHasher::default();
+        value.hash(&mut hasher);
+        let full = hasher.finish();
+        let folded = (full ^ (full >> 32)) as u32;
+        let val = if folded == 0 { 1 } else { folded };
+        // SAFETY: val is guaranteed non-zero.
+        Self(unsafe { NonZero::new_unchecked(val) })
+    }
+
+    /// Content hash over original source rows: the complete structural hash
+    /// of the row slice. `None` when there are no rows.
+    pub fn of_rows(rows: &[crate::wire::OutputRow]) -> Option<Self> {
+        (!rows.is_empty()).then(|| Self::of_hashable(&rows))
+    }
+
     /// The raw non-zero integer representation.
     pub const fn get(self) -> u32 {
         self.0.get()
-    }
-
-    /// Check if this hash matches the trimmed content of a line.
-    pub fn matches_content(self, content: &str) -> bool {
-        Self::from_content(content) == self
     }
 
     /// Return the formatted 8-character hexadecimal string.
@@ -491,7 +607,7 @@ impl<'de> Deserialize<'de> for LineHash {
             type Value = LineHash;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a 1-8 character hexadecimal string or u32 integer")
+                formatter.write_str("a 1-8 character hexadecimal string")
             }
 
             fn visit_str<E>(self, v: &str) -> Result<LineHash, E>
@@ -500,91 +616,192 @@ impl<'de> Deserialize<'de> for LineHash {
             {
                 LineHash::from_hex(v).map_err(serde::de::Error::custom)
             }
-
-            fn visit_u64<E>(self, v: u64) -> Result<LineHash, E>
-            where
-                E: serde::de::Error,
-            {
-                let val = if (v as u32) == 0 { 1 } else { v as u32 };
-                // SAFETY: val is guaranteed non-zero.
-                Ok(LineHash(unsafe { NonZero::new_unchecked(val) }))
-            }
         }
 
-        deserializer.deserialize_any(LineHashVisitor)
+        deserializer.deserialize_str(LineHashVisitor)
     }
 }
 
-/// Convenience alias: compute the deterministic line hash from line content.
-pub fn hash_line_content(content: &str) -> LineHash {
-    LineHash::from_content(content)
-}
+impl DiffCoord {
+    /// Whether the row's coordinates lie within the span `start..=end` on a
+    /// side both bounds share. Mirrors the reviewer selection semantics: a
+    /// row qualifies through a side it shares with fully bounded span
+    /// bounds; rows without a number on any fully bounded side are outside.
+    #[must_use]
+    pub fn row_in_span(row: &crate::wire::OutputRow, start: Self, end: Self) -> bool {
+        let within = |n: u32, lo: LineNum, hi: LineNum| match (lo, hi) {
+            (Some(lo), Some(hi)) => {
+                let (lo, hi) = (lo.get().min(hi.get()), lo.get().max(hi.get()));
+                n >= lo && n <= hi
+            }
+            _ => false,
+        };
+        row.old_line
+            .is_some_and(|n| within(n, start.old_line_num, end.old_line_num))
+            || row
+                .new_line
+                .is_some_and(|n| within(n, start.new_line_num, end.new_line_num))
+    }
 
-/// Check whether a note anchors cleanly against a single line of content.
-///
-/// If the note has a recorded `line_hash` or `source_lines`, verifies that the
-/// line matches. Notes without a hash or source lines always return true.
-pub fn note_anchors_cleanly(note: &ReviewNote, line_content: &str) -> bool {
-    note_anchors_cleanly_lines(note, [line_content])
-}
+    /// Construct a coordinate from an output row, capturing both old and new
+    /// line numbers when available (mod/ctx rows carry both). `None` when the
+    /// row has no line numbers at all.
+    #[inline]
+    #[must_use]
+    pub fn from_row(row: &crate::wire::OutputRow) -> Option<Self> {
+        Self::from_numbers(row.old_line, row.new_line)
+    }
 
-/// Check whether a note anchors cleanly against all selected lines.
-pub fn note_anchors_cleanly_lines<'a, I>(note: &ReviewNote, lines: I) -> bool
-where
-    I: IntoIterator<Item = &'a str>,
-{
-    if let Some(expected) = note.line_hash {
-        LineHash::from_lines(lines) == expected
-    } else if let Some(ref src) = note.source_lines {
-        LineHash::from_lines(lines) == LineHash::from_lines(src.lines())
-    } else {
-        true
+    /// Human-readable coordinate label: `old 12` for a pre-image-only
+    /// coordinate (when there is no post-image line), or plain `12` when
+    /// a post-image line number is present (defaulting to showing the
+    /// post-image line without labelling it).
+    #[inline]
+    #[must_use]
+    pub fn label(self) -> String {
+        match (self.old_line_num, self.new_line_num) {
+            (_, Some(n)) => format!("{}", n.get()),
+            (Some(o), None) => format!("old {}", o.get()),
+            (None, None) => String::new(),
+        }
     }
 }
 
-/// Check whether a note anchors cleanly in a file's content lines.
+/// Whether a row's line numbers exactly match a coordinate on both sides.
+fn coord_matches(row: &crate::wire::OutputRow, coord: &DiffCoord) -> bool {
+    row.old_line == coord.old_line_num.map(|n| n.get())
+        && row.new_line == coord.new_line_num.map(|n| n.get())
+}
+
+/// Check whether a note anchors against a row slice. Anchoring semantics:
 ///
-/// Returns true only if:
-/// 1. The note has a recorded compound hash or source lines to verify against.
-/// 2. The note's target range `[start..=end]` is valid and within bounds.
-/// 3. All lines in that range match the note's recorded compound hash (or
-///    source lines).
-/// 4. The matching text chunk is unique across the entire file (appears exactly
-///    once).
-pub fn note_anchors_in_file<S: AsRef<str>>(note: &ReviewNote, file_lines: &[S]) -> bool {
-    let Some((_, start, end)) = note.location.as_line() else {
+/// 1. `File` -> unanchored.
+/// 2. `Line(coord)` -> the first row whose old AND new line numbers both
+///    exactly match `coord` locates the anchor; the hash is computed over that
+///    single row afterwards.
+/// 3. `Range(start, end)` -> the first row matching `start` opens the window;
+///    scanning forward, every row is included until (and including) the first
+///    row matching `end`; the hash is computed over the whole window
+///    afterwards.
+///
+/// Notes never re-anchor at different lines. The window-located rows are
+/// hashed with [`LineHash::of_rows`] after the coordinates are found, and
+/// the computed hash must equal the note's stored `content_hash`. Any
+/// failure (missing hash, missing coordinates, hash mismatch) leaves the
+/// note unanchored.
+fn anchors_by_coord(note: &ReviewNote, rows: &[&crate::wire::OutputRow]) -> bool {
+    let Some(expected) = note.content_hash else {
         return false;
     };
-    if start == 0 || end == 0 {
-        return false;
-    }
-    let start_idx = (start - 1) as usize;
-    let end_idx = end as usize;
-    if end_idx == 0 || end_idx > file_lines.len() || start_idx >= end_idx {
-        return false;
-    }
-    let slice = &file_lines[start_idx..end_idx];
-    // Anchor by direct coordinate lookup. If the note carries a hash, the
-    // hash of the current file content at the recorded coordinate must match.
-    // If the note carries source_lines, the literal source must match.
-    if let Some(hash) = note.line_hash {
-        let current_hash = LineHash::from_lines(slice.iter().map(|s| s.as_ref()));
-        if current_hash != hash {
-            return false;
-        }
-    } else if let Some(source) = &note.source_lines {
-        let joined = slice
+    let located: Option<Vec<&crate::wire::OutputRow>> = match &note.location {
+        NoteLocation::File => None,
+        NoteLocation::Line { coord } => rows
             .iter()
-            .map(|s| s.as_ref())
-            .collect::<Vec<_>>()
-            .join("\n");
-        if joined != *source {
-            return false;
-        }
-    } else {
+            .position(|r| coord_matches(r, coord))
+            .map(|i| vec![rows[i]]),
+        NoteLocation::Range { start, end } => rows
+            .iter()
+            .position(|r| coord_matches(r, start))
+            .and_then(|first| {
+                rows[first..]
+                    .iter()
+                    .position(|r| coord_matches(r, end))
+                    .map(|len| (first, first + len))
+            })
+            .map(|(first, last)| {
+                // The window is the span's visible rows: everything between
+                // the boundary matches that the span's sides contain, exactly
+                // as a reviewer selection captures them. Hidden rows without
+                // a number on a bounded side are not part of the capture.
+                rows[first..=last]
+                    .iter()
+                    .copied()
+                    .filter(|r| DiffCoord::row_in_span(r, *start, *end))
+                    .collect()
+            }),
+    };
+    let Some(window) = located.as_deref() else {
+        return false;
+    };
+    LineHash::of_hashable(&window) == expected
+}
+
+/// Check whether a note anchors in the current output rows of a file.
+pub fn note_anchors_in_rows<'r>(
+    note: &ReviewNote,
+    rows: impl IntoIterator<Item = &'r crate::wire::OutputRow>,
+) -> bool {
+    let rows: Vec<&crate::wire::OutputRow> = rows.into_iter().collect();
+    anchors_by_coord(note, &rows)
+}
+
+/// Gap-note content gate: whether the note's stored original source rows
+/// still reproduce the plain file content at the location's exact primary
+/// coordinates (one stored row per line, primary-side text equal).
+///
+/// Used as a pre-filter before synthesizing context hunks for notes outside
+/// the diff (pipeline gap synthesis, unmodified-file inclusion), so stale
+/// notes no longer resurrect hunks. The authoritative coordinate + hash
+/// anchor check runs later over the real output rows via
+/// [`note_anchors_in_rows`].
+pub fn note_anchors_in_context_lines<S: AsRef<str>>(note: &ReviewNote, file_lines: &[S]) -> bool {
+    let primary = |c: &DiffCoord| c.new_line_num.or(c.old_line_num).map(|n| n.get());
+    let (start, end) = match &note.location {
+        NoteLocation::File => return false,
+        NoteLocation::Line { coord } => match primary(coord) {
+            Some(n) => (n, n),
+            None => return false,
+        },
+        NoteLocation::Range { start, end } => match (primary(start), primary(end)) {
+            (Some(s), Some(e)) => (s.min(e), e.max(s)),
+            _ => return false,
+        },
+    };
+    if start == 0 || end == 0 || end as usize > file_lines.len() {
         return false;
     }
-    true
+    if note.original_source_rows.is_empty() {
+        return false;
+    }
+    let new_side = note
+        .location
+        .primary_coord()
+        .is_some_and(|c| c.new_line_num.is_some());
+    let row_num = |row: &crate::wire::OutputRow| {
+        if new_side { row.new_line } else { row.old_line }
+    };
+    // The captured rows must cover the recorded span boundaries on the
+    // primary side.
+    let covers_span = note
+        .original_source_rows
+        .first()
+        .is_some_and(|r| row_num(r) == Some(start))
+        && note
+            .original_source_rows
+            .last()
+            .is_some_and(|r| row_num(r) == Some(end));
+    if !covers_span {
+        return false;
+    }
+    // Every stored row must match the content line at its own primary-side
+    // coordinate. Rows without a primary-side number are malformed captures
+    // and fail the gate; interleaved hidden rows (deletions inside a
+    // selected range) legitimately leave gaps in the numbering.
+    note.original_source_rows.iter().all(|row| {
+        let num = if new_side { row.new_line } else { row.old_line };
+        let Some(num) = num else {
+            return false;
+        };
+        if num == 0 || num as usize > file_lines.len() {
+            return false;
+        }
+        let text = if new_side {
+            row.new_text()
+        } else {
+            row.old_text()
+        };
+        text == file_lines[(num - 1) as usize].as_ref()
+    })
 }
 
 /// Load notes from disk. Returns an empty DB if the file does not exist or
@@ -771,9 +988,26 @@ pub fn remove_notes_in_range(
     };
     let before = list.len();
     list.retain(|n| {
-        n.location
-            .as_line()
-            .is_none_or(|(_, n_start, n_end)| n_end < start || n_start > end)
+        let note_range = match &n.location {
+            NoteLocation::File => return true,
+            NoteLocation::Line { coord } => {
+                let num = coord.new_line_num.or(coord.old_line_num);
+                match num {
+                    Some(n) => (n.get(), n.get()),
+                    None => return true,
+                }
+            }
+            NoteLocation::Range { start: s, end: e } => {
+                let s_num = s.new_line_num.or(s.old_line_num);
+                let e_num = e.new_line_num.or(e.old_line_num);
+                match (s_num, e_num) {
+                    (Some(sn), Some(en)) => (sn.get(), en.get()),
+                    _ => return true,
+                }
+            }
+        };
+        let (n_start, n_end) = note_range;
+        n_end < start || n_start > end
     });
     let removed = before - list.len();
     if list.is_empty() {

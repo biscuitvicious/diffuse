@@ -68,7 +68,8 @@ pub struct AppState {
     pub viewport_height: usize,
     pub screen_height: usize,
     pub show_resolved_notes: bool,
-    pub show_source_lines: bool,
+    /// Whether note callouts display the note's original source snapshot.
+    pub show_note_source: bool,
     pub notes: NotesDB,
     pub notes_path: PathBuf,
     pub hunk_starts: Vec<HunkStart>,
@@ -176,7 +177,7 @@ impl AppState {
             viewport_height: 20,
             screen_height: 24,
             show_resolved_notes: false,
-            show_source_lines: false,
+            show_note_source: false,
             notes: loaded_notes,
             notes_path,
             hunk_starts,
@@ -230,8 +231,8 @@ impl AppState {
         self
     }
 
-    pub fn with_show_source_lines(mut self, show_source: bool) -> Self {
-        self.show_source_lines = show_source;
+    pub fn with_show_note_source(mut self, show_source: bool) -> Self {
+        self.show_note_source = show_source;
         self
     }
 

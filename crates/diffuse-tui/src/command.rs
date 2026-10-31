@@ -64,7 +64,7 @@ pub enum TuiCommand {
     DeleteNote,
     CycleNoteStatus,
     ToggleShowResolvedNotes,
-    ToggleShowSourceLines,
+    ToggleShowNoteSource,
 
     // --- Mouse & Layout Interaction ---
     MouseClick {

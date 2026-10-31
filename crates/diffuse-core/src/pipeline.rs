@@ -50,7 +50,7 @@ use crate::{
     lcs::word_spans_and_runs_with_profile,
     merge::{RunKind, is_wholesale_mod, is_wholesale_replacement, merged_runs_with_profile},
     moves::mark_moves_with_profile,
-    notes::{NoteStatus, NotesDB, ReviewNote, Side, query_notes_for_file},
+    notes::{NoteStatus, NotesDB, ReviewNote, query_notes_for_file},
     parse::{CtxLine, DiffFile, Hunk, Row, RowKind},
     visible::Side as VisibleSide,
     wire::{
@@ -727,9 +727,9 @@ pub fn process_single_diff_file(
             text: n.text.clone(),
             created_at: n.created_at,
             runs: note_runs(&n.text),
-            line_hash: n.line_hash,
+            content_hash: n.content_hash,
             status: n.status,
-            source_lines: n.source_lines.clone(),
+            original_source_rows: n.original_source_rows.clone(),
         })
         .collect();
 
@@ -1330,24 +1330,26 @@ pub fn synthesize_note_context_hunks(
 
     // 1. Identify line notes whose target span [start..=end] is uncovered by
     //    existing diff hunks (file notes never anchor to hunk spans).
-    let uncovered: Vec<(&ReviewNote, Side, u32, u32)> = notes
+    // A coordinate resolves to the new side when a new line number exists,
+    // otherwise to the old side.
+    let uncovered: Vec<(&ReviewNote, VisibleSide, u32, u32)> = notes
         .into_iter()
         .filter_map(|note| {
-            let (side, start, end) = note.location.as_line()?;
+            let (side, start, end) = crate::notes::note_line_span(&note.location)?;
             let content_lines = match side {
-                Side::New => &f.new_content,
-                Side::Old => &f.old_content,
+                VisibleSide::New => &f.new_content,
+                VisibleSide::Old => &f.old_content,
             };
-            if !crate::notes::note_anchors_in_file(note, content_lines) {
+            if !crate::notes::note_anchors_in_context_lines(note, content_lines) {
                 return None;
             }
             let covered = f.hunks.iter().any(|h| match side {
-                Side::New => {
+                VisibleSide::New => {
                     let h_start = h.new_start;
                     let h_end = h.new_start + h.new_count.saturating_sub(1);
                     h.new_count > 0 && start >= h_start && end <= h_end
                 }
-                Side::Old => {
+                VisibleSide::Old => {
                     let h_start = h.old_start;
                     let h_end = h.old_start + h.old_count.saturating_sub(1);
                     h.old_count > 0 && start >= h_start && end <= h_end
@@ -1388,7 +1390,7 @@ pub fn synthesize_note_context_hunks(
             0
         } else {
             match note_side {
-                Side::New => {
+                VisibleSide::New => {
                     let mut found = m;
                     for (i, h) in f.hunks.iter().enumerate() {
                         if n_start < h.new_start {
@@ -1398,7 +1400,7 @@ pub fn synthesize_note_context_hunks(
                     }
                     found
                 }
-                Side::Old => {
+                VisibleSide::Old => {
                     let mut found = m;
                     for (i, h) in f.hunks.iter().enumerate() {
                         if n_start < h.old_start {
@@ -1414,8 +1416,8 @@ pub fn synthesize_note_context_hunks(
         let delta = gap_delta(gap_idx);
 
         let (new_s, new_e) = match note_side {
-            Side::New => (n_start, n_end),
-            Side::Old => {
+            VisibleSide::New => (n_start, n_end),
+            VisibleSide::Old => {
                 let ns = ((n_start as i64) + delta).max(1) as u32;
                 let ne = ((n_end as i64) + delta).max(1) as u32;
                 (ns, ne)

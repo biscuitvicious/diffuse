@@ -216,7 +216,7 @@ pub fn stream_git_repo_to_producer(
                 }
                 let has_anchor = file_notes
                     .iter()
-                    .any(|n| crate::notes::note_anchors_in_file(n, &file_lines));
+                    .any(|n| crate::notes::note_anchors_in_context_lines(n, &file_lines));
 
                 if !has_anchor {
                     // No anchoring notes: show the file header and any
@@ -368,7 +368,7 @@ pub fn load_git_repo_with_notes(
                 }
                 let has_anchor = file_notes
                     .iter()
-                    .any(|n| crate::notes::note_anchors_in_file(n, &file_lines));
+                    .any(|n| crate::notes::note_anchors_in_context_lines(n, &file_lines));
                 if !diff.is_empty() && !diff.ends_with('\n') {
                     diff.push('\n');
                 }

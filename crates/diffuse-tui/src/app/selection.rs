@@ -9,6 +9,9 @@ impl AppState {
     /// reference `computeSelection`: anchor..cursor snapped to coordinate
     /// rows and clamped to the file. With no active anchor, the confirmed
     /// selection is returned when it lives in the current file.
+    ///
+    /// The span bounds are diff-row coordinates in display order, carrying
+    /// both line numbers whenever the selected rows provide them.
     pub fn compute_selection(&self) -> Option<Selection> {
         let Some(anchor) = self.anchor else {
             return self
@@ -30,18 +33,19 @@ impl AppState {
         }
         lo = self.next_coord_row(lo);
         hi = self.prev_coord_row(hi);
+        if lo > hi {
+            return None;
+        }
         let first = self.flat.get(lo)?;
         let last = self.flat.get(hi)?;
         let r_first = self.row_of(first)?;
         let r_last = self.row_of(last)?;
-        let side_is_new = r_first.new_line.is_some() || r_last.new_line.is_some();
-        let f = Self::row_coord(r_first)?;
-        let l = Self::row_coord(r_last)?;
+        let start = diffuse_core::notes::DiffCoord::from_row(r_first)?;
+        let end = diffuse_core::notes::DiffCoord::from_row(r_last)?;
         Some(Selection {
             file_idx: c_file,
-            start: f.min(l),
-            end: f.max(l),
-            side_is_new,
+            start,
+            end,
         })
     }
 
@@ -88,9 +92,8 @@ impl AppState {
                 if item.file_idx != conf.file_idx {
                     continue;
                 }
-                if let Some(c) = self.flat_row_coord(item)
-                    && c >= conf.start
-                    && c <= conf.end
+                if let Some(r) = self.row_of(item)
+                    && conf.contains_row(r)
                 {
                     set[i] = true;
                 }

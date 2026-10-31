@@ -1,13 +1,39 @@
 //! TUI Domain Types — selection, navigation coordinates, and flat visual row
 //! models.
 
-/// A contiguous line selection within a file.
+use diffuse_core::{notes::DiffCoord, wire::OutputRow};
+
+/// A contiguous line selection within a file, bounded by diff-row
+/// coordinates in display order. Each bound carries both the old and new
+/// line numbers when the selected rows provide them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Selection {
     pub file_idx: usize,
-    pub start: u32,
-    pub end: u32,
-    pub side_is_new: bool,
+    pub start: DiffCoord,
+    pub end: DiffCoord,
+}
+
+impl Selection {
+    /// Whether a row lies within this selection span.
+    ///
+    /// Delegates to [`DiffCoord::row_in_span`].
+    #[inline]
+    #[must_use]
+    pub fn contains_row(&self, row: &OutputRow) -> bool {
+        DiffCoord::row_in_span(row, self.start, self.end)
+    }
+
+    /// `file:old 12-new 15`-style location label for the selection span
+    /// (plain numbers on the new side, `old` prefix only for pre-image
+    /// coordinates).
+    #[must_use]
+    pub fn loc_label(&self, file_path: &str) -> String {
+        if self.start == self.end {
+            format!("{file_path}:{}", self.start.label())
+        } else {
+            format!("{file_path}:{}-{}", self.start.label(), self.end.label())
+        }
+    }
 }
 
 /// Snapshot of cursor position, coordinate anchor, and vertical screen offset

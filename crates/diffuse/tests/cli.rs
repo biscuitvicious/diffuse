@@ -963,41 +963,61 @@ fn diffuse_staged_flag_excludes_untracked_files() {
 
 #[test]
 fn test_cli_notes_subcommand_suite() {
-    use diffuse::core::notes::{NoteStatus, NotesDB, ReviewNote, add_note, load_notes, save_notes};
+    use diffuse::core::{
+        merge::RunKind,
+        notes::{NoteStatus, NotesDB, ReviewNote, add_note, load_notes, save_notes},
+        parse::RowKind,
+        wire::{OutputRow, OutputRun},
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let notes_path = dir.path().join("notes.json");
     let mut db = NotesDB::new();
+    let source_row = OutputRow {
+        kind: RowKind::Ctx,
+        mov_side: None,
+        old_line: None,
+        new_line: Some(10),
+        runs: vec![OutputRun::new(RunKind::Ctx, "fn original() {}".to_string())],
+        wholesale: false,
+        group: None,
+    };
 
     let note_open = ReviewNote {
         id: "note-open".into(),
         file: "src/lib.rs".into(),
-        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 10, 10),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(10),
+        ),
         text: "Fix this issue".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::Open,
-        source_lines: Some("fn original() {}".into()),
+        original_source_rows: vec![source_row],
     };
     let note_prog = ReviewNote {
         id: "note-prog".into(),
         file: "src/lib.rs".into(),
-        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 20, 20),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(20),
+        ),
         text: "Working on refactor".into(),
         created_at: 1001,
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::InProgress,
-        source_lines: None,
+        original_source_rows: Vec::new(),
     };
     let note_res = ReviewNote {
         id: "note-res".into(),
         file: "src/main.rs".into(),
-        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 30, 30),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(30),
+        ),
         text: "Already resolved".into(),
         created_at: 1002,
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::Resolved,
-        source_lines: None,
+        original_source_rows: Vec::new(),
     };
 
     add_note(&mut db, "repo1", note_open);
@@ -1111,6 +1131,10 @@ fn test_cli_notes_subcommand_suite() {
     let stdout_show = String::from_utf8_lossy(&out_show.stdout);
     assert!(stdout_show.contains("Note:     note-open"));
     assert!(stdout_show.contains("fn original() {}"));
+    assert!(
+        !stdout_show.contains('│'),
+        "source lines must not have indentation '│': {stdout_show}"
+    );
     assert!(stdout_show.contains("Fix this issue"));
 
     // 7. Reply with --resolve
@@ -1223,14 +1247,26 @@ fn test_cli_notes_add_subcommand() {
     let notes_path = tmp.path().join("notes.json");
     let notes_file_arg = notes_path.to_str().unwrap();
 
-    let foo_path = tmp.path().join("foo.rs");
-    fs::write(
-        &foo_path,
-        "fn first() {}\nfn second() {}\nfn third() {}\nfn fourth() {}\n",
+    // A real repository with an uncommitted modification: the create flow
+    // anchors notes against the reviewed diff rows.
+    let repo = init_repo(tmp.path()).unwrap();
+    let _ = commit_files(
+        &repo,
+        "commit 1",
+        &[(
+            "foo.rs",
+            "fn first() {}\nfn second() {}\nfn third() {}\nfn fourth() {}\n",
+        )],
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("foo.rs"),
+        "fn first() {}\nfn second() renamed() {}\nfn third() {}\n",
     )
     .unwrap();
 
-    // 1. Add note with coordinates in target string and synthesized source lines
+    // 1. Create a note with coordinates in the target string: the stored rows are
+    //    the actual diff rows the note was created against.
     let out1 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(tmp.path())
         .arg("--notes-file")
@@ -1251,7 +1287,8 @@ fn test_cli_notes_add_subcommand() {
         String::from_utf8_lossy(&out1.stderr)
     );
     let db = load_notes(&notes_path);
-    let notes = db.get("test-repo").unwrap().get("foo.rs").unwrap();
+    let key = db.keys().find(|k| k.starts_with("test-repo")).unwrap();
+    let notes = db.get(key).unwrap().get("foo.rs").unwrap();
     assert_eq!(notes.len(), 1);
     let n1 = &notes[0];
     assert_eq!(n1.file, "foo.rs");
@@ -1259,12 +1296,19 @@ fn test_cli_notes_add_subcommand() {
     assert_eq!(n1.end(), 2);
     assert_eq!(n1.status, NoteStatus::Open);
     assert_eq!(n1.text, "First two functions");
+    assert_eq!(n1.original_source_rows.len(), 2);
+    assert_eq!(n1.original_source_rows[0].text(), "fn first() {}");
     assert_eq!(
-        n1.source_lines,
-        Some("fn first() {}\nfn second() {}".to_string())
+        n1.original_source_rows[1].text(),
+        "fn second() renamed() {}"
     );
+    // The context row keeps only its new-side number; the modification row
+    // carries both sides.
+    assert!(n1.original_source_rows[0].old_line.is_none());
+    assert_eq!(n1.original_source_rows[1].old_line, Some(2));
+    assert!(n1.content_hash.is_some());
 
-    // 2. Add note with positional start/end and explicit source lines
+    // 2. Create a note with explicit --new and --status
     let out2 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(tmp.path())
         .arg("--notes-file")
@@ -1274,27 +1318,30 @@ fn test_cli_notes_add_subcommand() {
         .arg("notes")
         .arg("add")
         .arg("foo.rs")
+        .arg("--new")
         .arg("3")
-        .arg("4")
         .arg("-m")
-        .arg("Explicit source lines")
-        .arg("--source")
-        .arg("custom source lines")
+        .arg("Third function")
         .arg("--status")
         .arg("in-progress")
         .output()
         .unwrap();
     assert_eq!(out2.status.code(), Some(0));
     let db = load_notes(&notes_path);
-    let notes = db.get("test-repo").unwrap().get("foo.rs").unwrap();
+    let key = db.keys().find(|k| k.starts_with("test-repo")).unwrap();
+    let notes = db.get(key).unwrap().get("foo.rs").unwrap();
     assert_eq!(notes.len(), 2);
     let n2 = &notes[1];
     assert_eq!(n2.start(), 3);
-    assert_eq!(n2.end(), 4);
+    assert_eq!(n2.end(), 3);
     assert_eq!(n2.status, NoteStatus::InProgress);
-    assert_eq!(n2.source_lines, Some("custom source lines".to_string()));
 
-    // 3. Add note with --no-source
+    // 3. Create a note on the pre-image side of a deletion
+    std::fs::write(
+        tmp.path().join("foo.rs"),
+        "fn first() {}\nfn second() renamed() {}\n",
+    )
+    .unwrap();
     let out3 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(tmp.path())
         .arg("--notes-file")
@@ -1303,21 +1350,50 @@ fn test_cli_notes_add_subcommand() {
         .arg("test-repo")
         .arg("notes")
         .arg("add")
-        .arg("foo.rs:2")
+        .arg("foo.rs")
+        .arg("--old")
+        .arg("3")
         .arg("-m")
-        .arg("Without source")
-        .arg("--no-source")
+        .arg("Deleted third function")
         .output()
         .unwrap();
-    assert_eq!(out3.status.code(), Some(0));
+    assert_eq!(
+        out3.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out3.stderr)
+    );
     let db = load_notes(&notes_path);
-    let notes = db.get("test-repo").unwrap().get("foo.rs").unwrap();
+    let key = db.keys().find(|k| k.starts_with("test-repo")).unwrap();
+    let notes = db.get(key).unwrap().get("foo.rs").unwrap();
     assert_eq!(notes.len(), 3);
     let n3 = &notes[2];
-    assert_eq!(n3.source_lines, None);
+    assert_eq!(n3.start(), 3);
+    assert!(n3.original_source_rows[0].old_line.is_some());
+    assert_eq!(n3.original_source_rows[0].text(), "fn third() {}");
 
-    // 4. Add note on missing file (source lines not possible -> None)
+    // 4. A both-side anchor must locate the same diff rows
     let out4 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("add")
+        .arg("foo.rs")
+        .arg("--old")
+        .arg("7")
+        .arg("--new")
+        .arg("1")
+        .arg("-m")
+        .arg("Conflicting sides")
+        .output()
+        .unwrap();
+    assert_eq!(out4.status.code(), Some(1));
+
+    // 5. Missing files are rejected
+    let out5 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
@@ -1330,14 +1406,10 @@ fn test_cli_notes_add_subcommand() {
         .arg("Missing file note")
         .output()
         .unwrap();
-    assert_eq!(out4.status.code(), Some(0));
-    let db = load_notes(&notes_path);
-    let notes_missing = db.get("test-repo").unwrap().get("missing.rs").unwrap();
-    assert_eq!(notes_missing.len(), 1);
-    assert_eq!(notes_missing[0].source_lines, None);
+    assert_eq!(out5.status.code(), Some(1));
 
-    // 5. Using alias 'create' and --json
-    let out5 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+    // 6. Using alias 'create' and --json
+    let out6 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
@@ -1351,11 +1423,13 @@ fn test_cli_notes_add_subcommand() {
         .arg("--json")
         .output()
         .unwrap();
-    assert_eq!(out5.status.code(), Some(0));
-    let v: serde_json::Value = serde_json::from_slice(&out5.stdout).unwrap();
+    assert_eq!(out6.status.code(), Some(0));
+    let v: serde_json::Value = serde_json::from_slice(&out6.stdout).unwrap();
     assert_eq!(v["file"], "foo.rs");
-    assert_eq!(v["location"]["start"], 1);
     assert_eq!(v["text"], "JSON create");
+    assert!(v["location"]["coord"].is_object());
+    assert!(v["contentHash"].is_string());
+    assert!(!v["originalSourceRows"].as_array().unwrap().is_empty());
 }
 
 #[test]
@@ -1394,7 +1468,9 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c1_a = ReviewNote {
         id: "c1-a".into(),
         file: "src/a.txt".into(),
-        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(1),
+        ),
         text: "Note on c1 file a".into(),
         created_at: 100,
         status: NoteStatus::Open,
@@ -1403,7 +1479,9 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c1_b = ReviewNote {
         id: "c1-b".into(),
         file: "src/b.txt".into(),
-        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(1),
+        ),
         text: "Note on c1 file b".into(),
         created_at: 101,
         status: NoteStatus::Open,
@@ -1416,7 +1494,9 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c2_a = ReviewNote {
         id: "c2-a".into(),
         file: "src/a.txt".into(),
-        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(1),
+        ),
         text: "Note on c2 file a".into(),
         created_at: 200,
         status: NoteStatus::Open,
@@ -1425,7 +1505,9 @@ fn test_notes_list_revisions_and_pathspecs() {
     let note_c2_doc = ReviewNote {
         id: "c2-doc".into(),
         file: "doc/readme.txt".into(),
-        location: diffuse::core::notes::NoteLocation::line(diffuse::core::notes::Side::New, 1, 1),
+        location: diffuse::core::notes::NoteLocation::line(
+            diffuse::core::notes::DiffCoord::new_side(1),
+        ),
         text: "Note on c2 doc".into(),
         created_at: 201,
         status: NoteStatus::Open,

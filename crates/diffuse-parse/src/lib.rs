@@ -6,7 +6,7 @@ use diffuse_algo::require;
 use serde::{Deserialize, Serialize};
 
 /// The semantic classification of a token run in a diff row.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum RunKind {
     Ctx,
     Del,
@@ -78,7 +78,7 @@ impl RunKind {
 }
 
 /// A diff row kind.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum RowKind {
     Add,
@@ -105,7 +105,7 @@ impl RowKind {
 }
 
 /// Identifies the expansion/collapse group role of a diff row.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RowGroup {
     Anchor,

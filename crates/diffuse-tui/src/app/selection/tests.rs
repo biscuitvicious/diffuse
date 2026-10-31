@@ -36,6 +36,14 @@ index 1111111..2222222 100644
     )
 }
 
+/// Primary display number of a selection bound (new side preferred).
+fn coord_num(c: diffuse_core::notes::DiffCoord) -> u32 {
+    c.new_line_num
+        .or(c.old_line_num)
+        .map(|n| n.get())
+        .unwrap_or(0)
+}
+
 #[test]
 fn test_selection_anchor_span_snaps_to_coord_rows() {
     let mut state = AppState::new(
@@ -60,12 +68,15 @@ fn test_selection_anchor_span_snaps_to_coord_rows() {
         .compute_selection()
         .expect("anchor over coordinate rows must yield a selection");
     assert_eq!(sel.file_idx, 0);
-    assert!(sel.start < sel.end, "range must span two rows");
-    assert_eq!(sel.start, 1025);
-    assert_eq!(sel.end, 1027);
     assert!(
-        sel.side_is_new,
-        "a range led by a new-side row is a new-side selection"
+        coord_num(sel.start) < coord_num(sel.end),
+        "range must span two rows"
+    );
+    assert_eq!(coord_num(sel.start), 1025);
+    assert_eq!(coord_num(sel.end), 1027);
+    assert!(
+        sel.start.new_line_num.is_some() && sel.end.new_line_num.is_some(),
+        "a range led by a new-side row carries new-side numbers on both bounds"
     );
 }
 
@@ -95,8 +106,8 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
     let sel = state
         .confirmed_sel
         .expect("confirm must record a selection");
-    assert_eq!(sel.start, 1025);
-    assert_eq!(sel.end, 1027);
+    assert_eq!(coord_num(sel.start), 1025);
+    assert_eq!(coord_num(sel.end), 1027);
 
     let frame2 = state.render_frame(100, 30);
     assert!(
@@ -138,6 +149,75 @@ fn test_selection_requires_coord_rows() {
     let sel = state
         .compute_selection()
         .expect("anchor over the header must snap to a coordinate row");
-    assert_eq!(sel.start, 1022, "snap to the first padded ctx row");
-    assert_eq!(sel.end, 1022);
+    assert_eq!(
+        coord_num(sel.start),
+        1022,
+        "snap to the first padded ctx row"
+    );
+    assert_eq!(coord_num(sel.end), 1022);
+}
+
+#[test]
+fn test_selection_non_coord_gap_returns_none_when_snapping_inverts() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
+    // Insert non-coordinate divider rows between two coordinate rows.
+    state
+        .flat
+        .insert(2, crate::types::FlatRow::hunk_divider(0, 0));
+    state
+        .flat
+        .insert(3, crate::types::FlatRow::hunk_divider(0, 0));
+
+    state.anchor = Some(2);
+    state.row_idx = 3;
+
+    assert!(
+        state.compute_selection().is_none(),
+        "selection spanning exclusively non-coordinate rows must return None when snapping crosses"
+    );
+}
+
+#[test]
+fn test_selection_loc_label_formatting() {
+    use crate::types::Selection;
+    use diffuse_core::notes::DiffCoord;
+
+    let sel_mod = Selection {
+        file_idx: 0,
+        start: DiffCoord::both(1615, 1617),
+        end: DiffCoord::both(1616, 1618),
+    };
+    assert_eq!(sel_mod.loc_label("src/wire.rs"), "src/wire.rs:1617-1618");
+
+    let sel_mixed = Selection {
+        file_idx: 0,
+        start: DiffCoord::both(8, 12),
+        end: DiffCoord::old_side(10),
+    };
+    assert_eq!(
+        sel_mixed.loc_label("src/types.rs"),
+        "src/types.rs:12-old 10"
+    );
+
+    let sel_single = Selection {
+        file_idx: 0,
+        start: DiffCoord::both(8, 12),
+        end: DiffCoord::both(8, 12),
+    };
+    assert_eq!(sel_single.loc_label("src/types.rs"), "src/types.rs:12");
+
+    let sel_old_only = Selection {
+        file_idx: 0,
+        start: DiffCoord::old_side(5),
+        end: DiffCoord::old_side(10),
+    };
+    assert_eq!(
+        sel_old_only.loc_label("src/lib.rs"),
+        "src/lib.rs:old 5-old 10"
+    );
 }

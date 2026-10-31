@@ -12,7 +12,7 @@ use crate::{
     Badge,
     ansi::{ColorExt, FG_RESET, SGR_RESET, optimize_ansi, strip_ansi},
     core::{
-        notes::{ReviewNote, Side, note_anchors_in_file},
+        notes::{ReviewNote, note_anchors_in_rows},
         parse::RowKind,
         wire::{OutputFile, OutputHunk, OutputNote, OutputRow, PipelineOutput},
     },
@@ -179,22 +179,22 @@ fn partition_file_notes<'a>(
     let mut row_notes: HashMap<usize, Vec<&'a OutputNote>> = HashMap::new();
 
     for note in &file.notes {
-        let Some((side, _start, end)) = note.location.as_line() else {
+        // `File` and unresolvable coordinates never bind to a row.
+        let line_coords = match &note.location {
+            crate::core::notes::NoteLocation::File => None,
+            crate::core::notes::NoteLocation::Line { coord } => Some((*coord, *coord)),
+            crate::core::notes::NoteLocation::Range { start, end } => Some((*start, *end)),
+        };
+        let Some((_start_coord, end_coord)) = line_coords else {
             banner_notes.push(note);
             continue;
         };
-        let content_lines = match side {
-            Side::New => &file.new_content,
-            Side::Old => &file.old_content,
-        };
         let rn = ReviewNote::from(note);
-        if !content_lines.is_empty() && note_anchors_in_file(&rn, content_lines) {
+        if note_anchors_in_rows(&rn, rows.iter().copied()) {
+            // Precise row pair matching: both line numbers must agree.
             let target_row = rows.iter().position(|r| {
-                let coord = match side {
-                    Side::New => r.new_line,
-                    Side::Old => r.old_line,
-                };
-                coord == Some(end)
+                r.old_line == end_coord.old_line_num.map(|n| n.get())
+                    && r.new_line == end_coord.new_line_num.map(|n| n.get())
             });
             if let Some(idx) = target_row {
                 row_notes.entry(idx).or_default().push(note);
@@ -320,6 +320,151 @@ pub fn render_file_diff(
     render_file_diff_with_width(file, badge, theme, styled_prefixes, DEFAULT_CALLOUT_WIDTH)
 }
 
+/// Render one diff row (gutter prefix, run coloring, wrapping, padding)
+/// exactly as `render_file_diff` does, appending complete lines to `out`.
+fn render_row_line(
+    out: &mut String,
+    r: &OutputRow,
+    theme: &DiffuseTheme,
+    width: usize,
+    styled_prefixes: bool,
+) {
+    let pfx = if styled_prefixes {
+        styled_prefix(
+            r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, false, theme,
+        )
+    } else {
+        let plain = prefix_of(r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs);
+        format!("{plain} ")
+    };
+
+    let cont_pfx = if styled_prefixes {
+        "\x1b[38;5;242m      \x1b[39m".to_string()
+    } else {
+        "      ".to_string()
+    };
+
+    let text = r.text();
+
+    if width == 0 {
+        let mut row_buf = String::with_capacity(text.len() + 64);
+        let _ = write_row_segment(
+            &mut row_buf,
+            &text,
+            r.is_aux(),
+            r.kind,
+            r.mov_side,
+            &r.runs,
+            0,
+            usize::MAX,
+            &pfx,
+            false,
+            false,
+            0,
+            true,
+            true,
+            theme,
+        );
+        out.push_str(&row_buf);
+        out.push_str(SGR_RESET);
+        out.push('\n');
+        return;
+    }
+
+    let text_cols = width.saturating_sub(6).max(1);
+    let disp = display_text(&text, r.is_aux(), r.kind, &r.runs, 0, true);
+    let exp = expand_tabs(&disp, 4);
+    let len = display_width(&exp);
+    let seg_count = if len == 0 { 1 } else { len.div_ceil(text_cols) };
+
+    if seg_count == 1 {
+        let mut row_buf = String::with_capacity(text.len() + 64);
+        let _ = write_row_segment(
+            &mut row_buf,
+            &text,
+            r.is_aux(),
+            r.kind,
+            r.mov_side,
+            &r.runs,
+            0,
+            usize::MAX,
+            &pfx,
+            false,
+            false,
+            0,
+            true,
+            true,
+            theme,
+        );
+        let plain = strip_ansi(&row_buf);
+        let exp = expand_tabs(&plain, 4);
+        let vis_w = display_width(&exp);
+        out.push_str(&row_buf);
+        if vis_w < width {
+            for _ in 0..(width - vis_w) {
+                out.push(' ');
+            }
+        }
+        out.push_str(SGR_RESET);
+        out.push('\n');
+        return;
+    }
+
+    for s_idx in 0..seg_count {
+        let seg_pfx = if s_idx == 0 { &pfx } else { &cont_pfx };
+        let seg_start = s_idx * text_cols;
+        let seg_end = seg_start + text_cols;
+        let mut row_buf = String::with_capacity(text_cols + 64);
+        let _ = write_row_segment(
+            &mut row_buf,
+            &text,
+            r.is_aux(),
+            r.kind,
+            r.mov_side,
+            &r.runs,
+            seg_start,
+            seg_end,
+            seg_pfx,
+            false,
+            false,
+            0,
+            true,
+            true,
+            theme,
+        );
+        let plain = strip_ansi(&row_buf);
+        let exp = expand_tabs(&plain, 4);
+        let vis_w = display_width(&exp);
+        out.push_str(&row_buf);
+        if vis_w < width {
+            for _ in 0..(width - vis_w) {
+                out.push(' ');
+            }
+        }
+        out.push_str(SGR_RESET);
+        out.push('\n');
+    }
+}
+
+/// Render original source rows with the standard diff row coloring for
+/// their kind and language-derived token runs — the presentation used for
+/// note `original_source_rows` snapshots.
+pub fn render_source_rows(
+    rows: &[OutputRow],
+    theme: &DiffuseTheme,
+    width: usize,
+    styled_prefixes: bool,
+) -> Vec<String> {
+    let mut out = String::with_capacity(rows.len() * 128);
+    for r in rows {
+        render_row_line(&mut out, r, theme, width, styled_prefixes);
+    }
+    out.trim_end_matches('\n')
+        .split('\n')
+        .map(str::to_string)
+        .collect()
+}
+
 /// Render a single file's header bar and colored hunks with a custom note
 /// wrapping width.
 pub fn render_file_diff_with_width(
@@ -367,124 +512,6 @@ pub fn render_file_diff_with_width(
         emit_note(note, &mut out);
     }
 
-    let render_row = |r: &OutputRow, out: &mut String| {
-        let pfx = if styled_prefixes {
-            styled_prefix(
-                r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, false, theme,
-            )
-        } else {
-            let plain = prefix_of(r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs);
-            format!("{plain} ")
-        };
-
-        let cont_pfx = if styled_prefixes {
-            "\x1b[38;5;242m      \x1b[39m".to_string()
-        } else {
-            "      ".to_string()
-        };
-
-        let text = r.text();
-
-        if width == 0 {
-            let mut row_buf = String::with_capacity(text.len() + 64);
-            let _ = write_row_segment(
-                &mut row_buf,
-                &text,
-                r.is_aux(),
-                r.kind,
-                r.mov_side,
-                &r.runs,
-                0,
-                usize::MAX,
-                &pfx,
-                false,
-                false,
-                0,
-                true,
-                true,
-                theme,
-            );
-            out.push_str(&row_buf);
-            out.push_str(SGR_RESET);
-            out.push('\n');
-            return;
-        }
-
-        let text_cols = width.saturating_sub(6).max(1);
-        let disp = display_text(&text, r.is_aux(), r.kind, &r.runs, 0, true);
-        let exp = expand_tabs(&disp, 4);
-        let len = display_width(&exp);
-        let seg_count = if len == 0 { 1 } else { len.div_ceil(text_cols) };
-
-        if seg_count == 1 {
-            let mut row_buf = String::with_capacity(text.len() + 64);
-            let _ = write_row_segment(
-                &mut row_buf,
-                &text,
-                r.is_aux(),
-                r.kind,
-                r.mov_side,
-                &r.runs,
-                0,
-                usize::MAX,
-                &pfx,
-                false,
-                false,
-                0,
-                true,
-                true,
-                theme,
-            );
-            let plain = strip_ansi(&row_buf);
-            let exp = expand_tabs(&plain, 4);
-            let vis_w = display_width(&exp);
-            out.push_str(&row_buf);
-            if vis_w < width {
-                for _ in 0..(width - vis_w) {
-                    out.push(' ');
-                }
-            }
-            out.push_str(SGR_RESET);
-            out.push('\n');
-            return;
-        }
-
-        for s_idx in 0..seg_count {
-            let seg_pfx = if s_idx == 0 { &pfx } else { &cont_pfx };
-            let seg_start = s_idx * text_cols;
-            let seg_end = seg_start + text_cols;
-            let mut row_buf = String::with_capacity(text_cols + 64);
-            let _ = write_row_segment(
-                &mut row_buf,
-                &text,
-                r.is_aux(),
-                r.kind,
-                r.mov_side,
-                &r.runs,
-                seg_start,
-                seg_end,
-                seg_pfx,
-                false,
-                false,
-                0,
-                true,
-                true,
-                theme,
-            );
-            let plain = strip_ansi(&row_buf);
-            let exp = expand_tabs(&plain, 4);
-            let vis_w = display_width(&exp);
-            out.push_str(&row_buf);
-            if vis_w < width {
-                for _ in 0..(width - vis_w) {
-                    out.push(' ');
-                }
-            }
-            out.push_str(SGR_RESET);
-            out.push('\n');
-        }
-    };
-
     let mut row_idx = 0;
     if !file.rows.is_empty() && !file.hunks.is_empty() {
         for (hi, h) in file.hunks.iter().enumerate() {
@@ -492,7 +519,7 @@ pub fn render_file_diff_with_width(
             for _ in 0..h.rows.len() {
                 if row_idx < file.rows.len() {
                     let r = &file.rows[row_idx];
-                    render_row(r, &mut out);
+                    render_row_line(&mut out, r, theme, width, styled_prefixes);
                     if let Some(notes) = row_notes.get(&row_idx) {
                         for note in notes {
                             emit_note(note, &mut out);
@@ -504,7 +531,7 @@ pub fn render_file_diff_with_width(
         }
         while row_idx < file.rows.len() {
             let r = &file.rows[row_idx];
-            render_row(r, &mut out);
+            render_row_line(&mut out, r, theme, width, styled_prefixes);
             if let Some(notes) = row_notes.get(&row_idx) {
                 for note in notes {
                     emit_note(note, &mut out);
@@ -514,7 +541,7 @@ pub fn render_file_diff_with_width(
         }
     } else if !file.rows.is_empty() {
         for r in &file.rows {
-            render_row(r, &mut out);
+            render_row_line(&mut out, r, theme, width, styled_prefixes);
             if let Some(notes) = row_notes.get(&row_idx) {
                 for note in notes {
                     emit_note(note, &mut out);
@@ -526,7 +553,7 @@ pub fn render_file_diff_with_width(
         for (hi, h) in file.hunks.iter().enumerate() {
             emit_hunk_divider(hi, h, &mut out);
             for r in &h.rows {
-                render_row(r, &mut out);
+                render_row_line(&mut out, r, theme, width, styled_prefixes);
                 if let Some(notes) = row_notes.get(&row_idx) {
                     for note in notes {
                         emit_note(note, &mut out);

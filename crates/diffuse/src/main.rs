@@ -137,14 +137,14 @@ Markdown output."
     )]
     all: bool,
 
-    /// Show original source lines captured when creating notes in diff, JSON,
+    /// Show original source rows captured when creating notes in diff, JSON,
     /// or Markdown output.
     #[arg(
         long,
         global = true,
         help_heading = "Review Notes",
-        help = "Show original captured source lines alongside notes",
-        long_help = "Display the original source lines snapshot captured when each review \
+        help = "Show each note's original source rows alongside notes",
+        long_help = "Display the original source rows snapshot captured when each review \
 note was created, preserving original context across code refactors."
     )]
     show_source: bool,
@@ -523,12 +523,12 @@ review notes integration). Emits the structured result as JSON, JSON Lines, or M
         )]
         all: bool,
 
-        /// Show original source lines captured when creating notes.
+        /// Show original source rows captured when creating notes.
         #[arg(
             long,
             help_heading = "Review Notes",
-            help = "Display original source lines snapshot alongside notes",
-            long_help = "Display the original source lines captured when each review note was created."
+            help = "Display original source rows snapshot alongside notes",
+            long_help = "Display the original source rows captured when each review note was created."
         )]
         show_source: bool,
     },
@@ -542,7 +542,7 @@ Notes support a 3-state task lifecycle:
   🔄 InProgress  Feedback currently being addressed (counts as active)
   ✅ Resolved    Completed feedback (hidden by default)
 
-Notes also capture original source line snapshots, support threaded \
+Notes also capture original source row snapshots, support threaded \
 quoted replies, and can be inspected in terminal, JSON, or Markdown formats.",
         after_help = "TYPICAL USAGE & EXAMPLES:
     diffuse notes                          List active (open & in-progress) notes
@@ -567,7 +567,7 @@ Notes support a 3-state task lifecycle:
   🔄 InProgress  Feedback currently being addressed (counts as active)
   ✅ Resolved    Completed feedback (hidden by default)
 
-Notes also capture original source line snapshots, support threaded \
+Notes also capture original source row snapshots, support threaded \
 quoted replies, and can be inspected in terminal, JSON, or Markdown formats.",
     after_help = "TYPICAL USAGE & EXAMPLES:
     diffuse notes                          List active (open & in-progress) notes
@@ -702,8 +702,8 @@ Can filter by status, revision, or pathspecs, or export to JSON and Markdown.",
         #[arg(
             long,
             help_heading = "Display Options",
-            help = "Show original source lines captured when creating the notes",
-            long_help = "Print the exact original source code snippet captured when each review note was created."
+            help = "Show the original source rows captured when creating the notes",
+            long_help = "Print the exact original source rows captured when each review note was created, rendered with standard diff coloring."
         )]
         show_source: bool,
 
@@ -732,109 +732,58 @@ Can filter by status, revision, or pathspecs, or export to JSON and Markdown.",
         alias = "create",
         alias = "new",
         about = "Create a new review note",
-        long_about = "Create a new review note anchored to a specific file and line range. \
-Original source code under the selection is automatically captured from disk \
-(for post-image changes) or git HEAD (for pre-image changes), or can be supplied \
-explicitly via --source.\n\n\
-Coordinates can be specified in standard syntax:
-  - 'path/file.rs:42' (single line 42)
-  - 'path/file.rs:10-25' (lines 10 through 25)
-  - 'path/file.rs 10 25' (positional start and end)
-  - '-f path/file.rs -l 10 -e 25' (explicit flags)",
+        long_about = "Create a new review note anchored to diff coordinates on a file. \
+Coordinates may be given as a target (`file.rs:17` on the new side), via `--new` \
+(post-image line or range; alias `--line`), or via `--old` (pre-image line or \
+range). When both `--old` and `--new` are given, they must locate the same diff \
+row(s).\n\n\
+The note stores the exact diff rows it was created against, so it re-anchors to \
+those rows and never drifts when the diff changes.",
         after_help = "TYPICAL USAGE & EXAMPLES:
-    diffuse notes add src/lib.rs:42 \"Fix typo in doc comment\"
-    diffuse notes add src/lib.rs:10-25 \"Refactor into helper method\"
-    diffuse notes add src/lib.rs 10 25 \"Positional range syntax\"
-    diffuse notes add -f src/lib.rs -l 10 -e 25 -m \"Flag-based syntax\"
-    diffuse notes add src/lib.rs:42 --side old \"Comment on pre-image deletion\"
-    diffuse notes add src/lib.rs:42 --old \"Shorthand for pre-image\"
-    diffuse notes add src/lib.rs:42 --source \"let x = 1;\" -m \"Explicit source lines\"
-    diffuse notes add src/lib.rs:42 --no-source -m \"Omit source capture\"
-    diffuse notes add src/lib.rs:42 --status in-progress -m \"Start as in-progress\"
-    echo \"Detailed comment\" | diffuse notes add src/lib.rs:42"
+    diffuse notes create src/lib.rs:42 \"Fix typo in doc comment\"
+    diffuse notes create src/lib.rs:10-25 \"Refactor into helper method\"
+    diffuse notes create src/lib.rs --new 12 \"New-side line 12\"
+    diffuse notes create src/lib.rs --line 12 \"--line is an alias for --new\"
+    diffuse notes create src/lib.rs --old 15 \"Pre-image line 15 (deletion)\"
+    diffuse notes create src/lib.rs --old 14 --new 15 \"Both sides of a modification\"
+    diffuse notes create src/lib.rs --new 10-25 \"Range on the new side\"
+    diffuse notes create src/lib.rs:42 --status in-progress -m \"Start as in-progress\"
+    echo \"Detailed comment\" | diffuse notes create src/lib.rs:42"
     )]
     Add {
-        /// Target file path, optionally with line range (e.g. `src/lib.rs`,
-        /// `src/lib.rs:42`, `src/lib.rs:42-45`)
+        /// Target file path, optionally with new-side coordinates (e.g.
+        /// `src/lib.rs`, `src/lib.rs:42`, `src/lib.rs:10-25`)
         #[arg(
             value_name = "TARGET",
             value_hint = clap::ValueHint::AnyPath,
             help_heading = "Target & Coordinates",
-            help = "Target file path or coordinate (e.g. 'src/lib.rs:42', 'src/lib.rs:10-25')"
+            help = "Target file path or new-side coordinate (e.g. 'src/lib.rs:42', 'src/lib.rs:10-25')"
         )]
         target: Option<String>,
 
-        /// Starting line number (if not given in target, e.g. `diffuse notes
-        /// add file.rs 42`)
-        #[arg(
-            short = 'l',
-            long = "line",
-            alias = "start",
-            value_name = "LINE",
-            help_heading = "Target & Coordinates",
-            help = "Starting line number (1-indexed)",
-            long_help = "Starting line number of the note range (1-indexed)."
-        )]
-        line: Option<u32>,
-
-        /// Ending line number (defaults to starting line number)
-        #[arg(
-            short = 'e',
-            long = "end",
-            value_name = "LINE",
-            help_heading = "Target & Coordinates",
-            help = "Ending line number (defaults to starting line)",
-            long_help = "Ending line number of the note range (1-indexed, inclusive). Defaults to starting line."
-        )]
-        end: Option<u32>,
-
-        /// Optional second positional argument: starting line number or note
-        /// message
-        #[arg(
-            value_name = "LINE_OR_MESSAGE",
-            help_heading = "Target & Coordinates",
-            help = "Second positional argument (starting line number or note message)"
-        )]
-        pos2: Option<String>,
-
-        /// Optional third positional argument: ending line number or note
-        /// message
-        #[arg(
-            value_name = "END_LINE_OR_MESSAGE",
-            help_heading = "Target & Coordinates",
-            help = "Third positional argument (ending line number or note message)"
-        )]
-        pos3: Option<String>,
-
-        /// Target file path via flag
-        #[arg(
-            short = 'f',
-            long = "file",
-            value_name = "FILE",
-            value_hint = clap::ValueHint::FilePath,
-            help_heading = "Target & Coordinates",
-            help = "Target file path (alternative to positional TARGET)"
-        )]
-        file: Option<String>,
-
-        /// Side of the diff: 'new' (default, post-image) or 'old' (pre-image)
+        /// Pre-image (old-side) line or range: `N` or `N-M`
         #[arg(
             long,
-            value_name = "SIDE",
-            default_value = "new",
+            value_name = "OLD",
             help_heading = "Target & Coordinates",
-            help = "Side of the diff: 'new' (post-image) or 'old' (pre-image)",
-            long_help = "Side of the diff to attach the note to: 'new' (default, post-image) or 'old' (pre-image deletion)."
+            help = "Pre-image (old-side) line or range: 'N' or 'N-M'",
+            long_help = "Pre-image (old-side) coordinates the note anchors to. Either a single line \
+number or an inclusive range 'N-M'. May be combined with --new only when both locate the same diff rows."
         )]
-        side: String,
+        old: Option<String>,
 
-        /// Shorthand for `--side old`
+        /// Post-image (new-side) line or range: `N` or `N-M`
         #[arg(
             long,
+            alias = "line",
+            value_name = "NEW",
             help_heading = "Target & Coordinates",
-            help = "Shorthand for '--side old' (pre-image deletion side)"
+            help = "Post-image (new-side) line or range: 'N' or 'N-M' (alias: --line)",
+            long_help = "Post-image (new-side) coordinates the note anchors to. Either a single line \
+number or an inclusive range 'N-M'. Alias: --line. May be combined with --old only when both locate \
+the same diff rows."
         )]
-        old: bool,
+        new: Option<String>,
 
         /// Note text message (if omitted, reads from stdin)
         #[arg(
@@ -854,26 +803,6 @@ Coordinates can be specified in standard syntax:
             help = "Trailing note text message argument"
         )]
         text: Option<String>,
-
-        /// Explicitly provide the original source lines
-        #[arg(
-            long = "source",
-            alias = "source-lines",
-            value_name = "CODE",
-            help_heading = "Message Content",
-            help = "Explicit original source lines to record with note",
-            long_help = "Explicit source code text to snapshot with the note. Overrides disk synthesis."
-        )]
-        source: Option<String>,
-
-        /// Do not capture or synthesize original source lines
-        #[arg(
-            long,
-            help_heading = "Message Content",
-            help = "Do not capture or synthesize original source lines",
-            long_help = "Suppress capturing or synthesizing source lines for this review note."
-        )]
-        no_source: bool,
 
         /// Initial status of the note: 'open' (default), 'in-progress', or
         /// 'resolved'
@@ -1091,8 +1020,6 @@ struct Input {
     note: Option<ReviewNote>,
     #[serde(default)]
     file: Option<String>,
-    #[serde(default)]
-    side: Option<Side>,
     #[serde(default)]
     start: Option<u32>,
     #[serde(default)]
@@ -1606,7 +1533,7 @@ fn main() -> io::Result<()> {
                 colorize: md_colorize,
                 theme,
                 show_resolved_notes: show_resolved,
-                show_source_lines: show_source,
+                show_source,
                 ..MarkdownOptions::default()
             };
             let md = render_markdown_output(&out, &md_opts);
@@ -1793,7 +1720,7 @@ fn main() -> io::Result<()> {
         colorize: md_colorize,
         theme,
         show_resolved_notes: show_resolved,
-        show_source_lines: show_source,
+        show_source,
         ..MarkdownOptions::default()
     };
 

@@ -168,7 +168,7 @@ pub fn run_tui(
         .with_repo_context(repo_root.clone(), git_revs, staged)
         .with_expand_lines(expand_lines)
         .with_show_resolved_notes(show_resolved)
-        .with_show_source_lines(show_source);
+        .with_show_note_source(show_source);
     state.enable_async_on_demand();
 
     let (fs_tx, fs_rx) = mpsc::channel();

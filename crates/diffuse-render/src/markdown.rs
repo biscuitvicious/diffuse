@@ -32,8 +32,9 @@ pub struct MarkdownOptions {
     /// Include resolved review notes in the markdown output (default: show
     /// active only).
     pub show_resolved_notes: bool,
-    /// Render original source lines captured when review notes were created.
-    pub show_source_lines: bool,
+    /// Render original source rows under review notes as a nested diff code
+    /// block.
+    pub show_source: bool,
     /// Whether to colorize the Markdown output with ANSI escape sequences.
     pub colorize: bool,
     /// Theme used for token colors when `colorize` is enabled.
@@ -48,7 +49,7 @@ impl Default for MarkdownOptions {
             default_open: true,
             include_notes: true,
             show_resolved_notes: false,
-            show_source_lines: false,
+            show_source: false,
             colorize: false,
             theme: DiffuseTheme::DEFAULT,
         }
@@ -297,41 +298,14 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
                 out.push('\n');
             }
             rendered_notes += 1;
-            let line_info = match note.location.as_line() {
+            let line_info = match crate::core::notes::note_line_span(&note.location) {
                 Some((_, start, end)) if start == end => format!("**Line {}**", start),
                 Some((_, start, end)) => format!("**Lines {}-{}**", start, end),
                 None => "**File**".to_string(),
             };
             let glyph = note.status.glyph();
             push_md_line(&mut out, "> [!NOTE]", options.colorize, &theme);
-            if options.show_source_lines
-                && let Some(ref src) = note.source_lines
             {
-                push_md_line(
-                    &mut out,
-                    &format!("> {glyph} {line_info}:"),
-                    options.colorize,
-                    &theme,
-                );
-                push_md_line(&mut out, &format!("> ```{ext}"), options.colorize, &theme);
-                for src_line in src.lines() {
-                    push_md_line(&mut out, &format!("> {src_line}"), options.colorize, &theme);
-                }
-                push_md_line(&mut out, "> ```", options.colorize, &theme);
-                push_md_line(&mut out, ">", options.colorize, &theme);
-                for text_line in note.text.lines() {
-                    if text_line.is_empty() {
-                        push_md_line(&mut out, ">", options.colorize, &theme);
-                    } else {
-                        push_md_line(
-                            &mut out,
-                            &format!("> {text_line}"),
-                            options.colorize,
-                            &theme,
-                        );
-                    }
-                }
-            } else {
                 let mut lines = note.text.lines();
                 if let Some(first_line) = lines.next() {
                     push_md_line(
@@ -360,6 +334,21 @@ pub fn render_file_markdown(file: &OutputFile, options: &MarkdownOptions) -> Str
                         &theme,
                     );
                 }
+            }
+            if options.show_source && !note.original_source_rows.is_empty() {
+                push_md_line(&mut out, ">", options.colorize, &theme);
+                push_md_line(&mut out, "> ```diff", options.colorize, &theme);
+                for row in &note.original_source_rows {
+                    for_each_diff_line(row, |prefix, text| {
+                        push_md_line(
+                            &mut out,
+                            &format!("> {prefix}{text}"),
+                            options.colorize,
+                            &theme,
+                        );
+                    });
+                }
+                push_md_line(&mut out, "> ```", options.colorize, &theme);
             }
             push_md_line(&mut out, ">", options.colorize, &theme);
         }
@@ -398,6 +387,24 @@ struct MarkdownRenderCtx<'a> {
     colorize: bool,
     theme: &'a DiffuseTheme,
     profile: Option<&'a crate::syntax::profile::LangProfile>,
+}
+
+fn for_each_diff_line(row: &crate::core::wire::OutputRow, mut f: impl FnMut(char, String)) {
+    match row.kind {
+        RowKind::Ctx => f(' ', row.new_text()),
+        RowKind::Add => f('+', row.new_text()),
+        RowKind::Del => f('-', row.old_text()),
+        RowKind::Mod => {
+            f('-', row.old_text());
+            f('+', row.new_text());
+        }
+        RowKind::Mov => match row.mov_side {
+            Some(MovSide::Src) => f('-', row.old_text()),
+            Some(MovSide::Tgt) => f('+', row.new_text()),
+            None => {}
+        },
+        RowKind::File | RowKind::Sep => {}
+    }
 }
 
 fn push_md_line(out: &mut String, line: &str, colorize: bool, theme: &DiffuseTheme) {

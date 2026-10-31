@@ -1,6 +1,6 @@
 //! Unit tests for note persistence, markdown formatting, and querying.
 
-use std::{ffi::OsString, fs, mem, path::PathBuf};
+use std::{ffi::OsString, mem, path::PathBuf};
 
 use diffuse_syntax::color::TokenColor;
 
@@ -38,15 +38,47 @@ fn test_default_notes_path_lives_in_state_dir() {
 }
 
 #[test]
+fn test_diff_coord_helpers_and_note_location_constructors() {
+    let c_new = DiffCoord::new_side(42);
+    assert_eq!(c_new.new_line_num.map(|n| n.get()), Some(42));
+    assert_eq!(c_new.old_line_num, None);
+
+    let c_old = DiffCoord::old_side(17);
+    assert_eq!(c_old.old_line_num.map(|n| n.get()), Some(17));
+    assert_eq!(c_old.new_line_num, None);
+
+    let c_both = DiffCoord::both(17, 42);
+    assert_eq!(c_both.old_line_num.map(|n| n.get()), Some(17));
+    assert_eq!(c_both.new_line_num.map(|n| n.get()), Some(42));
+
+    let loc_line = NoteLocation::line(c_both);
+    assert_eq!(loc_line, NoteLocation::Line { coord: c_both });
+    assert_eq!(loc_line.primary_coord(), Some(c_both));
+
+    let loc_range = NoteLocation::range(c_old, c_new);
+    assert_eq!(
+        loc_range,
+        NoteLocation::Range {
+            start: c_old,
+            end: c_new
+        }
+    );
+    assert_eq!(loc_range.primary_coord(), Some(c_old));
+
+    let loc_file = NoteLocation::File;
+    assert_eq!(loc_file.primary_coord(), None);
+}
+
+#[test]
 fn test_notes_add_and_query() {
     let mut db = NotesDB::new();
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
+        location: NoteLocation::range(DiffCoord::new_side(10), DiffCoord::new_side(15)),
         text: "Check `this` out".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
 
@@ -66,19 +98,19 @@ fn test_notes_remove() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
+        location: NoteLocation::range(DiffCoord::new_side(10), DiffCoord::new_side(15)),
         text: "First".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/main.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 25),
+        location: NoteLocation::range(DiffCoord::new_side(20), DiffCoord::new_side(25)),
         text: "Second".into(),
         created_at: 1001,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
 
@@ -99,19 +131,19 @@ fn test_remove_note_by_id_targeted() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
+        location: NoteLocation::range(DiffCoord::new_side(10), DiffCoord::new_side(15)),
         text: "First".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/main.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
+        location: NoteLocation::range(DiffCoord::new_side(10), DiffCoord::new_side(15)),
         text: "Second (same line)".into(),
         created_at: 1001,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
 
@@ -157,10 +189,10 @@ fn test_update_note_text_targeted() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/main.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 15),
+        location: NoteLocation::range(DiffCoord::new_side(10), DiffCoord::new_side(15)),
         text: "Initial text".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     add_note(&mut db, "myrepo", note);
@@ -218,10 +250,10 @@ fn test_notes_isolated_across_heads() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+        location: NoteLocation::line(DiffCoord::new_side(1)),
         text: "head-scoped".into(),
         created_at: 1,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     let key = notes_key("myrepo", Some("h1"));
@@ -334,10 +366,10 @@ fn test_notes_persistence() {
         ReviewNote {
             id: "n1".into(),
             file: "lib.rs".into(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::Old, 1, 1),
+            location: NoteLocation::line(DiffCoord::old_side(1)),
             text: "**important**".into(),
             created_at: 500,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -468,26 +500,6 @@ fn test_note_runs_multiline_html_behavior() {
 }
 
 #[test]
-fn test_hash_line_content() {
-    // 1. Same content, different indentation -> identical hash
-    let h1 = hash_line_content("    let x = 42;");
-    let h2 = hash_line_content("let x = 42;");
-    let h3 = hash_line_content("\t\tlet x = 42;\n");
-    assert_eq!(h1, h2);
-    assert_eq!(h1, h3);
-
-    // 2. Different content -> different hash
-    let h4 = hash_line_content("let x = 43;");
-    assert_ne!(h1, h4);
-
-    // 3. Exact 8 hex chars (short hash)
-    let s = h1.to_hex();
-    assert_eq!(s.len(), 8);
-    assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
-    assert_eq!(format!("{h1}"), s);
-}
-
-#[test]
 fn test_line_hash_zero_cost_option_representation() {
     // Zero-cost representation: Option<LineHash> occupies 4 bytes with no
     // discriminant overhead
@@ -498,12 +510,8 @@ fn test_line_hash_zero_cost_option_representation() {
 
 #[test]
 fn test_line_hash_encapsulation_behaviour() {
-    let hash = LineHash::from_content("fn compute_sum(a: i32, b: i32) -> i32 {");
-    assert!(hash.matches_content("fn compute_sum(a: i32, b: i32) -> i32 {"));
-    assert!(hash.matches_content("    fn compute_sum(a: i32, b: i32) -> i32 {\n"));
-    assert!(!hash.matches_content("fn compute_sum(a: i64, b: i64) -> i64 {"));
-
-    // Parsing from hex
+    // Parsing from hex roundtrip
+    let hash = LineHash::from_hex("deadbeef").unwrap();
     let hex_str = hash.to_hex();
     let parsed = LineHash::from_hex(&hex_str).unwrap();
     assert_eq!(hash, parsed);
@@ -515,68 +523,27 @@ fn test_line_hash_encapsulation_behaviour() {
 }
 
 #[test]
-fn test_note_anchors_cleanly_predicate() {
-    let hash = hash_line_content("fn foo() {}");
-    let note_with_hash = ReviewNote {
-        id: "n1".into(),
-        file: "src/lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
-        text: "my note".into(),
-        created_at: 1000,
-        line_hash: Some(hash),
-        ..Default::default()
+fn test_row_aware_hash_and_anchoring() {
+    let run = |kind: crate::merge::RunKind, text: &str| crate::wire::OutputRun {
+        kind,
+        color: TokenColor::Default,
+        sgr: None,
+        text: text.to_owned().into(),
+    };
+    let row = |kind: crate::parse::RowKind, old: Option<u32>, new: Option<u32>, text: &str| {
+        crate::wire::OutputRow {
+            kind,
+            mov_side: None,
+            old_line: old,
+            new_line: new,
+            runs: vec![run(crate::merge::RunKind::Ctx, text)],
+            wholesale: false,
+            group: None,
+        }
     };
 
-    // Clean match on line content
-    assert!(note_anchors_cleanly(&note_with_hash, "fn foo() {}"));
-    assert!(note_anchors_cleanly(&note_with_hash, "    fn foo() {}\n"));
-
-    // Mismatched content on that line -> dropped
-    assert!(!note_anchors_cleanly(&note_with_hash, "fn bar() {}"));
-
-    // Legacy note without line_hash -> anchors cleanly by line number
-    let legacy_note = ReviewNote {
-        id: "n2".into(),
-        file: "src/lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
-        text: "legacy note".into(),
-        created_at: 1000,
-        line_hash: None,
-        ..Default::default()
-    };
-    assert!(note_anchors_cleanly(&legacy_note, "any changed content"));
-
-    // Note with source_lines (no line_hash) -> matches source lines
-    let note_with_source = ReviewNote {
-        id: "n3".into(),
-        file: "src/lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
-        text: "source note".into(),
-        line_hash: None,
-        source_lines: Some("fn foo() {}".into()),
-        ..Default::default()
-    };
-    assert!(note_anchors_cleanly(&note_with_source, "fn foo() {}"));
-    assert!(!note_anchors_cleanly(&note_with_source, "fn bar() {}"));
-}
-
-#[test]
-fn test_compound_line_hash_and_note_anchors_in_file() {
-    use crate::notes::note_anchors_in_file;
-
-    // 1. Single-line equivalence
-    let single = LineHash::from_lines(["fn foo() {}"]);
-    assert_eq!(single, LineHash::from_content("fn foo() {}"));
-
-    // 2. Multi-line compound hash
-    let multi1 = LineHash::from_lines(["fn foo() {", "    let x = 42;", "}"]);
-    let multi2 = LineHash::from_lines(["  fn foo() {\n", "let x = 42;", "  }\t"]);
-    assert_eq!(multi1, multi2);
-
-    let multi_diff = LineHash::from_lines(["fn foo() {", "    let x = 43;", "}"]);
-    assert_ne!(multi1, multi_diff);
-
-    // 3. note_anchors_in_file with multi-line note
+    // 1. Context-line gate (gap notes): the stored rows must reproduce the file
+    //    content at the location's exact primary coordinates.
     let file_lines = vec![
         "// header".to_string(),
         "fn foo() {".to_string(),
@@ -584,19 +551,31 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
         "}".to_string(),
         "// footer".to_string(),
     ];
+    let ctx2 = row(crate::parse::RowKind::Ctx, Some(2), Some(2), "fn foo() {");
+    let ctx3 = row(
+        crate::parse::RowKind::Ctx,
+        Some(3),
+        Some(3),
+        "    let x = 42;",
+    );
+    let ctx4 = row(crate::parse::RowKind::Ctx, Some(4), Some(4), "}");
 
     let note_multi = ReviewNote {
         id: "n_multi".into(),
         file: "foo.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 4),
+        location: crate::notes::NoteLocation::Range {
+            start: DiffCoord::from_row(&ctx2).unwrap(),
+            end: DiffCoord::from_row(&ctx4).unwrap(),
+        },
         text: "check function".into(),
-        line_hash: Some(multi1),
+        original_source_rows: vec![ctx2.clone(), ctx3.clone(), ctx4.clone()],
+        content_hash: LineHash::of_rows(&[ctx2.clone(), ctx3.clone(), ctx4.clone()]),
         ..Default::default()
     };
 
-    assert!(note_anchors_in_file(&note_multi, &file_lines));
+    assert!(note_anchors_in_context_lines(&note_multi, &file_lines));
 
-    // Modified one line in the middle -> must fail to anchor
+    // Modified one line in the middle -> gate fails
     let file_lines_modified = vec![
         "// header".to_string(),
         "fn foo() {".to_string(),
@@ -604,41 +583,60 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
         "}".to_string(),
         "// footer".to_string(),
     ];
-    assert!(!note_anchors_in_file(&note_multi, &file_lines_modified));
+    assert!(!note_anchors_in_context_lines(
+        &note_multi,
+        &file_lines_modified
+    ));
 
-    // Out of bounds -> must fail to anchor
+    // Out of bounds -> gate fails
     let short_file = vec!["// header".to_string(), "fn foo() {".to_string()];
-    assert!(!note_anchors_in_file(&note_multi, &short_file));
+    assert!(!note_anchors_in_context_lines(&note_multi, &short_file));
 
-    // Note without hash or source_lines cannot reanchor
-    let legacy_in_bounds = ReviewNote {
-        id: "n_leg".into(),
+    // A stored row whose text contradicts its own coordinate -> gate fails
+    let note_wrong_text = ReviewNote {
+        original_source_rows: vec![row(
+            crate::parse::RowKind::Ctx,
+            Some(3),
+            Some(3),
+            "    let x = 43;",
+        )],
+        ..note_multi.clone()
+    };
+    assert!(!note_anchors_in_context_lines(
+        &note_wrong_text,
+        &file_lines
+    ));
+
+    // Out of bounds -> gate fails
+    let short_file = vec!["// header".to_string(), "fn foo() {".to_string()];
+    assert!(!note_anchors_in_context_lines(&note_multi, &short_file));
+
+    // Rows without a primary-side number cannot be verified -> gate fails
+    let note_unverifiable = ReviewNote {
+        original_source_rows: vec![row(crate::parse::RowKind::Ctx, None, None, "fn foo() {")],
+        ..note_multi.clone()
+    };
+    assert!(!note_anchors_in_context_lines(
+        &note_unverifiable,
+        &file_lines
+    ));
+
+    // Note without stored rows cannot anchor
+    let note_without_rows = ReviewNote {
+        id: "n_no_rows".into(),
         file: "foo.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 4),
-        text: "legacy note".into(),
-        line_hash: None,
+        location: NoteLocation::range(DiffCoord::new_side(2), DiffCoord::new_side(4)),
+        text: "note without rows".into(),
+        content_hash: None,
         ..Default::default()
     };
-    assert!(!note_anchors_in_file(&legacy_in_bounds, &file_lines));
-    assert!(!note_anchors_in_file(&legacy_in_bounds, &short_file));
+    assert!(!note_anchors_in_context_lines(
+        &note_without_rows,
+        &file_lines
+    ));
 
-    // Note with source_lines (no line_hash) -> succeeds when matching, fails when
-    // modified
-    let note_source = ReviewNote {
-        id: "n_src".into(),
-        file: "foo.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 4),
-        text: "source lines note".into(),
-        line_hash: None,
-        source_lines: Some("fn foo() {\n    let x = 42;\n}".into()),
-        ..Default::default()
-    };
-    assert!(note_anchors_in_file(&note_source, &file_lines));
-    assert!(!note_anchors_in_file(&note_source, &file_lines_modified));
-
-    // 4. Uniqueness check across the file:
-    // If the selected chunk appears more than once anywhere in the file,
-    // reanchoring still succeeds by coordinate lookup.
+    // Coordinates still gate the lookup: duplicated chunks elsewhere in the
+    // file do not re-anchor the note at a different line.
     let file_with_duplicate = vec![
         "// header".to_string(),
         "fn foo() {".to_string(),
@@ -649,35 +647,303 @@ fn test_compound_line_hash_and_note_anchors_in_file() {
         "    let x = 42;".to_string(),
         "}".to_string(),
     ];
+    let shifted = ReviewNote {
+        location: crate::notes::NoteLocation::Range {
+            start: DiffCoord::from_row(&ctx2).unwrap(),
+            end: DiffCoord {
+                old_line_num: NonZeroU32::new(7),
+                new_line_num: NonZeroU32::new(7),
+            },
+        },
+        ..note_multi.clone()
+    };
     assert!(
-        note_anchors_in_file(&note_multi, &file_with_duplicate),
-        "anchor by coordinate should succeed even if chunk is duplicated"
+        !note_anchors_in_context_lines(&shifted, &file_with_duplicate),
+        "the gate checks the exact recorded span, not a content search"
+    );
+    assert!(note_anchors_in_context_lines(
+        &note_multi,
+        &file_with_duplicate
+    ));
+
+    // 2. Output-row anchoring: exact both-side coordinate match first, then a
+    //    complete structural hash comparison over the located window.
+
+    // A mod row pairs old and new content.
+    let mod_row = crate::wire::OutputRow {
+        kind: crate::parse::RowKind::Mod,
+        mov_side: None,
+        old_line: Some(12),
+        new_line: Some(15),
+        runs: vec![
+            run(crate::merge::RunKind::Ctx, "fn foo("),
+            run(crate::merge::RunKind::Del, "old"),
+            run(crate::merge::RunKind::Add, "new"),
+            run(crate::merge::RunKind::Ctx, ") {}"),
+        ],
+        wholesale: false,
+        group: None,
+    };
+    let old_only_row = row(crate::parse::RowKind::Del, Some(3), None, "old debt");
+    let rows = vec![old_only_row.clone(), mod_row.clone()];
+
+    // Note anchored to the mod row's full coordinate: both sides must match.
+    let note_mod = ReviewNote {
+        id: "n_mod".into(),
+        file: "foo.rs".into(),
+        location: crate::notes::NoteLocation::Line {
+            coord: DiffCoord::from_row(&mod_row).unwrap(),
+        },
+        text: "mod note".into(),
+        original_source_rows: vec![mod_row.clone()],
+        content_hash: LineHash::of_rows(std::slice::from_ref(&mod_row)),
+        ..Default::default()
+    };
+    assert!(
+        note_anchors_in_rows(&note_mod, &rows),
+        "mod row anchors via exact (old, new) pair"
+    );
+
+    // Same new line number but different old side -> no anchor.
+    let mismatched_side_row = crate::wire::OutputRow {
+        kind: crate::parse::RowKind::Ctx,
+        old_line: Some(9),
+        ..mod_row.clone()
+    };
+    assert!(
+        !note_anchors_in_rows(&note_mod, &[mismatched_side_row]),
+        "coordinates must match on both sides"
+    );
+
+    // Same coordinates but recolored presentation -> the complete hash
+    // detects the difference.
+    let mut recolored = mod_row.clone();
+    recolored.runs[1].color = diffuse_syntax::color::TokenColor::Keyword;
+    assert!(!note_anchors_in_rows(&note_mod, &[recolored]));
+
+    // Old-side note anchors on single-side rows by exact pair.
+    let note_old = ReviewNote {
+        id: "n_old".into(),
+        file: "foo.rs".into(),
+        location: crate::notes::NoteLocation::Line {
+            coord: DiffCoord::from_row(&old_only_row).unwrap(),
+        },
+        text: "old note".into(),
+        original_source_rows: vec![old_only_row.clone()],
+        content_hash: LineHash::of_rows(std::slice::from_ref(&old_only_row)),
+        ..Default::default()
+    };
+    assert!(note_anchors_in_rows(&note_old, &rows));
+
+    // Cross-side range: start row then scan forward until the end row.
+    let second_del = row(crate::parse::RowKind::Del, Some(4), None, "old debt two");
+    let range_rows = vec![old_only_row.clone(), second_del.clone()];
+    let range_note = ReviewNote {
+        id: "n_range".into(),
+        file: "foo.rs".into(),
+        location: crate::notes::NoteLocation::Range {
+            start: DiffCoord::from_row(&old_only_row).unwrap(),
+            end: DiffCoord::from_row(&second_del).unwrap(),
+        },
+        text: "range note".into(),
+        original_source_rows: range_rows.clone(),
+        content_hash: LineHash::of_rows(&range_rows),
+        ..Default::default()
+    };
+    assert!(
+        note_anchors_in_rows(&range_note, &range_rows),
+        "range anchors when the window hash matches"
+    );
+
+    // A note whose hash covers only the start row does not anchor over the
+    // full window.
+    let start_only_hash = ReviewNote {
+        content_hash: LineHash::of_rows(std::slice::from_ref(&old_only_row)),
+        ..range_note.clone()
+    };
+    assert!(!note_anchors_in_rows(&start_only_hash, &range_rows));
+
+    // End coord not present after start -> unanchored.
+    let missing_end = ReviewNote {
+        location: crate::notes::NoteLocation::Range {
+            start: DiffCoord::from_row(&old_only_row).unwrap(),
+            end: DiffCoord {
+                old_line_num: NonZeroU32::new(999),
+                new_line_num: None,
+            },
+        },
+        ..range_note.clone()
+    };
+    assert!(!note_anchors_in_rows(&missing_end, &range_rows));
+
+    // Hashing a window of row references equals hashing the owned rows.
+    assert_eq!(
+        LineHash::of_hashable(&rows.iter().collect::<Vec<_>>()),
+        LineHash::of_rows(&rows).unwrap(),
+        "reference and owned windows hash identically"
     );
 }
 
 #[test]
-fn test_note_serialization_with_line_hash() {
+fn test_row_hash_is_complete_and_unambiguous() {
+    use crate::{
+        merge::RunKind,
+        parse::RowKind,
+        wire::{MovSide, OutputRun},
+    };
+
+    let run = |kind: RunKind, sgr: Option<u32>, text: &str| OutputRun {
+        kind,
+        color: TokenColor::Default,
+        sgr,
+        text: text.to_owned().into(),
+    };
+    let base = crate::wire::OutputRow {
+        kind: RowKind::Mod,
+        mov_side: None,
+        old_line: Some(12),
+        new_line: Some(15),
+        runs: vec![
+            run(RunKind::Ctx, None, "fn foo("),
+            run(RunKind::Add, None, "new"),
+        ],
+        wholesale: false,
+        group: None,
+    };
+    let h = |rows: &[crate::wire::OutputRow]| LineHash::of_rows(rows).unwrap();
+    let single = std::slice::from_ref(&base).to_vec();
+    let h0 = h(&single);
+
+    // Field-for-field completeness: mutating any field changes the hash.
+    let mut m = base.clone();
+    m.kind = RowKind::Ctx;
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "kind");
+    let mut m = base.clone();
+    m.mov_side = Some(MovSide::Src);
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "mov_side");
+    let mut m = base.clone();
+    m.old_line = Some(13);
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "old_line");
+    let mut m = base.clone();
+    m.new_line = Some(16);
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "new_line");
+    let mut m = base.clone();
+    m.wholesale = true;
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "wholesale");
+    let mut m = base.clone();
+    m.group = Some(crate::parse::RowGroup::Anchor);
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "group");
+    let mut m = base.clone();
+    m.runs[1].kind = RunKind::Ctx;
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "run kind");
+    let mut m = base.clone();
+    m.runs[0].sgr = Some(1);
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "run sgr");
+    let mut m = base.clone();
+    m.runs[1].text = "older".into();
+    assert_ne!(h(std::slice::from_ref(&m)), h0, "run text");
+
+    // Run-boundary ambiguity: distinct run splits of identical concatenated
+    // text never collide.
+    let split = crate::wire::OutputRow {
+        runs: vec![
+            run(RunKind::Ctx, None, "fn foo(n"),
+            run(RunKind::Add, None, "ew"),
+        ],
+        ..base.clone()
+    };
+    assert_ne!(h(std::slice::from_ref(&split)), h0);
+
+    // Run count participates.
+    let merged = crate::wire::OutputRow {
+        runs: vec![run(RunKind::Ctx, None, "fn foo(new")],
+        ..base.clone()
+    };
+    assert_ne!(h(std::slice::from_ref(&merged)), h0);
+
+    // Row count participates.
+    let two = vec![base.clone(), base.clone()];
+    assert_ne!(h(&two), h0);
+}
+
+#[test]
+fn test_diff_coord_invariants() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    // Both sides captured when available (mod/ctx rows carry both).
+    let coord = DiffCoord::from_numbers(Some(3), Some(12)).unwrap();
+    assert_eq!(coord.old_line_num.map(|n| n.get()), Some(3));
+    assert_eq!(coord.new_line_num.map(|n| n.get()), Some(12));
+
+    // Single-side coordinates remain single-side.
+    let old_only = DiffCoord::from_numbers(Some(7), None).unwrap();
+    assert!(old_only.new_line_num.is_none());
+    assert!(old_only.old_line_num.is_some());
+    let new_only = DiffCoord::from_numbers(None, Some(15)).unwrap();
+    assert!(new_only.old_line_num.is_none());
+    assert_eq!(new_only.new_line_num.map(|n| n.get()), Some(15));
+
+    // Zero line numbers are 0-indexed sentinels and get dropped.
+    let zeroed = DiffCoord::from_numbers(Some(0), Some(5)).unwrap();
+    assert!(zeroed.old_line_num.is_none());
+    assert_eq!(zeroed.new_line_num.map(|n| n.get()), Some(5));
+
+    // Not-both-None invariant: by construction returns None...
+    assert!(DiffCoord::from_numbers(None, None).is_none());
+    // ...and `new` asserts under the DbC precondition.
+    let panics = catch_unwind(AssertUnwindSafe(|| DiffCoord::new(None, None))).is_err();
+    assert!(
+        panics,
+        "DiffCoord::new(None, None) must violate the precondition"
+    );
+
+    // `from_row` captures both sides of a mod/ctx row.
+    let row = crate::wire::OutputRow {
+        kind: crate::parse::RowKind::Ctx,
+        mov_side: None,
+        old_line: Some(4),
+        new_line: Some(18),
+        runs: vec![crate::wire::OutputRun {
+            kind: crate::merge::RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "line".into(),
+        }],
+        wholesale: false,
+        group: None,
+    };
+    let coord = DiffCoord::from_row(&row).unwrap();
+    assert_eq!(coord.old_line_num.map(|n| n.get()), Some(4));
+    assert_eq!(coord.new_line_num.map(|n| n.get()), Some(18));
+}
+
+#[test]
+fn test_note_serialization_with_content_hash() {
     let hash = LineHash::from_hex("12345678").unwrap();
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
+        location: NoteLocation::line(DiffCoord::new_side(10)),
         text: "my note".into(),
         created_at: 1000,
-        line_hash: Some(hash),
+        content_hash: Some(hash),
         ..Default::default()
     };
     let json = serde_json::to_string(&note).unwrap();
-    assert!(json.contains("\"lineHash\":\"12345678\""));
+    assert!(json.contains("\"contentHash\":\"12345678\""));
+    assert!(
+        json.contains("\"location\":{\"kind\":\"line\",\"coord\":{\"newLineNum\":10}}"),
+        "wire shape: {json}"
+    );
 
-    // Deserialize note with lineHash
+    // Deserialize note with contentHash
     let deserialized: ReviewNote = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized.line_hash, Some(hash));
+    assert_eq!(deserialized.content_hash, Some(hash));
 
-    // Deserialize note without lineHash (new schema)
-    let legacy_json = r#"{"id":"n2","file":"lib.rs","location":{"kind":"line","side":"new","start":5,"end":5},"text":"hi","createdAt":500}"#;
-    let legacy_note: ReviewNote = serde_json::from_str(legacy_json).unwrap();
-    assert_eq!(legacy_note.line_hash, None);
+    // Deserialize note without contentHash
+    let plain_json = r#"{"id":"n2","file":"lib.rs","location":{"kind":"line","coord":{"newLineNum":5}},"text":"hi","createdAt":500}"#;
+    let plain_note: ReviewNote = serde_json::from_str(plain_json).unwrap();
+    assert_eq!(plain_note.content_hash, None);
 }
 
 #[test]
@@ -686,19 +952,19 @@ fn test_query_notes_for_file_scoping_and_standalone() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
+        location: NoteLocation::line(DiffCoord::new_side(10)),
         text: "note on scoped commit".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/other.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 20),
+        location: NoteLocation::line(DiffCoord::new_side(20)),
         text: "note on other file".into(),
         created_at: 1001,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     add_note(&mut db, "myrepo@commit123", note1.clone());
@@ -745,19 +1011,19 @@ fn test_note_files_for_repo() {
     let note1 = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
+        location: NoteLocation::line(DiffCoord::new_side(10)),
         text: "note on lib".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     let note2 = ReviewNote {
         id: "n2".into(),
         file: "src/untouched.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 20),
+        location: NoteLocation::line(DiffCoord::new_side(20)),
         text: "note on untouched".into(),
         created_at: 1001,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
     add_note(&mut db, "myrepo@commit123", note1);
@@ -818,25 +1084,25 @@ fn test_note_status_lifecycle_and_serialization() {
     let note_open = ReviewNote {
         id: "1".into(),
         file: "a.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+        location: NoteLocation::line(DiffCoord::new_side(1)),
         text: "hello".into(),
         created_at: 100,
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::Open,
-        source_lines: None,
+        original_source_rows: Vec::new(),
     };
     let json_open = serde_json::to_string(&note_open).unwrap();
     assert!(!json_open.contains("\"status\""));
-    assert!(!json_open.contains("\"sourceLines\""));
+    assert!(!json_open.contains("\"contentHash\""));
 
     let note_in_progress = ReviewNote {
         status: NoteStatus::InProgress,
-        source_lines: Some("fn foo() {}".into()),
+        content_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
         ..note_open.clone()
     };
     let json_ip = serde_json::to_string(&note_in_progress).unwrap();
     assert!(json_ip.contains("\"status\":\"inProgress\""));
-    assert!(json_ip.contains("\"sourceLines\":\"fn foo() {}\""));
+    assert!(json_ip.contains("\"contentHash\":"));
 
     let note_resolved = ReviewNote {
         status: NoteStatus::Resolved,
@@ -845,11 +1111,11 @@ fn test_note_status_lifecycle_and_serialization() {
     let json_res = serde_json::to_string(&note_resolved).unwrap();
     assert!(json_res.contains("\"status\":\"resolved\""));
 
-    // Deserialization without status or sourceLines defaults properly
-    let raw_legacy = r#"{"id":"2","file":"b.rs","location":{"kind":"line","side":"new","start":5,"end":5},"text":"legacy","createdAt":200}"#;
-    let parsed: ReviewNote = serde_json::from_str(raw_legacy).unwrap();
+    // Deserialization without status defaults properly
+    let raw = r#"{"id":"2","file":"b.rs","location":{"kind":"line","coord":{"newLineNum":5}},"text":"plain","createdAt":200}"#;
+    let parsed: ReviewNote = serde_json::from_str(raw).unwrap();
     assert_eq!(parsed.status, NoteStatus::Open);
-    assert_eq!(parsed.source_lines, None);
+    assert_eq!(parsed.content_hash, None);
 }
 
 #[test]
@@ -871,12 +1137,12 @@ fn test_notes_db_status_and_reply_operations() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "src/lib.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
+        location: NoteLocation::line(DiffCoord::new_side(10)),
         text: "initial comment".into(),
         created_at: 1000,
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::Open,
-        source_lines: Some("let x = 1;".into()),
+        original_source_rows: Vec::new(),
     };
     add_note(&mut db, "repo1", note);
 
@@ -945,22 +1211,22 @@ fn test_find_and_update_note_in_db() {
     let note1 = ReviewNote {
         id: "abc-123".into(),
         file: "src/main.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 10, 10),
+        location: NoteLocation::line(DiffCoord::new_side(10)),
         text: "first note".into(),
         created_at: 100,
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::Open,
-        source_lines: Some("println!();".into()),
+        original_source_rows: Vec::new(),
     };
     let note2 = ReviewNote {
         id: "def-456".into(),
         file: "src/util.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::Old, 20, 20),
+        location: NoteLocation::line(DiffCoord::old_side(20)),
         text: "second note".into(),
         created_at: 200,
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::InProgress,
-        source_lines: None,
+        original_source_rows: Vec::new(),
     };
     add_note(&mut db, "myrepo@commit1", note1);
     add_note(&mut db, "other@commit2", note2);
@@ -1000,49 +1266,58 @@ fn test_generate_note_id_is_unique_and_non_empty() {
 }
 
 #[test]
-fn test_extract_source_lines() {
-    let content = "line 1\nline 2\nline 3\nline 4\nline 5";
-    // Single line
-    assert_eq!(extract_source_lines(content, 1, 1), Some("line 1".into()));
-    assert_eq!(extract_source_lines(content, 3, 3), Some("line 3".into()));
-    // Multi-line range
-    assert_eq!(
-        extract_source_lines(content, 2, 4),
-        Some("line 2\nline 3\nline 4".into())
-    );
-    // Full content
-    assert_eq!(extract_source_lines(content, 1, 5), Some(content.into()));
-    // End clamped to EOF
-    assert_eq!(
-        extract_source_lines(content, 4, 10),
-        Some("line 4\nline 5".into())
-    );
-    // Out of bounds
-    assert_eq!(extract_source_lines(content, 0, 1), None);
-    assert_eq!(extract_source_lines(content, 4, 2), None);
-    assert_eq!(extract_source_lines(content, 6, 10), None);
-    // Empty content
-    assert_eq!(extract_source_lines("", 1, 1), None);
-}
+fn test_coord_and_location_label_formatting() {
+    // 1. Single coordinate with new line: shows new line without labelling it
+    let new_only = DiffCoord::new_side(42);
+    assert_eq!(new_only.label(), "42");
+    assert_eq!(NoteLocation::line(new_only).label(), "42");
 
-#[test]
-fn test_synthesize_source_lines_from_disk() {
-    let tmp = tempfile::tempdir().unwrap();
-    let file_path = tmp.path().join("foo.rs");
-    fs::write(&file_path, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+    // 2. Single coordinate with both old and new (same): shows line number without
+    //    labelling it
+    let both_same = DiffCoord::both(15, 15);
+    assert_eq!(both_same.label(), "15");
+    assert_eq!(NoteLocation::line(both_same).label(), "15");
 
-    // From direct path
-    let lines = synthesize_source_lines(None, file_path.to_str().unwrap(), Side::New, 2, 2);
-    assert_eq!(lines, Some("    println!(\"hello\");".into()));
+    // 3. Single coordinate with both old and new (different, e.g. on mod row):
+    // only shows "new" coord without labelling it
+    let both_diff = DiffCoord::both(30, 32);
+    assert_eq!(both_diff.label(), "32");
+    assert_eq!(NoteLocation::line(both_diff).label(), "32");
 
-    // From repo relative path
-    let rel_lines = synthesize_source_lines(Some(tmp.path()), "foo.rs", Side::New, 1, 2);
-    assert_eq!(
-        rel_lines,
-        Some("fn main() {\n    println!(\"hello\");".into())
-    );
+    // 4. Single coordinate with old line only (e.g. deletion row): shows "old"
+    //    coord
+    let old_only = DiffCoord::old_side(10);
+    assert_eq!(old_only.label(), "old 10");
+    assert_eq!(NoteLocation::line(old_only).label(), "old 10");
 
-    // Non-existent file
-    let missing = synthesize_source_lines(Some(tmp.path()), "nonexistent.rs", Side::New, 1, 1);
-    assert_eq!(missing, None);
+    // 5. Range over modification rows: old 1615/new 1617 to old 1616/new 1618 ->
+    //    simply "1617-1618"
+    let mod_start = DiffCoord::both(1615, 1617);
+    let mod_end = DiffCoord::both(1616, 1618);
+    let range_mod = NoteLocation::range(mod_start, mod_end);
+    assert_eq!(range_mod.label(), "1617-1618");
+
+    // 6. Range from modification row to deletion row: old 8/new 12 to old 10 ->
+    //    "12-old 10"
+    let mixed_start = DiffCoord::both(8, 12);
+    let mixed_end = DiffCoord::old_side(10);
+    let range_mixed = NoteLocation::range(mixed_start, mixed_end);
+    assert_eq!(range_mixed.label(), "12-old 10");
+
+    // 7. Range over deletion rows only: old 5 to old 9 -> "old 5-old 9"
+    let del_start = DiffCoord::old_side(5);
+    let del_end = DiffCoord::old_side(9);
+    let range_del = NoteLocation::range(del_start, del_end);
+    assert_eq!(range_del.label(), "old 5-old 9");
+
+    // 8. Range from deletion row to addition row: old 5 to new 12 -> "old 5-12"
+    let del_to_add = NoteLocation::range(DiffCoord::old_side(5), DiffCoord::new_side(12));
+    assert_eq!(del_to_add.label(), "old 5-12");
+
+    // 9. File-level note -> "file"
+    assert_eq!(NoteLocation::File.label(), "file");
+
+    // 10. Empty coordinate (both None) -> empty string
+    let empty_coord = DiffCoord::from_numbers(None, None);
+    assert_eq!(empty_coord, None);
 }

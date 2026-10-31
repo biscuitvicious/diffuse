@@ -60,6 +60,14 @@ index 1111111..2222222 100644
     )
 }
 
+/// Primary display number of a selection bound (new side preferred).
+fn coord_num(c: diffuse_core::notes::DiffCoord) -> u32 {
+    c.new_line_num
+        .or(c.old_line_num)
+        .map(|n| n.get())
+        .unwrap_or(0)
+}
+
 #[test]
 fn test_note_draft_enter_inserts_newline() {
     let mut s = state_with_draft();
@@ -348,8 +356,8 @@ fn test_v_starts_and_confirms_selection() {
     );
     assert!(s.anchor.is_none(), "second v confirms and clears");
     let sel = s.confirmed_sel.expect("confirmed selection recorded");
-    assert_eq!(sel.start, 1025);
-    assert_eq!(sel.end, 1027);
+    assert_eq!(coord_num(sel.start), 1025);
+    assert_eq!(coord_num(sel.end), 1027);
 }
 
 #[test]
@@ -886,8 +894,8 @@ fn test_shift_click_and_shift_drag_selection_modification() {
         }),
     );
     let initial_sel = s.confirmed_sel.expect("confirmed selection exists");
-    assert_eq!(initial_sel.start, 1024);
-    assert_eq!(initial_sel.end, 1025);
+    assert_eq!(coord_num(initial_sel.start), 1024);
+    assert_eq!(coord_num(initial_sel.end), 1025);
     assert!(s.anchor.is_none(), "not in active drag mode");
 
     // 2. Shift-Click on row 7 (line 1027): modifies confirmed_sel in place without
@@ -906,9 +914,10 @@ fn test_shift_click_and_shift_drag_selection_modification() {
         "Shift-click must not enter active selection mode"
     );
     let updated_sel = s.confirmed_sel.expect("confirmed selection modified");
-    assert_eq!(updated_sel.start, 1024);
+    assert_eq!(coord_num(updated_sel.start), 1024);
     assert_eq!(
-        updated_sel.end, 1027,
+        coord_num(updated_sel.end),
+        1027,
         "Shift-click extended selection end to row 7 (1027)"
     );
 
@@ -950,8 +959,8 @@ fn test_shift_click_and_shift_drag_selection_modification() {
     let drag_sel = s
         .confirmed_sel
         .expect("confirmed selection updated by drag");
-    assert_eq!(drag_sel.start, 1024);
-    assert_eq!(drag_sel.end, 1027);
+    assert_eq!(coord_num(drag_sel.start), 1024);
+    assert_eq!(coord_num(drag_sel.end), 1027);
 }
 
 #[test]

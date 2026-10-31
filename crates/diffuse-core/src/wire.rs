@@ -29,7 +29,7 @@ pub use jsonl::{WireRecord, decode_jsonl_records, emit_file_jsonl};
 mod tests;
 
 /// Identifies which side of a moved line an `OutputRow` represents.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum MovSide {
     Src,
@@ -1124,7 +1124,7 @@ impl RowFlags {
 ///
 /// Serialized as a positional tuple: `[kind, old_line, new_line, runs,
 /// flags?]`.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct OutputRow {
     pub kind: RowKind,
     pub mov_side: Option<MovSide>,
@@ -1447,7 +1447,7 @@ pub use diffuse_syntax::color::TokenColor;
 /// - 2 elements: `["+text", "kwd"]` for styled runs without SGR.
 /// - 3 elements: `["+text", null, 4]` or `["+text", "kwd", 1]` when SGR is
 ///   present.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub struct OutputRun {
     pub kind: RunKind,
     pub color: TokenColor,
@@ -1609,11 +1609,13 @@ pub struct OutputNote {
     pub created_at: u64,
     pub runs: Vec<OutputRun>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub line_hash: Option<LineHash>,
+    pub content_hash: Option<LineHash>,
     #[serde(default, skip_serializing_if = "NoteStatus::is_open")]
     pub status: NoteStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_lines: Option<String>,
+    /// The output rows captured at note creation time — the original source
+    /// the note was written against, preserved for display.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub original_source_rows: Vec<OutputRow>,
 }
 
 impl OutputNote {
@@ -1625,9 +1627,13 @@ impl OutputNote {
             text: self.text.clone(),
             created_at: self.created_at,
             runs: self.runs.iter().map(OutputRun::reverse).collect(),
-            line_hash: self.line_hash,
+            content_hash: self.content_hash,
             status: self.status,
-            source_lines: self.source_lines.clone(),
+            original_source_rows: self
+                .original_source_rows
+                .iter()
+                .map(OutputRow::reverse)
+                .collect(),
         }
     }
 }
@@ -1640,9 +1646,9 @@ impl From<&OutputNote> for crate::notes::ReviewNote {
             location: n.location,
             text: n.text.clone(),
             created_at: n.created_at,
-            line_hash: n.line_hash,
+            content_hash: n.content_hash,
             status: n.status,
-            source_lines: n.source_lines.clone(),
+            original_source_rows: n.original_source_rows.clone(),
         }
     }
 }

@@ -151,11 +151,12 @@ impl AppState {
                     && let Some(c) = self.flat_row_coord(row)
                 {
                     let range = self.compute_selection().and_then(|sel| {
-                        if sel.side_is_new {
-                            Some((sel.start, sel.end))
-                        } else {
-                            None
-                        }
+                        // Editor ranges use new-side line numbers (the post-image).
+                        let s = sel.start.new_line_num.or(sel.start.old_line_num)?;
+                        let e = sel.end.new_line_num.or(sel.end.old_line_num)?;
+                        // Only pass a range if the selection is on the new side.
+                        sel.start.new_line_num?;
+                        Some((s.get(), e.get()))
                     });
                     self.pending_editor = Some(crate::editor::EditorRequest {
                         file: file.path.clone(),
@@ -217,7 +218,7 @@ impl AppState {
                 let _ = self.cycle_note_status();
             }
             TuiCommand::ToggleShowResolvedNotes => self.toggle_show_resolved_notes(),
-            TuiCommand::ToggleShowSourceLines => self.toggle_show_source_lines(),
+            TuiCommand::ToggleShowNoteSource => self.toggle_show_note_source(),
             TuiCommand::MouseClick { row, col, shift } => {
                 let header_offset = self.last_viewport_start;
                 let vh = self.viewport_height;

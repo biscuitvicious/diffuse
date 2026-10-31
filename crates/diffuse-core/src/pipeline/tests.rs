@@ -1063,7 +1063,7 @@ untracked file mode 100644
 
 #[test]
 fn test_pipeline_notes_counts_with_resolved_repo() {
-    use crate::notes::{ReviewNote, add_note};
+    use crate::notes::add_note;
 
     let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
     let mut db = crate::notes::NotesDB::new();
@@ -1074,10 +1074,10 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
             ReviewNote {
                 id: format!("n{i}"),
                 file: "a.txt".to_string(),
-                location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+                location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(1)),
                 text: text.to_string(),
                 created_at: 0,
-                line_hash: None,
+                content_hash: None,
                 ..Default::default()
             },
         );
@@ -1089,10 +1089,10 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
         ReviewNote {
             id: "other".to_string(),
             file: "unrelated.rs".to_string(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(1)),
             text: "other".to_string(),
             created_at: 0,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -1132,10 +1132,9 @@ fn test_pipeline_note_status_filtering_and_counts() {
         ReviewNote {
             id: "n_open".to_string(),
             file: "a.txt".to_string(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(1)),
             text: "open note".to_string(),
             status: NoteStatus::Open,
-            source_lines: Some("new one".to_string()),
             ..Default::default()
         },
     );
@@ -1145,7 +1144,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
         ReviewNote {
             id: "n_in_progress".to_string(),
             file: "a.txt".to_string(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(1)),
             text: "in progress note".to_string(),
             status: NoteStatus::InProgress,
             ..Default::default()
@@ -1157,7 +1156,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
         ReviewNote {
             id: "n_resolved".to_string(),
             file: "a.txt".to_string(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(1)),
             text: "resolved note".to_string(),
             status: NoteStatus::Resolved,
             ..Default::default()
@@ -1179,10 +1178,6 @@ fn test_pipeline_note_status_filtering_and_counts() {
         "only active notes in default output"
     );
     assert_eq!(out.files[0].notes[0].status, NoteStatus::Open);
-    assert_eq!(
-        out.files[0].notes[0].source_lines.as_deref(),
-        Some("new one")
-    );
     assert_eq!(out.files[0].notes[1].status, NoteStatus::InProgress);
 
     let total = out.total_counts();
@@ -1205,37 +1200,37 @@ fn test_pipeline_note_status_filtering_and_counts() {
 
 #[test]
 fn test_pipeline_preserves_all_notes_in_counts() {
-    use crate::notes::{LineHash, ReviewNote, add_note, hash_line_content};
+    use crate::notes::{LineHash, ReviewNote, add_note};
 
     let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-old one\n+new one\n old two\n";
     let mut db = crate::notes::NotesDB::new();
 
-    // 1. Cleanly anchored note (matching line_hash) -> kept
+    // 1. Note with a content_hash -> kept
     add_note(
         &mut db,
         "myrepo",
         ReviewNote {
             id: "clean".into(),
             file: "a.txt".into(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(1)),
             text: "clean note".into(),
             created_at: 0,
-            line_hash: Some(hash_line_content("new one")),
+            content_hash: Some(LineHash::from_hex("0000bad1").unwrap()),
             ..Default::default()
         },
     );
 
-    // 2. Mismatched line_hash note -> kept (displayed on file banner)
+    // 2. Note whose hash matches nothing -> kept (displayed on file banner)
     add_note(
         &mut db,
         "myrepo",
         ReviewNote {
             id: "mismatch".into(),
             file: "a.txt".into(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 1, 1),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(1)),
             text: "mismatched note".into(),
             created_at: 0,
-            line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
+            content_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
             ..Default::default()
         },
     );
@@ -1247,26 +1242,26 @@ fn test_pipeline_preserves_all_notes_in_counts() {
         ReviewNote {
             id: "orphan".into(),
             file: "a.txt".into(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 9999, 9999),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(9999)),
             text: "orphan note".into(),
             created_at: 0,
-            line_hash: Some(hash_line_content("some content")),
+            content_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
             ..Default::default()
         },
     );
 
-    // 4. Legacy note without line_hash on an existing line -> kept (displayed on
-    //    file banner)
+    // 4. Note without a content_hash on an existing line -> kept (displayed on file
+    //    banner)
     add_note(
         &mut db,
         "myrepo",
         ReviewNote {
-            id: "legacy".into(),
+            id: "unhashed".into(),
             file: "a.txt".into(),
-            location: crate::notes::NoteLocation::line(crate::notes::Side::New, 2, 2),
-            text: "legacy note".into(),
+            location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(2)),
+            text: "unhashed note".into(),
             created_at: 0,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -1276,11 +1271,11 @@ fn test_pipeline_preserves_all_notes_in_counts() {
     assert_eq!(out.files.len(), 1);
     assert_eq!(
         out.files[0].counts.notes, 4,
-        "all notes (clean, mismatch, orphan, legacy) must be retained in counts"
+        "all notes (clean, mismatch, orphan, unhashed) must be retained in counts"
     );
     assert_eq!(out.files[0].notes.len(), 4);
     let note_ids: Vec<_> = out.files[0].notes.iter().map(|n| n.id.as_str()).collect();
-    assert_eq!(note_ids, vec!["clean", "mismatch", "orphan", "legacy"]);
+    assert_eq!(note_ids, vec!["clean", "mismatch", "orphan", "unhashed"]);
     assert_eq!(out.total_counts().notes, 4);
 }
 
@@ -1682,9 +1677,59 @@ new file mode 100644
     assert_eq!(file.fences[0].lang, "");
 }
 
+/// Build a gap-note fixture: context rows for the span `start..=end` with
+/// per-line content from `line_text`, plus the matching note whose location,
+/// stored rows, and content hash derive from those rows.
+fn gap_note(
+    id: &str,
+    text: &str,
+    start: u32,
+    end: u32,
+    new_side: bool,
+    line_text: impl Fn(u32) -> String,
+) -> crate::notes::ReviewNote {
+    let rows: Vec<crate::wire::OutputRow> = (start..=end)
+        .map(|n| crate::wire::OutputRow {
+            kind: RowKind::Ctx,
+            mov_side: None,
+            // New-side gap rows carry both coordinates (old == new in
+            // unchanged regions); old-side gap rows carry only the old one.
+            old_line: Some(n),
+            new_line: new_side.then_some(n),
+            runs: vec![crate::wire::OutputRun {
+                kind: crate::merge::RunKind::Ctx,
+                color: TokenColor::Default,
+                sgr: None,
+                text: line_text(n).into(),
+            }],
+            wholesale: false,
+            group: None,
+        })
+        .collect();
+    let first = crate::notes::DiffCoord::from_row(&rows[0]).unwrap();
+    let last = crate::notes::DiffCoord::from_row(rows.last().unwrap()).unwrap();
+    crate::notes::ReviewNote {
+        id: id.into(),
+        file: "test.rs".into(),
+        location: if start == end {
+            crate::notes::NoteLocation::Line { coord: first }
+        } else {
+            crate::notes::NoteLocation::Range {
+                start: first,
+                end: last,
+            }
+        },
+        text: text.into(),
+        created_at: 1000,
+        original_source_rows: rows.clone(),
+        content_hash: crate::notes::LineHash::of_rows(&rows),
+        ..Default::default()
+    }
+}
+
 #[test]
 fn test_isolated_note_hunk_synthesis() {
-    use crate::notes::{LineHash, ReviewNote, add_note};
+    use crate::notes::add_note;
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1706,16 +1751,13 @@ diff --git a/test.rs b/test.rs
     new_content.insert("test.rs".to_string(), full_content);
 
     let mut db = HashMap::new();
-    let note = ReviewNote {
-        id: "note-isolated".into(),
-        file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 80, 80),
-        text: "isolated review note".into(),
-        created_at: 1000,
-        line_hash: Some(LineHash::from_content("line 80")),
-        ..Default::default()
-    };
-    add_note(&mut db, "repo", note);
+    add_note(
+        &mut db,
+        "repo",
+        gap_note("note-isolated", "isolated review note", 80, 80, true, |n| {
+            format!("line {n}")
+        }),
+    );
 
     let opts = PipelineOptions::default()
         .with_notes(Some(db), Some("repo".to_string()))
@@ -1743,7 +1785,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_boundary_adjacent_note_merging() {
-    use crate::notes::{LineHash, ReviewNote, add_note};
+    use crate::notes::add_note;
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1767,16 +1809,18 @@ diff --git a/test.rs b/test.rs
     let mut db = HashMap::new();
     // Diff hunk with visual_context=4 ends around line 12 + 4 = 16.
     // Note at line 20 is distance 4 from hunk end (<= 2*N = 8), so it merges.
-    let note = ReviewNote {
-        id: "note-adjacent".into(),
-        file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 20, 20),
-        text: "boundary adjacent note".into(),
-        created_at: 1000,
-        line_hash: Some(LineHash::from_content("line 20")),
-        ..Default::default()
-    };
-    add_note(&mut db, "repo", note);
+    add_note(
+        &mut db,
+        "repo",
+        gap_note(
+            "note-adjacent",
+            "boundary adjacent note",
+            20,
+            20,
+            true,
+            |n| format!("line {n}"),
+        ),
+    );
 
     let opts = PipelineOptions::default()
         .with_notes(Some(db), Some("repo".to_string()))
@@ -1807,7 +1851,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_multi_note_clustering_in_gap() {
-    use crate::notes::{LineHash, ReviewNote, add_note};
+    use crate::notes::add_note;
 
     let mut lines = Vec::new();
     for i in 1..=100 {
@@ -1831,26 +1875,20 @@ diff --git a/test.rs b/test.rs
     let mut db = HashMap::new();
     // Note 1 at line 60, Note 2 at line 65. Distance is 5 <= 2*N = 8, so cluster
     // together.
-    let note1 = ReviewNote {
-        id: "note-cluster-1".into(),
-        file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 60, 60),
-        text: "cluster 1".into(),
-        created_at: 1000,
-        line_hash: Some(LineHash::from_content("line 60")),
-        ..Default::default()
-    };
-    let note2 = ReviewNote {
-        id: "note-cluster-2".into(),
-        file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 65, 65),
-        text: "cluster 2".into(),
-        created_at: 1001,
-        line_hash: Some(LineHash::from_content("line 65")),
-        ..Default::default()
-    };
-    add_note(&mut db, "repo", note1);
-    add_note(&mut db, "repo", note2);
+    add_note(
+        &mut db,
+        "repo",
+        gap_note("note-cluster-1", "cluster 1", 60, 60, true, |n| {
+            format!("line {n}")
+        }),
+    );
+    add_note(
+        &mut db,
+        "repo",
+        gap_note("note-cluster-2", "cluster 2", 65, 65, true, |n| {
+            format!("line {n}")
+        }),
+    );
 
     let opts = PipelineOptions::default()
         .with_notes(Some(db), Some("repo".to_string()))
@@ -1879,7 +1917,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_missing_snapshot_content_fallback() {
-    use crate::notes::{LineHash, ReviewNote, add_note};
+    use crate::notes::add_note;
 
     let diff = "\
 diff --git a/test.rs b/test.rs
@@ -1895,10 +1933,12 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "note-no-snap".into(),
         file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 80, 80),
+        location: crate::notes::NoteLocation::line(crate::notes::DiffCoord::new_side(80)),
         text: "note without snapshot".into(),
         created_at: 1000,
-        line_hash: Some(LineHash::from_content("line 80")),
+        // No stored rows and no content hash: the note cannot anchor, so no
+        // context hunk may be synthesized for it.
+        content_hash: None,
         ..Default::default()
     };
     add_note(&mut db, "repo", note);
@@ -1919,7 +1959,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_note_on_old_side_gap_line_mapping() {
-    use crate::notes::{LineHash, ReviewNote, add_note};
+    use crate::notes::add_note;
 
     // Old file: 100 lines
     let mut old_lines = Vec::new();
@@ -1961,16 +2001,13 @@ diff --git a/test.rs b/test.rs
 
     let mut db = HashMap::new();
     // Note on Old side at line 50. Delta is +3, so new line is 53.
-    let note = ReviewNote {
-        id: "note-old-side".into(),
-        file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::Old, 50, 50),
-        text: "old side note".into(),
-        created_at: 1000,
-        line_hash: Some(LineHash::from_content("old line 50")),
-        ..Default::default()
-    };
-    add_note(&mut db, "repo", note);
+    add_note(
+        &mut db,
+        "repo",
+        gap_note("note-old-side", "old side note", 50, 50, false, |n| {
+            format!("old line {n}")
+        }),
+    );
 
     let opts = PipelineOptions::default()
         .with_notes(Some(db), Some("repo".to_string()))
@@ -2019,18 +2056,14 @@ fn test_synthetic_note_hunk_anchoring() {
     old_map.insert("test.rs".to_string(), old_content);
 
     // Note 1: multi-line note (lines 50..=52) that matches cleanly and is unique.
-    let hash = crate::notes::LineHash::from_lines(["line 50", "line 51", "line 52"]);
-    let note_matching = ReviewNote {
-        id: "note-unique".into(),
-        file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 50, 52),
-        text: "clean match".into(),
-        line_hash: Some(hash),
-        ..Default::default()
-    };
-
     let mut db = HashMap::new();
-    crate::notes::add_note(&mut db, "repo", note_matching);
+    crate::notes::add_note(
+        &mut db,
+        "repo",
+        gap_note("note-unique", "clean match", 50, 52, true, |n| {
+            format!("line {n}")
+        }),
+    );
 
     let opts = PipelineOptions::default()
         .with_notes(Some(db), Some("repo".to_string()))
@@ -2050,18 +2083,16 @@ fn test_synthetic_note_hunk_anchoring() {
         "Hunk must be synthesized for cleanly anchored note"
     );
 
-    // Note 2: line_hash does NOT match -> no hunk synthesized!
-    let wrong_hash = crate::notes::LineHash::from_lines(["changed 50", "changed 51", "changed 52"]);
-    let note_mismatched = ReviewNote {
-        id: "note-mismatched".into(),
-        file: "test.rs".into(),
-        location: crate::notes::NoteLocation::line(crate::notes::Side::New, 50, 52),
-        text: "mismatch".into(),
-        line_hash: Some(wrong_hash),
-        ..Default::default()
-    };
+    // Note 2: stored rows do NOT match the file content -> gate rejects the
+    // note and no hunk is synthesized!
     let mut db2 = HashMap::new();
-    crate::notes::add_note(&mut db2, "repo", note_mismatched);
+    crate::notes::add_note(
+        &mut db2,
+        "repo",
+        gap_note("note-mismatched", "mismatch", 50, 52, true, |n| {
+            format!("changed {n}")
+        }),
+    );
     let opts2 = PipelineOptions::default()
         .with_notes(Some(db2), Some("repo".to_string()))
         .with_visual_context(4);

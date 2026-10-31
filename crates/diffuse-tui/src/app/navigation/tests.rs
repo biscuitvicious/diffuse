@@ -1196,7 +1196,7 @@ fn test_sub_row_navigation_through_notes_and_wrapped_lines() {
 
     // Add a 2-paragraph note draft (2 rendered lines) and commit it to row 2
     state.note_draft = Some("First note line\n\nSecond note line".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     let cur_row = state.row_idx;
     let seg_count = state.row_seg_count(cur_row, 80);
@@ -1263,7 +1263,7 @@ fn test_viewport_scrolling_through_tall_content_without_min_vis_snap() {
         .collect::<Vec<_>>()
         .join("\n");
     state.note_draft = Some(tall_note);
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     // Move down 12 times into the note
     for _ in 0..12 {

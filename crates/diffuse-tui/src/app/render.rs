@@ -105,17 +105,14 @@ impl AppState {
             // Inline note draft if active
             if let Some(ref draft) = self.note_draft {
                 let loc = if let Some(sel) = self.compute_selection() {
-                    if sel.start == sel.end {
-                        format!("{}:{}", f.path, sel.start)
-                    } else {
-                        format!("{}:{}-{}", f.path, sel.start, sel.end)
-                    }
+                    sel.loc_label(&f.path)
                 } else {
-                    let line = self
+                    let coord = self
                         .current_flat_row()
-                        .and_then(|fr| self.flat_row_coord(fr))
-                        .unwrap_or(0);
-                    format!("{}:{}", f.path, line)
+                        .and_then(|fr| self.row_of(fr))
+                        .and_then(crate::core::notes::DiffCoord::from_row)
+                        .map_or_else(String::new, crate::core::notes::DiffCoord::label);
+                    format!("{}:{coord}", f.path)
                 };
                 lines.push(format!(
                     "\x1b[38;5;220m Note on {loc}: {draft}_  [ctrl+s save · enter newline · esc cancel]\x1b[39m"
@@ -709,17 +706,16 @@ impl AppState {
         // 8. Note Draft Modal Overlay
         if self.note_draft.is_some() || self.note_editor.is_some() {
             let loc = if let Some(sel) = self.compute_selection() {
-                if sel.start == sel.end {
-                    format!("{file_path}:{}", sel.start)
-                } else {
-                    format!("{file_path}:{}-{}", sel.start, sel.end)
-                }
+                sel.loc_label(file_path.as_str())
             } else if let Some(fr) = self.current_flat_row() {
                 if let crate::types::FlatRowKind::FileHeader = fr.kind {
                     file_path.clone()
                 } else {
-                    let line = self.flat_row_coord(fr).unwrap_or(0);
-                    format!("{file_path}:{line}")
+                    let coord = self
+                        .row_of(fr)
+                        .and_then(crate::core::notes::DiffCoord::from_row)
+                        .map_or_else(String::new, crate::core::notes::DiffCoord::label);
+                    format!("{file_path}:{coord}")
                 }
             } else {
                 file_path.clone()

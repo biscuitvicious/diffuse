@@ -4,15 +4,22 @@ use crate::{
     app::{AppState, temp_notes_path},
     core::{
         PipelineOptions,
-        notes::{
-            LineHash, NoteStatus, ReviewNote, add_note, hash_line_content, load_notes,
-            notes_for_file,
-        },
+        notes::{LineHash, NoteStatus, ReviewNote, add_note, load_notes, notes_for_file},
         pipeline::run_pipeline_full,
         wire::PipelineOutput,
     },
     render::ColorExt,
 };
+
+/// The output row at a new-side line number in the given file.
+fn row_at_new(state: &AppState, file_idx: usize, n: u32) -> &crate::core::wire::OutputRow {
+    let f = &state.output.files[file_idx];
+    f.rows
+        .iter()
+        .chain(f.hunks.iter().flat_map(|h| h.rows.iter()))
+        .find(|r| r.new_line == Some(n))
+        .unwrap_or_else(|| panic!("no output row at new line {n}"))
+}
 
 fn sample_output() -> PipelineOutput {
     let diff = r#"diff --git a/filesystem.rs b/filesystem.rs
@@ -114,7 +121,7 @@ fn test_note_commit_persists_and_deletes() {
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("check this **carefully**".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
     assert!(state.note_draft.is_none());
 
     let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
@@ -157,7 +164,7 @@ fn test_note_commit_persists_and_deletes() {
 }
 
 #[test]
-fn test_note_commit_records_line_hash() {
+fn test_note_commit_records_content_hash() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let notes_path = notes_file.path().to_path_buf();
     let mut state = AppState::new(
@@ -169,11 +176,13 @@ fn test_note_commit_records_line_hash() {
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("note with hash".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
     assert_eq!(notes.len(), 1);
-    let hash = notes[0].line_hash.expect("line_hash must be recorded");
+    let hash = notes[0]
+        .content_hash
+        .expect("content_hash must be recorded");
     // Short hash: exactly 8 hex chars (max 4-8 chars)
     let hex = hash.to_hex();
     assert_eq!(hex.len(), 8);
@@ -194,15 +203,18 @@ fn test_note_callout_anchoring_and_banner_placement() {
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
 
-    // 1. Note with matching line_hash anchors cleanly -> inline callout produced
-    let matching_hash = hash_line_content("    let x = 1;");
+    // 1. Note whose complete row hash matches the row at its exact coordinates
+    //    anchors cleanly -> inline callout produced
+    let anchor_row = row_at_new(&state, 0, 1025);
+    let coord = crate::core::notes::DiffCoord::from_row(anchor_row).unwrap();
     let valid_note = ReviewNote {
         id: "valid".into(),
         file: file.clone(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
+        location: crate::core::notes::NoteLocation::Line { coord },
         text: "valid note".into(),
         created_at: 100,
-        line_hash: Some(matching_hash),
+        content_hash: LineHash::of_rows(std::slice::from_ref(anchor_row)),
+        original_source_rows: vec![anchor_row.clone()],
         ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, valid_note);
@@ -217,15 +229,17 @@ fn test_note_callout_anchoring_and_banner_placement() {
         "cleanly anchored note must anchor inline, not on file banner"
     );
 
-    // 2. Note with mismatching line_hash -> displayed on file banner
+    // 2. Note with mismatching content_hash -> displayed on file banner
     state.notes.clear();
     let mismatch_note = ReviewNote {
         id: "mismatch".into(),
         file: file.clone(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            1025,
+        )),
         text: "mismatch note".into(),
         created_at: 101,
-        line_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
+        content_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
         ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, mismatch_note);
@@ -233,11 +247,11 @@ fn test_note_callout_anchoring_and_banner_placement() {
     assert_eq!(
         callouts_mismatch.len(),
         1,
-        "mismatched line_hash note must produce a banner callout"
+        "mismatched content_hash note must produce a banner callout"
     );
     assert!(
         callouts_mismatch.contains_key(&banner_idx),
-        "mismatched line_hash note must display attached to the file banner"
+        "mismatched content_hash note must display attached to the file banner"
     );
 
     // 3. Note on nonexistent line number -> displayed on file banner
@@ -245,14 +259,12 @@ fn test_note_callout_anchoring_and_banner_placement() {
     let nonexistent_line_note = ReviewNote {
         id: "nonexistent".into(),
         file: file.clone(),
-        location: crate::core::notes::NoteLocation::line(
-            crate::core::notes::Side::New,
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
             99999,
-            99999,
-        ),
+        )),
         text: "orphan note".into(),
         created_at: 102,
-        line_hash: Some(LineHash::from_hex("87654321").unwrap()),
+        content_hash: Some(LineHash::from_hex("87654321").unwrap()),
         ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, nonexistent_line_note);
@@ -267,27 +279,29 @@ fn test_note_callout_anchoring_and_banner_placement() {
         "orphan note must display attached to the file banner"
     );
 
-    // 4. Note without line_hash -> displayed on file banner
+    // 4. Note without content_hash -> displayed on file banner
     state.notes.clear();
-    let legacy_note = ReviewNote {
-        id: "legacy".into(),
+    let unhashed_note = ReviewNote {
+        id: "unhashed".into(),
         file: file.clone(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
-        text: "legacy note".into(),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            1025,
+        )),
+        text: "unhashed note".into(),
         created_at: 103,
-        line_hash: None,
+        content_hash: None,
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, legacy_note);
-    let callouts_legacy = state.note_callouts(80);
+    add_note(&mut state.notes, &state.notes_key, unhashed_note);
+    let callouts_unhashed = state.note_callouts(80);
     assert_eq!(
-        callouts_legacy.len(),
+        callouts_unhashed.len(),
         1,
-        "legacy note without hash must produce a banner callout"
+        "unhashed note must produce a banner callout"
     );
     assert!(
-        callouts_legacy.contains_key(&banner_idx),
-        "legacy note without hash must display attached to the file banner"
+        callouts_unhashed.contains_key(&banner_idx),
+        "unhashed note must display attached to the file banner"
     );
 }
 
@@ -304,19 +318,23 @@ fn test_multiline_note_anchors_to_last_line() {
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
 
-    // Multi-line range 1025..=1027: compound hash across all selected lines
-    let compound_hash = LineHash::from_lines([
-        "    let x = 1;",
-        "    // new comment — em dash updated",
-        "    let y = 2;",
-    ]);
+    // Multi-line range 1025..=1027: complete hash over all captured rows
+    let rows = vec![
+        row_at_new(&state, 0, 1025).clone(),
+        row_at_new(&state, 0, 1026).clone(),
+        row_at_new(&state, 0, 1027).clone(),
+    ];
     let valid_multiline = ReviewNote {
         id: "multi-valid".into(),
         file: file.clone(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1027),
+        location: crate::core::notes::NoteLocation::Range {
+            start: crate::core::notes::DiffCoord::from_row(&rows[0]).unwrap(),
+            end: crate::core::notes::DiffCoord::from_row(rows.last().unwrap()).unwrap(),
+        },
         text: "multiline note".into(),
         created_at: 100,
-        line_hash: Some(compound_hash),
+        content_hash: LineHash::of_rows(&rows),
+        original_source_rows: rows,
         ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, valid_multiline);
@@ -331,17 +349,19 @@ fn test_multiline_note_anchors_to_last_line() {
         "multiline note anchored to last line must anchor inline, not on file banner"
     );
 
-    // If line_hash was for first line only ("    let x = 1;"), it should NOT match
-    // when compound-anchoring across the 3-line range
+    // A hash over only the first row does not match the 3-row window
     state.notes.clear();
-    let first_line_hash = hash_line_content("    let x = 1;");
+    let first_row = row_at_new(&state, 0, 1025).clone();
     let mismatch_multiline = ReviewNote {
         id: "multi-mismatch".into(),
         file,
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1027),
+        location: crate::core::notes::NoteLocation::Range {
+            start: crate::core::notes::DiffCoord::from_row(&first_row).unwrap(),
+            end: crate::core::notes::DiffCoord::from_row(row_at_new(&state, 0, 1027)).unwrap(),
+        },
         text: "first line hash note".into(),
         created_at: 101,
-        line_hash: Some(first_line_hash),
+        content_hash: LineHash::of_rows(std::slice::from_ref(&first_row)),
         ..Default::default()
     };
     add_note(&mut state.notes, &state.notes_key, mismatch_multiline);
@@ -372,7 +392,7 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
     // Commit note via draft -> file counts and total counts dynamically update
     // to 1
     state.note_draft = Some("first dynamic note".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
     assert_eq!(state.output.files[0].counts.notes, 1);
     assert_eq!(state.output.total_counts().notes, 1);
     assert_eq!(state.output.files[0].notes.len(), 1);
@@ -385,13 +405,11 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
             id: "banner-note".into(),
             file: file.clone(),
             location: crate::core::notes::NoteLocation::line(
-                crate::core::notes::Side::New,
-                99999,
-                99999,
+                crate::core::notes::DiffCoord::new_side(99999),
             ),
             text: "unanchored note".into(),
             created_at: 104,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -441,13 +459,11 @@ fn test_note_callouts_render_across_all_files_and_banners() {
             id: "note-file-1".into(),
             file: "second.rs".into(),
             location: crate::core::notes::NoteLocation::line(
-                crate::core::notes::Side::New,
-                999,
-                999,
+                crate::core::notes::DiffCoord::new_side(999),
             ),
             text: "second file banner note".into(),
             created_at: 200,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -483,17 +499,19 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
         crate::render::DiffuseTheme::DEFAULT,
     );
 
-    let matching_hash = hash_line_content("    let a = 20;");
+    let anchor_row = row_at_new(&state, 1, 2).clone();
+    let coord = crate::core::notes::DiffCoord::from_row(&anchor_row).unwrap();
     add_note(
         &mut state.notes,
         &state.notes_key,
         ReviewNote {
             id: "inline-note-file-1".into(),
             file: "second.rs".into(),
-            location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 2, 2),
+            location: crate::core::notes::NoteLocation::Line { coord },
             text: "inline note on second.rs".into(),
             created_at: 201,
-            line_hash: Some(matching_hash),
+            content_hash: LineHash::of_rows(std::slice::from_ref(&anchor_row)),
+            original_source_rows: vec![anchor_row],
             ..Default::default()
         },
     );
@@ -545,13 +563,11 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
             id: "md-note".into(),
             file: "first.rs".into(),
             location: crate::core::notes::NoteLocation::line(
-                crate::core::notes::Side::New,
-                9999,
-                9999,
+                crate::core::notes::DiffCoord::new_side(9999),
             ),
             text: note_text.into(),
             created_at: 300,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -656,13 +672,11 @@ fn test_note_callout_gutter_band_and_terminal_line() {
             id: "gutter-note".into(),
             file: "first.rs".into(),
             location: crate::core::notes::NoteLocation::line(
-                crate::core::notes::Side::New,
-                9999,
-                9999,
+                crate::core::notes::DiffCoord::new_side(9999),
             ),
             text: "This is\na 4-line\nnote:\n`let a = 17;`".into(),
             created_at: 301,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -733,13 +747,11 @@ fn test_note_callout_empty_text_renders_one_line() {
             id: "empty-note".into(),
             file: "first.rs".into(),
             location: crate::core::notes::NoteLocation::line(
-                crate::core::notes::Side::New,
-                9999,
-                9999,
+                crate::core::notes::DiffCoord::new_side(9999),
             ),
             text: String::new(),
             created_at: 302,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -776,13 +788,11 @@ fn test_note_callout_long_line_wrapping() {
             id: "wrap-test".into(),
             file: "first.rs".into(),
             location: crate::core::notes::NoteLocation::line(
-                crate::core::notes::Side::New,
-                9999,
-                9999,
+                crate::core::notes::DiffCoord::new_side(9999),
             ),
             text: note_text,
             created_at: 400,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -834,13 +844,11 @@ fn test_table_note_width_at_narrow_content_width() {
             id: "table-note".into(),
             file: "filesystem.rs".into(),
             location: crate::core::notes::NoteLocation::line(
-                crate::core::notes::Side::New,
-                1025,
-                1025,
+                crate::core::notes::DiffCoord::new_side(1025),
             ),
             text: table.to_string(),
             created_at: 0,
-            line_hash: None,
+            content_hash: None,
             ..Default::default()
         },
     );
@@ -875,9 +883,9 @@ fn test_targeted_note_deletion_multiple_notes_on_same_row() {
 
     // Commit two notes on the first code row
     state.note_draft = Some("First note".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
     state.note_draft = Some("Second note".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     let note_row = 1;
     state.row_idx = note_row;
@@ -923,7 +931,7 @@ fn test_targeted_note_editing_preserves_id_and_updates_text() {
     let file = state.current_file().unwrap().path.clone();
 
     state.note_draft = Some("Original comment text".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     let note_row = 1;
     state.row_idx = note_row;
@@ -939,7 +947,7 @@ fn test_targeted_note_editing_preserves_id_and_updates_text() {
 
     // Modify the draft text
     state.note_draft = Some("Updated comment text!".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     assert!(state.note_draft.is_none());
     assert!(state.editing_note_id.is_none());
@@ -963,7 +971,7 @@ fn test_delete_note_disabled_on_diff_row_without_selection() {
     let file = state.current_file().unwrap().path.clone();
 
     state.note_draft = Some("Keep me safe".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     // Cursor is on row 1, vis_line 1 (code row, not the note)
     state.row_idx = 1;
@@ -988,7 +996,7 @@ fn test_style_focused_note_line() {
         crate::render::DiffuseTheme::DEFAULT,
     );
     state.note_draft = Some("test note".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
     let callouts = state.note_callouts(80);
     let note_line = callouts.values().next().unwrap().first().unwrap();
 
@@ -1024,6 +1032,94 @@ fn test_style_focused_note_line() {
 }
 
 #[test]
+fn test_style_focused_note_line_in_progress_and_resolved() {
+    use crate::app::notes::style_focused_note_line;
+    let theme = crate::render::DiffuseTheme::DEFAULT;
+
+    // Test InProgress status with 3 lines to exercise first_prefix, line_prefix,
+    // final_prefix
+    let in_progress_lines = crate::render::render_note_callout_lines(
+        NoteStatus::InProgress,
+        "- Line one\n- Line two\n- Line three",
+        &[],
+        false,
+        true,
+        &theme,
+        80,
+    );
+    assert_eq!(in_progress_lines.len(), 3);
+
+    // First line (InProgress)
+    let focused_first = style_focused_note_line(&in_progress_lines[0], true);
+    assert!(
+        focused_first.contains("\x1b[38;5;81m"),
+        "in-progress first line must switch left stripe to cyan"
+    );
+    assert!(
+        focused_first.contains("\x1b[48;5;237m"),
+        "current line receives cursor background 237"
+    );
+    assert!(
+        focused_first.contains("🔄"),
+        "must preserve InProgress 🔄 glyph"
+    );
+
+    // Middle line (InProgress, line_prefix)
+    let focused_middle = style_focused_note_line(&in_progress_lines[1], false);
+    assert!(
+        focused_middle.contains("\x1b[38;5;81m"),
+        "in-progress continuation line must switch left stripe to cyan"
+    );
+    assert!(
+        focused_middle.contains("\x1b[48;5;234m"),
+        "non-current line keeps note_bg 234"
+    );
+    assert!(focused_middle.contains('│'), "must preserve connector │");
+
+    // Final line (InProgress, final_prefix)
+    let focused_final = style_focused_note_line(&in_progress_lines[2], false);
+    assert!(
+        focused_final.contains("\x1b[38;5;81m"),
+        "in-progress final line must switch left stripe to cyan"
+    );
+    assert!(
+        focused_final.contains("\x1b[48;5;234m"),
+        "non-current line keeps note_bg 234"
+    );
+    assert!(focused_final.contains('╰'), "must preserve connector ╰");
+
+    // Test Resolved status
+    let resolved_lines = crate::render::render_note_callout_lines(
+        NoteStatus::Resolved,
+        "- Res one\n- Res two",
+        &[],
+        false,
+        true,
+        &theme,
+        80,
+    );
+    assert_eq!(resolved_lines.len(), 2);
+
+    let focused_res = style_focused_note_line(&resolved_lines[0], true);
+    assert!(
+        focused_res.contains("\x1b[38;5;81m"),
+        "resolved line must switch left stripe to cyan"
+    );
+    assert!(
+        focused_res.contains("\x1b[48;5;237m"),
+        "current line receives cursor background 237"
+    );
+    assert!(
+        focused_res.contains("✅"),
+        "must preserve Resolved ✅ glyph"
+    );
+
+    // Non-note string falls through unchanged
+    let non_note = "arbitrary line content";
+    assert_eq!(style_focused_note_line(non_note, true), non_note);
+}
+
+#[test]
 fn test_multiline_note_stripe_entirely_cyan_when_cursor_on_any_line() {
     let mut state = AppState::new(
         sample_output(),
@@ -1032,7 +1128,7 @@ fn test_multiline_note_stripe_entirely_cyan_when_cursor_on_any_line() {
         crate::render::DiffuseTheme::DEFAULT,
     );
     state.note_draft = Some("- First line\n- Second line\n- Third line".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     // Row 1 has: vis_line 0 = hunk div, vis_line 1 = code seg,
     // vis_line 2 = note line 0, 3 = note line 1, 4 = note line 2
@@ -1064,7 +1160,7 @@ fn test_note_status_cycling_open_progress_resolved() {
     );
     state.row_idx = 1;
     state.note_draft = Some("Cycle me".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     let file_notes: Vec<_> =
         notes_for_file(&state.notes, &state.notes_key, "filesystem.rs").collect();
@@ -1155,7 +1251,7 @@ fn test_toggle_show_resolved_notes() {
     );
     state.row_idx = 1;
     state.note_draft = Some("Resolved note test".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     // Mark resolved
     state.vis_line = 2;
@@ -1179,14 +1275,98 @@ fn test_toggle_show_resolved_notes() {
 }
 
 #[test]
-fn test_toggle_show_source_lines() {
+fn test_toggle_show_note_source() {
     let mut state = AppState::new(
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
         crate::render::DiffuseTheme::DEFAULT,
     );
-    // Find first flat row that is an actual diff content row with non-empty text
+    // Create an unanchored note on the banner (with original_source_rows)
+    let banner_idx = state.first_row_of_file(state.current_file_idx());
+    let file = state.output.files[state.current_file_idx()].path.clone();
+    let unanchored_note = ReviewNote {
+        id: "unanchored-src-1".into(),
+        file: file.clone(),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            9999,
+        )),
+        text: "Feedback on unanchored snippet".into(),
+        created_at: 100,
+        original_source_rows: vec![diffuse_core::wire::OutputRow {
+            kind: diffuse_core::parse::RowKind::Add,
+            mov_side: None,
+            new_line: Some(9999),
+            old_line: None,
+            runs: vec![diffuse_core::wire::OutputRun::new(
+                diffuse_core::merge::RunKind::Add,
+                "let test_var = 123;".to_string(),
+            )],
+            wholesale: false,
+            group: None,
+        }],
+        ..Default::default()
+    };
+    add_note(&mut state.notes, &state.notes_key, unanchored_note);
+    state.bump_notes();
+
+    let src = "let test_var = 123;";
+
+    assert!(!state.show_note_source);
+    let callouts_no_src = state.note_callouts(80);
+    let lines_no_src = &callouts_no_src[&banner_idx];
+    assert!(
+        !lines_no_src
+            .iter()
+            .any(|l| crate::render::strip_ansi(l).contains(src.trim()))
+    );
+    assert!(
+        lines_no_src
+            .iter()
+            .any(|l| l.contains("Feedback on unanchored snippet"))
+    );
+
+    // Toggle on
+    state.toggle_show_note_source();
+    assert!(state.show_note_source);
+    let callouts_src = state.note_callouts(80);
+    let lines_src = &callouts_src[&banner_idx];
+    assert!(
+        lines_src
+            .iter()
+            .any(|l| crate::render::strip_ansi(l).contains(src.trim()))
+    );
+    assert!(
+        lines_src
+            .iter()
+            .any(|l| l.contains("Feedback on unanchored snippet"))
+    );
+
+    // Toggle off
+    state.toggle_show_note_source();
+    assert!(!state.show_note_source);
+    let callouts_off = state.note_callouts(80);
+    let lines_off = &callouts_off[&banner_idx];
+    assert!(
+        !lines_off
+            .iter()
+            .any(|l| crate::render::strip_ansi(l).contains(src.trim()))
+    );
+    assert!(
+        lines_off
+            .iter()
+            .any(|l| l.contains("Feedback on unanchored snippet"))
+    );
+}
+
+#[test]
+fn test_show_source_only_on_unanchored_notes() {
+    let mut state = AppState::new(
+        sample_output(),
+        "test_repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::DEFAULT,
+    );
     let content_row = state
         .flat
         .iter()
@@ -1197,46 +1377,88 @@ fn test_toggle_show_source_lines() {
         })
         .unwrap();
     state.row_idx = content_row;
-    state.note_draft = Some("Feedback on snippet".into());
-    state.commit_note_draft();
+    state.note_draft = Some("Anchored note".into());
+    state.commit_note_draft().expect("note commit must succeed");
 
-    let src = {
-        let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
-            .next()
-            .unwrap();
-        assert!(
-            n.source_lines.is_some(),
-            "source_lines must be captured on note creation"
-        );
-        n.source_lines.clone().unwrap()
+    // Also create an unanchored note on the banner (with original_source_rows)
+    let banner_idx = state.first_row_of_file(state.current_file_idx());
+    let file = state.output.files[state.current_file_idx()].path.clone();
+    let unanchored_note = ReviewNote {
+        id: "unanchored-note-1".into(),
+        file: file.clone(),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            9999,
+        )),
+        text: "Unanchored note on banner".into(),
+        created_at: 200,
+        original_source_rows: vec![diffuse_core::wire::OutputRow {
+            kind: diffuse_core::parse::RowKind::Add,
+            mov_side: None,
+            new_line: Some(9999),
+            old_line: None,
+            runs: vec![diffuse_core::wire::OutputRun::new(
+                diffuse_core::merge::RunKind::Add,
+                "unanchored_original_code()".to_string(),
+            )],
+            wholesale: false,
+            group: None,
+        }],
+        ..Default::default()
     };
-    assert!(!src.is_empty(), "captured source line must not be empty");
+    add_note(&mut state.notes, &state.notes_key, unanchored_note);
+    state.bump_notes();
 
-    assert!(!state.show_source_lines);
-    let callouts_no_src = state.note_callouts(80);
-    let lines_no_src = &callouts_no_src.values().next().unwrap();
-    assert!(!lines_no_src.iter().any(|l| l.contains(src.trim())));
+    // Toggle show_note_source on
+    state.toggle_show_note_source();
+    assert!(state.show_note_source);
+    let callouts_on = state.note_callouts(80);
+
+    // Anchored note at content_row must NOT display original source rows!
+    let anchored_callout = &callouts_on[&content_row];
+    let anchored_src = {
+        let n = notes_for_file(&state.notes, &state.notes_key, &file)
+            .find(|n| n.text == "Anchored note")
+            .unwrap();
+        n.original_source_rows[0].text()
+    };
     assert!(
-        lines_no_src
+        !anchored_callout
             .iter()
-            .any(|l| l.contains("Feedback on snippet"))
+            .any(|l| crate::render::strip_ansi(l).contains(anchored_src.trim())),
+        "anchored notes must NEVER display source lines in the TUI even when show_note_source is on"
     );
 
-    // Toggle on
-    state.toggle_show_source_lines();
-    assert!(state.show_source_lines);
-    let callouts_src = state.note_callouts(80);
-    let lines_src = &callouts_src.values().next().unwrap();
-    assert!(lines_src.iter().any(|l| l.contains(src.trim())));
-    assert!(lines_src.iter().any(|l| l.contains("Feedback on snippet")));
+    // Unanchored note at banner_idx MUST display original source rows *above* the
+    // note callout!
+    let banner_callout_on = &callouts_on[&banner_idx];
+    let src_idx = banner_callout_on
+        .iter()
+        .position(|l| crate::render::strip_ansi(l).contains("unanchored_original_code()"))
+        .expect("unanchored original code must be present");
+    let note_idx = banner_callout_on
+        .iter()
+        .position(|l| l.contains("Unanchored note on banner"))
+        .expect("note text must be present");
+    assert!(
+        src_idx < note_idx,
+        "original source line (idx {src_idx}) must appear above the note callout (idx {note_idx})"
+    );
 
-    // Toggle off
-    state.toggle_show_source_lines();
-    assert!(!state.show_source_lines);
-    let callouts_off = state.note_callouts(80);
-    let lines_off = &callouts_off.values().next().unwrap();
-    assert!(!lines_off.iter().any(|l| l.contains(src.trim())));
-    assert!(lines_off.iter().any(|l| l.contains("Feedback on snippet")));
+    // Layout helper for row must also reflect this distinction
+    let anchored_layout = state.note_callout_layout_for_row(content_row, 80);
+    assert_eq!(anchored_layout.len(), 1);
+    assert_eq!(
+        anchored_layout[0].1, 1,
+        "anchored note callout line count must not include source rows"
+    );
+
+    let banner_layout = state.note_callout_layout_for_row(banner_idx, 80);
+    assert!(
+        banner_layout
+            .iter()
+            .any(|(n, lines)| n.id == "unanchored-note-1" && *lines > 1),
+        "unanchored note callout line count must include source rows when show_note_source is true"
+    );
 }
 
 #[test]
@@ -1251,7 +1473,7 @@ fn test_event_keybindings_x_z_and_shift_s() {
     );
     state.row_idx = 1;
     state.note_draft = Some("Keybinding test".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     // Position on note
     state.vis_line = 2;
@@ -1275,12 +1497,12 @@ fn test_event_keybindings_x_z_and_shift_s() {
     assert!(state.show_resolved_notes);
 
     // Press 'S' (Shift+S): toggle show source lines
-    assert!(!state.show_source_lines);
+    assert!(!state.show_note_source);
     crate::event::handle_key_event(
         &mut state,
         KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT),
     );
-    assert!(state.show_source_lines);
+    assert!(state.show_note_source);
 }
 
 #[test]
@@ -1298,7 +1520,9 @@ fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
     let note = ReviewNote {
         id: "banner-multi".into(),
         file: file.clone(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 9999, 9999),
+        location: crate::core::notes::NoteLocation::line(
+            crate::core::notes::DiffCoord::new_side(9999),
+        ),
         text: "Ambiguity guard test: line content matches but chunk is not unique across the file. The uniqueness check prevents false re-anchoring and safely places the note onto the file header banner.".into(),
         created_at: 100,
         ..Default::default()
@@ -1402,15 +1626,33 @@ diff --git a/test.rs b/test.rs
         "must initially have 2 hunks"
     );
 
-    // Add note spanning lines 11 to 31 (spans both hunks and the gap between them!)
-    let sel_lines: Vec<&str> = file_lines[10..=30].iter().map(|s| s.as_str()).collect();
-    let hash = LineHash::from_lines(sel_lines);
+    // Add note spanning lines 11 to 31 (spans both hunks and the gap between
+    // them!). Provisional capture: plain context rows over the span, exactly
+    // as a fresh note records its selection before relocation.
+    let provisional_rows: Vec<crate::core::wire::OutputRow> = (11u32..=31)
+        .map(|n| crate::core::wire::OutputRow {
+            kind: crate::core::parse::RowKind::Ctx,
+            mov_side: None,
+            old_line: Some(n),
+            new_line: Some(n),
+            runs: vec![crate::core::wire::OutputRun::new(
+                crate::core::merge::RunKind::Ctx,
+                file_lines[(n - 1) as usize].clone(),
+            )],
+            wholesale: false,
+            group: None,
+        })
+        .collect();
     let note = ReviewNote {
         id: "cross-hunk".into(),
         file: "test.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 11, 31),
+        location: crate::core::notes::NoteLocation::Range {
+            start: crate::core::notes::DiffCoord::from_row(&provisional_rows[0]).unwrap(),
+            end: crate::core::notes::DiffCoord::from_row(provisional_rows.last().unwrap()).unwrap(),
+        },
         text: "Spans across hunk 1 and hunk 2".into(),
-        line_hash: Some(hash),
+        original_source_rows: provisional_rows,
+        content_hash: None,
         ..Default::default()
     };
 
@@ -1429,6 +1671,28 @@ diff --git a/test.rs b/test.rs
         1,
         "bridged hunks must merge into a single hunk"
     );
+
+    // Relocation: re-anchor the note to the actual output rows (the same
+    // flow `diffuse notes create` applies after pipeline synthesis).
+    let f = &out.files[0];
+    let window: Vec<crate::core::wire::OutputRow> = f
+        .rows
+        .iter()
+        .filter(|r| matches!(r.new_line, Some(n) if (11..=31).contains(&n)))
+        .cloned()
+        .collect();
+    assert_eq!(window.len(), 21, "the merged hunk must cover the full span");
+    let relocated = ReviewNote {
+        location: crate::core::notes::NoteLocation::Range {
+            start: crate::core::notes::DiffCoord::from_row(&window[0]).unwrap(),
+            end: crate::core::notes::DiffCoord::from_row(window.last().unwrap()).unwrap(),
+        },
+        original_source_rows: window.clone(),
+        content_hash: LineHash::of_rows(&window),
+        ..db["test_repo"]["test.rs"][0].clone()
+    };
+    let mut db = HashMap::new();
+    add_note(&mut db, "test_repo", relocated);
 
     let mut state = AppState::new(
         out,
@@ -1463,7 +1727,9 @@ fn test_diff_notes_db_resolved_and_unresolved() {
     let note1 = ReviewNote {
         id: "note-1".into(),
         file: "src/lib.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 10, 10),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            10,
+        )),
         text: "Please fix this".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1504,7 +1770,9 @@ fn test_diff_notes_db_add_delete_edit() {
     let note1 = ReviewNote {
         id: "note-1".into(),
         file: "src/lib.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 10, 10),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            10,
+        )),
         text: "Original text".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1516,7 +1784,9 @@ fn test_diff_notes_db_add_delete_edit() {
     let note2 = ReviewNote {
         id: "note-2".into(),
         file: "src/lib.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 20, 20),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            20,
+        )),
         text: "New note".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1560,7 +1830,9 @@ fn test_reload_notes_from_disk_updates_counts_and_hides_resolved() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "filesystem.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            1025,
+        )),
         text: "Review feedback".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1639,7 +1911,9 @@ fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
     let note = ReviewNote {
         id: "n1".into(),
         file: "filesystem.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 1025, 1025),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            1025,
+        )),
         text: "Line 1\nLine 2".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1685,7 +1959,9 @@ fn test_diff_notes_db_in_progress_and_plural_formatting() {
     let note1 = ReviewNote {
         id: "note-1".into(),
         file: "src/lib.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 10, 10),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            10,
+        )),
         text: "Note 1".into(),
         status: NoteStatus::Open,
         ..Default::default()
@@ -1693,7 +1969,9 @@ fn test_diff_notes_db_in_progress_and_plural_formatting() {
     let note2 = ReviewNote {
         id: "note-2".into(),
         file: "src/lib.rs".into(),
-        location: crate::core::notes::NoteLocation::line(crate::core::notes::Side::New, 20, 20),
+        location: crate::core::notes::NoteLocation::line(crate::core::notes::DiffCoord::new_side(
+            20,
+        )),
         text: "Note 2".into(),
         status: NoteStatus::Open,
         ..Default::default()

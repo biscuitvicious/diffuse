@@ -267,7 +267,11 @@ fn test_selection_anchor_band_and_confirm() {
     let sel = state
         .compute_selection()
         .expect("anchor over coordinate rows must yield selection");
-    assert!(sel.start < sel.end);
+    assert!(
+        sel.start.new_line_num.map(|n| n.get()) < sel.end.new_line_num.map(|n| n.get())
+            || sel.start.old_line_num.map(|n| n.get()) < sel.end.old_line_num.map(|n| n.get()),
+        "range must span two rows"
+    );
 
     let frame = state.render_frame(100, 30);
     assert!(
@@ -303,7 +307,7 @@ fn test_notes_commit_and_delete_via_public_api() {
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("review this".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
     assert!(state.note_draft.is_none());
     assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 1);
     let frame = state.render_frame(100, 30);
@@ -329,7 +333,7 @@ fn test_notes_key_scopes_state_to_head() {
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("head-scoped note".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     // Visible under the scoped key, invisible under the bare repo name or
     // any other head; the display name stays human-readable.
@@ -734,7 +738,7 @@ fn test_long_note_with_emoji_stays_within_viewport_width() {
     state.note_draft = Some(
         "renders the identical golden (the extension's golden walk's rust leg \u{2014} \u{2705} passed); A/B on the real repo with a fairly long trailing tail to push past the edge".into(),
     );
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
     let frame = state.render_frame(100, 30);
     assert!(frame.contains("\u{2705}"));
     for (i, line) in frame.lines().enumerate() {

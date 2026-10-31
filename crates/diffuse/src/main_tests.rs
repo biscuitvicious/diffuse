@@ -6,7 +6,7 @@ use diffuse::prelude::*;
 
 use super::{Args, SubCommand, route_mode};
 
-use diffuse::core::notes::{NoteLocation, Side};
+use diffuse::core::notes::NoteLocation;
 
 #[test]
 fn extension_json_payload_is_json_mode() {
@@ -263,10 +263,9 @@ diff --git a/test.rs b/test.rs
     let note = ReviewNote {
         id: "note-1".into(),
         file: "test.rs".into(),
-        location: NoteLocation::line(Side::New, 2, 2),
+        location: NoteLocation::line(diffuse::core::notes::DiffCoord::new_side(2)),
         text: "piped note".into(),
         created_at: 1000,
-        line_hash: None,
         ..Default::default()
     };
     add_note(&mut db, "some_repo@commit", note);
@@ -300,10 +299,9 @@ diff --git a/test.rs b/test.rs
     let new_note = ReviewNote {
         id: "note-2".into(),
         file: "test.rs".into(),
-        location: NoteLocation::line(Side::New, 3, 3),
+        location: NoteLocation::line(diffuse::core::notes::DiffCoord::new_side(3)),
         text: "another note".into(),
         created_at: 1002,
-        line_hash: None,
         ..Default::default()
     };
     let input_add_no_file = super::Input {
@@ -350,7 +348,7 @@ diff --git a/test.rs b/test.rs
 
 #[test]
 fn test_json_protocol_note_status_and_reply_actions() {
-    use diffuse::core::notes::{NoteStatus, ReviewNote, Side, load_notes, save_notes};
+    use diffuse::core::notes::{NoteStatus, ReviewNote, load_notes, save_notes};
 
     let tmp = tempfile::NamedTempFile::new().unwrap();
     let notes_path = tmp.path().to_path_buf();
@@ -359,12 +357,11 @@ fn test_json_protocol_note_status_and_reply_actions() {
     let note = ReviewNote {
         id: "note-abc".into(),
         file: "src/main.rs".into(),
-        location: NoteLocation::line(Side::New, 5, 5),
+        location: NoteLocation::line(diffuse::core::notes::DiffCoord::new_side(5)),
         text: "Please refactor".into(),
         created_at: 1000,
-        line_hash: None,
         status: NoteStatus::Open,
-        source_lines: None,
+        ..Default::default()
     };
     diffuse::core::notes::add_note(&mut db, "repo1", note);
     save_notes(&notes_path, &db).unwrap();
@@ -374,7 +371,6 @@ fn test_json_protocol_note_status_and_reply_actions() {
         action: None,
         note: None,
         file: None,
-        side: None,
         start: None,
         end: None,
         diff: "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n".into(),
@@ -533,8 +529,8 @@ fn test_notes_cli_arg_parsing() {
         "src/lib.rs:10-20",
         "-m",
         "hello",
-        "--source",
-        "code",
+        "--old",
+        "9-19",
     ])
     .unwrap();
     if let Some(SubCommand::Notes(notes)) = args.command {
@@ -543,9 +539,10 @@ fn test_notes_cli_arg_parsing() {
             Some(NotesAction::Add {
                 target: Some(ref t),
                 message: Some(ref msg),
-                source: Some(ref src),
+                old: Some(ref old),
+                new: None,
                 ..
-            }) if t == "src/lib.rs:10-20" && msg == "hello" && src == "code"
+            }) if t == "src/lib.rs:10-20" && msg == "hello" && old == "9-19"
         ));
     } else {
         panic!("expected Notes subcommand");
@@ -556,6 +553,7 @@ fn test_notes_cli_arg_parsing() {
         "notes",
         "create",
         "src/lib.rs",
+        "--line",
         "15",
         "-m",
         "hello",
@@ -566,9 +564,9 @@ fn test_notes_cli_arg_parsing() {
             notes.action,
             Some(NotesAction::Add {
                 target: Some(ref t),
-                pos2: Some(ref p2),
+                new: Some(ref new),
                 ..
-            }) if t == "src/lib.rs" && p2 == "15"
+            }) if t == "src/lib.rs" && new == "15"
         ));
     } else {
         panic!("expected Notes subcommand");
@@ -813,4 +811,60 @@ fn test_no_watch_flag() {
 
     let args_no_watch = Args::try_parse_from(["diffuse", "--no-watch"]).unwrap();
     assert!(args_no_watch.no_watch);
+}
+
+#[test]
+fn test_relocate_span_interleaved_rows() {
+    use diffuse::core::{
+        parse::{RowKind, RunKind},
+        wire::{OutputRow, OutputRun},
+    };
+
+    let mk_row = |kind: RowKind, old: Option<u32>, new: Option<u32>, text: &str| OutputRow {
+        kind,
+        mov_side: None,
+        old_line: old,
+        new_line: new,
+        runs: vec![OutputRun::new(RunKind::Ctx, text.to_string())],
+        wholesale: false,
+        group: None,
+    };
+
+    let rows = [
+        mk_row(RowKind::Ctx, Some(10), Some(10), "common line 10"),
+        mk_row(RowKind::Del, Some(11), None, "deleted line 11"),
+        mk_row(RowKind::Add, None, Some(11), "added line 11"),
+        mk_row(RowKind::Ctx, Some(12), Some(12), "common line 12"),
+    ];
+
+    let row_refs: Vec<&OutputRow> = rows.iter().collect();
+    let relocated = crate::notes_cli::relocate_span(&row_refs, None, Some((10, 12)))
+        .expect("should relocate span spanning 10-12");
+
+    assert_eq!(
+        relocated.len(),
+        4,
+        "interleaved deletion row must be included in the relocation window"
+    );
+    assert_eq!(relocated[1].kind, RowKind::Del);
+    assert_eq!(relocated[2].kind, RowKind::Add);
+
+    // Old-side relocation also captures interleaved additions
+    let relocated_old = crate::notes_cli::relocate_span(&row_refs, Some((10, 12)), None)
+        .expect("should relocate old span 10-12");
+    assert_eq!(relocated_old.len(), 4);
+
+    // Both spans given
+    let relocated_both = crate::notes_cli::relocate_span(&row_refs, Some((10, 12)), Some((10, 12)))
+        .expect("should relocate matching both spans");
+    assert_eq!(relocated_both.len(), 4);
+
+    // Inverted span returns None
+    assert!(crate::notes_cli::relocate_span(&row_refs, None, Some((12, 10))).is_none());
+
+    // Single row
+    let single = crate::notes_cli::relocate_span(&row_refs, None, Some((10, 10)))
+        .expect("single row relocation");
+    assert_eq!(single.len(), 1);
+    assert_eq!(single[0].new_line, Some(10));
 }

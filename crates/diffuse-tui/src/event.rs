@@ -282,7 +282,7 @@ pub(crate) fn handle_key_event(state: &mut AppState, key: KeyEvent) {
         }
 
         (KeyModifiers::SHIFT, KeyCode::Char('S')) => {
-            state.execute(TuiCommand::ToggleShowSourceLines);
+            state.execute(TuiCommand::ToggleShowNoteSource);
         }
         (KeyModifiers::NONE, KeyCode::Char('u')) => {
             state.execute(TuiCommand::Unstage);

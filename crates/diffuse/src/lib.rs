@@ -56,7 +56,7 @@ pub use diffuse_core::{
     DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
     DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
     DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB, PipelineInput,
-    PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange, Side,
+    PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange,
     notes::{add_note, default_notes_path, load_notes, save_notes},
     parse::{Hunk, Row, RowKind},
     pipeline::{run_pipeline, run_pipeline_full},
@@ -80,7 +80,7 @@ pub mod prelude {
         DEFAULT_CLUSTER_BANDWIDTH_MIN, DEFAULT_CLUSTER_BANDWIDTH_SLACK, DEFAULT_CLUSTER_BUDGET,
         DEFAULT_CLUSTER_PRODUCT_CAP, DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES,
         DEFAULT_TOKEN_PRODUCT_CAP, ENGINE_CONTEXT, LineHash, NoteStatus, NotesDB, PipelineInput,
-        PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange, Side,
+        PipelineOptions, Repo, ReviewNote, ReviewTarget, ReviewTargetNotesExt, RevisionRange,
         merge::RunKind,
         notes::{add_note, default_notes_path, load_notes, save_notes},
         parse::{Hunk, Row, RowKind},
@@ -93,7 +93,7 @@ pub mod prelude {
         default_theme, detect_terminal_width, render_file_diff, render_file_diff_with_width,
         render_file_markdown, render_markdown_output, render_pipeline_output,
         render_pipeline_output_with_width, render_raw_file_diff, render_raw_file_diff_with_width,
-        render_raw_pipeline_output, render_raw_pipeline_output_with_width,
+        render_raw_pipeline_output, render_raw_pipeline_output_with_width, render_source_rows,
     };
     pub use diffuse_syntax::{TokenColor, profile::LangProfile, registry::lang_profile};
     pub use diffuse_tui::{run_interactive_tui, run_tui};

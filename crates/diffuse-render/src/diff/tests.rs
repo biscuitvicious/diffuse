@@ -164,13 +164,15 @@ fn test_nonzero_notes_still_rendered() {
         notes: vec![OutputNote {
             id: "n1".to_string(),
             file: "src/lib.rs".to_string(),
-            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 1, 1),
+            location: diffuse_core::notes::NoteLocation::line(
+                diffuse_core::notes::DiffCoord::new_side(1),
+            ),
             text: "a note".to_string(),
             created_at: 0,
             runs: vec![],
-            line_hash: None,
+            content_hash: None,
             status: diffuse_core::notes::NoteStatus::Open,
-            source_lines: None,
+            original_source_rows: Vec::new(),
         }],
         content_runs: vec![],
         rows: vec![],
@@ -319,6 +321,18 @@ fn test_status_suffix_unmodified_unadorned() {
 
 #[test]
 fn test_render_file_diff_renders_inline_note_callouts() {
+    // The anchored add row: the line note's hash derives from it.
+    let anchored_add_row = OutputRow {
+        kind: RowKind::Add,
+        mov_side: None,
+        new_line: Some(2),
+        old_line: None,
+        runs: vec![OutputRun::new(RunKind::Add, "line 2".to_string())],
+        wholesale: false,
+        group: None,
+    };
+    let line_note_hash =
+        diffuse_core::notes::LineHash::of_rows(std::slice::from_ref(&anchored_add_row));
     let file = OutputFile {
         path: "src/lib.rs".to_string(),
         old_path: None,
@@ -363,31 +377,28 @@ fn test_render_file_diff_renders_inline_note_callouts() {
                 id: "banner-note".to_string(),
                 file: "src/lib.rs".to_string(),
                 location: diffuse_core::notes::NoteLocation::line(
-                    diffuse_core::notes::Side::New,
-                    999,
-                    999,
+                    diffuse_core::notes::DiffCoord::new_side(999),
                 ),
                 text: "Unanchored banner note".to_string(),
                 created_at: 0,
                 runs: vec![],
-                line_hash: None,
+                content_hash: None,
                 status: diffuse_core::notes::NoteStatus::Open,
-                source_lines: None,
+                original_source_rows: Vec::new(),
             },
             OutputNote {
                 id: "line-note".to_string(),
                 file: "src/lib.rs".to_string(),
                 location: diffuse_core::notes::NoteLocation::line(
-                    diffuse_core::notes::Side::New,
-                    2,
-                    2,
+                    diffuse_core::notes::DiffCoord::new_side(2),
                 ),
                 text: "Anchored line note".to_string(),
                 created_at: 0,
                 runs: vec![],
-                line_hash: Some(diffuse_core::notes::LineHash::from_content("line 2")),
+                // Complete structural hash over the anchored add row.
+                content_hash: line_note_hash,
                 status: diffuse_core::notes::NoteStatus::InProgress,
-                source_lines: None,
+                original_source_rows: Vec::new(),
             },
         ],
         content_runs: vec![],
@@ -446,13 +457,15 @@ fn test_render_file_diff_wraps_notes_at_specified_width() {
         notes: vec![OutputNote {
             id: "wrap-note".to_string(),
             file: "src/lib.rs".to_string(),
-            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 1, 1),
+            location: diffuse_core::notes::NoteLocation::line(
+                diffuse_core::notes::DiffCoord::new_side(1),
+            ),
             text: "This is a long review note with enough content that it will definitely wrap differently at narrow versus wide widths.".to_string(),
             created_at: 0,
             runs: vec![],
-            line_hash: None,
+            content_hash: None,
             status: diffuse_core::notes::NoteStatus::Open,
-            source_lines: None,
+            original_source_rows: Vec::new(),
         }],
         content_runs: vec![],
         rows: vec![],
@@ -764,4 +777,48 @@ fn test_render_file_diff_continuation_lines_indented_six_spaces() {
         diff_lines[1].starts_with("\x1b[48;"),
         "continuation line must preserve row background tint"
     );
+}
+
+#[test]
+fn test_render_source_rows_mirrors_grid_rendering() {
+    let theme = DiffuseTheme::DEFAULT;
+    let rows = vec![
+        crate::core::wire::OutputRow {
+            kind: crate::core::parse::RowKind::Ctx,
+            mov_side: None,
+            old_line: Some(10),
+            new_line: Some(10),
+            runs: vec![OutputRun::new(RunKind::Ctx, "unchanged line".to_string())],
+            wholesale: false,
+            group: None,
+        },
+        crate::core::wire::OutputRow {
+            kind: crate::core::parse::RowKind::Add,
+            mov_side: None,
+            old_line: None,
+            new_line: Some(11),
+            runs: vec![OutputRun::new(RunKind::Add, "added line".to_string())],
+            wholesale: false,
+            group: None,
+        },
+    ];
+
+    // Styled prefixes: gutter line numbers and row tints match the diff grid.
+    let styled = render_source_rows(&rows, &theme, 0, true);
+    assert_eq!(styled.len(), 2, "one rendered line per row");
+    let plain_ctx = strip_ansi(&styled[0]);
+    assert!(plain_ctx.starts_with("  10  "), "ctx gutter: {plain_ctx:?}");
+    assert!(plain_ctx.contains("unchanged line"));
+    let plain_add = strip_ansi(&styled[1]);
+    assert!(
+        plain_add.starts_with("  11 +"),
+        "add row renders its number and sign: {plain_add:?}"
+    );
+    assert!(plain_add.contains("added line"));
+    assert!(styled[1].starts_with("\x1b["), "styled prefixes carry ANSI");
+
+    // Plain prefixes: bare sign gutters.
+    let plain = render_source_rows(&rows, &theme, 0, false);
+    let plain0 = strip_ansi(&plain[0]);
+    assert!(plain0.starts_with("  10 "), "plain ctx gutter: {plain0:?}");
 }

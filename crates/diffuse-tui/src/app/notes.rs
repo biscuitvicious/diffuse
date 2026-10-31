@@ -5,8 +5,9 @@ use std::{collections::HashMap, process};
 use crate::{render::ColorExt, types::FlatRowKind};
 
 use crate::core::notes::{
-    LineHash, NotesDB, ReviewNote, Side, add_note, note_anchors_in_file, note_runs, notes_for_file,
-    now_millis, remove_note_by_id, remove_notes_in_range, save_notes, update_note_text,
+    DiffCoord, LineHash, NoteLocation, NotesDB, ReviewNote, add_note, note_anchors_in_rows,
+    note_runs, notes_for_file, now_millis, remove_note_by_id, remove_notes_in_range, save_notes,
+    update_note_text,
 };
 
 use super::AppState;
@@ -107,12 +108,12 @@ pub enum VisualTarget<'a> {
 }
 
 /// Apply cursor focus highlight to a rendered note callout line: switches the
-/// left-edge stripe from amber to active cyan, and if `is_current_line` is
-/// true, highlights the line background with cursor background (`Fixed(237)`).
+/// left-edge stripe from the status color to active cyan, and if
+/// `is_current_line` is true, highlights the line background with cursor
+/// background (`Fixed(237)`).
 pub(crate) fn style_focused_note_line(nline: &str, is_current_line: bool) -> String {
     let gutter_fg = crate::render::Color::Rgb(220, 220, 20).fg_code();
     let glyph_fg = crate::render::Color::Fixed(255).fg_code();
-    let amber_fg = crate::render::Color::Rgb(250, 75, 40).fg_code();
     let cyan_fg = "\x1b[38;5;81m";
     let note_bg = crate::render::Color::Fixed(234).bg_code();
     let cursor_bg = crate::render::Color::Fixed(237).bg_code();
@@ -125,35 +126,44 @@ pub(crate) fn style_focused_note_line(nline: &str, is_current_line: bool) -> Str
     const STRIPE_LEFT: &str = "\u{258C}";
     const BAND_BLOCK: &str = "\u{2588}";
 
-    let first_prefix = format!(
-        "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}💬 {fg_reset}"
-    );
-    let line_prefix = format!(
-        "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
-    );
-    let final_prefix = format!(
-        "{note_bg}{amber_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
-    );
+    const STATUS_PAIRS: [(crate::render::Color, &str); 3] = [
+        (crate::render::Color::Rgb(250, 75, 40), "💬"),
+        (crate::render::Color::Rgb(60, 180, 240), "🔄"),
+        (crate::render::Color::Rgb(40, 140, 60), "✅"),
+    ];
 
-    let focused_first = format!(
-        "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}💬 {fg_reset}"
-    );
-    let focused_line = format!(
-        "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
-    );
-    let focused_final = format!(
-        "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
-    );
+    for (stripe_color, glyph) in STATUS_PAIRS {
+        let stripe_fg = stripe_color.fg_code();
+        let first_prefix = format!(
+            "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}{glyph} {fg_reset}"
+        );
+        let line_prefix = format!(
+            "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
+        );
+        let final_prefix = format!(
+            "{note_bg}{stripe_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
+        );
 
-    if let Some(rest) = nline.strip_prefix(&first_prefix) {
-        format!("{focused_first}{rest}")
-    } else if let Some(rest) = nline.strip_prefix(&line_prefix) {
-        format!("{focused_line}{rest}")
-    } else if let Some(rest) = nline.strip_prefix(&final_prefix) {
-        format!("{focused_final}{rest}")
-    } else {
-        nline.to_string()
+        let focused_first = format!(
+            "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}{glyph} {fg_reset}"
+        );
+        let focused_line = format!(
+            "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}│  {fg_reset}"
+        );
+        let focused_final = format!(
+            "{active_bg}{cyan_fg}{STRIPE_LEFT}{gutter_fg}{BAND_BLOCK}{BAND_BLOCK}{BAND_BLOCK}{fg_reset} {glyph_fg}╰  {fg_reset}"
+        );
+
+        if let Some(rest) = nline.strip_prefix(&first_prefix) {
+            return format!("{focused_first}{rest}");
+        } else if let Some(rest) = nline.strip_prefix(&line_prefix) {
+            return format!("{focused_line}{rest}");
+        } else if let Some(rest) = nline.strip_prefix(&final_prefix) {
+            return format!("{focused_final}{rest}");
+        }
     }
+
+    nline.to_string()
 }
 
 impl AppState {
@@ -236,93 +246,65 @@ impl AppState {
             }
             return Err("note to edit not found");
         }
-        let (file, start, end, is_new, selected_lines, source_lines) =
-            if let Some(sel) = self.compute_selection() {
-                let file = self
-                    .output
-                    .files
-                    .get(sel.file_idx)
-                    .expect("selection file_idx out of bounds in output.files");
-                let mut selected_lines = Vec::new();
-                for fr in &self.flat {
-                    if fr.file_idx != sel.file_idx {
-                        continue;
-                    }
-                    if let Some(r) = self.row_of(fr) {
-                        let coord = if sel.side_is_new {
-                            r.new_line
-                        } else {
-                            r.old_line
-                        };
-                        if let Some(c) = coord
-                            && c >= sel.start
-                            && c <= sel.end
-                        {
-                            let text = if sel.side_is_new {
-                                r.new_text()
-                            } else {
-                                r.old_text()
-                            };
-                            selected_lines.push(text);
-                        }
-                    }
-                }
-                let source = (!selected_lines.is_empty()).then(|| selected_lines.join("\n"));
-                (
-                    file.path.clone(),
-                    sel.start,
-                    sel.end,
-                    sel.side_is_new,
-                    selected_lines,
-                    source,
-                )
-            } else {
-                let Some(file) = self.current_file() else {
-                    return Err("no current file");
-                };
-                let Some(row) = self.current_flat_row() else {
-                    return Err("no current row");
-                };
-                if let crate::types::FlatRowKind::FileHeader = row.kind {
-                    // File-level note
-                    (file.path.clone(), 0, 0, true, Vec::new(), None)
-                } else {
-                    let Some(r) = self.row_of(row) else {
-                        return Err("row not found");
-                    };
-                    let Some(c) = Self::row_coord(r) else {
-                        return Err("row has no line coordinate");
-                    };
-                    let is_new = r.new_line.is_some();
-                    let text = if is_new { r.new_text() } else { r.old_text() };
-                    (
-                        file.path.clone(),
-                        c,
-                        c,
-                        is_new,
-                        vec![text.clone()],
-                        Some(text),
-                    )
-                }
+        let (file, selected_rows) = if let Some(sel) = self.compute_selection() {
+            let file = self
+                .output
+                .files
+                .get(sel.file_idx)
+                .expect("selection file_idx out of bounds in output.files");
+            let selected_rows: Vec<_> = self
+                .flat
+                .iter()
+                .filter(|fr| fr.file_idx == sel.file_idx)
+                .filter_map(|fr| self.row_of(fr))
+                .filter(|r| sel.contains_row(r))
+                .cloned()
+                .collect();
+            (file.path.clone(), selected_rows)
+        } else {
+            let Some(file) = self.current_file() else {
+                return Err("no current file");
             };
+            let Some(row) = self.current_flat_row() else {
+                return Err("no current row");
+            };
+            if let crate::types::FlatRowKind::FileHeader = row.kind {
+                // File-level note — no rows selected.
+                (file.path.clone(), Vec::new())
+            } else {
+                let Some(r) = self.row_of(row) else {
+                    return Err("row not found");
+                };
+                if crate::core::notes::DiffCoord::from_row(r).is_none() {
+                    return Err("row has no line coordinate");
+                }
+                (file.path.clone(), vec![r.clone()])
+            }
+        };
         self.note_id_counter += 1;
         let created_at = now_millis();
-        let line_hash = if !selected_lines.is_empty() {
-            Some(LineHash::from_lines(
-                selected_lines.iter().map(|s| s.as_str()),
-            ))
-        } else {
-            None
-        };
+        // The complete structural hash over the captured rows: verified at
+        // anchor time against the rows found at the note's coordinates.
+        let content_hash = LineHash::of_rows(&selected_rows);
         let note_file = file.clone();
-        let location = if start == 0 && end == 0 && selected_lines.is_empty() {
-            crate::core::notes::NoteLocation::File
-        } else {
-            crate::core::notes::NoteLocation::line(
-                if is_new { Side::New } else { Side::Old },
-                start,
-                end,
-            )
+        // Build location from the row coords: both old and new are captured
+        // where the row carries them. Single row → Line; multi-row → Range;
+        // no rows → File-level note.
+        let location = match selected_rows.as_slice() {
+            [] => NoteLocation::File,
+            [row] => match DiffCoord::from_row(row) {
+                Some(coord) => NoteLocation::Line { coord },
+                None => NoteLocation::File,
+            },
+            rows => {
+                let first = DiffCoord::from_row(&rows[0]);
+                let last = DiffCoord::from_row(rows.last().unwrap());
+                match (first, last) {
+                    (Some(start), Some(end)) => NoteLocation::Range { start, end },
+                    (Some(coord), None) | (None, Some(coord)) => NoteLocation::Line { coord },
+                    (None, None) => NoteLocation::File,
+                }
+            }
         };
         let note = ReviewNote {
             id: format!(
@@ -335,9 +317,11 @@ impl AppState {
             location,
             text,
             created_at,
-            line_hash,
+            content_hash,
             status: diffuse_core::notes::NoteStatus::Open,
-            source_lines,
+            // One-time capture of the selection's output rows: the original
+            // source the note was written against.
+            original_source_rows: selected_rows,
         };
         add_note(&mut self.notes, &self.notes_key, note);
         let _ = save_notes(&self.notes_path, &self.notes);
@@ -366,8 +350,14 @@ impl AppState {
                 &mut self.notes,
                 &self.notes_key,
                 &file_path,
-                sel.start,
-                sel.end,
+                sel.start
+                    .new_line_num
+                    .or(sel.start.old_line_num)
+                    .map_or(0, |n| n.get()),
+                sel.end
+                    .new_line_num
+                    .or(sel.end.old_line_num)
+                    .map_or(0, |n| n.get()),
             );
             let _ = save_notes(&self.notes_path, &self.notes);
             if let Some(fi) = self.output.files.iter().position(|f| f.path == file_path) {
@@ -440,8 +430,18 @@ impl AppState {
             info
         } else if let Some(sel) = self.compute_selection() {
             let file = &self.output.files[sel.file_idx];
+            let sel_start = sel
+                .start
+                .new_line_num
+                .or(sel.start.old_line_num)
+                .map_or(0, |n| n.get());
+            let sel_end = sel
+                .end
+                .new_line_num
+                .or(sel.end.old_line_num)
+                .map_or(0, |n| n.get());
             if let Some(n) = notes_for_file(&self.notes, &self.notes_key, &file.path)
-                .find(|n| n.start() <= sel.end && n.end() >= sel.start)
+                .find(|n| n.start() <= sel_end && n.end() >= sel_start)
             {
                 (n.file.clone(), n.id.clone())
             } else {
@@ -525,14 +525,14 @@ impl AppState {
         }
     }
 
-    /// Toggle displaying original source lines in note callouts.
-    pub fn toggle_show_source_lines(&mut self) {
-        self.show_source_lines = !self.show_source_lines;
+    /// Toggle displaying the original source snapshot in note callouts.
+    pub fn toggle_show_note_source(&mut self) {
+        self.show_note_source = !self.show_note_source;
         self.bump_notes();
-        let msg = if self.show_source_lines {
-            "showing note source lines"
+        let msg = if self.show_note_source {
+            "showing note original source"
         } else {
-            "hiding note source lines"
+            "hiding note original source"
         };
         self.set_status_message(msg.to_string(), true);
     }
@@ -550,9 +550,9 @@ impl AppState {
                         text: n.text.clone(),
                         created_at: n.created_at,
                         runs: note_runs(&n.text),
-                        line_hash: n.line_hash,
+                        content_hash: n.content_hash,
                         status: n.status,
-                        source_lines: n.source_lines.clone(),
+                        original_source_rows: n.original_source_rows.clone(),
                     })
                     .collect();
             let mut open_notes = 0;
@@ -617,8 +617,7 @@ impl AppState {
                         summary.in_progress_delta -= 1;
                     }
                 }
-                if old_note.text != new_note.text || old_note.source_lines != new_note.source_lines
-                {
+                if old_note.text != new_note.text {
                     summary.edited += 1;
                 }
             } else {
@@ -686,25 +685,34 @@ impl AppState {
 
     /// Determine which flat row a note anchors to.
     ///
-    /// If the note anchors cleanly against the file's content lines, returns
-    /// the row index corresponding to `note.end`. Otherwise, falls back to
-    /// the file header banner row.
+    /// Anchoring is coordinate-exact: the note must anchor against the file's
+    /// output rows (exact both-side coordinate match plus complete hash), and
+    /// the flat row whose coordinates exactly match the note's end coordinate
+    /// receives the callout. Otherwise, the note falls back to the file
+    /// header banner row.
     pub fn note_target_row(&self, file_idx: usize, note: &ReviewNote) -> usize {
         let banner_idx = self.first_row_of_file(file_idx);
         let Some(f) = self.output.files.get(file_idx) else {
             return banner_idx;
         };
-        let Some(side) = note.side() else {
-            return banner_idx;
+        // The end coordinate of the location: where the callout attaches.
+        let end_coord = match &note.location {
+            NoteLocation::File => return banner_idx,
+            NoteLocation::Line { coord } => *coord,
+            NoteLocation::Range { end, .. } => *end,
         };
-        let content_lines = match side {
-            Side::New => &f.new_content,
-            Side::Old => &f.old_content,
+        // Collect the file's visible output rows for anchor verification —
+        // the same side-projected rows the user sees and the note's rows
+        // were captured from (render's `partition_file_notes` uses the same
+        // view). Hunks are the fallback when no visible rows exist.
+        let file_rows: Vec<_> = if f.rows.is_empty() {
+            f.hunks.iter().flat_map(|h| h.rows.iter()).collect()
+        } else {
+            f.rows.iter().collect()
         };
-        if !note_anchors_in_file(note, content_lines) {
+        if !note_anchors_in_rows(note, file_rows.iter().copied()) {
             return banner_idx;
         }
-        let target_coord = note.start().max(note.end());
         for (i, item) in self.flat.iter().enumerate() {
             if item.file_idx != file_idx {
                 continue;
@@ -712,11 +720,9 @@ impl AppState {
             let Some(r) = self.row_of(item) else {
                 continue;
             };
-            let coord = match side {
-                Side::New => r.new_line,
-                Side::Old => r.old_line,
-            };
-            if coord == Some(target_coord) {
+            if r.old_line == end_coord.old_line_num.map(|n| n.get())
+                && r.new_line == end_coord.new_line_num.map(|n| n.get())
+            {
                 return i;
             }
         }
@@ -724,23 +730,25 @@ impl AppState {
     }
 
     /// Map of flat-row index → pre-rendered note callout lines (`💬
-    /// <markdown>`). Notes that have a line hash and anchor cleanly to
-    /// their target line display inline on the last row in their coordinate
-    /// range. Notes that do not anchor cleanly display attached to the file
-    /// banner.
+    /// <markdown>`). Notes that anchor cleanly to their target line display
+    /// inline on the last row in their coordinate range. Notes that do not
+    /// anchor cleanly display attached to the file banner.
     pub(crate) fn note_callouts(&self, content_width: usize) -> HashMap<usize, Vec<String>> {
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
         for (file_idx, f) in self.output.files.iter().enumerate() {
+            let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
                 if !self.show_resolved_notes && n.status.is_resolved() {
                     continue;
                 }
                 let target_row = self.note_target_row(file_idx, n);
+                let is_unanchored = target_row == banner_idx;
+                let show_source = self.show_note_source && is_unanchored;
                 let rendered_lines = crate::render::render_note_callout_lines(
                     n.status,
                     &n.text,
-                    n.source_lines.as_deref(),
-                    self.show_source_lines,
+                    &n.original_source_rows,
+                    show_source,
                     self.syntax_on,
                     &self.theme,
                     content_width,
@@ -760,17 +768,20 @@ impl AppState {
     ) -> Vec<(&ReviewNote, usize)> {
         let mut results = Vec::new();
         for (file_idx, f) in self.output.files.iter().enumerate() {
+            let banner_idx = self.first_row_of_file(file_idx);
             for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
                 if !self.show_resolved_notes && n.status.is_resolved() {
                     continue;
                 }
                 let target_row = self.note_target_row(file_idx, n);
                 if target_row == row_idx {
+                    let is_unanchored = target_row == banner_idx;
+                    let show_source = self.show_note_source && is_unanchored;
                     let lines = crate::render::render_note_callout_lines(
                         n.status,
                         &n.text,
-                        n.source_lines.as_deref(),
-                        self.show_source_lines,
+                        &n.original_source_rows,
+                        show_source,
                         self.syntax_on,
                         &self.theme,
                         content_width,

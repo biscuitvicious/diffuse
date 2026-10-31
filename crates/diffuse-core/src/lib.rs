@@ -7,7 +7,7 @@ pub use cluster::dp::{
 pub use diffuse_git;
 pub use git::{DEFAULT_CONTEXT_LINES, DEFAULT_EXPAND_LINES, ENGINE_CONTEXT};
 pub use lcs::DEFAULT_TOKEN_PRODUCT_CAP;
-pub use notes::{LineHash, NoteStatus, NotesDB, ReviewNote, Side};
+pub use notes::{LineHash, NoteStatus, NotesDB, ReviewNote};
 pub use parse::{FileStatus, RowGroup};
 pub use pipeline::{PipelineInput, PipelineOptions};
 pub use repo::{

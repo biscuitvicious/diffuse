@@ -45,7 +45,6 @@ fn test_prelude_reexports() {
     assert_eq!(stripped, "hello");
     assert!(!SGR_RESET.is_empty());
 
-    let _side = Side::Old;
     let _status = NoteStatus::Open;
 
     let prof: Option<&LangProfile> = lang_profile("rs");

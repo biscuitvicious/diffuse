@@ -56,6 +56,14 @@ index 1111111..2222222 100644
     )
 }
 
+/// Primary display number of a selection bound (new side preferred).
+fn coord_num(c: diffuse_core::notes::DiffCoord) -> u32 {
+    c.new_line_num
+        .or(c.old_line_num)
+        .map(|n| n.get())
+        .unwrap_or(0)
+}
+
 #[test]
 fn test_with_theme_builder_sets_theme() {
     let state = AppState::new(
@@ -167,7 +175,7 @@ fn test_note_commit_persists_and_deletes() {
 
     let file = state.current_file().unwrap().path.clone();
     state.note_draft = Some("check this **carefully**".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
     assert!(state.note_draft.is_none());
 
     let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
@@ -257,12 +265,15 @@ fn test_selection_anchor_span_snaps_to_coord_rows() {
         .compute_selection()
         .expect("anchor over coordinate rows must yield a selection");
     assert_eq!(sel.file_idx, 0);
-    assert!(sel.start < sel.end, "range must span two rows");
-    assert_eq!(sel.start, 1025);
-    assert_eq!(sel.end, 1027);
     assert!(
-        sel.side_is_new,
-        "a range led by a new-side row is a new-side selection"
+        coord_num(sel.start) < coord_num(sel.end),
+        "range must span two rows"
+    );
+    assert_eq!(coord_num(sel.start), 1025);
+    assert_eq!(coord_num(sel.end), 1027);
+    assert!(
+        sel.start.new_line_num.is_some() && sel.end.new_line_num.is_some(),
+        "a range led by a new-side row carries new-side numbers on both bounds"
     );
 }
 
@@ -292,8 +303,8 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
     let sel = state
         .confirmed_sel
         .expect("confirm must record a selection");
-    assert_eq!(sel.start, 1025);
-    assert_eq!(sel.end, 1027);
+    assert_eq!(coord_num(sel.start), 1025);
+    assert_eq!(coord_num(sel.end), 1027);
 
     let frame2 = state.render_frame(100, 30);
     assert!(
@@ -335,8 +346,12 @@ fn test_selection_requires_coord_rows() {
     let sel = state
         .compute_selection()
         .expect("anchor over the header must snap to a coordinate row");
-    assert_eq!(sel.start, 1022, "snap to the first padded ctx row");
-    assert_eq!(sel.end, 1022);
+    assert_eq!(
+        coord_num(sel.start),
+        1022,
+        "snap to the first padded ctx row"
+    );
+    assert_eq!(coord_num(sel.end), 1022);
 }
 
 #[test]
@@ -3468,7 +3483,7 @@ fn test_mouse_click_note_line_selects_note() {
     state.row_idx = 1;
     state.vis_line = 0;
     state.note_draft = Some("Review this line".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     state.render_frame(120, 40);
     let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);
@@ -3514,7 +3529,7 @@ fn test_mouse_click_multiline_note_selects_specific_line() {
     state.row_idx = 1;
     state.vis_line = 0;
     state.note_draft = Some("Line 1\n\nLine 2".into());
-    state.commit_note_draft();
+    state.commit_note_draft().expect("note commit must succeed");
 
     state.render_frame(120, 40);
     let (starts, _, seg_counts, _) = state.visual_geometry(state.last_content_width);

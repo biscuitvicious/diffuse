@@ -98,16 +98,14 @@ fn sample_output() -> PipelineOutput {
                     id: "n1".to_string(),
                     file: "src/main.rs".to_string(),
                     location: diffuse_core::notes::NoteLocation::line(
-                        diffuse_core::notes::Side::New,
-                        2,
-                        2,
+                        diffuse_core::notes::DiffCoord::new_side(2),
                     ),
                     text: "Great greeting update!".to_string(),
                     created_at: 123456789,
                     runs: vec![],
-                    line_hash: None,
+                    content_hash: None,
                     status: NoteStatus::Open,
-                    source_lines: None,
+                    original_source_rows: Vec::new(),
                 }],
                 content_runs: vec![],
                 rows: vec![],
@@ -270,7 +268,7 @@ fn test_render_markdown_options_variations() {
         default_open: false,
         include_notes: false,
         show_resolved_notes: false,
-        show_source_lines: false,
+        show_source: false,
         colorize: false,
         theme: DiffuseTheme::DEFAULT,
     };
@@ -287,7 +285,7 @@ fn test_render_markdown_options_variations() {
         default_open: false,
         include_notes: true,
         show_resolved_notes: false,
-        show_source_lines: false,
+        show_source: false,
         colorize: false,
         theme: DiffuseTheme::DEFAULT,
     };
@@ -363,17 +361,16 @@ fn test_render_markdown_single_file_and_multi_line_notes_and_empty_hunks() {
                 notes: vec![OutputNote {
                     id: "n2".to_string(),
                     file: "src/lib.rs".to_string(),
-                    location: diffuse_core::notes::NoteLocation::line(
-                        diffuse_core::notes::Side::Old,
-                        10,
-                        15,
+                    location: diffuse_core::notes::NoteLocation::range(
+                        diffuse_core::notes::DiffCoord::old_side(10),
+                        diffuse_core::notes::DiffCoord::old_side(15),
                     ),
                     text: "Multi-line removal comment".to_string(),
                     created_at: 987654321,
                     runs: vec![],
-                    line_hash: None,
+                    content_hash: None,
                     status: NoteStatus::Open,
-                    source_lines: None,
+                    original_source_rows: Vec::new(),
                 }],
                 content_runs: vec![],
                 rows: vec![],
@@ -1008,35 +1005,41 @@ fn test_render_markdown_note_statuses() {
         OutputNote {
             id: "n_open".to_string(),
             file: "src/main.rs".to_string(),
-            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 2, 2),
+            location: diffuse_core::notes::NoteLocation::line(
+                diffuse_core::notes::DiffCoord::new_side(2),
+            ),
             text: "Open comment".to_string(),
             created_at: 100,
             runs: vec![],
-            line_hash: None,
+            content_hash: None,
             status: NoteStatus::Open,
-            source_lines: None,
+            original_source_rows: Vec::new(),
         },
         OutputNote {
             id: "n_in_progress".to_string(),
             file: "src/main.rs".to_string(),
-            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 5, 5),
+            location: diffuse_core::notes::NoteLocation::line(
+                diffuse_core::notes::DiffCoord::new_side(5),
+            ),
             text: "In progress comment".to_string(),
             created_at: 200,
             runs: vec![],
-            line_hash: None,
+            content_hash: None,
             status: NoteStatus::InProgress,
-            source_lines: None,
+            original_source_rows: Vec::new(),
         },
         OutputNote {
             id: "n_resolved".to_string(),
             file: "src/main.rs".to_string(),
-            location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 8, 8),
+            location: diffuse_core::notes::NoteLocation::line(
+                diffuse_core::notes::DiffCoord::new_side(8),
+            ),
             text: "Resolved comment".to_string(),
             created_at: 300,
             runs: vec![],
-            line_hash: None,
+            content_hash: None,
             status: NoteStatus::Resolved,
-            source_lines: None,
+            original_source_rows: Vec::new(),
         },
     ];
 
@@ -1065,13 +1068,15 @@ fn test_render_markdown_resolved_notes_omitted_summary() {
     output.files[0].notes = vec![OutputNote {
         id: "n_open".to_string(),
         file: "src/main.rs".to_string(),
-        location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 2, 2),
+        location: diffuse_core::notes::NoteLocation::line(
+            diffuse_core::notes::DiffCoord::new_side(2),
+        ),
         text: "Open comment".to_string(),
         created_at: 100,
         runs: vec![],
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::Open,
-        source_lines: None,
+        original_source_rows: Vec::new(),
     }];
 
     let opts = MarkdownOptions::default();
@@ -1088,36 +1093,29 @@ fn test_render_markdown_resolved_notes_omitted_summary() {
 }
 
 #[test]
-fn test_render_markdown_source_lines_code_block() {
+fn test_render_markdown_multi_line_note_location() {
     let mut output = sample_output();
     output.files[0].notes = vec![OutputNote {
         id: "n_src".to_string(),
         file: "src/main.rs".to_string(),
-        location: diffuse_core::notes::NoteLocation::line(diffuse_core::notes::Side::New, 2, 3),
+        location: diffuse_core::notes::NoteLocation::range(
+            diffuse_core::notes::DiffCoord::new_side(2),
+            diffuse_core::notes::DiffCoord::new_side(3),
+        ),
         text: "Quoted review note".to_string(),
         created_at: 100,
         runs: vec![],
-        line_hash: None,
+        content_hash: None,
         status: NoteStatus::Open,
-        source_lines: Some("println!(\"Hello diffuse!\");\n}".to_string()),
+        original_source_rows: Vec::new(),
     }];
 
-    let opts = MarkdownOptions {
-        show_source_lines: true,
-        ..MarkdownOptions::default()
-    };
-    let md = render_markdown_output(&output, &opts);
-    assert!(md.contains("> 💬 **Lines 2-3**:"));
-    assert!(md.contains("> ```rs\n> println!(\"Hello diffuse!\");\n> }\n> ```"));
-    assert!(md.contains("> Quoted review note"));
-
-    let opts_no_src = MarkdownOptions {
-        show_source_lines: false,
-        ..MarkdownOptions::default()
-    };
-    let md_no_src = render_markdown_output(&output, &opts_no_src);
-    assert!(!md_no_src.contains("> ```rs"));
-    assert!(md_no_src.contains("> 💬 **Lines 2-3**: Quoted review note"));
+    let md = render_markdown_output(&output, &MarkdownOptions::default());
+    assert!(md.contains("> 💬 **Lines 2-3**: Quoted review note"));
+    assert!(
+        !md.contains("> ```rs"),
+        "source-lines code blocks no longer render"
+    );
 }
 
 #[test]
@@ -1195,4 +1193,75 @@ fn test_render_markdown_mov_none_side_panics() {
         ..MarkdownOptions::default()
     };
     let _ = render_markdown_output(&output, &opts);
+}
+
+#[test]
+fn test_render_markdown_note_with_nested_source_diff_code_block() {
+    let mut output = sample_output();
+    output.files[0].notes = vec![OutputNote {
+        id: "note-1".to_string(),
+        file: "src/main.rs".to_string(),
+        location: diffuse_core::notes::NoteLocation::line(
+            diffuse_core::notes::DiffCoord::new_side(10),
+        ),
+        text: "Please refactor this".to_string(),
+        created_at: 123456789,
+        runs: vec![],
+        content_hash: None,
+        status: NoteStatus::Open,
+        original_source_rows: vec![
+            OutputRow {
+                kind: RowKind::Del,
+                mov_side: None,
+                old_line: Some(10),
+                new_line: None,
+                runs: vec![OutputRun {
+                    kind: RunKind::Del,
+                    color: TokenColor::Default,
+                    sgr: None,
+                    text: "old_impl();".into(),
+                }],
+                wholesale: false,
+                group: None,
+            },
+            OutputRow {
+                kind: RowKind::Add,
+                mov_side: None,
+                old_line: None,
+                new_line: Some(10),
+                runs: vec![OutputRun {
+                    kind: RunKind::Add,
+                    color: TokenColor::Default,
+                    sgr: None,
+                    text: "new_impl();".into(),
+                }],
+                wholesale: false,
+                group: None,
+            },
+        ],
+    }];
+
+    // 1. Without show_source (default), nested code block is absent
+    let opts_no_src = MarkdownOptions {
+        show_source: false,
+        summary_table: false,
+        collapsible: false,
+        ..MarkdownOptions::default()
+    };
+    let md_no_src = render_markdown_output(&output, &opts_no_src);
+    assert!(md_no_src.contains("> [!NOTE]"));
+    assert!(md_no_src.contains("> 💬 **Line 10**: Please refactor this"));
+    assert!(!md_no_src.contains("> ```diff"));
+
+    // 2. With show_source = true, nested diff code block is rendered
+    let opts_with_src = MarkdownOptions {
+        show_source: true,
+        summary_table: false,
+        collapsible: false,
+        ..MarkdownOptions::default()
+    };
+    let md_with_src = render_markdown_output(&output, &opts_with_src);
+    assert!(md_with_src.contains("> [!NOTE]"));
+    assert!(md_with_src.contains("> 💬 **Line 10**: Please refactor this"));
+    assert!(md_with_src.contains("> ```diff\n> -old_impl();\n> +new_impl();\n> ```"));
 }
