@@ -127,12 +127,17 @@ pub fn reload_diff(
         staged,
         ENGINE_CONTEXT,
         Some(&notes_db),
-        Some(&state.notes_key),
+        state.repo_key.as_deref(),
+        state.rev_key.as_deref(),
     )
     .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
-        .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
+        .with_notes(
+            Some(state.notes.clone()),
+            state.repo_key.clone(),
+            state.rev_key.clone(),
+        )
         .with_expand_lines(state.expand_lines);
     let mut new_out = run_pipeline_full(
         &git_res.diff,
@@ -169,12 +174,17 @@ pub fn reload_specific_files(
         staged,
         ENGINE_CONTEXT,
         Some(&notes_db),
-        Some(&state.notes_key),
+        state.repo_key.as_deref(),
+        state.rev_key.as_deref(),
     )
     .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
-        .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
+        .with_notes(
+            Some(state.notes.clone()),
+            state.repo_key.clone(),
+            state.rev_key.clone(),
+        )
         .with_expand_lines(state.expand_lines);
     let mut new_out = run_pipeline_full(
         &git_res.diff,
@@ -218,12 +228,17 @@ pub fn toggle_staged_action(
         target_staged,
         ENGINE_CONTEXT,
         Some(&notes_db),
-        Some(&state.notes_key),
+        state.repo_key.as_deref(),
+        state.rev_key.as_deref(),
     )
     .map_err(|e| format!("failed to reload git repo: {e}"))?;
 
     let pipeline_opts = PipelineOptions::default()
-        .with_notes(Some(state.notes.clone()), Some(state.notes_key.clone()))
+        .with_notes(
+            Some(state.notes.clone()),
+            state.repo_key.clone(),
+            state.rev_key.clone(),
+        )
         .with_expand_lines(state.expand_lines);
     let mut new_out = run_pipeline_full(
         &git_res.diff,

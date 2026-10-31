@@ -75,11 +75,33 @@ fn test_repo_discovery_and_metadata() {
     let non_repo = tempfile::tempdir().unwrap();
     assert!(Repo::discover(non_repo.path()).is_none());
 
-    // With name and name_opt
-    let repo_with_name = repo.clone().with_name("my-repo");
-    assert_eq!(repo_with_name.name(), "my-repo");
-    let repo_opt = repo.with_name_opt(Some("opt-repo".to_string()));
-    assert_eq!(repo_opt.name(), "opt-repo");
+    // With key and key_opt
+    let repo_with_key = repo.clone().with_key("my-repo");
+    assert_eq!(repo_with_key.key(), Some("my-repo"));
+    assert_eq!(repo_with_key.display_name(), "my-repo");
+    let repo_opt = repo.clone().with_key_opt(Some("opt-repo".to_string()));
+    assert_eq!(repo_opt.key(), Some("opt-repo"));
+    assert_eq!(repo_opt.display_name(), "opt-repo");
+
+    // Rooted without explicit key uses canonical path for key, file_name for
+    // display
+    let expected_root = dir.canonicalize().unwrap();
+    let expected_name = dir.file_name().unwrap().to_str().unwrap();
+    assert_eq!(repo.key(), Some(expected_root.to_str().unwrap()));
+    assert_eq!(repo.display_name(), expected_name);
+
+    // Unrooted without key returns None for key, "<unnamed>" for display
+    let unrooted_empty = Repo {
+        root: None,
+        key: None,
+    };
+    assert_eq!(unrooted_empty.key(), None);
+    assert_eq!(unrooted_empty.display_name(), "<unnamed>");
+
+    // Unrooted with key
+    let unrooted_key = Repo::from_key("custom");
+    assert_eq!(unrooted_key.key(), Some("custom"));
+    assert_eq!(unrooted_key.display_name(), "custom");
 }
 
 #[test]
@@ -438,6 +460,7 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
         git_revs: vec![],
         pathspecs: vec![],
         staged: false,
+        rev_key: None,
     };
     let statuses = repo.file_statuses(&unstaged_target).unwrap();
     let f1 = statuses
@@ -469,6 +492,7 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
         git_revs: vec![],
         pathspecs: vec![],
         staged: true,
+        rev_key: None,
     };
     let staged_statuses = repo.file_statuses(&staged_target).unwrap();
 
@@ -502,6 +526,7 @@ fn test_repository_file_statuses_unstaged_staged_and_range() {
         git_revs: vec![],
         pathspecs: vec![],
         staged: false,
+        rev_key: None,
     };
     let range_statuses = repo.file_statuses(&range_target).unwrap();
     assert_eq!(range_statuses.len(), 3);
@@ -714,6 +739,7 @@ fn test_diff_repository_unstaged_staged_and_range() {
         git_revs: vec![],
         pathspecs: vec![],
         staged: false,
+        rev_key: None,
     };
 
     let res =
@@ -754,6 +780,7 @@ fn test_diff_repository_on_cli_setup_repo() {
         git_revs: vec![],
         pathspecs: vec![],
         staged: false,
+        rev_key: None,
     };
 
     let res =
@@ -813,6 +840,7 @@ fn test_submodule_gitlink_diff() {
         git_revs: vec!["HEAD~1..HEAD".to_string()],
         pathspecs: vec![],
         staged: false,
+        rev_key: None,
     };
 
     let res =
@@ -931,6 +959,7 @@ fn two() {
         git_revs: vec![],
         pathspecs: vec![],
         staged: false,
+        rev_key: None,
     };
     let res = crate::diff::diff_repository(&repo, &target, 0, crate::diff::WhitespaceMode::Exact)
         .unwrap();

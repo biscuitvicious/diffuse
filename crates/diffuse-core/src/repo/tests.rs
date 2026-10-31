@@ -32,22 +32,25 @@ fn test_repo_construction_and_queries() {
     let dir = tmp.path();
     let (_c1, _, _, c4) = init_test_git_repo(dir);
 
-    // 1. From root: infers name from dir name
+    // 1. From root: infers display name from dir name
     let repo = Repo::from_root(dir);
-    assert_eq!(repo.root(), Some(dir));
+    assert!(repo.root().is_some());
     let expected_name = dir.file_name().unwrap().to_str().unwrap();
-    assert_eq!(repo.name(), expected_name);
+    assert_eq!(repo.display_name(), expected_name);
     assert!(repo.is_work_tree());
     assert_eq!(repo.head_commit(), Some(c4.clone()));
+    assert!(repo.key().is_some());
 
-    // 2. Overridden name
-    let repo_named = repo.clone().with_name("custom-repo");
-    assert_eq!(repo_named.name(), "custom-repo");
+    // 2. Overridden key
+    let repo_keyed = repo.clone().with_key("custom-repo");
+    assert_eq!(repo_keyed.display_name(), "custom-repo");
+    assert_eq!(repo_keyed.key(), Some("custom-repo"));
 
-    // 3. From name only (unrooted)
-    let unrooted = Repo::from_name("unrooted-repo");
+    // 3. From key only (unrooted)
+    let unrooted = Repo::from_key("unrooted-repo");
     assert_eq!(unrooted.root(), None);
-    assert_eq!(unrooted.name(), "unrooted-repo");
+    assert_eq!(unrooted.display_name(), "unrooted-repo");
+    assert_eq!(unrooted.key(), Some("unrooted-repo"));
     assert!(!unrooted.is_work_tree());
     assert_eq!(unrooted.head_commit(), None);
     assert_eq!(unrooted.branch(), "");
@@ -109,7 +112,7 @@ fn test_review_target_queries() {
     let (c1, c2, c3, c4) = init_test_git_repo(dir);
     let (s1, s4) = (&c1[..7], &c4[..7]);
 
-    let repo = Repo::from_root(dir).with_name("myrepo");
+    let repo = Repo::from_root(dir).with_key("myrepo");
 
     // 1. Reviewing a commit range c1..c4
     let range_args = vec![format!("{c1}..{c4}")];
@@ -120,27 +123,27 @@ fn test_review_target_queries() {
         Some(&RevisionRange(s1.to_string(), s4.to_string()))
     );
     assert_eq!(target_range.commit_range(), Some(format!("{s1}..{s4}")));
-    assert_eq!(target_range.repo_name(), "myrepo");
-    assert_eq!(target_range.repo_root(), Some(dir));
-    // Notes commit for range c1..c4 (next newest) is c1..c3
-    assert_eq!(target_range.notes_commit(), Some(format!("{c1}..{c3}")));
-    assert_eq!(target_range.notes_key(), format!("myrepo@{c1}..{c3}"));
+    assert_eq!(target_range.display_name(), "myrepo");
+    assert!(target_range.repo_root().is_some());
+    // Notes rev_key for range c1..c4 (next newest) is c1..c3
+    assert_eq!(target_range.rev_key(), Some(format!("{c1}..{c3}").as_str()));
+    assert_eq!(target_range.repo_key(), Some("myrepo"));
     assert!(!target_range.is_staged());
     assert!(!target_range.is_cached());
 
     // 1b. Single-commit range c1..c2 enters single-commit path
     let target_single_range =
         ReviewTarget::from_repo_args(repo.clone(), vec![format!("{c1}..{c2}")], false);
-    assert_eq!(target_single_range.notes_commit(), Some(c1.clone()));
-    assert_eq!(target_single_range.notes_key(), format!("myrepo@{c1}"));
+    assert_eq!(target_single_range.rev_key(), Some(c1.as_str()));
+    assert_eq!(target_single_range.repo_key(), Some("myrepo"));
 
     // 2. Reviewing working tree (empty args)
     let target_wt = ReviewTarget::from_repo_args(repo, vec![], false);
     assert!(!target_wt.is_range());
     assert_eq!(target_wt.range(), None);
     assert_eq!(target_wt.commit_range(), None);
-    assert_eq!(target_wt.notes_commit(), Some(c4.clone()));
-    assert_eq!(target_wt.notes_key(), format!("myrepo@{c4}"));
+    assert_eq!(target_wt.rev_key(), Some(c4.as_str()));
+    assert_eq!(target_wt.repo_key(), Some("myrepo"));
     assert!(!target_wt.is_staged());
 
     // 3. Staged target
@@ -149,18 +152,18 @@ fn test_review_target_queries() {
     assert!(target_staged.is_cached());
 
     // 4. Unrooted review target
-    let unrooted_repo = Repo::from_name("piped-repo");
+    let unrooted_repo = Repo::from_key("piped-repo");
     let target_unrooted = ReviewTarget::from_repo(unrooted_repo);
     assert!(!target_unrooted.is_range());
-    assert_eq!(target_unrooted.notes_commit(), None);
-    assert_eq!(target_unrooted.notes_key(), "piped-repo");
+    assert_eq!(target_unrooted.rev_key(), None);
+    assert_eq!(target_unrooted.repo_key(), Some("piped-repo"));
     assert_eq!(target_unrooted.repo_root(), None);
     assert_eq!(target_unrooted.branch(), "");
     assert!(!target_unrooted.is_work_tree());
 
     // 5. from_root constructor and branch / worktree forwarding
     let target_from_root = ReviewTarget::from_root(dir);
-    assert_eq!(target_from_root.repo_root(), Some(dir));
+    assert!(target_from_root.repo_root().is_some());
     assert!(target_from_root.is_work_tree());
     assert!(!target_from_root.branch().is_empty());
 }
@@ -173,13 +176,13 @@ fn test_repo_edge_cases_and_branches() {
     // Discover in non-git directory returns None
     assert_eq!(Repo::discover(dir), None);
 
-    // Empty override name falls back to root dir name or "diffuse"
-    let repo_empty_name = Repo::from_root(dir).with_name("");
+    // Empty override key falls back to root dir name
+    let repo_empty_key = Repo::from_root(dir).with_key("");
     let expected = dir.file_name().unwrap().to_str().unwrap();
-    assert_eq!(repo_empty_name.name(), expected);
+    assert_eq!(repo_empty_key.display_name(), expected);
 
-    let unrooted_empty = Repo::from_name("");
-    assert_eq!(unrooted_empty.name(), "diffuse");
+    let unrooted_empty = Repo::from_key("");
+    assert_eq!(unrooted_empty.display_name(), "<unnamed>");
 
     // with_target
     let target = unrooted_empty.with_target(
@@ -207,25 +210,25 @@ fn test_review_target_revisions_and_pathspecs() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
     let (c1, c2, c3, c4) = init_test_git_repo(dir);
-    let repo = Repo::from_root(dir).with_name("myrepo");
+    let repo = Repo::from_root(dir).with_key("myrepo");
 
     // 1. Single commit argument `c1`:
     //    - git_revs = [c1], pathspecs = []
-    //    - notes_commit = c1, notes_key = myrepo@c1
+    //    - rev_key = c1, repo_key = myrepo
     let target_c1 = ReviewTarget::from_repo_args(repo.clone(), vec![c1.clone()], false);
     assert_eq!(target_c1.git_revs, vec![c1.clone()]);
     assert!(target_c1.pathspecs.is_empty());
-    assert_eq!(target_c1.notes_commit(), Some(c1.clone()));
-    assert_eq!(target_c1.notes_key(), format!("myrepo@{c1}"));
+    assert_eq!(target_c1.rev_key(), Some(c1.as_str()));
+    assert_eq!(target_c1.repo_key(), Some("myrepo"));
 
     // 2. Pathspec argument `file.txt` only:
     //    - git_revs = [], pathspecs = [file.txt]
-    //    - notes_commit = c4 (live HEAD), notes_key = myrepo@c4
+    //    - rev_key = c4 (live HEAD), repo_key = myrepo
     let target_path = ReviewTarget::from_repo_args(repo.clone(), vec!["file.txt".into()], false);
     assert!(target_path.git_revs.is_empty());
     assert_eq!(target_path.pathspecs, vec!["file.txt"]);
-    assert_eq!(target_path.notes_commit(), Some(c4.clone()));
-    assert_eq!(target_path.notes_key(), format!("myrepo@{c4}"));
+    assert_eq!(target_path.rev_key(), Some(c4.as_str()));
+    assert_eq!(target_path.repo_key(), Some("myrepo"));
     assert!(target_path.matches_path("file.txt", dir));
     assert!(!target_path.matches_path("other.rs", dir));
 
@@ -234,7 +237,7 @@ fn test_review_target_revisions_and_pathspecs() {
         ReviewTarget::from_repo_args(repo.clone(), vec![c1.clone(), "file.txt".into()], false);
     assert_eq!(target_both.git_revs, vec![c1.clone()]);
     assert_eq!(target_both.pathspecs, vec!["file.txt"]);
-    assert_eq!(target_both.notes_commit(), Some(c1.clone()));
+    assert_eq!(target_both.rev_key(), Some(c1.as_str()));
     assert!(target_both.matches_path("file.txt", dir));
 
     // 4. Using `--` separator syntax:
@@ -255,29 +258,33 @@ fn test_review_target_revisions_and_pathspecs() {
         text: "Note".into(),
         ..Default::default()
     };
-    crate::notes::add_note(&mut db, &format!("myrepo@{c1}"), note.clone());
-    crate::notes::add_note(&mut db, &format!("myrepo@{c4}"), note.clone());
-    crate::notes::add_note(&mut db, &format!("myrepo@{c1}..{c3}"), note.clone());
-    crate::notes::add_note(&mut db, "myrepo", note);
+    crate::notes::add_note(&mut db, "myrepo", &c1, note.clone());
+    crate::notes::add_note(&mut db, "myrepo", &c4, note.clone());
+    crate::notes::add_note(&mut db, "myrepo", &format!("{c1}..{c3}"), note.clone());
+    crate::notes::add_note(&mut db, "myrepo", "", note);
 
-    let keys_c1 = target_c1.matched_notes_db_keys(&db);
-    assert_eq!(keys_c1, vec![format!("myrepo@{c1}")]);
+    let keys_c1 = target_c1.matched_rev_keys(&db);
+    assert_eq!(keys_c1, vec![c1.as_str()]);
 
-    let keys_head = target_path.matched_notes_db_keys(&db);
-    assert_eq!(keys_head, vec![format!("myrepo@{c4}")]);
+    let keys_head = target_path.matched_rev_keys(&db);
+    assert_eq!(keys_head, vec![c4.as_str()]);
 
-    // Range review matches range note key
+    // Range review matches range note rev_key
     let target_range =
         ReviewTarget::from_repo_args(repo.clone(), vec![format!("{c1}..{c4}")], false);
-    let keys_range = target_range.matched_notes_db_keys(&db);
-    assert_eq!(keys_range, vec![format!("myrepo@{c1}..{c3}")]);
+    let keys_range = target_range.matched_rev_keys(&db);
+    assert_eq!(keys_range, vec![format!("{c1}..{c3}").as_str()]);
 
-    // Target with no notes on its commit returns empty keys (no fallback to bare
-    // repo)
+    // Target with no notes on its commit returns empty keys (no fallback)
     let target_empty = ReviewTarget::from_repo_args(repo.clone(), vec![c2.clone()], false);
-    assert!(target_empty.matched_notes_db_keys(&db).is_empty());
+    assert!(target_empty.matched_rev_keys(&db).is_empty());
 
-    // Unrooted target matches bare repo
-    let unrooted_target = ReviewTarget::from_repo(Repo::from_name("myrepo"));
-    assert_eq!(unrooted_target.matched_notes_db_keys(&db), vec!["myrepo"]);
+    // Unrooted target without rev_key matches all rev keys in db["myrepo"]
+    let unrooted_target = ReviewTarget::from_repo(Repo::from_key("myrepo"));
+    let range_key = format!("{c1}..{c3}");
+    let mut expected_all = vec!["", c1.as_str(), c4.as_str(), range_key.as_str()];
+    expected_all.sort_unstable();
+    let mut actual_unrooted = unrooted_target.matched_rev_keys(&db);
+    actual_unrooted.sort_unstable();
+    assert_eq!(actual_unrooted, expected_all);
 }

@@ -331,12 +331,8 @@ pub fn note_line_span(location: &NoteLocation) -> Option<(crate::visible::Side, 
     }
 }
 
-/// The notes database: repo -> (`file_path` -> list of notes).
-///
-/// The top-level repo key is HEAD-scoped (see [`notes_key`]): notes saved
-/// under one commit are invisible after the working tree is committed or
-/// the branch changes, instead of lingering as stale annotations.
-pub type NotesDB = HashMap<String, HashMap<String, Vec<ReviewNote>>>;
+/// The notes database: repo_key -> rev_key -> file_path -> list of notes.
+pub type NotesDB = HashMap<String, HashMap<String, HashMap<String, Vec<ReviewNote>>>>;
 
 /// Extension-agnostic state directory for diffuse: `$XDG_STATE_HOME/diffuse`,
 /// else `~/.local/state/diffuse`, else `.diffuse` relative to the cwd.
@@ -407,32 +403,6 @@ pub fn notes_commit(repo_root: &Path, git_revs: &[String]) -> Option<String> {
     diffuse_git::Repository::open(repo_root)
         .ok()
         .and_then(|r| r.notes_commit(git_revs))
-}
-
-/// Notes-DB key for a repo at a given HEAD: `{repo}@{head}`.
-///
-/// Falls back to the bare repo name when HEAD is unknown (non-git
-/// contexts, repos without commits yet) so notes keep working there.
-/// Entries saved under a previous bare-repo key are simply never matched
-/// again once a HEAD is known; they are left on disk untouched.
-pub fn notes_key(repo: &str, head: Option<&str>) -> String {
-    match head {
-        Some(h) if !h.is_empty() => format!("{repo}@{h}"),
-        _ => repo.to_string(),
-    }
-}
-
-/// Convenience wrapper: resolve the target notes commit for `repo_root` under
-/// `git_revs` (second-to-last commit when reviewing a range, otherwise HEAD)
-/// and build the notes-DB key for `repo`.
-pub fn notes_key_for_repo_args(repo_root: &Path, repo: &str, git_revs: &[String]) -> String {
-    notes_key(repo, notes_commit(repo_root, git_revs).as_deref())
-}
-
-/// Convenience wrapper: resolve the live HEAD under `repo_root` and build
-/// the notes-DB key for `repo`.
-pub fn notes_key_for_repo(repo_root: &Path, repo: &str) -> String {
-    notes_key_for_repo_args(repo_root, repo, &[])
 }
 
 /// A deterministic 32-bit short hash of trimmed line content.
@@ -822,14 +792,16 @@ pub fn save_notes(path: &Path, db: &NotesDB) -> io::Result<()> {
     fs::write(path, raw)
 }
 
-/// Get all notes for a specific repo and file.
+/// Get all notes for a specific repo, rev, and file.
 pub fn notes_for_file<'a>(
     db: &'a NotesDB,
-    repo: &str,
+    repo_key: &str,
+    rev_key: &str,
     file: &str,
 ) -> impl Iterator<Item = &'a ReviewNote> {
-    db.get(repo)
-        .and_then(|repo_map| repo_map.get(file))
+    db.get(repo_key)
+        .and_then(|rev_map| rev_map.get(rev_key))
+        .and_then(|file_map| file_map.get(file))
         .into_iter()
         .flatten()
 }
@@ -842,6 +814,9 @@ pub fn notes_for_file<'a>(
 /// range candidates, and range targets never match single-commit candidates.
 #[inline]
 pub(crate) fn commit_spec_matches(target_spec: &str, candidate_hash: &str) -> bool {
+    if target_spec.is_empty() || candidate_hash.is_empty() {
+        return target_spec == candidate_hash;
+    }
     if let Some((target_base, target_tip)) = target_spec.split_once("..") {
         if let Some((c_base, c_tip)) = candidate_hash.split_once("..") {
             (target_base.starts_with(c_base) || c_base.starts_with(target_base))
@@ -856,113 +831,109 @@ pub(crate) fn commit_spec_matches(target_spec: &str, candidate_hash: &str) -> bo
     }
 }
 
-/// Query notes for a specific file path.
+/// Query notes for a specific file path within a repository.
 ///
-/// Priority resolution order:
-/// - Exact match on bucket `repo` (e.g. `repo@commit` or bare `repo`).
-/// - If `repo` is commit-scoped (`repo@commit`), matches buckets with
-///   compatible commit prefix.
-/// - If `repo` is bare (`repo`), matches `{repo}@` buckets.
-/// - If `repo` is `None` (standalone review): searches all buckets in `db` for
-///   notes matching `file`.
+/// If `repo_key` is None, returns empty (notes disabled outside a repository).
+/// When `rev_key` is specified, matches exact rev_key first, then compatible
+/// commit/range prefixes via [`commit_spec_matches`].
+/// When `rev_key` is None, queries notes across all revisions for that
+/// repo_key.
 pub fn query_notes_for_file<'a>(
     db: &'a NotesDB,
-    repo: Option<&str>,
+    repo_key: Option<&str>,
+    rev_key: Option<&str>,
     file: &str,
 ) -> Vec<&'a ReviewNote> {
-    if let Some(r) = repo {
-        if let Some(repo_map) = db.get(r)
-            && let Some(notes) = repo_map.get(file)
+    let Some(repo_k) = repo_key else {
+        return Vec::new();
+    };
+    let Some(rev_map) = db.get(repo_k) else {
+        return Vec::new();
+    };
+
+    if let Some(target_rev) = rev_key {
+        if let Some(file_map) = rev_map.get(target_rev)
+            && let Some(notes) = file_map.get(file)
             && !notes.is_empty()
         {
             return notes.iter().collect();
         }
-        if let Some((repo_name, commit)) = r.split_once('@') {
-            let prefix = format!("{repo_name}@");
-            return db
-                .iter()
-                .filter(|(k, _)| {
-                    if let Some(hash) = k.strip_prefix(&prefix) {
-                        commit_spec_matches(commit, hash)
-                    } else {
-                        false
-                    }
-                })
-                .filter_map(|(_, repo_map)| repo_map.get(file))
-                .flatten()
-                .collect();
-        } else {
-            let prefix = format!("{r}@");
-            return db
-                .iter()
-                .filter(|(k, _)| k.as_str() == r || k.starts_with(&prefix))
-                .filter_map(|(_, repo_map)| repo_map.get(file))
-                .flatten()
-                .collect();
-        }
+        return rev_map
+            .iter()
+            .filter(|(k, _)| commit_spec_matches(target_rev, k))
+            .filter_map(|(_, file_map)| file_map.get(file))
+            .flatten()
+            .collect();
     }
-    db.values()
-        .filter_map(|repo_map| repo_map.get(file))
+
+    if let Some(file_map) = rev_map.get("")
+        && let Some(notes) = file_map.get(file)
+        && !notes.is_empty()
+    {
+        return notes.iter().collect();
+    }
+
+    rev_map
+        .values()
+        .filter_map(|file_map| file_map.get(file))
         .flatten()
         .collect()
 }
 
-/// Query all distinct file paths that have notes for the given repo bucket (or
-/// across all buckets if `repo` is None).
-pub fn note_files_for_repo(db: &NotesDB, repo: Option<&str>) -> Vec<String> {
+/// Query all distinct file paths that have notes for the given repo (and
+/// optional rev).
+pub fn note_files_for_repo(
+    db: &NotesDB,
+    repo_key: Option<&str>,
+    rev_key: Option<&str>,
+) -> Vec<String> {
+    let Some(repo_k) = repo_key else {
+        return Vec::new();
+    };
+    let Some(rev_map) = db.get(repo_k) else {
+        return Vec::new();
+    };
+
     let mut files = std::collections::HashSet::new();
-    if let Some(r) = repo {
-        if let Some(repo_map) = db.get(r) {
-            for (f, notes) in repo_map {
+    if let Some(target_rev) = rev_key {
+        if let Some(file_map) = rev_map.get(target_rev) {
+            for (f, notes) in file_map {
                 if !notes.is_empty() {
                     files.insert(f.clone());
                 }
             }
         }
-        if let Some((repo_name, commit)) = r.split_once('@') {
-            let prefix = format!("{repo_name}@");
-            for (k, repo_map) in db {
-                if let Some(hash) = k.strip_prefix(&prefix)
-                    && commit_spec_matches(commit, hash)
-                {
-                    for (f, notes) in repo_map {
-                        if !notes.is_empty() {
-                            files.insert(f.clone());
-                        }
-                    }
-                }
-            }
-        } else {
-            let prefix = format!("{r}@");
-            for (k, repo_map) in db {
-                if k.starts_with(&prefix) {
-                    for (f, notes) in repo_map {
-                        if !notes.is_empty() {
-                            files.insert(f.clone());
-                        }
+        for (cand_rev, file_map) in rev_map {
+            if cand_rev != target_rev && commit_spec_matches(target_rev, cand_rev) {
+                for (f, notes) in file_map {
+                    if !notes.is_empty() {
+                        files.insert(f.clone());
                     }
                 }
             }
         }
     } else {
-        for repo_map in db.values() {
-            for (f, notes) in repo_map {
+        for file_map in rev_map.values() {
+            for (f, notes) in file_map {
                 if !notes.is_empty() {
                     files.insert(f.clone());
                 }
             }
         }
     }
+
     let mut sorted: Vec<String> = files.into_iter().collect();
     sorted.sort();
     sorted
 }
 
-/// Get all notes for a specific repo.
-pub fn all_notes<'a>(db: &'a NotesDB, repo: &str) -> impl Iterator<Item = &'a ReviewNote> {
-    db.get(repo)
+/// Get all notes for a specific repository.
+pub fn all_notes<'a>(db: &'a NotesDB, repo_key: &str) -> impl Iterator<Item = &'a ReviewNote> {
+    db.get(repo_key)
         .into_iter()
-        .flat_map(|repo_map| repo_map.values().flatten())
+        .flat_map(|rev_map| rev_map.values())
+        .flat_map(|file_map| file_map.values())
+        .flatten()
 }
 
 /// Return a copy of the database restricted to non-resolved notes.
@@ -970,22 +941,28 @@ pub fn all_notes<'a>(db: &'a NotesDB, repo: &str) -> impl Iterator<Item = &'a Re
 /// Callers that load content only for notes the user can currently see (for
 /// example, synthesizing context around an anchoring note) use this to derive
 /// a content-scoped view; the authoritative source database is never modified.
-/// Empty per-file and per-repo maps are pruned after removal.
+/// Empty per-file, per-revision, and per-repo maps are pruned after removal.
 #[must_use]
 pub fn without_resolved(db: &NotesDB) -> NotesDB {
     let mut out = db.clone();
-    for repo_map in out.values_mut() {
-        for notes in repo_map.values_mut() {
-            notes.retain(|n| !n.status.is_resolved());
+    for rev_map in out.values_mut() {
+        for file_map in rev_map.values_mut() {
+            for notes in file_map.values_mut() {
+                notes.retain(|n| !n.status.is_resolved());
+            }
+            file_map.retain(|_, notes| !notes.is_empty());
         }
-        repo_map.retain(|_, notes| !notes.is_empty());
+        rev_map.retain(|_, file_map| !file_map.is_empty());
     }
+    out.retain(|_, rev_map| !rev_map.is_empty());
     out
 }
 
-/// Add a note to the database for a given repo.
-pub fn add_note(db: &mut NotesDB, repo: &str, note: ReviewNote) {
-    db.entry(repo.to_string())
+/// Add a note to the database for a given repository and revision.
+pub fn add_note(db: &mut NotesDB, repo_key: &str, rev_key: &str, note: ReviewNote) {
+    db.entry(repo_key.to_string())
+        .or_default()
+        .entry(rev_key.to_string())
         .or_default()
         .entry(note.file.clone())
         .or_default()
@@ -996,15 +973,19 @@ pub fn add_note(db: &mut NotesDB, repo: &str, note: ReviewNote) {
 /// diff side. Returns the number of removed notes.
 pub fn remove_notes_in_range(
     db: &mut NotesDB,
-    repo: &str,
+    repo_key: &str,
+    rev_key: &str,
     file: &str,
     start: u32,
     end: u32,
 ) -> usize {
-    let Some(repo_map) = db.get_mut(repo) else {
+    let Some(rev_map) = db.get_mut(repo_key) else {
         return 0;
     };
-    let Some(list) = repo_map.get_mut(file) else {
+    let Some(file_map) = rev_map.get_mut(rev_key) else {
+        return 0;
+    };
+    let Some(list) = file_map.get_mut(file) else {
         return 0;
     };
     let before = list.len();
@@ -1032,61 +1013,86 @@ pub fn remove_notes_in_range(
     });
     let removed = before - list.len();
     if list.is_empty() {
-        repo_map.remove(file);
+        file_map.remove(file);
+        if file_map.is_empty() {
+            rev_map.remove(rev_key);
+        }
     }
     removed
 }
 
 /// Remove all file-level notes for a file (notes whose location is
 /// [`NoteLocation::File`]). Returns the number of removed notes.
-pub fn remove_file_notes(db: &mut NotesDB, repo: &str, file: &str) -> usize {
-    let Some(repo_map) = db.get_mut(repo) else {
+pub fn remove_file_notes(db: &mut NotesDB, repo_key: &str, rev_key: &str, file: &str) -> usize {
+    let Some(rev_map) = db.get_mut(repo_key) else {
         return 0;
     };
-    let Some(list) = repo_map.get_mut(file) else {
+    let Some(file_map) = rev_map.get_mut(rev_key) else {
+        return 0;
+    };
+    let Some(list) = file_map.get_mut(file) else {
         return 0;
     };
     let before = list.len();
     list.retain(|n| !n.location.is_file());
     let removed = before - list.len();
     if list.is_empty() {
-        repo_map.remove(file);
+        file_map.remove(file);
+        if file_map.is_empty() {
+            rev_map.remove(rev_key);
+        }
     }
     removed
 }
 
-/// Remove a specific note matching the repo, file, and unique `note_id`.
+/// Remove a specific note matching the repo, rev, file, and unique `note_id`.
 /// Returns `true` if a note was removed, `false` otherwise.
-pub fn remove_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
-    let Some(repo_map) = db.get_mut(repo) else {
+pub fn remove_note_by_id(
+    db: &mut NotesDB,
+    repo_key: &str,
+    rev_key: &str,
+    file: &str,
+    note_id: &str,
+) -> bool {
+    let Some(rev_map) = db.get_mut(repo_key) else {
         return false;
     };
-    let Some(list) = repo_map.get_mut(file) else {
+    let Some(file_map) = rev_map.get_mut(rev_key) else {
+        return false;
+    };
+    let Some(list) = file_map.get_mut(file) else {
         return false;
     };
     let before = list.len();
     list.retain(|n| n.id != note_id);
     let removed = list.len() < before;
     if list.is_empty() {
-        repo_map.remove(file);
+        file_map.remove(file);
+        if file_map.is_empty() {
+            rev_map.remove(rev_key);
+        }
     }
     removed
 }
 
-/// Update the text of a specific note matching the repo, file, and unique
+/// Update the text of a specific note matching the repo, rev, file, and unique
 /// `note_id`. Returns `true` if the note was found and updated, `false`
 /// otherwise.
 pub fn update_note_text(
     db: &mut NotesDB,
-    repo: &str,
+    repo_key: &str,
+    rev_key: &str,
     file: &str,
     note_id: &str,
     new_text: String,
 ) -> bool {
-    let Some(repo_map) = db.get_mut(repo) else {
+    let Some(rev_map) = db.get_mut(repo_key) else {
         return false;
     };
-    let Some(list) = repo_map.get_mut(file) else {
+    let Some(file_map) = rev_map.get_mut(rev_key) else {
+        return false;
+    };
+    let Some(list) = file_map.get_mut(file) else {
         return false;
     };
     if let Some(note) = list.iter_mut().find(|n| n.id == note_id) {
@@ -1108,19 +1114,23 @@ pub fn reply_to_note_text(original: &str, reply: &str) -> String {
     format!("{reply}\n\n{quoted}")
 }
 
-/// Set the lifecycle status of a specific note matching repo, file, and
+/// Set the lifecycle status of a specific note matching repo, rev, file, and
 /// `note_id`.
 pub fn set_note_status_by_id(
     db: &mut NotesDB,
-    repo: &str,
+    repo_key: &str,
+    rev_key: &str,
     file: &str,
     note_id: &str,
     status: NoteStatus,
 ) -> bool {
-    let Some(repo_map) = db.get_mut(repo) else {
+    let Some(rev_map) = db.get_mut(repo_key) else {
         return false;
     };
-    let Some(list) = repo_map.get_mut(file) else {
+    let Some(file_map) = rev_map.get_mut(rev_key) else {
+        return false;
+    };
+    let Some(list) = file_map.get_mut(file) else {
         return false;
     };
     if let Some(note) = list.iter_mut().find(|n| n.id == note_id) {
@@ -1133,36 +1143,58 @@ pub fn set_note_status_by_id(
 
 /// Mark a specific note as resolved (`NoteStatus::Resolved`).
 #[inline]
-pub fn resolve_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
-    set_note_status_by_id(db, repo, file, note_id, NoteStatus::Resolved)
+pub fn resolve_note_by_id(
+    db: &mut NotesDB,
+    repo_key: &str,
+    rev_key: &str,
+    file: &str,
+    note_id: &str,
+) -> bool {
+    set_note_status_by_id(db, repo_key, rev_key, file, note_id, NoteStatus::Resolved)
 }
 
 /// Reopen a specific note back to open status (`NoteStatus::Open`).
 #[inline]
-pub fn reopen_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
-    set_note_status_by_id(db, repo, file, note_id, NoteStatus::Open)
+pub fn reopen_note_by_id(
+    db: &mut NotesDB,
+    repo_key: &str,
+    rev_key: &str,
+    file: &str,
+    note_id: &str,
+) -> bool {
+    set_note_status_by_id(db, repo_key, rev_key, file, note_id, NoteStatus::Open)
 }
 
 /// Alias for [`reopen_note_by_id`]: reset note back to open.
 #[inline]
-pub fn open_note_by_id(db: &mut NotesDB, repo: &str, file: &str, note_id: &str) -> bool {
-    reopen_note_by_id(db, repo, file, note_id)
+pub fn open_note_by_id(
+    db: &mut NotesDB,
+    repo_key: &str,
+    rev_key: &str,
+    file: &str,
+    note_id: &str,
+) -> bool {
+    reopen_note_by_id(db, repo_key, rev_key, file, note_id)
 }
 
 /// Reply to a specific note by prepending reply text and blockquoting original
 /// text. Optionally updates the note's status.
 pub fn reply_to_note_by_id(
     db: &mut NotesDB,
-    repo: &str,
+    repo_key: &str,
+    rev_key: &str,
     file: &str,
     note_id: &str,
     reply: &str,
     status: Option<NoteStatus>,
 ) -> bool {
-    let Some(repo_map) = db.get_mut(repo) else {
+    let Some(rev_map) = db.get_mut(repo_key) else {
         return false;
     };
-    let Some(list) = repo_map.get_mut(file) else {
+    let Some(file_map) = rev_map.get_mut(rev_key) else {
+        return false;
+    };
+    let Some(list) = file_map.get_mut(file) else {
         return false;
     };
     if let Some(note) = list.iter_mut().find(|n| n.id == note_id) {
@@ -1176,86 +1208,70 @@ pub fn reply_to_note_by_id(
     }
 }
 
-/// Find a note and its file path by note ID within `repo`.
+/// Find a note and its rev and file path by note ID within `repo_key`.
 pub fn find_note_by_id<'a>(
     db: &'a NotesDB,
-    repo: &str,
+    repo_key: &str,
     note_id: &str,
-) -> Option<(&'a str, &'a ReviewNote)> {
-    let repo_map = db.get(repo)?;
-    for (file, notes) in repo_map {
-        if let Some(note) = notes.iter().find(|n| n.id == note_id) {
-            return Some((file.as_str(), note));
+) -> Option<(&'a str, &'a str, &'a ReviewNote)> {
+    let rev_map = db.get(repo_key)?;
+    for (rev, file_map) in rev_map {
+        for (file, notes) in file_map {
+            if let Some(note) = notes.iter().find(|n| n.id == note_id) {
+                return Some((rev.as_str(), file.as_str(), note));
+            }
         }
     }
     None
 }
 
-/// Set a note's lifecycle status searching across all files in `repo`.
+/// Set a note's lifecycle status searching across all revisions and files in
+/// `repo_key`.
 pub fn set_note_status_in_repo(
     db: &mut NotesDB,
-    repo: &str,
+    repo_key: &str,
     note_id: &str,
     status: NoteStatus,
 ) -> bool {
-    let Some(repo_map) = db.get_mut(repo) else {
+    let Some(rev_map) = db.get_mut(repo_key) else {
         return false;
     };
-    for notes in repo_map.values_mut() {
-        if let Some(note) = notes.iter_mut().find(|n| n.id == note_id) {
-            note.status = status;
-            return true;
+    for file_map in rev_map.values_mut() {
+        for notes in file_map.values_mut() {
+            if let Some(note) = notes.iter_mut().find(|n| n.id == note_id) {
+                note.status = status;
+                return true;
+            }
         }
     }
     false
 }
 
-/// Find a note by ID (or ID prefix) across buckets in `db`.
-/// If `repo` is provided, searches that bucket first, then commit-scoped
-/// buckets matching `{repo}@`, and finally falls back to all buckets in the
-/// database. Matches exact note ID first; if none match, matches note ID
-/// prefix.
-pub fn find_note_in_db<'a>(
+/// Find a note by ID (or ID prefix) strictly within `repo_key`.
+///
+/// Returns `Some((rev_key, file_path, note))` if found.
+/// Matches exact note ID first; if none match, matches note ID prefix.
+pub fn find_note_in_repo<'a>(
     db: &'a NotesDB,
-    repo: Option<&str>,
+    repo_key: &str,
     id_or_prefix: &str,
 ) -> Option<(&'a str, &'a str, &'a ReviewNote)> {
-    let mut candidate_keys: Vec<&'a str> = Vec::new();
-    if let Some(r) = repo {
-        if let Some((k, _)) = db.get_key_value(r) {
-            candidate_keys.push(k.as_str());
-        }
-        let pfx = format!("{r}@");
-        for k in db.keys() {
-            if k.starts_with(&pfx) && !candidate_keys.contains(&k.as_str()) {
-                candidate_keys.push(k.as_str());
-            }
-        }
-    }
-    for k in db.keys() {
-        if !candidate_keys.contains(&k.as_str()) {
-            candidate_keys.push(k.as_str());
-        }
-    }
+    let rev_map = db.get(repo_key)?;
 
     // 1. Exact ID match pass
-    for key in &candidate_keys {
-        if let Some(repo_map) = db.get(*key) {
-            for (file, notes) in repo_map {
-                if let Some(note) = notes.iter().find(|n| n.id == id_or_prefix) {
-                    return Some((*key, file.as_str(), note));
-                }
+    for (rev, file_map) in rev_map {
+        for (file, notes) in file_map {
+            if let Some(note) = notes.iter().find(|n| n.id == id_or_prefix) {
+                return Some((rev.as_str(), file.as_str(), note));
             }
         }
     }
 
     // 2. Prefix match pass
-    for key in &candidate_keys {
-        if let Some(repo_map) = db.get(*key) {
-            for (file, notes) in repo_map {
-                if let Some(note) = notes.iter().find(|n| n.id.starts_with(id_or_prefix)) {
-                    return Some((*key, file.as_str(), note));
-                }
+    for (rev, file_map) in rev_map {
+        for (file, notes) in file_map {
+            if let Some(note) = notes.iter().find(|n| n.id.starts_with(id_or_prefix)) {
+                return Some((rev.as_str(), file.as_str(), note));
             }
         }
     }
@@ -1263,27 +1279,51 @@ pub fn find_note_in_db<'a>(
     None
 }
 
-/// Mutate a note found by ID (or prefix) across buckets in `db`.
-pub fn update_note_in_db<F>(
+/// Mutate a note found by ID (or prefix) strictly within `repo_key`.
+pub fn update_note_in_repo<F>(
     db: &mut NotesDB,
-    repo: Option<&str>,
+    repo_key: &str,
     id_or_prefix: &str,
     mut f: F,
 ) -> bool
 where
     F: FnMut(&mut ReviewNote),
 {
-    // First find where the note is located
-    let found = find_note_in_db(db, repo, id_or_prefix)
-        .map(|(k, file, note)| (k.to_string(), file.to_string(), note.id.clone()));
+    let found = find_note_in_repo(db, repo_key, id_or_prefix)
+        .map(|(rev, file, note)| (rev.to_string(), file.to_string(), note.id.clone()));
 
-    if let Some((bucket, file, note_id)) = found
-        && let Some(repo_map) = db.get_mut(&bucket)
-        && let Some(notes) = repo_map.get_mut(&file)
+    if let Some((rev, file, note_id)) = found
+        && let Some(rev_map) = db.get_mut(repo_key)
+        && let Some(file_map) = rev_map.get_mut(&rev)
+        && let Some(notes) = file_map.get_mut(&file)
         && let Some(note) = notes.iter_mut().find(|n| n.id == note_id)
     {
         f(note);
         return true;
+    }
+    false
+}
+
+/// Delete a note by ID (or prefix) strictly within `repo_key`.
+pub fn delete_note_in_repo(db: &mut NotesDB, repo_key: &str, id_or_prefix: &str) -> bool {
+    let found = find_note_in_repo(db, repo_key, id_or_prefix)
+        .map(|(rev, file, note)| (rev.to_string(), file.to_string(), note.id.clone()));
+
+    if let Some((rev, file, note_id)) = found
+        && let Some(rev_map) = db.get_mut(repo_key)
+        && let Some(file_map) = rev_map.get_mut(&rev)
+        && let Some(notes) = file_map.get_mut(&file)
+    {
+        let before = notes.len();
+        notes.retain(|n| n.id != note_id);
+        let removed = notes.len() < before;
+        if notes.is_empty() {
+            file_map.remove(&file);
+            if file_map.is_empty() {
+                rev_map.remove(&rev);
+            }
+        }
+        return removed;
     }
     false
 }

@@ -1020,9 +1020,9 @@ fn test_cli_notes_subcommand_suite() {
         original_source_rows: Vec::new(),
     };
 
-    add_note(&mut db, "repo1", note_open);
-    add_note(&mut db, "repo1", note_prog);
-    add_note(&mut db, "repo1", note_res);
+    add_note(&mut db, "repo1", "", note_open);
+    add_note(&mut db, "repo1", "", note_prog);
+    add_note(&mut db, "repo1", "", note_res);
     save_notes(&notes_path, &db).unwrap();
 
     let notes_file_arg = notes_path.to_str().unwrap();
@@ -1032,7 +1032,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .output()
@@ -1049,7 +1049,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("list")
@@ -1066,7 +1066,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("list")
@@ -1084,7 +1084,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("list")
@@ -1102,7 +1102,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("list")
@@ -1119,7 +1119,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("show")
@@ -1142,7 +1142,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("reply")
@@ -1157,6 +1157,8 @@ fn test_cli_notes_subcommand_suite() {
     let note = db
         .get("repo1")
         .unwrap()
+        .get("")
+        .unwrap()
         .get("src/lib.rs")
         .unwrap()
         .iter()
@@ -1170,7 +1172,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("progress")
@@ -1181,6 +1183,8 @@ fn test_cli_notes_subcommand_suite() {
     let db = load_notes(&notes_path);
     let note = db
         .get("repo1")
+        .unwrap()
+        .get("")
         .unwrap()
         .get("src/lib.rs")
         .unwrap()
@@ -1194,7 +1198,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("open")
@@ -1205,6 +1209,8 @@ fn test_cli_notes_subcommand_suite() {
     let db = load_notes(&notes_path);
     let note = db
         .get("repo1")
+        .unwrap()
+        .get("")
         .unwrap()
         .get("src/lib.rs")
         .unwrap()
@@ -1218,7 +1224,7 @@ fn test_cli_notes_subcommand_suite() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("repo1")
         .arg("notes")
         .arg("status")
@@ -1230,6 +1236,8 @@ fn test_cli_notes_subcommand_suite() {
     let db = load_notes(&notes_path);
     let note = db
         .get("repo1")
+        .unwrap()
+        .get("")
         .unwrap()
         .get("src/lib.rs")
         .unwrap()
@@ -1271,7 +1279,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("add")
@@ -1287,8 +1295,9 @@ fn test_cli_notes_add_subcommand() {
         String::from_utf8_lossy(&out1.stderr)
     );
     let db = load_notes(&notes_path);
-    let key = db.keys().find(|k| k.starts_with("test-repo")).unwrap();
-    let notes = db.get(key).unwrap().get("foo.rs").unwrap();
+    let repo_map = db.get("test-repo").unwrap();
+    let rev_map = repo_map.values().next().unwrap();
+    let notes = rev_map.get("foo.rs").unwrap();
     assert_eq!(notes.len(), 1);
     let n1 = &notes[0];
     assert_eq!(n1.file, "foo.rs");
@@ -1313,7 +1322,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("add")
@@ -1328,8 +1337,9 @@ fn test_cli_notes_add_subcommand() {
         .unwrap();
     assert_eq!(out2.status.code(), Some(0));
     let db = load_notes(&notes_path);
-    let key = db.keys().find(|k| k.starts_with("test-repo")).unwrap();
-    let notes = db.get(key).unwrap().get("foo.rs").unwrap();
+    let repo_map = db.get("test-repo").unwrap();
+    let rev_map = repo_map.values().next().unwrap();
+    let notes = rev_map.get("foo.rs").unwrap();
     assert_eq!(notes.len(), 2);
     let n2 = &notes[1];
     assert_eq!(n2.start(), 3);
@@ -1346,7 +1356,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("add")
@@ -1364,8 +1374,9 @@ fn test_cli_notes_add_subcommand() {
         String::from_utf8_lossy(&out3.stderr)
     );
     let db = load_notes(&notes_path);
-    let key = db.keys().find(|k| k.starts_with("test-repo")).unwrap();
-    let notes = db.get(key).unwrap().get("foo.rs").unwrap();
+    let repo_map = db.get("test-repo").unwrap();
+    let rev_map = repo_map.values().next().unwrap();
+    let notes = rev_map.get("foo.rs").unwrap();
     assert_eq!(notes.len(), 3);
     let n3 = &notes[2];
     assert_eq!(n3.start(), 3);
@@ -1377,7 +1388,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("add")
@@ -1397,7 +1408,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("add")
@@ -1413,7 +1424,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("create")
@@ -1450,7 +1461,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("create")
@@ -1469,11 +1480,12 @@ fn test_cli_notes_add_subcommand() {
     );
 
     let db = load_notes(&notes_path);
-    let expected_range_key = format!("test-repo@{c1_sha}..{c2_sha}");
+    let repo_map = db.get("test-repo").unwrap();
+    let expected_rev_key = format!("{c1_sha}..{c2_sha}");
     assert!(
-        db.contains_key(&expected_range_key),
-        "expected key {expected_range_key} in db, found: {:?}",
-        db.keys().collect::<Vec<_>>()
+        repo_map.contains_key(&expected_rev_key),
+        "expected rev key {expected_rev_key} in test-repo, found: {:?}",
+        repo_map.keys().collect::<Vec<_>>()
     );
 
     // Query back using list -r
@@ -1481,7 +1493,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("list")
@@ -1501,7 +1513,7 @@ fn test_cli_notes_add_subcommand() {
         .current_dir(tmp.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg(format!("{c1_sha}..{c3_sha}"))
@@ -1569,8 +1581,8 @@ fn test_notes_list_revisions_and_pathspecs() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut db, &format!("test-repo@{c1}"), note_c1_a);
-    add_note(&mut db, &format!("test-repo@{c1}"), note_c1_b);
+    add_note(&mut db, "test-repo", &c1, note_c1_a);
+    add_note(&mut db, "test-repo", &c1, note_c1_b);
 
     // Notes on c2
     let note_c2_a = ReviewNote {
@@ -1595,8 +1607,8 @@ fn test_notes_list_revisions_and_pathspecs() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut db, &format!("test-repo@{c2}"), note_c2_a);
-    add_note(&mut db, &format!("test-repo@{c2}"), note_c2_doc);
+    add_note(&mut db, "test-repo", &c2, note_c2_a);
+    add_note(&mut db, "test-repo", &c2, note_c2_doc);
     save_notes(&notes_path, &db).unwrap();
 
     let notes_file_arg = notes_path.to_str().unwrap();
@@ -1606,7 +1618,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("list")
@@ -1624,7 +1636,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("list")
@@ -1644,7 +1656,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("list")
@@ -1663,7 +1675,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("list")
@@ -1683,7 +1695,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("list")
@@ -1702,7 +1714,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("HEAD~1")
@@ -1720,7 +1732,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("--")
@@ -1738,7 +1750,7 @@ fn test_notes_list_revisions_and_pathspecs() {
         .current_dir(dir.path())
         .arg("--notes-file")
         .arg(notes_file_arg)
-        .arg("--repo")
+        .arg("--repo-key")
         .arg("test-repo")
         .arg("notes")
         .arg("list")

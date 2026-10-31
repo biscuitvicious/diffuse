@@ -82,9 +82,9 @@ fn test_notes_add_and_query() {
         ..Default::default()
     };
 
-    add_note(&mut db, "myrepo", note.clone());
+    add_note(&mut db, "myrepo", "c1", note.clone());
 
-    let repo_notes: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
+    let repo_notes: Vec<_> = notes_for_file(&db, "myrepo", "c1", "src/main.rs").collect();
     assert_eq!(repo_notes.len(), 1);
     assert_eq!(repo_notes[0].id, "n1");
 
@@ -114,13 +114,13 @@ fn test_notes_remove() {
         ..Default::default()
     };
 
-    add_note(&mut db, "myrepo", note1);
-    add_note(&mut db, "myrepo", note2);
+    add_note(&mut db, "myrepo", "c1", note1);
+    add_note(&mut db, "myrepo", "c1", note2);
 
-    let removed = remove_notes_in_range(&mut db, "myrepo", "src/main.rs", 12, 18);
+    let removed = remove_notes_in_range(&mut db, "myrepo", "c1", "src/main.rs", 12, 18);
     assert_eq!(removed, 1);
 
-    let remaining: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
+    let remaining: Vec<_> = notes_for_file(&db, "myrepo", "c1", "src/main.rs").collect();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, "n2");
 }
@@ -147,40 +147,65 @@ fn test_remove_note_by_id_targeted() {
         ..Default::default()
     };
 
-    add_note(&mut db, "myrepo", note1);
-    add_note(&mut db, "myrepo", note2);
+    add_note(&mut db, "myrepo", "c1", note1);
+    add_note(&mut db, "myrepo", "c1", note2);
 
     // Target specifically note1
-    assert!(remove_note_by_id(&mut db, "myrepo", "src/main.rs", "n1"));
-    let remaining: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
+    assert!(remove_note_by_id(
+        &mut db,
+        "myrepo",
+        "c1",
+        "src/main.rs",
+        "n1"
+    ));
+    let remaining: Vec<_> = notes_for_file(&db, "myrepo", "c1", "src/main.rs").collect();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].id, "n2");
     assert_eq!(remaining[0].text, "Second (same line)");
 
-    // Non-existent ID or repo returns false
+    // Non-existent ID, rev, or repo returns false
     assert!(!remove_note_by_id(
         &mut db,
         "myrepo",
+        "c1",
         "src/main.rs",
         "nonexistent"
     ));
     assert!(!remove_note_by_id(
         &mut db,
         "unknown_repo",
+        "c1",
         "src/main.rs",
         "n2"
     ));
     assert!(!remove_note_by_id(
         &mut db,
         "myrepo",
+        "unknown_rev",
+        "src/main.rs",
+        "n2"
+    ));
+    assert!(!remove_note_by_id(
+        &mut db,
+        "myrepo",
+        "c1",
         "unknown_file.rs",
         "n2"
     ));
 
     // Removing last note cleans up file entry in DB
-    assert!(remove_note_by_id(&mut db, "myrepo", "src/main.rs", "n2"));
-    assert_eq!(notes_for_file(&db, "myrepo", "src/main.rs").count(), 0);
-    assert!(!db.get("myrepo").unwrap().contains_key("src/main.rs"));
+    assert!(remove_note_by_id(
+        &mut db,
+        "myrepo",
+        "c1",
+        "src/main.rs",
+        "n2"
+    ));
+    assert_eq!(
+        notes_for_file(&db, "myrepo", "c1", "src/main.rs").count(),
+        0
+    );
+    assert!(!db.get("myrepo").unwrap().contains_key("c1"));
 }
 
 #[test]
@@ -195,17 +220,18 @@ fn test_update_note_text_targeted() {
         content_hash: None,
         ..Default::default()
     };
-    add_note(&mut db, "myrepo", note);
+    add_note(&mut db, "myrepo", "c1", note);
 
     assert!(update_note_text(
         &mut db,
         "myrepo",
+        "c1",
         "src/main.rs",
         "n1",
         "Updated text".into()
     ));
 
-    let updated: Vec<_> = notes_for_file(&db, "myrepo", "src/main.rs").collect();
+    let updated: Vec<_> = notes_for_file(&db, "myrepo", "c1", "src/main.rs").collect();
     assert_eq!(updated.len(), 1);
     assert_eq!(updated[0].id, "n1");
     assert_eq!(updated[0].text, "Updated text");
@@ -213,10 +239,11 @@ fn test_update_note_text_targeted() {
     assert_eq!(updated[0].end(), 15);
     assert_eq!(updated[0].created_at, 1000);
 
-    // Non-existent ID, file, or repo returns false
+    // Non-existent ID, file, rev, or repo returns false
     assert!(!update_note_text(
         &mut db,
         "myrepo",
+        "c1",
         "src/main.rs",
         "nonexistent",
         "New text".into()
@@ -224,6 +251,7 @@ fn test_update_note_text_targeted() {
     assert!(!update_note_text(
         &mut db,
         "unknown_repo",
+        "c1",
         "src/main.rs",
         "n1",
         "New text".into()
@@ -231,17 +259,19 @@ fn test_update_note_text_targeted() {
     assert!(!update_note_text(
         &mut db,
         "myrepo",
+        "unknown_rev",
+        "src/main.rs",
+        "n1",
+        "New text".into()
+    ));
+    assert!(!update_note_text(
+        &mut db,
+        "myrepo",
+        "c1",
         "other.rs",
         "n1",
         "New text".into()
     ));
-}
-
-#[test]
-fn test_notes_key_scopes_repo_by_head() {
-    assert_eq!(notes_key("myrepo", Some("abc123")), "myrepo@abc123");
-    assert_eq!(notes_key("myrepo", None), "myrepo");
-    assert_eq!(notes_key("myrepo", Some("")), "myrepo");
 }
 
 #[test]
@@ -256,16 +286,12 @@ fn test_notes_isolated_across_heads() {
         content_hash: None,
         ..Default::default()
     };
-    let key = notes_key("myrepo", Some("h1"));
-    add_note(&mut db, &key, note);
+    add_note(&mut db, "myrepo", "h1", note);
 
-    assert_eq!(notes_for_file(&db, &key, "lib.rs").count(), 1);
-    // Bare repo name and a different head must not see the note.
-    assert_eq!(notes_for_file(&db, "myrepo", "lib.rs").count(), 0);
-    assert_eq!(
-        notes_for_file(&db, &notes_key("myrepo", Some("h2")), "lib.rs").count(),
-        0
-    );
+    assert_eq!(notes_for_file(&db, "myrepo", "h1", "lib.rs").count(), 1);
+    // Bare repo or a different head must not see the note.
+    assert_eq!(notes_for_file(&db, "myrepo", "", "lib.rs").count(), 0);
+    assert_eq!(notes_for_file(&db, "myrepo", "h2", "lib.rs").count(), 0);
 }
 
 #[test]
@@ -284,13 +310,6 @@ fn test_head_commit_resolves_temp_repo() {
     let head = head_commit(dir).expect("HEAD must resolve after a commit");
     assert_eq!(head.len(), 40);
     assert!(head.chars().all(|c| c.is_ascii_hexdigit()));
-
-    // The convenience wrapper keys off the live HEAD.
-    assert_eq!(notes_key_for_repo(dir, "myrepo"), format!("myrepo@{head}"));
-    assert_eq!(
-        notes_key_for_repo(Path::new("/nonexistent-diffuse-test-dir"), "myrepo"),
-        "myrepo"
-    );
 }
 
 #[test]
@@ -314,45 +333,25 @@ fn test_notes_commit_for_ranges() {
 
     // 1. Working tree / no range -> keys off HEAD (c4)
     assert_eq!(notes_commit(dir, &[]), Some(c4.clone()));
-    assert_eq!(
-        notes_key_for_repo_args(dir, "myrepo", &[]),
-        format!("myrepo@{c4}")
-    );
 
     // 2. Single-commit range c1..c2 -> next newest in range is c1 (commit before
     //    c2)
     let r_1_2 = vec![format!("{c1}..{c2}")];
     assert_eq!(notes_commit(dir, &r_1_2), Some(c1.clone()));
-    assert_eq!(
-        notes_key_for_repo_args(dir, "myrepo", &r_1_2),
-        format!("myrepo@{c1}")
-    );
 
     // 3. Multi-commit range c1..c4 (commits: c2, c3, c4) -> base c1, parent of tip
     //    c4 is c3 -> c1..c3
     let r_1_4 = vec![format!("{c1}..{c4}")];
     assert_eq!(notes_commit(dir, &r_1_4), Some(format!("{c1}..{c3}")));
-    assert_eq!(
-        notes_key_for_repo_args(dir, "myrepo", &r_1_4),
-        format!("myrepo@{c1}..{c3}")
-    );
 
     // 4. Single-commit notation c3^! -> commit before c3 is c2
     let r_c3_head = vec![format!("{c3}^!")];
     assert_eq!(notes_commit(dir, &r_c3_head), Some(c2.clone()));
-    assert_eq!(
-        notes_key_for_repo_args(dir, "myrepo", &r_c3_head),
-        format!("myrepo@{c2}")
-    );
 
     // 5. Two ref arguments [c1, c3] (commits: c2, c3) -> base c1, parent of tip c3
     //    is c2 -> c1..c2
     let r_two_refs = vec![c1.clone(), c3.clone()];
     assert_eq!(notes_commit(dir, &r_two_refs), Some(format!("{c1}..{c2}")));
-    assert_eq!(
-        notes_key_for_repo_args(dir, "myrepo", &r_two_refs),
-        format!("myrepo@{c1}..{c2}")
-    );
 }
 
 #[test]
@@ -385,6 +384,7 @@ fn test_notes_persistence() {
     add_note(
         &mut db,
         "repo1",
+        "c1",
         ReviewNote {
             id: "n1".into(),
             file: "lib.rs".into(),
@@ -400,7 +400,7 @@ fn test_notes_persistence() {
 
     let loaded = load_notes(file);
     assert_eq!(loaded.len(), 1);
-    let loaded_notes: Vec<_> = notes_for_file(&loaded, "repo1", "lib.rs").collect();
+    let loaded_notes: Vec<_> = notes_for_file(&loaded, "repo1", "c1", "lib.rs").collect();
     assert_eq!(loaded_notes.len(), 1);
     assert_eq!(loaded_notes[0].text, "**important**");
 }
@@ -989,38 +989,37 @@ fn test_query_notes_for_file_scoping_and_standalone() {
         content_hash: None,
         ..Default::default()
     };
-    add_note(&mut db, "myrepo@commit123", note1.clone());
-    add_note(&mut db, "standalone_repo", note2.clone());
+    add_note(&mut db, "myrepo", "commit123", note1.clone());
+    add_note(&mut db, "standalone_repo", "", note2.clone());
 
     // 1. Exact match
-    let exact = query_notes_for_file(&db, Some("myrepo@commit123"), "src/lib.rs");
+    let exact = query_notes_for_file(&db, Some("myrepo"), Some("commit123"), "src/lib.rs");
     assert_eq!(exact.len(), 1);
     assert_eq!(exact[0].id, "n1");
 
-    // 2. Prefix match (repo without commit)
-    let prefix_match = query_notes_for_file(&db, Some("myrepo"), "src/lib.rs");
+    // 2. Prefix match on revision
+    let prefix_match = query_notes_for_file(&db, Some("myrepo"), Some("commit12"), "src/lib.rs");
     assert_eq!(prefix_match.len(), 1);
     assert_eq!(prefix_match[0].id, "n1");
 
-    // 3. Standalone match (repo is None) finds notes by file path across all
-    //    buckets
-    let standalone = query_notes_for_file(&db, None, "src/lib.rs");
+    // 3. Querying with rev = None queries across all revisions for that repo
+    let all_revs = query_notes_for_file(&db, Some("myrepo"), None, "src/lib.rs");
+    assert_eq!(all_revs.len(), 1);
+    assert_eq!(all_revs[0].id, "n1");
+
+    let standalone = query_notes_for_file(&db, Some("standalone_repo"), None, "src/other.rs");
     assert_eq!(standalone.len(), 1);
-    assert_eq!(standalone[0].id, "n1");
+    assert_eq!(standalone[0].id, "n2");
 
-    let standalone_other = query_notes_for_file(&db, None, "src/other.rs");
-    assert_eq!(standalone_other.len(), 1);
-    assert_eq!(standalone_other[0].id, "n2");
-
-    // 4. Missing file returns empty vec
-    let missing = query_notes_for_file(&db, None, "src/nonexistent.rs");
-    assert!(missing.is_empty());
+    // 4. Missing repo returns empty vec (fail-fast: notes disabled outside repo)
+    let missing_repo = query_notes_for_file(&db, None, None, "src/lib.rs");
+    assert!(missing_repo.is_empty());
 
     // 5. Querying scoped commit does not leak notes from other commits
     let mut db_multi = NotesDB::new();
-    add_note(&mut db_multi, "myrepo@commit123", note1.clone());
-    add_note(&mut db_multi, "myrepo@commit456", note2.clone());
-    let leaked = query_notes_for_file(&db_multi, Some("myrepo@commit123"), "src/other.rs");
+    add_note(&mut db_multi, "myrepo", "commit123", note1.clone());
+    add_note(&mut db_multi, "myrepo", "commit456", note2.clone());
+    let leaked = query_notes_for_file(&db_multi, Some("myrepo"), Some("commit123"), "src/other.rs");
     assert!(
         leaked.is_empty(),
         "Notes from commit456 must not leak when querying commit123"
@@ -1048,33 +1047,37 @@ fn test_note_files_for_repo() {
         content_hash: None,
         ..Default::default()
     };
-    add_note(&mut db, "myrepo@commit123", note1);
-    add_note(&mut db, "myrepo@commit123", note2);
+    add_note(&mut db, "myrepo", "commit123", note1);
+    add_note(&mut db, "myrepo", "commit123", note2);
 
-    // Exact repo match
-    let files = note_files_for_repo(&db, Some("myrepo@commit123"));
+    // Exact rev match
+    let files = note_files_for_repo(&db, Some("myrepo"), Some("commit123"));
     assert_eq!(
         files,
         vec!["src/lib.rs".to_string(), "src/untouched.rs".to_string()]
     );
 
-    // Prefix match
-    let files = note_files_for_repo(&db, Some("myrepo"));
+    // Prefix rev match
+    let files = note_files_for_repo(&db, Some("myrepo"), Some("commit12"));
     assert_eq!(
         files,
         vec!["src/lib.rs".to_string(), "src/untouched.rs".to_string()]
     );
 
-    // Fallback across all buckets
-    let files = note_files_for_repo(&db, None);
+    // Query across all revisions
+    let files = note_files_for_repo(&db, Some("myrepo"), None);
     assert_eq!(
         files,
         vec!["src/lib.rs".to_string(), "src/untouched.rs".to_string()]
     );
 
-    // Non-existent repo without matches in other buckets
+    // None repo returns empty
+    let files = note_files_for_repo(&db, None, None);
+    assert!(files.is_empty());
+
+    // Non-existent repo returns empty
     let empty_db = NotesDB::new();
-    let files = note_files_for_repo(&empty_db, Some("other"));
+    let files = note_files_for_repo(&empty_db, Some("other"), None);
     assert!(files.is_empty());
 }
 
@@ -1166,39 +1169,61 @@ fn test_notes_db_status_and_reply_operations() {
         status: NoteStatus::Open,
         original_source_rows: Vec::new(),
     };
-    add_note(&mut db, "repo1", note);
+    add_note(&mut db, "repo1", "c1", note);
 
     // set_note_status_by_id
     assert!(set_note_status_by_id(
         &mut db,
         "repo1",
+        "c1",
         "src/lib.rs",
         "n1",
         NoteStatus::InProgress
     ));
-    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    let n = notes_for_file(&db, "repo1", "c1", "src/lib.rs")
+        .next()
+        .unwrap();
     assert_eq!(n.status, NoteStatus::InProgress);
 
     // resolve_note_by_id
-    assert!(resolve_note_by_id(&mut db, "repo1", "src/lib.rs", "n1"));
-    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    assert!(resolve_note_by_id(
+        &mut db,
+        "repo1",
+        "c1",
+        "src/lib.rs",
+        "n1"
+    ));
+    let n = notes_for_file(&db, "repo1", "c1", "src/lib.rs")
+        .next()
+        .unwrap();
     assert_eq!(n.status, NoteStatus::Resolved);
 
     // reopen_note_by_id
-    assert!(reopen_note_by_id(&mut db, "repo1", "src/lib.rs", "n1"));
-    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    assert!(reopen_note_by_id(
+        &mut db,
+        "repo1",
+        "c1",
+        "src/lib.rs",
+        "n1"
+    ));
+    let n = notes_for_file(&db, "repo1", "c1", "src/lib.rs")
+        .next()
+        .unwrap();
     assert_eq!(n.status, NoteStatus::Open);
 
     // reply_to_note_by_id with status update
     assert!(reply_to_note_by_id(
         &mut db,
         "repo1",
+        "c1",
         "src/lib.rs",
         "n1",
         "Addressed!",
         Some(NoteStatus::Resolved)
     ));
-    let n = notes_for_file(&db, "repo1", "src/lib.rs").next().unwrap();
+    let n = notes_for_file(&db, "repo1", "c1", "src/lib.rs")
+        .next()
+        .unwrap();
     assert_eq!(n.status, NoteStatus::Resolved);
     assert_eq!(n.text, "Addressed!\n\n> initial comment");
 
@@ -1206,6 +1231,7 @@ fn test_notes_db_status_and_reply_operations() {
     assert!(!set_note_status_by_id(
         &mut db,
         "repo1",
+        "c1",
         "src/lib.rs",
         "missing",
         NoteStatus::Open
@@ -1213,6 +1239,7 @@ fn test_notes_db_status_and_reply_operations() {
     assert!(!set_note_status_by_id(
         &mut db,
         "missing_repo",
+        "c1",
         "src/lib.rs",
         "n1",
         NoteStatus::Open
@@ -1220,6 +1247,7 @@ fn test_notes_db_status_and_reply_operations() {
     assert!(!reply_to_note_by_id(
         &mut db,
         "repo1",
+        "c1",
         "src/lib.rs",
         "missing",
         "hi",
@@ -1228,7 +1256,7 @@ fn test_notes_db_status_and_reply_operations() {
 }
 
 #[test]
-fn test_find_and_update_note_in_db() {
+fn test_find_and_update_note_in_repo() {
     let mut db = NotesDB::new();
     let note1 = ReviewNote {
         id: "abc-123".into(),
@@ -1250,31 +1278,35 @@ fn test_find_and_update_note_in_db() {
         status: NoteStatus::InProgress,
         original_source_rows: Vec::new(),
     };
-    add_note(&mut db, "myrepo@commit1", note1);
-    add_note(&mut db, "other@commit2", note2);
+    add_note(&mut db, "myrepo", "commit1", note1);
+    add_note(&mut db, "other", "commit2", note2);
 
     // Exact match by id with repo
-    let (key, file, n) = find_note_in_db(&db, Some("myrepo"), "abc-123").expect("found");
-    assert_eq!(key, "myrepo@commit1");
+    let (rev, file, n) = find_note_in_repo(&db, "myrepo", "abc-123").expect("found");
+    assert_eq!(rev, "commit1");
     assert_eq!(file, "src/main.rs");
     assert_eq!(n.id, "abc-123");
 
     // Prefix match
-    let (key, file, n) = find_note_in_db(&db, None, "def").expect("found prefix");
-    assert_eq!(key, "other@commit2");
-    assert_eq!(file, "src/util.rs");
-    assert_eq!(n.id, "def-456");
+    let (rev, file, n) = find_note_in_repo(&db, "myrepo", "abc").expect("found prefix");
+    assert_eq!(rev, "commit1");
+    assert_eq!(file, "src/main.rs");
+    assert_eq!(n.id, "abc-123");
 
-    // Not found
-    assert!(find_note_in_db(&db, None, "xyz").is_none());
+    // Note from other repo is NOT found in myrepo (fail-fast isolation!)
+    assert!(find_note_in_repo(&db, "myrepo", "def").is_none());
 
-    // Update note in db
-    let updated = update_note_in_db(&mut db, None, "abc", |n| {
+    // Update note in repo
+    let updated = update_note_in_repo(&mut db, "myrepo", "abc", |n| {
         n.status = NoteStatus::Resolved;
     });
     assert!(updated);
-    let (_, _, n) = find_note_in_db(&db, None, "abc-123").unwrap();
+    let (_, _, n) = find_note_in_repo(&db, "myrepo", "abc-123").unwrap();
     assert_eq!(n.status, NoteStatus::Resolved);
+
+    // Delete note in repo
+    assert!(delete_note_in_repo(&mut db, "myrepo", "abc"));
+    assert!(find_note_in_repo(&db, "myrepo", "abc-123").is_none());
 }
 
 #[test]

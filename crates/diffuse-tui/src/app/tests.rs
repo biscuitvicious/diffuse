@@ -178,7 +178,7 @@ fn test_note_commit_persists_and_deletes() {
     state.commit_note_draft().expect("note commit must succeed");
     assert!(state.note_draft.is_none());
 
-    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", "", &file).collect();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].text, "check this **carefully**");
     assert!(
@@ -188,7 +188,7 @@ fn test_note_commit_persists_and_deletes() {
 
     let on_disk = load_notes(&notes_path);
     assert_eq!(
-        notes_for_file(&on_disk, "test_repo", &file).count(),
+        notes_for_file(&on_disk, "test_repo", "", &file).count(),
         1,
         "commit must persist through the notes DB file"
     );
@@ -203,14 +203,14 @@ fn test_note_commit_persists_and_deletes() {
     state.move_down();
     state.delete_note();
     assert!(
-        notes_for_file(&state.notes, "test_repo", &file)
+        notes_for_file(&state.notes, "test_repo", "", &file)
             .next()
             .is_none(),
         "delete must remove the note from the DB"
     );
     let on_disk2 = load_notes(&notes_path);
     assert!(
-        notes_for_file(&on_disk2, "test_repo", &file)
+        notes_for_file(&on_disk2, "test_repo", "", &file)
             .next()
             .is_none(),
         "delete must persist the removal"
@@ -3809,7 +3809,7 @@ fn test_app_header_bar_shows_staged_badge() {
         untracked_skipped: vec![],
     };
     let target = diffuse_core::ReviewTarget::from_repo_args(
-        diffuse_core::Repo::from_name("my_repo"),
+        diffuse_core::Repo::from_key("my_repo"),
         vec![],
         true,
     );

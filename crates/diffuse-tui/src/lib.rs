@@ -48,10 +48,13 @@ use crate::core::{
 /// that currently carries notes (visible or not), plus `previously` noted paths
 /// so note removal can drop a synthetic file from the view.
 fn affected_notes_files(state: &AppState, previously: &[String]) -> Vec<String> {
-    let mut affected: HashSet<String> =
-        diffuse_core::notes::note_files_for_repo(&state.notes, Some(&state.repo))
-            .into_iter()
-            .collect();
+    let mut affected: HashSet<String> = diffuse_core::notes::note_files_for_repo(
+        &state.notes,
+        state.repo_key.as_deref(),
+        state.rev_key.as_deref(),
+    )
+    .into_iter()
+    .collect();
     for p in previously {
         affected.insert(p.clone());
     }
@@ -109,7 +112,11 @@ fn trigger_streaming_reload(
     let _ = state.reload_notes_from_disk();
     let notes_db = state.visible_notes_db();
     let pipeline_opts = diffuse_core::PipelineOptions::default()
-        .with_notes(Some(notes_db), Some(state.notes_key.clone()))
+        .with_notes(
+            Some(notes_db),
+            state.repo_key.clone(),
+            state.rev_key.clone(),
+        )
         .with_expand_lines(state.expand_lines)
         .with_lazy_collapsed(true)
         .with_show_resolved(true);
@@ -146,11 +153,8 @@ pub fn run_tui(
     initial_output: PipelineOutput,
     streaming_rx: Option<Receiver<OutputFile>>,
     meta_rx: Option<Receiver<Result<GitRepoMeta, String>>>,
-    repo: String,
+    target: diffuse_core::ReviewTarget,
     notes_path: PathBuf,
-    repo_root: PathBuf,
-    git_revs: Vec<String>,
-    staged: bool,
     expand_lines: usize,
     theme: crate::render::DiffuseTheme,
     show_resolved: bool,
@@ -158,20 +162,21 @@ pub fn run_tui(
     watch: bool,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
-    let target = diffuse_core::ReviewTarget::from_repo_args(
-        diffuse_core::Repo::from_root(repo_root.clone()).with_name(repo.clone()),
-        git_revs.clone(),
-        staged,
-    );
-    let mut state = AppState::new(initial_output, repo, notes_path, theme)
-        .with_target(target)
-        .with_repo_context(repo_root.clone(), git_revs, staged)
+    let mut state = AppState::new(
+        initial_output,
+        target.display_name().to_string(),
+        notes_path,
+        theme,
+    )
+    .with_target(target);
+    state = state
         .with_expand_lines(expand_lines)
         .with_show_resolved_notes(show_resolved)
         .with_show_note_source(show_source);
     state.enable_async_on_demand();
 
     let (fs_tx, fs_rx) = mpsc::channel();
+    let repo_root = state.repo_root.clone();
     let watch_repo = !state.target.is_range() && !repo_root.as_os_str().is_empty();
     let watch_notes = !state.notes_path.as_os_str().is_empty();
     let _watcher = if watch && (watch_repo || watch_notes) {
@@ -262,7 +267,11 @@ pub fn run_tui(
                     }
 
                     let old_note_files: Vec<String> = if reload_notes {
-                        diffuse_core::notes::note_files_for_repo(&state.notes, Some(&state.repo))
+                        diffuse_core::notes::note_files_for_repo(
+                            &state.notes,
+                            state.repo_key.as_deref(),
+                            state.rev_key.as_deref(),
+                        )
                     } else {
                         Vec::new()
                     };
@@ -460,22 +469,16 @@ pub fn run_tui(
 /// Launch and run the interactive TUI application with static output.
 pub fn run_interactive_tui(
     output: PipelineOutput,
-    repo: String,
+    target: diffuse_core::ReviewTarget,
     notes_path: PathBuf,
-    repo_root: PathBuf,
-    git_revs: Vec<String>,
-    staged: bool,
     theme: crate::render::DiffuseTheme,
 ) -> io::Result<()> {
     run_tui(
         output,
         None,
         None,
-        repo,
+        target,
         notes_path,
-        repo_root,
-        git_revs,
-        staged,
         DEFAULT_EXPAND_LINES,
         theme,
         false,

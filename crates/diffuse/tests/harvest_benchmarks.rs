@@ -420,8 +420,9 @@ fn test_harvest_cli_tool_harvests_associated_notes() {
         vec!["HEAD^!".to_string()],
         false,
     );
-    let note_key = target.notes_key();
-    diffuse::core::notes::add_note(&mut db, &note_key, note);
+    let repo_k = target.repo_key().unwrap();
+    let rev_k = target.rev_key().unwrap();
+    diffuse::core::notes::add_note(&mut db, repo_k, rev_k, note);
     diffuse::core::notes::save_notes(&notes_path, &db).unwrap();
 
     // 1. Harvest commit with --notes-file
@@ -449,19 +450,21 @@ fn test_harvest_cli_tool_harvests_associated_notes() {
         "notes.json must be written"
     );
     let harvested_notes = diffuse::core::notes::load_notes(&corpus_dir.join("notes.json"));
-    assert!(harvested_notes.contains_key(&note_key));
     let file_notes = harvested_notes
-        .get(&note_key)
+        .get(repo_k)
+        .unwrap()
+        .get(rev_k)
         .unwrap()
         .get("src/kernel/driver_0.c")
         .unwrap();
     assert_eq!(file_notes.len(), 1);
     assert_eq!(file_notes[0].id, "note-1");
 
-    // Verify meta.json records repo_key
+    // Verify meta.json records repo_key and rev_key
     let meta_text = fs::read_to_string(corpus_dir.join("meta.json")).unwrap();
     let meta: serde_json::Value = serde_json::from_str(&meta_text).unwrap();
-    assert_eq!(meta["repo_key"], note_key);
+    assert_eq!(meta["repo_key"], repo_k);
+    assert_eq!(meta["rev_key"], rev_k);
 
     // Commit a third change without any notes
     commit_files(

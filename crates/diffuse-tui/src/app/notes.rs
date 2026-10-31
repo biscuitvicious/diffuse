@@ -5,9 +5,9 @@ use std::{collections::HashMap, process};
 use crate::{render::ColorExt, types::FlatRowKind};
 
 use crate::core::notes::{
-    DiffCoord, LineHash, NoteLocation, NotesDB, ReviewNote, add_note, note_anchors_in_rows,
-    note_runs, notes_for_file, now_millis, remove_note_by_id, remove_notes_in_range, save_notes,
-    update_note_text,
+    DiffCoord, LineHash, NoteLocation, NotesDB, ReviewNote, add_note, find_note_in_repo,
+    note_anchors_in_rows, note_runs, now_millis, query_notes_for_file, remove_note_by_id,
+    remove_notes_in_range, save_notes, update_note_text,
 };
 
 use super::AppState;
@@ -197,6 +197,18 @@ impl AppState {
     /// persist it through the notes DB. Mirrors the reference
     /// `commitNoteAction`.
     pub fn commit_note_draft(&mut self) -> Result<crate::core::notes::NoteLocation, &'static str> {
+        let Some(repo_key) = self.repo_key.clone() else {
+            self.note_editor = None;
+            self.note_draft = None;
+            self.editing_note_id = None;
+            self.set_status_message(
+                "notes disabled: not in a git repository (specify --repo-key to enable)"
+                    .to_string(),
+                false,
+            );
+            return Err("notes disabled: no repository key");
+        };
+
         let text = if let Some(ref draft) = self.note_draft {
             if let Some(ref ed) = self.note_editor {
                 if draft != &ed.text() {
@@ -224,25 +236,21 @@ impl AppState {
             return Err("empty note");
         }
         if let Some(id) = editing_id {
-            if let Some(file) = self.current_file().map(|f| f.path.clone()) {
-                let loc = {
-                    let mut notes_iter = notes_for_file(&self.notes, &self.notes_key, &file);
-                    notes_iter.find(|n| n.id == id).map(|n| n.location)
-                };
-                if let Some(loc) = loc {
-                    let updated =
-                        update_note_text(&mut self.notes, &self.notes_key, &file, &id, text);
-                    if updated {
-                        let _ = save_notes(&self.notes_path, &self.notes);
-                        if let Some(fi) = self.output.files.iter().position(|f| f.path == file) {
-                            self.sync_file_notes(fi);
-                        }
-                        self.bump_notes();
-                        self.pending_notes_reload = Some(vec![file.clone()]);
-                        self.set_status_message("updated note".to_string(), true);
+            if let Some((rev_k, file_k, note)) = find_note_in_repo(&self.notes, &repo_key, &id) {
+                let loc = note.location;
+                let file = file_k.to_string();
+                let rev = rev_k.to_string();
+                let updated = update_note_text(&mut self.notes, &repo_key, &rev, &file, &id, text);
+                if updated {
+                    let _ = save_notes(&self.notes_path, &self.notes);
+                    if let Some(fi) = self.output.files.iter().position(|f| f.path == file) {
+                        self.sync_file_notes(fi);
                     }
-                    return Ok(loc);
+                    self.bump_notes();
+                    self.pending_notes_reload = Some(vec![file.clone()]);
+                    self.set_status_message("updated note".to_string(), true);
                 }
+                return Ok(loc);
             }
             return Err("note to edit not found");
         }
@@ -323,7 +331,8 @@ impl AppState {
             // source the note was written against.
             original_source_rows: selected_rows,
         };
-        add_note(&mut self.notes, &self.notes_key, note);
+        let rev_key = self.rev_key.as_deref().unwrap_or("");
+        add_note(&mut self.notes, &repo_key, rev_key, note);
         let _ = save_notes(&self.notes_path, &self.notes);
         if let Some(fi) = self.output.files.iter().position(|f| f.path == note_file) {
             self.sync_file_notes(fi);
@@ -339,6 +348,14 @@ impl AppState {
     /// range. If the cursor is on a diff line without a selection, deletion
     /// is disabled to prevent accidental removal while navigating code.
     pub fn delete_note(&mut self) {
+        let Some(repo_key) = self.repo_key.clone() else {
+            self.set_status_message(
+                "notes disabled: not in a git repository (specify --repo-key to enable)"
+                    .to_string(),
+                false,
+            );
+            return;
+        };
         if let Some(sel) = self.compute_selection() {
             let file = self
                 .output
@@ -346,9 +363,11 @@ impl AppState {
                 .get(sel.file_idx)
                 .expect("selection file_idx out of bounds in output.files");
             let file_path = file.path.clone();
+            let rev_key = self.rev_key.as_deref().unwrap_or("");
             let removed = remove_notes_in_range(
                 &mut self.notes,
-                &self.notes_key,
+                &repo_key,
+                rev_key,
                 &file_path,
                 sel.start
                     .new_line_num
@@ -382,25 +401,30 @@ impl AppState {
                 VisualTarget::Note { note, .. } => Some((note.file.clone(), note.id.clone())),
                 _ => None,
             };
-            if let Some((file, note_id)) = note_info {
-                let removed = remove_note_by_id(&mut self.notes, &self.notes_key, &file, &note_id);
-                if removed {
-                    let _ = save_notes(&self.notes_path, &self.notes);
-                    if let Some(fi) = self.output.files.iter().position(|f| f.path == file) {
-                        self.sync_file_notes(fi);
+            if let Some((_, note_id)) = note_info {
+                if let Some((rev_k, f_k, _)) = find_note_in_repo(&self.notes, &repo_key, &note_id) {
+                    let file = f_k.to_string();
+                    let rev = rev_k.to_string();
+                    let removed =
+                        remove_note_by_id(&mut self.notes, &repo_key, &rev, &file, &note_id);
+                    if removed {
+                        let _ = save_notes(&self.notes_path, &self.notes);
+                        if let Some(fi) = self.output.files.iter().position(|f| f.path == file) {
+                            self.sync_file_notes(fi);
+                        }
+                        self.bump_notes();
+                        self.pending_notes_reload = Some(vec![file.clone()]);
+                        let cw = if self.last_content_width > 0 {
+                            self.last_content_width
+                        } else {
+                            80
+                        };
+                        let max_nav = self.row_nav_vis_count(self.row_idx, cw);
+                        if self.vis_line >= max_nav {
+                            self.vis_line = max_nav.saturating_sub(1);
+                        }
+                        self.set_status_message("deleted note".to_string(), true);
                     }
-                    self.bump_notes();
-                    self.pending_notes_reload = Some(vec![file.clone()]);
-                    let cw = if self.last_content_width > 0 {
-                        self.last_content_width
-                    } else {
-                        80
-                    };
-                    let max_nav = self.row_nav_vis_count(self.row_idx, cw);
-                    if self.vis_line >= max_nav {
-                        self.vis_line = max_nav.saturating_sub(1);
-                    }
-                    self.set_status_message("deleted note".to_string(), true);
                 }
             } else {
                 self.set_status_message("no note here".to_string(), false);
@@ -416,6 +440,10 @@ impl AppState {
     /// Resolved -> Open. Returns true if a note status was cycled, false if
     /// no note was focused.
     pub fn cycle_note_status(&mut self) -> bool {
+        let Some(repo_key) = self.repo_key.clone() else {
+            return false;
+        };
+
         let focused_note = if let Some(target) = self.visual_target_at(self.row_idx, self.vis_line)
         {
             match target {
@@ -426,7 +454,7 @@ impl AppState {
             None
         };
 
-        let (file_path, note_id) = if let Some(info) = focused_note {
+        let (_file_path, note_id) = if let Some(info) = focused_note {
             info
         } else if let Some(sel) = self.compute_selection() {
             let file = &self.output.files[sel.file_idx];
@@ -440,8 +468,14 @@ impl AppState {
                 .new_line_num
                 .or(sel.end.old_line_num)
                 .map_or(0, |n| n.get());
-            if let Some(n) = notes_for_file(&self.notes, &self.notes_key, &file.path)
-                .find(|n| n.start() <= sel_end && n.end() >= sel_start)
+            if let Some(n) = query_notes_for_file(
+                &self.notes,
+                Some(&repo_key),
+                self.rev_key.as_deref(),
+                &file.path,
+            )
+            .into_iter()
+            .find(|n| n.start() <= sel_end && n.end() >= sel_start)
             {
                 (n.file.clone(), n.id.clone())
             } else {
@@ -451,8 +485,14 @@ impl AppState {
             && let Some(row) = self.current_flat_row()
             && let Some(c) = self.flat_row_coord(row)
         {
-            if let Some(n) = notes_for_file(&self.notes, &self.notes_key, &file.path)
-                .find(|n| n.start() <= c && n.end() >= c)
+            if let Some(n) = query_notes_for_file(
+                &self.notes,
+                Some(&repo_key),
+                self.rev_key.as_deref(),
+                &file.path,
+            )
+            .into_iter()
+            .find(|n| n.start() <= c && n.end() >= c)
             {
                 (n.file.clone(), n.id.clone())
             } else {
@@ -462,18 +502,18 @@ impl AppState {
             return false;
         };
 
-        let next_status = {
-            let existing =
-                notes_for_file(&self.notes, &self.notes_key, &file_path).find(|n| n.id == note_id);
-            match existing {
-                Some(n) => n.status.cycle(),
-                None => return false,
-            }
+        let Some((rev_k, f_path, existing)) = find_note_in_repo(&self.notes, &repo_key, &note_id)
+        else {
+            return false;
         };
+        let next_status = existing.status.cycle();
+        let rev_k = rev_k.to_string();
+        let file_path = f_path.to_string();
 
         let updated = crate::core::notes::set_note_status_by_id(
             &mut self.notes,
-            &self.notes_key,
+            &repo_key,
+            &rev_k,
             &file_path,
             &note_id,
             next_status,
@@ -541,20 +581,25 @@ impl AppState {
     /// `self.output.files` with the active state in `self.notes`.
     pub(crate) fn sync_file_notes(&mut self, file_idx: usize) {
         if let Some(f) = self.output.files.get_mut(file_idx) {
-            let notes: Vec<crate::core::wire::OutputNote> =
-                notes_for_file(&self.notes, &self.notes_key, &f.path)
-                    .map(|n| crate::core::wire::OutputNote {
-                        id: n.id.clone(),
-                        file: n.file.clone(),
-                        location: n.location,
-                        text: n.text.clone(),
-                        created_at: n.created_at,
-                        runs: note_runs(&n.text),
-                        content_hash: n.content_hash,
-                        status: n.status,
-                        original_source_rows: n.original_source_rows.clone(),
-                    })
-                    .collect();
+            let notes: Vec<crate::core::wire::OutputNote> = query_notes_for_file(
+                &self.notes,
+                self.repo_key.as_deref(),
+                self.rev_key.as_deref(),
+                &f.path,
+            )
+            .into_iter()
+            .map(|n| crate::core::wire::OutputNote {
+                id: n.id.clone(),
+                file: n.file.clone(),
+                location: n.location,
+                text: n.text.clone(),
+                created_at: n.created_at,
+                runs: note_runs(&n.text),
+                content_hash: n.content_hash,
+                status: n.status,
+                original_source_rows: n.original_source_rows.clone(),
+            })
+            .collect();
             let mut open_notes = 0;
             let mut in_progress_notes = 0;
             let mut resolved_notes = 0;
@@ -580,26 +625,30 @@ impl AppState {
         }
     }
 
-    /// Compare two versions of the notes database for `notes_key` and compute
+    /// Compare two versions of the notes database for `repo_key` and compute
     /// an aggregated delta summary.
     pub fn diff_notes_db(
         old: &crate::core::notes::NotesDB,
         new: &crate::core::notes::NotesDB,
-        key: &str,
+        repo_key: Option<&str>,
     ) -> NotesChangeSummary {
         fn collect_notes<'a>(
             db: &'a crate::core::notes::NotesDB,
-            key: &str,
+            repo_key: Option<&str>,
         ) -> HashMap<&'a str, &'a ReviewNote> {
+            let Some(key) = repo_key else {
+                return HashMap::new();
+            };
             db.get(key)
                 .into_iter()
+                .flat_map(|rev_map| rev_map.values())
                 .flat_map(|file_map| file_map.values().flatten())
                 .map(|note| (note.id.as_str(), note))
                 .collect()
         }
 
-        let old_notes = collect_notes(old, key);
-        let new_notes = collect_notes(new, key);
+        let old_notes = collect_notes(old, repo_key);
+        let new_notes = collect_notes(new, repo_key);
         let mut summary = NotesChangeSummary::default();
 
         for (id, old_note) in &old_notes {
@@ -653,7 +702,7 @@ impl AppState {
             return None;
         }
 
-        let summary = Self::diff_notes_db(&self.notes, &new_notes, &self.notes_key);
+        let summary = Self::diff_notes_db(&self.notes, &new_notes, self.repo_key.as_deref());
 
         let old_vis = self.cursor_visual_line();
         let screen_y = old_vis.saturating_sub(self.scroll);
@@ -737,7 +786,12 @@ impl AppState {
         let mut out: HashMap<usize, Vec<String>> = HashMap::new();
         for (file_idx, f) in self.output.files.iter().enumerate() {
             let banner_idx = self.first_row_of_file(file_idx);
-            for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
+            for n in query_notes_for_file(
+                &self.notes,
+                self.repo_key.as_deref(),
+                self.rev_key.as_deref(),
+                &f.path,
+            ) {
                 if !self.show_resolved_notes && n.status.is_resolved() {
                     continue;
                 }
@@ -769,7 +823,12 @@ impl AppState {
         let mut results = Vec::new();
         for (file_idx, f) in self.output.files.iter().enumerate() {
             let banner_idx = self.first_row_of_file(file_idx);
-            for n in notes_for_file(&self.notes, &self.notes_key, &f.path) {
+            for n in query_notes_for_file(
+                &self.notes,
+                self.repo_key.as_deref(),
+                self.rev_key.as_deref(),
+                &f.path,
+            ) {
                 if !self.show_resolved_notes && n.status.is_resolved() {
                     continue;
                 }

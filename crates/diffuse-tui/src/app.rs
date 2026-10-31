@@ -52,12 +52,10 @@ pub struct AppState {
     pub confirmed_sel: Option<Selection>,
     pub theme: DiffuseTheme,
     pub repo: String,
-    /// HEAD-scoped notes-DB key (`{repo}@{head}`); the display name in
-    /// `repo` stays human-readable while notes isolate per commit.
-    /// Resolved once at startup and never re-resolved mid-session, so all
-    /// notes filed while the TUI is open land under the commit it opened
-    /// with even if HEAD moves outside diffuse.
-    pub notes_key: String,
+    /// Repository lookup key for notes storage. None disables notes.
+    pub repo_key: Option<String>,
+    /// Revision lookup key for notes storage.
+    pub rev_key: Option<String>,
     pub target: diffuse_core::ReviewTarget,
     pub should_quit: bool,
     /// Ephemeral action feedback rendered at the front of the secondary
@@ -150,6 +148,14 @@ impl AppState {
         let hunk_meta = Self::build_hunk_meta(&output);
 
         let loaded_notes = load_notes(&notes_path);
+        let target = if repo.is_empty() || repo == "<unnamed>" {
+            diffuse_core::ReviewTarget::from_repo(diffuse_core::Repo::default())
+        } else {
+            diffuse_core::ReviewTarget::from_repo(diffuse_core::Repo::from_key(repo.clone()))
+        };
+        let repo_display = target.display_name().to_string();
+        let repo_key = target.repo_key().map(ToString::to_string);
+        let rev_key = target.rev_key().map(ToString::to_string);
         let mut state = Self {
             output,
             flat,
@@ -169,9 +175,10 @@ impl AppState {
             sel_pivot: None,
             confirmed_sel: None,
             theme,
-            repo: repo.clone(),
-            notes_key: repo.clone(),
-            target: diffuse_core::ReviewTarget::from_repo(diffuse_core::Repo::from_name(repo)),
+            repo: repo_display,
+            repo_key,
+            rev_key,
+            target,
             should_quit: false,
             status_message: None,
             viewport_height: 20,
@@ -236,11 +243,12 @@ impl AppState {
         self
     }
 
-    /// Set the review target, synchronizing repo, notes_key, repo_root,
+    /// Set the review target, synchronizing repo, repo_key, rev_key, repo_root,
     /// commit_range, and git_revs fields.
     pub fn with_target(mut self, target: diffuse_core::ReviewTarget) -> Self {
-        self.repo = target.repo_name().to_string();
-        self.notes_key = target.notes_key();
+        self.repo = target.display_name().to_string();
+        self.repo_key = target.repo_key().map(ToString::to_string);
+        self.rev_key = target.rev_key().map(ToString::to_string);
         if let Some(root) = target.repo_root() {
             self.repo_root = root.to_path_buf();
         }
@@ -257,12 +265,11 @@ impl AppState {
         git_revs: Vec<String>,
         staged: bool,
     ) -> Self {
-        let repo_name = self.repo.clone();
-        let target = diffuse_core::ReviewTarget::from_repo_args(
-            diffuse_core::Repo::from_root(repo_root).with_name(repo_name),
-            git_revs,
-            staged,
-        );
+        let repo = diffuse_core::Repo::from_root(repo_root).with_key_opt(self.repo_key.clone());
+        let mut target = diffuse_core::ReviewTarget::from_repo_args(repo, git_revs, staged);
+        if let Some(rev_key) = self.rev_key.clone() {
+            target = target.with_rev_key(rev_key);
+        }
         self.with_target(target)
     }
 
@@ -278,10 +285,16 @@ impl AppState {
             || self.pending_editor.is_some()
     }
 
-    /// Scope note storage/lookup to the live HEAD of `repo_root`
-    /// (`{repo}@{head}`); falls back to the bare repo name outside git.
-    pub fn with_notes_key(mut self, notes_key: String) -> Self {
-        self.notes_key = notes_key;
+    /// Explicitly override the repository key for review notes.
+    pub fn with_repo_key(mut self, repo_key: Option<String>) -> Self {
+        self.repo_key = repo_key;
+        self.sync_all_notes();
+        self
+    }
+
+    /// Explicitly override the revision key for review notes.
+    pub fn with_rev_key(mut self, rev_key: Option<String>) -> Self {
+        self.rev_key = rev_key;
         self.sync_all_notes();
         self
     }
@@ -391,8 +404,11 @@ impl AppState {
         let f = self.output.files.get(fi)?;
         let source = f.raw_source.as_ref()?;
         let opts = diffuse_core::PipelineOptions::default()
-            .with_repo(self.repo_root.to_str().map(String::from))
-            .with_notes(Some(self.notes.clone()), Some(self.notes_key.clone()))
+            .with_notes(
+                Some(self.notes.clone()),
+                self.repo_key.clone(),
+                self.rev_key.clone(),
+            )
             .with_expand_lines(self.expand_lines);
         diffuse_core::pipeline::render_file_from_source(
             source,
@@ -444,13 +460,13 @@ impl AppState {
             let repo_root = self.repo_root.clone();
             let git_revs = self.git_revs.clone();
             let notes = self.notes.clone();
-            let repo = self.notes_key.clone();
+            let repo_key = self.repo_key.clone();
+            let rev_key = self.rev_key.clone();
             let expand_lines = self.expand_lines;
 
             thread::spawn(move || {
                 let opts = diffuse_core::PipelineOptions::default()
-                    .with_repo(repo_root.to_str().map(String::from))
-                    .with_notes(Some(notes), Some(repo))
+                    .with_notes(Some(notes), repo_key, rev_key)
                     .with_expand_lines(expand_lines);
                 if let Some(rendered) = diffuse_core::pipeline::render_file_from_source(
                     &source,

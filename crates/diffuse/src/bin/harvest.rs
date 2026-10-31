@@ -152,6 +152,8 @@ struct FixtureOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    rev_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     notes: Option<diffuse::core::notes::NotesDB>,
 }
 
@@ -412,35 +414,40 @@ fn main() {
         .notes_file
         .unwrap_or_else(diffuse::core::notes::default_notes_path);
 
-    let (harvested_notes, repo_key) = if notes_path.is_file() {
+    let (harvested_notes, repo_key, rev_key) = if notes_path.is_file() {
         use diffuse::core::repo::ReviewTargetNotesExt;
         let db = diffuse::core::notes::load_notes(&notes_path);
         let repo = diffuse::core::repo::Repo::from_root(&repo_root);
         let target =
             diffuse::core::repo::ReviewTarget::from_repo_args(repo, base_args.clone(), false);
-        let matched_keys = target.matched_notes_db_keys(&db);
+        let rk = target.repo_key().unwrap_or("diffuse");
+        let matched_revs = target.matched_rev_keys(&db);
         let mut notes_map: diffuse::core::notes::NotesDB = HashMap::new();
-        for key in &matched_keys {
-            if let Some(file_notes) = db.get(*key)
-                && !file_notes.is_empty()
-            {
-                notes_map.insert((*key).to_string(), file_notes.clone());
+        if let Some(rev_map) = db.get(rk) {
+            let mut harvested_revs = HashMap::new();
+            for rev in &matched_revs {
+                if let Some(file_notes) = rev_map.get(*rev)
+                    && !file_notes.is_empty()
+                {
+                    harvested_revs.insert((*rev).to_string(), file_notes.clone());
+                }
+            }
+            if !harvested_revs.is_empty() {
+                notes_map.insert(rk.to_string(), harvested_revs);
             }
         }
         if notes_map.is_empty() {
-            (None, None)
+            (None, None, None)
         } else {
-            let key = if matched_keys.len() == 1 {
-                matched_keys[0].to_string()
-            } else if matched_keys.contains(&target.notes_key().as_str()) {
-                target.notes_key()
-            } else {
-                matched_keys[0].to_string()
-            };
-            (Some(notes_map), Some(key))
+            let target_rev = target.rev_key().unwrap_or("");
+            (
+                Some(notes_map),
+                Some(rk.to_string()),
+                Some(target_rev.to_string()),
+            )
         }
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     let fixture = FixtureOutput {
@@ -449,6 +456,7 @@ fn main() {
         old_content: git_res.old_content,
         revision,
         repo_key: repo_key.clone(),
+        rev_key: rev_key.clone(),
         notes: harvested_notes.clone(),
     };
 
@@ -502,6 +510,8 @@ fn main() {
                 revision: String,
                 #[serde(skip_serializing_if = "Option::is_none")]
                 repo_key: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                rev_key: Option<String>,
                 files: Vec<MetaRecord>,
             }
 
@@ -528,6 +538,7 @@ fn main() {
             let meta = MetaOutput {
                 revision: fixture.revision,
                 repo_key,
+                rev_key,
                 files: meta_records,
             };
             let meta_json = serde_json::to_string_pretty(&meta).expect("serialize meta.json");
@@ -538,6 +549,7 @@ fn main() {
                 fs::write(corpus_dir.join("notes.json"), notes_json).expect("write notes.json");
                 let note_count: usize = notes
                     .values()
+                    .flat_map(|revs| revs.values())
                     .flat_map(|files| files.values())
                     .map(Vec::len)
                     .sum();

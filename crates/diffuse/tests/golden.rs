@@ -66,6 +66,8 @@ struct Fixture {
     notes_db: Option<diffuse::core::notes::NotesDB>,
     #[serde(skip)]
     repo_key: Option<String>,
+    #[serde(skip)]
+    rev_key: Option<String>,
 }
 
 fn golden_dir() -> PathBuf {
@@ -140,9 +142,9 @@ struct CorpusMeta {
     #[serde(default)]
     revision: String,
     #[serde(default)]
-    repo: Option<String>,
-    #[serde(default)]
     repo_key: Option<String>,
+    #[serde(default)]
+    rev_key: Option<String>,
     #[serde(default)]
     files: Vec<MetaFileRecord>,
 }
@@ -196,26 +198,21 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
     }
 
     let notes_json_path = corpus_dir.join("notes.json");
-    let (notes_file, notes_db, repo_key) = if notes_json_path.is_file() {
+    let (notes_file, notes_db, repo_key, rev_key) = if notes_json_path.is_file() {
         let db = diffuse::core::notes::load_notes(&notes_json_path);
-        let key = if let Some(ref rk) = meta.repo_key {
-            rk.clone()
-        } else {
-            let repo_name = meta.repo.as_deref().unwrap_or("diffuse");
-            if repo_name.contains('@') {
-                repo_name.to_string()
-            } else {
-                let base_commit = meta
-                    .revision
-                    .split_once("..")
-                    .map(|(base, _)| base.trim())
-                    .filter(|s| !s.is_empty());
-                diffuse::core::notes::notes_key(repo_name, base_commit)
-            }
-        };
-        (Some(notes_json_path), Some(db), Some(key))
+        let rk = meta
+            .repo_key
+            .clone()
+            .unwrap_or_else(|| "diffuse".to_string());
+        let rvk = meta.rev_key.clone().or_else(|| {
+            meta.revision
+                .split_once("..")
+                .map(|(b, _)| b.trim().to_string())
+                .filter(|s| !s.is_empty())
+        });
+        (Some(notes_json_path), Some(db), Some(rk), rvk)
     } else {
-        (None, None, None)
+        (None, None, None, None)
     };
 
     let f = Fixture {
@@ -225,6 +222,7 @@ fn load_fixture(name: &str) -> Arc<Fixture> {
         notes_file,
         notes_db,
         repo_key,
+        rev_key,
     };
     let arc = Arc::new(f);
     let mut cache = FIXTURE_CACHE.lock().unwrap();
@@ -1465,7 +1463,10 @@ fn run_bin_markdown_leg(name: &str) {
         cmd.arg("--notes-file").arg(notes_path);
     }
     if let Some(ref repo_key) = fixture.repo_key {
-        cmd.arg("--repo").arg(repo_key);
+        cmd.arg("--repo-key").arg(repo_key);
+    }
+    if let Some(ref rev_key) = fixture.rev_key {
+        cmd.arg("--rev-key").arg(rev_key);
     }
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1542,7 +1543,10 @@ fn run_bin_raw_leg(name: &str) {
         cmd.arg("--notes-file").arg(notes_path);
     }
     if let Some(ref repo_key) = fixture.repo_key {
-        cmd.arg("--repo").arg(repo_key);
+        cmd.arg("--repo-key").arg(repo_key);
+    }
+    if let Some(ref rev_key) = fixture.rev_key {
+        cmd.arg("--rev-key").arg(rev_key);
     }
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1652,7 +1656,11 @@ fn run_lib_leg(name: &str, num_files: usize) -> (Arc<Fixture>, PipelineOutput) {
     };
     let mut opts = diffuse::core::pipeline::PipelineOptions::default();
     if let Some(ref db) = fixture.notes_db {
-        opts = opts.with_notes(Some(db.clone()), fixture.repo_key.clone());
+        opts = opts.with_notes(
+            Some(db.clone()),
+            fixture.repo_key.clone(),
+            fixture.rev_key.clone(),
+        );
     }
     let output = if env::var("GEN_GOLDEN_FILE_DIAG").is_ok() {
         run_pipeline_for_generation(&fixture, opts)
@@ -1717,7 +1725,10 @@ fn run_bin_leg(name: &str, num_files: usize) {
             cmd.arg("--notes-file").arg(notes_path);
         }
         if let Some(ref repo_key) = fixture.repo_key {
-            cmd.arg("--repo").arg(repo_key);
+            cmd.arg("--repo-key").arg(repo_key);
+        }
+        if let Some(ref rev_key) = fixture.rev_key {
+            cmd.arg("--rev-key").arg(rev_key);
         }
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -1763,7 +1774,10 @@ fn run_bin_leg(name: &str, num_files: usize) {
         cmd.arg("--notes-file").arg(notes_path);
     }
     if let Some(ref repo_key) = fixture.repo_key {
-        cmd.arg("--repo").arg(repo_key);
+        cmd.arg("--repo-key").arg(repo_key);
+    }
+    if let Some(ref rev_key) = fixture.rev_key {
+        cmd.arg("--rev-key").arg(rev_key);
     }
     let mut child = cmd
         .stdin(Stdio::piped())

@@ -67,7 +67,18 @@ fn test_fixed_commit_range_excludes_untracked_files() {
         crate::pipeline::PipelineOptions::default(),
     );
     let (meta_tx, _meta_rx) = mpsc::channel();
-    stream_git_repo_to_producer(dir, &[range], &[], false, 4, producer, &meta_tx, None, None);
+    stream_git_repo_to_producer(
+        dir,
+        &[range],
+        &[],
+        false,
+        4,
+        producer,
+        &meta_tx,
+        None,
+        None,
+        None,
+    );
     let files: Vec<_> = consumer.collect();
     assert!(
         files.iter().all(|f| f.path != "bogus_untracked.txt"),
@@ -217,7 +228,18 @@ fn test_git_diff_additions_only_still_fetches_old_size() {
         crate::pipeline::PipelineOptions::default(),
     );
     let (meta_tx, _meta_rx) = mpsc::channel();
-    stream_git_repo_to_producer(dir, &[], &[], false, 4, producer, &meta_tx, None, None);
+    stream_git_repo_to_producer(
+        dir,
+        &[],
+        &[],
+        false,
+        4,
+        producer,
+        &meta_tx,
+        None,
+        None,
+        None,
+    );
     let files: Vec<_> = consumer.collect();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].old_bytes, Some(initial_content.len()));
@@ -344,9 +366,19 @@ fn test_load_git_repo_unmodified_files_with_notes() {
         content_hash: None,
         ..Default::default()
     };
-    crate::notes::add_note(&mut db, &format!("myrepo@{head}"), note);
+    crate::notes::add_note(&mut db, "myrepo", &head, note);
 
-    let res = load_git_repo_with_notes(dir, &[], &[], false, 4, Some(&db), Some("myrepo")).unwrap();
+    let res = load_git_repo_with_notes(
+        dir,
+        &[],
+        &[],
+        false,
+        4,
+        Some(&db),
+        Some("myrepo"),
+        Some(&head),
+    )
+    .unwrap();
     assert!(
         res.diff.contains("untouched.rs"),
         "diff must contain unmodified untouched.rs"
@@ -360,8 +392,11 @@ fn test_load_git_repo_unmodified_files_with_notes() {
         &res.diff,
         Some(res.new_content),
         Some(res.old_content),
-        crate::pipeline::PipelineOptions::default()
-            .with_notes(Some(db.clone()), Some(format!("myrepo@{head}"))),
+        crate::pipeline::PipelineOptions::default().with_notes(
+            Some(db.clone()),
+            Some("myrepo".to_string()),
+            Some(head.clone()),
+        ),
     );
     assert_eq!(out.files.len(), 2, "expected modified.rs and untouched.rs");
     let untouched = out

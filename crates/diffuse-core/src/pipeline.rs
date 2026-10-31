@@ -63,7 +63,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PipelineOptions {
     pub notes_db: Option<NotesDB>,
-    pub repo: Option<String>,
+    pub target_repo_key: Option<String>,
+    pub target_rev_key: Option<String>,
     pub visual_context: usize,
     pub expand_lines: usize,
     pub token_product_cap: usize,
@@ -78,7 +79,8 @@ impl Default for PipelineOptions {
     fn default() -> Self {
         Self {
             notes_db: None,
-            repo: None,
+            target_repo_key: None,
+            target_rev_key: None,
             visual_context: crate::git::DEFAULT_CONTEXT_LINES,
             expand_lines: crate::git::DEFAULT_EXPAND_LINES,
             token_product_cap: crate::lcs::DEFAULT_TOKEN_PRODUCT_CAP,
@@ -96,14 +98,25 @@ impl PipelineOptions {
         Self::default()
     }
 
-    pub fn with_notes(mut self, notes_db: Option<NotesDB>, repo: Option<String>) -> Self {
+    pub fn with_notes(
+        mut self,
+        notes_db: Option<NotesDB>,
+        repo_key: Option<String>,
+        rev_key: Option<String>,
+    ) -> Self {
         self.notes_db = notes_db;
-        self.repo = repo;
+        self.target_repo_key = repo_key;
+        self.target_rev_key = rev_key;
         self
     }
 
-    pub fn with_repo(mut self, repo: Option<String>) -> Self {
-        self.repo = repo;
+    pub fn with_repo_key(mut self, repo_key: Option<String>) -> Self {
+        self.target_repo_key = repo_key;
+        self
+    }
+
+    pub fn with_rev_key(mut self, rev_key: Option<String>) -> Self {
+        self.target_rev_key = rev_key;
         self
     }
 
@@ -183,9 +196,15 @@ impl PipelineInput {
         self
     }
 
-    pub fn with_notes(mut self, db: Option<NotesDB>, repo: Option<String>) -> Self {
+    pub fn with_notes(
+        mut self,
+        db: Option<NotesDB>,
+        repo_key: Option<String>,
+        rev_key: Option<String>,
+    ) -> Self {
         self.options.notes_db = db;
-        self.options.repo = repo;
+        self.options.target_repo_key = repo_key;
+        self.options.target_rev_key = rev_key;
         self
     }
 
@@ -211,7 +230,7 @@ pub fn run_pipeline(
     diff: impl Into<String>,
     new_content: Option<HashMap<String, String>>,
 ) -> PipelineOutput {
-    run_pipeline_with_notes(diff, new_content, None, None)
+    run_pipeline_with_notes(diff, new_content, None, None, None)
 }
 
 /// Run the pipeline over a diff with no file contents; produce the
@@ -226,13 +245,14 @@ pub fn run_pipeline_with_notes(
     diff: impl Into<String>,
     new_content: Option<HashMap<String, String>>,
     notes_db: Option<NotesDB>,
-    repo: Option<String>,
+    repo_key: Option<String>,
+    rev_key: Option<String>,
 ) -> PipelineOutput {
     run_pipeline_full(
         diff,
         new_content,
         None,
-        PipelineOptions::default().with_notes(notes_db, repo),
+        PipelineOptions::default().with_notes(notes_db, repo_key, rev_key),
     )
 }
 
@@ -448,7 +468,7 @@ pub fn process_single_diff_file(
     } else if f.is_binary {
         if let Ok(meta) = fs::metadata(&f.path) {
             Some(meta.len() as usize)
-        } else if let Some(ref r) = opts.repo
+        } else if let Some(ref r) = opts.target_repo_key
             && let Ok(meta) = fs::metadata(Path::new(r).join(&f.path))
         {
             Some(meta.len() as usize)
@@ -553,7 +573,13 @@ pub fn process_single_diff_file(
 
     let has_snapshots = new_content.is_some() || old_content.is_some();
     if has_snapshots && let Some(db) = &opts.notes_db {
-        synthesize_note_context_hunks(&mut f, db, opts.repo.as_deref(), opts.visual_context);
+        synthesize_note_context_hunks(
+            &mut f,
+            db,
+            opts.target_repo_key.as_deref(),
+            opts.target_rev_key.as_deref(),
+            opts.visual_context,
+        );
     }
 
     let is_plain_common_context = !f.is_binary
@@ -702,7 +728,12 @@ pub fn process_single_diff_file(
     }
 
     let raw_notes = match &opts.notes_db {
-        Some(db) => query_notes_for_file(db, opts.repo.as_deref(), &f.path),
+        Some(db) => query_notes_for_file(
+            db,
+            opts.target_repo_key.as_deref(),
+            opts.target_rev_key.as_deref(),
+            &f.path,
+        ),
         None => Vec::new(),
     };
 
@@ -1315,13 +1346,14 @@ fn build_hunk_output_row(
 pub fn synthesize_note_context_hunks(
     f: &mut DiffFile,
     notes_db: &NotesDB,
-    repo: Option<&str>,
+    repo_key: Option<&str>,
+    rev_key: Option<&str>,
     visual_context: usize,
 ) {
     if f.is_binary || f.status == crate::parse::FileStatus::Deleted {
         return;
     }
-    let notes = query_notes_for_file(notes_db, repo, &f.path);
+    let notes = query_notes_for_file(notes_db, repo_key, rev_key, &f.path);
     if notes.is_empty() {
         return;
     }

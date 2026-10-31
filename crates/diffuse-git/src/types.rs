@@ -91,28 +91,43 @@ impl GitBlob {
     }
 }
 
+fn canonicalize_path(path: &Path) -> PathBuf {
+    match path.canonicalize() {
+        Ok(p) => {
+            let s = p.to_string_lossy();
+            if let Some(stripped) = s.strip_prefix(r"\\?\") {
+                PathBuf::from(stripped)
+            } else {
+                p
+            }
+        }
+        Err(_) => path.to_path_buf(),
+    }
+}
+
 /// A git repository store identity, holding its filesystem root and optional
-/// display name override.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// review key override.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Repo {
     pub root: Option<PathBuf>,
-    pub name: Option<String>,
+    pub key: Option<String>,
 }
 
 impl Repo {
     /// Create a repo context rooted at a directory path.
     pub fn from_root(root: impl Into<PathBuf>) -> Self {
+        let p = root.into();
         Self {
-            root: Some(root.into()),
-            name: None,
+            root: Some(canonicalize_path(&p)),
+            key: None,
         }
     }
 
-    /// Create an unrooted repo context (e.g. for piped or non-git reviews).
-    pub fn from_name(name: impl Into<String>) -> Self {
+    /// Create an unrooted repo context with an explicit review key.
+    pub fn from_key(key: impl Into<String>) -> Self {
         Self {
             root: None,
-            name: Some(name.into()),
+            key: Some(key.into()),
         }
     }
 
@@ -126,16 +141,16 @@ impl Repo {
         Some(Self::from_root(root))
     }
 
-    /// Set an explicit display name override.
-    pub fn with_name(mut self, name: impl Into<String>) -> Self {
-        self.name = Some(name.into());
+    /// Set an explicit review key override.
+    pub fn with_key(mut self, key: impl Into<String>) -> Self {
+        self.key = Some(key.into());
         self
     }
 
-    /// Set an optional display name override if Some.
-    pub fn with_name_opt(mut self, name: Option<String>) -> Self {
-        if let Some(n) = name {
-            self.name = Some(n);
+    /// Set an optional review key override if Some.
+    pub fn with_key_opt(mut self, key: Option<String>) -> Self {
+        if let Some(k) = key {
+            self.key = Some(k);
         }
         self
     }
@@ -145,13 +160,39 @@ impl Repo {
         self.root.as_deref()
     }
 
-    /// The repository name: returns explicit override if set, otherwise
-    /// infers from root directory's file name, falling back to `"diffuse"`.
-    pub fn name(&self) -> &str {
-        if let Some(ref n) = self.name
-            && !n.is_empty()
+    /// The repository key used for notes lookup.
+    ///
+    /// - If explicit `key` is set, returns that key.
+    /// - Else if `root` is set, returns the canonical root path string.
+    /// - Else returns `None` (no notes functionality available).
+    pub fn key(&self) -> Option<&str> {
+        if let Some(ref k) = self.key
+            && !k.is_empty()
         {
-            return n.as_str();
+            return Some(k.as_str());
+        }
+        if let Some(ref root) = self.root {
+            return root.to_str();
+        }
+        None
+    }
+
+    /// Human-readable display name for presentation in TUI and export.
+    ///
+    /// - If explicit `key` is set: returns its basename if it looks like a
+    ///   path, otherwise the key itself.
+    /// - Else if `root` is set: returns root directory's file name.
+    /// - Else returns `"<unnamed>"`.
+    pub fn display_name(&self) -> &str {
+        if let Some(ref k) = self.key
+            && !k.is_empty()
+        {
+            if let Some(name) = Path::new(k).file_name().and_then(|f| f.to_str())
+                && !name.is_empty()
+            {
+                return name;
+            }
+            return k.as_str();
         }
         if let Some(ref root) = self.root
             && let Some(name) = root.file_name().and_then(|f| f.to_str())
@@ -159,7 +200,7 @@ impl Repo {
         {
             return name;
         }
-        "diffuse"
+        "<unnamed>"
     }
 
     /// Resolve the live HEAD commit of this repository, if rooted.
@@ -374,6 +415,13 @@ impl RefPair {
     }
 }
 
+fn resolve_rev_key(repo: &Repo, git_revs: &[String]) -> Option<String> {
+    let root = repo.root()?;
+    crate::repository::Repository::open(root)
+        .ok()?
+        .notes_commit(git_revs)
+}
+
 /// The subject of a diffuse review: a repository and its revision target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewTarget {
@@ -382,6 +430,7 @@ pub struct ReviewTarget {
     pub git_revs: Vec<String>,
     pub pathspecs: Vec<String>,
     pub staged: bool,
+    pub rev_key: Option<String>,
 }
 
 impl ReviewTarget {
@@ -394,12 +443,14 @@ impl ReviewTarget {
         pathspecs: Vec<String>,
         staged: bool,
     ) -> Self {
+        let rev_key = resolve_rev_key(&repo, &git_revs);
         Self {
             repo,
             range,
             git_revs,
             pathspecs,
             staged,
+            rev_key,
         }
     }
 
@@ -409,12 +460,14 @@ impl ReviewTarget {
         let range = repo
             .root()
             .and_then(|root| RevisionRange::resolve(root, &revs));
+        let rev_key = resolve_rev_key(&repo, &revs);
         Self {
             repo,
             range,
             git_revs: revs,
             pathspecs: paths,
             staged,
+            rev_key,
         }
     }
 
@@ -428,29 +481,53 @@ impl ReviewTarget {
         let range = repo
             .root()
             .and_then(|root| RevisionRange::resolve(root, &git_revs));
+        let rev_key = resolve_rev_key(&repo, &git_revs);
         Self {
             repo,
             range,
             git_revs,
             pathspecs,
             staged,
+            rev_key,
         }
     }
 
     /// Create a default review target for a repo with empty git arguments.
     pub fn from_repo(repo: Repo) -> Self {
+        let rev_key = resolve_rev_key(&repo, &[]);
         Self {
             repo,
             range: None,
             git_revs: Vec::new(),
             pathspecs: Vec::new(),
             staged: false,
+            rev_key,
         }
     }
 
     /// Create a review target rooted at a directory with empty git arguments.
     pub fn from_root(root: impl Into<PathBuf>) -> Self {
         Self::from_repo(Repo::from_root(root))
+    }
+
+    /// Override the revision key on this review target.
+    pub fn with_rev_key(mut self, rev_key: impl Into<String>) -> Self {
+        self.rev_key = Some(rev_key.into());
+        self
+    }
+
+    /// Override the revision key on this review target if Some.
+    pub fn with_rev_key_opt(mut self, rev_key: Option<String>) -> Self {
+        if let Some(rk) = rev_key {
+            self.rev_key = Some(rk);
+        }
+        self
+    }
+
+    /// Override the repository key on this review target if Some.
+    pub fn with_repo_key_opt(mut self, repo_key: Option<String>) -> Self {
+        self.repo = self.repo.with_key_opt(repo_key);
+        self
     }
 
     /// Whether this target is a commit-to-commit range rather than a working
@@ -464,9 +541,21 @@ impl ReviewTarget {
         self.range.as_ref()
     }
 
+    /// The repository key used for notes lookup (e.g. canonical root path or
+    /// explicit override).
+    pub fn repo_key(&self) -> Option<&str> {
+        self.repo.key()
+    }
+
+    /// The revision key used for notes lookup (e.g. commit hash, range, or
+    /// explicit override).
+    pub fn rev_key(&self) -> Option<&str> {
+        self.rev_key.as_deref()
+    }
+
     /// The human-readable display name of the repository.
-    pub fn repo_name(&self) -> &str {
-        self.repo.name()
+    pub fn display_name(&self) -> &str {
+        self.repo.display_name()
     }
 
     /// The filesystem root of the repository, if rooted.
@@ -500,24 +589,6 @@ impl ReviewTarget {
             return repo.rev_to_full_hash(new);
         }
         None
-    }
-
-    /// Target commit hash or range scope to attach review notes to.
-    pub fn notes_commit(&self) -> Option<String> {
-        let root = self.repo.root()?;
-        let repo = crate::repository::Repository::open(root).ok()?;
-        repo.notes_commit(&self.git_revs)
-    }
-
-    /// Scoped notes database key: `{repo_name}@{notes_commit}` or bare
-    /// `{repo_name}`.
-    pub fn notes_key(&self) -> String {
-        let repo = self.repo_name();
-        if let Some(commit) = self.notes_commit() {
-            format!("{repo}@{commit}")
-        } else {
-            repo.to_string()
-        }
     }
 
     /// Check whether a file path matches this target's pathspecs.

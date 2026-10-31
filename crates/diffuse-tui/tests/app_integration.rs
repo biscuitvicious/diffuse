@@ -309,18 +309,24 @@ fn test_notes_commit_and_delete_via_public_api() {
     state.note_draft = Some("review this".into());
     state.commit_note_draft().expect("note commit must succeed");
     assert!(state.note_draft.is_none());
-    assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 1);
+    assert_eq!(
+        notes_for_file(&state.notes, "test_repo", "", &file).count(),
+        1
+    );
     let frame = state.render_frame(100, 30);
     assert!(frame.contains("💬"), "committed note must show callout");
 
     // Targeted deletion requires focusing the note line
     state.move_down();
     state.delete_note();
-    assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 0);
+    assert_eq!(
+        notes_for_file(&state.notes, "test_repo", "", &file).count(),
+        0
+    );
 }
 
 #[test]
-fn test_notes_key_scopes_state_to_head() {
+fn test_rev_key_scopes_state_to_commit() {
     let notes_file = tempfile::NamedTempFile::new().unwrap();
     let path = notes_file.path().to_path_buf();
     let mut state = AppState::new(
@@ -329,21 +335,24 @@ fn test_notes_key_scopes_state_to_head() {
         path.clone(),
         diffuse_tui::render::DiffuseTheme::DEFAULT,
     )
-    .with_notes_key("test_repo@abc123".into());
+    .with_rev_key(Some("abc1234".into()));
 
     let file = state.current_file().unwrap().path.clone();
-    state.note_draft = Some("head-scoped note".into());
+    state.note_draft = Some("commit-scoped note".into());
     state.commit_note_draft().expect("note commit must succeed");
 
-    // Visible under the scoped key, invisible under the bare repo name or
-    // any other head; the display name stays human-readable.
+    // Visible under the scoped rev_key, invisible under bare/empty or
+    // any other commit; the display name stays human-readable.
     assert_eq!(
-        notes_for_file(&state.notes, "test_repo@abc123", &file).count(),
+        notes_for_file(&state.notes, "test_repo", "abc1234", &file).count(),
         1
     );
-    assert_eq!(notes_for_file(&state.notes, "test_repo", &file).count(), 0);
     assert_eq!(
-        notes_for_file(&state.notes, "test_repo@def456", &file).count(),
+        notes_for_file(&state.notes, "test_repo", "", &file).count(),
+        0
+    );
+    assert_eq!(
+        notes_for_file(&state.notes, "test_repo", "def5678", &file).count(),
         0
     );
     assert_eq!(state.repo, "test_repo");

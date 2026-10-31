@@ -115,7 +115,8 @@ pub fn stream_git_repo_to_producer(
     producer: crate::streaming::StreamingProducer,
     meta_tx: &std::sync::mpsc::Sender<Result<crate::streaming::GitRepoMeta, String>>,
     notes_db: Option<&crate::notes::NotesDB>,
-    repo: Option<&str>,
+    repo_key: Option<&str>,
+    rev_key: Option<&str>,
 ) {
     if !is_inside_work_tree(repo_root) {
         let _ = meta_tx.send(Err(format!(
@@ -143,13 +144,13 @@ pub fn stream_git_repo_to_producer(
         }
     };
 
-    let target = diffuse_git::ReviewTarget {
-        repo: diffuse_git::Repo::from_root(repo_root),
-        range: refs.revision_range(),
-        git_revs: base_args.to_vec(),
-        pathspecs: paths.to_vec(),
+    let target = diffuse_git::ReviewTarget::new(
+        diffuse_git::Repo::from_root(repo_root),
+        refs.revision_range(),
+        base_args.to_vec(),
+        paths.to_vec(),
         staged,
-    };
+    );
     let repo_diff = match diffuse_git::diff_repository(
         &git_repo,
         &target,
@@ -184,7 +185,10 @@ pub fn stream_git_repo_to_producer(
 
     // Unmodified files carrying review notes.
     if let Some(db) = notes_db {
-        let note_files = crate::notes::note_files_for_repo(db, repo);
+        let effective_repo_key = repo_key.or_else(|| target.repo_key());
+        let effective_rev_key = rev_key.or_else(|| target.rev_key());
+        let note_files =
+            crate::notes::note_files_for_repo(db, effective_repo_key, effective_rev_key);
         for file_path in note_files {
             if seen_paths.contains(&file_path) {
                 continue;
@@ -210,7 +214,8 @@ pub fn stream_git_repo_to_producer(
 
             if let Some(c) = content {
                 let file_lines = crate::pipeline::split_content_lines(&c);
-                let file_notes = crate::notes::query_notes_for_file(db, repo, &file_path);
+                let file_notes =
+                    crate::notes::query_notes_for_file(db, repo_key, rev_key, &file_path);
                 if file_notes.is_empty() {
                     continue;
                 }
@@ -267,6 +272,7 @@ pub fn stream_git_repo_to_producer(
 }
 
 #[tracing::instrument(level = "trace", ret, err, skip(paths, notes_db), fields(repo_root = %repo_root.display(), base_args = ?base_args, path_count = paths.len(), staged, context))]
+#[allow(clippy::too_many_arguments)]
 pub fn load_git_repo_with_notes(
     repo_root: &Path,
     base_args: &[String],
@@ -274,7 +280,8 @@ pub fn load_git_repo_with_notes(
     staged: bool,
     context: usize,
     notes_db: Option<&crate::notes::NotesDB>,
-    repo: Option<&str>,
+    repo_key: Option<&str>,
+    rev_key: Option<&str>,
 ) -> Result<LoadGitResult, String> {
     if !is_inside_work_tree(repo_root) {
         return Err(format!(
@@ -290,13 +297,13 @@ pub fn load_git_repo_with_notes(
         .or_else(|_| diffuse_git::Repository::discover(repo_root))
         .map_err(|e| format!("cannot open repository: {e}"))?;
 
-    let target = diffuse_git::ReviewTarget {
-        repo: diffuse_git::Repo::from_root(repo_root),
-        range: refs.revision_range(),
-        git_revs: base_args.to_vec(),
-        pathspecs: paths.to_vec(),
+    let target = diffuse_git::ReviewTarget::new(
+        diffuse_git::Repo::from_root(repo_root),
+        refs.revision_range(),
+        base_args.to_vec(),
+        paths.to_vec(),
         staged,
-    };
+    );
     let repo_diff = diffuse_git::diff_repository(
         &git_repo,
         &target,
@@ -336,7 +343,10 @@ pub fn load_git_repo_with_notes(
 
     // Unmodified files carrying review notes.
     if let Some(db) = notes_db {
-        let note_files = crate::notes::note_files_for_repo(db, repo);
+        let effective_repo_key = repo_key.or_else(|| target.repo_key());
+        let effective_rev_key = rev_key.or_else(|| target.rev_key());
+        let note_files =
+            crate::notes::note_files_for_repo(db, effective_repo_key, effective_rev_key);
         for file_path in note_files {
             if seen_paths.contains(&file_path) {
                 continue;
@@ -362,7 +372,8 @@ pub fn load_git_repo_with_notes(
 
             if let Some(c) = content {
                 let file_lines = crate::pipeline::split_content_lines(&c);
-                let file_notes = crate::notes::query_notes_for_file(db, repo, &file_path);
+                let file_notes =
+                    crate::notes::query_notes_for_file(db, repo_key, rev_key, &file_path);
                 if file_notes.is_empty() {
                     continue;
                 }
@@ -401,7 +412,9 @@ pub fn load_git_repo(
     staged: bool,
     context: usize,
 ) -> Result<LoadGitResult, String> {
-    load_git_repo_with_notes(repo_root, base_args, paths, staged, context, None, None)
+    load_git_repo_with_notes(
+        repo_root, base_args, paths, staged, context, None, None, None,
+    )
 }
 
 /// Load a git blob text and byte size.

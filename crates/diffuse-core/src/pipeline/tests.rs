@@ -776,7 +776,8 @@ fn test_binary_file_falls_back_to_fs_metadata_for_size() {
 
     let diff = "diff --git a/image.bin b/image.bin\nBinary files differ\n";
     let f = crate::parse::parse_diff(diff).into_iter().next().unwrap();
-    let opts = PipelineOptions::default().with_repo(Some(dir.path().to_str().unwrap().to_string()));
+    let opts =
+        PipelineOptions::default().with_repo_key(Some(dir.path().to_str().unwrap().to_string()));
     let out = process_single_diff_file(f, None, None, None, &opts);
     assert!(out.is_binary);
     assert_eq!(out.new_bytes, Some(8192));
@@ -1071,6 +1072,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
         add_note(
             &mut db,
             "myrepo",
+            "",
             ReviewNote {
                 id: format!("n{i}"),
                 file: "a.txt".to_string(),
@@ -1086,6 +1088,7 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "other".to_string(),
             file: "unrelated.rs".to_string(),
@@ -1098,8 +1101,8 @@ fn test_pipeline_notes_counts_with_resolved_repo() {
     );
 
     // The streaming TUI passes the *resolved* repo name (dir basename or
-    // --repo) — with it, per-file counts.notes and the global sum populate.
-    let opts = PipelineOptions::default().with_notes(Some(db), Some("myrepo".to_string()));
+    // --repo-key) — with it, per-file counts.notes and the global sum populate.
+    let opts = PipelineOptions::default().with_notes(Some(db), Some("myrepo".to_string()), None);
     let out = run_pipeline_full(diff, None, None, opts);
     assert_eq!(out.files.len(), 1);
     assert_eq!(
@@ -1129,6 +1132,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "n_open".to_string(),
             file: "a.txt".to_string(),
@@ -1141,6 +1145,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "n_in_progress".to_string(),
             file: "a.txt".to_string(),
@@ -1153,6 +1158,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "n_resolved".to_string(),
             file: "a.txt".to_string(),
@@ -1165,7 +1171,8 @@ fn test_pipeline_note_status_filtering_and_counts() {
 
     // Default: show_resolved = false. Only active (Open + InProgress) notes
     // returned.
-    let opts = PipelineOptions::default().with_notes(Some(db.clone()), Some("myrepo".to_string()));
+    let opts =
+        PipelineOptions::default().with_notes(Some(db.clone()), Some("myrepo".to_string()), None);
     let out = run_pipeline_full(diff, None, None, opts);
     assert_eq!(out.files.len(), 1);
     let counts = out.files[0].counts;
@@ -1187,7 +1194,7 @@ fn test_pipeline_note_status_filtering_and_counts() {
 
     // With show_resolved = true: all notes returned.
     let opts_all = PipelineOptions::default()
-        .with_notes(Some(db), Some("myrepo".to_string()))
+        .with_notes(Some(db), Some("myrepo".to_string()), None)
         .with_show_resolved(true);
     let out_all = run_pipeline_full(diff, None, None, opts_all);
     assert_eq!(
@@ -1209,6 +1216,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "clean".into(),
             file: "a.txt".into(),
@@ -1224,6 +1232,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "mismatch".into(),
             file: "a.txt".into(),
@@ -1239,6 +1248,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "orphan".into(),
             file: "a.txt".into(),
@@ -1255,6 +1265,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
     add_note(
         &mut db,
         "myrepo",
+        "",
         ReviewNote {
             id: "unhashed".into(),
             file: "a.txt".into(),
@@ -1266,7 +1277,7 @@ fn test_pipeline_preserves_all_notes_in_counts() {
         },
     );
 
-    let opts = PipelineOptions::default().with_notes(Some(db), Some("myrepo".into()));
+    let opts = PipelineOptions::default().with_notes(Some(db), Some("myrepo".into()), None);
     let out = run_pipeline_full(diff, None, None, opts);
     assert_eq!(out.files.len(), 1);
     assert_eq!(
@@ -1754,13 +1765,14 @@ diff --git a/test.rs b/test.rs
     add_note(
         &mut db,
         "repo",
+        "",
         gap_note("note-isolated", "isolated review note", 80, 80, true, |n| {
             format!("line {n}")
         }),
     );
 
     let opts = PipelineOptions::default()
-        .with_notes(Some(db), Some("repo".to_string()))
+        .with_notes(Some(db), Some("repo".to_string()), None)
         .with_visual_context(4);
 
     let output = PipelineInput::new(diff)
@@ -1812,6 +1824,7 @@ diff --git a/test.rs b/test.rs
     add_note(
         &mut db,
         "repo",
+        "",
         gap_note(
             "note-adjacent",
             "boundary adjacent note",
@@ -1823,7 +1836,7 @@ diff --git a/test.rs b/test.rs
     );
 
     let opts = PipelineOptions::default()
-        .with_notes(Some(db), Some("repo".to_string()))
+        .with_notes(Some(db), Some("repo".to_string()), None)
         .with_visual_context(4);
 
     let output = PipelineInput::new(diff)
@@ -1878,6 +1891,7 @@ diff --git a/test.rs b/test.rs
     add_note(
         &mut db,
         "repo",
+        "",
         gap_note("note-cluster-1", "cluster 1", 60, 60, true, |n| {
             format!("line {n}")
         }),
@@ -1885,13 +1899,14 @@ diff --git a/test.rs b/test.rs
     add_note(
         &mut db,
         "repo",
+        "",
         gap_note("note-cluster-2", "cluster 2", 65, 65, true, |n| {
             format!("line {n}")
         }),
     );
 
     let opts = PipelineOptions::default()
-        .with_notes(Some(db), Some("repo".to_string()))
+        .with_notes(Some(db), Some("repo".to_string()), None)
         .with_visual_context(4);
 
     let output = PipelineInput::new(diff)
@@ -1941,10 +1956,10 @@ diff --git a/test.rs b/test.rs
         content_hash: None,
         ..Default::default()
     };
-    add_note(&mut db, "repo", note);
+    add_note(&mut db, "repo", "", note);
 
     let opts = PipelineOptions::default()
-        .with_notes(Some(db), Some("repo".to_string()))
+        .with_notes(Some(db), Some("repo".to_string()), None)
         .with_visual_context(4);
 
     // No snapshot provided
@@ -2004,13 +2019,14 @@ diff --git a/test.rs b/test.rs
     add_note(
         &mut db,
         "repo",
+        "",
         gap_note("note-old-side", "old side note", 50, 50, false, |n| {
             format!("old line {n}")
         }),
     );
 
     let opts = PipelineOptions::default()
-        .with_notes(Some(db), Some("repo".to_string()))
+        .with_notes(Some(db), Some("repo".to_string()), None)
         .with_visual_context(4);
 
     let output = PipelineInput::new(diff)
@@ -2060,13 +2076,14 @@ fn test_synthetic_note_hunk_anchoring() {
     crate::notes::add_note(
         &mut db,
         "repo",
+        "",
         gap_note("note-unique", "clean match", 50, 52, true, |n| {
             format!("line {n}")
         }),
     );
 
     let opts = PipelineOptions::default()
-        .with_notes(Some(db), Some("repo".to_string()))
+        .with_notes(Some(db), Some("repo".to_string()), None)
         .with_visual_context(4);
 
     let output = PipelineInput::new(diff)
@@ -2089,12 +2106,13 @@ fn test_synthetic_note_hunk_anchoring() {
     crate::notes::add_note(
         &mut db2,
         "repo",
+        "",
         gap_note("note-mismatched", "mismatch", 50, 52, true, |n| {
             format!("changed {n}")
         }),
     );
     let opts2 = PipelineOptions::default()
-        .with_notes(Some(db2), Some("repo".to_string()))
+        .with_notes(Some(db2), Some("repo".to_string()), None)
         .with_visual_context(4);
 
     let output2 = PipelineInput::new(diff)

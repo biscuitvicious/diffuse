@@ -21,7 +21,6 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const repoRoot = rootRes.stdout.trim();
-			const repoName = repoRoot.split("/").pop() || repoRoot;
 
 			const prefixRes = await pi.exec("git", ["rev-parse", "--show-prefix"], { cwd: ctx.cwd });
 			const repoPrefix = prefixRes.code === 0 ? prefixRes.stdout.trim() : "";
@@ -29,8 +28,6 @@ export default function (pi: ExtensionAPI) {
 
 			const bin = diffuseBinPath();
 			const argv: string[] = [
-				"--repo",
-				repoName,
 				...parsed.baseArgs,
 				...(parsed.paths.length > 0 ? ["--", ...parsed.paths] : []),
 			];

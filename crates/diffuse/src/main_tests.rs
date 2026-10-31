@@ -268,7 +268,7 @@ diff --git a/test.rs b/test.rs
         created_at: 1000,
         ..Default::default()
     };
-    add_note(&mut db, "some_repo@commit", note);
+    add_note(&mut db, "some_repo", "", note);
     save_notes(&notes_path, &db).unwrap();
 
     let base_args = Args::try_parse_from(["diffuse"]).unwrap();
@@ -283,10 +283,11 @@ diff --git a/test.rs b/test.rs
     assert_eq!(out_no_notes.files[0].counts.notes, 0);
     assert!(out_no_notes.files[0].notes.is_empty());
 
-    // 2. Standalone piped diff WITH explicit notes_file -> notes are active and
-    //    matched by path
+    // 2. Standalone piped diff WITH explicit notes_file and repo_key -> notes are
+    //    active and matched by path
     let input_with_notes = super::Input {
         notes_file: Some(notes_path.to_str().unwrap().to_string()),
+        repo_key: Some("some_repo".into()),
         ..input_no_notes.clone()
     };
     let out_with_notes = super::process_input(input_with_notes, &base_args);
@@ -307,7 +308,7 @@ diff --git a/test.rs b/test.rs
     let input_add_no_file = super::Input {
         action: Some("addNote".into()),
         note: Some(new_note.clone()),
-        repo: Some("standalone_repo".into()),
+        repo_key: Some("standalone_repo".into()),
         notes_file: None,
         ..input_no_notes.clone()
     };
@@ -316,7 +317,9 @@ diff --git a/test.rs b/test.rs
     let reloaded = load_notes(&notes_path);
     assert_eq!(
         reloaded
-            .get("some_repo@commit")
+            .get("some_repo")
+            .unwrap()
+            .get("")
             .unwrap()
             .get("test.rs")
             .unwrap()
@@ -328,7 +331,7 @@ diff --git a/test.rs b/test.rs
     let input_add_with_file = super::Input {
         action: Some("addNote".into()),
         note: Some(new_note),
-        repo: Some("standalone_repo".into()),
+        repo_key: Some("standalone_repo".into()),
         notes_file: Some(notes_path.to_str().unwrap().to_string()),
         ..input_no_notes
     };
@@ -338,6 +341,8 @@ diff --git a/test.rs b/test.rs
     assert_eq!(
         reloaded_after
             .get("standalone_repo")
+            .unwrap()
+            .get("")
             .unwrap()
             .get("test.rs")
             .unwrap()
@@ -363,7 +368,7 @@ fn test_json_protocol_note_status_and_reply_actions() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    diffuse::core::notes::add_note(&mut db, "repo1", note);
+    diffuse::core::notes::add_note(&mut db, "repo1", "", note);
     save_notes(&notes_path, &db).unwrap();
 
     let base_args = Args::try_parse_from(["diffuse"]).unwrap();
@@ -383,7 +388,7 @@ fn test_json_protocol_note_status_and_reply_actions() {
         context: None,
         notes: None,
         notes_file: Some(notes_path.to_str().unwrap().to_string()),
-        repo: Some("repo1".into()),
+        repo_key: Some("repo1".into()),
         token_product_cap: None,
         cluster_budget: None,
         cluster_bandwidth_min: None,
@@ -401,7 +406,13 @@ fn test_json_protocol_note_status_and_reply_actions() {
     let _ = super::process_input(input_progress, &base_args);
     let db = load_notes(&notes_path);
     assert_eq!(
-        db.get("repo1").unwrap().get("src/main.rs").unwrap()[0].status,
+        db.get("repo1")
+            .unwrap()
+            .get("")
+            .unwrap()
+            .get("src/main.rs")
+            .unwrap()[0]
+            .status,
         NoteStatus::InProgress
     );
 
@@ -412,7 +423,13 @@ fn test_json_protocol_note_status_and_reply_actions() {
     input_reply.status = Some(NoteStatus::Resolved);
     let _ = super::process_input(input_reply, &base_args);
     let db = load_notes(&notes_path);
-    let note = &db.get("repo1").unwrap().get("src/main.rs").unwrap()[0];
+    let note = &db
+        .get("repo1")
+        .unwrap()
+        .get("")
+        .unwrap()
+        .get("src/main.rs")
+        .unwrap()[0];
     assert_eq!(note.status, NoteStatus::Resolved);
     assert_eq!(
         note.text,
@@ -422,20 +439,34 @@ fn test_json_protocol_note_status_and_reply_actions() {
     // 3. reopenNote
     let mut input_reopen = base_input.clone();
     input_reopen.action = Some("reopenNote".into());
+    input_reopen.reply_text = None;
     let _ = super::process_input(input_reopen, &base_args);
     let db = load_notes(&notes_path);
     assert_eq!(
-        db.get("repo1").unwrap().get("src/main.rs").unwrap()[0].status,
+        db.get("repo1")
+            .unwrap()
+            .get("")
+            .unwrap()
+            .get("src/main.rs")
+            .unwrap()[0]
+            .status,
         NoteStatus::Open
     );
 
     // 4. resolveNote
     let mut input_resolve = base_input.clone();
     input_resolve.action = Some("resolveNote".into());
+    input_resolve.reply_text = None;
     let _ = super::process_input(input_resolve, &base_args);
     let db = load_notes(&notes_path);
     assert_eq!(
-        db.get("repo1").unwrap().get("src/main.rs").unwrap()[0].status,
+        db.get("repo1")
+            .unwrap()
+            .get("")
+            .unwrap()
+            .get("src/main.rs")
+            .unwrap()[0]
+            .status,
         NoteStatus::Resolved
     );
 }

@@ -8,10 +8,10 @@ use std::{
 };
 
 use diffuse::{
-    git::{ENGINE_CONTEXT, is_inside_work_tree, load_git_repo_with_notes},
+    git::{ENGINE_CONTEXT, is_inside_work_tree, load_git_repo},
     notes::{
-        DiffCoord, LineHash, NoteLocation, find_note_in_db, generate_note_id, now_millis,
-        reply_to_note_text, update_note_in_db,
+        DiffCoord, LineHash, NoteLocation, add_note, find_note_in_repo, generate_note_id,
+        now_millis, reply_to_note_text, update_note_in_repo,
     },
     prelude::*,
 };
@@ -203,14 +203,21 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
 
     let current_dir = env::current_dir()?;
     let repo = if is_inside_work_tree(&current_dir) {
-        Repo::from_root(&current_dir).with_name_opt(args.repo.clone())
+        Repo::from_root(&current_dir).with_key_opt(args.repo_key.clone())
+    } else if let Some(key) = args.repo_key.clone() {
+        Repo::from_key(key)
     } else {
-        Repo::from_name(args.repo.clone().unwrap_or_else(|| "diffuse".to_string()))
+        Repo::default()
     };
     let target =
-        ReviewTarget::from_repo_args(repo.clone(), args.revision.git_revs.clone(), args.staged);
-    let repo_name = Some(target.repo_name().to_string());
-    let notes_key = target.notes_key();
+        ReviewTarget::from_repo_args(repo.clone(), args.revision.git_revs.clone(), args.staged)
+            .with_rev_key_opt(args.rev_key.clone());
+    let Some(repo_key) = target.repo_key() else {
+        eprintln!(
+            "diffuse: not in a git repository; specify --repo-key <KEY> to manage notes outside a repository"
+        );
+        process::exit(1);
+    };
 
     match &notes_args.action {
         None | Some(NotesAction::List { .. }) => {
@@ -261,18 +268,21 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 combined_revision.git_revs,
                 combined_revision.pathspecs,
                 args.staged,
-            );
-            let keys = list_target.matched_notes_db_keys(&db);
+            )
+            .with_rev_key_opt(args.rev_key.clone());
+            let rev_keys = list_target.matched_rev_keys(&db);
 
             let mut all_notes: Vec<(&str, &ReviewNote)> = Vec::new();
-            for k in &keys {
-                if let Some(repo_map) = db.get(*k) {
-                    for (file, notes) in repo_map {
-                        if !list_target.matches_path(file, &current_dir) {
-                            continue;
-                        }
-                        for note in notes {
-                            all_notes.push((file.as_str(), note));
+            if let Some(rev_map) = db.get(repo_key) {
+                for rk in &rev_keys {
+                    if let Some(file_map) = rev_map.get(*rk) {
+                        for (file, notes) in file_map {
+                            if !list_target.matches_path(file, &current_dir) {
+                                continue;
+                            }
+                            for note in notes {
+                                all_notes.push((file.as_str(), note));
+                            }
                         }
                     }
                 }
@@ -484,8 +494,9 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 args.revision.git_revs.clone()
             };
             let add_target =
-                ReviewTarget::from_repo_args(repo.clone(), effective_revs.clone(), args.staged);
-            let add_notes_key = add_target.notes_key();
+                ReviewTarget::from_repo_args(repo.clone(), effective_revs.clone(), args.staged)
+                    .with_rev_key_opt(args.rev_key.clone());
+            let add_rev_key = add_target.rev_key().unwrap_or("").to_string();
 
             // 4. The note stores the diff rows it was created against. When the file is
             //    part of the reviewed diff, the pipeline runs with the provisional note
@@ -495,14 +506,12 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             //    file banner.
             let reviewed = if is_inside_work_tree(&current_dir) {
                 Some(
-                    load_git_repo_with_notes(
+                    load_git_repo(
                         &current_dir,
                         &effective_revs,
                         std::slice::from_ref(&file_path),
                         args.staged,
                         ENGINE_CONTEXT,
-                        None,
-                        None,
                     )
                     .unwrap_or_else(|e| {
                         eprintln!("diffuse: cannot load diff: {e}");
@@ -598,9 +607,13 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 reviewed_content.is_some().then_some(reviewed).flatten()
             {
                 let mut prov_db = db.clone();
-                add_note(&mut prov_db, &notes_key, provisional_note);
-                let opts =
-                    PipelineOptions::default().with_notes(Some(prov_db), Some(notes_key.clone()));
+                let prov_rev = add_target.rev_key().unwrap_or("");
+                add_note(&mut prov_db, repo_key, prov_rev, provisional_note);
+                let opts = PipelineOptions::default().with_notes(
+                    Some(prov_db),
+                    Some(repo_key.to_string()),
+                    Some(prov_rev.to_string()),
+                );
                 let out = run_pipeline_full(
                     &git_res.diff,
                     Some(git_res.new_content),
@@ -667,7 +680,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             };
 
             // 6. Persist and output.
-            add_note(&mut db, &add_notes_key, final_note.clone());
+            add_note(&mut db, repo_key, &add_rev_key, final_note.clone());
             save_notes(&notes_path, &db)?;
 
             if *json {
@@ -692,8 +705,8 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             json,
             markdown,
         }) => {
-            let found = find_note_in_db(&db, repo_name.as_deref(), id);
-            let (_key, file, note) = match found {
+            let found = find_note_in_repo(&db, repo_key, id);
+            let (_rev, file, note) = match found {
                 Some(res) => res,
                 None => {
                     eprintln!("diffuse: note '{id}' not found");
@@ -791,7 +804,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             };
 
             let mut updated_status = None;
-            let updated = update_note_in_db(&mut db, repo_name.as_deref(), id, |n| {
+            let updated = update_note_in_repo(&mut db, repo_key, id, |n| {
                 n.text = reply_to_note_text(&n.text, &reply_content);
                 if let Some(s) = target_status {
                     n.status = s;
@@ -808,7 +821,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             println!("Replied to note {id} (status: {} {:?})", st.glyph(), st);
         }
         Some(NotesAction::Progress { id }) => {
-            let updated = update_note_in_db(&mut db, repo_name.as_deref(), id, |n| {
+            let updated = update_note_in_repo(&mut db, repo_key, id, |n| {
                 n.status = NoteStatus::InProgress;
             });
             if !updated {
@@ -819,7 +832,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             println!("Marked note {id} as in-progress 🔄");
         }
         Some(NotesAction::Resolve { id }) => {
-            let updated = update_note_in_db(&mut db, repo_name.as_deref(), id, |n| {
+            let updated = update_note_in_repo(&mut db, repo_key, id, |n| {
                 n.status = NoteStatus::Resolved;
             });
             if !updated {
@@ -830,7 +843,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             println!("Marked note {id} as resolved ✅");
         }
         Some(NotesAction::Open { id }) | Some(NotesAction::Reopen { id }) => {
-            let updated = update_note_in_db(&mut db, repo_name.as_deref(), id, |n| {
+            let updated = update_note_in_repo(&mut db, repo_key, id, |n| {
                 n.status = NoteStatus::Open;
             });
             if !updated {
@@ -852,7 +865,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                     process::exit(1);
                 }
             };
-            let updated = update_note_in_db(&mut db, repo_name.as_deref(), id, |n| {
+            let updated = update_note_in_repo(&mut db, repo_key, id, |n| {
                 n.status = parsed_status;
             });
             if !updated {

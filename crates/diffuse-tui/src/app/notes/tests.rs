@@ -124,7 +124,7 @@ fn test_note_commit_persists_and_deletes() {
     state.commit_note_draft().expect("note commit must succeed");
     assert!(state.note_draft.is_none());
 
-    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", "", &file).collect();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].text, "check this **carefully**");
     assert!(
@@ -134,7 +134,7 @@ fn test_note_commit_persists_and_deletes() {
 
     let on_disk = load_notes(&notes_path);
     assert_eq!(
-        notes_for_file(&on_disk, "test_repo", &file).count(),
+        notes_for_file(&on_disk, "test_repo", "", &file).count(),
         1,
         "commit must persist through the notes DB file"
     );
@@ -149,14 +149,14 @@ fn test_note_commit_persists_and_deletes() {
     state.move_down();
     state.delete_note();
     assert!(
-        notes_for_file(&state.notes, "test_repo", &file)
+        notes_for_file(&state.notes, "test_repo", "", &file)
             .next()
             .is_none(),
         "delete must remove the note from the DB"
     );
     let on_disk2 = load_notes(&notes_path);
     assert!(
-        notes_for_file(&on_disk2, "test_repo", &file)
+        notes_for_file(&on_disk2, "test_repo", "", &file)
             .next()
             .is_none(),
         "delete must persist the removal"
@@ -178,7 +178,7 @@ fn test_note_commit_records_content_hash() {
     state.note_draft = Some("note with hash".into());
     state.commit_note_draft().expect("note commit must succeed");
 
-    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", "", &file).collect();
     assert_eq!(notes.len(), 1);
     let hash = notes[0]
         .content_hash
@@ -217,7 +217,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         original_source_rows: vec![anchor_row.clone()],
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, valid_note);
+    add_note(&mut state.notes, "test_repo", "", valid_note);
     let callouts = state.note_callouts(80);
     assert_eq!(
         callouts.len(),
@@ -242,7 +242,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         content_hash: Some(LineHash::from_hex("deadbeef").unwrap()),
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, mismatch_note);
+    add_note(&mut state.notes, "test_repo", "", mismatch_note);
     let callouts_mismatch = state.note_callouts(80);
     assert_eq!(
         callouts_mismatch.len(),
@@ -267,7 +267,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         content_hash: Some(LineHash::from_hex("87654321").unwrap()),
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, nonexistent_line_note);
+    add_note(&mut state.notes, "test_repo", "", nonexistent_line_note);
     let callouts_orphan = state.note_callouts(80);
     assert_eq!(
         callouts_orphan.len(),
@@ -292,7 +292,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         content_hash: None,
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, unhashed_note);
+    add_note(&mut state.notes, "test_repo", "", unhashed_note);
     let callouts_unhashed = state.note_callouts(80);
     assert_eq!(
         callouts_unhashed.len(),
@@ -337,7 +337,7 @@ fn test_multiline_note_anchors_to_last_line() {
         original_source_rows: rows,
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, valid_multiline);
+    add_note(&mut state.notes, "test_repo", "", valid_multiline);
     let callouts = state.note_callouts(80);
     assert_eq!(
         callouts.len(),
@@ -364,7 +364,7 @@ fn test_multiline_note_anchors_to_last_line() {
         content_hash: LineHash::of_rows(std::slice::from_ref(&first_row)),
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, mismatch_multiline);
+    add_note(&mut state.notes, "test_repo", "", mismatch_multiline);
     let callouts_mismatch = state.note_callouts(80);
     assert!(
         callouts_mismatch.contains_key(&banner_idx),
@@ -400,7 +400,8 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
     // Add an unanchored note (mismatched hash) directly to notes DB and sync
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "banner-note".into(),
             file: file.clone(),
@@ -454,7 +455,8 @@ fn test_note_callouts_render_across_all_files_and_banners() {
     // Add unanchored note to second.rs (file 1)
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "note-file-1".into(),
             file: "second.rs".into(),
@@ -503,7 +505,8 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
     let coord = crate::core::notes::DiffCoord::from_row(&anchor_row).unwrap();
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "inline-note-file-1".into(),
             file: "second.rs".into(),
@@ -558,7 +561,8 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
     let banner_idx = state.first_row_of_file(0);
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "md-note".into(),
             file: "first.rs".into(),
@@ -667,7 +671,8 @@ fn test_note_callout_gutter_band_and_terminal_line() {
 
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "gutter-note".into(),
             file: "first.rs".into(),
@@ -742,7 +747,8 @@ fn test_note_callout_empty_text_renders_one_line() {
 
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "empty-note".into(),
             file: "first.rs".into(),
@@ -783,7 +789,8 @@ fn test_note_callout_long_line_wrapping() {
 
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "wrap-test".into(),
             file: "first.rs".into(),
@@ -839,7 +846,8 @@ fn test_table_note_width_at_narrow_content_width() {
     let table = "| State & Style | Alignment & Code | Metrics | Long Tokens & Wrapping |\n| :--- | :---: | ---: | :--- |\n| ✅ **Ready** | `cargo test` | 100.0% | Normal text with multiple wrapped words |\n| 🔄 *Active* | [diffuse](https://diffuse.rs) | +42 ms | Supercalifragilisticexpialidocious |\n| ⬜ Pending | ~~deprecated~~ | $1,234.56 | `diffuse::render::terminal::wrap_cell` |\n| 🦀 **Mixed** 🚀 | *italic* & **bold** | -99 | **Bold across multiple lines when squashed** |\n| ⚠️ Warning | | 0.00 | Unicode: 👩‍💻 and 🇩🇪 |";
     add_note(
         &mut state.notes,
-        &state.notes_key,
+        "test_repo",
+        "",
         ReviewNote {
             id: "table-note".into(),
             file: "filesystem.rs".into(),
@@ -912,7 +920,7 @@ fn test_targeted_note_deletion_multiple_notes_on_same_row() {
     // Delete targeted note
     state.delete_note();
 
-    let remaining: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    let remaining: Vec<_> = notes_for_file(&state.notes, "test_repo", "", &file).collect();
     assert_eq!(remaining.len(), 1);
     assert_ne!(remaining[0].id, note2_id);
     assert_eq!(remaining[0].text, "First note");
@@ -952,7 +960,7 @@ fn test_targeted_note_editing_preserves_id_and_updates_text() {
     assert!(state.note_draft.is_none());
     assert!(state.editing_note_id.is_none());
 
-    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", "", &file).collect();
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].id, orig_id, "editing must preserve note id");
     assert_eq!(notes[0].text, "Updated comment text!");
@@ -982,7 +990,7 @@ fn test_delete_note_disabled_on_diff_row_without_selection() {
         state.status_message.as_ref().map(|(s, _, _)| s.as_str()),
         Some("no note here")
     );
-    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", &file).collect();
+    let notes: Vec<_> = notes_for_file(&state.notes, "test_repo", "", &file).collect();
     assert_eq!(notes.len(), 1, "note must not be deleted from code line");
 }
 
@@ -1163,7 +1171,7 @@ fn test_note_status_cycling_open_progress_resolved() {
     state.commit_note_draft().expect("note commit must succeed");
 
     let file_notes: Vec<_> =
-        notes_for_file(&state.notes, &state.notes_key, "filesystem.rs").collect();
+        notes_for_file(&state.notes, "test_repo", "", "filesystem.rs").collect();
     assert_eq!(file_notes.len(), 1);
     assert_eq!(file_notes[0].status, NoteStatus::Open);
     assert_eq!(state.output.files[0].counts.notes, 1);
@@ -1176,7 +1184,7 @@ fn test_note_status_cycling_open_progress_resolved() {
     // Cycle 1: Open -> InProgress
     let cycled = state.cycle_note_status();
     assert!(cycled);
-    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+    let n = notes_for_file(&state.notes, "test_repo", "", "filesystem.rs")
         .next()
         .unwrap();
     assert_eq!(n.status, NoteStatus::InProgress);
@@ -1200,7 +1208,7 @@ fn test_note_status_cycling_open_progress_resolved() {
     // Cycle 2: InProgress -> Resolved
     let cycled2 = state.cycle_note_status();
     assert!(cycled2);
-    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+    let n = notes_for_file(&state.notes, "test_repo", "", "filesystem.rs")
         .next()
         .unwrap();
     assert_eq!(n.status, NoteStatus::Resolved);
@@ -1227,7 +1235,7 @@ fn test_note_status_cycling_open_progress_resolved() {
     // Even when hidden in callouts, cycling while on coordinate still works
     let cycled3 = state.cycle_note_status();
     assert!(cycled3);
-    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+    let n = notes_for_file(&state.notes, "test_repo", "", "filesystem.rs")
         .next()
         .unwrap();
     assert_eq!(n.status, NoteStatus::Open);
@@ -1307,7 +1315,7 @@ fn test_toggle_show_note_source() {
         }],
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, unanchored_note);
+    add_note(&mut state.notes, "test_repo", "", unanchored_note);
     state.bump_notes();
 
     let src = "let test_var = 123;";
@@ -1405,7 +1413,7 @@ fn test_show_source_only_on_unanchored_notes() {
         }],
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, unanchored_note);
+    add_note(&mut state.notes, "test_repo", "", unanchored_note);
     state.bump_notes();
 
     // Toggle show_note_source on
@@ -1416,7 +1424,7 @@ fn test_show_source_only_on_unanchored_notes() {
     // Anchored note at content_row must NOT display original source rows!
     let anchored_callout = &callouts_on[&content_row];
     let anchored_src = {
-        let n = notes_for_file(&state.notes, &state.notes_key, &file)
+        let n = notes_for_file(&state.notes, "test_repo", "", &file)
             .find(|n| n.text == "Anchored note")
             .unwrap();
         n.original_source_rows[0].text()
@@ -1483,7 +1491,7 @@ fn test_event_keybindings_x_z_and_shift_s() {
         &mut state,
         KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
     );
-    let n = notes_for_file(&state.notes, &state.notes_key, "filesystem.rs")
+    let n = notes_for_file(&state.notes, "test_repo", "", "filesystem.rs")
         .next()
         .unwrap();
     assert_eq!(n.status, NoteStatus::InProgress);
@@ -1527,7 +1535,7 @@ fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
         created_at: 100,
         ..Default::default()
     };
-    add_note(&mut state.notes, &state.notes_key, note);
+    add_note(&mut state.notes, "test_repo", "", note);
     state.bump_notes();
 
     let callouts = state.note_callouts(80);
@@ -1657,10 +1665,10 @@ diff --git a/test.rs b/test.rs
     };
 
     let mut db = HashMap::new();
-    add_note(&mut db, "test_repo", note);
+    add_note(&mut db, "test_repo", "", note);
 
     let opts = PipelineOptions::default()
-        .with_notes(Some(db.clone()), Some("test_repo".to_string()))
+        .with_notes(Some(db.clone()), Some("test_repo".to_string()), None)
         .with_visual_context(4);
 
     let out = run_pipeline_full(diff, Some(new_map), None, opts);
@@ -1689,10 +1697,10 @@ diff --git a/test.rs b/test.rs
         },
         original_source_rows: window.clone(),
         content_hash: LineHash::of_rows(&window),
-        ..db["test_repo"]["test.rs"][0].clone()
+        ..db["test_repo"][""]["test.rs"][0].clone()
     };
     let mut db = HashMap::new();
-    add_note(&mut db, "test_repo", relocated);
+    add_note(&mut db, "test_repo", "", relocated);
 
     let mut state = AppState::new(
         out,
@@ -1710,7 +1718,7 @@ diff --git a/test.rs b/test.rs
         "must not be on file banner"
     );
 
-    let target_row = state.note_target_row(0, &state.notes["test_repo"]["test.rs"][0]);
+    let target_row = state.note_target_row(0, &state.notes["test_repo"][""]["test.rs"][0]);
     assert_ne!(
         target_row, banner_idx,
         "target row must be inside the merged hunk"
@@ -1734,11 +1742,13 @@ fn test_diff_notes_db_resolved_and_unresolved() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut old_db, "repo", note1.clone());
+    add_note(&mut old_db, "repo", "", note1.clone());
 
     let mut new_db = old_db.clone();
     let n = new_db
         .get_mut("repo")
+        .unwrap()
+        .get_mut("")
         .unwrap()
         .get_mut("src/lib.rs")
         .unwrap()
@@ -1746,7 +1756,7 @@ fn test_diff_notes_db_resolved_and_unresolved() {
         .unwrap();
     n.status = NoteStatus::Resolved;
 
-    let summary = AppState::diff_notes_db(&old_db, &new_db, "repo");
+    let summary = AppState::diff_notes_db(&old_db, &new_db, Some("repo"));
     assert_eq!(summary.active_delta, -1);
     assert_eq!(summary.resolved_delta, 1);
     assert_eq!(
@@ -1755,7 +1765,7 @@ fn test_diff_notes_db_resolved_and_unresolved() {
     );
 
     // And back: un-resolving note
-    let rev_summary = AppState::diff_notes_db(&new_db, &old_db, "repo");
+    let rev_summary = AppState::diff_notes_db(&new_db, &old_db, Some("repo"));
     assert_eq!(rev_summary.active_delta, 1);
     assert_eq!(rev_summary.resolved_delta, -1);
     assert_eq!(
@@ -1777,7 +1787,7 @@ fn test_diff_notes_db_add_delete_edit() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut db1, "repo", note1);
+    add_note(&mut db1, "repo", "", note1);
 
     // Addition
     let mut db2 = db1.clone();
@@ -1791,14 +1801,14 @@ fn test_diff_notes_db_add_delete_edit() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut db2, "repo", note2);
+    add_note(&mut db2, "repo", "", note2);
 
-    let summary_add = AppState::diff_notes_db(&db1, &db2, "repo");
+    let summary_add = AppState::diff_notes_db(&db1, &db2, Some("repo"));
     assert_eq!(summary_add.added, 1);
     assert_eq!(summary_add.format_message(), "↻ notes updated (+1 note)");
 
     // Deletion
-    let summary_del = AppState::diff_notes_db(&db2, &db1, "repo");
+    let summary_del = AppState::diff_notes_db(&db2, &db1, Some("repo"));
     assert_eq!(summary_del.deleted, 1);
     assert_eq!(summary_del.format_message(), "↻ notes updated (-1 note)");
 
@@ -1806,12 +1816,14 @@ fn test_diff_notes_db_add_delete_edit() {
     let mut db3 = db1.clone();
     db3.get_mut("repo")
         .unwrap()
+        .get_mut("")
+        .unwrap()
         .get_mut("src/lib.rs")
         .unwrap()
         .get_mut(0)
         .unwrap()
         .text = "Updated text".into();
-    let summary_edit = AppState::diff_notes_db(&db1, &db3, "repo");
+    let summary_edit = AppState::diff_notes_db(&db1, &db3, Some("repo"));
     assert_eq!(summary_edit.edited, 1);
     assert_eq!(
         summary_edit.format_message(),
@@ -1837,7 +1849,7 @@ fn test_reload_notes_from_disk_updates_counts_and_hides_resolved() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut db, "test_repo", note);
+    add_note(&mut db, "test_repo", "", note);
     save_notes(&notes_path, &db).unwrap();
 
     let mut state = AppState::new(
@@ -1864,6 +1876,8 @@ fn test_reload_notes_from_disk_updates_counts_and_hides_resolved() {
     let mut resolved_db = db.clone();
     resolved_db
         .get_mut("test_repo")
+        .unwrap()
+        .get_mut("")
         .unwrap()
         .get_mut("filesystem.rs")
         .unwrap()
@@ -1918,7 +1932,7 @@ fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut db, "test_repo", note);
+    add_note(&mut db, "test_repo", "", note);
     save_notes(&notes_path, &db).unwrap();
 
     let mut state = AppState::new(
@@ -1930,7 +1944,7 @@ fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
     state.notes = db.clone();
     state.sync_all_notes();
 
-    let target_row = state.note_target_row(0, &state.notes["test_repo"]["filesystem.rs"][0]);
+    let target_row = state.note_target_row(0, &state.notes["test_repo"][""]["filesystem.rs"][0]);
     state.row_idx = target_row;
     state.vis_line = 1;
 
@@ -1938,6 +1952,8 @@ fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
     let mut resolved_db = db.clone();
     resolved_db
         .get_mut("test_repo")
+        .unwrap()
+        .get_mut("")
         .unwrap()
         .get_mut("filesystem.rs")
         .unwrap()
@@ -1976,12 +1992,14 @@ fn test_diff_notes_db_in_progress_and_plural_formatting() {
         status: NoteStatus::Open,
         ..Default::default()
     };
-    add_note(&mut db1, "repo", note1);
-    add_note(&mut db1, "repo", note2);
+    add_note(&mut db1, "repo", "", note1);
+    add_note(&mut db1, "repo", "", note2);
 
     // Transition note1 from Open -> InProgress
     let mut db2 = db1.clone();
     db2.get_mut("repo")
+        .unwrap()
+        .get_mut("")
         .unwrap()
         .get_mut("src/lib.rs")
         .unwrap()
@@ -1989,17 +2007,17 @@ fn test_diff_notes_db_in_progress_and_plural_formatting() {
         .unwrap()
         .status = NoteStatus::InProgress;
 
-    let summary = AppState::diff_notes_db(&db1, &db2, "repo");
+    let summary = AppState::diff_notes_db(&db1, &db2, Some("repo"));
     assert_eq!(summary.in_progress_delta, 1);
     assert_eq!(summary.format_message(), "↻ notes updated (+1 in progress)");
 
     // Plural additions and deletions
     let empty_db = HashMap::new();
-    let add_two = AppState::diff_notes_db(&empty_db, &db1, "repo");
+    let add_two = AppState::diff_notes_db(&empty_db, &db1, Some("repo"));
     assert_eq!(add_two.added, 2);
     assert_eq!(add_two.format_message(), "↻ notes updated (+2 notes)");
 
-    let del_two = AppState::diff_notes_db(&db1, &empty_db, "repo");
+    let del_two = AppState::diff_notes_db(&db1, &empty_db, Some("repo"));
     assert_eq!(del_two.deleted, 2);
     assert_eq!(del_two.format_message(), "↻ notes updated (-2 notes)");
 }

@@ -414,7 +414,8 @@ pub fn spawn_git_stream_pipeline(
     worker_count: Option<usize>,
 ) -> (StreamingConsumer, Receiver<Result<GitRepoMeta, String>>) {
     let notes_db = opts.notes_db.clone();
-    let notes_repo = opts.repo.clone();
+    let target_repo_key = opts.target_repo_key.clone();
+    let target_rev_key = opts.target_rev_key.clone();
     let (producer, consumer) = spawn_streaming_pipeline(worker_count, opts);
     let (meta_tx, meta_rx) = channel::<Result<GitRepoMeta, String>>();
 
@@ -428,7 +429,8 @@ pub fn spawn_git_stream_pipeline(
             producer,
             &meta_tx,
             notes_db.as_ref(),
-            notes_repo.as_deref(),
+            target_repo_key.as_deref(),
+            target_rev_key.as_deref(),
         );
     });
 

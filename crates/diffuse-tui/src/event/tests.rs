@@ -393,12 +393,8 @@ fn test_note_commit_on_range_selection() {
         Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)),
     );
 
-    let empty = Vec::new();
-    let notes = s
-        .notes
-        .get(&s.repo)
-        .and_then(|m| m.get("filesystem.rs"))
-        .unwrap_or(&empty);
+    let notes: Vec<_> =
+        crate::core::notes::notes_for_file(&s.notes, &s.repo, "", "filesystem.rs").collect();
     assert_eq!(notes.len(), 1, "note must be saved");
     assert_eq!(notes[0].start(), 1025);
     assert_eq!(notes[0].end(), 1027);
@@ -433,12 +429,8 @@ fn test_note_delete_on_range_selection() {
         Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE)),
     );
 
-    let empty = Vec::new();
-    let notes = s
-        .notes
-        .get(&s.repo)
-        .and_then(|m| m.get("filesystem.rs"))
-        .unwrap_or(&empty);
+    let notes: Vec<_> =
+        crate::core::notes::notes_for_file(&s.notes, &s.repo, "", "filesystem.rs").collect();
     assert_eq!(notes.len(), 0, "note must be deleted by range selection");
 }
 
