@@ -484,10 +484,7 @@ pub fn dispatch(args: &Args) -> io::Result<()> {
 
     match payload {
         InputPayload::Batch(inputs) => {
-            let outputs: Vec<_> = inputs
-                .into_iter()
-                .map(|i| process_input(i, args))
-                .collect();
+            let outputs: Vec<_> = inputs.into_iter().map(|i| process_input(i, args)).collect();
             if is_markdown {
                 let mut stdout = io::stdout().lock();
                 for out in &outputs {

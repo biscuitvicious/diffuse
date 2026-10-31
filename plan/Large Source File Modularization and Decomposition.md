@@ -4,7 +4,7 @@
 - [x] Phase 1 — Dynamic Programming Solver Engine (`crates/diffuse-core/src/cluster/dp.rs` · 3,823 lines)
 - [x] Phase 2 — Hunk Modification Assembly & Reflow Engine (`crates/diffuse-core/src/collapse.rs` · 2,682 lines)
 - [x] Phase 3 — CLI Entry Point, Args & Command Dispatch (`crates/diffuse/src/main.rs` · 1,916 lines)
-- [ ] Phase 4 — Line Tokenization, LCS Alignment & Word Spans (`crates/diffuse-core/src/lcs.rs` · 1,697 lines)
+- [x] Phase 4 — Line Tokenization, LCS Alignment & Word Spans (`crates/diffuse-core/src/lcs.rs` · 1,697 lines)
 - [ ] Phase 5 — Diff Pipeline Orchestration & Run Classification (`crates/diffuse-core/src/pipeline.rs` · 1,671 lines)
 - [ ] Phase 6 — Public Wire Contract & Serialization Models (`crates/diffuse-core/src/wire.rs` · 1,664 lines)
 - [ ] Phase 7 — Bit-Parallel LCS Vector Search (`crates/diffuse-core/src/lcs/bit_parallel.rs` · 1,535 lines)
