@@ -1,7 +1,7 @@
 # Plan — Large Source File Modularization and Decomposition
 
 ## Global TODO
-- [ ] Phase 1 — Dynamic Programming Solver Engine (`crates/diffuse-core/src/cluster/dp.rs` · 3,823 lines)
+- [x] Phase 1 — Dynamic Programming Solver Engine (`crates/diffuse-core/src/cluster/dp.rs` · 3,823 lines)
 - [ ] Phase 2 — Hunk Modification Assembly & Reflow Engine (`crates/diffuse-core/src/collapse.rs` · 2,682 lines)
 - [ ] Phase 3 — CLI Entry Point, Args & Command Dispatch (`crates/diffuse/src/main.rs` · 1,916 lines)
 - [ ] Phase 4 — Line Tokenization, LCS Alignment & Word Spans (`crates/diffuse-core/src/lcs.rs` · 1,697 lines)
