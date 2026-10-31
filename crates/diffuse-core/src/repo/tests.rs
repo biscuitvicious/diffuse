@@ -106,7 +106,7 @@ fn test_revision_range_resolution() {
 fn test_review_target_queries() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let (c1, _c2, c3, c4) = init_test_git_repo(dir);
+    let (c1, c2, c3, c4) = init_test_git_repo(dir);
     let (s1, s4) = (&c1[..7], &c4[..7]);
 
     let repo = Repo::from_root(dir).with_name("myrepo");
@@ -122,11 +122,17 @@ fn test_review_target_queries() {
     assert_eq!(target_range.commit_range(), Some(format!("{s1}..{s4}")));
     assert_eq!(target_range.repo_name(), "myrepo");
     assert_eq!(target_range.repo_root(), Some(dir));
-    // Notes commit for range c1..c4 (next newest) is full c3
-    assert_eq!(target_range.notes_commit(), Some(c3.clone()));
-    assert_eq!(target_range.notes_key(), format!("myrepo@{c3}"));
+    // Notes commit for range c1..c4 (next newest) is c1..c3
+    assert_eq!(target_range.notes_commit(), Some(format!("{c1}..{c3}")));
+    assert_eq!(target_range.notes_key(), format!("myrepo@{c1}..{c3}"));
     assert!(!target_range.is_staged());
     assert!(!target_range.is_cached());
+
+    // 1b. Single-commit range c1..c2 enters single-commit path
+    let target_single_range =
+        ReviewTarget::from_repo_args(repo.clone(), vec![format!("{c1}..{c2}")], false);
+    assert_eq!(target_single_range.notes_commit(), Some(c1.clone()));
+    assert_eq!(target_single_range.notes_key(), format!("myrepo@{c1}"));
 
     // 2. Reviewing working tree (empty args)
     let target_wt = ReviewTarget::from_repo_args(repo, vec![], false);
@@ -200,7 +206,7 @@ fn test_repo_edge_cases_and_branches() {
 fn test_review_target_revisions_and_pathspecs() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let (c1, _c2, _c3, c4) = init_test_git_repo(dir);
+    let (c1, c2, c3, c4) = init_test_git_repo(dir);
     let repo = Repo::from_root(dir).with_name("myrepo");
 
     // 1. Single commit argument `c1`:
@@ -209,7 +215,6 @@ fn test_review_target_revisions_and_pathspecs() {
     let target_c1 = ReviewTarget::from_repo_args(repo.clone(), vec![c1.clone()], false);
     assert_eq!(target_c1.git_revs, vec![c1.clone()]);
     assert!(target_c1.pathspecs.is_empty());
-    assert_eq!(target_c1.single_commit(), Some(c1.clone()));
     assert_eq!(target_c1.notes_commit(), Some(c1.clone()));
     assert_eq!(target_c1.notes_key(), format!("myrepo@{c1}"));
 
@@ -252,6 +257,7 @@ fn test_review_target_revisions_and_pathspecs() {
     };
     crate::notes::add_note(&mut db, &format!("myrepo@{c1}"), note.clone());
     crate::notes::add_note(&mut db, &format!("myrepo@{c4}"), note.clone());
+    crate::notes::add_note(&mut db, &format!("myrepo@{c1}..{c3}"), note.clone());
     crate::notes::add_note(&mut db, "myrepo", note);
 
     let keys_c1 = target_c1.matched_notes_db_keys(&db);
@@ -260,9 +266,15 @@ fn test_review_target_revisions_and_pathspecs() {
     let keys_head = target_path.matched_notes_db_keys(&db);
     assert_eq!(keys_head, vec![format!("myrepo@{c4}")]);
 
+    // Range review matches range note key
+    let target_range =
+        ReviewTarget::from_repo_args(repo.clone(), vec![format!("{c1}..{c4}")], false);
+    let keys_range = target_range.matched_notes_db_keys(&db);
+    assert_eq!(keys_range, vec![format!("myrepo@{c1}..{c3}")]);
+
     // Target with no notes on its commit returns empty keys (no fallback to bare
     // repo)
-    let target_empty = ReviewTarget::from_repo_args(repo.clone(), vec![_c2.clone()], false);
+    let target_empty = ReviewTarget::from_repo_args(repo.clone(), vec![c2.clone()], false);
     assert!(target_empty.matched_notes_db_keys(&db).is_empty());
 
     // Unrooted target matches bare repo

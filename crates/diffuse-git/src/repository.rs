@@ -211,35 +211,66 @@ impl Repository {
         Ok(())
     }
 
-    /// Resolve the commit hash to scope review notes to.
+    /// Resolve the commit or range scope to attach review notes to.
     ///
-    /// When reviewing a range, returns the second newest commit in the range
-    /// (or the base commit). Otherwise returns HEAD.
+    /// - Working tree review (empty args): returns HEAD.
+    /// - Single commit diff (`c^!` or `p..c` where `p` is `c`'s parent):
+    ///   returns commit parent `p`.
+    /// - Explicit single commit reference (`c`): returns commit `c`.
+    /// - Multi-commit range (`c0..c3`): returns `<base>..<tip~1>` (parent of
+    ///   tip).
+    /// - Explicit worktree range (`<base>..`): returns `<base>..<head>` (parent
+    ///   of worktree tip).
     pub fn notes_commit(&self, git_revs: &[String]) -> Option<String> {
+        if git_revs.is_empty() {
+            return self.head_commit_hash();
+        }
+
+        // Single ref without range syntax: resolves to that single commit
+        if git_revs.len() == 1 {
+            let r = &git_revs[0];
+            if let Some(c) = r.strip_suffix("^!") {
+                return self.rev_to_full_hash(&format!("{c}^"));
+            }
+            if !r.contains("..") && !r.contains("...") {
+                return self.rev_to_full_hash(r);
+            }
+        }
+
         let ref_pair = crate::types::RefPair::resolve(git_revs, false);
 
-        if !ref_pair.worktree_new
-            && let (Some(old), Some(new)) = (ref_pair.old_ref, ref_pair.new_ref)
-        {
-            // If new is a commit, try traversing its parent commits
-            if let Some(new_id) = self.rev_to_full_hash(&new)
-                && let Ok(id) = gix::ObjectId::from_hex(new_id.as_bytes())
+        if ref_pair.worktree_new {
+            let head = self.head_commit_hash()?;
+            if let Some(old) = ref_pair.old_ref
+                && let Some(old_hash) = self.rev_to_full_hash(&old)
+                && old_hash != head
+            {
+                return Some(format!("{old_hash}..{head}"));
+            }
+            return Some(head);
+        }
+
+        if let (Some(old), Some(new)) = (ref_pair.old_ref, ref_pair.new_ref) {
+            let old_hash = self.rev_to_full_hash(&old)?;
+            let new_hash = self.rev_to_full_hash(&new)?;
+
+            // Check if this range contains exactly one commit:
+            if self.is_single_commit_range(&old, &new) {
+                return Some(old_hash);
+            }
+
+            // Multi-commit range: base..parent_of_tip
+            if let Ok(id) = gix::ObjectId::from_hex(new_hash.as_bytes())
                 && let Ok(walk) = self.inner.rev_walk([id]).all()
             {
                 let commits: Vec<_> = walk.filter_map(|info| info.ok()).take(2).collect();
                 if commits.len() >= 2 {
-                    return Some(commits[1].id.to_string());
+                    let tip_parent = commits[1].id.to_string();
+                    return Some(format!("{old_hash}..{tip_parent}"));
                 }
             }
-            if let Some(h) = self.rev_to_full_hash(&old) {
-                return Some(h);
-            }
-            if let Some(h) = self.rev_to_full_hash(&format!("{new}~1")) {
-                return Some(h);
-            }
-            if let Some(h) = self.rev_to_full_hash(&new) {
-                return Some(h);
-            }
+
+            return Some(format!("{old_hash}..{new_hash}"));
         }
 
         self.head_commit_hash()

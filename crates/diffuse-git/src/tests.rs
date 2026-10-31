@@ -1084,6 +1084,50 @@ fn test_is_single_commit_range() {
 }
 
 #[test]
+fn test_notes_scope_resolution() {
+    use crate::testing::{commit_files, init_repo};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = init_repo(tmp.path()).expect("init_repo succeeds");
+
+    let c1 = commit_files(&repo, "c1", &[("a.txt", "1\n")]).expect("c1");
+    let c2 = commit_files(&repo, "c2", &[("a.txt", "2\n")]).expect("c2");
+    let c3 = commit_files(&repo, "c3", &[("a.txt", "3\n")]).expect("c3");
+
+    // 1. Working tree: resolves to HEAD (c3)
+    assert_eq!(repo.notes_commit(&[]), Some(c3.to_string()));
+
+    // 2. Single-commit range c1..c2 (1 commit): resolves to c1 (parent of c2)
+    assert_eq!(
+        repo.notes_commit(&[format!("{c1}..{c2}")]),
+        Some(c1.to_string())
+    );
+
+    // 3. Single-commit notation c2^!: resolves to c1 (parent of c2)
+    assert_eq!(
+        repo.notes_commit(&[format!("{c2}^!")]),
+        Some(c1.to_string())
+    );
+
+    // 4. Multi-commit range c1..c3 (c2, c3): base c1, parent of tip c3 is c2 ->
+    //    "c1..c2"
+    assert_eq!(
+        repo.notes_commit(&[format!("{c1}..{c3}")]),
+        Some(format!("{c1}..{c2}"))
+    );
+
+    // 5. Single commit ref c1: resolves to c1
+    assert_eq!(repo.notes_commit(&[c1.to_string()]), Some(c1.to_string()));
+
+    // 6. Range c1.. (equivalent to c1..HEAD): base c1, parent of tip c3 (HEAD) is
+    //    c2 -> "c1..c2"
+    assert_eq!(
+        repo.notes_commit(&[format!("{c1}..")]),
+        Some(format!("{c1}..{c2}"))
+    );
+}
+
+#[test]
 fn test_repository_create_tag() {
     use crate::testing::{commit_files, init_repo};
 

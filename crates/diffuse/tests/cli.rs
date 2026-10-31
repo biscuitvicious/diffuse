@@ -1428,6 +1428,88 @@ fn test_cli_notes_add_subcommand() {
     assert_eq!(v["file"], "foo.rs");
     assert_eq!(v["text"], "JSON create");
     assert!(v["location"]["coord"].is_object());
+
+    // 7. Using -r / --rev to create and list notes against a commit range
+    let c2 = commit_files(
+        &repo,
+        "commit 2",
+        &[("foo.rs", "fn first() {}\nfn second() {}\n")],
+    )
+    .unwrap();
+    let c3 = commit_files(
+        &repo,
+        "commit 3",
+        &[("foo.rs", "fn first() {}\nfn second() {}\nfn third() {}\n")],
+    )
+    .unwrap();
+    let c1_sha = repo.rev_to_full_hash("HEAD~2").unwrap();
+    let c2_sha = c2.to_string();
+    let c3_sha = c3.to_string();
+
+    let out7 = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("create")
+        .arg("foo.rs:1")
+        .arg("-m")
+        .arg("Range note")
+        .arg("-r")
+        .arg(format!("{c1_sha}..{c3_sha}"))
+        .output()
+        .unwrap();
+    assert_eq!(
+        out7.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out7.stderr)
+    );
+
+    let db = load_notes(&notes_path);
+    let expected_range_key = format!("test-repo@{c1_sha}..{c2_sha}");
+    assert!(
+        db.contains_key(&expected_range_key),
+        "expected key {expected_range_key} in db, found: {:?}",
+        db.keys().collect::<Vec<_>>()
+    );
+
+    // Query back using list -r
+    let out_list = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg("list")
+        .arg("-r")
+        .arg(format!("{c1_sha}..{c3_sha}"))
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert_eq!(out_list.status.code(), Some(0));
+    let list_v: serde_json::Value = serde_json::from_slice(&out_list.stdout).unwrap();
+    assert_eq!(list_v["notes"].as_array().unwrap().len(), 1);
+    assert_eq!(list_v["notes"][0]["text"], "Range note");
+
+    // Query back using diffuse notes <c1>..<c3> (positional range arg, default list
+    // action)
+    let out_pos = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(tmp.path())
+        .arg("--notes-file")
+        .arg(notes_file_arg)
+        .arg("--repo")
+        .arg("test-repo")
+        .arg("notes")
+        .arg(format!("{c1_sha}..{c3_sha}"))
+        .output()
+        .unwrap();
+    assert_eq!(out_pos.status.code(), Some(0));
+    let stdout_pos = String::from_utf8_lossy(&out_pos.stdout);
+    assert!(stdout_pos.contains("Range note"));
     assert!(v["contentHash"].is_string());
     assert!(!v["originalSourceRows"].as_array().unwrap().is_empty());
 }

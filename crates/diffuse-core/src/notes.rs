@@ -834,6 +834,28 @@ pub fn notes_for_file<'a>(
         .flatten()
 }
 
+/// Check if a commit or range specification matches a candidate hash/range from
+/// the database.
+///
+/// Supports prefix matching for single commits as well as dual-endpoint prefix
+/// matching for commit ranges (`base..tip`). Single-commit targets never match
+/// range candidates, and range targets never match single-commit candidates.
+#[inline]
+pub(crate) fn commit_spec_matches(target_spec: &str, candidate_hash: &str) -> bool {
+    if let Some((target_base, target_tip)) = target_spec.split_once("..") {
+        if let Some((c_base, c_tip)) = candidate_hash.split_once("..") {
+            (target_base.starts_with(c_base) || c_base.starts_with(target_base))
+                && (target_tip.starts_with(c_tip) || c_tip.starts_with(target_tip))
+        } else {
+            false
+        }
+    } else if candidate_hash.contains("..") {
+        false
+    } else {
+        target_spec.starts_with(candidate_hash) || candidate_hash.starts_with(target_spec)
+    }
+}
+
 /// Query notes for a specific file path.
 ///
 /// Priority resolution order:
@@ -841,9 +863,8 @@ pub fn notes_for_file<'a>(
 /// - If `repo` is commit-scoped (`repo@commit`), matches buckets with
 ///   compatible commit prefix.
 /// - If `repo` is bare (`repo`), matches `{repo}@` buckets.
-///
-/// If `repo` is `None` (standalone review):
-/// - Searches all buckets in `db` for notes matching `file`.
+/// - If `repo` is `None` (standalone review): searches all buckets in `db` for
+///   notes matching `file`.
 pub fn query_notes_for_file<'a>(
     db: &'a NotesDB,
     repo: Option<&str>,
@@ -862,7 +883,7 @@ pub fn query_notes_for_file<'a>(
                 .iter()
                 .filter(|(k, _)| {
                     if let Some(hash) = k.strip_prefix(&prefix) {
-                        commit.starts_with(hash) || hash.starts_with(commit)
+                        commit_spec_matches(commit, hash)
                     } else {
                         false
                     }
@@ -902,7 +923,7 @@ pub fn note_files_for_repo(db: &NotesDB, repo: Option<&str>) -> Vec<String> {
             let prefix = format!("{repo_name}@");
             for (k, repo_map) in db {
                 if let Some(hash) = k.strip_prefix(&prefix)
-                    && (commit.starts_with(hash) || hash.starts_with(commit))
+                    && commit_spec_matches(commit, hash)
                 {
                     for (f, notes) in repo_map {
                         if !notes.is_empty() {

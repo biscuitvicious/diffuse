@@ -214,7 +214,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
 
     match &notes_args.action {
         None | Some(NotesAction::List { .. }) => {
-            let (resolved, in_progress, all, show_source, json, markdown, sub_revision) =
+            let (resolved, in_progress, all, show_source, json, markdown, sub_revision, list_rev) =
                 if let Some(NotesAction::List {
                     resolved,
                     in_progress,
@@ -223,6 +223,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                     json,
                     markdown,
                     ref revision,
+                    ref rev,
                 }) = notes_args.action
                 {
                     (
@@ -233,6 +234,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                         json || notes_args.json,
                         markdown || notes_args.markdown,
                         revision.clone(),
+                        rev.clone(),
                     )
                 } else {
                     (
@@ -243,12 +245,16 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                         notes_args.json,
                         notes_args.markdown,
                         RevisionArgs::default(),
+                        None,
                     )
                 };
 
             let mut combined_revision = args.revision.clone();
             combined_revision.extend(&notes_args.revision);
             combined_revision.extend(&sub_revision);
+            if let Some(r) = list_rev.as_ref().or(notes_args.rev.as_ref()) {
+                combined_revision.git_revs.push(r.clone());
+            }
 
             let list_target = ReviewTarget::from_parts(
                 repo,
@@ -388,6 +394,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             text,
             status,
             json,
+            rev,
         }) => {
             // 1. Resolve the target file and coordinate spans.
             let mut file_path: Option<String> = None;
@@ -469,6 +476,17 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 _ => NoteStatus::Open,
             };
 
+            let effective_revs = if let Some(r) = rev.as_ref().or(notes_args.rev.as_ref()) {
+                vec![r.clone()]
+            } else if !notes_args.revision.git_revs.is_empty() {
+                notes_args.revision.git_revs.clone()
+            } else {
+                args.revision.git_revs.clone()
+            };
+            let add_target =
+                ReviewTarget::from_repo_args(repo.clone(), effective_revs.clone(), args.staged);
+            let add_notes_key = add_target.notes_key();
+
             // 4. The note stores the diff rows it was created against. When the file is
             //    part of the reviewed diff, the pipeline runs with the provisional note
             //    registered (so gap synthesis includes its span) and the note is relocated
@@ -479,7 +497,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
                 Some(
                     load_git_repo_with_notes(
                         &current_dir,
-                        &args.revision.git_revs,
+                        &effective_revs,
                         std::slice::from_ref(&file_path),
                         args.staged,
                         ENGINE_CONTEXT,
@@ -649,7 +667,7 @@ pub fn run_notes_command(notes_args: &NotesArgs, args: &Args) -> io::Result<()> 
             };
 
             // 6. Persist and output.
-            add_note(&mut db, &notes_key, final_note.clone());
+            add_note(&mut db, &add_notes_key, final_note.clone());
             save_notes(&notes_path, &db)?;
 
             if *json {

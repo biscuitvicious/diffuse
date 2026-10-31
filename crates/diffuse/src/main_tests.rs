@@ -571,6 +571,50 @@ fn test_notes_cli_arg_parsing() {
     } else {
         panic!("expected Notes subcommand");
     }
+
+    let args = Args::try_parse_from([
+        "diffuse",
+        "notes",
+        "create",
+        "src/lib.rs:42",
+        "-m",
+        "range note",
+        "-r",
+        "c1..c2",
+    ])
+    .unwrap();
+    if let Some(SubCommand::Notes(notes)) = args.command {
+        assert!(matches!(
+            notes.action,
+            Some(NotesAction::Add {
+                target: Some(ref t),
+                rev: Some(ref r),
+                ..
+            }) if t == "src/lib.rs:42" && r == "c1..c2"
+        ));
+    } else {
+        panic!("expected Notes subcommand");
+    }
+
+    let args = Args::try_parse_from(["diffuse", "notes", "list", "-r", "HEAD~1"]).unwrap();
+    if let Some(SubCommand::Notes(notes)) = args.command {
+        assert!(matches!(
+            notes.action,
+            Some(NotesAction::List {
+                rev: Some(ref r),
+                ..
+            }) if r == "HEAD~1"
+        ));
+    } else {
+        panic!("expected Notes subcommand");
+    }
+
+    let args = Args::try_parse_from(["diffuse", "notes", "-r", "HEAD~1"]).unwrap();
+    if let Some(SubCommand::Notes(notes)) = args.command {
+        assert_eq!(notes.rev.as_deref(), Some("HEAD~1"));
+    } else {
+        panic!("expected Notes subcommand");
+    }
 }
 
 #[test]

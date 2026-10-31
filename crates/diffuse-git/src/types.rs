@@ -487,33 +487,26 @@ impl ReviewTarget {
     }
 
     /// Resolves the single commit hash if `git_revs` targets a single commit.
+    /// Resolves the single commit hash if `git_revs` targets a single commit
+    /// (e.g. `c^!` or `p..c` where `p` is `c`'s parent).
     pub fn single_commit(&self) -> Option<String> {
-        if self.git_revs.len() == 1 {
-            let r = &self.git_revs[0];
-            if !r.contains("..")
-                && !r.contains("...")
-                && !r.ends_with("^!")
-                && let Some(root) = self.repo.root()
-                && let Ok(repo) = crate::repository::Repository::open(root)
-            {
-                return repo.rev_to_full_hash(r);
-            }
+        let root = self.repo.root()?;
+        let repo = crate::repository::Repository::open(root).ok()?;
+        let ref_pair = RefPair::resolve(&self.git_revs, self.staged);
+        if !ref_pair.worktree_new
+            && let (Some(old), Some(new)) = (&ref_pair.old_ref, &ref_pair.new_ref)
+            && repo.is_single_commit_range(old, new)
+        {
+            return repo.rev_to_full_hash(new);
         }
         None
     }
 
-    /// Target commit hash to scope review notes to.
+    /// Target commit hash or range scope to attach review notes to.
     pub fn notes_commit(&self) -> Option<String> {
         let root = self.repo.root()?;
         let repo = crate::repository::Repository::open(root).ok()?;
-        if !self.git_revs.is_empty() {
-            if let Some(single) = self.single_commit() {
-                return Some(single);
-            }
-            repo.notes_commit(&self.git_revs)
-        } else {
-            self.repo.head_commit()
-        }
+        repo.notes_commit(&self.git_revs)
     }
 
     /// Scoped notes database key: `{repo_name}@{notes_commit}` or bare

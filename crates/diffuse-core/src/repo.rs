@@ -22,7 +22,7 @@ impl ReviewTargetNotesExt for ReviewTarget {
             let prefix = format!("{r}@");
             for k in db.keys() {
                 if let Some(hash) = k.strip_prefix(&prefix)
-                    && (target_commit.starts_with(hash) || hash.starts_with(target_commit))
+                    && crate::notes::commit_spec_matches(target_commit, hash)
                 {
                     matched.push(k.as_str());
                 }

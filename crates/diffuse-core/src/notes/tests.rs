@@ -328,13 +328,13 @@ fn test_notes_commit_for_ranges() {
         format!("myrepo@{c1}")
     );
 
-    // 3. Multi-commit range c1..c4 (commits: c2, c3, c4) -> second to last commit
-    //    in range (next newest) is c3
+    // 3. Multi-commit range c1..c4 (commits: c2, c3, c4) -> base c1, parent of tip
+    //    c4 is c3 -> c1..c3
     let r_1_4 = vec![format!("{c1}..{c4}")];
-    assert_eq!(notes_commit(dir, &r_1_4), Some(c3.clone()));
+    assert_eq!(notes_commit(dir, &r_1_4), Some(format!("{c1}..{c3}")));
     assert_eq!(
         notes_key_for_repo_args(dir, "myrepo", &r_1_4),
-        format!("myrepo@{c3}")
+        format!("myrepo@{c1}..{c3}")
     );
 
     // 4. Single-commit notation c3^! -> commit before c3 is c2
@@ -345,13 +345,35 @@ fn test_notes_commit_for_ranges() {
         format!("myrepo@{c2}")
     );
 
-    // 5. Two ref arguments [c1, c3] (commits: c2, c3) -> next newest is c2
+    // 5. Two ref arguments [c1, c3] (commits: c2, c3) -> base c1, parent of tip c3
+    //    is c2 -> c1..c2
     let r_two_refs = vec![c1.clone(), c3.clone()];
-    assert_eq!(notes_commit(dir, &r_two_refs), Some(c2.clone()));
+    assert_eq!(notes_commit(dir, &r_two_refs), Some(format!("{c1}..{c2}")));
     assert_eq!(
         notes_key_for_repo_args(dir, "myrepo", &r_two_refs),
-        format!("myrepo@{c2}")
+        format!("myrepo@{c1}..{c2}")
     );
+}
+
+#[test]
+fn test_commit_spec_matches() {
+    use super::commit_spec_matches;
+
+    // Both single commits: prefix matching in both directions
+    assert!(commit_spec_matches("abc12345", "abc12"));
+    assert!(commit_spec_matches("abc12", "abc12345"));
+    assert!(commit_spec_matches("abc12345", "abc12345"));
+    assert!(!commit_spec_matches("abc12345", "def678"));
+
+    // Range vs single commit: never matches
+    assert!(!commit_spec_matches("abc12..def34", "abc12"));
+    assert!(!commit_spec_matches("abc12", "abc12..def34"));
+
+    // Both ranges: both base and tip must match
+    assert!(commit_spec_matches("abc12345..def67890", "abc12..def67"));
+    assert!(commit_spec_matches("abc12..def67", "abc12345..def67890"));
+    assert!(!commit_spec_matches("abc12345..def67890", "xyz99..def67"));
+    assert!(!commit_spec_matches("abc12345..def67890", "abc12..xyz99"));
 }
 
 #[test]

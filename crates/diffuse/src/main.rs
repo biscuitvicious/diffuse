@@ -643,6 +643,18 @@ pub struct NotesArgs {
         long_help = "Render the review notes as GitHub-Flavored Markdown callout blocks."
     )]
     pub markdown: bool,
+
+    /// Target revision or commit range (e.g. `HEAD~1`, `c1..c2`)
+    #[arg(
+        short = 'r',
+        long = "rev",
+        alias = "revision",
+        value_name = "REV",
+        help_heading = "Filters",
+        help = "Target revision or commit range (e.g. 'HEAD~1', 'c1..c2')",
+        long_help = "Filter notes matching a specific revision or commit range."
+    )]
+    pub rev: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -725,6 +737,18 @@ Can filter by status, revision, or pathspecs, or export to JSON and Markdown.",
             long_help = "Render the review notes as GitHub-Flavored Markdown callout blocks."
         )]
         markdown: bool,
+
+        /// Target revision or commit range (e.g. `HEAD~1`, `c1..c2`)
+        #[arg(
+            short = 'r',
+            long = "rev",
+            alias = "revision",
+            value_name = "REV",
+            help_heading = "Filters",
+            help = "Target revision or commit range (e.g. 'HEAD~1', 'c1..c2')",
+            long_help = "Filter notes matching a specific revision or commit range."
+        )]
+        rev: Option<String>,
     },
 
     /// Create a new review note
@@ -824,6 +848,19 @@ the same diff rows."
             long_help = "Print the newly created review note serialized as JSON to stdout."
         )]
         json: bool,
+
+        /// Target revision or commit range (e.g. `HEAD~1`, `c1..c2`)
+        #[arg(
+            short = 'r',
+            long = "rev",
+            alias = "revision",
+            value_name = "REV",
+            help_heading = "Target & Coordinates",
+            help = "Target revision or commit range (e.g. 'HEAD~1', 'c1..c2')",
+            long_help = "Target revision or commit range to attach the note to. Can be a single commit \
+or a commit range. Overrides any top-level revision."
+        )]
+        rev: Option<String>,
     },
 
     /// Show details for a specific note
