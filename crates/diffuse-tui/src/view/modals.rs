@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use super::header::{truncate_pad, visible_width};
+use super::header::{clamp_or_pad_ansi, truncate_pad, visible_width};
 use crate::{
     core::wire::PipelineOutput,
     finder::FileFinderState,
@@ -400,13 +400,7 @@ pub fn render_finder_modal(
                     true,
                     theme,
                 );
-                let vis_w = visible_width(&rendered_row);
-                let pad_str = if vis_w < width {
-                    " ".repeat(width - vis_w)
-                } else {
-                    String::new()
-                };
-                lines.push(format!("{rendered_row}{pad_str}\x1b[0m"));
+                lines.push(clamp_or_pad_ansi(&rendered_row, width));
             }
         }
     }
@@ -587,9 +581,8 @@ pub fn render_finder_modal_widget(
     if let Some(m) = finder.matches.get(finder.selected_idx) {
         let file = &output.files[m.file_idx];
         let max_preview_rows = preview_area.height.saturating_sub(2) as usize;
-        let text_cols = (preview_area.width.saturating_sub(2) as usize)
-            .saturating_sub(6)
-            .max(1);
+        let inner_w = preview_area.width.saturating_sub(2) as usize;
+        let text_cols = inner_w.saturating_sub(6).max(1);
         if file.rows.is_empty() {
             preview_lines.push(Line::from(Span::styled(
                 "  (No diff lines to preview)",
@@ -617,7 +610,8 @@ pub fn render_finder_modal_widget(
                     true,
                     theme,
                 );
-                preview_lines.push(ansi_to_ratatui_line(&rendered_row));
+                let padded = clamp_or_pad_ansi(&rendered_row, inner_w);
+                preview_lines.push(ansi_to_ratatui_line(&padded));
             }
         }
     }

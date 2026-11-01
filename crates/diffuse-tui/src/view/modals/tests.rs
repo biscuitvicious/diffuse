@@ -246,6 +246,29 @@ fn test_ratatui_finder_modal_visual_layout() {
     assert!(full_text.contains("PREVIEW"));
     assert!(full_text.contains("+ First todo item"));
     assert!(full_text.contains("+ Second todo item"));
+
+    let add_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.add_tint_bg);
+    let mut found_preview_row = false;
+    for y in 0..24 {
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buffer[(x, y)].symbol());
+        }
+        if line.contains("First todo item") {
+            found_preview_row = true;
+            for x in 1..79 {
+                assert_eq!(
+                    buffer[(x, y)].bg,
+                    add_tint_bg,
+                    "cell at ({x}, {y}) must have add_tint_bg across full width of preview modal"
+                );
+            }
+        }
+    }
+    assert!(
+        found_preview_row,
+        "preview row containing 'First todo item' must exist"
+    );
 }
 
 #[test]
@@ -284,6 +307,39 @@ fn test_finder_modal_navigation_updates_preview_visual_layout() {
     assert!(full_text.contains("PREVIEW"));
     assert!(full_text.contains("- old render line"));
     assert!(full_text.contains("+ new render line"));
+
+    let del_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.del_tint_bg);
+    let add_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.add_tint_bg);
+    let mut found_del = false;
+    let mut found_add = false;
+    for y in 0..24 {
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buffer[(x, y)].symbol());
+        }
+        if line.contains("old render line") {
+            found_del = true;
+            for x in 1..79 {
+                assert_eq!(
+                    buffer[(x, y)].bg,
+                    del_tint_bg,
+                    "del preview row at ({x}, {y}) must have del_tint_bg to full width"
+                );
+            }
+        }
+        if line.contains("new render line") {
+            found_add = true;
+            for x in 1..79 {
+                assert_eq!(
+                    buffer[(x, y)].bg,
+                    add_tint_bg,
+                    "add preview row at ({x}, {y}) must have add_tint_bg to full width"
+                );
+            }
+        }
+    }
+    assert!(found_del, "must find deleted preview row");
+    assert!(found_add, "must find added preview row");
 }
 
 #[test]
@@ -293,6 +349,13 @@ fn test_ansi_finder_modal_visual_layout() {
 
     let lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::DEFAULT);
     assert_eq!(lines.len(), 24);
+    for (i, line) in lines.iter().enumerate() {
+        assert_eq!(
+            visible_width(line),
+            80,
+            "line {i} must have exact visual width 80"
+        );
+    }
 
     let joined = lines.join("\n");
     assert!(joined.contains("FIND FILE (1/2)"));
