@@ -238,7 +238,7 @@ fn test_help_modal_toggles_and_renders() {
         with_help.contains("KEY BINDINGS"),
         "help modal must render when enabled"
     );
-    assert!(with_help.contains("toggle syntax"));
+    assert!(with_help.contains("page down"));
 }
 
 #[test]

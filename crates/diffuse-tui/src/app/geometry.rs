@@ -670,6 +670,7 @@ impl ScrollbarCell {
     }
 
     /// Render this scrollbar cell into an ANSI SGR escape sequence string.
+    #[cfg(test)]
     pub(crate) fn render_ansi(self, palette: &crate::render::ThemePalette) -> String {
         use crate::render::ColorExt;
         let thumb_fg = palette.scrollbar_thumb.fg_code();

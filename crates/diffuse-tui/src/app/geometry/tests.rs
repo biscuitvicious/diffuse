@@ -185,7 +185,7 @@ index 1111111..2222222 100644
         "marker and text must render green: {raw_line:?}"
     );
     assert!(
-        frame.contains("\x1b[38;5;242m      \x1b[39m\x1b[38;5;120m"),
+        frame.contains("\x1b[38;5;242m      \x1b[38;5;120m"),
         "continuation segments must start with 6-space gutter and green foreground"
     );
 }

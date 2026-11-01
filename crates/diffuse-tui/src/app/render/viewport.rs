@@ -3,7 +3,7 @@
 
 use std::{collections::HashMap, time::Instant};
 
-use super::ansi::escape_ansi_for_diagnostic;
+use super::buffer::escape_ansi_for_diagnostic;
 use crate::{
     app::AppState,
     core::parse::RowKind,
