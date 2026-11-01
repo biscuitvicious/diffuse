@@ -33,13 +33,14 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     }
 }
 
-/// Compute the centered area for the file finder modal.
+/// Compute the centered area for standard dialog modals (file finder, key
+/// bindings).
 ///
 /// On large screens, the dialog occupies 50% of width and 60% of height,
 /// centered horizontally and vertically. On small screens, it expands up to the
 /// full screen dimensions.
 #[must_use]
-pub fn finder_modal_area(area: Rect) -> Rect {
+pub fn standard_modal_area(area: Rect) -> Rect {
     let modal_w = ((area.width as u32 * 50) / 100)
         .max(50)
         .min(area.width as u32) as u16;
@@ -47,6 +48,18 @@ pub fn finder_modal_area(area: Rect) -> Rect {
         .max(16)
         .min(area.height as u32) as u16;
     centered_rect(modal_w, modal_h, area)
+}
+
+/// Compute the centered area for the file finder modal.
+#[must_use]
+pub fn finder_modal_area(area: Rect) -> Rect {
+    standard_modal_area(area)
+}
+
+/// Compute the centered area for the key-bindings help modal.
+#[must_use]
+pub fn help_modal_area(area: Rect) -> Rect {
+    standard_modal_area(area)
 }
 
 /// Render the `?` key-bindings modal as full-screen overlay lines.
@@ -180,8 +193,8 @@ pub fn wrap_words(text: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-/// Render the Help Modal directly as a full-screen Ratatui widget popup with
-/// rounded borders.
+/// Render the Help Modal as a centered Ratatui widget popup with rounded
+/// borders.
 pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect) {
     let entries: &[(&str, &str)] = &[
         ("j · ↓ / k · ↑", "next / prev line"),
@@ -206,13 +219,20 @@ pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect)
         ("q · Ctrl+c", "quit"),
     ];
 
-    f.render_widget(Clear, area);
+    let modal_area = standard_modal_area(area);
+    f.render_widget(Clear, modal_area);
 
     let p = &theme.palette;
+    let title = if modal_area.width < 38 {
+        " KEYS · ?/Esc "
+    } else {
+        " KEY BINDINGS · ? / Esc close "
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(" KEY BINDINGS · ? / Esc close ")
+        .title(title)
         .title_style(
             Style::default()
                 .fg(crate::view::to_color(p.modal_title))
@@ -225,7 +245,7 @@ pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect)
                 .fg(crate::view::to_color(p.modal_text)),
         );
 
-    let inner_w = area.width.saturating_sub(2) as usize;
+    let inner_w = modal_area.width.saturating_sub(2) as usize;
     let key_w = if inner_w < 44 {
         16
     } else if inner_w < 54 {
@@ -260,7 +280,7 @@ pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect)
     }
 
     let p_widget = Paragraph::new(lines).block(block);
-    f.render_widget(p_widget, area);
+    f.render_widget(p_widget, modal_area);
 }
 
 /// Render the fuzzy file finder popup dialog covering the full screen with a
@@ -489,7 +509,7 @@ pub fn render_finder_modal_widget(
     theme: &DiffuseTheme,
     area: Rect,
 ) {
-    let modal_area = finder_modal_area(area);
+    let modal_area = standard_modal_area(area);
     f.render_widget(Clear, modal_area);
 
     let p = &theme.palette;

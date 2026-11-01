@@ -18,8 +18,9 @@ pub use header::{
     visible_width, wrap_text_by_visual_width,
 };
 pub use modals::{
-    ansi_to_ratatui_line, finder_modal_area, render_finder_modal, render_finder_modal_widget,
-    render_help_modal, render_help_modal_widget, render_note_modal_widget,
+    ansi_to_ratatui_line, finder_modal_area, help_modal_area, render_finder_modal,
+    render_finder_modal_widget, render_help_modal, render_help_modal_widget,
+    render_note_modal_widget, standard_modal_area,
 };
 
 use ratatui::style::Color;

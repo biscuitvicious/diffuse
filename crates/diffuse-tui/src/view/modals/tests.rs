@@ -29,11 +29,54 @@ fn test_ratatui_help_modal_widget() {
     assert!(text.contains("KEY BINDINGS"));
     assert!(text.contains("next / prev hunk"));
     assert!(text.contains("? / Esc close"));
+
+    // Verify centering and scaling (50x16 centered in 80x24 at x=15, y=4)
+    let modal_area = help_modal_area(Rect::new(0, 0, 80, 24));
+    assert_eq!(modal_area, Rect::new(15, 4, 50, 16));
+
+    // Outside cells must not be part of the modal
+    assert_eq!(buffer[(0, 0)].symbol(), " ");
+    assert_eq!(buffer[(79, 23)].symbol(), " ");
+
+    // Border corners
+    assert_eq!(buffer[(15, 4)].symbol(), "╭");
+    assert_eq!(buffer[(64, 4)].symbol(), "╮");
+    assert_eq!(buffer[(15, 19)].symbol(), "╰");
+    assert_eq!(buffer[(64, 19)].symbol(), "╯");
+}
+
+#[test]
+fn test_ratatui_help_modal_large_screen_centering() {
+    let backend = TestBackend::new(200, 60);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    terminal
+        .draw(|f| {
+            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let modal_area = help_modal_area(Rect::new(0, 0, 200, 60));
+    // 50% width = 100, 60% height = 36, centered at x=50, y=12
+    assert_eq!(modal_area, Rect::new(50, 12, 100, 36));
+
+    // Outside cells must remain empty
+    assert_eq!(buffer[(0, 0)].symbol(), " ");
+    assert_eq!(buffer[(49, 12)].symbol(), " ");
+    assert_eq!(buffer[(150, 12)].symbol(), " ");
+    assert_eq!(buffer[(199, 59)].symbol(), " ");
+
+    // Border corners at (50, 12) and (149, 47)
+    assert_eq!(buffer[(50, 12)].symbol(), "╭");
+    assert_eq!(buffer[(149, 12)].symbol(), "╮");
+    assert_eq!(buffer[(50, 47)].symbol(), "╰");
+    assert_eq!(buffer[(149, 47)].symbol(), "╯");
 }
 
 #[test]
 fn test_ratatui_help_modal_visual_layout() {
-    let backend = TestBackend::new(50, 30);
+    let backend = TestBackend::new(50, 55);
     let mut terminal = Terminal::new(backend).unwrap();
 
     terminal
@@ -44,7 +87,7 @@ fn test_ratatui_help_modal_visual_layout() {
 
     let buffer = terminal.backend().buffer();
     let mut lines = Vec::new();
-    for y in 0..30 {
+    for y in 0..55 {
         let mut line = String::new();
         for x in 0..50 {
             line.push_str(buffer[(x, y)].symbol());
@@ -498,34 +541,25 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
 }
 
 #[test]
-fn test_finder_modal_area_scaling_and_centering() {
+fn test_standard_modal_area_scaling_and_centering() {
     use ratatui::layout::Rect;
 
-    // Large screens: exactly 50% width and 60% height, centered
-    let large1 = Rect::new(0, 0, 200, 60);
-    assert_eq!(finder_modal_area(large1), Rect::new(50, 12, 100, 36));
+    let cases = [
+        // (input, expected)
+        (Rect::new(0, 0, 200, 60), Rect::new(50, 12, 100, 36)),
+        (Rect::new(0, 0, 160, 50), Rect::new(40, 10, 80, 30)),
+        (Rect::new(0, 0, 100, 30), Rect::new(25, 6, 50, 18)),
+        (Rect::new(0, 0, 80, 24), Rect::new(15, 4, 50, 16)),
+        (Rect::new(0, 0, 44, 24), Rect::new(0, 4, 44, 16)),
+        (Rect::new(0, 0, 80, 14), Rect::new(15, 0, 50, 14)),
+        (Rect::new(0, 0, 50, 12), Rect::new(0, 0, 50, 12)),
+    ];
 
-    let large2 = Rect::new(0, 0, 160, 50);
-    assert_eq!(finder_modal_area(large2), Rect::new(40, 10, 80, 30));
-
-    let med = Rect::new(0, 0, 100, 30);
-    assert_eq!(finder_modal_area(med), Rect::new(25, 6, 50, 18));
-
-    // Standard 80x24: clamped to minimum bounds 50x16, centered
-    let standard = Rect::new(0, 0, 80, 24);
-    assert_eq!(finder_modal_area(standard), Rect::new(15, 4, 50, 16));
-
-    // Very small width: expands to full width (100%), height clamped to 16
-    let narrow = Rect::new(0, 0, 44, 24);
-    assert_eq!(finder_modal_area(narrow), Rect::new(0, 4, 44, 16));
-
-    // Very small height: expands to full height (100%), width clamped to 50
-    let short = Rect::new(0, 0, 80, 14);
-    assert_eq!(finder_modal_area(short), Rect::new(15, 0, 50, 14));
-
-    // Very small screen: both dimensions expand to full screen (100%)
-    let tiny = Rect::new(0, 0, 50, 12);
-    assert_eq!(finder_modal_area(tiny), Rect::new(0, 0, 50, 12));
+    for (input, expected) in cases {
+        assert_eq!(standard_modal_area(input), expected);
+        assert_eq!(finder_modal_area(input), expected);
+        assert_eq!(help_modal_area(input), expected);
+    }
 }
 
 #[test]
