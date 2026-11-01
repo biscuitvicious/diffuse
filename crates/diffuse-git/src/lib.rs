@@ -17,7 +17,7 @@ pub use mutation::{
     apply_hunk_to_buffer, create_stash_checkpoint, discard_file, discard_hunk, stage_file,
     stage_hunk, unstage_file, unstage_hunk,
 };
-pub use repository::Repository;
+pub use repository::{Repository, RevisionCandidate, RevisionKind};
 pub use status::{GitFileStatus, UntrackedOutput};
 pub use types::{
     GitBlob, GitDiffOptions, GitError, RefPair, Repo, ReviewTarget, RevisionRange,

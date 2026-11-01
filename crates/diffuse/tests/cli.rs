@@ -1959,3 +1959,64 @@ fn assert_zero_git_subprocess_invocations_in_workspace() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn test_dynamic_completion_git_revisions_and_ranges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path();
+    let repo = diffuse_git::testing::init_repo(repo_dir).unwrap();
+    diffuse_git::testing::commit_files(&repo, "Initial commit", &[("file.txt", "hello\n")])
+        .unwrap();
+
+    // Create a sub-directory to verify parent directory walk
+    let sub = repo_dir.join("sub/path");
+    fs::create_dir_all(&sub).unwrap();
+
+    // Test completion of HEAD from sub-directory
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--")
+        .arg("diffuse")
+        .arg("HEA")
+        .current_dir(&sub)
+        .env("COMPLETE", "bash")
+        .env("_CLAP_COMPLETE_INDEX", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("HEAD"), "stdout: {stdout}");
+
+    // Test completion of relative notation HEAD~
+    let out_rel = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--")
+        .arg("diffuse")
+        .arg("HEAD~")
+        .current_dir(&sub)
+        .env("COMPLETE", "bash")
+        .env("_CLAP_COMPLETE_INDEX", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(out_rel.status.code(), Some(0));
+    let stdout_rel = String::from_utf8_lossy(&out_rel.stdout);
+    assert!(stdout_rel.contains("HEAD~1"), "stdout: {stdout_rel}");
+
+    // Test completion of commit ranges main..HEA
+    let out_range = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("--")
+        .arg("diffuse")
+        .arg("main..HEA")
+        .current_dir(&sub)
+        .env("COMPLETE", "bash")
+        .env("_CLAP_COMPLETE_INDEX", "1")
+        .output()
+        .unwrap();
+
+    assert_eq!(out_range.status.code(), Some(0));
+    let stdout_range = String::from_utf8_lossy(&out_range.stdout);
+    assert!(
+        stdout_range.contains("main..HEAD"),
+        "stdout: {stdout_range}"
+    );
+}

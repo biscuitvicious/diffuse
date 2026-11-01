@@ -7,7 +7,7 @@
 
 use std::{env, io, process};
 
-use clap::Parser;
+use clap::{CommandFactory as _, Parser};
 
 use diffuse::init_logging;
 
@@ -27,6 +27,8 @@ pub use cli::{
 pub use cli::{args::SubCommand, dispatch::route_mode, theme::resolve_theme};
 
 fn main() -> io::Result<()> {
+    clap_complete::CompleteEnv::with_factory(Args::command).complete();
+
     let _ = init_logging();
     let args = Args::parse();
 

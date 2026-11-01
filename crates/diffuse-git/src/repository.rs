@@ -4,6 +4,34 @@ use std::path::Path;
 
 use crate::GitError;
 
+/// Category of a git revision reference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevisionKind {
+    LocalBranch,
+    RemoteBranch,
+    Tag,
+    Special,
+}
+
+impl RevisionKind {
+    /// Human-readable label for shell completion help.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::LocalBranch => "Local branch",
+            Self::RemoteBranch => "Remote branch",
+            Self::Tag => "Tag",
+            Self::Special => "Commit reference",
+        }
+    }
+}
+
+/// A git revision reference candidate with its classification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionCandidate {
+    pub name: String,
+    pub kind: RevisionKind,
+}
+
 /// A pure-Gitoxide repository handle.
 pub struct Repository {
     pub(crate) inner: gix::Repository,
@@ -59,6 +87,41 @@ impl Repository {
             .ok()
             .flatten()
             .map(|name| name.shorten().to_string())
+    }
+
+    /// List all local and remote branches, tags, and HEAD for completion.
+    pub fn revision_candidates(&self) -> Vec<RevisionCandidate> {
+        let mut candidates = Vec::new();
+        candidates.push(RevisionCandidate {
+            name: "HEAD".to_string(),
+            kind: RevisionKind::Special,
+        });
+
+        if let Ok(platform) = self.inner.references()
+            && let Ok(iter) = platform.all()
+        {
+            for reference in iter.flatten() {
+                let full_name = reference.name().as_bstr();
+                let kind = if full_name.starts_with(b"refs/heads/") {
+                    RevisionKind::LocalBranch
+                } else if full_name.starts_with(b"refs/remotes/") {
+                    if full_name.ends_with(b"/HEAD") {
+                        continue;
+                    }
+                    RevisionKind::RemoteBranch
+                } else if full_name.starts_with(b"refs/tags/") {
+                    RevisionKind::Tag
+                } else {
+                    continue;
+                };
+
+                candidates.push(RevisionCandidate {
+                    name: reference.name().shorten().to_string(),
+                    kind,
+                });
+            }
+        }
+        candidates
     }
 
     /// Check if a revision specifier resolves to an existing commit.

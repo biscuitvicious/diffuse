@@ -1,8 +1,11 @@
 //! Command-line argument definitions and Clap schema.
 
 use clap::{Parser, Subcommand};
+use clap_complete::engine::ArgValueCompleter;
 use diffuse::prelude::*;
 use std::path::PathBuf;
+
+use super::complete::complete_git_revision;
 
 /// The diffuse diff-engine CLI.
 #[derive(Parser, Debug)]
@@ -117,6 +120,7 @@ Defaults to the canonical root directory path of the detected git repository."
     #[arg(
         long,
         value_name = "KEY",
+        add = ArgValueCompleter::new(complete_git_revision),
         global = true,
         help_heading = "Review Notes",
         help = "Revision review key for notes storage and lookup",
@@ -387,6 +391,7 @@ pub struct RevisionArgs {
     /// Git revision arguments (revisions or commit ranges)
     #[arg(
         value_name = "GIT_REV",
+        add = ArgValueCompleter::new(complete_git_revision),
         help_heading = "Revision & Path Controls",
         help = "Git revision arguments (revisions or commit ranges)",
         long_help = "Arguments specifying commits (e.g. HEAD~1) or ranges (e.g. main..feat)."
@@ -663,6 +668,7 @@ pub struct NotesArgs {
         long = "rev",
         alias = "revision",
         value_name = "REV",
+        add = ArgValueCompleter::new(complete_git_revision),
         help_heading = "Filters",
         help = "Target revision or commit range (e.g. 'HEAD~1', 'c1..c2')",
         long_help = "Filter notes matching a specific revision or commit range."
@@ -757,6 +763,7 @@ Can filter by status, revision, or pathspecs, or export to JSON and Markdown.",
             long = "rev",
             alias = "revision",
             value_name = "REV",
+            add = ArgValueCompleter::new(complete_git_revision),
             help_heading = "Filters",
             help = "Target revision or commit range (e.g. 'HEAD~1', 'c1..c2')",
             long_help = "Filter notes matching a specific revision or commit range."
@@ -868,6 +875,7 @@ the same diff rows."
             long = "rev",
             alias = "revision",
             value_name = "REV",
+            add = ArgValueCompleter::new(complete_git_revision),
             help_heading = "Target & Coordinates",
             help = "Target revision or commit range (e.g. 'HEAD~1', 'c1..c2')",
             long_help = "Target revision or commit range to attach the note to. Can be a single commit \
