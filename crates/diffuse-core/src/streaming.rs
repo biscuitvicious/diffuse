@@ -405,7 +405,7 @@ pub fn stream_diff_reader<R: std::io::BufRead + Send + 'static>(
 
     std::thread::spawn(move || {
         let mut idx = 0;
-        diffuse_parse::parse_diff_from_reader(reader, |f| {
+        diffuse_parse::parse_diff_with_raw_from_reader(reader, |mut f, raw_diff| {
             let new_content = new_dir.as_ref().and_then(|dir| {
                 std::fs::read_to_string(dir.join(&f.path))
                     .ok()
@@ -417,12 +417,15 @@ pub fn stream_diff_reader<R: std::io::BufRead + Send + 'static>(
                     .ok()
                     .map(Arc::new)
             });
+            if new_content.is_none() && old_content.is_none() {
+                f.no_content = true;
+            }
             producer.push(FileJob {
                 idx,
                 file: f,
                 new_content,
                 old_content,
-                diff_fallback: None,
+                diff_fallback: Some(Arc::new(raw_diff)),
             });
             idx += 1;
         });

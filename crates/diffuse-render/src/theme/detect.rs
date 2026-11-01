@@ -126,6 +126,10 @@ fn poll_stdin(timeout_ms: i32) -> bool {
 
 #[cfg(unix)]
 fn query_terminal_mode_osc11() -> Option<TerminalMode> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return None;
+    }
+
     let _guard = RawModeGuard::acquire()?;
 
     let mut stdout = io::stdout().lock();

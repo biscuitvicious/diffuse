@@ -220,3 +220,20 @@ fn test_default_worker_count() {
     let expected = (cpus * 3 / 4).max(1);
     assert_eq!(default_worker_count(), expected);
 }
+
+#[test]
+fn test_stream_diff_reader_populates_raw_diff_source_and_no_content() {
+    let diff = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1,1 +1,1 @@\n-const X: i32 = 1;\n+const X: i32 = 2;\n";
+    let cursor = std::io::Cursor::new(diff.as_bytes());
+    let consumer = stream_diff_reader(cursor, PipelineOptions::default(), Some(2), None, None);
+    let files: Vec<OutputFile> = consumer.collect();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "x.rs");
+    match files[0].raw_source.as_ref() {
+        Some(crate::wire::RawFileSource::Raw { path, diff: d, .. }) => {
+            assert_eq!(path, "x.rs");
+            assert_eq!(d.as_str(), diff);
+        }
+        other => panic!("expected RawFileSource::Raw, got: {other:?}"),
+    }
+}

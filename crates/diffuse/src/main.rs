@@ -24,7 +24,11 @@ pub use cli::{
 };
 
 #[cfg(test)]
-pub use cli::{args::SubCommand, dispatch::route_mode, theme::resolve_theme};
+pub use cli::{
+    args::SubCommand,
+    dispatch::{is_terminal_interactive, route_mode},
+    theme::resolve_theme,
+};
 
 fn main() -> io::Result<()> {
     clap_complete::CompleteEnv::with_factory(Args::command).complete();

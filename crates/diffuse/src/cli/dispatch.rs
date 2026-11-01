@@ -41,6 +41,26 @@ pub fn route_mode(
     has_piped_stdin
 }
 
+/// Returns true if an interactive terminal session can be driven via stdin or
+/// the controlling terminal (`/dev/tty`).
+pub fn is_terminal_interactive(stdin_tty: bool) -> bool {
+    if stdin_tty {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 pub fn dispatch(args: &Args) -> io::Result<()> {
     if let Some(SubCommand::Notes(ref notes_args)) = args.command {
         return notes_cli::run_notes_command(notes_args, args);
@@ -129,7 +149,7 @@ pub fn dispatch(args: &Args) -> io::Result<()> {
         _ => args.show_source,
     };
 
-    let no_tui = args.no_tui || args.pager || is_markdown || is_raw;
+    let no_tui = args.no_tui || args.pager || is_markdown || is_raw || is_json || is_jsonl;
 
     // Direct path diffing: `diffuse <file1> <file2>` or `diffuse <dir1> <dir2>`.
     if explicit_cmd.is_none() && git_revs.len() == 2 {
@@ -250,11 +270,24 @@ fn dispatch_path_diff(
     )?;
 
     let explicit_notes_path = args.notes_file.as_ref();
-    let notes_path = explicit_notes_path.map(PathBuf::from);
-    let loaded_db = notes_path.as_ref().map(|p| load_notes(p));
+    let notes_path = explicit_notes_path
+        .map(PathBuf::from)
+        .unwrap_or_else(default_notes_path);
+    let loaded_db = load_notes(&notes_path);
+
+    let display_title = args
+        .repo_key
+        .clone()
+        .unwrap_or_else(|| format!("{} ↔ {}", p1.display(), p2.display()));
+    let target = ReviewTarget::from_repo(Repo::from_key(display_title))
+        .with_rev_key_opt(args.rev_key.clone());
 
     let pipeline_opts = PipelineOptions::default()
-        .with_notes(loaded_db, args.repo_key.clone(), args.rev_key.clone())
+        .with_notes(
+            Some(loaded_db),
+            target.repo_key().map(ToString::to_string),
+            target.rev_key().map(ToString::to_string),
+        )
         .with_show_resolved(show_resolved)
         .with_visual_context(args.context)
         .with_expand_lines(args.expand_lines)
@@ -271,20 +304,19 @@ fn dispatch_path_diff(
         args.jobs,
     );
 
-    if !no_tui && stdin_tty && stdout_tty {
-        let theme = resolve_theme(args.theme.as_deref(), true);
+    if !no_tui && stdout_tty && is_terminal_interactive(stdin_tty) {
+        let theme = resolve_theme(args.theme.as_deref(), stdin_tty);
         let initial_out = PipelineOutput {
             files: Vec::new(),
             branch: String::new(),
             untracked_skipped: Vec::new(),
         };
-        let target = ReviewTarget::from_repo(Repo::default());
         run_tui(
             initial_out,
             Some(consumer.into_receiver()),
             None,
             target,
-            notes_path.unwrap_or_else(default_notes_path),
+            notes_path,
             args.expand_lines,
             theme,
             show_resolved,
@@ -325,11 +357,25 @@ fn dispatch_diff_stream(
     colorize: bool,
 ) -> io::Result<()> {
     let explicit_notes_path = args.notes_file.as_ref();
-    let notes_path = explicit_notes_path.map(PathBuf::from);
-    let loaded_db = notes_path.as_ref().map(|p| load_notes(p));
+    let notes_path = explicit_notes_path
+        .map(PathBuf::from)
+        .unwrap_or_else(default_notes_path);
+    let loaded_db = load_notes(&notes_path);
+
+    let display_title = match (args.repo_key.as_deref(), diff_opt) {
+        (Some(key), _) => key,
+        (None, Some(path)) => path,
+        (None, None) => "<stdin>",
+    };
+    let target = ReviewTarget::from_repo(Repo::from_key(display_title))
+        .with_rev_key_opt(args.rev_key.clone());
 
     let pipeline_opts = PipelineOptions::default()
-        .with_notes(loaded_db, args.repo_key.clone(), args.rev_key.clone())
+        .with_notes(
+            Some(loaded_db),
+            target.repo_key().map(ToString::to_string),
+            target.rev_key().map(ToString::to_string),
+        )
         .with_show_resolved(show_resolved)
         .with_visual_context(args.context)
         .with_expand_lines(args.expand_lines)
@@ -365,20 +411,19 @@ fn dispatch_diff_stream(
         )
     };
 
-    if !no_tui && stdin_tty && stdout_tty {
-        let theme = resolve_theme(args.theme.as_deref(), true);
+    if !no_tui && stdout_tty && is_terminal_interactive(stdin_tty) {
+        let theme = resolve_theme(args.theme.as_deref(), stdin_tty);
         let initial_out = PipelineOutput {
             files: Vec::new(),
             branch: String::new(),
             untracked_skipped: Vec::new(),
         };
-        let target = ReviewTarget::from_repo(Repo::default());
         run_tui(
             initial_out,
             Some(consumer.into_receiver()),
             None,
             target,
-            notes_path.unwrap_or_else(default_notes_path),
+            notes_path,
             args.expand_lines,
             theme,
             show_resolved,
@@ -458,8 +503,8 @@ fn dispatch_git_review(
 
     let staged = args.staged;
 
-    if !no_tui && stdin_tty && stdout_tty {
-        let theme = resolve_theme(args.theme.as_deref(), true);
+    if !no_tui && stdout_tty && is_terminal_interactive(stdin_tty) {
+        let theme = resolve_theme(args.theme.as_deref(), stdin_tty);
         let (consumer, meta_rx) = spawn_git_stream_pipeline(
             repo_root,
             git_revs.to_vec(),

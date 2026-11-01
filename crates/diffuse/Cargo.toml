@@ -35,6 +35,7 @@ yansi = { workspace = true }
 
 [dev-dependencies]
 difflib = { workspace = true }
+libc = { workspace = true }
 rayon = { workspace = true }
 tempfile = { workspace = true }
 nix = { version = "0.31", features = ["term"] }

@@ -32,6 +32,9 @@ pub fn stage_action(
     repo_root: &Path,
     whole_file: bool,
 ) -> Result<(), String> {
+    if repo_root.as_os_str().is_empty() {
+        return Err("cannot stage: not in a git repository review".into());
+    }
     let f = match state.current_file() {
         Some(file) => file,
         None => return Err("no active file".into()),
@@ -60,6 +63,9 @@ pub fn unstage_action(
     repo_root: &Path,
     whole_file: bool,
 ) -> Result<(), String> {
+    if repo_root.as_os_str().is_empty() {
+        return Err("cannot unstage: not in a git repository review".into());
+    }
     let f = match state.current_file() {
         Some(file) => file,
         None => return Err("no active file".into()),
@@ -89,6 +95,9 @@ pub fn discard_action(
     repo_root: &Path,
     whole_file: bool,
 ) -> Result<Option<String>, String> {
+    if repo_root.as_os_str().is_empty() {
+        return Err("cannot discard: not in a git repository review".into());
+    }
     let f = match state.current_file() {
         Some(file) => file,
         None => return Err("no active file".into()),
@@ -117,6 +126,9 @@ pub fn reload_diff(
     repo_root: &Path,
     git_revs: &[String],
 ) -> Result<(), String> {
+    if repo_root.as_os_str().is_empty() {
+        return Err("cannot reload diff: not in a git repository review".into());
+    }
     let staged = state.target.is_staged();
     let notes_db = state.visible_notes_db();
 
@@ -210,6 +222,9 @@ pub fn toggle_staged_action(
     repo_root: &Path,
     git_revs: &[String],
 ) -> Result<(), String> {
+    if repo_root.as_os_str().is_empty() {
+        return Err("cannot toggle staged: not in a git repository review".into());
+    }
     if state.commit_range.is_some()
         || state.target.is_range()
         || diffuse_core::repo::RevisionRange::resolve(repo_root, git_revs).is_some()

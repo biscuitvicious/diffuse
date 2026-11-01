@@ -83,10 +83,10 @@ pub fn process_single_diff_file(
     // (sync fallback included). Gating this on lazy stubs would leave
     // user-collapsed files unloadable — the `Git` descriptor is ~100 bytes,
     // and for non-git inputs the embedded `Raw` diff is the only reload path.
-    let raw_source = if let Some(fb) = diff_fallback {
+    let raw_source = if let Some(ref fb) = diff_fallback {
         Some(crate::wire::RawFileSource::Raw {
             path: f.path.clone(),
-            diff: fb,
+            diff: Arc::clone(fb),
             new_content: new_content.map(String::from),
             old_content: old_content.map(String::from),
         })
@@ -145,6 +145,9 @@ pub fn process_single_diff_file(
     crate::cluster::dp::set_cluster_bandwidth_min(opts.cluster_bandwidth_min);
     crate::cluster::dp::set_cluster_bandwidth_slack(opts.cluster_bandwidth_slack);
     let t_start = Instant::now();
+    if new_content.is_none() && old_content.is_none() {
+        f.no_content = true;
+    }
     let ext = f.path.rsplit('.').next().unwrap_or("");
     let profile = lang_profile(ext);
     let new_lines_fallback: Vec<String>;
@@ -192,9 +195,7 @@ pub fn process_single_diff_file(
     } else if let Some(c) = new_content {
         Some(c.len())
     } else if f.is_binary {
-        if let Ok(meta) = fs::metadata(&f.path) {
-            Some(meta.len() as usize)
-        } else if let Some(ref r) = opts.target_repo_key
+        if let Some(ref r) = opts.target_repo_key
             && let Ok(meta) = fs::metadata(Path::new(r).join(&f.path))
         {
             Some(meta.len() as usize)

@@ -4,7 +4,7 @@ use clap::Parser;
 
 use diffuse::prelude::*;
 
-use super::{Args, SubCommand, route_mode};
+use super::{Args, SubCommand, is_terminal_interactive, route_mode};
 
 #[test]
 fn piped_diff_is_stream_mode() {
@@ -41,6 +41,29 @@ fn git_args_are_always_git_mode() {
         false,
         false
     ));
+}
+
+#[test]
+fn test_is_terminal_interactive_true_when_stdin_tty() {
+    assert!(is_terminal_interactive(true));
+}
+
+#[test]
+fn test_is_terminal_interactive_matches_dev_tty_when_stdin_not_tty() {
+    let result = is_terminal_interactive(false);
+    #[cfg(unix)]
+    {
+        let can_open = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .is_ok();
+        assert_eq!(result, can_open);
+    }
+    #[cfg(not(unix))]
+    {
+        assert!(!result);
+    }
 }
 
 #[test]

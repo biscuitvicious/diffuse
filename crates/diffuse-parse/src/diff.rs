@@ -15,13 +15,14 @@ pub fn zero_hunk_section(path: &str) -> String {
 }
 
 /// Parse a sequence of diff lines progressively, yielding each `DiffFile`
-/// as soon as it has been completely parsed.
-pub fn parse_diff_lines<I, S>(lines: I, mut on_file: impl FnMut(DiffFile))
+/// and its raw unified diff text as soon as it has been completely parsed.
+pub fn parse_diff_lines_with_raw<I, S>(lines: I, mut on_file: impl FnMut(DiffFile, String))
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
     let mut cur: Option<DiffFile> = None;
+    let mut cur_raw = String::new();
     let mut oi: u32 = 1;
     let mut ni: u32 = 1;
 
@@ -31,8 +32,12 @@ where
             if let Some(c) = cur.take()
                 && is_valid_diff_file(&c)
             {
-                on_file(c);
+                on_file(c, std::mem::take(&mut cur_raw));
+            } else {
+                cur_raw.clear();
             }
+            cur_raw.push_str(line);
+            cur_raw.push('\n');
             let (_p_a, p_b) = parse_diff_git_paths(rest);
             cur = Some(DiffFile {
                 path: p_b.unwrap_or_default(),
@@ -54,7 +59,12 @@ where
             });
         } else if cur.is_none() {
             continue;
-        } else if let Some(mode) = line.strip_prefix("old mode ") {
+        } else {
+            cur_raw.push_str(line);
+            cur_raw.push('\n');
+        }
+
+        if let Some(mode) = line.strip_prefix("old mode ") {
             if let Some(c) = cur.as_mut() {
                 c.old_mode = Some(mode.trim().to_string());
                 if c.status == FileStatus::Modified {
@@ -225,8 +235,28 @@ where
     if let Some(c) = cur.take()
         && is_valid_diff_file(&c)
     {
-        on_file(c);
+        on_file(c, cur_raw);
     }
+}
+
+/// Parse a sequence of diff lines progressively, yielding each `DiffFile`
+/// as soon as it has been completely parsed.
+pub fn parse_diff_lines<I, S>(lines: I, mut on_file: impl FnMut(DiffFile))
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    parse_diff_lines_with_raw(lines, |f, _raw| on_file(f));
+}
+
+/// Parse a `git diff` progressively from any `io::BufRead` (such as `stdin`),
+/// yielding each `DiffFile` and its raw unified diff text to a callback as soon
+/// as it has been completely parsed.
+pub fn parse_diff_with_raw_from_reader<R: std::io::BufRead>(
+    reader: R,
+    on_file: impl FnMut(DiffFile, String),
+) {
+    parse_diff_lines_with_raw(reader.lines().map_while(Result::ok), on_file);
 }
 
 /// Parse a `git diff` progressively, yielding each `DiffFile` to a callback

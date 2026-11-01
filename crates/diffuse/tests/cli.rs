@@ -2020,3 +2020,334 @@ fn test_dynamic_completion_git_revisions_and_ranges() {
         "stdout: {stdout_range}"
     );
 }
+
+#[test]
+fn piped_diff_with_redirected_stdout_never_enters_tui() {
+    let diff =
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-one\n+ONE\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+    drop(stdin);
+
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("?1049"),
+        "must not enter alternate screen when stdout is redirected"
+    );
+    assert!(stdout.contains("a.txt"));
+}
+
+#[test]
+fn piped_diff_with_non_tui_flags() {
+    let diff =
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-one\n+ONE\n";
+    for flag in ["-p", "--no-tui", "--raw"] {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+            .arg(flag)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let mut stdin = child.stdin.take().unwrap();
+        Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+        drop(stdin);
+
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(0));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(!stdout.contains("?1049"));
+        assert!(stdout.contains("a.txt"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_diff_into_diffuse_with_pty_and_pager_flag_never_enters_tui() {
+    let pty = nix::pty::openpty(None, None).expect("openpty failed");
+    let mut master = File::from(pty.master);
+    let slave = File::from(pty.slave);
+
+    let diff =
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-one\n+ONE\n";
+    let mut child = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .stdin(Stdio::piped())
+        .stdout(slave)
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+    drop(stdin);
+
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 256];
+        loop {
+            match master.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                Err(_) => break,
+            }
+        }
+        buf
+    });
+
+    let out = child.wait_with_output().unwrap();
+    let pty_bytes = reader.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&pty_bytes);
+    assert!(
+        !stdout.contains("?1049"),
+        "must not enter TUI when -p is specified"
+    );
+    assert!(stdout.contains("a.txt"));
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_diff_into_diffuse_with_pty_stdout_enters_tui_and_quits() {
+    use std::{io::Read, os::unix::process::CommandExt};
+
+    let winsize = nix::pty::Winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let pty = nix::pty::openpty(Some(&winsize), None).expect("openpty failed");
+    let mut master = File::from(pty.master);
+    let slave = File::from(pty.slave);
+
+    let diff =
+        "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,1 +1,1 @@\n-one\n+ONE\n";
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.arg("--theme")
+        .arg("dark")
+        .stdin(Stdio::piped())
+        .stdout(slave)
+        .stderr(Stdio::piped());
+
+    unsafe {
+        cmd.pre_exec(move || {
+            libc::setsid();
+            libc::ioctl(1, libc::TIOCSCTTY, 0);
+            Ok(())
+        });
+    }
+
+    let mut child = cmd.spawn().unwrap();
+    drop(cmd);
+
+    let mut stdin = child.stdin.take().unwrap();
+    Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+    drop(stdin);
+
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        let mut answered_query = false;
+        let mut sent_q = false;
+
+        loop {
+            match master.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if !answered_query && buf.windows(3).any(|w| w == b"[6n" || w == b"[?u") {
+                        let _ = master.write_all(b"\x1b[1;1R");
+                        let _ = master.flush();
+                        answered_query = true;
+                    }
+                    if !sent_q && buf.windows(5).any(|w| w == b"?1049") {
+                        let _ = master.write_all(b"q");
+                        let _ = master.flush();
+                        sent_q = true;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        buf
+    });
+
+    let out = child.wait_with_output().unwrap();
+    let pty_bytes = reader.join().unwrap_or_default();
+    let stdout = String::from_utf8_lossy(&pty_bytes);
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "TUI must exit cleanly with 0 on 'q', stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        stdout.contains("?1049"),
+        "must enter alternate screen TUI when stdin is piped and stdout is a PTY, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("<stdin>"),
+        "must display '<stdin>' as header title, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("\u{2387}"),
+        "must not display branch glyph when diff is piped, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("diffuse"),
+        "must not display git repo name when diff is piped, got: {stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn piped_large_multi_file_diff_into_diffuse_with_pty_stdout_never_panics() {
+    use std::{io::Read, os::unix::process::CommandExt};
+
+    let winsize = nix::pty::Winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let pty = nix::pty::openpty(Some(&winsize), None).expect("openpty failed");
+    let mut master = File::from(pty.master);
+    let slave = File::from(pty.slave);
+
+    let mut diff = String::new();
+    for fi in 0..10 {
+        diff.push_str(&format!(
+            "diff --git a/file_{fi}.rs b/file_{fi}.rs\n--- a/file_{fi}.rs\n+++ b/file_{fi}.rs\n@@ -1,5 +1,6 @@\n"
+        ));
+        for li in 0..50 {
+            diff.push_str(&format!(" ctx line {li} in file {fi}\n"));
+        }
+        diff.push_str(&format!("-old line in file {fi}\n+new line in file {fi}\n"));
+        for li in 50..100 {
+            diff.push_str(&format!(" ctx line {li} in file {fi}\n"));
+        }
+    }
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.arg("--theme")
+        .arg("dark")
+        .stdin(Stdio::piped())
+        .stdout(slave)
+        .stderr(Stdio::piped());
+
+    unsafe {
+        cmd.pre_exec(move || {
+            libc::setsid();
+            libc::ioctl(1, libc::TIOCSCTTY, 0);
+            Ok(())
+        });
+    }
+
+    let mut child = cmd.spawn().unwrap();
+    drop(cmd);
+
+    let mut stdin = child.stdin.take().unwrap();
+    Write::write_all(&mut stdin, diff.as_bytes()).unwrap();
+    drop(stdin);
+
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        let mut answered_query = false;
+        let mut sent_q = false;
+
+        loop {
+            match master.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    buf.extend_from_slice(&chunk[..n]);
+                    if !answered_query && buf.windows(3).any(|w| w == b"[6n" || w == b"[?u") {
+                        let _ = master.write_all(b"\x1b[1;1R");
+                        let _ = master.flush();
+                        answered_query = true;
+                    }
+                    if !sent_q && buf.windows(5).any(|w| w == b"?1049") {
+                        let _ = master.write_all(b"q");
+                        let _ = master.flush();
+                        sent_q = true;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        buf
+    });
+
+    let out = child.wait_with_output().unwrap();
+    let _ = reader.join();
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "large piped diff must exit cleanly with 0 on 'q', stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn piped_diff_in_git_repo_does_not_synthesize_lines_from_matching_local_git_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path();
+    let repo = diffuse_git::testing::init_repo(repo_dir).unwrap();
+
+    // Commit file.rs with local content containing local lines
+    let local_content = "local_line_1\nlocal_line_2\nlocal_line_3\nlocal_line_4\nlocal_line_5\n";
+    diffuse_git::testing::commit_files(&repo, "initial", &[("file.rs", local_content)]).unwrap();
+
+    // The piped diff has a change for file.rs with entirely different external
+    // lines
+    let diff = "diff --git a/file.rs b/file.rs\n--- a/file.rs\n+++ b/file.rs\n@@ -1,3 +1,3 @@\n external_ctx\n-external_old\n+external_new\n external_ctx2\n";
+
+    // Run diffuse with json output to check wire representation
+    let output = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .current_dir(repo_dir)
+        .arg("--json")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(diff.as_bytes())
+                .unwrap();
+            child.wait_with_output()
+        })
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("local_line"),
+        "must not synthesize or read lines from matching local git repo, got: {stdout}"
+    );
+    assert!(stdout.contains("external_ctx"));
+
+    let wire: diffuse_core::wire::PipelineOutput = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(wire.files.len(), 1);
+    let f = &wire.files[0];
+    assert_eq!(f.path, "file.rs");
+    assert_eq!(f.counts.mods, 1);
+    assert_eq!(f.counts.adds, 0);
+    assert_eq!(f.counts.dels, 0);
+}

@@ -190,7 +190,7 @@ impl AppState {
             hunk_starts,
             hunk_meta,
             note_id_counter: 0,
-            repo_root: PathBuf::from("."),
+            repo_root: PathBuf::new(),
             git_revs: Vec::new(),
             pending_editor: None,
             file_finder: None,
@@ -251,6 +251,8 @@ impl AppState {
         self.rev_key = target.rev_key().map(ToString::to_string);
         if let Some(root) = target.repo_root() {
             self.repo_root = root.to_path_buf();
+        } else {
+            self.repo_root = PathBuf::new();
         }
         self.commit_range = target.commit_range();
         self.git_revs = target.git_revs.clone();
@@ -410,9 +412,14 @@ impl AppState {
                 self.rev_key.clone(),
             )
             .with_expand_lines(self.expand_lines);
+        let repo_root_opt = if self.repo_root.as_os_str().is_empty() {
+            None
+        } else {
+            Some(self.repo_root.as_path())
+        };
         diffuse_core::pipeline::render_file_from_source(
             source,
-            Some(&self.repo_root),
+            repo_root_opt,
             &self.git_revs,
             diffuse_core::ENGINE_CONTEXT,
             &opts,
@@ -468,9 +475,14 @@ impl AppState {
                 let opts = diffuse_core::PipelineOptions::default()
                     .with_notes(Some(notes), repo_key, rev_key)
                     .with_expand_lines(expand_lines);
+                let repo_root_opt = if repo_root.as_os_str().is_empty() {
+                    None
+                } else {
+                    Some(repo_root.as_path())
+                };
                 if let Some(rendered) = diffuse_core::pipeline::render_file_from_source(
                     &source,
-                    Some(&repo_root),
+                    repo_root_opt,
                     &git_revs,
                     diffuse_core::ENGINE_CONTEXT,
                     &opts,

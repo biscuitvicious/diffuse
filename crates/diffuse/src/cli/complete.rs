@@ -20,9 +20,10 @@ pub fn find_git_repository(start: &Path) -> Option<Repository> {
     for dir in start.ancestors() {
         let dot_git = dir.join(".git");
         if dot_git.exists()
-            && let Ok(repo) = Repository::open(dir) {
-                return Some(repo);
-            }
+            && let Ok(repo) = Repository::open(dir)
+        {
+            return Some(repo);
+        }
     }
     Repository::discover(start).ok()
 }

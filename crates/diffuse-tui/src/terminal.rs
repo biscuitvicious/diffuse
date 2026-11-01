@@ -1,7 +1,7 @@
 //! Terminal Session RAII wrapper, Crossterm events & raw mode initialization.
 
 use std::{
-    io::{self, Stdout, Write, stdout},
+    io::{self, IsTerminal, Stdout, Write, stdout},
     panic,
     sync::atomic::AtomicBool,
     time::Duration,
@@ -71,7 +71,8 @@ impl TerminalGuard {
         install_panic_hook();
         let mut stdout = stdout();
         enable_raw_mode()?;
-        let enhanced_keyboard = supports_keyboard_enhancement().unwrap_or(false);
+        let enhanced_keyboard =
+            io::stdin().is_terminal() && supports_keyboard_enhancement().unwrap_or(false);
         if enhanced_keyboard {
             let _ = execute!(
                 stdout,

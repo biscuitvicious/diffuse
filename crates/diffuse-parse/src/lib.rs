@@ -8,7 +8,8 @@ pub mod hunk;
 pub mod row;
 
 pub use diff::{
-    parse_diff, parse_diff_for_each, parse_diff_from_reader, parse_diff_lines, zero_hunk_section,
+    parse_diff, parse_diff_for_each, parse_diff_from_reader, parse_diff_lines,
+    parse_diff_lines_with_raw, parse_diff_with_raw_from_reader, zero_hunk_section,
 };
 pub use file::{
     DiffFile, FileStatus, hunk_path, is_valid_diff_file, parse_diff_git_paths, unquote_git_path,
