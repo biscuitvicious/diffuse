@@ -236,18 +236,20 @@ fn test_ratatui_finder_modal_visual_layout() {
     assert!(full_text.contains("FIND FILE (1/2)"));
     assert!(full_text.contains("@ █"));
     assert!(full_text.contains("▶ TODO.md"));
-    assert!(full_text.contains("+2 -0 ~0"));
+    assert!(full_text.contains("+2"));
+    assert!(!full_text.contains("+2 -0 ~0"));
     assert!(
         full_text.contains("crates/diffuse-tui/src/app/render.rs")
             || full_text.contains("…/diffuse-tui/src/app/render.rs")
     );
-    assert!(full_text.contains("+127 -295 ~2"));
+    assert!(full_text.contains("−295 +127 ~2"));
 
     // Bottom Preview Box
     assert!(full_text.contains("PREVIEW"));
     assert!(full_text.contains("+ First todo item"));
     assert!(full_text.contains("+ Second todo item"));
 
+    let modal_area = finder_modal_area(Rect::new(0, 0, 80, 24));
     let add_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.add_tint_bg);
     let mut found_preview_row = false;
     for y in 0..24 {
@@ -257,13 +259,15 @@ fn test_ratatui_finder_modal_visual_layout() {
         }
         if line.contains("First todo item") {
             found_preview_row = true;
-            for x in 1..79 {
+            for x in (modal_area.x + 1)..(modal_area.x + modal_area.width - 1) {
                 assert_eq!(
                     buffer[(x, y)].bg,
                     add_tint_bg,
                     "cell at ({x}, {y}) must have add_tint_bg across full width of preview modal"
                 );
             }
+            assert_ne!(buffer[(0, y)].bg, add_tint_bg);
+            assert_ne!(buffer[(79, y)].bg, add_tint_bg);
         }
     }
     assert!(
@@ -309,6 +313,7 @@ fn test_finder_modal_navigation_updates_preview_visual_layout() {
     assert!(full_text.contains("- old render line"));
     assert!(full_text.contains("+ new render line"));
 
+    let modal_area = finder_modal_area(Rect::new(0, 0, 80, 24));
     let del_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.del_tint_bg);
     let add_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.add_tint_bg);
     let mut found_del = false;
@@ -320,23 +325,27 @@ fn test_finder_modal_navigation_updates_preview_visual_layout() {
         }
         if line.contains("old render line") {
             found_del = true;
-            for x in 1..79 {
+            for x in (modal_area.x + 1)..(modal_area.x + modal_area.width - 1) {
                 assert_eq!(
                     buffer[(x, y)].bg,
                     del_tint_bg,
                     "del preview row at ({x}, {y}) must have del_tint_bg to full width"
                 );
             }
+            assert_ne!(buffer[(0, y)].bg, del_tint_bg);
+            assert_ne!(buffer[(79, y)].bg, del_tint_bg);
         }
         if line.contains("new render line") {
             found_add = true;
-            for x in 1..79 {
+            for x in (modal_area.x + 1)..(modal_area.x + modal_area.width - 1) {
                 assert_eq!(
                     buffer[(x, y)].bg,
                     add_tint_bg,
                     "add preview row at ({x}, {y}) must have add_tint_bg to full width"
                 );
             }
+            assert_ne!(buffer[(0, y)].bg, add_tint_bg);
+            assert_ne!(buffer[(79, y)].bg, add_tint_bg);
         }
     }
     assert!(found_del, "must find deleted preview row");
@@ -362,7 +371,8 @@ fn test_ansi_finder_modal_visual_layout() {
     assert!(joined.contains("FIND FILE (1/2)"));
     assert!(joined.contains("@ █"));
     assert!(joined.contains("TODO.md"));
-    assert!(joined.contains("+2 -0 ~0"));
+    assert!(joined.contains("+2"));
+    assert!(!joined.contains("+2 -0 ~0"));
     assert!(joined.contains("First todo item"));
     assert!(joined.contains("Second todo item"));
 }
@@ -485,6 +495,37 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
     assert!(!ansi_joined.contains('⬍'));
     assert!(!ansi_joined.contains('▲'));
     assert!(!ansi_joined.contains('▼'));
+}
+
+#[test]
+fn test_finder_modal_area_scaling_and_centering() {
+    use ratatui::layout::Rect;
+
+    // Large screens: exactly 50% width and 60% height, centered
+    let large1 = Rect::new(0, 0, 200, 60);
+    assert_eq!(finder_modal_area(large1), Rect::new(50, 12, 100, 36));
+
+    let large2 = Rect::new(0, 0, 160, 50);
+    assert_eq!(finder_modal_area(large2), Rect::new(40, 10, 80, 30));
+
+    let med = Rect::new(0, 0, 100, 30);
+    assert_eq!(finder_modal_area(med), Rect::new(25, 6, 50, 18));
+
+    // Standard 80x24: clamped to minimum bounds 50x16, centered
+    let standard = Rect::new(0, 0, 80, 24);
+    assert_eq!(finder_modal_area(standard), Rect::new(15, 4, 50, 16));
+
+    // Very small width: expands to full width (100%), height clamped to 16
+    let narrow = Rect::new(0, 0, 44, 24);
+    assert_eq!(finder_modal_area(narrow), Rect::new(0, 4, 44, 16));
+
+    // Very small height: expands to full height (100%), width clamped to 50
+    let short = Rect::new(0, 0, 80, 14);
+    assert_eq!(finder_modal_area(short), Rect::new(15, 0, 50, 14));
+
+    // Very small screen: both dimensions expand to full screen (100%)
+    let tiny = Rect::new(0, 0, 50, 12);
+    assert_eq!(finder_modal_area(tiny), Rect::new(0, 0, 50, 12));
 }
 
 #[test]
@@ -784,7 +825,8 @@ fn test_finder_modal_proportional_height_scaling() {
         text.push('\n');
     }
     assert!(text.contains("file_0.rs"));
-    assert!(text.contains("file_11.rs"));
+    assert!(text.contains("file_6.rs"));
+    assert!(!text.contains("file_7.rs"));
 
     // Constrained terminal (height 14): exactly 3 visible files (file_0.rs
     // through file_2.rs)
@@ -1019,4 +1061,144 @@ fn test_optimized_ansi_parses_identically() {
             "optimized parse must match for {line:?}"
         );
     }
+}
+
+#[test]
+fn test_finder_modal_counts_format_omits_zero_and_matches_canonical_order() {
+    use crate::core::{counts::FileCounts, wire::OutputFile};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn make_test_file(path: &str, counts: FileCounts) -> OutputFile {
+        OutputFile {
+            path: path.to_string(),
+            old_path: None,
+            old_mode: None,
+            new_mode: None,
+            status: diffuse_core::FileStatus::Modified,
+            new_line_count: 10,
+            old_line_count: 10,
+            new_content: vec![],
+            old_content: vec![],
+            hunks: vec![],
+            raw_hunks: vec![],
+            counts,
+            fences: vec![],
+            notes: vec![],
+            content_runs: vec![],
+            rows: vec![],
+            is_binary: false,
+            old_bytes: None,
+            new_bytes: None,
+            raw_source: None,
+        }
+    }
+
+    let files = vec![
+        make_test_file(
+            "src/full.rs",
+            FileCounts {
+                dels: 5,
+                adds: 10,
+                mods: 2,
+                movs: 3,
+                ..Default::default()
+            },
+        ),
+        make_test_file(
+            "src/adds_only.rs",
+            FileCounts {
+                dels: 0,
+                adds: 4,
+                mods: 0,
+                movs: 0,
+                ..Default::default()
+            },
+        ),
+        make_test_file(
+            "src/dels_mods.rs",
+            FileCounts {
+                dels: 2,
+                adds: 0,
+                mods: 1,
+                movs: 0,
+                ..Default::default()
+            },
+        ),
+        make_test_file("src/clean.rs", FileCounts::default()),
+    ];
+
+    let output = PipelineOutput {
+        branch: "main".to_string(),
+        untracked_skipped: vec![],
+        files,
+    };
+
+    let mut finder = FileFinderState::new(&output.files, 0, 0);
+    finder.selected_idx = 0; // src/full.rs selected
+
+    // 1. ANSI renderer test
+    let theme = DiffuseTheme::DEFAULT;
+    let lines = render_finder_modal(&output, &finder, 80, 24, &theme);
+    let joined = lines.join("\n");
+
+    // Canonical order is − (dels), + (adds), ~ (mods), ≈ (movs)
+    assert!(joined.contains("−5 +10 ~2 ≈3"));
+    assert!(joined.contains("+4"));
+    assert!(!joined.contains("+4 -0 ~0"));
+    assert!(joined.contains("−2 ~1"));
+    assert!(!joined.contains("+0 -2 ~1"));
+
+    // 2. Ratatui widget test
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            render_finder_modal_widget(f, &output, &finder, &theme, f.area());
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut rendered_lines = Vec::new();
+    for y in 0..24 {
+        let mut line = String::new();
+        for x in 0..80 {
+            line.push_str(buffer[(x, y)].symbol());
+        }
+        rendered_lines.push(line);
+    }
+    let full_rendered = rendered_lines.join("\n");
+    assert!(full_rendered.contains("−5 +10 ~2 ≈3"));
+    assert!(full_rendered.contains("+4"));
+    assert!(full_rendered.contains("−2 ~1"));
+
+    // Verify cell color attributes:
+    // Selected row (src/full.rs) counts must use modal_selected_fg &
+    // modal_selected_bg
+    let modal_sel_fg = crate::view::to_color(theme.palette.modal_selected_fg);
+    let modal_sel_bg = crate::view::to_color(theme.palette.modal_selected_bg);
+    let modal_dim_fg = crate::view::to_color(theme.palette.modal_dim);
+    let modal_bg = crate::view::to_color(theme.palette.modal_bg);
+
+    // Find the row containing "−5 +10 ~2 ≈3"
+    let mut found_full_row = false;
+    let mut found_adds_row = false;
+    for y in 0..24 {
+        let line = &rendered_lines[y];
+        if line.contains("−5 +10 ~2 ≈3") {
+            found_full_row = true;
+            let byte_idx = line.find('−').unwrap();
+            let col = line[..byte_idx].chars().count();
+            assert_eq!(buffer[(col as u16, y as u16)].fg, modal_sel_fg);
+            assert_eq!(buffer[(col as u16, y as u16)].bg, modal_sel_bg);
+        }
+        if line.contains("+4") {
+            found_adds_row = true;
+            let byte_idx = line.find("+4").unwrap();
+            let col = line[..byte_idx].chars().count();
+            assert_eq!(buffer[(col as u16, y as u16)].fg, modal_dim_fg);
+            assert_eq!(buffer[(col as u16, y as u16)].bg, modal_bg);
+        }
+    }
+    assert!(found_full_row, "must find selected row with counts");
+    assert!(found_adds_row, "must find unselected row with counts");
 }

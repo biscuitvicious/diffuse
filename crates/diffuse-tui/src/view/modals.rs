@@ -10,7 +10,7 @@ use ratatui::{
 
 use super::{
     diff_grid::{hunk_divider_line, hunk_divider_text},
-    header::{clamp_or_pad_ansi, truncate_pad, visible_width},
+    header::{clamp_or_pad_ansi, format_counts_plain, truncate_pad, visible_width},
 };
 use crate::{
     core::wire::{OutputHunk, PipelineOutput},
@@ -31,6 +31,22 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
         width: width.min(area.width),
         height: height.min(area.height),
     }
+}
+
+/// Compute the centered area for the file finder modal.
+///
+/// On large screens, the dialog occupies 50% of width and 60% of height,
+/// centered horizontally and vertically. On small screens, it expands up to the
+/// full screen dimensions.
+#[must_use]
+pub fn finder_modal_area(area: Rect) -> Rect {
+    let modal_w = ((area.width as u32 * 50) / 100)
+        .max(50)
+        .min(area.width as u32) as u16;
+    let modal_h = ((area.height as u32 * 60) / 100)
+        .max(16)
+        .min(area.height as u32) as u16;
+    centered_rect(modal_w, modal_h, area)
 }
 
 /// Render the `?` key-bindings modal as full-screen overlay lines.
@@ -323,7 +339,7 @@ pub fn render_finder_modal(
             let is_sel = actual_idx == finder.selected_idx;
             let f = &output.files[m.file_idx];
             let prefix = if is_sel { "▶ " } else { "  " };
-            let stats = format!("+{} -{} ~{}", f.counts.adds, f.counts.dels, f.counts.mods);
+            let stats = format_counts_plain(&f.counts);
 
             let row_bg_code = if is_sel {
                 p.modal_selected_bg.bg_code()
@@ -342,7 +358,7 @@ pub fn render_finder_modal(
             };
 
             let prefix_w = visible_width(prefix);
-            let stats_w = stats.len();
+            let stats_w = display_width(&stats);
             let right_margin = 2;
             let avail_path_w = width.saturating_sub(prefix_w + 2 + stats_w + right_margin);
 
@@ -473,28 +489,43 @@ pub fn render_finder_modal_widget(
     theme: &DiffuseTheme,
     area: Rect,
 ) {
-    f.render_widget(Clear, area);
+    let modal_area = finder_modal_area(area);
+    f.render_widget(Clear, modal_area);
 
     let p = &theme.palette;
-    let file_list_h = (area.height / 5).max(3);
-    let finder_h = (file_list_h + 4).min(area.height.saturating_sub(4)).max(4);
+    let file_list_h = (modal_area.height / 5).max(3);
+    let finder_h = (file_list_h + 4)
+        .min(modal_area.height.saturating_sub(4))
+        .max(4);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(finder_h), Constraint::Min(4)])
-        .split(area);
+        .split(modal_area);
 
     let finder_area = chunks[0];
     let preview_area = chunks[1];
 
-    let title = format!(
-        " FIND FILE ({}/{}) · ↑/↓ nav · Enter jump · Esc close ",
-        if finder.matches.is_empty() {
-            0
-        } else {
-            finder.selected_idx + 1
-        },
-        finder.matches.len()
-    );
+    let title = if modal_area.width < 55 {
+        format!(
+            " FIND FILE ({}/{}) · ↑/↓ · ↵ · Esc ",
+            if finder.matches.is_empty() {
+                0
+            } else {
+                finder.selected_idx + 1
+            },
+            finder.matches.len()
+        )
+    } else {
+        format!(
+            " FIND FILE ({}/{}) · ↑/↓ nav · Enter jump · Esc close ",
+            if finder.matches.is_empty() {
+                0
+            } else {
+                finder.selected_idx + 1
+            },
+            finder.matches.len()
+        )
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -555,10 +586,7 @@ pub fn render_finder_modal_widget(
             let is_sel = actual_idx == finder.selected_idx;
             let file = &output.files[m.file_idx];
             let prefix = if is_sel { "▶ " } else { "  " };
-            let stats = format!(
-                "+{} -{} ~{}",
-                file.counts.adds, file.counts.dels, file.counts.mods
-            );
+            let stats = format_counts_plain(&file.counts);
 
             let mut spans = vec![Span::styled(
                 prefix,
@@ -572,7 +600,7 @@ pub fn render_finder_modal_widget(
             )];
 
             let prefix_w = display_width(prefix);
-            let stats_w = stats.len();
+            let stats_w = display_width(&stats);
             let avail_path_w = inner_w.saturating_sub(prefix_w + 2 + stats_w);
             let path_spans =
                 format_path_matches_spans(&m.path, &m.match_indices, avail_path_w, is_sel, p);
@@ -588,18 +616,20 @@ pub fn render_finder_modal_widget(
 
             let pad_w = inner_w.saturating_sub(prefix_w + path_len + stats_w);
             spans.push(Span::styled(" ".repeat(pad_w), pad_style));
-            spans.push(Span::styled(
-                stats,
-                if is_sel {
-                    Style::default()
-                        .fg(crate::view::to_color(p.modal_selected_fg))
-                        .bg(crate::view::to_color(p.modal_selected_bg))
-                } else {
-                    Style::default()
-                        .fg(crate::view::to_color(p.modal_dim))
-                        .bg(crate::view::to_color(p.modal_bg))
-                },
-            ));
+            if !stats.is_empty() {
+                spans.push(Span::styled(
+                    stats,
+                    if is_sel {
+                        Style::default()
+                            .fg(crate::view::to_color(p.modal_selected_fg))
+                            .bg(crate::view::to_color(p.modal_selected_bg))
+                    } else {
+                        Style::default()
+                            .fg(crate::view::to_color(p.modal_dim))
+                            .bg(crate::view::to_color(p.modal_bg))
+                    },
+                ));
+            }
 
             let mut line = Line::from(spans);
             if is_sel {
@@ -672,9 +702,10 @@ pub fn render_finder_modal_widget(
                 };
                 let mut div_line = hunk_divider_line(badge, h, 0, false, inner_w, theme);
                 if let Some(span) = div_line.spans.first_mut()
-                    && span.style.bg.is_none() {
-                        span.style = span.style.bg(crate::view::to_color(p.modal_bg));
-                    }
+                    && span.style.bg.is_none()
+                {
+                    span.style = span.style.bg(crate::view::to_color(p.modal_bg));
+                }
                 preview_lines.push(div_line);
 
                 for r in &h.rows {
