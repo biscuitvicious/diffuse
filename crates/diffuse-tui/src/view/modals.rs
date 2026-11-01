@@ -62,6 +62,41 @@ pub fn help_modal_area(area: Rect) -> Rect {
     standard_modal_area(area)
 }
 
+/// Canonical key bindings reference displayed in the `?` help dialog.
+pub const HELP_ENTRIES: &[(&str, &str)] = &[
+    ("j · ↓ / k · ↑", "next / prev line"),
+    ("J · } / K · {", "next / prev hunk"),
+    ("Space · PgDn · Ctrl+d · Ctrl+f", "page down"),
+    ("PgUp · Ctrl+u · Ctrl+b", "page up"),
+    ("G · End / g · Home", "bottom / top"),
+    ("<num>g · <num>G", "jump to line number"),
+    ("n · ] · Tab / p · [ · S-Tab", "next / prev file"),
+    ("@", "find file in diff"),
+    ("Enter", "toggle file collapse / expand"),
+    ("l · → / h · ←", "right / left scroll"),
+    ("^ · 0 / $", "start / end of line"),
+    ("w", "toggle word diff"),
+    ("y", "toggle syntax highlight"),
+    ("R", "toggle raw diff view"),
+    ("r · Ctrl+r", "force reload diff"),
+    ("t", "toggle staged / unstaged"),
+    ("s / u", "stage / unstage hunk"),
+    ("U", "unstage entire file"),
+    ("x", "cycle note status / discard hunk"),
+    ("X", "discard entire file"),
+    ("v · V", "select lines / anchor band"),
+    ("o · O", "open in editor"),
+    ("T · Ctrl+t · F2", "toggle light / dark theme"),
+    ("a · +", "expand all context lines"),
+    ("c / C", "reset hunk / all context"),
+    ("m", "new note"),
+    ("d", "delete note"),
+    ("z", "toggle resolved notes"),
+    ("S", "toggle note original source"),
+    ("?", "toggle help"),
+    ("q · Ctrl+c", "quit"),
+];
+
 /// Render the `?` key-bindings modal as full-screen overlay lines.
 pub fn render_help_modal(width: usize, height: usize, theme: &DiffuseTheme) -> Vec<String> {
     let key_w = if width < 48 {
@@ -72,31 +107,7 @@ pub fn render_help_modal(width: usize, height: usize, theme: &DiffuseTheme) -> V
         32
     };
 
-    let entries: &[(&str, &str)] = &[
-        ("j · ↓ / k · ↑", "next / prev line"),
-        ("J · } / K · {", "next / prev hunk"),
-        ("Space · PgDn · Ctrl+d · Ctrl+f", "page down"),
-        ("PgUp · Ctrl+u · Ctrl+b", "page up"),
-        ("G · End / g · Home", "bottom / top"),
-        ("n · ] / p · [", "next / prev file"),
-        ("@", "find file in diff"),
-        ("l · → / h · ←", "right / left scroll"),
-        ("w", "toggle word diff"),
-        ("y", "toggle syntax highlight"),
-        ("R", "toggle raw diff view"),
-        ("r · Ctrl+r", "force reload diff"),
-        ("t", "toggle staged / unstaged"),
-        ("T", "toggle light / dark theme"),
-        ("a · +", "expand all context lines"),
-        ("c / C", "reset hunk / all context"),
-        ("m", "new note"),
-        ("d", "delete note"),
-        ("x", "cycle note status / discard"),
-        ("z", "toggle resolved notes"),
-        ("S", "toggle note original source"),
-        ("?", "toggle help"),
-        ("q · Ctrl+c", "quit"),
-    ];
+    let entries = HELP_ENTRIES;
 
     let p = &theme.palette;
     let bg_code = p.modal_bg.bg_code();
@@ -196,28 +207,7 @@ pub fn wrap_words(text: &str, max_width: usize) -> Vec<String> {
 /// Render the Help Modal as a centered Ratatui widget popup with rounded
 /// borders.
 pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect) {
-    let entries: &[(&str, &str)] = &[
-        ("j · ↓ / k · ↑", "next / prev line"),
-        ("J · } / K · {", "next / prev hunk"),
-        ("Space · PgDn · Ctrl+d · Ctrl+f", "page down"),
-        ("PgUp · Ctrl+u · Ctrl+b", "page up"),
-        ("G · End / g · Home", "bottom / top"),
-        ("n · ] / p · [", "next / prev file"),
-        ("@", "find file in diff"),
-        ("l · → / h · ←", "right / left scroll"),
-        ("w", "toggle word diff"),
-        ("y", "toggle syntax highlight"),
-        ("R", "toggle raw diff view"),
-        ("r · Ctrl+r", "force reload diff"),
-        ("t", "toggle staged / unstaged"),
-        ("T", "toggle light / dark theme"),
-        ("a · +", "expand all context lines"),
-        ("c / C", "reset hunk / all context"),
-        ("m", "new note"),
-        ("d", "delete note"),
-        ("?", "toggle help"),
-        ("q · Ctrl+c", "quit"),
-    ];
+    let entries = HELP_ENTRIES;
 
     let modal_area = standard_modal_area(area);
     f.render_widget(Clear, modal_area);

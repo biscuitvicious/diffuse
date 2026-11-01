@@ -76,7 +76,7 @@ fn test_ratatui_help_modal_large_screen_centering() {
 
 #[test]
 fn test_ratatui_help_modal_visual_layout() {
-    let backend = TestBackend::new(50, 55);
+    let backend = TestBackend::new(60, 80);
     let mut terminal = Terminal::new(backend).unwrap();
 
     terminal
@@ -87,9 +87,9 @@ fn test_ratatui_help_modal_visual_layout() {
 
     let buffer = terminal.backend().buffer();
     let mut lines = Vec::new();
-    for y in 0..55 {
+    for y in 0..80 {
         let mut line = String::new();
-        for x in 0..50 {
+        for x in 0..60 {
             line.push_str(buffer[(x, y)].symbol());
         }
         lines.push(line.trim_end().to_string());
@@ -108,8 +108,15 @@ fn test_ratatui_help_modal_visual_layout() {
     assert!(full_text.contains("Ctrl+b"));
     assert!(full_text.contains("G · End / g · Home"));
     assert!(full_text.contains("bottom / top"));
-    assert!(full_text.contains("n · ] / p · ["));
+    assert!(full_text.contains("n · ] · Tab"));
+    assert!(full_text.contains("S-Tab"));
     assert!(full_text.contains("next / prev file"));
+    assert!(full_text.contains("Enter"));
+    assert!(full_text.contains("toggle file collapse"));
+    assert!(full_text.contains("s / u"));
+    assert!(full_text.contains("stage / unstage hunk"));
+    assert!(full_text.contains("o · O"));
+    assert!(full_text.contains("open in editor"));
     assert!(full_text.contains("l · → / h · ←"));
     assert!(full_text.contains("right / left scroll"));
     assert!(full_text.contains("a · +"));
