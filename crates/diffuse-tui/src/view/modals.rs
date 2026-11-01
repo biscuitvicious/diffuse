@@ -8,12 +8,15 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, Paragraph},
 };
 
-use super::header::{clamp_or_pad_ansi, truncate_pad, visible_width};
+use super::{
+    diff_grid::{hunk_divider_line, hunk_divider_text},
+    header::{clamp_or_pad_ansi, truncate_pad, visible_width},
+};
 use crate::{
-    core::wire::PipelineOutput,
+    core::wire::{OutputHunk, PipelineOutput},
     finder::FileFinderState,
     render::{
-        ColorExt, DiffuseTheme, render_row_segment, styled_prefix,
+        Badge, ColorExt, DiffuseTheme, render_row_segment, slice_by_visual_width, styled_prefix,
         width::{char_width, display_width},
     },
 };
@@ -369,7 +372,27 @@ pub fn render_finder_modal(
         let f = &output.files[selected_match.file_idx];
 
         let remaining = height.saturating_sub(lines.len());
-        if f.rows.is_empty() {
+        let synthetic_hunk;
+        let has_hunk_rows = f.hunks.iter().any(|h| !h.rows.is_empty())
+            || f.raw_hunks.iter().any(|h| !h.rows.is_empty());
+        let hunks: &[OutputHunk] = if !f.hunks.is_empty() && has_hunk_rows {
+            &f.hunks
+        } else if !f.raw_hunks.is_empty() && has_hunk_rows {
+            &f.raw_hunks
+        } else if !f.rows.is_empty() {
+            synthetic_hunk = [OutputHunk {
+                old_start: 1,
+                old_count: 0,
+                new_start: 1,
+                new_count: f.rows.len() as u32,
+                rows: f.rows.clone(),
+            }];
+            &synthetic_hunk
+        } else {
+            &f.hunks
+        };
+
+        if hunks.is_empty() {
             if remaining > 0 {
                 let dim_code = p.modal_dim.fg_code();
                 lines.push(format!(
@@ -378,29 +401,58 @@ pub fn render_finder_modal(
                 ));
             }
         } else {
+            let (bg, fg) = theme.palette.hunk_divider_colors(false, false);
+            let div_bg_code = match bg {
+                crate::render::Color::Primary => p.modal_bg.bg_code(),
+                color => color.bg_code(),
+            };
+            let fg_code = fg.fg_code();
             let text_cols = width.saturating_sub(6).max(1);
-            for r in f.rows.iter().take(remaining) {
-                let pfx = styled_prefix(
-                    r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
-                );
-                let text = r.text();
-                let rendered_row = render_row_segment(
-                    &text,
-                    r.is_aux(),
-                    r.kind,
-                    r.mov_side,
-                    &r.runs,
-                    0,
-                    text_cols,
-                    &pfx,
-                    false,
-                    false,
-                    0,
-                    true,
-                    true,
-                    theme,
-                );
-                lines.push(clamp_or_pad_ansi(&rendered_row, width));
+
+            'outer: for (hi, h) in hunks.iter().enumerate() {
+                if lines.len() >= height {
+                    break;
+                }
+                let badge = Badge {
+                    idx: hi,
+                    total: hunks.len(),
+                };
+                let txt = hunk_divider_text(badge, h, 0);
+                let piece = slice_by_visual_width(&txt, 0, width);
+                let piece_w = display_width(&piece);
+                let bar_str = if piece_w < width {
+                    format!("{piece}{}", "─".repeat(width - piece_w))
+                } else {
+                    piece
+                };
+                lines.push(format!("{div_bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m"));
+
+                for r in &h.rows {
+                    if lines.len() >= height {
+                        break 'outer;
+                    }
+                    let pfx = styled_prefix(
+                        r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
+                    );
+                    let text = r.text();
+                    let rendered_row = render_row_segment(
+                        &text,
+                        r.is_aux(),
+                        r.kind,
+                        r.mov_side,
+                        &r.runs,
+                        0,
+                        text_cols,
+                        &pfx,
+                        false,
+                        false,
+                        0,
+                        true,
+                        true,
+                        theme,
+                    );
+                    lines.push(clamp_or_pad_ansi(&rendered_row, width));
+                }
             }
         }
     }
@@ -583,35 +635,75 @@ pub fn render_finder_modal_widget(
         let max_preview_rows = preview_area.height.saturating_sub(2) as usize;
         let inner_w = preview_area.width.saturating_sub(2) as usize;
         let text_cols = inner_w.saturating_sub(6).max(1);
-        if file.rows.is_empty() {
+
+        let synthetic_hunk;
+        let has_hunk_rows = file.hunks.iter().any(|h| !h.rows.is_empty())
+            || file.raw_hunks.iter().any(|h| !h.rows.is_empty());
+        let hunks: &[OutputHunk] = if !file.hunks.is_empty() && has_hunk_rows {
+            &file.hunks
+        } else if !file.raw_hunks.is_empty() && has_hunk_rows {
+            &file.raw_hunks
+        } else if !file.rows.is_empty() {
+            synthetic_hunk = [OutputHunk {
+                old_start: 1,
+                old_count: 0,
+                new_start: 1,
+                new_count: file.rows.len() as u32,
+                rows: file.rows.clone(),
+            }];
+            &synthetic_hunk
+        } else {
+            &file.hunks
+        };
+
+        if hunks.is_empty() {
             preview_lines.push(Line::from(Span::styled(
                 "  (No diff lines to preview)",
                 Style::default().fg(crate::view::to_color(p.modal_dim)),
             )));
         } else {
-            for r in file.rows.iter().take(max_preview_rows) {
-                let pfx = styled_prefix(
-                    r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
-                );
-                let text = r.text();
-                let rendered_row = render_row_segment(
-                    &text,
-                    r.is_aux(),
-                    r.kind,
-                    r.mov_side,
-                    &r.runs,
-                    0,
-                    text_cols,
-                    &pfx,
-                    false,
-                    false,
-                    0,
-                    true,
-                    true,
-                    theme,
-                );
-                let padded = clamp_or_pad_ansi(&rendered_row, inner_w);
-                preview_lines.push(ansi_to_ratatui_line(&padded));
+            'outer: for (hi, h) in hunks.iter().enumerate() {
+                if preview_lines.len() >= max_preview_rows {
+                    break;
+                }
+                let badge = Badge {
+                    idx: hi,
+                    total: hunks.len(),
+                };
+                let mut div_line = hunk_divider_line(badge, h, 0, false, inner_w, theme);
+                if let Some(span) = div_line.spans.first_mut()
+                    && span.style.bg.is_none() {
+                        span.style = span.style.bg(crate::view::to_color(p.modal_bg));
+                    }
+                preview_lines.push(div_line);
+
+                for r in &h.rows {
+                    if preview_lines.len() >= max_preview_rows {
+                        break 'outer;
+                    }
+                    let pfx = styled_prefix(
+                        r.kind, r.mov_side, r.group, r.new_line, r.old_line, &r.runs, true, theme,
+                    );
+                    let text = r.text();
+                    let rendered_row = render_row_segment(
+                        &text,
+                        r.is_aux(),
+                        r.kind,
+                        r.mov_side,
+                        &r.runs,
+                        0,
+                        text_cols,
+                        &pfx,
+                        false,
+                        false,
+                        0,
+                        true,
+                        true,
+                        theme,
+                    );
+                    let padded = clamp_or_pad_ansi(&rendered_row, inner_w);
+                    preview_lines.push(ansi_to_ratatui_line(&padded));
+                }
             }
         }
     }

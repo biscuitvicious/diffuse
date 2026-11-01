@@ -1,8 +1,9 @@
 use super::*;
 use crate::core::{
+    counts::FileCounts,
     merge::RunKind,
     parse::RowKind,
-    wire::{OutputRow, OutputRun},
+    wire::{OutputFile, OutputHunk, OutputRow, OutputRun},
 };
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -364,6 +365,126 @@ fn test_ansi_finder_modal_visual_layout() {
     assert!(joined.contains("+2 -0 ~0"));
     assert!(joined.contains("First todo item"));
     assert!(joined.contains("Second todo item"));
+}
+
+#[test]
+fn test_finder_modal_preview_renders_standard_hunk_dividers() {
+    let file = OutputFile {
+        path: "src/main.rs".to_string(),
+        old_path: None,
+        old_mode: None,
+        new_mode: None,
+        status: diffuse_core::FileStatus::Modified,
+        new_line_count: 50,
+        old_line_count: 50,
+        new_content: vec![],
+        old_content: vec![],
+        hunks: vec![
+            OutputHunk {
+                old_start: 5,
+                old_count: 1,
+                new_start: 5,
+                new_count: 2,
+                rows: vec![dummy_row(RowKind::Add, 5, "first hunk add")],
+            },
+            OutputHunk {
+                old_start: 30,
+                old_count: 2,
+                new_start: 31,
+                new_count: 1,
+                rows: vec![
+                    dummy_row(RowKind::Del, 30, "second hunk del"),
+                    dummy_row(RowKind::Add, 31, "second hunk add"),
+                ],
+            },
+        ],
+        raw_hunks: vec![],
+        counts: FileCounts {
+            adds: 2,
+            dels: 1,
+            ..Default::default()
+        },
+        fences: vec![],
+        notes: vec![],
+        content_runs: vec![],
+        rows: vec![
+            dummy_row(RowKind::Add, 5, "first hunk add"),
+            dummy_row(RowKind::Del, 30, "second hunk del"),
+            dummy_row(RowKind::Add, 31, "second hunk add"),
+        ],
+        is_binary: false,
+        old_bytes: None,
+        new_bytes: None,
+        raw_source: None,
+    };
+
+    let output = PipelineOutput {
+        files: vec![file],
+        branch: "main".to_string(),
+        untracked_skipped: vec![],
+    };
+    let finder = FileFinderState::new(&output.files, 0, 0);
+
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+        })
+        .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let mut full_text = String::new();
+    for y in 0..24 {
+        for x in 0..80 {
+            full_text.push_str(buffer[(x, y)].symbol());
+        }
+        full_text.push('\n');
+    }
+
+    // Must contain both hunk divider badges
+    assert!(
+        full_text.contains("H1/2"),
+        "preview must show H1/2 divider: {full_text}"
+    );
+    assert!(
+        full_text.contains("H2/2"),
+        "preview must show H2/2 divider: {full_text}"
+    );
+    assert!(full_text.contains("first hunk add"));
+    assert!(full_text.contains("second hunk del"));
+    assert!(full_text.contains("second hunk add"));
+
+    // Must NOT contain expansion icons
+    assert!(
+        !full_text.contains('⬍'),
+        "divider must not contain expansion icons"
+    );
+    assert!(
+        !full_text.contains('▲'),
+        "divider must not contain expansion icons"
+    );
+    assert!(
+        !full_text.contains('▼'),
+        "divider must not contain expansion icons"
+    );
+
+    // Verify ANSI path as well
+    let ansi_lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::DEFAULT);
+    assert_eq!(ansi_lines.len(), 24);
+    for (i, line) in ansi_lines.iter().enumerate() {
+        assert_eq!(
+            visible_width(line),
+            80,
+            "ansi line {i} visual width must be 80"
+        );
+    }
+    let ansi_joined = ansi_lines.join("\n");
+    assert!(ansi_joined.contains("H1/2"));
+    assert!(ansi_joined.contains("H2/2"));
+    assert!(!ansi_joined.contains('⬍'));
+    assert!(!ansi_joined.contains('▲'));
+    assert!(!ansi_joined.contains('▼'));
 }
 
 #[test]
