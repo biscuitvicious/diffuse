@@ -28,7 +28,7 @@
 - [x] Phase 25 — Cluster DP Pairing & Surplus Survival (`crates/diffuse-core/src/cluster/pairing.rs` · 771 lines)
 - [x] Phase 26 — Spatial Neighborhood & Relocation Matching (`crates/diffuse-algo/src/bipartite_matching.rs` · 760 lines)
 - [x] Phase 27 — Syntactic Profile Registry & Extension Mapping (`crates/diffuse-syntax/src/registry.rs` · 744 lines)
-- [ ] Phase 28 — Context Row Synthesis & Hunk Folding State (`crates/diffuse-tui/src/app/context.rs` · 731 lines)
+- [x] Phase 28 — Context Row Synthesis & Hunk Folding State (`crates/diffuse-tui/src/app/context.rs` · 731 lines)
 - [ ] Phase 29 — ANSI Escape Sequence & Color Styling Models (`crates/diffuse-render/src/ansi.rs` · 702 lines)
 - [ ] Phase 30 — Git Domain Models, Repositories & Review Targets (`crates/diffuse-git/src/types.rs` · 693 lines)
 - [ ] Phase 31 — File Header Banners & Diff Hunk Rendering (`crates/diffuse-render/src/diff.rs` · 686 lines)
