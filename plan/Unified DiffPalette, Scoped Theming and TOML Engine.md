@@ -1,7 +1,7 @@
 # Plan — Unified DiffPalette, Scoped Theming and TOML Engine
 
 ## Global TODO
-- [ ] Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling (`SurfaceColors`, `StyledColor`, `GutterColors`, `SyntaxPalette`, `PrimitivePalette`)
+- [x] Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling (`SurfaceColors`, `StyledColor`, `GutterColors`, `SyntaxPalette`, `PrimitivePalette`)
 - [ ] Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture (`Scope`, `DiffKind`, `DiffPalette`, `ScopePalette`, `ThemePalette`)
 - [ ] Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine with `inherits` & `$variable` Reference (`crates/diffuse-render/src/theme/toml/`)
 - [ ] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)

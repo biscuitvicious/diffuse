@@ -13,6 +13,18 @@ pub use palette::*;
 pub mod detect;
 pub use detect::*;
 
+pub mod primitive;
+pub use primitive::PrimitivePalette;
+
+pub mod styled_color;
+pub use styled_color::{GutterColors, StyledColor};
+
+pub mod surface;
+pub use surface::SurfaceColors;
+
+pub mod syntax;
+pub use syntax::SyntaxPalette;
+
 pub use crate::ansi::{
     Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
 };
