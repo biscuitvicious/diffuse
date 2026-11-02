@@ -43,7 +43,7 @@
 - [x] Phase 40 — TUI Application State Lifecycle & Construction (`crates/diffuse-tui/src/app.rs` · 533 lines)
 - [x] Phase 41 — Visual Row & Semantic Hunk Navigation (`crates/diffuse-tui/src/app/navigation.rs` · 529 lines)
 - [x] Phase 42 — Keyboard Event Dispatch & TuiAction Mapping (`crates/diffuse-tui/src/app/dispatch.rs` · 527 lines)
-- [ ] Phase 43 — Working Tree Hunk Staging & Mutation Engine (`crates/diffuse-git/src/mutation.rs` · 514 lines)
+- [x] Phase 43 — Working Tree Hunk Staging & Mutation Engine (`crates/diffuse-git/src/mutation.rs` · 514 lines)
 
 ---
 
