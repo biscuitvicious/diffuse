@@ -1,0 +1,107 @@
+use super::text::{visible_width, wrap_text_by_visual_width};
+use crate::{
+    core::{counts::FileCounts, wire::OutputFile},
+    render::{ColorExt, width::display_width},
+};
+use ratatui::{
+    style::{Modifier, Style},
+    text::{Line, Span},
+};
+
+/// Parameters for rendering the secondary status bar.
+#[derive(Debug, Clone, Copy)]
+pub struct StatusBarContext<'a> {
+    pub cur_fi: usize,
+    pub total_files: usize,
+    pub cur_hunk: usize,
+    pub total_hunks: usize,
+    pub raw_diff: bool,
+    pub col_offset: usize,
+    pub num_buffer: &'a str,
+    pub common_prefix: Option<&'a str>,
+    pub width: usize,
+    pub is_streaming: bool,
+    pub streaming_dot: &'a str,
+    /// Ephemeral action feedback shown first when present.
+    pub status_message: Option<(&'a str, bool)>,
+    /// Current file (optional; file path and stats render in sticky file
+    /// banners).
+    pub file: Option<&'a OutputFile>,
+    /// Change counts of the current hunk, shown after the hunk badge.
+    pub hunk_counts: Option<FileCounts>,
+    /// Active theme for status bar styling.
+    pub theme: &'a crate::render::DiffuseTheme,
+}
+
+/// Render the secondary status bar as ANSI strings: the shared
+/// [`status_layout`](crate::view::status_layout) segments emitted as escape
+/// runs (empty when no persistent or transient content; callers render a blank
+/// slot to hold layout and background).
+pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
+    use crate::view::status_layout::{StatusSegment, status_layout};
+
+    let bg_code = ctx.theme.palette.status_bar_bg.bg_code();
+
+    let seg_ansi = |seg: &StatusSegment| -> String {
+        let bold = if seg.bold { "\x1b[1m" } else { "" };
+        let bold_off = if seg.bold { "\x1b[22m" } else { "" };
+        format!(
+            "{}{bold}{}{bold_off}\x1b[39m",
+            seg.color.fg_code(),
+            seg.text
+        )
+    };
+
+    let layout = status_layout(&ctx);
+    if layout.segments.is_empty() {
+        return Vec::new();
+    }
+    let line: String = layout.segments.iter().map(seg_ansi).collect();
+    if !layout.wraps {
+        let vw = visible_width(&line);
+        return vec![format!(
+            "{bg_code}{line}{}\x1b[0m",
+            " ".repeat(ctx.width.saturating_sub(vw))
+        )];
+    }
+    wrap_text_by_visual_width(&line, ctx.width)
+        .into_iter()
+        .map(|piece| {
+            let piece_vw = visible_width(&piece);
+            let pad = " ".repeat(ctx.width.saturating_sub(piece_vw));
+            format!("{bg_code}{piece}{pad}\x1b[0m")
+        })
+        .collect()
+}
+
+/// Render the secondary status bar as a styled Ratatui [`Line`], consuming
+/// the same shared [`status_layout`](crate::view::status_layout) segments as
+/// the ANSI path.
+pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
+    use crate::view::status_layout::{StatusSegment, status_layout};
+
+    let seg_span = |seg: &StatusSegment| -> Span<'static> {
+        let mut style = Style::default().fg(crate::view::to_color(seg.color));
+        if seg.bold {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        Span::styled(seg.text.to_string(), style)
+    };
+
+    let layout = status_layout(&ctx);
+    if layout.segments.is_empty() {
+        return Line::default();
+    }
+    let spans: Vec<Span<'static>> = layout.segments.iter().map(seg_span).collect();
+    let bg = crate::view::to_color(ctx.theme.palette.status_bar_bg);
+    padded_line(spans, ctx.width).style(Style::default().bg(bg))
+}
+
+/// Pad spans with trailing spaces to `width` and wrap into a [`Line`].
+pub fn padded_line(mut spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
+    let used_w: usize = spans.iter().map(|s| display_width(&s.content)).sum();
+    if used_w < width {
+        spans.push(Span::raw(" ".repeat(width - used_w)));
+    }
+    Line::from(spans)
+}

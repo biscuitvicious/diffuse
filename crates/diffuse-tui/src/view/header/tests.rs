@@ -1,9 +1,16 @@
 use super::*;
 use crate::{
-    core::{counts::FileCounts, notes::NoteStatus, wire::OutputNote},
-    render::DiffuseTheme,
+    core::{
+        counts::FileCounts,
+        notes::NoteStatus,
+        wire::{OutputFile, OutputNote},
+    },
+    render::{ColorExt, DiffuseTheme},
 };
-use ratatui::style::Color;
+use ratatui::{
+    style::{Color, Modifier},
+    text::Line,
+};
 
 #[test]
 fn test_render_status_bar_styling() {
