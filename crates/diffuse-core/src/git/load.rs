@@ -1,9 +1,4 @@
-use std::{
-    collections::HashSet,
-    fs,
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashSet, fs, path::Path, sync::Arc};
 
 use super::{
     GitFileItem, LoadGitResult, blob::load_git_blob, get_current_branch, is_inside_work_tree,
