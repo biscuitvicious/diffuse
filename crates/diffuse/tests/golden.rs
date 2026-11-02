@@ -2024,13 +2024,13 @@ fn run_oracle_for_corpus(name: &str, fixture: &Fixture, wire: &PipelineOutput) {
     }
 
     assert_eq!(
-        wire.reverse().reverse(),
+        wire.clone().reverse().reverse(),
         *wire,
         "[{name}] wire.reverse().reverse() == wire"
     );
 
     if name.starts_with("opt-") {
-        let wire_rev = wire.reverse();
+        let wire_rev = wire.clone().reverse();
         let reconstructed = wire.reconstruct();
         let reconstructed_rev = wire_rev.reconstruct();
 

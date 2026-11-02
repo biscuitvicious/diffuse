@@ -23,12 +23,9 @@ pub struct PipelineOutput {
 }
 
 impl PipelineOutput {
-    pub fn reverse(&self) -> Self {
-        PipelineOutput {
-            files: self.files.iter().map(OutputFile::reverse).collect(),
-            branch: self.branch.clone(),
-            untracked_skipped: self.untracked_skipped.clone(),
-        }
+    pub fn reverse(mut self) -> Self {
+        self.files = self.files.into_iter().map(OutputFile::reverse).collect();
+        self
     }
 
     pub fn reconstruct(&self) -> Vec<DiffFile> {

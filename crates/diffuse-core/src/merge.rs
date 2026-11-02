@@ -20,7 +20,7 @@ pub struct Run<'a> {
 }
 
 impl<'a> Run<'a> {
-    pub fn reverse(&self) -> Self {
+    pub const fn reverse(self) -> Self {
         Run {
             kind: self.kind.reverse(),
             text: self.text,

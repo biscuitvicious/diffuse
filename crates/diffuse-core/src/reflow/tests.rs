@@ -17,7 +17,7 @@ fn test_block_reflow_involution() {
     assert!(expansion.is_expansion());
     assert_eq!(expansion.k(), 3);
 
-    let collapse = expansion.inverse();
+    let collapse = expansion.clone().reverse();
     assert!(collapse.is_collapse());
     assert_eq!(collapse.k(), 3);
     assert_eq!(collapse.old_range, 20..23);
@@ -26,7 +26,7 @@ fn test_block_reflow_involution() {
     assert_eq!(collapse.anchor_new, 0);
 
     // Exact involution property: (R^-1)^-1 == R
-    assert_eq!(collapse.inverse(), expansion);
+    assert_eq!(collapse.reverse(), expansion);
 }
 
 #[test]
@@ -36,11 +36,11 @@ fn test_block_reflow_tape_reversibility() {
     let rs = lang_profile("rs");
 
     let reflow = build_expansion_reflow(old, &new_cont, 0, rs);
-    let inv = reflow.inverse();
+    let rev = reflow.clone().reverse();
 
-    assert_eq!(inv.inverse(), reflow);
-    assert_eq!(inv.tape.project_old(), reflow.tape.project_new());
-    assert_eq!(inv.tape.project_new(), reflow.tape.project_old());
+    assert_eq!(rev.clone().reverse(), reflow);
+    assert_eq!(rev.tape.project_old(), reflow.tape.project_new());
+    assert_eq!(rev.tape.project_new(), reflow.tape.project_old());
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn test_subline_relocation_tracks_relocated_tokens() {
 }
 
 #[test]
-fn test_collapse_reflow_and_inverse_involution() {
+fn test_collapse_reflow_and_reverse_involution() {
     let old_lines = ["    transform(", "        alpha, beta);"];
     let new = "    transform(alpha, beta);";
 
@@ -91,7 +91,7 @@ fn test_collapse_reflow_and_inverse_involution() {
     assert_eq!(reflow.old_range, 0..2);
     assert_eq!(reflow.new_range, 0..1);
 
-    let inv = reflow.inverse();
-    assert!(inv.is_expansion());
-    assert_eq!(inv.inverse(), reflow);
+    let rev = reflow.clone().reverse();
+    assert!(rev.is_expansion());
+    assert_eq!(rev.reverse(), reflow);
 }

@@ -30,22 +30,15 @@ pub struct OutputNote {
 }
 
 impl OutputNote {
-    pub fn reverse(&self) -> Self {
-        OutputNote {
-            id: self.id.clone(),
-            file: self.file.clone(),
-            location: self.location.reverse(),
-            text: self.text.clone(),
-            created_at: self.created_at,
-            runs: self.runs.iter().map(OutputRun::reverse).collect(),
-            content_hash: self.content_hash,
-            status: self.status,
-            original_source_rows: self
-                .original_source_rows
-                .iter()
-                .map(OutputRow::reverse)
-                .collect(),
-        }
+    pub fn reverse(mut self) -> Self {
+        self.location = self.location.reverse();
+        self.runs = self.runs.into_iter().map(OutputRun::reverse).collect();
+        self.original_source_rows = self
+            .original_source_rows
+            .into_iter()
+            .map(OutputRow::reverse)
+            .collect();
+        self
     }
 }
 

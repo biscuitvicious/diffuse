@@ -32,7 +32,7 @@ impl FileStatus {
         }
     }
 
-    pub fn reverse(&self) -> FileStatus {
+    pub const fn reverse(self) -> FileStatus {
         match self {
             FileStatus::Added => FileStatus::Deleted,
             FileStatus::Deleted => FileStatus::Added,
@@ -153,29 +153,18 @@ impl DiffFile {
         }
     }
 
-    pub fn reverse(&self) -> Self {
-        DiffFile {
-            path: self.old_path.clone().unwrap_or_else(|| self.path.clone()),
-            old_path: if self.old_path.is_some() {
-                Some(self.path.clone())
-            } else {
-                None
-            },
-            old_mode: self.new_mode.clone(),
-            new_mode: self.old_mode.clone(),
-            status: self.status.reverse(),
-            is_binary: self.is_binary,
-            has_file_headers: self.has_file_headers,
-            old_bytes: self.new_bytes,
-            new_bytes: self.old_bytes,
-            new_line_count: self.old_line_count,
-            old_line_count: self.new_line_count,
-            new_content: self.old_content.clone(),
-            old_content: self.new_content.clone(),
-            hunks: self.hunks.iter().map(Hunk::reverse).collect(),
-            raw_hunks: self.raw_hunks.iter().map(Hunk::reverse).collect(),
-            no_content: self.no_content,
+    pub fn reverse(mut self) -> Self {
+        if let Some(old) = self.old_path {
+            self.old_path = Some(std::mem::replace(&mut self.path, old));
         }
+        std::mem::swap(&mut self.old_mode, &mut self.new_mode);
+        std::mem::swap(&mut self.old_bytes, &mut self.new_bytes);
+        std::mem::swap(&mut self.old_line_count, &mut self.new_line_count);
+        std::mem::swap(&mut self.old_content, &mut self.new_content);
+        self.status = self.status.reverse();
+        self.hunks = self.hunks.into_iter().map(Hunk::reverse).collect();
+        self.raw_hunks = self.raw_hunks.into_iter().map(Hunk::reverse).collect();
+        self
     }
 }
 

@@ -49,19 +49,15 @@ pub struct OutputRow {
 }
 
 impl OutputRow {
-    pub fn reverse(&self) -> Self {
-        OutputRow {
-            kind: self.kind.reverse(),
-            mov_side: self.mov_side.map(|s| match s {
-                MovSide::Src => MovSide::Tgt,
-                MovSide::Tgt => MovSide::Src,
-            }),
-            new_line: self.old_line,
-            old_line: self.new_line,
-            runs: self.runs.iter().map(OutputRun::reverse).collect(),
-            wholesale: self.wholesale,
-            group: self.group,
-        }
+    pub fn reverse(mut self) -> Self {
+        self.kind = self.kind.reverse();
+        self.mov_side = self.mov_side.map(|s| match s {
+            MovSide::Src => MovSide::Tgt,
+            MovSide::Tgt => MovSide::Src,
+        });
+        std::mem::swap(&mut self.new_line, &mut self.old_line);
+        self.runs = self.runs.into_iter().map(OutputRun::reverse).collect();
+        self
     }
 
     #[inline]

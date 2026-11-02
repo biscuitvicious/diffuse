@@ -148,37 +148,30 @@ impl OutputFile {
         self.fences.shrink_to_fit();
     }
 
-    pub fn reverse(&self) -> Self {
-        OutputFile {
-            path: self.old_path.clone().unwrap_or_else(|| self.path.clone()),
-            old_path: if self.old_path.is_some() {
-                Some(self.path.clone())
-            } else {
-                None
-            },
-            old_mode: self.new_mode.clone(),
-            new_mode: self.old_mode.clone(),
-            status: self.status.reverse(),
-            is_binary: self.is_binary,
-            old_bytes: self.new_bytes,
-            new_bytes: self.old_bytes,
-            new_line_count: self.old_line_count,
-            old_line_count: self.new_line_count,
-            new_content: self.old_content.clone(),
-            old_content: self.new_content.clone(),
-            hunks: self.hunks.iter().map(OutputHunk::reverse).collect(),
-            raw_hunks: self.raw_hunks.iter().map(OutputHunk::reverse).collect(),
-            counts: self.counts.reverse(),
-            fences: self.fences.clone(),
-            notes: self.notes.iter().map(OutputNote::reverse).collect(),
-            content_runs: self
-                .content_runs
-                .iter()
-                .map(|runs| runs.iter().map(OutputRun::reverse).collect())
-                .collect(),
-            rows: self.rows.iter().map(OutputRow::reverse).collect(),
-            raw_source: self.raw_source.clone(),
+    pub fn reverse(mut self) -> Self {
+        if let Some(old) = self.old_path {
+            self.old_path = Some(std::mem::replace(&mut self.path, old));
         }
+        std::mem::swap(&mut self.old_mode, &mut self.new_mode);
+        std::mem::swap(&mut self.old_bytes, &mut self.new_bytes);
+        std::mem::swap(&mut self.old_line_count, &mut self.new_line_count);
+        std::mem::swap(&mut self.old_content, &mut self.new_content);
+        self.status = self.status.reverse();
+        self.hunks = self.hunks.into_iter().map(OutputHunk::reverse).collect();
+        self.raw_hunks = self
+            .raw_hunks
+            .into_iter()
+            .map(OutputHunk::reverse)
+            .collect();
+        self.counts = self.counts.reverse();
+        self.notes = self.notes.into_iter().map(OutputNote::reverse).collect();
+        self.content_runs = self
+            .content_runs
+            .into_iter()
+            .map(|runs| runs.into_iter().map(OutputRun::reverse).collect())
+            .collect();
+        self.rows = self.rows.into_iter().map(OutputRow::reverse).collect();
+        self
     }
 
     pub fn reconstruct(&self) -> DiffFile {

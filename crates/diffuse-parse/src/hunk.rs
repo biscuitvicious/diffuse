@@ -19,17 +19,11 @@ pub struct Hunk {
 }
 
 impl Hunk {
-    pub fn reverse(&self) -> Self {
-        Hunk {
-            old_start: self.new_start,
-            old_count: self.new_count,
-            new_start: self.old_start,
-            new_count: self.old_count,
-            section: self.section.clone(),
-            rows: self.rows.iter().map(Row::reverse).collect(),
-            above_ctx: self.above_ctx,
-            below_ctx: self.below_ctx,
-        }
+    pub fn reverse(mut self) -> Self {
+        std::mem::swap(&mut self.old_start, &mut self.new_start);
+        std::mem::swap(&mut self.old_count, &mut self.new_count);
+        self.rows = self.rows.into_iter().map(Row::reverse).collect();
+        self
     }
 }
 

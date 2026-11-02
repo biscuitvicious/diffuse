@@ -50,13 +50,9 @@ impl OutputRun {
         self.kind.sign_char()
     }
 
-    pub fn reverse(&self) -> Self {
-        OutputRun {
-            kind: self.kind.reverse(),
-            color: self.color,
-            sgr: self.sgr,
-            text: self.text.clone(),
-        }
+    pub fn reverse(mut self) -> Self {
+        self.kind = self.kind.reverse();
+        self
     }
 }
 

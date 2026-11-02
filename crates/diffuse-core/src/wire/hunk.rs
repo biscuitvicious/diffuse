@@ -35,14 +35,11 @@ pub struct OutputHunk {
 }
 
 impl OutputHunk {
-    pub fn reverse(&self) -> Self {
-        OutputHunk {
-            old_start: self.new_start,
-            old_count: self.new_count,
-            new_start: self.old_start,
-            new_count: self.old_count,
-            rows: self.rows.iter().map(OutputRow::reverse).collect(),
-        }
+    pub fn reverse(mut self) -> Self {
+        std::mem::swap(&mut self.old_start, &mut self.new_start);
+        std::mem::swap(&mut self.old_count, &mut self.new_count);
+        self.rows = self.rows.into_iter().map(OutputRow::reverse).collect();
+        self
     }
 
     /// Aggregated line-level change counts for this hunk's rows, mirroring

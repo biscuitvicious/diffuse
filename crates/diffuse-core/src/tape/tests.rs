@@ -527,7 +527,7 @@ fn test_prefix_suffix_peeling_equivalence() {
 
     assert_eq!(tape.project_old(), old);
     assert_eq!(tape.project_new(), new);
-    assert_eq!(tape.reverse().reverse(), tape);
+    assert_eq!(tape.clone().reverse().reverse(), tape);
 
     let runs = tape.to_merged_runs();
     let old_extracted: String = runs
@@ -549,7 +549,7 @@ fn test_prefix_suffix_peeling_equivalence() {
     let tape_tail = AlignmentTape::from_texts(old_tail, new_tail, None);
     assert_eq!(tape_tail.project_old(), old_tail);
     assert_eq!(tape_tail.project_new(), new_tail);
-    assert_eq!(tape_tail.reverse().reverse(), tape_tail);
+    assert_eq!(tape_tail.clone().reverse().reverse(), tape_tail);
 
     // Leading change (common suffix)
     let old_head = "prev_calc(42);";
@@ -557,7 +557,7 @@ fn test_prefix_suffix_peeling_equivalence() {
     let tape_head = AlignmentTape::from_texts(old_head, new_head, None);
     assert_eq!(tape_head.project_old(), old_head);
     assert_eq!(tape_head.project_new(), new_head);
-    assert_eq!(tape_head.reverse().reverse(), tape_head);
+    assert_eq!(tape_head.clone().reverse().reverse(), tape_head);
 
     // Trailing whitespace modification
     let old_ws = "let x = 1;   ";
@@ -565,7 +565,7 @@ fn test_prefix_suffix_peeling_equivalence() {
     let tape_ws = AlignmentTape::from_texts(old_ws, new_ws, None);
     assert_eq!(tape_ws.project_old(), old_ws);
     assert_eq!(tape_ws.project_new(), new_ws);
-    assert_eq!(tape_ws.reverse().reverse(), tape_ws);
+    assert_eq!(tape_ws.clone().reverse().reverse(), tape_ws);
 }
 
 #[test]

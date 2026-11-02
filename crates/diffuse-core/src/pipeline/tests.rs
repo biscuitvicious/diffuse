@@ -129,13 +129,15 @@ index 111..222 100644
     assert_eq!(reconstructed_files[0].path, "src/a.rs");
 
     // Involution on wire output: wire.reverse().reverse() == wire
-    let wire_rev = wire.reverse();
-    assert_eq!(wire_rev.reverse(), wire);
+    let wire_rev = wire.clone().reverse();
+    assert_eq!(wire_rev.clone().reverse(), wire);
 
     // Reconstruct from reverse wire matches reversed AST files
     let rev_files_from_wire = wire_rev.reconstruct();
-    let rev_files_direct: Vec<DiffFile> =
-        reconstructed_files.iter().map(DiffFile::reverse).collect();
+    let rev_files_direct: Vec<DiffFile> = reconstructed_files
+        .into_iter()
+        .map(DiffFile::reverse)
+        .collect();
     assert_eq!(rev_files_from_wire[0].path, rev_files_direct[0].path);
     assert_eq!(
         rev_files_from_wire[0].hunks.len(),

@@ -178,8 +178,24 @@ impl<'a> AlignmentTape<'a> {
     /// Swaps `Strike` and `Fill`, inverts `Relocate` spans, and preserves
     /// `Keep`. Satisfies the involution property: `tape.reverse().reverse()
     /// == tape`.
-    pub fn reverse(&self) -> AlignmentTape<'a> {
-        Self::from_algebraic_tape(self.to_algebraic_tape().invert())
+    pub fn reverse(mut self) -> AlignmentTape<'a> {
+        for c in &mut self.chunks {
+            *c = match c {
+                TapeChunk::Keep(s) => TapeChunk::Keep(s),
+                TapeChunk::Strike(s) => TapeChunk::Fill(s),
+                TapeChunk::Fill(s) => TapeChunk::Strike(s),
+                TapeChunk::Relocate {
+                    from_span,
+                    to_span,
+                    text,
+                } => TapeChunk::Relocate {
+                    from_span: *to_span,
+                    to_span: *from_span,
+                    text,
+                },
+            };
+        }
+        self
     }
 
     /// Converts this alignment tape into an algebraic `Tape<&'a str>`.

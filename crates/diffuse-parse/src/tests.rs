@@ -130,7 +130,7 @@ fn parse_diff_bare_git_header_is_dropped() {
 fn test_diff_components_reverse_involution() {
     let files = parse_diff(DIFF);
     for f in &files {
-        let rev = f.reverse();
+        let rev = f.clone().reverse();
         assert_eq!(
             rev.reverse(),
             *f,
@@ -138,10 +138,10 @@ fn test_diff_components_reverse_involution() {
             f.path
         );
         for h in &f.hunks {
-            let h_rev = h.reverse();
+            let h_rev = h.clone().reverse();
             assert_eq!(h_rev.reverse(), *h, "Hunk reverse is an involution");
             for r in &h.rows {
-                let r_rev = r.reverse();
+                let r_rev = r.clone().reverse();
                 assert_eq!(r_rev.reverse(), *r, "Row reverse is an involution");
             }
         }
@@ -152,7 +152,7 @@ fn test_diff_components_reverse_involution() {
         del: vec![(0, 5), (10, 15)],
         add: vec![(2, 8)],
     };
-    let rev_spans = spans.reverse();
+    let rev_spans = spans.clone().reverse();
     assert_eq!(rev_spans.del, spans.add);
     assert_eq!(rev_spans.add, spans.del);
     assert_eq!(rev_spans.reverse(), spans);
@@ -163,7 +163,7 @@ fn test_diff_components_reverse_involution() {
         AddLine::new(42, "new line text"),
         spans.clone(),
     );
-    let rev_mod = mod_row.reverse();
+    let rev_mod = mod_row.clone().reverse();
     assert_eq!(rev_mod.kind(), RowKind::Mod);
     assert_eq!(rev_mod.text(), "old line text");
     assert_eq!(rev_mod.old_text(), Some("new line text"));
@@ -177,7 +177,7 @@ fn test_diff_components_reverse_involution() {
         spans: spans.clone(),
         cached_runs: vec![(RunKind::MovedSrc, "moved text".to_string())],
     };
-    let rev_mov = mov_src.reverse();
+    let rev_mov = mov_src.clone().reverse();
     assert_eq!(rev_mov.kind(), RowKind::Mov);
     assert_eq!(rev_mov.new_line(), Some(10));
     assert_eq!(rev_mov.reverse(), mov_src);
@@ -189,7 +189,7 @@ fn test_diff_components_reverse_involution() {
         spans: spans.clone(),
         cached_runs: vec![(RunKind::MovedTgt, "aux text".to_string())],
     };
-    let rev_aux = aux_add.reverse();
+    let rev_aux = aux_add.clone().reverse();
     assert_eq!(rev_aux.group(), Some(RowGroup::Aux { anchor: 100 }));
     assert_eq!(rev_aux.old_line(), Some(105));
     assert_eq!(rev_aux.reverse(), aux_add);

@@ -120,7 +120,7 @@ impl FileCounts {
         out
     }
 
-    pub fn reverse(&self) -> Self {
+    pub fn reverse(self) -> Self {
         let rev = FileCounts {
             adds: self.dels,
             dels: self.adds,

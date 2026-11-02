@@ -63,19 +63,16 @@ impl<'a> BlockReflow<'a> {
         }
     }
 
-    /// The algebraic inverse reflow: inverts ranges, swaps anchors, and
-    /// reverses the alignment tape.
+    /// The algebraic reverse reflow: swaps old and new ranges, swaps anchors,
+    /// and reverses the alignment tape.
     ///
     /// Satisfies the involution property:
-    /// `reflow.inverse().inverse() == reflow`
-    pub fn inverse(&self) -> BlockReflow<'a> {
-        Self {
-            anchor_old: self.anchor_new,
-            anchor_new: self.anchor_old,
-            old_range: self.new_range.clone(),
-            new_range: self.old_range.clone(),
-            tape: self.tape.reverse(),
-        }
+    /// `reflow.reverse().reverse() == reflow`
+    pub fn reverse(mut self) -> BlockReflow<'a> {
+        std::mem::swap(&mut self.anchor_old, &mut self.anchor_new);
+        std::mem::swap(&mut self.old_range, &mut self.new_range);
+        self.tape = self.tape.reverse();
+        self
     }
 
     /// Is this reflow a 1-to-K expansion?

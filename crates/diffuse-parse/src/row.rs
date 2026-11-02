@@ -64,7 +64,7 @@ impl RunKind {
         matches!(self, RunKind::Add | RunKind::MovedTgt)
     }
 
-    pub fn reverse(&self) -> Self {
+    pub const fn reverse(self) -> Self {
         match self {
             RunKind::Ctx => RunKind::Ctx,
             RunKind::Del => RunKind::Add,
@@ -90,7 +90,7 @@ pub enum RowKind {
 }
 
 impl RowKind {
-    pub fn reverse(&self) -> RowKind {
+    pub const fn reverse(self) -> RowKind {
         match self {
             RowKind::Add => RowKind::Del,
             RowKind::Del => RowKind::Add,
@@ -196,11 +196,9 @@ impl Spans {
         self.add.iter().map(|(s, e)| e.saturating_sub(*s)).sum()
     }
 
-    pub fn reverse(&self) -> Self {
-        Spans {
-            del: self.add.clone(),
-            add: self.del.clone(),
-        }
+    pub fn reverse(mut self) -> Self {
+        std::mem::swap(&mut self.del, &mut self.add);
+        self
     }
 }
 
@@ -494,15 +492,15 @@ impl Row {
         matches!(self, Row::AuxAdd { .. } | Row::AuxDel { .. })
     }
 
-    pub fn reverse(&self) -> Self {
+    pub fn reverse(self) -> Self {
         match self {
             Row::Ctx(ctx_line) => Row::Ctx(CtxLine {
                 old_pos: ctx_line.new_pos,
                 new_pos: ctx_line.old_pos,
-                text: ctx_line.text.clone(),
+                text: ctx_line.text,
             }),
-            Row::Del(del_line) => Row::Add(AddLine::new(del_line.num, del_line.text.clone())),
-            Row::Add(add_line) => Row::Del(DelLine::new(add_line.num, add_line.text.clone())),
+            Row::Del(del_line) => Row::Add(AddLine::new(del_line.num, del_line.text)),
+            Row::Add(add_line) => Row::Del(DelLine::new(add_line.num, add_line.text)),
             Row::Mod {
                 old_line,
                 new_line,
@@ -510,25 +508,25 @@ impl Row {
                 cached_runs,
                 is_anchor,
             } => Row::Mod {
-                old_line: DelLine::new(new_line.num, new_line.text.clone()),
-                new_line: AddLine::new(old_line.num, old_line.text.clone()),
+                old_line: DelLine::new(new_line.num, new_line.text),
+                new_line: AddLine::new(old_line.num, old_line.text),
                 spans: spans.reverse(),
                 cached_runs: cached_runs
-                    .iter()
-                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .into_iter()
+                    .map(|(k, t)| (k.reverse(), t))
                     .collect(),
-                is_anchor: *is_anchor,
+                is_anchor,
             },
             Row::MovSrc {
                 line,
                 spans,
                 cached_runs,
             } => Row::MovTgt {
-                line: AddLine::new(line.num, line.text.clone()),
+                line: AddLine::new(line.num, line.text),
                 spans: spans.reverse(),
                 cached_runs: cached_runs
-                    .iter()
-                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .into_iter()
+                    .map(|(k, t)| (k.reverse(), t))
                     .collect(),
             },
             Row::MovTgt {
@@ -536,11 +534,11 @@ impl Row {
                 spans,
                 cached_runs,
             } => Row::MovSrc {
-                line: DelLine::new(line.num, line.text.clone()),
+                line: DelLine::new(line.num, line.text),
                 spans: spans.reverse(),
                 cached_runs: cached_runs
-                    .iter()
-                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .into_iter()
+                    .map(|(k, t)| (k.reverse(), t))
                     .collect(),
             },
             Row::AuxDel {
@@ -549,12 +547,12 @@ impl Row {
                 spans,
                 cached_runs,
             } => Row::AuxAdd {
-                anchor: *anchor,
-                line: AddLine::new(line.num, line.text.clone()),
+                anchor,
+                line: AddLine::new(line.num, line.text),
                 spans: spans.reverse(),
                 cached_runs: cached_runs
-                    .iter()
-                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .into_iter()
+                    .map(|(k, t)| (k.reverse(), t))
                     .collect(),
             },
             Row::AuxAdd {
@@ -563,15 +561,15 @@ impl Row {
                 spans,
                 cached_runs,
             } => Row::AuxDel {
-                anchor: *anchor,
-                line: DelLine::new(line.num, line.text.clone()),
+                anchor,
+                line: DelLine::new(line.num, line.text),
                 spans: spans.reverse(),
                 cached_runs: cached_runs
-                    .iter()
-                    .map(|(k, t)| (k.reverse(), t.clone()))
+                    .into_iter()
+                    .map(|(k, t)| (k.reverse(), t))
                     .collect(),
             },
-            Row::Sep(s) => Row::Sep(s.clone()),
+            Row::Sep(s) => Row::Sep(s),
         }
     }
 }
