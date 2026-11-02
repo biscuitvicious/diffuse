@@ -2,7 +2,7 @@
 
 ## Global TODO
 - [x] Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling (`SurfaceColors`, `StyledColor`, `GutterColors`, `SyntaxPalette`, `PrimitivePalette`)
-- [ ] Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture (`Scope`, `DiffKind`, `DiffPalette`, `ScopePalette`, `ThemePalette`)
+- [x] Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture (`Scope`, `DiffKind`, `DiffPalette`, `ScopePalette`, `ThemePalette`)
 - [ ] Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine with `inherits` & `$variable` Reference (`crates/diffuse-render/src/theme/toml/`)
 - [ ] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)
 - [ ] Phase 5 — Render Pipeline & Row Styler Migration (`crates/diffuse-render/src/`)
@@ -193,6 +193,14 @@ Establish two orthogonal axes:
 ### Acceptance Criteria
 - `palette[Scope::Row][DiffKind::Add].surface.bg` provides direct, zero-allocation, compile-time verified access.
 - Submodule decomposition under `crates/diffuse-render/src/theme/` complies with repository code style.
+
+### Coexistence Note
+The legacy flat `ThemePalette` in [`crates/diffuse-render/src/theme/palette/mod.rs`](../crates/diffuse-render/src/theme/palette/mod.rs)
+remains the canonical theme consumed by existing renderers until phases 5-7
+repoint them. The scoped architecture therefore lives in
+`theme/palette/scoped.rs` and its `ThemePalette` is not re-exported at the
+`theme` root while the legacy name occupies it; the scoped type becomes the
+top-level `theme::ThemePalette` when the legacy palette is retired.
 
 ---
 

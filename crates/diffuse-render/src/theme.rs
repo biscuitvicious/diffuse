@@ -16,6 +16,12 @@ pub use detect::*;
 pub mod primitive;
 pub use primitive::PrimitivePalette;
 
+pub mod scope;
+pub use scope::Scope;
+
+pub mod diff;
+pub use diff::{DiffKind, DiffPalette};
+
 pub mod styled_color;
 pub use styled_color::{GutterColors, StyledColor};
 
