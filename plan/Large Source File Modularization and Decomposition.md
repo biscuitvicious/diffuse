@@ -20,7 +20,7 @@
 - [x] Phase 17 — Review Notes CLI Action Handlers & Formatters (`crates/diffuse/src/notes_cli.rs` · 1,015 lines)
 - [x] Phase 18 — Token Semantics, Entropy & Container Affinities (`crates/diffuse-core/src/token.rs` · 996 lines)
 - [x] Phase 19 — Interactive TUI Modals & Dialog Views (`crates/diffuse-tui/src/view/modals.rs` · 994 lines)
-- [ ] Phase 20 — TUI Review Notes Lifecycle & Disk Sync (`crates/diffuse-tui/src/app/notes.rs` · 935 lines)
+- [x] Phase 20 — TUI Review Notes Lifecycle & Disk Sync (`crates/diffuse-tui/src/app/notes.rs` · 935 lines)
 - [ ] Phase 21 — Interactive Text Buffer & History Editor (`crates/diffuse-tui/src/editor.rs` · 932 lines)
 - [ ] Phase 22 — Terminal Row Segments, Gutters & Raw Diff Formatting (`crates/diffuse-render/src/row.rs` · 859 lines)
 - [ ] Phase 23 — Golden Test Harvesting & Fixture Ingestion CLI (`crates/diffuse/src/bin/harvest.rs` · 854 lines)
