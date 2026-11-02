@@ -1,7 +1,12 @@
 use super::*;
-use crate::core::{
-    merge::RunKind,
-    wire::{MovSide, OutputRun},
+use crate::{
+    ansi::ColorExt,
+    core::{
+        merge::RunKind,
+        parse::{RowGroup, RowKind, Spans},
+        wire::{MovSide, OutputRun},
+    },
+    theme::DiffuseTheme,
 };
 use diffuse_syntax::color::TokenColor;
 
