@@ -1,10 +1,12 @@
 use super::*;
 use crate::{
-    ansi::strip_ansi,
+    Badge, DiffuseTheme,
+    ansi::{ColorExt, strip_ansi},
     core::{
         PipelineOptions,
         merge::RunKind,
-        wire::{OutputHunk, OutputNote, OutputRun},
+        parse::RowKind,
+        wire::{OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun, PipelineOutput},
     },
 };
 
