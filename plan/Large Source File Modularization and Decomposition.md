@@ -40,7 +40,7 @@
 - [x] Phase 37 — Working Tree Live Reload & Note Synchronization (`crates/diffuse-tui/src/app/sync.rs` · 569 lines)
 - [x] Phase 38 — Native Git Engine & Content Loader (`crates/diffuse-core/src/git.rs` · 565 lines)
 - [x] Phase 39 — Affine-Gap Cost Matrix & Dynamic Programming Traceback (`crates/diffuse-algo/src/affine_gap.rs` · 562 lines)
-- [ ] Phase 40 — TUI Application State Lifecycle & Construction (`crates/diffuse-tui/src/app.rs` · 533 lines)
+- [x] Phase 40 — TUI Application State Lifecycle & Construction (`crates/diffuse-tui/src/app.rs` · 533 lines)
 - [ ] Phase 41 — Visual Row & Semantic Hunk Navigation (`crates/diffuse-tui/src/app/navigation.rs` · 529 lines)
 - [ ] Phase 42 — Keyboard Event Dispatch & TuiAction Mapping (`crates/diffuse-tui/src/app/dispatch.rs` · 527 lines)
 - [ ] Phase 43 — Working Tree Hunk Staging & Mutation Engine (`crates/diffuse-git/src/mutation.rs` · 514 lines)
