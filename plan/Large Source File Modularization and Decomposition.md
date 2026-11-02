@@ -25,7 +25,7 @@
 - [x] Phase 22 — Terminal Row Segments, Gutters & Raw Diff Formatting (`crates/diffuse-render/src/row.rs` · 859 lines)
 - [x] Phase 23 — Golden Test Harvesting & Fixture Ingestion CLI (`crates/diffuse/src/bin/harvest.rs` · 854 lines)
 - [x] Phase 24 — Visual Line Geometry & Scrollbar Indicators (`crates/diffuse-tui/src/app/geometry.rs` · 775 lines)
-- [ ] Phase 25 — Cluster DP Pairing & Surplus Survival (`crates/diffuse-core/src/cluster/pairing.rs` · 771 lines)
+- [x] Phase 25 — Cluster DP Pairing & Surplus Survival (`crates/diffuse-core/src/cluster/pairing.rs` · 771 lines)
 - [ ] Phase 26 — Spatial Neighborhood & Relocation Matching (`crates/diffuse-algo/src/bipartite_matching.rs` · 760 lines)
 - [ ] Phase 27 — Syntactic Profile Registry & Extension Mapping (`crates/diffuse-syntax/src/registry.rs` · 744 lines)
 - [ ] Phase 28 — Context Row Synthesis & Hunk Folding State (`crates/diffuse-tui/src/app/context.rs` · 731 lines)
