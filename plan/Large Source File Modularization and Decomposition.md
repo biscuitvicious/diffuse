@@ -15,7 +15,7 @@
 - [x] Phase 12 — Terminal Markdown Flow, Table & Inline Renderer (`crates/diffuse-render/src/markdown/terminal.rs` · 1,198 lines)
 - [x] Phase 13 — Unified Diff Parser & Core AST Models (`crates/diffuse-parse/src/lib.rs` · 1,178 lines)
 - [x] Phase 14 — Invertible Alignment Tape & Run Reconstruction (`crates/diffuse-core/src/tape.rs` · 1,086 lines)
-- [ ] Phase 15 — Syntactic Language Profiles & Delimiter Tables (`crates/diffuse-syntax/src/profile.rs` · 1,032 lines)
+- [x] Phase 15 — Syntactic Language Profiles & Delimiter Tables (`crates/diffuse-syntax/src/profile.rs` · 1,032 lines)
 - [ ] Phase 16 — Dyck Language Pushdown Automata & Containers (`crates/diffuse-algo/src/dyck.rs` · 1,017 lines)
 - [ ] Phase 17 — Review Notes CLI Action Handlers & Formatters (`crates/diffuse/src/notes_cli.rs` · 1,015 lines)
 - [ ] Phase 18 — Token Semantics, Entropy & Container Affinities (`crates/diffuse-core/src/token.rs` · 996 lines)
