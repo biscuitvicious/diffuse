@@ -35,7 +35,7 @@
 - [x] Phase 32 — Markdown Table Formatting & Side-by-Side Diffing (`crates/diffuse-render/src/markdown.rs` · 667 lines)
 - [x] Phase 33 — Theme Color Palettes & Contrast Specifications (`crates/diffuse-render/src/theme/palette.rs` · 663 lines)
 - [x] Phase 34 — TUI Top Header & Revision Status Bar (`crates/diffuse-tui/src/view/header.rs` · 597 lines)
-- [ ] Phase 35 — TUI Diff Grid Cell Layout & Column Math (`crates/diffuse-tui/src/view/diff_grid.rs` · 580 lines)
+- [x] Phase 35 — TUI Diff Grid Cell Layout & Column Math (`crates/diffuse-tui/src/view/diff_grid.rs` · 580 lines)
 - [ ] Phase 36 — Native Git Tree & Working Copy Diffing (`crates/diffuse-git/src/diff.rs` · 571 lines)
 - [ ] Phase 37 — Working Tree Live Reload & Note Synchronization (`crates/diffuse-tui/src/app/sync.rs` · 569 lines)
 - [ ] Phase 38 — Native Git Engine & Content Loader (`crates/diffuse-core/src/git.rs` · 565 lines)

@@ -4,7 +4,7 @@ use crate::{
         counts::FileCounts,
         wire::{OutputFile, OutputHunk},
     },
-    render::{Badge, DiffuseTheme, width::display_width},
+    render::{Badge, ColorExt, DiffuseTheme, width::display_width},
 };
 
 fn dummy_file() -> OutputFile {
