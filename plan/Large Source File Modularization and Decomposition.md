@@ -23,7 +23,7 @@
 - [x] Phase 20 — TUI Review Notes Lifecycle & Disk Sync (`crates/diffuse-tui/src/app/notes.rs` · 935 lines)
 - [x] Phase 21 — Interactive Text Buffer & History Editor (`crates/diffuse-tui/src/editor.rs` · 932 lines)
 - [x] Phase 22 — Terminal Row Segments, Gutters & Raw Diff Formatting (`crates/diffuse-render/src/row.rs` · 859 lines)
-- [ ] Phase 23 — Golden Test Harvesting & Fixture Ingestion CLI (`crates/diffuse/src/bin/harvest.rs` · 854 lines)
+- [x] Phase 23 — Golden Test Harvesting & Fixture Ingestion CLI (`crates/diffuse/src/bin/harvest.rs` · 854 lines)
 - [ ] Phase 24 — Visual Line Geometry & Scrollbar Indicators (`crates/diffuse-tui/src/app/geometry.rs` · 775 lines)
 - [ ] Phase 25 — Cluster DP Pairing & Surplus Survival (`crates/diffuse-core/src/cluster/pairing.rs` · 771 lines)
 - [ ] Phase 26 — Spatial Neighborhood & Relocation Matching (`crates/diffuse-algo/src/bipartite_matching.rs` · 760 lines)

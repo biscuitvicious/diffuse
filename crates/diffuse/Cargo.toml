@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "harvest"
-path = "src/bin/harvest.rs"
+path = "src/bin/harvest/main.rs"
 
 [dependencies]
 diffuse-algo = { workspace = true }
