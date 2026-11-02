@@ -1,90 +1,15 @@
-//! Semantic token classification, information entropy calculation, and
-//! multi-token phrase landmark detection for robust alignment anchoring.
+//! Shannon self-information entropy and multi-token phrase landmark anchoring.
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use diffuse_algo::DelimiterClassifier;
 use diffuse_syntax::profile::LangProfile;
 
-use crate::lcs::{char_len, token_is_ws};
-
-#[cfg(test)]
-mod tests;
-
-/// Position-based classification of whitespace tokens within a line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum WhitespaceKind {
-    /// Leading whitespace (indentation).
-    Leading,
-    /// Internal whitespace separating tokens within code or prose.
-    Internal,
-    /// Trailing whitespace at the line boundary.
-    Trailing,
-}
-
-impl WhitespaceKind {
-    /// Semantic token weight used in subword similarity calculations.
-    ///
-    /// - `Leading`: Indentation depth weighted at ~1 unit per 4-space indent
-    ///   level (minimum 1.0).
-    /// - `Internal`: Full character weight as an intra-line structural token
-    ///   separator.
-    /// - `Trailing`: Zero weight as it carries zero semantic value.
-    #[inline]
-    pub fn token_weight(&self, char_count: usize) -> f64 {
-        match self {
-            WhitespaceKind::Leading => ((char_count as f64) * 0.25).max(1.0),
-            WhitespaceKind::Internal => char_count as f64,
-            WhitespaceKind::Trailing => 0.0,
-        }
-    }
-
-    /// Gotoh sequence alignment match reward.
-    ///
-    /// - `Leading`: Standard indentation match reward (2).
-    /// - `Internal`: Standard whitespace separator match reward (2).
-    /// - `Trailing`: Zero reward so trailing whitespace never latches or
-    ///   distorts alignment.
-    #[inline]
-    pub fn match_reward(&self) -> i32 {
-        match self {
-            WhitespaceKind::Leading => 2,
-            WhitespaceKind::Internal => 2,
-            WhitespaceKind::Trailing => 0,
-        }
-    }
-}
-
-/// Semantic role and classification of a token.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum TokenClass {
-    Whitespace,
-    Delimiter,
-    Operator,
-    Keyword,
-    Identifier,
-    Literal,
-    ProseWord,
-    FunctionWord,
-}
-
-impl TokenClass {
-    /// Information-theoretic class weight used in Shannon self-information
-    /// calculation.
-    pub fn class_weight(&self) -> f64 {
-        match self {
-            TokenClass::Identifier => 2.0,
-            TokenClass::Keyword => 1.6,
-            TokenClass::Literal => 1.5,
-            TokenClass::ProseWord => 1.5,
-            TokenClass::Operator => 0.8,
-            TokenClass::FunctionWord => 0.5,
-            TokenClass::Delimiter => 0.2,
-            TokenClass::Whitespace => 0.0,
-        }
-    }
-}
+use super::{
+    class::{classify_token, is_anchor_content_token, is_delim, is_function_word},
+    container::{ContainerKind, compute_token_containers, get_enclosing_caller},
+};
+use crate::lcs::{char_len, is_subword_token, token_is_alnum, token_is_ws, tokens_can_match};
 
 /// Minimum self-information threshold for a single token to be considered an
 /// anchor.
@@ -94,280 +19,6 @@ pub const MIN_SINGLE_TOKEN_ENTROPY: f64 = 1.0;
 /// landmark.
 pub const MIN_PHRASE_ENTROPY: f64 = 2.5;
 
-#[inline]
-fn is_delim(t: &str) -> bool {
-    if t.is_ascii() {
-        t.len() == 1
-            && matches!(
-                t.as_bytes()[0],
-                b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b';'
-            )
-    } else {
-        use unicode_segmentation::UnicodeSegmentation;
-        t.graphemes(true).count() == 1
-            && t.chars().next().is_some_and(|c| {
-                diffuse_syntax::profile::is_opening_delimiter_char(c)
-                    || diffuse_syntax::profile::is_closing_delimiter_char(c)
-            })
-    }
-}
-
-#[inline]
-fn is_numeric_literal(t: &str) -> bool {
-    if t.is_empty() {
-        return false;
-    }
-    let b = t.as_bytes();
-    if b[0].is_ascii_digit() {
-        return true;
-    }
-    if (t.starts_with("0x") || t.starts_with("0b") || t.starts_with("0o")) && t.len() > 2 {
-        return true;
-    }
-    false
-}
-
-#[inline]
-fn is_string_literal(t: &str) -> bool {
-    (t.starts_with('"') && t.ends_with('"') && t.len() >= 2)
-        || (t.starts_with('\'') && t.ends_with('\'') && t.len() >= 2)
-        || (t.starts_with('`') && t.ends_with('`') && t.len() >= 2)
-}
-
-#[inline]
-fn is_builtin_keyword(t: &str) -> bool {
-    matches!(
-        t,
-        "fn" | "let"
-            | "pub"
-            | "mut"
-            | "if"
-            | "else"
-            | "match"
-            | "return"
-            | "struct"
-            | "enum"
-            | "impl"
-            | "trait"
-            | "type"
-            | "async"
-            | "await"
-            | "const"
-            | "static"
-            | "mod"
-            | "use"
-            | "super"
-            | "self"
-            | "Self"
-            | "crate"
-            | "def"
-            | "class"
-            | "import"
-            | "from"
-            | "function"
-            | "var"
-            | "val"
-            | "package"
-            | "func"
-            | "interface"
-            | "select"
-            | "case"
-            | "default"
-            | "switch"
-            | "for"
-            | "while"
-            | "loop"
-            | "break"
-            | "continue"
-            | "yield"
-    )
-}
-
-#[inline]
-pub(crate) fn is_function_word(t: &str) -> bool {
-    matches!(
-        t,
-        "the"
-            | "The"
-            | "THE"
-            | "a"
-            | "A"
-            | "an"
-            | "An"
-            | "AN"
-            | "and"
-            | "And"
-            | "AND"
-            | "or"
-            | "Or"
-            | "OR"
-            | "in"
-            | "In"
-            | "IN"
-            | "on"
-            | "On"
-            | "ON"
-            | "at"
-            | "At"
-            | "AT"
-            | "to"
-            | "To"
-            | "TO"
-            | "for"
-            | "For"
-            | "FOR"
-            | "of"
-            | "Of"
-            | "OF"
-            | "with"
-            | "With"
-            | "WITH"
-            | "by"
-            | "By"
-            | "BY"
-            | "is"
-            | "Is"
-            | "IS"
-            | "it"
-            | "It"
-            | "IT"
-            | "its"
-            | "Its"
-            | "ITS"
-            | "as"
-            | "As"
-            | "AS"
-    )
-}
-
-#[inline]
-fn is_op_char(c: char) -> bool {
-    matches!(
-        c,
-        '=' | '+'
-            | '-'
-            | '*'
-            | '/'
-            | '%'
-            | '&'
-            | '|'
-            | '^'
-            | '!'
-            | '<'
-            | '>'
-            | '?'
-            | ':'
-            | '~'
-            | '@'
-            | '#'
-            | '$'
-    )
-}
-
-#[inline]
-fn is_identifier_like(t: &str) -> bool {
-    if t.is_empty() {
-        return false;
-    }
-    if t.is_ascii() {
-        let b = t.as_bytes();
-        let starts_valid = b[0].is_ascii_alphabetic() || b[0] == b'_';
-        if !starts_valid {
-            return false;
-        }
-        let all_alphanumeric_or_underscore =
-            t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-        if !all_alphanumeric_or_underscore {
-            return false;
-        }
-        t.contains('_') || t.chars().any(|c| c.is_ascii_uppercase())
-    } else {
-        let mut chars = t.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        let starts_valid = first.is_alphabetic() || first == '_';
-        if !starts_valid {
-            return false;
-        }
-        let all_alphanumeric_or_underscore = t.chars().all(|c| c.is_alphanumeric() || c == '_');
-        if !all_alphanumeric_or_underscore {
-            return false;
-        }
-        t.contains('_') || t.chars().any(char::is_uppercase)
-    }
-}
-
-/// Classifies a token into its syntactic/semantic role.
-pub fn classify_token(token: &str, profile: Option<&LangProfile>) -> TokenClass {
-    if token.is_empty() || token_is_ws(token) {
-        return TokenClass::Whitespace;
-    }
-    if is_delim(token) {
-        return TokenClass::Delimiter;
-    }
-    if profile.is_some_and(|p| p.is_operator_anchor(token)) {
-        return TokenClass::Operator;
-    }
-    if is_string_literal(token) || is_numeric_literal(token) {
-        return TokenClass::Literal;
-    }
-    if profile.is_some_and(|p| p.is_keyword(token)) || is_builtin_keyword(token) {
-        return TokenClass::Keyword;
-    }
-    if is_identifier_like(token) {
-        return TokenClass::Identifier;
-    }
-    if token.chars().all(is_op_char) {
-        return TokenClass::Operator;
-    }
-    if is_function_word(token) {
-        return TokenClass::FunctionWord;
-    }
-    TokenClass::ProseWord
-}
-
-/// Classifies a whitespace token at `idx` in `tokens` into its position-based
-/// role: leading (indentation), internal (token separator), or trailing
-/// whitespace.
-///
-/// Precondition: `idx < tokens.len()` and `token_is_ws(tokens[idx])`.
-pub fn classify_whitespace(tokens: &[&str], idx: usize) -> WhitespaceKind {
-    assert!(
-        idx < tokens.len(),
-        "token index out of bounds: {} >= {}",
-        idx,
-        tokens.len()
-    );
-    assert!(
-        token_is_ws(tokens[idx]),
-        "expected whitespace token at index {}, got {:?}",
-        idx,
-        tokens[idx]
-    );
-
-    let is_leading = tokens[..idx].iter().all(|t| token_is_ws(t));
-    let has_non_ws_after = tokens[idx + 1..].iter().any(|t| !token_is_ws(t));
-
-    if is_leading {
-        WhitespaceKind::Leading
-    } else if !has_non_ws_after {
-        WhitespaceKind::Trailing
-    } else {
-        WhitespaceKind::Internal
-    }
-}
-
-/// Returns the `WhitespaceKind` if the token at `idx` is whitespace, or `None`
-/// otherwise.
-pub fn classify_token_whitespace(tokens: &[&str], idx: usize) -> Option<WhitespaceKind> {
-    if idx < tokens.len() && token_is_ws(tokens[idx]) {
-        Some(classify_whitespace(tokens, idx))
-    } else {
-        None
-    }
-}
-
 /// Computes the Shannon self-information score of a single token:
 /// $$I(t) = \text{class\_weight}(t.\text{class}) \times \ln(1 +
 /// \text{char\_len}(t))$$
@@ -375,43 +26,6 @@ pub fn token_self_information(token: &str, profile: Option<&LangProfile>) -> f64
     let class = classify_token(token, profile);
     let len = char_len(token);
     class.class_weight() * ((1 + len) as f64).ln()
-}
-
-/// Returns true if a token can serve as an anchor point or phrase boundary.
-#[inline]
-pub fn is_anchor_content_token(t: &str, profile: Option<&LangProfile>) -> bool {
-    if token_is_ws(t) || is_delim(t) || is_function_word(t) {
-        return false;
-    }
-    let is_op = profile.is_some_and(|p| p.is_operator_anchor(t));
-    let is_alnum = crate::lcs::token_is_alnum(t);
-    is_alnum || is_op
-}
-
-/// Computes parenthesis nesting depth for tokens, ignoring parentheses that
-/// occur inside string literals or backtick code spans.
-pub fn compute_parenthesis_depth(
-    tokens: &[&str],
-    containers: &[Option<ContainerKind>],
-) -> Vec<usize> {
-    let mut result = Vec::with_capacity(tokens.len());
-    let mut depth = 0usize;
-    for (idx, &t) in tokens.iter().enumerate() {
-        if !containers[idx].is_some_and(|c| c.is_quoted()) {
-            if t == ")" {
-                depth = depth.saturating_sub(1);
-                result.push(depth);
-            } else if t == "(" {
-                result.push(depth);
-                depth += 1;
-            } else {
-                result.push(depth);
-            }
-        } else {
-            result.push(depth);
-        }
-    }
-    result
 }
 
 #[inline]
@@ -439,28 +53,6 @@ fn is_dangling_suffix_token(t: &str, profile: Option<&LangProfile>) -> bool {
         return true;
     }
     !is_anchor_content_token(t, profile) && !matches!(t, ")" | "]" | "}" | "\"" | "'" | "`")
-}
-
-#[inline]
-pub(crate) fn get_enclosing_caller<'a>(tokens: &[&'a str], idx: usize) -> Option<&'a str> {
-    let classifier = diffuse_algo::UniversalDelimiterClassifier;
-    let mut depth = 0usize;
-    for i in (0..idx).rev() {
-        if let Some(diffuse_algo::DelimiterCategory::Close(_)) = classifier.classify(&tokens[i]) {
-            depth += 1;
-        } else if let Some(diffuse_algo::DelimiterCategory::Open(_)) =
-            classifier.classify(&tokens[i])
-        {
-            if depth == 0 {
-                return (0..i)
-                    .rev()
-                    .find(|&k| !token_is_ws(tokens[k]))
-                    .map(|k| tokens[k]);
-            }
-            depth -= 1;
-        }
-    }
-    None
 }
 
 /// Identifies maximal multi-token phrase landmarks ($k \ge 2$) shared between
@@ -590,24 +182,22 @@ pub fn multi_token_phrase_anchors(
                 continue;
             }
 
-            let starts_inside_word = (a_start > 0
-                && crate::lcs::is_subword_token(a[a_start - 1])
-                && crate::lcs::is_subword_token(a[a_start]))
-                || (b_start > 0
-                    && crate::lcs::is_subword_token(b[b_start - 1])
-                    && crate::lcs::is_subword_token(b[b_start]));
-            let ends_inside_word = (a_end < a.len()
-                && crate::lcs::is_subword_token(a[a_end - 1])
-                && crate::lcs::is_subword_token(a[a_end]))
-                || (b_end < b.len()
-                    && crate::lcs::is_subword_token(b[b_end - 1])
-                    && crate::lcs::is_subword_token(b[b_end]));
+            let starts_inside_word =
+                (a_start > 0 && is_subword_token(a[a_start - 1]) && is_subword_token(a[a_start]))
+                    || (b_start > 0
+                        && is_subword_token(b[b_start - 1])
+                        && is_subword_token(b[b_start]));
+            let ends_inside_word =
+                (a_end < a.len() && is_subword_token(a[a_end - 1]) && is_subword_token(a[a_end]))
+                    || (b_end < b.len()
+                        && is_subword_token(b[b_end - 1])
+                        && is_subword_token(b[b_end]));
 
             if starts_inside_word || ends_inside_word {
                 continue;
             }
 
-            if !crate::lcs::tokens_can_match(a, b, &[], &[], None, None, a_start, b_start) {
+            if !tokens_can_match(a, b, &[], &[], None, None, a_start, b_start) {
                 continue;
             }
             let phrase_slice = &a[a_start..a_start + trimmed_len];
@@ -688,13 +278,13 @@ pub fn multi_token_phrase_anchors(
                     && get_enclosing_caller(a, a_start) != get_enclosing_caller(b, b_start);
                 let left_supported = a[..a_start].iter().any(|&x| {
                     !token_is_ws(x)
-                        && crate::lcs::token_is_alnum(x)
+                        && token_is_alnum(x)
                         && !is_function_word(x)
                         && b[..b_start].contains(&x)
                 });
                 let right_supported = a[a_end..].iter().any(|&x| {
                     !token_is_ws(x)
-                        && crate::lcs::token_is_alnum(x)
+                        && token_is_alnum(x)
                         && !is_function_word(x)
                         && b[b_end..].contains(&x)
                 });
@@ -739,62 +329,6 @@ pub fn multi_token_phrase_anchors(
     }
 
     result
-}
-
-/// Syntactic container enclosing a token (paired bracket, string literal, or
-/// code span).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum ContainerKind {
-    Paren,
-    Bracket,
-    Brace,
-    DoubleQuote,
-    SingleQuote,
-    #[default]
-    Backtick,
-}
-
-impl ContainerKind {
-    #[inline]
-    pub fn is_quoted(&self) -> bool {
-        matches!(self, Self::DoubleQuote | Self::SingleQuote | Self::Backtick)
-    }
-
-    /// Whether two container contexts are structurally compatible for token
-    /// matching. Containers of different bracket types (e.g. `()` vs `{}`)
-    /// or between quoted strings and unquoted code are incompatible. Code
-    /// tokens at top-level (`None`) may match code tokens wrapped in an
-    /// unquoted code container (e.g. `Paren`, `Bracket`, `Brace`).
-    #[inline]
-    pub fn is_compatible_with(a: Option<Self>, b: Option<Self>) -> bool {
-        match (a, b) {
-            (Some(ca), Some(cb)) => ca == cb,
-            (Some(c), None) | (None, Some(c)) => !c.is_quoted(),
-            (None, None) => true,
-        }
-    }
-
-    #[inline]
-    pub fn from_id(id: u8) -> Option<Self> {
-        match id {
-            1 => Some(Self::Paren),
-            2 => Some(Self::Bracket),
-            3 => Some(Self::Brace),
-            10 => Some(Self::DoubleQuote),
-            11 => Some(Self::SingleQuote),
-            12 => Some(Self::Backtick),
-            _ => None,
-        }
-    }
-}
-
-/// Computes the active enclosing container (if any) for each token in a
-/// sequence.
-pub fn compute_token_containers(tokens: &[&str]) -> Vec<Option<ContainerKind>> {
-    diffuse_algo::track_enclosing_containers(tokens, &diffuse_algo::UniversalDelimiterClassifier)
-        .into_iter()
-        .map(|opt| opt.and_then(ContainerKind::from_id))
-        .collect()
 }
 
 /// Computes entropy-weighted anchors combining multi-token phrase landmarks
@@ -866,7 +400,7 @@ pub fn entropy_anchors(
             && count_b == 1
         {
             let is_op = profile.is_some_and(|p| p.is_operator_anchor(t));
-            let is_alnum = crate::lcs::token_is_alnum(t);
+            let is_alnum = token_is_alnum(t);
             if (is_alnum || is_op)
                 && !is_function_word(t)
                 && is_compatible_with_phrases(idx_a, idx_b)
@@ -877,28 +411,26 @@ pub fn entropy_anchors(
                 // must share context with at least one side.
                 let mut left_bound_a = idx_a;
                 while left_bound_a > 0
-                    && (crate::lcs::is_subword_token(a[left_bound_a - 1])
-                        || a[left_bound_a - 1] == "::")
+                    && (is_subword_token(a[left_bound_a - 1]) || a[left_bound_a - 1] == "::")
                 {
                     left_bound_a -= 1;
                 }
                 let mut left_bound_b = idx_b;
                 while left_bound_b > 0
-                    && (crate::lcs::is_subword_token(b[left_bound_b - 1])
-                        || b[left_bound_b - 1] == "::")
+                    && (is_subword_token(b[left_bound_b - 1]) || b[left_bound_b - 1] == "::")
                 {
                     left_bound_b -= 1;
                 }
 
                 let mut right_bound_a = idx_a + 1;
                 while right_bound_a < a.len()
-                    && (crate::lcs::is_subword_token(a[right_bound_a]) || a[right_bound_a] == "::")
+                    && (is_subword_token(a[right_bound_a]) || a[right_bound_a] == "::")
                 {
                     right_bound_a += 1;
                 }
                 let mut right_bound_b = idx_b + 1;
                 while right_bound_b < b.len()
-                    && (crate::lcs::is_subword_token(b[right_bound_b]) || b[right_bound_b] == "::")
+                    && (is_subword_token(b[right_bound_b]) || b[right_bound_b] == "::")
                 {
                     right_bound_b += 1;
                 }
@@ -917,7 +449,7 @@ pub fn entropy_anchors(
                     let is_support_token = |tok: &str| {
                         !token_is_ws(tok)
                             && !is_delim(tok)
-                            && (crate::lcs::token_is_alnum(tok)
+                            && (token_is_alnum(tok)
                                 || profile.is_some_and(|p| p.is_operator_anchor(tok)))
                             && !is_function_word(tok)
                     };
@@ -937,17 +469,15 @@ pub fn entropy_anchors(
                 }
 
                 if is_alnum {
-                    let left_sub_a = idx_a > 0 && crate::lcs::is_subword_token(a[idx_a - 1]);
-                    let left_sub_b = idx_b > 0 && crate::lcs::is_subword_token(b[idx_b - 1]);
-                    let right_sub_a =
-                        idx_a + 1 < a.len() && crate::lcs::is_subword_token(a[idx_a + 1]);
-                    let right_sub_b =
-                        idx_b + 1 < b.len() && crate::lcs::is_subword_token(b[idx_b + 1]);
+                    let left_sub_a = idx_a > 0 && is_subword_token(a[idx_a - 1]);
+                    let left_sub_b = idx_b > 0 && is_subword_token(b[idx_b - 1]);
+                    let right_sub_a = idx_a + 1 < a.len() && is_subword_token(a[idx_a + 1]);
+                    let right_sub_b = idx_b + 1 < b.len() && is_subword_token(b[idx_b + 1]);
                     if left_sub_a || left_sub_b || right_sub_a || right_sub_b {
                         continue;
                     }
                 }
-                if crate::lcs::tokens_can_match(a, b, &[], &[], None, None, idx_a, idx_b) {
+                if tokens_can_match(a, b, &[], &[], None, None, idx_a, idx_b) {
                     let info = token_self_information(t, profile);
                     if info >= MIN_SINGLE_TOKEN_ENTROPY || is_op {
                         candidates.push((idx_a, idx_b));
