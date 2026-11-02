@@ -1,11 +1,16 @@
 use super::*;
-use crate::core::{
-    counts::FileCounts,
-    merge::RunKind,
-    parse::RowKind,
-    wire::{OutputFile, OutputHunk, OutputRow, OutputRun},
+use crate::{
+    core::{
+        counts::FileCounts,
+        merge::RunKind,
+        parse::RowKind,
+        wire::{OutputFile, OutputHunk, OutputRow, OutputRun, PipelineOutput},
+    },
+    finder::FileFinderState,
+    render::DiffuseTheme,
+    view::header::visible_width,
 };
-use ratatui::{Terminal, backend::TestBackend};
+use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
 
 #[test]
 fn test_ratatui_help_modal_widget() {
