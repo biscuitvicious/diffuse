@@ -32,7 +32,7 @@
 - [x] Phase 29 — ANSI Escape Sequence & Color Styling Models (`crates/diffuse-render/src/ansi.rs` · 702 lines)
 - [x] Phase 30 — Git Domain Models, Repositories & Review Targets (`crates/diffuse-git/src/types.rs` · 693 lines)
 - [x] Phase 31 — File Header Banners & Diff Hunk Rendering (`crates/diffuse-render/src/diff.rs` · 686 lines)
-- [ ] Phase 32 — Markdown Table Formatting & Side-by-Side Diffing (`crates/diffuse-render/src/markdown.rs` · 667 lines)
+- [x] Phase 32 — Markdown Table Formatting & Side-by-Side Diffing (`crates/diffuse-render/src/markdown.rs` · 667 lines)
 - [ ] Phase 33 — Theme Color Palettes & Contrast Specifications (`crates/diffuse-render/src/theme/palette.rs` · 663 lines)
 - [ ] Phase 34 — TUI Top Header & Revision Status Bar (`crates/diffuse-tui/src/view/header.rs` · 597 lines)
 - [ ] Phase 35 — TUI Diff Grid Cell Layout & Column Math (`crates/diffuse-tui/src/view/diff_grid.rs` · 580 lines)

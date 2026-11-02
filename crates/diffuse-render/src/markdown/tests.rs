@@ -2,12 +2,14 @@ use diffuse_syntax::color::TokenColor;
 
 use super::*;
 use crate::{
+    DiffuseTheme,
     ansi::ColorExt,
     core::{
         counts::FileCounts,
         merge::RunKind,
         notes::NoteStatus,
-        wire::{OutputHunk, OutputNote, OutputRow, OutputRun},
+        parse::RowKind,
+        wire::{MovSide, OutputFile, OutputHunk, OutputNote, OutputRow, OutputRun, PipelineOutput},
     },
 };
 
