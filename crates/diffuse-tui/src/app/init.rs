@@ -2,11 +2,7 @@ use std::{collections::HashSet, path::PathBuf, time::Instant};
 
 use super::AppState;
 use crate::{
-    core::{
-        DEFAULT_EXPAND_LINES,
-        notes::load_notes,
-        wire::PipelineOutput,
-    },
+    core::{DEFAULT_EXPAND_LINES, notes::load_notes, wire::PipelineOutput},
     render::DiffuseTheme,
 };
 
