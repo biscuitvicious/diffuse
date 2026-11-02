@@ -17,7 +17,7 @@
 - [x] Phase 14 — Invertible Alignment Tape & Run Reconstruction (`crates/diffuse-core/src/tape.rs` · 1,086 lines)
 - [x] Phase 15 — Syntactic Language Profiles & Delimiter Tables (`crates/diffuse-syntax/src/profile.rs` · 1,032 lines)
 - [x] Phase 16 — Dyck Language Pushdown Automata & Containers (`crates/diffuse-algo/src/dyck.rs` · 1,017 lines)
-- [ ] Phase 17 — Review Notes CLI Action Handlers & Formatters (`crates/diffuse/src/notes_cli.rs` · 1,015 lines)
+- [x] Phase 17 — Review Notes CLI Action Handlers & Formatters (`crates/diffuse/src/notes_cli.rs` · 1,015 lines)
 - [ ] Phase 18 — Token Semantics, Entropy & Container Affinities (`crates/diffuse-core/src/token.rs` · 996 lines)
 - [ ] Phase 19 — Interactive TUI Modals & Dialog Views (`crates/diffuse-tui/src/view/modals.rs` · 994 lines)
 - [ ] Phase 20 — TUI Review Notes Lifecycle & Disk Sync (`crates/diffuse-tui/src/app/notes.rs` · 935 lines)
