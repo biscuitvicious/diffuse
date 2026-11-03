@@ -3,7 +3,7 @@
 ## Global TODO
 - [x] Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling (`SurfaceColors`, `StyledColor`, `GutterColors`, `SyntaxPalette`, `PrimitivePalette`)
 - [x] Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture (`Scope`, `DiffKind`, `DiffPalette`, `ScopePalette`, `ThemePalette`)
-- [ ] Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine with `inherits` & `$variable` Reference (`crates/diffuse-render/src/theme/toml/`)
+- [x] Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine with `inherits` & `$variable` Reference (`crates/diffuse-render/src/theme/toml/`)
 - [ ] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)
 - [ ] Phase 5 — Render Pipeline & Row Styler Migration (`crates/diffuse-render/src/`)
 - [ ] Phase 6 — Interactive TUI Grid, Header, Gutter & Mode Toggle Migration (`crates/diffuse-tui/src/`)
@@ -229,6 +229,11 @@ Declarative theme loading with clean inheritance, `$variable` expansion, and `in
   - Inherited theme overlays (`inherits = "..."`).
   - Partial theme parsing where missing tokens successfully cascade across scope and diff dimensions.
   - Error reporting on unresolved `$variables`, cyclic inheritance, or invalid hex formats.
+
+### Implementation Record
+- Builtin registry (`"dark"`/`"light"`, plus `"default"` alias) resolves `inherits`; registry entries declare no base, so chains are acyclic and **cyclic-inheritance testing is deferred** to phases 4/7, when non-builtin declarative themes can participate in chains.
+- Cascade field-channel order (per `(scope, kind, field)`): explicit kind slot along the scope walk (innermost→outermost, chain self-first), then the `mov` alias channel for `MovSrc`/`MovTgt`, then the `ctx` channel, then mode-baseline fallbacks (primitive swatches for surfaces/gutter, the mode's `SyntaxPalette` for tokens).
+- `parse_theme_str` returns `ParsedTheme { palette (scoped)::ThemePalette, name, mode }`; the scoped `ThemePalette` stays reachable only via `theme::palette::scoped` until phases 5-7 migrate consumers (see the Phase 2 coexistence note).
 
 ---
 

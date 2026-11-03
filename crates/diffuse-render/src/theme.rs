@@ -31,6 +31,9 @@ pub use surface::SurfaceColors;
 pub mod syntax;
 pub use syntax::SyntaxPalette;
 
+pub mod toml;
+pub use toml::{ParsedTheme, ThemeParseError, parse_theme_str};
+
 pub use crate::ansi::{
     Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
 };
