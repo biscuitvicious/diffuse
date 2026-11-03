@@ -44,6 +44,9 @@ pub struct PaletteModel {
 /// A color specification in any accepted form.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColorValue {
+    /// Terminal primary styling: the unmodified default color
+    /// (`Color::Primary`).
+    Primary,
     /// A `$variable` reference (forced) or a named primitive swatch.
     Named(String),
     /// `#RRGGBB` hexadecimal literal.
@@ -60,11 +63,15 @@ impl<'de> Deserialize<'de> for ColorValue {
             type Value = ColorValue;
 
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("a color (\"#RRGGBB\", an ANSI 256 index, or a variable name)")
+                f.write_str(
+                    "a color (\"#RRGGBB\", an ANSI 256 index, \"primary\", or a variable name)",
+                )
             }
 
             fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<ColorValue, E> {
-                if let Some(hex) = s.strip_prefix('#') {
+                if s == "primary" {
+                    Ok(ColorValue::Primary)
+                } else if let Some(hex) = s.strip_prefix('#') {
                     let [r, g, b] = parse_hex_triplet(hex).map_err(|_| {
                         E::invalid_value(serde::de::Unexpected::Str(s), &"\"#RRGGBB\"")
                     })?;
@@ -247,6 +254,10 @@ pub struct ThemeModel {
     pub name: Option<String>,
     pub mode: Option<Mode>,
     pub inherits: Option<String>,
+    /// Name of the theme paired for the opposite terminal mode.
+    pub light_pair: Option<String>,
+    /// Name of the theme paired for the dark terminal mode.
+    pub dark_pair: Option<String>,
     pub palette: Option<PaletteModel>,
     pub ui: Option<UiModel>,
     pub none: Option<ScopeModel>,
@@ -305,6 +316,8 @@ mod tests {
         assert_eq!(ok.v, ColorValue::Named("$green".to_string()));
         let ok = toml::from_str::<Wrap>("v = \"green\"").unwrap();
         assert_eq!(ok.v, ColorValue::Named("green".to_string()));
+        let ok = toml::from_str::<Wrap>("v = \"primary\"").unwrap();
+        assert_eq!(ok.v, ColorValue::Primary);
 
         // Out-of-range indices and malformed hex fail at parse time.
         assert!(toml::from_str::<Wrap>("v = 256").is_err());

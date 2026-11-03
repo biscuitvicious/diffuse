@@ -123,6 +123,7 @@ fn resolve_color(
     path: &str,
 ) -> Result<Color, ThemeParseError> {
     match value {
+        ColorValue::Primary => Ok(Color::Primary),
         ColorValue::Named(name) => {
             let variable = name.strip_prefix('$').unwrap_or(name);
             primitives
@@ -466,6 +467,11 @@ mod tests {
     #[test]
     fn test_resolve_color_forms() {
         let primitives = PrimitivePalette::dark();
+        let primary = ColorValue::Primary;
+        assert_eq!(
+            resolve_color(&primary, &primitives, "x").unwrap(),
+            Color::Primary
+        );
         let named = ColorValue::Named("$red".to_string());
         assert_eq!(
             resolve_color(&named, &primitives, "p.red").unwrap(),

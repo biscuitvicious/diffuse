@@ -1,0 +1,135 @@
+# Canonical dark theme — bundled asset.
+#
+# Byte-for-byte equivalent to the legacy flat dark palette
+# (`theme/palette/dark.rs`): the equivalence tests in `theme/toml/parse.rs`
+# freeze this mapping (phase 4). Until phases 5-7 migrate renderers, the
+# legacy palette remains authoritative for consumers; these assets become
+# authoritative at migration.
+#
+# Scope axis for banners: REST state at `Scope::None`, CURRENT at
+# `Scope::File`, SELECTED at `Scope::Row`. Context gutters: out-of-hunk rows
+# resolve at `Scope::None`/`Scope::File`, in-hunk rows at `Scope::Hunk`.
+# Banner path suffix colors and per-row-kind cursor backgrounds are not yet
+# representable in the scoped palette (deferred to the TUI migration).
+
+name = "default"
+mode = "dark"
+light_pair = "light"
+
+[ui]
+bg_base = 233
+bg_modal = 236          # legacy `modal_bg`
+warning = 220
+note = 220
+accent = 51
+status_bar_bg = 234
+status_bar_fg = 252
+status_bar_dim = 244
+status_bar_accent = 220
+ribbon_divider = 244
+ribbon_text = 244
+header_bar_bg = 234
+header_bar_fg = 231
+header_repo = 117
+header_branch = 252
+header_dim = 244
+header_staged = 120
+header_prefix = 152
+scrollbar_thumb = 244
+scrollbar_track = 233
+modal_border = 240
+modal_title = 231
+modal_text = 250
+modal_dim = 242
+modal_selected_bg = 239
+modal_selected_fg = 248
+count_dels = 203
+count_adds = 120
+count_mods = 214
+count_movs = 147
+count_notes = 220
+
+[none.file_header]      # rest state
+bg = 233
+fg = 214
+
+[none.hunk_divider]     # rest state
+bg = "primary"          # legacy `hunk_divider_bg_rest` = Color::Primary
+fg = 213
+
+[none.ctx]              # context rows outside the current hunk
+bg = 233
+fg = "primary"
+num = 238
+icon = 238
+
+[none.ctx.syntax]
+url = 150               # legacy parity: context rows render Url with the comment color
+
+[none.add]
+bg = "#1c321e"
+fill = "#1e6032"
+fg = 120
+num = 120
+icon = 120
+
+[none.add.syntax]
+url = 250               # explicit `add_url` (differs from the ctx comment mapping)
+
+[none.del]
+bg = "#260c0e"
+fill = "#521c20"
+fg = 203
+num = 203
+icon = 203
+
+[none.del.syntax]
+keyword = 183
+typ = 215
+function = 159
+number = 222
+literal = 222
+comment = 224
+operator = 153
+text = "primary"
+bold = 222
+italic = 224
+link = 153
+url = 248
+string = 203
+char_literal = 210
+code = 203
+table_header = 224
+
+[none.mod]              # modification rows inherit their syntax from ctx
+bg = "#262626"
+fill = "#1e6032"
+fg = 245
+num = 214
+icon = 214
+
+[none.mov]              # shared relocation channel for both sides
+bg = 233
+fg = 245
+num = 147
+icon = 117
+
+[file.file_header]      # current-file state
+bg = 235
+fg = 220
+
+[file.hunk_divider]
+bg = 235
+fg = 213
+
+[hunk.ctx]              # context rows inside the current hunk
+num = 245
+icon = 245
+
+[row.file_header]       # selected state
+bg = 238
+fg = 221
+
+[row.hunk_divider]
+bg = 238
+fg = "#ff9bff"

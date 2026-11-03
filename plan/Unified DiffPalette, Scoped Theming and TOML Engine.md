@@ -4,7 +4,7 @@
 - [x] Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling (`SurfaceColors`, `StyledColor`, `GutterColors`, `SyntaxPalette`, `PrimitivePalette`)
 - [x] Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture (`Scope`, `DiffKind`, `DiffPalette`, `ScopePalette`, `ThemePalette`)
 - [x] Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine with `inherits` & `$variable` Reference (`crates/diffuse-render/src/theme/toml/`)
-- [ ] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)
+- [x] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)
 - [ ] Phase 5 — Render Pipeline & Row Styler Migration (`crates/diffuse-render/src/`)
 - [ ] Phase 6 — Interactive TUI Grid, Header, Gutter & Mode Toggle Migration (`crates/diffuse-tui/src/`)
 - [ ] Phase 7 — Dynamic User Theme Discovery, Configuration & CLI Integration (`crates/diffuse/src/`)
@@ -256,6 +256,14 @@ Replace hardcoded static Rust arrays with embedded TOML assets parsed at compile
 ### Acceptance Criteria
 - Equivalence assertions pass with zero deviations.
 - `dark.rs` and `light.rs` are replaced or re-implemented via bundled TOML parsing.
+
+### Implementation Record
+- Assets at `crates/diffuse-render/themes/{dark,light}.toml`; `builtin("dark"|"default")` / `builtin("light")` now parse the embedded assets (`include_str!`), so `inherits = "dark" | "light"` inherits the full canonical values.
+- Legacy → scoped mapping frozen by `parse.rs::equivalence` tests: surface `bg`=`*_tint_bg`, `fill`=`*_fill_bg`, `fg`=`*_fg`; gutters `num`/`icon` per kind; syntax through legacy `token_color` semantics — including the ctx `Url`→comment quirk (`[none.ctx.syntax].url`) which frozen golden renders depend on. Mod/Mov syntax inherits ctx (legacy `_` arm).
+- Banner states by scope axis: REST at `Scope::None`, CURRENT at `Scope::File`, SELECTED at `Scope::Row` (file_header & hunk_divider). In-hunk context gutter via `[hunk.ctx]` (`ctx_gutter_in_hunk` vs out-of-hunk at `None`/`File`).
+- `scoped ui.bg_modal` := legacy `modal_bg` (the modal canvas); legacy `bg_modal` has no scoped slot. `ColorValue` gained a `"primary"` keyword for `Color::Primary` (`hunk_divider_bg_rest`).
+- The equivalence freeze exposed (and realigned) `SyntaxPalette::dark()` baseline divergences: `rule` 243→220, `code` 222→81, `table_header` 220→229.
+- **Deferred to phases 5-7** (no scoped slot yet): banner path colors (`file_header_path_*`), per-kind cursor backgrounds (legacy `*_cursor_bg`/`*_fill_cursor_bg`), `band_bg`, `note_tint_bg`, legacy `bg_modal`, `note` row styling. The legacy flat palettes remain authoritative for current renderers until those phases migrate consumers; only then are `dark.rs`/`light.rs` removed.
 
 ---
 

@@ -1,0 +1,117 @@
+# Canonical light theme — bundled asset.
+#
+# Byte-for-byte equivalent to the legacy flat light palette
+# (`theme/palette/light.rs`), frozen by the phase 4 equivalence tests (see
+# `themes/dark.toml` for the scope-axis mapping notes).
+
+name = "default"
+mode = "light"
+dark_pair = "dark"
+
+[ui]
+bg_base = "#fafafa"
+bg_modal = "#ffffff"    # legacy `modal_bg`
+warning = "#b45000"
+note = "#965f00"
+accent = "#0969da"
+status_bar_bg = "#ebeef2"
+status_bar_fg = "#24292f"
+status_bar_dim = "#697382"
+status_bar_accent = "#aa5a00"
+ribbon_divider = "#b9bec8"
+ribbon_text = "#697382"
+header_bar_bg = "#ebeef2"
+header_bar_fg = "#24292f"
+header_repo = "#0a55b9"
+header_branch = "#24292f"
+header_dim = "#697382"
+header_staged = "#1a7f37"
+header_prefix = "#0f6e82"
+scrollbar_thumb = "#b4b9c3"
+scrollbar_track = "#f0f2f5"
+modal_border = "#b9bec8"
+modal_title = "#24292f"
+modal_text = "#24292f"
+modal_dim = "#697382"
+modal_selected_bg = "#dce8fc"
+modal_selected_fg = "#0a55b9"
+count_dels = "#cf222e"
+count_adds = "#1a7f37"
+count_mods = "#aa5a00"
+count_movs = "#6e2882"
+count_notes = "#965f00"
+
+[none.file_header]      # rest state
+bg = "#f0f3f8"
+fg = "#3c506e"
+
+[none.hunk_divider]     # rest state
+bg = "primary"          # legacy `hunk_divider_bg_rest` = Color::Primary
+fg = "#6e2882"
+
+[none.ctx]              # context rows outside the current hunk
+bg = "#fafafa"
+fg = "#24292f"
+num = "#afb8c1"
+icon = "#afb8c1"
+
+[none.ctx.syntax]
+text = "#24292f"        # legacy `text` (the baseline falls back to terminal default)
+url = "#697382"         # legacy parity: context rows render Url with the comment color
+
+[none.add]
+bg = "#e6f6ec"
+fill = "#ace0ba"
+fg = "#1a7f37"
+num = "#1a7f37"
+icon = "#1a7f37"
+
+[none.add.syntax]
+url = "#646973"         # explicit `add_url` (differs from the ctx comment mapping)
+
+[none.del]
+bg = "#ffebec"
+fill = "#ffb2b8"
+fg = "#cf222e"
+num = "#cf222e"
+icon = "#cf222e"
+
+[none.del.syntax]
+text = "#cf222e"
+string = "#b41e28"
+char_literal = "#be2d37"
+url = "#646973"
+code = "#b41e28"
+
+[none.mod]              # modification rows inherit their syntax from ctx
+bg = "#f5f5f7"
+fill = "#ace0ba"
+fg = "#24292f"
+num = "#aa5a00"
+icon = "#aa5a00"
+
+[none.mov]              # shared relocation channel for both sides
+bg = "#f4f0ff"
+fg = "#5a2da0"
+num = "#6e2882"
+icon = "#6e2882"
+
+[file.file_header]      # current-file state
+bg = "#e4ecf8"
+fg = "#194ba0"
+
+[file.hunk_divider]
+bg = "#eeeef6"
+fg = "#6e2882"
+
+[hunk.ctx]              # context rows inside the current hunk
+num = "#656d76"
+icon = "#656d76"
+
+[row.file_header]       # selected state
+bg = "#d7e4fa"
+fg = "#0f3c8c"
+
+[row.hunk_divider]
+bg = "#e1e1ee"
+fg = "#8c2da5"
