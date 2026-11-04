@@ -267,7 +267,7 @@ pub fn render_file_header_segment(
     col += path_w;
     if !parts.counts.is_empty() {
         col += 1;
-        for cell in count_cells(&file.counts, &theme.palette) {
+        for cell in count_cells(&file.counts, &theme.scoped_palette().ui) {
             let text = format!("{}{}", cell.marker, cell.value);
             let w = display_width(&text);
             runs.push(BannerStyleRun {

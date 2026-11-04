@@ -38,8 +38,11 @@ pub fn write_file_header_bar_with_width<W: Write>(
     let counts = &file.counts;
     let path_display = file.display_path();
     let status_display = file.display_status();
-    let bg_code = theme.palette.header_bar_bg.bg_code();
-    let fg_code = theme.palette.header_bar_fg.fg_code();
+    let ui = &theme.scoped_palette().ui;
+    let bg_code = ui.header_bar_bg.bg_code();
+    let fg_code = ui.header_bar_fg.fg_code();
+    // The current-file path white has no scoped slot yet (deferred to the
+    // TUI migration); it keeps its flat palette entry.
     let path_white = theme.palette.file_header_path_current.fg_code();
 
     let status_suffix = if status_display.is_empty()
@@ -63,7 +66,7 @@ pub fn write_file_header_bar_with_width<W: Write>(
     // Shared count cells: the same segments, order, and colors as the
     // status bar and the TUI banners (the ≈ mov count converges on the
     // shared 147; the gutter icon keeps its own color).
-    for cell in count_cells(counts, &theme.palette) {
+    for cell in count_cells(counts, &theme.scoped_palette().ui) {
         let fg = cell.color.fg_code();
         write!(
             bar_buf,

@@ -3,7 +3,7 @@
 //! Provides the 256-color / RGB palette, row styles, background
 //! tints, cursor backgrounds, and SGR modifiers.
 
-use std::{env, fmt::Write};
+use std::{env, fmt::Write, sync::OnceLock};
 
 use diffuse_syntax::color::TokenColor;
 
@@ -16,8 +16,8 @@ pub use detect::*;
 pub mod primitive;
 pub use primitive::PrimitivePalette;
 
-pub mod scope;
-pub use scope::Scope;
+pub mod cursor;
+pub use cursor::Cursor;
 
 pub mod diff;
 pub use diff::{DiffKind, DiffPalette};
@@ -32,7 +32,7 @@ pub mod syntax;
 pub use syntax::SyntaxPalette;
 
 pub mod toml;
-pub use toml::{ParsedTheme, ThemeParseError, parse_theme_str};
+pub use toml::{ParsedTheme, ThemeParseError, parse_builtin, parse_theme_str};
 
 pub use crate::ansi::{
     Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
@@ -119,6 +119,11 @@ pub struct DiffuseTheme {
     pub palette: ThemePalette,
 }
 
+/// Compiled scoped palettes, initialized on first access from the bundled
+/// TOML assets (`themes/{dark,light}.toml`).
+static SCOPED_DARK: OnceLock<palette::scoped::ThemePalette> = OnceLock::new();
+static SCOPED_LIGHT: OnceLock<palette::scoped::ThemePalette> = OnceLock::new();
+
 impl DiffuseTheme {
     pub const DEFAULT: Self = Self {
         name: "default",
@@ -129,6 +134,29 @@ impl DiffuseTheme {
         name: "light",
         palette: ThemePalette::light_palette(),
     };
+
+    /// The compiled scoped palette for this theme, cached as a process-wide
+    /// static and compiled from the bundled TOML asset on first access.
+    ///
+    /// Selection is keyed on the theme mode (`name == "light"`); the legacy
+    /// flat [`ThemePalette`](palette::ThemePalette) remains authoritative for
+    /// fields with no scoped slot until the consumer migrations complete.
+    #[must_use]
+    pub fn scoped_palette(&self) -> &'static palette::scoped::ThemePalette {
+        if self.name == "light" {
+            SCOPED_LIGHT.get_or_init(|| {
+                toml::parse_builtin("light")
+                    .expect("bundled light theme parses")
+                    .palette
+            })
+        } else {
+            SCOPED_DARK.get_or_init(|| {
+                toml::parse_builtin("dark")
+                    .expect("bundled dark theme parses")
+                    .palette
+            })
+        }
+    }
 
     /// Get the row background and icon style for the specified diff row kind
     /// under this theme.
@@ -171,6 +199,22 @@ impl DiffuseTheme {
         }
     }
 
+    /// Resolve a token color through the scoped palette at the canonical
+    /// render cursor tier ([`Cursor::Rest`]), dispatching the row kind to
+    /// its diff-kind syntax channel. Mod/Mov rows inherit the ctx channel,
+    /// matching the legacy flat `token_color` semantics (frozen by the
+    /// phase 4 equivalence suite).
+    fn scoped_token_color(
+        &self,
+        color: TokenColor,
+        row_kind: diffuse_core::parse::RowKind,
+    ) -> Option<Color> {
+        let kind = DiffKind::from_row(row_kind);
+        self.scoped_palette()[Cursor::Rest][kind]
+            .syntax
+            .token_color(color)
+    }
+
     /// Render a syntax/markdown token directly into an output buffer.
     pub fn write_token<W: Write>(
         &self,
@@ -192,7 +236,7 @@ impl DiffuseTheme {
             RowKind::Ctx
         };
 
-        let ansi_color = self.palette.token_color(color, rk);
+        let ansi_color = self.scoped_token_color(color, rk);
 
         if let Some(s) = sgr {
             if let Some(on) = sgr_on_str(s) {
@@ -239,7 +283,7 @@ impl DiffuseTheme {
             RowKind::Ctx
         };
 
-        let ansi_color = self.palette.token_color(color, rk);
+        let ansi_color = self.scoped_token_color(color, rk);
 
         if !sgrs.is_empty() {
             let _ = out.write_str("\x1b[");

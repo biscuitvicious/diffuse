@@ -8,4 +8,4 @@ pub mod cascade;
 pub mod model;
 pub mod parse;
 
-pub use parse::{ParsedTheme, ThemeParseError, parse_theme_str};
+pub use parse::{ParsedTheme, ThemeParseError, parse_builtin, parse_theme_str};

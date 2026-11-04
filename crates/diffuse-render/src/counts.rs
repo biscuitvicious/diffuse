@@ -7,21 +7,22 @@ use smallvec::SmallVec;
 
 use crate::{
     core::counts::{CountKind, FileCounts},
-    theme::ThemePalette,
+    theme::UiPalette,
 };
 use yansi::Color;
 
-/// Highlight color for mod-count segments resolved from a [`ThemePalette`].
+/// Highlight color for mod-count segments resolved from the scoped
+/// [`UiPalette`].
 #[must_use]
-pub fn count_color(kind: CountKind, palette: &ThemePalette) -> Color {
+pub fn count_color(kind: CountKind, ui: &UiPalette) -> Color {
     match kind {
-        CountKind::Dels => palette.count_dels,
-        CountKind::Adds => palette.count_adds,
-        CountKind::Mods => palette.count_mods,
-        CountKind::Movs => palette.count_movs,
-        CountKind::Notes => palette.count_notes,
+        CountKind::Dels => ui.count_dels,
+        CountKind::Adds => ui.count_adds,
+        CountKind::Mods => ui.count_mods,
+        CountKind::Movs => ui.count_movs,
+        CountKind::Notes => ui.count_notes,
         CountKind::InProgressNotes => Color::Rgb(60, 180, 240),
-        CountKind::ResolvedNotes => palette.count_adds,
+        CountKind::ResolvedNotes => ui.count_adds,
     }
 }
 
@@ -36,14 +37,14 @@ pub struct CountCell {
 
 /// Shared count cells: same segments, order, and colors everywhere counts
 /// render (status bars, file banners, pretty printer).
-pub fn count_cells(counts: &FileCounts, palette: &ThemePalette) -> SmallVec<[CountCell; 7]> {
+pub fn count_cells(counts: &FileCounts, ui: &UiPalette) -> SmallVec<[CountCell; 7]> {
     counts
         .segments()
         .iter()
         .map(|seg| CountCell {
             marker: seg.marker,
             value: seg.value,
-            color: count_color(seg.kind, palette),
+            color: count_color(seg.kind, ui),
         })
         .collect()
 }
@@ -67,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_count_cells_order_and_colors() {
-        let palette = ThemePalette::default_palette();
+        let ui = &crate::theme::DiffuseTheme::DEFAULT.scoped_palette().ui;
         let cells = count_cells(
             &FileCounts {
                 dels: 7,
@@ -78,7 +79,7 @@ mod tests {
                 in_progress_notes: 1,
                 resolved_notes: 2,
             },
-            &palette,
+            ui,
         );
         let texts: Vec<String> = cells
             .iter()
@@ -89,20 +90,23 @@ mod tests {
         assert_eq!(
             colors,
             vec![
-                palette.count_dels,
-                palette.count_adds,
-                palette.count_mods,
-                palette.count_movs,
-                palette.count_notes,
+                ui.count_dels,
+                ui.count_adds,
+                ui.count_mods,
+                ui.count_movs,
+                ui.count_notes,
                 Color::Rgb(60, 180, 240),
-                palette.count_adds,
+                ui.count_adds,
             ]
         );
+        // The bundled dark asset carries real count colors (not the
+        // `Color::Primary` default), so the parity above is meaningful.
+        assert_ne!(ui.count_adds, Color::Primary);
     }
 
     #[test]
     fn test_count_cells_zero_counts_omitted() {
-        let palette = ThemePalette::default_palette();
+        let ui = &crate::theme::DiffuseTheme::DEFAULT.scoped_palette().ui;
         let cells = count_cells(
             &FileCounts {
                 dels: 0,
@@ -113,12 +117,12 @@ mod tests {
                 in_progress_notes: 0,
                 resolved_notes: 0,
             },
-            &palette,
+            ui,
         );
         assert_eq!(cells.len(), 1);
         assert_eq!(cells[0].marker, "+");
         assert_eq!(cells[0].value, 5);
-        assert_eq!(cells[0].color, palette.count_adds);
+        assert_eq!(cells[0].color, ui.count_adds);
     }
 
     #[test]

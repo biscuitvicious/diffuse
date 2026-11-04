@@ -173,7 +173,8 @@ impl AppState {
                 f.render_widget(blank_status_widget(&self.theme.palette), status_area);
             }
 
-            let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette);
+            let (div_line, rib_line) =
+                bottom_ribbon_lines(main_width, &self.theme.scoped_palette().ui);
             f.render_widget(
                 Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(bg)),
                 ribbon_area,
@@ -298,7 +299,7 @@ impl AppState {
         }
 
         // 6. Bottom Ribbon
-        let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette);
+        let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.scoped_palette().ui);
         let rib_bg = to_color(self.theme.palette.bg_base);
         f.render_widget(
             Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(rib_bg)),

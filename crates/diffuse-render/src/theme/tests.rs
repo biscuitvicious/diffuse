@@ -784,3 +784,89 @@ fn test_theme_from_name_auto_stays_query_free() {
         env::remove_var("DIFFUSE_THEME");
     }
 }
+
+#[test]
+fn test_scoped_palette_resolves_by_theme_mode() {
+    // Dark and light compile their own scoped palettes, cached as statics:
+    // repeated access returns the same compiled instance.
+    let dark = DiffuseTheme::DEFAULT.scoped_palette();
+    let light = DiffuseTheme::LIGHT.scoped_palette();
+    assert_eq!(dark.ui.accent, DiffuseTheme::DEFAULT.palette.accent);
+    assert_eq!(light.ui.accent, DiffuseTheme::LIGHT.palette.accent);
+    assert_eq!(
+        dark,
+        DiffuseTheme::DEFAULT.scoped_palette(),
+        "dark is cached"
+    );
+    assert_eq!(
+        light,
+        DiffuseTheme::LIGHT.scoped_palette(),
+        "light is cached"
+    );
+
+    // Scoped banner states resolve per cursor tier from the same asset values the
+    // flat palette exposes via its accessor methods.
+    let (rest_bg, _) = DiffuseTheme::DEFAULT
+        .palette
+        .file_header_colors(false, false, false);
+    let (current_bg, _) = DiffuseTheme::DEFAULT
+        .palette
+        .file_header_colors(false, true, false);
+    let (sel_bg, _) = DiffuseTheme::DEFAULT
+        .palette
+        .file_header_colors(true, false, false);
+    assert_eq!(dark[Cursor::Rest].file_header.bg, rest_bg);
+    assert_eq!(dark[Cursor::File].file_header.bg, current_bg);
+    assert_eq!(dark[Cursor::Row].file_header.bg, sel_bg);
+}
+
+#[test]
+fn test_scoped_token_dispatch_matches_legacy() {
+    // write_token dispatches through the scoped palette now; output must
+    // stay byte-identical for every row kind and token.
+    let theme = DiffuseTheme::DEFAULT;
+    for (row_kind, tok_kind) in [
+        ("ctx", None),
+        ("ctx", Some("ctx")),
+        ("add", None),
+        ("add", Some("add")),
+        ("del", None),
+        ("del", Some("del")),
+        ("mod", None),
+        ("", None),
+        ("unknown", None),
+    ] {
+        for token in [
+            TokenColor::Keyword,
+            TokenColor::Comment,
+            TokenColor::Url,
+            TokenColor::Bold,
+            TokenColor::Default,
+        ] {
+            assert_eq!(
+                theme.render_token(token, "x", row_kind, tok_kind, None),
+                {
+                    let rk = if row_kind == "add" || tok_kind == Some("add") {
+                        diffuse_core::parse::RowKind::Add
+                    } else if row_kind == "del" || tok_kind == Some("del") {
+                        diffuse_core::parse::RowKind::Del
+                    } else if row_kind == "mod" {
+                        diffuse_core::parse::RowKind::Mod
+                    } else {
+                        diffuse_core::parse::RowKind::Ctx
+                    };
+                    let mut out = String::new();
+                    if let Some(c) = theme.palette.token_color(token, rk) {
+                        out.push_str(&c.fg_code());
+                        out.push('x');
+                        out.push_str(crate::ansi::FG_RESET);
+                    } else {
+                        out.push('x');
+                    }
+                    out
+                },
+                "token {token:?} on row_kind {row_kind:?}/{tok_kind:?}"
+            );
+        }
+    }
+}

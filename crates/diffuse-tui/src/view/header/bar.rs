@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     core::counts::FileCounts,
-    render::{ColorExt, DiffuseTheme, ThemePalette},
+    render::{ColorExt, DiffuseTheme, UiPalette},
 };
 use ratatui::{
     style::{Modifier, Style},
@@ -20,38 +20,38 @@ pub fn render_header_bar(
     branch: Option<&str>,
     commit_range: Option<&str>,
     is_staged: bool,
-    palette: &ThemePalette,
+    ui: &UiPalette,
 ) -> Vec<String> {
     let branch_seg = if let Some(range) = commit_range
         && !range.is_empty()
     {
         format!(
             " {}\u{2387}\x1b[0m\x1b[1m{}{range}\x1b[0m",
-            palette.header_dim.fg_code(),
-            palette.header_branch.fg_code()
+            ui.header_dim.fg_code(),
+            ui.header_branch.fg_code()
         )
     } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
         let staged_badge = if is_staged {
             format!(
                 " {}(\x1b[1m{}staged\x1b[0m{})",
-                palette.header_dim.fg_code(),
-                palette.header_staged.fg_code(),
-                palette.header_dim.fg_code()
+                ui.header_dim.fg_code(),
+                ui.header_staged.fg_code(),
+                ui.header_dim.fg_code()
             )
         } else {
             String::new()
         };
         format!(
             " {}\u{2387}\x1b[0m\x1b[1m{}{b}\x1b[0m{staged_badge}",
-            palette.header_dim.fg_code(),
-            palette.header_branch.fg_code()
+            ui.header_dim.fg_code(),
+            ui.header_branch.fg_code()
         )
     } else if is_staged {
         format!(
             " {}\u{2387}(\x1b[1m{}staged\x1b[0m{})",
-            palette.header_dim.fg_code(),
-            palette.header_staged.fg_code(),
-            palette.header_dim.fg_code()
+            ui.header_dim.fg_code(),
+            ui.header_staged.fg_code(),
+            ui.header_dim.fg_code()
         )
     } else {
         String::new()
@@ -60,14 +60,14 @@ pub fn render_header_bar(
     // already separates them.
     let global_counts_seg = match global_counts {
         Some(ref gc) if !gc.is_empty() => {
-            format!(" {}", format_counts_ansi(gc, palette))
+            format!(" {}", format_counts_ansi(gc, ui))
         }
         _ => String::new(),
     };
 
     let head_raw = format!(
         " \x1b[1m{}{repo}\x1b[0m{branch_seg}{global_counts_seg}",
-        palette.header_repo.fg_code()
+        ui.header_repo.fg_code()
     );
     let wrapped = wrap_text_by_visual_width(&head_raw, width);
     wrapped
@@ -77,23 +77,23 @@ pub fn render_header_bar(
             let pad = " ".repeat(width.saturating_sub(piece_vw));
             format!(
                 "{}\x1b[1m{}{piece}{pad}\x1b[0m",
-                palette.header_bar_bg.bg_code(),
-                palette.header_bar_fg.fg_code()
+                ui.header_bar_bg.bg_code(),
+                ui.header_bar_fg.fg_code()
             )
         })
         .collect()
 }
 
 /// Render the bottom navigation key-bindings ribbon.
-pub fn render_bottom_ribbon(width: usize, palette: &ThemePalette) -> (String, String) {
+pub fn render_bottom_ribbon(width: usize, ui: &UiPalette) -> (String, String) {
     let div_str = format!(" {}", "─".repeat(width.saturating_sub(2).min(60)));
-    let divider = format!("{}{div_str}\x1b[39m", palette.ribbon_divider.fg_code());
+    let divider = format!("{}{div_str}\x1b[39m", ui.ribbon_divider.fg_code());
     let ribbon_text = truncate_pad(
         " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [t]staged [T]theme [x]discard",
         width.saturating_sub(1),
     );
 
-    let ribbon = format!("{}{ribbon_text}\x1b[39m", palette.ribbon_text.fg_code());
+    let ribbon = format!("{}{ribbon_text}\x1b[39m", ui.ribbon_text.fg_code());
     (divider, ribbon)
 }
 
@@ -184,7 +184,7 @@ pub fn header_bar_line(
         // No dot separator: the branch glyph (or repo name) already
         // separates the global counts.
         spans.push(Span::raw(" "));
-        spans.extend(format_counts_spans(gc, &theme.palette));
+        spans.extend(format_counts_spans(gc, &theme.scoped_palette().ui));
     }
 
     let bg = crate::view::to_color(theme.palette.header_bar_bg);
@@ -193,15 +193,15 @@ pub fn header_bar_line(
 
 /// Render the bottom navigation key-bindings ribbon as styled Ratatui
 /// [`Line`]s.
-pub fn bottom_ribbon_lines(width: usize, palette: &ThemePalette) -> (Line<'static>, Line<'static>) {
-    let bg = crate::view::to_color(palette.bg_base);
+pub fn bottom_ribbon_lines(width: usize, ui: &UiPalette) -> (Line<'static>, Line<'static>) {
+    let bg = crate::view::to_color(ui.bg_base);
     let div_str = truncate_pad(
         &format!(" {}", "─".repeat(width.saturating_sub(2).min(60))),
         width,
     );
     let divider = Line::from(Span::styled(
         div_str,
-        Style::default().fg(crate::view::to_color(palette.ribbon_divider)),
+        Style::default().fg(crate::view::to_color(ui.ribbon_divider)),
     ))
     .style(Style::default().bg(bg));
     let ribbon_text = truncate_pad(
@@ -211,7 +211,7 @@ pub fn bottom_ribbon_lines(width: usize, palette: &ThemePalette) -> (Line<'stati
 
     let ribbon = Line::from(Span::styled(
         ribbon_text,
-        Style::default().fg(crate::view::to_color(palette.ribbon_text)),
+        Style::default().fg(crate::view::to_color(ui.ribbon_text)),
     ))
     .style(Style::default().bg(bg));
     (divider, ribbon)

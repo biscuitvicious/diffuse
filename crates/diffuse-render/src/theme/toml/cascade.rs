@@ -3,11 +3,10 @@
 //! Merges a chain of [`ThemeModel`]s (self first, inherited bases after)
 //! into a flat, scoped [`ThemePalette`].
 //!
-//! Resolution walks the containment axis innermost-first (Row → Hunk → File
-//! → None). For each diff kind the explicit kind channel is consulted along
-//! the scope walk first; relocation sides additionally consult the shared
-//! `mov` alias channel, then the `ctx` channel. Unresolved fields fall back
-//! to the mode baseline: primitive swatches for surfaces, the mode's
+//! Resolution walks the cursor axis innermost-first (Row → Hunk → File
+//! → Rest). For each diff kind the explicit kind channel is consulted along
+//! the cursor walk first, then the `ctx` channel. Unresolved fields fall
+//! back to the mode baseline: primitive swatches for surfaces, the mode's
 //! [`SyntaxPalette`] for token colors.
 
 use std::collections::BTreeMap;
@@ -15,15 +14,15 @@ use std::collections::BTreeMap;
 use crate::syntax::color::TokenColor;
 
 use super::{
-    model::{ColorValue, DiffModel, KindSlot, Mode, StyledValue, SurfaceModel, ThemeModel},
+    model::{ColorValue, DiffModel, Mode, StyledValue, SurfaceModel, ThemeModel},
     parse::ThemeParseError,
 };
 use crate::theme::{
     Color,
+    cursor::Cursor,
     diff::{DiffKind, DiffPalette},
-    palette::scoped::{ScopePalette, ThemePalette as ScopedPalette, UiPalette},
+    palette::scoped::{CursorPalette, ThemePalette as ScopedPalette, UiPalette},
     primitive::PrimitivePalette,
-    scope::Scope,
     styled_color::{GutterColors, StyledColor},
     surface::SurfaceColors,
     syntax::SyntaxPalette,
@@ -63,11 +62,10 @@ const DIFF_KINDS: [DiffKind; DiffKind::COUNT] = [
     DiffKind::Add,
     DiffKind::Del,
     DiffKind::Mod,
-    DiffKind::MovSrc,
-    DiffKind::MovTgt,
+    DiffKind::Mov,
 ];
 
-/// Banner surface of a scope palette.
+/// Banner surface of a cursor-tier palette.
 #[derive(Clone, Copy)]
 enum Banner {
     FileHeader,
@@ -85,14 +83,14 @@ impl Banner {
     }
 }
 
-/// TOML key for a containment scope.
+/// TOML key for a cursor tier.
 #[inline]
-fn scope_key(scope: Scope) -> &'static str {
-    match scope {
-        Scope::None => "none",
-        Scope::File => "file",
-        Scope::Hunk => "hunk",
-        Scope::Row => "row",
+fn cursor_key(cursor: Cursor) -> &'static str {
+    match cursor {
+        Cursor::Rest => "rest",
+        Cursor::File => "file",
+        Cursor::Hunk => "hunk",
+        Cursor::Row => "row",
     }
 }
 
@@ -161,25 +159,15 @@ fn resolve_styled(
 }
 
 /// Channel tiers for a diff kind, in resolution priority: the explicit kind
-/// slot, the shared `mov` alias (relocation sides only), then the `ctx`
-/// channel. `None` entries are skipped.
+/// channel, then the `ctx` channel. `None` entries are skipped.
 #[inline]
-fn diff_tiers(kind: DiffKind) -> [Option<KindSlot>; 3] {
+fn diff_tiers(kind: DiffKind) -> [Option<DiffKind>; 2] {
     match kind {
-        DiffKind::Ctx => [Some(KindSlot::Ctx), None, None],
-        DiffKind::Add => [Some(KindSlot::Add), None, Some(KindSlot::Ctx)],
-        DiffKind::Del => [Some(KindSlot::Del), None, Some(KindSlot::Ctx)],
-        DiffKind::Mod => [Some(KindSlot::Mod), None, Some(KindSlot::Ctx)],
-        DiffKind::MovSrc => [
-            Some(KindSlot::MovSrc),
-            Some(KindSlot::Mov),
-            Some(KindSlot::Ctx),
-        ],
-        DiffKind::MovTgt => [
-            Some(KindSlot::MovTgt),
-            Some(KindSlot::Mov),
-            Some(KindSlot::Ctx),
-        ],
+        DiffKind::Ctx => [Some(DiffKind::Ctx), None],
+        DiffKind::Add => [Some(DiffKind::Add), Some(DiffKind::Ctx)],
+        DiffKind::Del => [Some(DiffKind::Del), Some(DiffKind::Ctx)],
+        DiffKind::Mod => [Some(DiffKind::Mod), Some(DiffKind::Ctx)],
+        DiffKind::Mov => [Some(DiffKind::Mov), Some(DiffKind::Ctx)],
     }
 }
 
@@ -191,35 +179,35 @@ struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    /// The first diff model defining `slot` at `scope`, searching the chain
+    /// The first diff model defining `kind` at `cursor`, searching the chain
     /// self-first.
-    fn scope_slot(&self, scope: Scope, slot: KindSlot) -> Option<&'a DiffModel> {
+    fn cursor_slot(&self, cursor: Cursor, kind: DiffKind) -> Option<&'a DiffModel> {
         self.models
             .iter()
-            .find_map(|model| model.scope(scope).and_then(|s| s.slot(slot)))
+            .find_map(|model| model.cursor(cursor).and_then(|s| s.slot(kind)))
     }
 
-    /// The first banner model defining `banner` at `scope`, searching the
+    /// The first banner model defining `banner` at `cursor`, searching the
     /// chain self-first.
-    fn banner_channel(&self, scope: Scope, banner: Banner) -> Option<&'a SurfaceModel> {
+    fn banner_channel(&self, cursor: Cursor, banner: Banner) -> Option<&'a SurfaceModel> {
         self.models.iter().find_map(|model| {
-            model.scope(scope).and_then(|s| match banner {
+            model.cursor(cursor).and_then(|s| match banner {
                 Banner::FileHeader => s.file_header.as_ref(),
                 Banner::HunkDivider => s.hunk_divider.as_ref(),
             })
         })
     }
 
-    /// Resolution-ordered diff channel list for `(scope, kind)`: for each
-    /// channel tier (kind slot, `mov` alias, `ctx`), the scope walk
-    /// innermost-first with the inherit chain self-first.
-    fn diff_channels(&self, scope: Scope, kind: DiffKind) -> Vec<&'a DiffModel> {
+    /// Resolution-ordered diff channel list for `(cursor, kind)`: for each
+    /// channel tier (kind channel, `ctx`), the cursor walk innermost-first
+    /// with the inherit chain self-first.
+    fn diff_channels(&self, cursor: Cursor, kind: DiffKind) -> Vec<&'a DiffModel> {
         let mut channels = Vec::new();
         for tier in diff_tiers(kind).into_iter().flatten() {
-            let mut current = Some(scope);
-            while let Some(scope) = current {
-                current = scope.outer();
-                if let Some(diff) = self.scope_slot(scope, tier) {
+            let mut current = Some(cursor);
+            while let Some(cursor) = current {
+                current = cursor.outer();
+                if let Some(diff) = self.cursor_slot(cursor, tier) {
                     channels.push(diff);
                 }
             }
@@ -229,9 +217,9 @@ impl<'a> Compiler<'a> {
 
     /// Compile one diff kind palette: explicit channels then mode-baseline
     /// fallbacks.
-    fn build_diff(&self, scope: Scope, kind: DiffKind) -> Result<DiffPalette, ThemeParseError> {
-        let channels = self.diff_channels(scope, kind);
-        let section = format!("{}.{}", scope_key(scope), kind.name());
+    fn build_diff(&self, cursor: Cursor, kind: DiffKind) -> Result<DiffPalette, ThemeParseError> {
+        let channels = self.diff_channels(cursor, kind);
+        let section = format!("{}.{}", cursor_key(cursor), kind.name());
 
         let bg = channels.iter().find_map(|c| c.bg.as_ref());
         let fill = channels.iter().find_map(|c| c.fill.as_ref());
@@ -344,17 +332,21 @@ impl<'a> Compiler<'a> {
     }
 
     /// Compile one banner surface.
-    fn build_banner(&self, scope: Scope, banner: Banner) -> Result<SurfaceColors, ThemeParseError> {
+    fn build_banner(
+        &self,
+        cursor: Cursor,
+        banner: Banner,
+    ) -> Result<SurfaceColors, ThemeParseError> {
         let mut channels = Vec::new();
-        let mut current = Some(scope);
-        while let Some(scope) = current {
-            current = scope.outer();
-            if let Some(model) = self.banner_channel(scope, banner) {
+        let mut current = Some(cursor);
+        while let Some(cursor) = current {
+            current = cursor.outer();
+            if let Some(model) = self.banner_channel(cursor, banner) {
                 channels.push(model);
             }
         }
 
-        let section = format!("{}.{}", scope_key(scope), banner.key());
+        let section = format!("{}.{}", cursor_key(cursor), banner.key());
         let bg = channels.iter().find_map(|c| c.bg.as_ref());
         let fill = channels.iter().find_map(|c| c.fill.as_ref());
         let fg = channels.iter().find_map(|c| c.fg.as_ref());
@@ -379,15 +371,15 @@ impl<'a> Compiler<'a> {
         })
     }
 
-    /// Compile one scope palette: both banners plus every diff kind.
-    fn build_scope(&self, scope: Scope) -> Result<ScopePalette, ThemeParseError> {
-        let file_header = self.build_banner(scope, Banner::FileHeader)?;
-        let hunk_divider = self.build_banner(scope, Banner::HunkDivider)?;
+    /// Compile one cursor-tier palette: both banners plus every diff kind.
+    fn build_cursor(&self, cursor: Cursor) -> Result<CursorPalette, ThemeParseError> {
+        let file_header = self.build_banner(cursor, Banner::FileHeader)?;
+        let hunk_divider = self.build_banner(cursor, Banner::HunkDivider)?;
         let mut diffs = [DiffPalette::default(); DiffKind::COUNT];
         for (index, kind) in DIFF_KINDS.iter().enumerate() {
-            diffs[index] = self.build_diff(scope, *kind)?;
+            diffs[index] = self.build_diff(cursor, *kind)?;
         }
-        Ok(ScopePalette::new(file_header, hunk_divider, diffs))
+        Ok(CursorPalette::new(file_header, hunk_divider, diffs))
     }
 
     /// Compile UI chrome: inherit-chain overlays over the default palette,
@@ -437,12 +429,12 @@ pub(super) fn compile(models: &[ThemeModel], mode: Mode) -> Result<ScopedPalette
         primitives: primitives_for(models, mode)?,
         mode,
     };
-    let mut scopes = [ScopePalette::default(); Scope::COUNT];
-    for scope in [Scope::None, Scope::File, Scope::Hunk, Scope::Row] {
-        scopes[scope as usize] = compiler.build_scope(scope)?;
+    let mut tiers = [CursorPalette::default(); Cursor::COUNT];
+    for cursor in [Cursor::Rest, Cursor::File, Cursor::Hunk, Cursor::Row] {
+        tiers[cursor as usize] = compiler.build_cursor(cursor)?;
     }
     let ui = compiler.build_ui()?;
-    Ok(ScopedPalette::new(scopes, ui))
+    Ok(ScopedPalette::new(tiers, ui))
 }
 
 #[cfg(test)]
@@ -484,10 +476,10 @@ mod tests {
         );
         let unknown = ColorValue::Named("$nolight".to_string());
         assert_eq!(
-            resolve_color(&unknown, &primitives, "none.add.bg").unwrap_err(),
+            resolve_color(&unknown, &primitives, "rest.add.bg").unwrap_err(),
             ThemeParseError::UnresolvedVariable {
                 name: "nolight".to_string(),
-                path: "none.add.bg".to_string(),
+                path: "rest.add.bg".to_string(),
             }
         );
         let rgb = ColorValue::Rgb { r: 1, g: 2, b: 3 };
@@ -535,34 +527,22 @@ mod tests {
 
     #[test]
     fn test_diff_tiers_all_kinds() {
-        assert_eq!(diff_tiers(DiffKind::Ctx), [Some(KindSlot::Ctx), None, None]);
+        assert_eq!(diff_tiers(DiffKind::Ctx), [Some(DiffKind::Ctx), None]);
         assert_eq!(
             diff_tiers(DiffKind::Add),
-            [Some(KindSlot::Add), None, Some(KindSlot::Ctx)]
+            [Some(DiffKind::Add), Some(DiffKind::Ctx)]
         );
         assert_eq!(
             diff_tiers(DiffKind::Del),
-            [Some(KindSlot::Del), None, Some(KindSlot::Ctx)]
+            [Some(DiffKind::Del), Some(DiffKind::Ctx)]
         );
         assert_eq!(
             diff_tiers(DiffKind::Mod),
-            [Some(KindSlot::Mod), None, Some(KindSlot::Ctx)]
+            [Some(DiffKind::Mod), Some(DiffKind::Ctx)]
         );
         assert_eq!(
-            diff_tiers(DiffKind::MovSrc),
-            [
-                Some(KindSlot::MovSrc),
-                Some(KindSlot::Mov),
-                Some(KindSlot::Ctx)
-            ]
-        );
-        assert_eq!(
-            diff_tiers(DiffKind::MovTgt),
-            [
-                Some(KindSlot::MovTgt),
-                Some(KindSlot::Mov),
-                Some(KindSlot::Ctx)
-            ]
+            diff_tiers(DiffKind::Mov),
+            [Some(DiffKind::Mov), Some(DiffKind::Ctx)]
         );
     }
 
@@ -589,17 +569,17 @@ mod tests {
     #[test]
     fn test_default_baseline_is_mode_primitives() {
         let palette = compile_model("").unwrap();
-        let ctx = palette[Scope::None][DiffKind::Ctx];
+        let ctx = palette[Cursor::Rest][DiffKind::Ctx];
         assert_eq!(ctx.surface.bg, Color::Fixed(233), "dark base_bg baseline");
         assert_eq!(ctx.surface.fg, Color::Primary, "dark base_fg baseline");
         assert_eq!(ctx.surface.fill, None);
         assert_eq!(ctx.gutter.num, StyledColor::default());
         assert_eq!(ctx.gutter.icon, StyledColor::default());
         assert_eq!(ctx.syntax, SyntaxPalette::dark());
-        assert_eq!(palette[Scope::Row].file_header.bg, Color::Fixed(233));
-        assert_eq!(palette[Scope::Row].hunk_divider.bg, Color::Fixed(233));
+        assert_eq!(palette[Cursor::Row].file_header.bg, Color::Fixed(233));
+        assert_eq!(palette[Cursor::Row].hunk_divider.bg, Color::Fixed(233));
         assert_eq!(
-            palette[Scope::Row][DiffKind::Add].syntax,
+            palette[Cursor::Row][DiffKind::Add].syntax,
             SyntaxPalette::dark()
         );
     }
@@ -609,24 +589,24 @@ mod tests {
         let model: ThemeModel = toml::from_str("mode = \"light\"").unwrap();
         let palette = compile_chain(&[model]).unwrap();
         assert_eq!(
-            palette[Scope::None][DiffKind::Ctx].surface.bg,
+            palette[Cursor::Rest][DiffKind::Ctx].surface.bg,
             Color::Fixed(255)
         );
         assert_eq!(
-            palette[Scope::None][DiffKind::Ctx].syntax,
+            palette[Cursor::Rest][DiffKind::Ctx].syntax,
             SyntaxPalette::light()
         );
     }
 
     #[test]
-    fn test_partial_cascade_across_scope_and_ctx_channels() {
+    fn test_partial_cascade_across_tier_and_ctx_channels() {
         let palette = compile_model(
             r#"
-            [none.ctx]
+            [rest.ctx]
             bg = 100
             fg = 101
             syntax = { keyword = 111, string = 112 }
-            [none.add]
+            [rest.add]
             bg = 200
             [row.add]
             fill = 210
@@ -634,12 +614,12 @@ mod tests {
         )
         .unwrap();
 
-        let add = palette[Scope::Row][DiffKind::Add];
+        let add = palette[Cursor::Row][DiffKind::Add];
         assert_eq!(add.surface.fill, Some(Color::Fixed(210)), "innermost fill");
         assert_eq!(
             add.surface.bg,
             Color::Fixed(200),
-            "row.add falls to none.add"
+            "row.add falls to rest.add"
         );
         assert_eq!(
             add.surface.fg,
@@ -649,7 +629,7 @@ mod tests {
         assert_eq!(
             add.syntax.keyword,
             Color::Fixed(111),
-            "add tokens inherit from ctx along the scope walk"
+            "add tokens inherit from ctx along the cursor walk"
         );
         assert_eq!(add.syntax.string, Color::Fixed(112));
         assert_eq!(
@@ -658,7 +638,7 @@ mod tests {
             "unmentioned tokens stay at the mode baseline"
         );
 
-        let ctx = palette[Scope::Hunk][DiffKind::Ctx];
+        let ctx = palette[Cursor::Hunk][DiffKind::Ctx];
         assert_eq!(
             ctx.surface.bg,
             Color::Fixed(100),
@@ -671,42 +651,29 @@ mod tests {
     fn test_mov_alias_channel() {
         let palette = compile_model(
             r#"
-            [none.mov]
+            [rest.mov]
             bg = 30
             fg = 32
-            [none.mov_src]
             num = 40
             "#,
         )
         .unwrap();
 
-        let src = palette[Scope::None][DiffKind::MovSrc];
+        let mov = palette[Cursor::Rest][DiffKind::Mov];
         assert_eq!(
-            src.surface.bg,
+            mov.surface.bg,
             Color::Fixed(30),
-            "src inherits the mov channel"
+            "mov resolves its explicit channel"
         );
-        assert_eq!(src.surface.fg, Color::Fixed(32));
+        assert_eq!(mov.surface.fg, Color::Fixed(32));
+        assert_eq!(mov.gutter.num.color, Color::Fixed(40), "mov explicit slot");
         assert_eq!(
-            src.gutter.num.color,
-            Color::Fixed(40),
-            "mov_src explicit slot"
-        );
-        assert_eq!(
-            src.gutter.icon,
+            mov.gutter.icon,
             StyledColor::default(),
             "icon not in any channel"
         );
 
-        let tgt = palette[Scope::None][DiffKind::MovTgt];
-        assert_eq!(
-            tgt.surface.bg,
-            Color::Fixed(30),
-            "tgt inherits the mov channel"
-        );
-        assert_eq!(tgt.surface.fg, Color::Fixed(32));
-
-        let add = palette[Scope::None][DiffKind::Add];
+        let add = palette[Cursor::Rest][DiffKind::Add];
         assert_eq!(
             add.surface.bg,
             Color::Fixed(233),
@@ -715,58 +682,36 @@ mod tests {
     }
 
     #[test]
-    fn test_mov_side_override_beats_alias() {
+    fn test_banner_cascade_is_tier_local() {
         let palette = compile_model(
             r#"
-            [none.mov]
-            bg = 30
-            [none.mov_tgt]
-            bg = 44
-            "#,
-        )
-        .unwrap();
-        assert_eq!(
-            palette[Scope::None][DiffKind::MovTgt].surface.bg,
-            Color::Fixed(44),
-            "explicit side slot beats the alias"
-        );
-        assert_eq!(
-            palette[Scope::None][DiffKind::MovSrc].surface.bg,
-            Color::Fixed(30)
-        );
-    }
-
-    #[test]
-    fn test_banner_cascade_is_scope_local() {
-        let palette = compile_model(
-            r#"
-            [none.file_header]
+            [rest.file_header]
             bg = 240
             fg = 241
             fill = 242
             "#,
         )
         .unwrap();
-        let header = palette[Scope::None].file_header;
+        let header = palette[Cursor::Rest].file_header;
         assert_eq!(header.bg, Color::Fixed(240));
         assert_eq!(header.fg, Color::Fixed(241));
         assert_eq!(header.fill, Some(Color::Fixed(242)));
 
-        // Row mode divert: an inner scope banner applies only there; the
-        // outer scope retains its own chain resolution.
+        // Row mode divert: an inner-tier banner applies only there; the
+        // outer tier retains its own chain resolution.
         let palette = compile_model("[row.file_header]\nbg = 1\n").unwrap();
-        assert_eq!(palette[Scope::Row].file_header.bg, Color::Fixed(1));
-        assert_eq!(palette[Scope::None].file_header.bg, Color::Fixed(233));
+        assert_eq!(palette[Cursor::Row].file_header.bg, Color::Fixed(1));
+        assert_eq!(palette[Cursor::Rest].file_header.bg, Color::Fixed(233));
     }
 
     #[test]
     fn test_unknown_syntax_token_rejects() {
-        let error = compile_model("[none.ctx.syntax]\nkwds = 5\n").unwrap_err();
+        let error = compile_model("[rest.ctx.syntax]\nkwds = 5\n").unwrap_err();
         assert_eq!(
             error,
             ThemeParseError::UnknownToken {
                 key: "kwds".to_string(),
-                path: "none.ctx.syntax".to_string(),
+                path: "rest.ctx.syntax".to_string(),
             }
         );
         let error = compile_model("[row.add.syntax]\nbogus = 5\n").unwrap_err();
@@ -780,7 +725,7 @@ mod tests {
     fn test_syntax_overlay_on_every_token_channel() {
         let palette = compile_model(
             r#"
-            [none.ctx.syntax]
+            [rest.ctx.syntax]
             text = 10
             keyword = 11
             typ = 12
@@ -807,7 +752,7 @@ mod tests {
             "#,
         )
         .unwrap();
-        let syntax = palette[Scope::None][DiffKind::Ctx].syntax;
+        let syntax = palette[Cursor::Rest][DiffKind::Ctx].syntax;
         assert_eq!(syntax.text, Color::Fixed(10));
         assert_eq!(syntax.keyword, Color::Fixed(11));
         assert_eq!(syntax.typ, Color::Fixed(12));
@@ -841,7 +786,7 @@ mod tests {
             mode = "dark"
             [ui]
             accent = 10
-            [none.ctx]
+            [rest.ctx]
             bg = 11
             "#,
         )
@@ -861,7 +806,7 @@ mod tests {
         let palette = compile_chain(&[child.clone(), base.clone()]).unwrap();
         assert_eq!(palette.ui.accent, Color::Fixed(20), "self wins over base");
         assert_eq!(
-            palette[Scope::None][DiffKind::Ctx].surface.bg,
+            palette[Cursor::Rest][DiffKind::Ctx].surface.bg,
             Color::Fixed(11),
             "base values flow through when not overridden"
         );

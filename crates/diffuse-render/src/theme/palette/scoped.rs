@@ -1,8 +1,8 @@
-//! Scope-indexed palette architecture.
+//! Cursor-indexed palette architecture.
 //!
 //! Replaces flat color permutations with two orthogonal axes: containment
-//! [`Scope`] and semantic [`DiffKind`]. Lookup is $O(1)$ pointer arithmetic:
-//! `palette[Scope::Row][DiffKind::Add].surface.bg`.
+//! [`Cursor`] and semantic [`DiffKind`]. Lookup is $O(1)$ pointer arithmetic:
+//! `palette[Cursor::Row][DiffKind::Add].surface.bg`.
 //!
 //! This module intentionally coexists with the legacy flat
 //! [`super::ThemePalette`](super::ThemePalette) until the render-pipeline and
@@ -15,15 +15,15 @@ use std::ops;
 use yansi::Color;
 
 use super::super::{
+    cursor::Cursor,
     diff::{DiffKind, DiffPalette},
-    scope::Scope,
     surface::SurfaceColors,
 };
 
-/// Styling for one containment scope: banner surfaces plus one [`DiffPalette`]
-/// per diff kind, dual-indexed by `palette[scope][kind]`.
+/// Styling for one cursor tier: banner surfaces plus one [`DiffPalette`]
+/// per diff kind, dual-indexed by `palette[cursor][kind]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct ScopePalette {
+pub struct CursorPalette {
     /// File header banner surface.
     pub file_header: SurfaceColors,
     /// Hunk divider banner surface.
@@ -32,7 +32,7 @@ pub struct ScopePalette {
     pub diffs: [DiffPalette; DiffKind::COUNT],
 }
 
-impl ops::Index<DiffKind> for ScopePalette {
+impl ops::Index<DiffKind> for CursorPalette {
     type Output = DiffPalette;
 
     #[inline]
@@ -41,8 +41,9 @@ impl ops::Index<DiffKind> for ScopePalette {
     }
 }
 
-impl ScopePalette {
-    /// Construct a scope palette from its banner surfaces and diff palettes.
+impl CursorPalette {
+    /// Construct a cursor-tier palette from its banner surfaces and diff
+    /// palettes.
     #[inline]
     #[must_use]
     pub const fn new(
@@ -58,7 +59,7 @@ impl ScopePalette {
     }
 }
 
-/// UI chrome and status surface colors outside the diff-grid scope axis.
+/// UI chrome and status surface colors outside the diff-grid cursor axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct UiPalette {
     /// Application background canvas.
@@ -136,47 +137,47 @@ pub struct UiPalette {
     pub count_notes: Color,
 }
 
-/// Complete scoped theme palette: one [`ScopePalette`] per containment scope
+/// Complete scoped theme palette: one [`CursorPalette`] per cursor tier
 /// plus UI chrome, resolved at load time into flat, `Copy`, array-indexed
 /// storage for zero-allocation rendering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct ThemePalette {
-    /// One palette per containment scope, ordered by [`Scope`] discriminant.
-    pub scopes: [ScopePalette; Scope::COUNT],
-    /// UI chrome outside the scope axis.
+    /// One palette per cursor tier, ordered by [`Cursor`] discriminant.
+    pub tiers: [CursorPalette; Cursor::COUNT],
+    /// UI chrome outside the cursor axis.
     pub ui: UiPalette,
 }
 
-impl ops::Index<Scope> for ThemePalette {
-    type Output = ScopePalette;
+impl ops::Index<Cursor> for ThemePalette {
+    type Output = CursorPalette;
 
     #[inline]
-    fn index(&self, scope: Scope) -> &Self::Output {
-        &self.scopes[scope as usize]
+    fn index(&self, cursor: Cursor) -> &Self::Output {
+        &self.tiers[cursor as usize]
     }
 }
 
 impl ThemePalette {
-    /// Construct a theme palette from its scope arrays and UI chrome.
+    /// Construct a theme palette from its cursor-tier arrays and UI chrome.
     #[inline]
     #[must_use]
-    pub const fn new(scopes: [ScopePalette; Scope::COUNT], ui: UiPalette) -> Self {
-        Self { scopes, ui }
+    pub const fn new(tiers: [CursorPalette; Cursor::COUNT], ui: UiPalette) -> Self {
+        Self { tiers, ui }
     }
 
-    /// The palette for a containment scope.
+    /// The palette for a cursor tier.
     #[inline]
     #[must_use]
-    pub const fn scope(&self, scope: Scope) -> &ScopePalette {
-        &self.scopes[scope as usize]
+    pub const fn tier(&self, cursor: Cursor) -> &CursorPalette {
+        &self.tiers[cursor as usize]
     }
 
-    /// The palette for a diff kind within a containment scope, resolving the
+    /// The palette for a diff kind within a cursor tier, resolving the
     /// double axis in a single call.
     #[inline]
     #[must_use]
-    pub const fn diff(&self, scope: Scope, kind: DiffKind) -> &DiffPalette {
-        &self.scopes[scope as usize].diffs[kind as usize]
+    pub const fn diff(&self, cursor: Cursor, kind: DiffKind) -> &DiffPalette {
+        &self.tiers[cursor as usize].diffs[kind as usize]
     }
 }
 
@@ -188,8 +189,8 @@ mod tests {
     };
 
     #[test]
-    fn test_scope_palette_indexes_each_diff_kind() {
-        let mut palette = ScopePalette::default();
+    fn test_cursor_palette_indexes_each_diff_kind() {
+        let mut palette = CursorPalette::default();
         palette.diffs[DiffKind::Add as usize].surface =
             SurfaceColors::new(Color::Fixed(30), Color::Fixed(120));
         assert_eq!(
@@ -205,48 +206,42 @@ mod tests {
     }
 
     #[test]
-    fn test_theme_palette_scope_and_diff_accessors_agree() {
-        let mut scopes = [ScopePalette::default(); Scope::COUNT];
-        scopes[Scope::Row as usize].file_header =
+    fn test_theme_palette_cursor_and_diff_accessors_agree() {
+        let mut tiers = [CursorPalette::default(); Cursor::COUNT];
+        tiers[Cursor::Row as usize].file_header =
             SurfaceColors::new(Color::Fixed(234), Color::Fixed(231));
-        scopes[Scope::Hunk as usize].diffs[DiffKind::Del as usize].gutter =
+        tiers[Cursor::Hunk as usize].diffs[DiffKind::Del as usize].gutter =
             GutterColors::from_styled(
                 StyledColor::new(Color::Fixed(203)),
                 StyledColor::new(Color::Fixed(88)),
             );
-        let palette = ThemePalette::new(scopes, UiPalette::default());
+        let palette = ThemePalette::new(tiers, UiPalette::default());
 
         assert_eq!(
-            palette[Scope::Row].file_header.bg,
+            palette[Cursor::Row].file_header.bg,
             Color::Fixed(234),
             "acceptance: direct, zero-allocation double-axis access"
         );
         assert_eq!(
-            palette[Scope::Row].file_header,
-            palette.scope(Scope::Row).file_header,
-            "Index<Scope> and scope() resolve identically"
+            palette[Cursor::Row].file_header,
+            palette.tier(Cursor::Row).file_header,
+            "Index<Cursor> and tier() resolve identically"
         );
         assert_eq!(
-            &palette[Scope::Hunk][DiffKind::Del],
-            palette.diff(Scope::Hunk, DiffKind::Del),
+            &palette[Cursor::Hunk][DiffKind::Del],
+            palette.diff(Cursor::Hunk, DiffKind::Del),
             "double indexing and diff() resolve identically"
         );
         assert_eq!(
-            palette[Scope::Hunk][DiffKind::Del].gutter.num.color,
+            palette[Cursor::Hunk][DiffKind::Del].gutter.num.color,
             Color::Fixed(203)
         );
         assert_eq!(
-            palette[Scope::Hunk][DiffKind::Del].gutter.icon.color,
+            palette[Cursor::Hunk][DiffKind::Del].gutter.icon.color,
             Color::Fixed(88)
         );
-        assert_eq!(
-            palette[Scope::None][DiffKind::MovSrc],
-            DiffPalette::default()
-        );
-        assert_eq!(
-            palette[Scope::File][DiffKind::MovTgt],
-            DiffPalette::default()
-        );
+        assert_eq!(palette[Cursor::Rest][DiffKind::Mov], DiffPalette::default());
+        assert_eq!(palette[Cursor::File][DiffKind::Mod], DiffPalette::default());
     }
 
     #[test]
@@ -256,10 +251,10 @@ mod tests {
         // into renderers with zero heap allocation.
         let copy = palette;
         assert_eq!(copy, palette);
-        // The storage is a flat array: every scope slot is contiguous and the
-        // discriminant is the index.
-        for (i, scope) in Scope::cascade().into_iter().enumerate().rev() {
-            assert_eq!(copy.scopes[i], palette[scope]);
+        // The storage is a flat array: every cursor-tier slot is contiguous
+        // and the discriminant is the index.
+        for (i, cursor) in Cursor::cascade().into_iter().enumerate().rev() {
+            assert_eq!(copy.tiers[i], palette[cursor]);
         }
     }
 

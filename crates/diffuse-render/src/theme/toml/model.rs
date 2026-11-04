@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer};
 
-use super::super::scope::Scope;
+use super::super::{cursor::Cursor, diff::DiffKind};
 
 /// Theme application mode, selecting the primitive swatch baseline.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -156,28 +156,11 @@ pub struct DiffModel {
     pub syntax: Option<BTreeMap<String, ColorValue>>,
 }
 
-/// Slots a scope provides for diff styling. `Mov` is the alias channel
-/// shared by relocation sides unless explicitly overridden.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KindSlot {
-    Ctx,
-    Add,
-    Del,
-    Mod,
-    Mov,
-    MovSrc,
-    MovTgt,
-}
-
-impl KindSlot {
-    /// Number of slots, including the `mov` alias channel.
-    pub const COUNT: usize = 7;
-}
-
-/// Per-scope override tables.
+/// Per-cursor-tier override tables, keyed by diff kind (the `mov` channel
+/// covers both relocation sides).
 #[derive(Clone, Default, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ScopeModel {
+pub struct CursorModel {
     pub file_header: Option<SurfaceModel>,
     pub hunk_divider: Option<SurfaceModel>,
     pub ctx: Option<DiffModel>,
@@ -186,23 +169,19 @@ pub struct ScopeModel {
     #[serde(rename = "mod")]
     pub r#mod: Option<DiffModel>,
     pub mov: Option<DiffModel>,
-    pub mov_src: Option<DiffModel>,
-    pub mov_tgt: Option<DiffModel>,
 }
 
-impl ScopeModel {
-    /// The diff slot for a kind channel.
+impl CursorModel {
+    /// The diff slot override for a palette channel.
     #[inline]
     #[must_use]
-    pub fn slot(&self, slot: KindSlot) -> Option<&DiffModel> {
-        match slot {
-            KindSlot::Ctx => &self.ctx,
-            KindSlot::Add => &self.add,
-            KindSlot::Del => &self.del,
-            KindSlot::Mod => &self.r#mod,
-            KindSlot::Mov => &self.mov,
-            KindSlot::MovSrc => &self.mov_src,
-            KindSlot::MovTgt => &self.mov_tgt,
+    pub fn slot(&self, kind: DiffKind) -> Option<&DiffModel> {
+        match kind {
+            DiffKind::Ctx => &self.ctx,
+            DiffKind::Add => &self.add,
+            DiffKind::Del => &self.del,
+            DiffKind::Mod => &self.r#mod,
+            DiffKind::Mov => &self.mov,
         }
         .as_ref()
     }
@@ -260,22 +239,23 @@ pub struct ThemeModel {
     pub dark_pair: Option<String>,
     pub palette: Option<PaletteModel>,
     pub ui: Option<UiModel>,
-    pub none: Option<ScopeModel>,
-    pub file: Option<ScopeModel>,
-    pub hunk: Option<ScopeModel>,
-    pub row: Option<ScopeModel>,
+    pub rest: Option<CursorModel>,
+    pub file: Option<CursorModel>,
+    pub hunk: Option<CursorModel>,
+    pub row: Option<CursorModel>,
 }
 
 impl ThemeModel {
-    /// The scope table for a containment scope.
+    /// The override table for a cursor tier (TOML keys `rest`, `file`,
+    /// `hunk`, `row`).
     #[inline]
     #[must_use]
-    pub fn scope(&self, scope: Scope) -> Option<&ScopeModel> {
-        match scope {
-            Scope::None => &self.none,
-            Scope::File => &self.file,
-            Scope::Hunk => &self.hunk,
-            Scope::Row => &self.row,
+    pub fn cursor(&self, cursor: Cursor) -> Option<&CursorModel> {
+        match cursor {
+            Cursor::Rest => &self.rest,
+            Cursor::File => &self.file,
+            Cursor::Hunk => &self.hunk,
+            Cursor::Row => &self.row,
         }
         .as_ref()
     }
@@ -361,69 +341,73 @@ mod tests {
     }
 
     #[test]
-    fn test_scope_model_slot_access() {
-        let scope: ScopeModel = toml::from_str(
-            "ctx = { bg = 10 }\nadd = { bg = 11 }\ndel = { bg = 12 }\nmod = { bg = 13 }\nmov = { bg = 14 }\nmov_src = { bg = 15 }\nmov_tgt = { bg = 16 }\nfile_header = { fill = 25 }\n",
+    fn test_cursor_model_slot_access() {
+        let cursor: CursorModel = toml::from_str(
+            "ctx = { bg = 10 }\nadd = { bg = 11 }\ndel = { bg = 12 }\nmod = { bg = 13 }\nmov = { bg = 14 }\nfile_header = { fill = 25 }\n",
         )
         .unwrap();
-        let slot_bg = |slot: KindSlot| scope.slot(slot).and_then(|diff| diff.bg.clone());
-        assert_eq!(slot_bg(KindSlot::Ctx), Some(ColorValue::Indexed(10)));
-        assert_eq!(slot_bg(KindSlot::Add), Some(ColorValue::Indexed(11)));
-        assert_eq!(slot_bg(KindSlot::Del), Some(ColorValue::Indexed(12)));
-        assert_eq!(slot_bg(KindSlot::Mod), Some(ColorValue::Indexed(13)));
-        assert_eq!(slot_bg(KindSlot::Mov), Some(ColorValue::Indexed(14)));
-        assert_eq!(slot_bg(KindSlot::MovSrc), Some(ColorValue::Indexed(15)));
-        assert_eq!(slot_bg(KindSlot::MovTgt), Some(ColorValue::Indexed(16)));
+        let slot_bg = |kind: DiffKind| cursor.slot(kind).and_then(|diff| diff.bg.clone());
+        assert_eq!(slot_bg(DiffKind::Ctx), Some(ColorValue::Indexed(10)));
+        assert_eq!(slot_bg(DiffKind::Add), Some(ColorValue::Indexed(11)));
+        assert_eq!(slot_bg(DiffKind::Del), Some(ColorValue::Indexed(12)));
+        assert_eq!(slot_bg(DiffKind::Mod), Some(ColorValue::Indexed(13)));
+        assert_eq!(slot_bg(DiffKind::Mov), Some(ColorValue::Indexed(14)));
         assert_eq!(
-            scope.file_header.as_ref().unwrap().fill,
+            cursor.file_header.as_ref().unwrap().fill,
             Some(ColorValue::Indexed(25))
         );
+
+        // Side-split keys were collapsed into the single `mov` channel;
+        // deny-unknown-fields rejects them so typos and stale themes
+        // surface at load time.
+        assert!(toml::from_str::<CursorModel>("mov_src = { bg = 15 }").is_err());
+        assert!(toml::from_str::<CursorModel>("mov_tgt = { bg = 16 }").is_err());
     }
 
     #[test]
-    fn test_theme_model_scope_tables() {
+    fn test_theme_model_cursor_tables() {
         let theme: ThemeModel = toml::from_str(
-            "[none]\n[file]\nctx = { bg = 21 }\n[hunk]\nctx = { bg = 22 }\n[row]\nctx = { bg = 23 }\n",
+            "[rest]\n[file]\nctx = { bg = 21 }\n[hunk]\nctx = { bg = 22 }\n[row]\nctx = { bg = 23 }\n",
         )
         .unwrap();
-        assert!(theme.scope(Scope::None).unwrap().ctx.is_none());
+        assert!(theme.cursor(Cursor::Rest).unwrap().ctx.is_none());
         assert_eq!(
             theme
-                .scope(Scope::File)
+                .cursor(Cursor::File)
                 .unwrap()
-                .slot(KindSlot::Ctx)
+                .slot(DiffKind::Ctx)
                 .unwrap()
                 .bg,
             Some(ColorValue::Indexed(21))
         );
         assert_eq!(
             theme
-                .scope(Scope::Hunk)
+                .cursor(Cursor::Hunk)
                 .unwrap()
-                .slot(KindSlot::Ctx)
+                .slot(DiffKind::Ctx)
                 .unwrap()
                 .bg,
             Some(ColorValue::Indexed(22))
         );
         assert_eq!(
             theme
-                .scope(Scope::Row)
+                .cursor(Cursor::Row)
                 .unwrap()
-                .slot(KindSlot::Ctx)
+                .slot(DiffKind::Ctx)
                 .unwrap()
                 .bg,
             Some(ColorValue::Indexed(23))
         );
-        assert!(ThemeModel::default().scope(Scope::Row).is_none());
+        assert!(ThemeModel::default().cursor(Cursor::Row).is_none());
     }
 
     #[test]
     fn test_full_theme_model_parses() {
         let m = toml::from_str::<ThemeModel>(
-            "\n[none]\n[none.add]\nbg = 233\n[none.add.syntax]\nkeyword = \"$red\"\n",
+            "\n[rest]\n[rest.add]\nbg = 233\n[rest.add.syntax]\nkeyword = \"$red\"\n",
         )
         .unwrap();
-        let add = m.scope(Scope::None).unwrap().slot(KindSlot::Add).unwrap();
+        let add = m.cursor(Cursor::Rest).unwrap().slot(DiffKind::Add).unwrap();
         assert_eq!(add.bg, Some(ColorValue::Indexed(233)));
         assert_eq!(
             add.syntax.as_ref().unwrap()["keyword"],

@@ -6,6 +6,8 @@
 
 use yansi::{Color, Style};
 
+use crate::ansi::ColorExt as _;
+
 /// A color combined with text attribute modifiers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StyledColor {
@@ -114,6 +116,38 @@ impl StyledColor {
         self
     }
 
+    /// Format the ANSI foreground escape sequence, fusing this color's
+    /// attribute flags into a single leading SGR group before the color
+    /// parameters (`\x1b[3;38;5;203m` for italic fixed 203). Unadorned
+    /// colors emit the plain foreground sequence unchanged.
+    #[must_use]
+    pub fn fg_code(&self) -> String {
+        let fg = self.color.fg_code();
+        if self.bold || self.italic || self.dim || self.underline {
+            let mut attrs = String::new();
+            if self.bold {
+                attrs.push_str("1;");
+            }
+            if self.italic {
+                attrs.push_str("3;");
+            }
+            if self.dim {
+                attrs.push_str("2;");
+            }
+            if self.underline {
+                attrs.push_str("4;");
+            }
+            // fg has the shape `\x1b[<params>m`; splice the attribute group
+            // in front of the color parameters.
+            let params = fg
+                .strip_prefix("\x1b[")
+                .and_then(|p| p.strip_suffix('m'))
+                .unwrap_or("39");
+            return format!("\x1b[{attrs}{params}m");
+        }
+        fg
+    }
+
     /// Build a [`yansi::Style`] combining the color and enabled modifiers.
     #[inline]
     #[must_use]
@@ -178,6 +212,62 @@ impl GutterColors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_fg_code_fuses_attribute_flags() {
+        // Unadorned: identical to the color's plain fg code.
+        assert_eq!(
+            StyledColor::new(Color::Fixed(203)).fg_code(),
+            Color::Fixed(203).fg_code()
+        );
+        assert_eq!(
+            StyledColor::new(Color::Primary).fg_code(),
+            "\x1b[39m",
+            "unadorned reset color keeps its plain reset sequence"
+        );
+        // Italic-only: byte-identical to the legacy fused italic code.
+        assert_eq!(
+            StyledColor::new(Color::Fixed(203))
+                .with_italic(true)
+                .fg_code(),
+            "\x1b[3;38;5;203m"
+        );
+        assert_eq!(
+            StyledColor::default().with_italic(true).fg_code(),
+            "\x1b[3;39m"
+        );
+        // Bold-only, dim-only, underline-only.
+        assert_eq!(
+            StyledColor::new(Color::Fixed(88)).with_bold(true).fg_code(),
+            "\x1b[1;38;5;88m"
+        );
+        assert_eq!(
+            StyledColor::new(Color::Fixed(88)).with_dim(true).fg_code(),
+            "\x1b[2;38;5;88m"
+        );
+        assert_eq!(
+            StyledColor::new(Color::Fixed(88))
+                .with_underline(true)
+                .fg_code(),
+            "\x1b[4;38;5;88m"
+        );
+        // Combined flags fuse into one sequence.
+        assert_eq!(
+            StyledColor::new(Color::Fixed(88))
+                .with_bold(true)
+                .with_italic(true)
+                .with_underline(true)
+                .fg_code(),
+            "\x1b[1;3;4;38;5;88m"
+        );
+        // RGB colors fuse the same way.
+        assert_eq!(
+            StyledColor::new(Color::Rgb(1, 2, 3))
+                .with_bold(true)
+                .fg_code(),
+            "\x1b[1;38;2;1;2;3m"
+        );
+    }
 
     #[test]
     fn test_styled_color_constructors() {

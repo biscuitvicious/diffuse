@@ -22,15 +22,28 @@ const LIGHT_THEME_TOML: &str = include_str!("../../../themes/light.toml");
 ///
 /// A parse failure here is a compile-time-embedded asset regression and
 /// panics by design (fail-fast invariant).
-fn builtin(name: &str) -> Option<ThemeModel> {
+pub fn parse_builtin(name: &str) -> Option<ParsedTheme> {
     let source = match name {
         "default" | "dark" => DARK_THEME_TOML,
         "light" => LIGHT_THEME_TOML,
         _ => return None,
     };
-    let model: ThemeModel =
-        toml::from_str(source).expect("bundled builtin theme parses against the schema");
-    Some(model)
+    Some(parse_theme_str(source).expect("bundled builtin theme parses against the schema"))
+}
+
+/// Compose the `inherits` chain over the registry: the embedded asset for
+/// every builtin name.
+fn builtin(name: &str) -> Option<ThemeModel> {
+    match name {
+        "default" | "dark" => Some(builtin_model(DARK_THEME_TOML)),
+        "light" => Some(builtin_model(LIGHT_THEME_TOML)),
+        _ => None,
+    }
+}
+
+/// Parse an embedded builtin asset, failing fast on schema regressions.
+fn builtin_model(source: &'static str) -> ThemeModel {
+    toml::from_str(source).expect("bundled builtin theme parses against the schema")
 }
 
 /// Errors encountered while parsing and cascading a declarative theme.
@@ -83,7 +96,7 @@ pub struct ParsedTheme {
 ///
 /// The document is validated against the schema, its `inherits` chain is
 /// composed (self theme first, bases after), and every field is cascaded
-/// through the scope and diff-kind axes into a flat [`ScopedPalette`].
+/// through the cursor and diff-kind axes into a flat [`ScopedPalette`].
 ///
 /// # Errors
 ///
@@ -141,7 +154,7 @@ mod equivalence {
 
     use diffuse_core::parse::RowKind;
 
-    use crate::theme::{diff::DiffKind, palette::ThemePalette as LegacyPalette, scope::Scope};
+    use crate::theme::{cursor::Cursor, diff::DiffKind, palette::ThemePalette as LegacyPalette};
 
     use super::{
         super::{cascade::TOKEN_KEYS, model::Mode},
@@ -150,7 +163,7 @@ mod equivalence {
 
     /// Assert the inherited asset reproduces every legacy value: row
     /// surfaces and gutters, syntax tokens per row kind, banner states by
-    /// scope, and UI chrome.
+    /// cursor tier, and UI chrome.
     fn assert_asset_equivalence(mode: Mode) {
         let theme = parse_theme_str(match mode {
             Mode::Dark => "inherits = \"dark\"",
@@ -164,9 +177,9 @@ mod equivalence {
             Mode::Light => LegacyPalette::light_palette(),
         };
 
-        // Row surfaces & gutters: every scope cascades to the none-scoped
+        // Row surfaces & gutters: every tier cascades to the rest baseline
         // canonical values. Mov sides resolve the shared `mov` channel.
-        for scope in Scope::cascade() {
+        for cursor in Cursor::cascade() {
             for (kind, _row_kind, bg, fill, fg, num, icon) in [
                 (
                     DiffKind::Ctx,
@@ -205,7 +218,7 @@ mod equivalence {
                     legacy.mod_gutter_icon,
                 ),
                 (
-                    DiffKind::MovSrc,
+                    DiffKind::Mov,
                     RowKind::Mov,
                     legacy.mov_tint_bg,
                     None,
@@ -214,11 +227,11 @@ mod equivalence {
                     legacy.mov_gutter_icon,
                 ),
             ] {
-                let palette = theme.palette[scope][kind];
-                // Context gutters switch in-hunk: Hunk and Row scopes
+                let palette = theme.palette[cursor][kind];
+                // Context gutters switch in-hunk: Hunk and Row tiers
                 // resolve the in-hunk color, rest fall to out-of-hunk.
-                let (num, icon) = match (kind, scope) {
-                    (DiffKind::Ctx, Scope::Hunk) | (DiffKind::Ctx, Scope::Row) => {
+                let (num, icon) = match (kind, cursor) {
+                    (DiffKind::Ctx, Cursor::Hunk) | (DiffKind::Ctx, Cursor::Row) => {
                         (legacy.ctx_gutter_in_hunk, legacy.ctx_gutter_in_hunk)
                     }
                     (DiffKind::Ctx, _) => (legacy.ctx_gutter_out_hunk, legacy.ctx_gutter_out_hunk),
@@ -226,40 +239,37 @@ mod equivalence {
                 };
                 assert_eq!(
                     palette.surface.bg, bg,
-                    "{mode:?} {kind:?} surface.bg at {scope:?}"
+                    "{mode:?} {kind:?} surface.bg at {cursor:?}"
                 );
                 assert_eq!(
                     palette.surface.fg, fg,
-                    "{mode:?} {kind:?} surface.fg at {scope:?}"
+                    "{mode:?} {kind:?} surface.fg at {cursor:?}"
                 );
                 assert_eq!(
                     palette.surface.fill, fill,
-                    "{mode:?} {kind:?} surface.fill at {scope:?}"
+                    "{mode:?} {kind:?} surface.fill at {cursor:?}"
                 );
                 assert_eq!(
                     palette.gutter.num.color, num,
-                    "{mode:?} {kind:?} gutter.num at {scope:?}"
+                    "{mode:?} {kind:?} gutter.num at {cursor:?}"
                 );
                 assert_eq!(
                     palette.gutter.icon.color, icon,
-                    "{mode:?} {kind:?} gutter.icon at {scope:?}"
-                );
-            }
-
-            let mov = DiffKind::MovSrc;
-            {
-                let side = DiffKind::MovTgt;
-                assert_eq!(
-                    theme.palette[scope][side], theme.palette[scope][mov],
-                    "{mode:?} relocation sides share the mov channel"
+                    "{mode:?} {kind:?} gutter.icon at {cursor:?}"
                 );
             }
         }
 
         // In-hunk context rows switch gutter colors.
-        let in_hunk = theme.palette[Scope::Hunk][DiffKind::Ctx].gutter;
+        let in_hunk = theme.palette[Cursor::Hunk][DiffKind::Ctx].gutter;
         assert_eq!(in_hunk.num.color, legacy.ctx_gutter_in_hunk);
         assert_eq!(in_hunk.icon.color, legacy.ctx_gutter_in_hunk);
+
+        // The del gutter number italic is palette data (fused at render
+        // time by `StyledColor::fg_code`), not renderer logic.
+        let del_num = theme.palette[Cursor::Rest][DiffKind::Del].gutter.num;
+        assert!(del_num.italic, "{mode:?} del gutter num carries italic");
+        assert_eq!(del_num.color, legacy.del_gutter_num);
 
         // Syntax tokens per row kind: Mod/Mov rows resolve the ctx arm,
         // matching legacy `token_color` semantics.
@@ -269,60 +279,59 @@ mod equivalence {
                 (DiffKind::Add, RowKind::Add),
                 (DiffKind::Del, RowKind::Del),
                 (DiffKind::Mod, RowKind::Mod),
-                (DiffKind::MovSrc, RowKind::Mov),
-                (DiffKind::MovTgt, RowKind::Mov),
+                (DiffKind::Mov, RowKind::Mov),
             ] {
                 assert_eq!(
-                    theme.palette[Scope::None][kind].syntax.token_color(token),
+                    theme.palette[Cursor::Rest][kind].syntax.token_color(token),
                     legacy.token_color(token, row_kind),
                     "{mode:?} syntax '{key}' on {kind:?}"
                 );
             }
         }
 
-        // Banner states: REST at None, CURRENT at File, SELECTED at Row.
-        for (scope, bg, fg) in [
+        // Banner states: REST at Rest, CURRENT at File, SELECTED at Row.
+        for (cursor, bg, fg) in [
             (
-                Scope::None,
+                Cursor::Rest,
                 legacy.file_header_bg_rest,
                 legacy.file_header_fg_rest,
             ),
             (
-                Scope::File,
+                Cursor::File,
                 legacy.file_header_bg_current,
                 legacy.file_header_fg_current,
             ),
             (
-                Scope::Row,
+                Cursor::Row,
                 legacy.file_header_bg_selected,
                 legacy.file_header_fg_selected,
             ),
         ] {
-            let header = theme.palette[scope].file_header;
-            assert_eq!(header.bg, bg, "{mode:?} file_header.bg at {scope:?}");
-            assert_eq!(header.fg, fg, "{mode:?} file_header.fg at {scope:?}");
+            let header = theme.palette[cursor].file_header;
+            assert_eq!(header.bg, bg, "{mode:?} file_header.bg at {cursor:?}");
+            assert_eq!(header.fg, fg, "{mode:?} file_header.fg at {cursor:?}");
             assert_eq!(header.fill, None);
         }
-        for (scope, bg, fg) in [
+        for (cursor, bg, fg) in [
             (
-                Scope::None,
+                Cursor::Rest,
                 legacy.hunk_divider_bg_rest,
                 legacy.hunk_divider_fg,
             ),
             (
-                Scope::File,
+                Cursor::File,
                 legacy.hunk_divider_bg_current,
                 legacy.hunk_divider_fg,
             ),
             (
-                Scope::Row,
+                Cursor::Row,
                 legacy.hunk_divider_bg_selected,
                 legacy.hunk_divider_fg_selected,
             ),
         ] {
-            let divider = theme.palette[scope].hunk_divider;
-            assert_eq!(divider.bg, bg, "{mode:?} hunk_divider.bg at {scope:?}");
-            assert_eq!(divider.fg, fg, "{mode:?} hunk_divider.fg at {scope:?}");
+            let divider = theme.palette[cursor].hunk_divider;
+            assert_eq!(divider.bg, bg, "{mode:?} hunk_divider.bg at {cursor:?}");
+            assert_eq!(divider.fg, fg, "{mode:?} hunk_divider.fg at {cursor:?}");
             assert_eq!(divider.fill, None);
         }
 
@@ -407,8 +416,22 @@ mod equivalence {
 mod tests {
     use super::*;
     use crate::theme::{
-        Color, diff::DiffKind, primitive::PrimitivePalette, scope::Scope, syntax::SyntaxPalette,
+        Color, cursor::Cursor, diff::DiffKind, primitive::PrimitivePalette, syntax::SyntaxPalette,
     };
+
+    #[test]
+    fn test_parse_builtin_by_registry_name() {
+        let dark = parse_builtin("dark").unwrap();
+        assert_eq!(dark.name, "default");
+        assert_eq!(dark.mode, Mode::Dark);
+        assert_eq!(
+            parse_builtin("default").map(|t| t.palette),
+            Some(dark.palette)
+        );
+        assert_eq!(parse_builtin("light").unwrap().mode, Mode::Light);
+        assert!(parse_builtin("noir").is_none());
+        assert!(parse_builtin("").is_none());
+    }
 
     #[test]
     fn test_builtin_registry() {
@@ -425,7 +448,7 @@ mod tests {
         let theme = parse_theme_str(
             r#"
             name = "test"
-            [none.ctx]
+            [rest.ctx]
             bg = 100
             fg = 101
             [ui]
@@ -436,11 +459,11 @@ mod tests {
         assert_eq!(theme.name, "test");
         assert_eq!(theme.mode, Mode::Dark);
         assert_eq!(
-            theme.palette[Scope::None][DiffKind::Ctx].surface.bg,
+            theme.palette[Cursor::Rest][DiffKind::Ctx].surface.bg,
             Color::Fixed(100)
         );
         assert_eq!(
-            theme.palette[Scope::None][DiffKind::Ctx].surface.fg,
+            theme.palette[Cursor::Rest][DiffKind::Ctx].surface.fg,
             Color::Fixed(101)
         );
         assert_eq!(theme.palette.ui.accent, Color::Fixed(203));
@@ -448,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_parse_unnamed_theme_defaults_name_and_mode() {
-        let theme = parse_theme_str("[none.ctx]\nbg = 5\n").unwrap();
+        let theme = parse_theme_str("[rest.ctx]\nbg = 5\n").unwrap();
         assert_eq!(theme.name, "default");
         assert_eq!(theme.mode, Mode::Dark);
     }
@@ -490,12 +513,12 @@ mod tests {
             "light primitives resolve $green differently from dark"
         );
         assert_eq!(
-            theme.palette[Scope::None][DiffKind::Ctx].surface.bg,
+            theme.palette[Cursor::Rest][DiffKind::Ctx].surface.bg,
             Color::Rgb(250, 250, 250),
             "light canonical ctx tint from the bundled asset"
         );
         assert_eq!(
-            theme.palette[Scope::None][DiffKind::Ctx].syntax.keyword,
+            theme.palette[Cursor::Rest][DiffKind::Ctx].syntax.keyword,
             SyntaxPalette::light().keyword,
             "light syntax baseline flows through the asset"
         );
@@ -510,7 +533,7 @@ mod tests {
 
     #[test]
     fn test_schema_violation_rejects_document() {
-        let error = parse_theme_str("[none.ctx]\nbcc = 5\n").unwrap_err();
+        let error = parse_theme_str("[rest.ctx]\nbcc = 5\n").unwrap_err();
         assert!(
             matches!(error, ThemeParseError::Toml(_)),
             "unknown fields surface as TOML errors: {error}"
@@ -546,12 +569,12 @@ mod tests {
 
     #[test]
     fn test_unresolved_variable_in_syntax_map() {
-        let error = parse_theme_str("[none.ctx.syntax]\nkeyword = \"$nope\"\n").unwrap_err();
+        let error = parse_theme_str("[rest.ctx.syntax]\nkeyword = \"$nope\"\n").unwrap_err();
         assert_eq!(
             error,
             ThemeParseError::UnresolvedVariable {
                 name: "nope".to_string(),
-                path: "none.ctx.syntax.keyword".to_string(),
+                path: "rest.ctx.syntax.keyword".to_string(),
             }
         );
     }
@@ -564,13 +587,13 @@ mod tests {
             r#"
             [palette]
             green = 9
-            [none.ctx]
+            [rest.ctx]
             bg = "$green"
             "#,
         )
         .unwrap();
         assert_eq!(
-            theme.palette[Scope::None][DiffKind::Ctx].surface.bg,
+            theme.palette[Cursor::Rest][DiffKind::Ctx].surface.bg,
             Color::Fixed(9)
         );
         // The primitive table itself is the overlay, verifiable through $refs:

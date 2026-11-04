@@ -1,14 +1,16 @@
 //! Diff-kind axis and per-kind palette containers.
 //!
 //! [`DiffKind`] unifies all diff row variants (context, additions, deletions,
-//! modifications, and relocation sides) under one palette shape so every kind
-//! is styled identically via $O(1)$ array indexing.
+//! modifications, relocations) under one palette shape so every kind is
+//! styled identically via $O(1)$ array indexing.
 
-use diffuse_core::{parse::RowKind, wire::MovSide};
+use diffuse_core::parse::RowKind;
 
 use super::{styled_color::GutterColors, surface::SurfaceColors, syntax::SyntaxPalette};
 
-/// Semantic diff row variant including relocation side asymmetry.
+/// Semantic palette channel for a diff row. Relocation sides share the
+/// single `mov` channel: sides differ in wire line numbers and gutter
+/// glyphs, never in theme colors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum DiffKind {
@@ -21,27 +23,24 @@ pub enum DiffKind {
     Del = 2,
     /// Paired modification row (struck pre-image, filled post-image).
     Mod = 3,
-    /// Relocation source (removed from its original position).
-    MovSrc = 4,
-    /// Relocation target (re-inserted at its new position).
-    MovTgt = 5,
+    /// Relocation row (either side).
+    Mov = 4,
 }
 
 impl DiffKind {
     /// Number of diff kinds indexed by the scoped palettes.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 5;
 
-    /// Map a wire row to its semantic diff kind. Relocation rows without a
-    /// declared side resolve to the target variant.
+    /// Map a wire row to its palette channel. Structural rows (file
+    /// headers, separators) style as context.
     #[inline]
     #[must_use]
-    pub fn from_row(kind: RowKind, mov_side: Option<MovSide>) -> Self {
-        match (kind, mov_side) {
-            (RowKind::Add, _) => Self::Add,
-            (RowKind::Del, _) => Self::Del,
-            (RowKind::Mod, _) => Self::Mod,
-            (RowKind::Mov, Some(MovSide::Src)) => Self::MovSrc,
-            (RowKind::Mov, _) => Self::MovTgt,
+    pub fn from_row(kind: RowKind) -> Self {
+        match kind {
+            RowKind::Add => Self::Add,
+            RowKind::Del => Self::Del,
+            RowKind::Mod => Self::Mod,
+            RowKind::Mov => Self::Mov,
             _ => Self::Ctx,
         }
     }
@@ -55,8 +54,7 @@ impl DiffKind {
             DiffKind::Add => "add",
             DiffKind::Del => "del",
             DiffKind::Mod => "mod",
-            DiffKind::MovSrc => "mov_src",
-            DiffKind::MovTgt => "mov_tgt",
+            DiffKind::Mov => "mov",
         }
     }
 }
@@ -93,33 +91,19 @@ mod tests {
 
     #[test]
     fn test_diff_kind_from_row_matches_wire_variants() {
-        assert_eq!(DiffKind::from_row(RowKind::Ctx, None), DiffKind::Ctx);
-        assert_eq!(DiffKind::from_row(RowKind::Add, None), DiffKind::Add);
-        assert_eq!(DiffKind::from_row(RowKind::Del, None), DiffKind::Del);
-        assert_eq!(DiffKind::from_row(RowKind::Mod, None), DiffKind::Mod);
-        assert_eq!(
-            DiffKind::from_row(RowKind::Mov, Some(MovSide::Src)),
-            DiffKind::MovSrc
-        );
-        assert_eq!(
-            DiffKind::from_row(RowKind::Mov, Some(MovSide::Tgt)),
-            DiffKind::MovTgt
-        );
-        // Relocation rows without a declared side resolve to the target.
-        assert_eq!(DiffKind::from_row(RowKind::Mov, None), DiffKind::MovTgt);
+        assert_eq!(DiffKind::from_row(RowKind::Ctx), DiffKind::Ctx);
+        assert_eq!(DiffKind::from_row(RowKind::Add), DiffKind::Add);
+        assert_eq!(DiffKind::from_row(RowKind::Del), DiffKind::Del);
+        assert_eq!(DiffKind::from_row(RowKind::Mod), DiffKind::Mod);
+        // Both relocation sides share the single mov channel: palette
+        // identity is side-independent (sides differ in wire line numbers
+        // and gutter glyphs, never in theme colors).
+        assert_eq!(DiffKind::from_row(RowKind::Mov), DiffKind::Mov);
         // Structural rows (file headers, separators) style as context.
-        assert_eq!(DiffKind::from_row(RowKind::File, None), DiffKind::Ctx);
-        assert_eq!(DiffKind::from_row(RowKind::Sep, None), DiffKind::Ctx);
-        assert_eq!(
-            DiffKind::from_row(RowKind::Add, Some(MovSide::Tgt)),
-            DiffKind::Add
-        );
-        assert_eq!(
-            DiffKind::from_row(RowKind::Del, Some(MovSide::Src)),
-            DiffKind::Del
-        );
+        assert_eq!(DiffKind::from_row(RowKind::File), DiffKind::Ctx);
+        assert_eq!(DiffKind::from_row(RowKind::Sep), DiffKind::Ctx);
         assert_eq!(DiffKind::default(), DiffKind::Ctx);
-        assert_eq!(DiffKind::COUNT, 6);
+        assert_eq!(DiffKind::COUNT, 5);
     }
 
     #[test]
@@ -129,10 +113,9 @@ mod tests {
             DiffKind::Add.name(),
             DiffKind::Del.name(),
             DiffKind::Mod.name(),
-            DiffKind::MovSrc.name(),
-            DiffKind::MovTgt.name(),
+            DiffKind::Mov.name(),
         ];
-        assert_eq!(names, ["ctx", "add", "del", "mod", "mov_src", "mov_tgt"]);
+        assert_eq!(names, ["ctx", "add", "del", "mod", "mov"]);
     }
 
     #[test]

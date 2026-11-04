@@ -2,10 +2,10 @@
 
 ## Global TODO
 - [x] Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling (`SurfaceColors`, `StyledColor`, `GutterColors`, `SyntaxPalette`, `PrimitivePalette`)
-- [x] Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture (`Scope`, `DiffKind`, `DiffPalette`, `ScopePalette`, `ThemePalette`)
+- [x] Phase 2 — Cursor Axis, DiffKind Indexing & Scoped Container Architecture (`Cursor`, `DiffKind`, `DiffPalette`, `CursorPalette`, `ThemePalette`) *(revised in phase 5: `Scope` renamed `Cursor` with baseline `Rest`, `MovSrc`/`MovTgt` collapsed to `Mov`)*
 - [x] Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine with `inherits` & `$variable` Reference (`crates/diffuse-render/src/theme/toml/`)
 - [x] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)
-- [ ] Phase 5 — Render Pipeline & Row Styler Migration (`crates/diffuse-render/src/`)
+- [x] Phase 5 — Render Pipeline & Row Styler Migration (`crates/diffuse-render/src/`)
 - [ ] Phase 6 — Interactive TUI Grid, Header, Gutter & Mode Toggle Migration (`crates/diffuse-tui/src/`)
 - [ ] Phase 7 — Dynamic User Theme Discovery, Configuration & CLI Integration (`crates/diffuse/src/`)
 - [ ] Phase 8 — Frozen Golden Corpus Verification, Dual-Leg Sign-Off & Benchmarks
@@ -28,7 +28,7 @@ This plan executes a comprehensive re-architecture inspired by canonical, state-
 
 ## Table of Contents
 1. [Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling](#1-phase-1--foundational-surface-styledcolor--primitive-palette-modeling)
-2. [Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture](#2-phase-2--scope-axis-diffkind-indexing--scoped-container-architecture)
+2. [Phase 2 — Cursor Axis, DiffKind Indexing & Scoped Container Architecture](#2-phase-2--cursor-axis-diffkind-indexing--scoped-container-architecture)
 3. [Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine](#3-phase-3--toml-theme-schema-serde-deserializer--cascading-engine)
 4. [Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing](#4-phase-4--bundled-canonical-dark-and-light-toml-assets-with-mode-pairing)
 5. [Phase 5 — Render Pipeline & Row Styler Migration](#5-phase-5--render-pipeline--row-styler-migration)
@@ -92,22 +92,29 @@ Separate concrete color swatches from semantic roles, unify 3-layer visual repre
 
 ---
 
-## 2. Phase 2 — Scope Axis, DiffKind Indexing & Scoped Container Architecture
+## 2. Phase 2 — Cursor Axis, DiffKind Indexing & Scoped Container Architecture
 
 ### Architectural Principle
 Establish two orthogonal axes:
-1. **Scope Axis**: Visual containment ($\text{Scope::None} \subset \text{Scope::File} \subset \text{Scope::Hunk} \subset \text{Scope::Row}$).
-2. **DiffKind Axis**: Semantic diff variants including relocation side asymmetry (`MovSrc` vs `MovTgt`).
+1. **Cursor Axis**: Visual focus depth ($\text{Cursor::Rest} \subset \text{Cursor::File} \subset \text{Cursor::Hunk} \subset \text{Cursor::Row}$).
+2. **DiffKind Axis**: Semantic diff variants; both relocation sides share the single `Mov` channel (sides differ in wire line numbers and gutter glyphs, never in theme colors).
+
+> **Revision (Phase 5)**: the axis enum was renamed `Scope` → `Cursor` with the
+> baseline variant `None` → `Rest` ("scope" collides with lexical-scope
+> reading; the axis is the interactive cursor's focus depth), and the
+> `MovSrc`/`MovTgt` variants were collapsed into one `Mov` variant — the TOML
+> schema has a single `mov` channel and no consumer can express a side split,
+> so two compiled slots were dead complexity.
 
 ### Key Types and Modules
-- **Location**: `crates/diffuse-render/src/theme/scope.rs`, `crates/diffuse-render/src/theme/diff.rs`, `crates/diffuse-render/src/theme/palette/mod.rs`
-- **`Scope`**:
+- **Location**: `crates/diffuse-render/src/theme/cursor.rs`, `crates/diffuse-render/src/theme/diff.rs`, `crates/diffuse-render/src/theme/palette/mod.rs`
+- **`Cursor`**:
   ```rust
   #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
   #[repr(u8)]
-  pub enum Scope {
+  pub enum Cursor {
       #[default]
-      None = 0,   // Global baseline scope (outside active file / rest)
+      Rest = 0,   // Global baseline tier (outside active file / rest content)
       File = 1,   // Inside active file, but outside active hunk
       Hunk = 2,   // Inside active hunk, but not the active cursor row
       Row = 3,    // Active cursor row or focused header/divider
@@ -123,22 +130,20 @@ Establish two orthogonal axes:
       Add = 1,
       Del = 2,
       Mod = 3,
-      MovSrc = 4,
-      MovTgt = 5,
+      Mov = 4,   // both relocation sides (shared channel)
   }
 
   impl DiffKind {
-      pub const COUNT: usize = 6;
+      pub const COUNT: usize = 5;
 
       #[inline]
-      pub fn from_row(kind: RowKind, mov_side: Option<MovSide>) -> Self {
-          match (kind, mov_side) {
-              (RowKind::Add, _) => Self::Add,
-              (RowKind::Del, _) => Self::Del,
-              (RowKind::Mod, _) => Self::Mod,
-              (RowKind::Mov, Some(MovSide::Src)) => Self::MovSrc,
-              (RowKind::Mov, _) => Self::MovTgt,
-              _ => Self::Ctx,
+      pub fn from_row(kind: RowKind) -> Self {
+          match kind {
+              RowKind::Add => Self::Add,
+              RowKind::Del => Self::Del,
+              RowKind::Mod => Self::Mod,
+              RowKind::Mov => Self::Mov,
+              _ => Self::Ctx, // structural rows (File/Sep) style as context
           }
       }
   }
@@ -152,16 +157,16 @@ Establish two orthogonal axes:
       pub syntax: SyntaxPalette,
   }
   ```
-- **`ScopePalette`**:
+- **`CursorPalette`**:
   ```rust
   #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-  pub struct ScopePalette {
+  pub struct CursorPalette {
       pub file_header: SurfaceColors,
       pub hunk_divider: SurfaceColors,
       pub diffs: [DiffPalette; DiffKind::COUNT],
   }
 
-  impl std::ops::Index<DiffKind> for ScopePalette {
+  impl std::ops::Index<DiffKind> for CursorPalette {
       type Output = DiffPalette;
       #[inline]
       fn index(&self, kind: DiffKind) -> &Self::Output {
@@ -173,25 +178,25 @@ Establish two orthogonal axes:
   ```rust
   #[derive(Clone, Copy, Debug, PartialEq, Eq)]
   pub struct ThemePalette {
-      pub scopes: [ScopePalette; 4],
+      pub tiers: [CursorPalette; Cursor::COUNT],
       pub ui: UiPalette,
   }
 
   impl ThemePalette {
       #[inline]
-      pub fn scope(&self, scope: Scope) -> &ScopePalette {
-          &self.scopes[scope as usize]
+      pub const fn tier(&self, cursor: Cursor) -> &CursorPalette {
+          &self.tiers[cursor as usize]
       }
 
       #[inline]
-      pub fn diff(&self, scope: Scope, kind: DiffKind) -> &DiffPalette {
-          &self.scopes[scope as usize][kind]
+      pub const fn diff(&self, cursor: Cursor, kind: DiffKind) -> &DiffPalette {
+          &self.tiers[cursor as usize].diffs[kind as usize]
       }
   }
   ```
 
 ### Acceptance Criteria
-- `palette[Scope::Row][DiffKind::Add].surface.bg` provides direct, zero-allocation, compile-time verified access.
+- `palette[Cursor::Row][DiffKind::Add].surface.bg` provides direct, zero-allocation, compile-time verified access.
 - Submodule decomposition under `crates/diffuse-render/src/theme/` complies with repository code style.
 
 ### Coexistence Note
@@ -211,9 +216,9 @@ Declarative theme loading with clean inheritance, `$variable` expansion, and `in
 1. **`$variable` Expansion**: Token values like `"$green"` expand against `[palette]`.
 2. **`inherits` Directive**: Theme files can extend bundled or parent themes (`inherits = "dark"`), overlaying only specific customizations.
 3. **Multi-Tier Cascade**:
-   - Scope: `Row` $\to$ `Hunk` $\to$ `File` $\to$ `None`.
-   - Diff: `add`, `del`, `mod`, `mov_src`, `mov_tgt` inherit missing syntax tokens from `ctx`.
-   - Mov: `[none.mov]` propagates to both `MovSrc` and `MovTgt` unless explicitly overridden.
+   - Cursor: `Row` $\to$ `Hunk` $\to$ `File` $\to$ `Rest`.
+   - Diff: `add`, `del`, `mod`, `mov` inherit missing syntax tokens from `ctx`.
+   - Mov: the `[rest.mov]` channel covers both relocation sides (single channel; no per-side keys).
    - Primitive: Missing semantic roles fall back to foundational swatches.
 
 ### Key Types and Modules
@@ -232,7 +237,7 @@ Declarative theme loading with clean inheritance, `$variable` expansion, and `in
 
 ### Implementation Record
 - Builtin registry (`"dark"`/`"light"`, plus `"default"` alias) resolves `inherits`; registry entries declare no base, so chains are acyclic and **cyclic-inheritance testing is deferred** to phases 4/7, when non-builtin declarative themes can participate in chains.
-- Cascade field-channel order (per `(scope, kind, field)`): explicit kind slot along the scope walk (innermost→outermost, chain self-first), then the `mov` alias channel for `MovSrc`/`MovTgt`, then the `ctx` channel, then mode-baseline fallbacks (primitive swatches for surfaces/gutter, the mode's `SyntaxPalette` for tokens).
+- Cascade field-channel order (per `(cursor, kind, field)`): explicit kind channel along the cursor walk (innermost→outermost, chain self-first), then the `ctx` channel, then mode-baseline fallbacks (primitive swatches for surfaces/gutter, the mode's `SyntaxPalette` for tokens). *(Revised in phase 5: the `mov` alias tier collapsed into the explicit `mov` channel.)*
 - `parse_theme_str` returns `ParsedTheme { palette (scoped)::ThemePalette, name, mode }`; the scoped `ThemePalette` stays reachable only via `theme::palette::scoped` until phases 5-7 migrate consumers (see the Phase 2 coexistence note).
 
 ---
@@ -259,8 +264,8 @@ Replace hardcoded static Rust arrays with embedded TOML assets parsed at compile
 
 ### Implementation Record
 - Assets at `crates/diffuse-render/themes/{dark,light}.toml`; `builtin("dark"|"default")` / `builtin("light")` now parse the embedded assets (`include_str!`), so `inherits = "dark" | "light"` inherits the full canonical values.
-- Legacy → scoped mapping frozen by `parse.rs::equivalence` tests: surface `bg`=`*_tint_bg`, `fill`=`*_fill_bg`, `fg`=`*_fg`; gutters `num`/`icon` per kind; syntax through legacy `token_color` semantics — including the ctx `Url`→comment quirk (`[none.ctx.syntax].url`) which frozen golden renders depend on. Mod/Mov syntax inherits ctx (legacy `_` arm).
-- Banner states by scope axis: REST at `Scope::None`, CURRENT at `Scope::File`, SELECTED at `Scope::Row` (file_header & hunk_divider). In-hunk context gutter via `[hunk.ctx]` (`ctx_gutter_in_hunk` vs out-of-hunk at `None`/`File`).
+- Legacy → scoped mapping frozen by `parse.rs::equivalence` tests: surface `bg`=`*_tint_bg`, `fill`=`*_fill_bg`, `fg`=`*_fg`; gutters `num`/`icon` per kind; syntax through legacy `token_color` semantics — including the ctx `Url`→comment quirk (`[rest.ctx.syntax].url` as of the phase 5 `[rest]` rename) which frozen golden renders depend on. Mod/Mov syntax inherits ctx (legacy `_` arm).
+- Banner states by cursor axis: REST at `Cursor::Rest`, CURRENT at `Cursor::File`, SELECTED at `Cursor::Row` (file_header & hunk_divider). In-hunk context gutter via `[hunk.ctx]` (`ctx_gutter_in_hunk` vs out-of-hunk at `Rest`/`File`).
 - `scoped ui.bg_modal` := legacy `modal_bg` (the modal canvas); legacy `bg_modal` has no scoped slot. `ColorValue` gained a `"primary"` keyword for `Color::Primary` (`hunk_divider_bg_rest`).
 - The equivalence freeze exposed (and realigned) `SyntaxPalette::dark()` baseline divergences: `rule` 243→220, `code` 222→81, `table_header` 220→229.
 - **Deferred to phases 5-7** (no scoped slot yet): banner path colors (`file_header_path_*`), per-kind cursor backgrounds (legacy `*_cursor_bg`/`*_fill_cursor_bg`), `band_bg`, `note_tint_bg`, legacy `bg_modal`, `note` row styling. The legacy flat palettes remain authoritative for current renderers until those phases migrate consumers; only then are `dark.rs`/`light.rs` removed.
@@ -297,6 +302,15 @@ Migrate diff row renderers, gutters, and markdown formatters to pass and consume
 - Unit tests in `diffuse-render` updated and passing.
 - Terminal markdown table and diff row rendering pass with zero regressions.
 
+### Implementation Record
+- **Architecture revisions (user-directed)**: `Scope` renamed `Cursor` with the baseline variant `Rest` (TOML table `[rest]`), `KindSlot` deleted (the schema's `ScopeModel` → `CursorModel::slot(DiffKind)`), and `DiffKind` collapsed to 5 variants (`Mov` absorbs `MovSrc`/`MovTgt`; the schema's per-side `mov_src`/`mov_tgt` keys are rejected by deny-unknown-fields). Cascade tiers simplify to `[explicit kind, ctx]`. See the Phase 2/3 revision notes.
+- **`DiffuseTheme::scoped_palette()`**: compiles the bundled asset on first access into `SCOPED_DARK`/`SCOPED_LIGHT` `OnceLock` statics, keyed on `name == "light"`; returns `&'static scoped::ThemePalette` so `DiffuseTheme` stays `Copy` with its flat `palette` field intact.
+- **Migrated to scoped dispatch** (all byte-identical; goldens stayed green): `write_token`/`write_token_stacked` via `scoped[Cursor::Rest][DiffKind::from_row(rk)].syntax.token_color(color)`; `diff/header.rs` header bar bg/fg from `scoped.ui` (`file_header_path_current` stays flat — no scoped slot); `diff/hunk.rs` rest divider from `scoped[Cursor::Rest].hunk_divider` (asset `bg = "primary"` reproduces the empty-string bg-code guard); `row/gutter.rs` `styled_prefix` composes per-kind gutters at `Cursor::Rest` with cross-kind glyphs from sibling slots and ctx gutters switching at `Cursor::Hunk` per the `in_hunk` flag; `counts.rs` `count_color`/`count_cells` take `&UiPalette`.
+- **Del-gutter italic is palette data**: assets carry `[rest.del] num = { color, italic = true }`; new `StyledColor::fg_code()` fuses attr flags SGR-style (`\x1b[3;38;5;203m`, attr order bold/italic/dim/underline), byte-identical to the legacy `italic_fg_code` (which remains on `ColorExt`, pinned by test).
+- **TUI counts call sites migrated** (mechanical): `view/header/counts.rs` formatters, `render_header_bar`/`render_bottom_ribbon`/`bottom_ribbon_lines` now take `&UiPalette` (their reads are all ui fields); `header_bar_line` keeps `&DiffuseTheme` with flat field reads (phase 6) but routes counts through `scoped_palette().ui`; `view/diff_grid/file.rs` and `app/render/ratatui.rs` count/ribbon callers pass `scoped_palette().ui`.
+- **Stays flat (deferred)**: `DiffuseTheme::row_style` (cursor/fill backgrounds have no scoped slot until phase 6 adds the cursor-state fields), `row/raw.rs` and `row/segment.rs` (deferred cursor/band fields), and all markdown emitters (token routing already flows through the migrated `write_token`). The legacy flat palettes remain authoritative for those fields until phases 6-7.
+- **`parse_builtin(name)`** exported (`theme::toml::parse_builtin` → theme root) as the asset-parse entry for the scoped statics; equivalence suite extended to pin the del-gutter italic attribute.
+
 ---
 
 ## 6. Phase 6 — Interactive TUI Grid, Header, Gutter & Mode Toggle Migration
@@ -306,25 +320,25 @@ Update the interactive terminal reviewer (`diffuse-tui`) to dynamically resolve 
 
 ### Key Types and Modules
 - **Location**: `crates/diffuse-tui/src/view/diff_grid/`, `crates/diffuse-tui/src/view/header/`, `crates/diffuse-tui/src/app/render/`, `crates/diffuse-tui/src/app/dispatch/`
-- **Scope Resolution Function**:
+- **Cursor Resolution Function** *(renamed from `scope_for_row` in phase 5)*:
   ```rust
   impl AppState {
-      pub fn scope_for_row(&self, row_idx: usize) -> Scope {
+      pub fn cursor_for_row(&self, row_idx: usize) -> Cursor {
           if row_idx == self.row_idx {
-              Scope::Row
+              Cursor::Row
           } else if self.is_row_in_current_hunk(row_idx) {
-              Scope::Hunk
+              Cursor::Hunk
           } else if self.is_row_in_current_file(row_idx) {
-              Scope::File
+              Cursor::File
           } else {
-              Scope::None
+              Cursor::Rest
           }
       }
   }
   ```
 - **Banner Styling**:
-  - File header banners query `palette.scope(file_scope).file_header`.
-  - Hunk divider banners query `palette.scope(hunk_scope).hunk_divider`.
+  - File header banners query `palette.tier(file_cursor).file_header`.
+  - Hunk divider banners query `palette.tier(hunk_cursor).hunk_divider`.
 - **Mode Toggle**:
   Pressing `t` resolves the current theme's paired twin (`light_pair` or `dark_pair`) with instant $O(1)$ visual update.
 

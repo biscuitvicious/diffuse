@@ -6,9 +6,9 @@
 # legacy palette remains authoritative for consumers; these assets become
 # authoritative at migration.
 #
-# Scope axis for banners: REST state at `Scope::None`, CURRENT at
-# `Scope::File`, SELECTED at `Scope::Row`. Context gutters: out-of-hunk rows
-# resolve at `Scope::None`/`Scope::File`, in-hunk rows at `Scope::Hunk`.
+# Cursor axis for banners: REST state at `Cursor::Rest`, CURRENT at
+# `Cursor::File`, SELECTED at `Cursor::Row`. Context gutters: out-of-hunk rows
+# resolve at `Cursor::Rest`/`Cursor::File`, in-hunk rows at `Cursor::Hunk`.
 # Banner path suffix colors and per-row-kind cursor backgrounds are not yet
 # representable in the scoped palette (deferred to the TUI migration).
 
@@ -49,41 +49,41 @@ count_mods = 214
 count_movs = 147
 count_notes = 220
 
-[none.file_header]      # rest state
+[rest.file_header]      # rest state
 bg = 233
 fg = 214
 
-[none.hunk_divider]     # rest state
+[rest.hunk_divider]     # rest state
 bg = "primary"          # legacy `hunk_divider_bg_rest` = Color::Primary
 fg = 213
 
-[none.ctx]              # context rows outside the current hunk
+[rest.ctx]              # context rows outside the current hunk
 bg = 233
 fg = "primary"
 num = 238
 icon = 238
 
-[none.ctx.syntax]
+[rest.ctx.syntax]
 url = 150               # legacy parity: context rows render Url with the comment color
 
-[none.add]
+[rest.add]
 bg = "#1c321e"
 fill = "#1e6032"
 fg = 120
 num = 120
 icon = 120
 
-[none.add.syntax]
+[rest.add.syntax]
 url = 250               # explicit `add_url` (differs from the ctx comment mapping)
 
-[none.del]
+[rest.del]
 bg = "#260c0e"
 fill = "#521c20"
 fg = 203
-num = 203
+num = { color = 203, italic = true }
 icon = 203
 
-[none.del.syntax]
+[rest.del.syntax]
 keyword = 183
 typ = 215
 function = 159
@@ -101,14 +101,14 @@ char_literal = 210
 code = 203
 table_header = 224
 
-[none.mod]              # modification rows inherit their syntax from ctx
+[rest.mod]              # modification rows inherit their syntax from ctx
 bg = "#262626"
 fill = "#1e6032"
 fg = 245
 num = 214
 icon = 214
 
-[none.mov]              # shared relocation channel for both sides
+[rest.mov]              # shared relocation channel for both sides
 bg = 233
 fg = 245
 num = 147

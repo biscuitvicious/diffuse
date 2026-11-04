@@ -255,12 +255,12 @@ fn test_ratatui_header_and_status_lines() {
         "streaming span must be bold"
     );
 
-    let (div, rib) = bottom_ribbon_lines(80, &DiffuseTheme::DEFAULT.palette);
+    let (div, rib) = bottom_ribbon_lines(80, &DiffuseTheme::DEFAULT.scoped_palette().ui);
     assert!(div.to_string().contains("──"));
     assert!(rib.to_string().starts_with(" [?]help [q]uit"));
     assert!(rib.to_string().contains("[j/k]move"));
 
-    let (ansi_div, ansi_rib) = render_bottom_ribbon(80, &DiffuseTheme::DEFAULT.palette);
+    let (ansi_div, ansi_rib) = render_bottom_ribbon(80, &DiffuseTheme::DEFAULT.scoped_palette().ui);
     assert!(ansi_div.contains("──"));
     assert!(ansi_rib.contains("[?]help [q]uit"));
 }
@@ -342,7 +342,7 @@ fn test_header_bar_zero_notes_suppressed() {
         None,
         None,
         false,
-        &crate::render::ThemePalette::default_palette(),
+        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
     )
     .join("\n");
 
@@ -455,7 +455,7 @@ fn test_header_bar_nonzero_notes_shown() {
         None,
         None,
         false,
-        &crate::render::ThemePalette::default_palette(),
+        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
     )
     .join("\n");
     assert!(
@@ -473,7 +473,7 @@ fn test_header_bar_none_file_no_diffs() {
         None,
         None,
         false,
-        &crate::render::ThemePalette::default_palette(),
+        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
     )
     .join("\n");
 
@@ -988,7 +988,7 @@ fn test_header_bar_global_mod_counts_ansi() {
         None,
         None,
         false,
-        &crate::render::ThemePalette::default_palette(),
+        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
     );
 
     let joined = ansi_lines.join("\n");
@@ -1125,7 +1125,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
 #[test]
 fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
     use crate::view::header::{format_counts_ansi, format_counts_plain, format_counts_spans};
-    let p = crate::render::ThemePalette::default_palette();
+    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
 
     // Test with all change types populated
     let counts = FileCounts {
@@ -1139,11 +1139,11 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
 
     assert_eq!(format_counts_plain(&counts), "−7 +15 ~6 ≈2");
     assert_eq!(
-        format_counts_ansi(&counts, &p),
+        format_counts_ansi(&counts, p),
         "\x1b[1m\x1b[38;5;203m−7\x1b[0m \x1b[1m\x1b[38;5;120m+15\x1b[0m \x1b[1m\x1b[38;5;214m~6\x1b[0m \x1b[1m\x1b[38;5;147m≈2\x1b[0m"
     );
 
-    let spans = format_counts_spans(&counts, &p);
+    let spans = format_counts_spans(&counts, p);
     assert_eq!(spans.len(), 4);
     assert_eq!(spans[0].content, "−7");
     assert_eq!(spans[0].style.fg, Some(Color::Indexed(203)));
@@ -1165,10 +1165,10 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
     };
     assert_eq!(format_counts_plain(&del_only), "−4");
     assert_eq!(
-        format_counts_ansi(&del_only, &p),
+        format_counts_ansi(&del_only, p),
         "\x1b[1m\x1b[38;5;203m−4\x1b[0m"
     );
-    let del_spans = format_counts_spans(&del_only, &p);
+    let del_spans = format_counts_spans(&del_only, p);
     assert_eq!(del_spans.len(), 1);
     assert_eq!(del_spans[0].content, "−4");
 }
@@ -1176,7 +1176,7 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
 #[test]
 fn test_format_counts_omit_zero_dels() {
     use crate::view::header::{format_counts_ansi, format_counts_plain, format_counts_spans};
-    let p = crate::render::ThemePalette::default_palette();
+    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
 
     // No del lines: the −0 segment must be omitted like any other zero.
     let adds_only = FileCounts {
@@ -1189,10 +1189,10 @@ fn test_format_counts_omit_zero_dels() {
     };
     assert_eq!(format_counts_plain(&adds_only), "+3 ~1");
     assert_eq!(
-        format_counts_ansi(&adds_only, &p),
+        format_counts_ansi(&adds_only, p),
         "\x1b[1m\x1b[38;5;120m+3\x1b[0m \x1b[1m\x1b[38;5;214m~1\x1b[0m"
     );
-    let spans = format_counts_spans(&adds_only, &p);
+    let spans = format_counts_spans(&adds_only, p);
     assert_eq!(spans.len(), 2);
     assert_eq!(spans[0].content, "+3");
     assert_eq!(spans[0].style.fg, Some(Color::Indexed(120)));
@@ -1213,9 +1213,9 @@ fn test_format_counts_omit_zero_dels() {
 
 #[test]
 fn test_header_bar_shows_branch_indicator() {
-    let p = crate::render::ThemePalette::default_palette();
+    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
     // ANSI header with branch
-    let ansi = render_header_bar("diffuse", 80, None, Some("main"), None, false, &p).join("\n");
+    let ansi = render_header_bar("diffuse", 80, None, Some("main"), None, false, p).join("\n");
     assert!(
         ansi.contains("\u{2387}"),
         "ANSI header must show branch glyph"
@@ -1234,7 +1234,7 @@ fn test_header_bar_shows_branch_indicator() {
     );
 
     // ANSI header without branch
-    let ansi_no_branch = render_header_bar("diffuse", 80, None, None, None, false, &p).join("\n");
+    let ansi_no_branch = render_header_bar("diffuse", 80, None, None, None, false, p).join("\n");
     assert!(
         !ansi_no_branch.contains("\u{2387}"),
         "ANSI header must not show branch glyph when branch is None"
@@ -1299,9 +1299,9 @@ fn test_header_bar_shows_branch_indicator() {
 
 #[test]
 fn test_header_bar_shows_staged_indicator() {
-    let p = crate::render::ThemePalette::default_palette();
+    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
     // When is_staged is true, the header must show `(staged)` after the branch
-    let ansi = render_header_bar("diffuse", 80, None, Some("work"), None, true, &p).join("\n");
+    let ansi = render_header_bar("diffuse", 80, None, Some("work"), None, true, p).join("\n");
     let visible_ansi = crate::render::ansi::strip_ansi(&ansi);
     assert!(
         visible_ansi.contains("work"),
@@ -1344,7 +1344,7 @@ fn test_header_bar_shows_staged_indicator() {
 
 #[test]
 fn test_top_header_drops_file_section_and_counts_dot() {
-    let p = crate::render::ThemePalette::default_palette();
+    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
     let global = FileCounts {
         adds: 15,
         dels: 7,
@@ -1356,7 +1356,7 @@ fn test_top_header_drops_file_section_and_counts_dot() {
     // ANSI header: repo, glyph, branch, then global counts with no dot and
     // no file section.
     let ansi =
-        render_header_bar("diffuse", 120, Some(global), Some("main"), None, false, &p).join("\n");
+        render_header_bar("diffuse", 120, Some(global), Some("main"), None, false, p).join("\n");
     assert!(ansi.contains("diffuse"), "must show repo name");
     let visible = crate::render::ansi::strip_ansi(&ansi);
     assert_eq!(

@@ -8,7 +8,7 @@ pub use dark::DEFAULT_BORDER_COLOR_DARK;
 use diffuse_core::parse::RowKind;
 use diffuse_syntax::color::TokenColor;
 pub use light::DEFAULT_BORDER_COLOR_LIGHT;
-pub use scoped::{ScopePalette, UiPalette};
+pub use scoped::{CursorPalette, UiPalette};
 use yansi::Color;
 
 /// Complete color palette for syntax highlighting, diff rows, and UI

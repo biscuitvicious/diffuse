@@ -1,5 +1,8 @@
 pub use crate::render::counts::{CountCell, count_cells, count_color};
-use crate::{core::counts::FileCounts, render::ColorExt};
+use crate::{
+    core::counts::FileCounts,
+    render::{ColorExt, UiPalette},
+};
 use ratatui::{
     style::{Modifier, Style},
     text::Span,
@@ -21,8 +24,8 @@ pub fn format_counts_plain(counts: &FileCounts) -> String {
 /// Format mod counts as an ANSI-highlighted string (`−dels`, `+adds`, `~mods`,
 /// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
 /// all counts are zero.
-pub fn format_counts_ansi(counts: &FileCounts, palette: &crate::render::ThemePalette) -> String {
-    count_cells(counts, palette)
+pub fn format_counts_ansi(counts: &FileCounts, ui: &UiPalette) -> String {
+    count_cells(counts, ui)
         .iter()
         .enumerate()
         .map(|(i, cell)| {
@@ -41,12 +44,9 @@ pub fn format_counts_ansi(counts: &FileCounts, palette: &crate::render::ThemePal
 /// `≈movs`, `💬 notes`), omitting zero counts. At most five spans are ever
 /// produced, stored inline without heap allocation. Returns an empty vec
 /// when all counts are zero.
-pub fn format_counts_spans(
-    counts: &FileCounts,
-    palette: &crate::render::ThemePalette,
-) -> SmallVec<[Span<'static>; 5]> {
+pub fn format_counts_spans(counts: &FileCounts, ui: &UiPalette) -> SmallVec<[Span<'static>; 5]> {
     let mut spans: SmallVec<[Span<'static>; 5]> = SmallVec::new();
-    for (i, cell) in count_cells(counts, palette).iter().enumerate() {
+    for (i, cell) in count_cells(counts, ui).iter().enumerate() {
         let prefix = if i == 0 { "" } else { " " };
         spans.push(Span::styled(
             format!("{prefix}{}{}", cell.marker, cell.value),

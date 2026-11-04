@@ -4,12 +4,11 @@ use std::str;
 
 use super::segment::is_common_only_row;
 use crate::{
-    ansi::ColorExt,
     core::{
         parse::{RowGroup, RowKind},
         wire::{MovSide, OutputRun},
     },
-    theme::{DiffuseTheme, FG_RESET},
+    theme::{Cursor, DiffKind, DiffuseTheme, FG_RESET},
 };
 
 /// Format 4-character right-aligned line numbers into a stack buffer without
@@ -86,6 +85,12 @@ pub fn prefix_of(
 
 /// Generate styled ANSI 6-character prefix gutter with color highlights and
 /// theme support.
+///
+/// Colors resolve through the scoped palette: per-kind gutters at the rest
+/// cursor tier, with cross-kind glyphs (the trailing `±` on relocation and
+/// aux rows, the `~` on aux rows) composed from the sibling kind slots at
+/// render time. The in-hunk flag selects the cursor tier for context
+/// gutters ([`Cursor::Hunk`] vs [`Cursor::Rest`]).
 #[allow(clippy::too_many_arguments)]
 pub fn styled_prefix(
     kind: RowKind,
@@ -98,90 +103,99 @@ pub fn styled_prefix(
     theme: &DiffuseTheme,
 ) -> String {
     let mut buf = [b' '; 4];
+    let scoped = theme.scoped_palette();
+    let ctx_num_fg = scoped[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
+        .gutter
+        .num
+        .fg_code();
     if is_common_only_row(kind, runs) {
         let pad = pad4_bytes(new_line, &mut buf);
-        let color = if in_hunk {
-            theme.palette.ctx_gutter_in_hunk
-        } else {
-            theme.palette.ctx_gutter_out_hunk
-        };
-        let color_fg = color.fg_code();
-        return format!("{color_fg}{pad}  {FG_RESET}\x1b[23m");
+        return format!("{ctx_num_fg}{pad}  {FG_RESET}\x1b[23m");
     }
+    let add = &scoped[Cursor::Rest][DiffKind::Add].gutter;
+    let del = &scoped[Cursor::Rest][DiffKind::Del].gutter;
+    let mov = &scoped[Cursor::Rest][DiffKind::Mov].gutter;
+    let r#mod = &scoped[Cursor::Rest][DiffKind::Mod].gutter;
     match group {
         Some(RowGroup::Anchor) if kind == RowKind::Mod => {
             let pad = pad4_bytes(new_line, &mut buf);
-            let num_fg = theme.palette.mod_gutter_num.fg_code();
-            let mod_fg = theme.palette.mod_gutter_icon.fg_code();
-            format!("{num_fg}{pad}{mod_fg}~ {FG_RESET}\x1b[23m")
+            format!(
+                "{}{pad}{}~ {FG_RESET}\x1b[23m",
+                r#mod.num.fg_code(),
+                r#mod.icon.fg_code()
+            )
         }
         Some(RowGroup::Aux { .. }) => match kind {
             RowKind::Add => {
                 let pad = pad4_bytes(new_line, &mut buf);
-                let num_fg = theme.palette.add_gutter_num.fg_code();
-                let mod_fg = theme.palette.mod_gutter_icon.fg_code();
-                let add_fg = theme.palette.add_gutter_icon.fg_code();
-                format!("{num_fg}{pad}{mod_fg}~{add_fg}+{FG_RESET}\x1b[23m")
+                format!(
+                    "{num_fg}{pad}{mod_fg}~{add_fg}+{FG_RESET}\x1b[23m",
+                    num_fg = add.num.fg_code(),
+                    mod_fg = r#mod.icon.fg_code(),
+                    add_fg = add.icon.fg_code(),
+                )
             }
             RowKind::Del => {
                 let pad = pad4_bytes(old_line, &mut buf);
-                let num_fg = theme.palette.del_gutter_num.italic_fg_code();
-                let mod_fg = theme.palette.mod_gutter_icon.fg_code();
-                let del_fg = theme.palette.del_gutter_icon.fg_code();
-                format!("{num_fg}{pad}\x1b[23m{mod_fg}~{del_fg}-{FG_RESET}\x1b[23m")
+                format!(
+                    "{num_fg}{pad}\x1b[23m{mod_fg}~{del_fg}-{FG_RESET}\x1b[23m",
+                    num_fg = del.num.fg_code(),
+                    mod_fg = r#mod.icon.fg_code(),
+                    del_fg = del.icon.fg_code(),
+                )
             }
             _ => {
                 let pad = pad4_bytes(new_line.or(old_line), &mut buf);
-                let color = if in_hunk {
-                    theme.palette.ctx_gutter_in_hunk
-                } else {
-                    theme.palette.ctx_gutter_out_hunk
-                };
-                let color_fg = color.fg_code();
-                format!("{color_fg}{pad}  {FG_RESET}\x1b[23m")
+                format!("{ctx_num_fg}{pad}  {FG_RESET}\x1b[23m")
             }
         },
         _ => match kind {
             RowKind::Del => {
                 let pad = pad4_bytes(old_line, &mut buf);
-                let num_fg = theme.palette.del_gutter_num.italic_fg_code();
-                let icon_fg = theme.palette.del_gutter_icon.fg_code();
-                format!("{num_fg}{pad}\x1b[23m {icon_fg}-{FG_RESET}\x1b[23m")
+                format!(
+                    "{num_fg}{pad}\x1b[23m {icon_fg}-{FG_RESET}\x1b[23m",
+                    num_fg = del.num.fg_code(),
+                    icon_fg = del.icon.fg_code(),
+                )
             }
             RowKind::Add => {
                 let pad = pad4_bytes(new_line, &mut buf);
-                let num_fg = theme.palette.add_gutter_num.fg_code();
-                let icon_fg = theme.palette.add_gutter_icon.fg_code();
-                format!("{num_fg}{pad} {icon_fg}+{FG_RESET}\x1b[23m")
+                format!(
+                    "{num_fg}{pad} {icon_fg}+{FG_RESET}\x1b[23m",
+                    num_fg = add.num.fg_code(),
+                    icon_fg = add.icon.fg_code(),
+                )
             }
             RowKind::Mod => {
                 let pad = pad4_bytes(new_line, &mut buf);
-                let num_fg = theme.palette.mod_gutter_num.fg_code();
-                let mod_fg = theme.palette.mod_gutter_icon.fg_code();
-                format!("{num_fg}{pad} {mod_fg}~{FG_RESET}\x1b[23m")
+                format!(
+                    "{num_fg}{pad} {icon_fg}~{FG_RESET}\x1b[23m",
+                    num_fg = r#mod.num.fg_code(),
+                    icon_fg = r#mod.icon.fg_code(),
+                )
             }
             RowKind::Mov => {
-                let num_fg = theme.palette.mov_gutter_num.fg_code();
-                let mov_fg = theme.palette.mov_gutter_icon.fg_code();
                 if mov_side == Some(MovSide::Src) {
                     let pad = pad4_bytes(old_line, &mut buf);
-                    let del_fg = theme.palette.del_gutter_icon.fg_code();
-                    format!("{num_fg}{pad}{mov_fg}≈{del_fg}-{FG_RESET}\x1b[23m")
+                    format!(
+                        "{num_fg}{pad}{mov_fg}≈{del_fg}-{FG_RESET}\x1b[23m",
+                        num_fg = mov.num.fg_code(),
+                        mov_fg = mov.icon.fg_code(),
+                        del_fg = del.icon.fg_code(),
+                    )
                 } else {
                     let pad = pad4_bytes(new_line, &mut buf);
-                    let add_fg = theme.palette.add_gutter_icon.fg_code();
-                    format!("{num_fg}{pad}{mov_fg}≈{add_fg}+{FG_RESET}\x1b[23m")
+                    format!(
+                        "{num_fg}{pad}{mov_fg}≈{add_fg}+{FG_RESET}\x1b[23m",
+                        num_fg = mov.num.fg_code(),
+                        mov_fg = mov.icon.fg_code(),
+                        add_fg = add.icon.fg_code(),
+                    )
                 }
             }
             _ => {
                 let pad = pad4_bytes(new_line.or(old_line), &mut buf);
-                let color = if in_hunk {
-                    theme.palette.ctx_gutter_in_hunk
-                } else {
-                    theme.palette.ctx_gutter_out_hunk
-                };
-                let color_fg = color.fg_code();
-                format!("{color_fg}{pad}  {FG_RESET}\x1b[23m")
+                format!("{ctx_num_fg}{pad}  {FG_RESET}\x1b[23m")
             }
         },
     }
