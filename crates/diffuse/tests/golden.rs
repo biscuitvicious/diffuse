@@ -1488,10 +1488,45 @@ fn assert_markdown_matches(output: &PipelineOutput, name: &str) {
     }
 }
 
+/// Spawn the golden `diffuse` binary for a bin-leg comparison with a
+/// hermetic environment: the ambient shell must not rewrite the bytes under
+/// comparison (`COLUMNS` rewidths the row fills; the theme indicators
+/// reselect the palette). Only diagnostics-only keys pass through — they can
+/// surface on child crash paths, never in golden stdout.
+fn hermetic_bin_cmd() -> Command {
+    const PASSTHROUGH: &[&str] = &["RUST_BACKTRACE", "RUST_LIB_BACKTRACE"];
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    // NB: the method is `env_clear`, not `clear_env`.
+    cmd.env_clear();
+    for key in PASSTHROUGH {
+        if let Some(val) = env::var_os(key) {
+            cmd.env(key, val);
+        }
+    }
+    // Detach from the ambient terminal session: crossterm's width probe
+    // opens /dev/tty directly, bypassing piped stdio and the cleared env,
+    // so a wide developer terminal would otherwise rewidth the fills even
+    // with COLUMNS unset. In a fresh session there is no controlling
+    // terminal, the probe fails, and the render falls back to the recorded
+    // 80-column width. (Same `setsid` pattern as the pager tests in
+    // `cli.rs`.)
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    cmd
+}
+
 fn run_bin_markdown_leg(name: &str) {
     let fixture = load_fixture(name);
     let input = fixture.diff.as_bytes();
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse").arg("-m").arg("--color=never");
     if let Some(ref notes_path) = fixture.notes_file {
         cmd.arg("--notes-file").arg(notes_path);
@@ -1508,9 +1543,13 @@ fn run_bin_markdown_leg(name: &str) {
     if let Some(ref new_dir) = fixture.new_dir {
         cmd.arg("--new-dir").arg(new_dir);
     }
+    // stderr is piped (not inherited) so the repo's own ioctl width
+    // fallback cannot see the ambient terminal either; as a bonus the
+    // non-zero-exit assertion below can now actually print child stderr.
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .expect("spawn the diffuse binary in markdown mode");
     {
@@ -1577,7 +1616,7 @@ fn run_bin_raw_leg(name: &str) {
     }
     let fixture = load_fixture(name);
     let diff_text = Arc::clone(&fixture.diff);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    let mut cmd = hermetic_bin_cmd();
     // The raw fixture encodes the dark palette; pin it so an ambient
     // COLORFGBG cannot change the bytes under comparison.
     cmd.arg("parse")
@@ -1771,7 +1810,7 @@ fn run_bin_leg(name: &str, num_files: usize) {
         // by the library leg, which diverges whenever the two differ.
         let fixture = load_fixture(name);
         let diff_text = Arc::clone(&fixture.diff);
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+        let mut cmd = hermetic_bin_cmd();
         cmd.arg("parse").arg("--jsonl");
         if let Some(ref notes_path) = fixture.notes_file {
             cmd.arg("--notes-file").arg(notes_path);
@@ -1820,7 +1859,7 @@ fn run_bin_leg(name: &str, num_files: usize) {
     }
     let fixture = load_fixture(name);
     let diff_text = Arc::clone(&fixture.diff);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    let mut cmd = hermetic_bin_cmd();
     cmd.arg("parse").arg("--jsonl");
     if let Some(ref notes_path) = fixture.notes_file {
         cmd.arg("--notes-file").arg(notes_path);
@@ -2204,4 +2243,123 @@ fn test_golden_initialized_detection() {
     // Verify uninitialized skip logic executes cleanly without panic
     assert!(!run_acceptance_test_impl(false, "test-corpus", 1));
     assert!(!run_binary_test_impl(false, "test-corpus", 1));
+}
+
+/// Ambient variables the golden binary legs must be immune to: the CLI
+/// honors each of them, so a developer's shell exports would otherwise
+/// rewrite the bytes under comparison (`COLUMNS` rewidths the row fills;
+/// the theme indicators reselect the palette).
+const HOSTILE_BIN_ENV: [(&str, &str); 4] = [
+    ("COLUMNS", "179"),
+    ("DIFFUSE_THEME", "light"),
+    ("COLORFGBG", "0;15"),
+    ("TERM_BACKGROUND", "light"),
+];
+
+/// Serializes ambient-environment mutation for
+/// [`bin_spawn_ignores_hostile_ambient_env`]: process env is global, so the
+/// hostile values are set, used, and restored while this lock is held. No
+/// other test in this binary reads these keys (library legs pin the dark
+/// theme and a fixed width), so the window is safe.
+static BIN_ENV_GUARD: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// The bin legs must render byte-identical output no matter what the ambient
+/// shell exports: hostile values are installed into the *process*
+/// environment (exactly what an inherited ambient environment looks like to
+/// the child) and the raw leg for one corpus must still match its golden.
+#[test]
+fn bin_spawn_ignores_hostile_ambient_env() {
+    if is_generating() {
+        eprintln!("skipping bin_spawn_ignores_hostile_ambient_env during golden regen");
+        return;
+    }
+    if !is_golden_initialized() {
+        eprintln!(
+            "tests/golden submodule is not initialized; skipping bin_spawn_ignores_hostile_ambient_env"
+        );
+        return;
+    }
+    let _guard = BIN_ENV_GUARD.lock().unwrap();
+    let saved: Vec<(&str, Option<std::ffi::OsString>)> = HOSTILE_BIN_ENV
+        .iter()
+        .map(|(key, _)| (*key, env::var_os(key)))
+        .chain(std::iter::once((
+            "RUST_BACKTRACE",
+            env::var_os("RUST_BACKTRACE"),
+        )))
+        .collect();
+    // `RUST_BACKTRACE` is diagnostics-only (child panic paths); it must pass
+    // through the scrub below, so set it to prove the passthrough arm runs.
+    unsafe {
+        for (key, val) in HOSTILE_BIN_ENV {
+            env::set_var(key, val);
+        }
+        env::set_var("RUST_BACKTRACE", "1");
+    }
+    let name = "untracked-files";
+    let fixture = load_fixture(name);
+    let diff_text = Arc::clone(&fixture.diff);
+    let mut cmd = hermetic_bin_cmd();
+    cmd.arg("parse")
+        .arg("--raw")
+        .arg("--color=always")
+        .arg("--theme")
+        .arg("dark");
+    if let Some(ref notes_path) = fixture.notes_file {
+        cmd.arg("--notes-file").arg(notes_path);
+    }
+    if let Some(ref repo_key) = fixture.repo_key {
+        cmd.arg("--repo-key").arg(repo_key);
+    }
+    if let Some(ref rev_key) = fixture.rev_key {
+        cmd.arg("--rev-key").arg(rev_key);
+    }
+    if let Some(ref old_dir) = fixture.old_dir {
+        cmd.arg("--old-dir").arg(old_dir);
+    }
+    if let Some(ref new_dir) = fixture.new_dir {
+        cmd.arg("--new-dir").arg(new_dir);
+    }
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the diffuse binary in --raw mode (hermetic env test)");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let writer_thread = thread::spawn(move || {
+        let _ = stdin.write_all(diff_text.as_bytes());
+        let _ = stdin.flush();
+        drop(stdin);
+    });
+    let out = child.wait_with_output().expect("wait for the bin");
+    let _ = writer_thread.join();
+    unsafe {
+        for (key, prev) in saved {
+            match prev {
+                Some(val) => env::set_var(key, val),
+                None => env::remove_var(key),
+            }
+        }
+    }
+    assert!(
+        out.status.success(),
+        "[{name}] the bin exited non-zero in raw mode: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let bin_raw = String::from_utf8_lossy(&out.stdout);
+    let actual_encoded = encode_sgr(&bin_raw);
+    let raw_path = expected_render_path(name, "raw");
+    let expected_encoded = load_expected_render(name, "raw");
+    if actual_encoded != *expected_encoded.as_ref() {
+        print_render_diff(
+            &format!("{name}.render.raw (hermetic env)"),
+            &actual_encoded,
+            expected_encoded.as_ref(),
+        );
+        panic!(
+            "[{name}] bin raw output changed under hostile ambient env ({}); the harness spawn is not hermetic. See render diff above.",
+            raw_path.display()
+        );
+    }
 }
