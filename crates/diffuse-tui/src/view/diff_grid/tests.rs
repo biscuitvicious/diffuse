@@ -151,7 +151,7 @@ fn test_binary_file_header_has_no_expand_caret() {
     );
     let plain = crate::render::strip_ansi(&rendered);
     assert!(
-        plain.contains("════ F1/1 · test.png −2 +5 ~1"),
+        plain.contains("════ File 1/1 · test.png −2 +5 ~1"),
         "binary file header must start with flat rule without caret: {plain:?}"
     );
     assert!(
@@ -373,7 +373,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(contiguous.contains("H2/2 ────"));
+    assert!(contiguous.contains("Hunk 2/2 ────"));
     assert!(!contiguous.contains("0 lines"));
     assert!(!contiguous.contains("hidden"));
 
@@ -400,7 +400,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(with_rows.contains("H2/2 · 6 lines: −1 +4 ~1 ────"));
+    assert!(with_rows.contains("Hunk 2/2 · 6 lines: −1 +4 ~1 ────"));
 
     // Normal 8 lines hidden gap
     let expanded = render_hunk_divider(
@@ -414,7 +414,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(expanded.contains("H2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────"));
+    assert!(expanded.contains("Hunk 2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────"));
 
     // Zero-change hunk (e.g. synthetic note hunk) -> count badge is omitted
     let zero_hunk = OutputHunk {
@@ -435,7 +435,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(zero_div.contains("H1/1 ────"));
+    assert!(zero_div.contains("Hunk 1/1 ────"));
     assert!(!zero_div.contains("0 lines"));
 
     // Zero-change hunk with hidden gap -> shows gap without count badge
@@ -450,7 +450,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(zero_gap_div.contains("H1/1 · 30 more lines: ▼ ────"));
+    assert!(zero_gap_div.contains("Hunk 1/1 · 30 more lines: ▼ ────"));
     assert!(!zero_gap_div.contains("0 lines"));
 
     // With movs (both source and target count towards modified lines)
@@ -466,7 +466,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(with_movs.contains("H2/2 · 7 lines: −1 +4 ~1 ≈1 ────"));
+    assert!(with_movs.contains("Hunk 2/2 · 7 lines: −1 +4 ~1 ≈1 ────"));
 
     // Single line hidden
     let single = render_hunk_divider(
@@ -585,7 +585,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         30,
         &DiffuseTheme::dark(),
     );
-    assert!(seg0.contains("──── H2/2 ·"));
+    assert!(seg0.contains("──── Hunk 2/2 ·"));
 
     // Segment 1 contains the wrapped continuation
     let seg1 = render_hunk_divider_segment(
@@ -663,7 +663,7 @@ fn test_ratatui_diff_grid_lines() {
         80,
         &DiffuseTheme::dark(),
     );
-    assert!(h_line.to_string().contains("H1"));
+    assert!(h_line.to_string().contains("Hunk 1"));
     assert!(h_line.to_string().contains("10 more lines:"));
 
     let b_line = bottom_gap_divider_line(5, false, false, 80, &DiffuseTheme::dark());
@@ -939,7 +939,7 @@ fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
         "file header banner must omit '(modified)', got: {banner}"
     );
     assert!(
-        banner.contains("════ ▼ F1/1 · src/main.rs −2 +5 ~1"),
+        banner.contains("════ ▼ File 1/1 · src/main.rs −2 +5 ~1"),
         "file header banner should directly show path and counts without '(modified)', got: {banner}"
     );
 
@@ -1121,7 +1121,7 @@ fn test_file_header_zero_counts_omitted() {
         "zero counts must be omitted: {banner:?}"
     );
     assert!(
-        banner.contains("════ ▼ F1/1 · src/main.rs"),
+        banner.contains("════ ▼ File 1/1 · src/main.rs"),
         "no double space when counts omitted: {banner:?}"
     );
 }

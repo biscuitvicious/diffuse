@@ -179,7 +179,7 @@ index 1111111..2222222 100644
     let frame = state.render_frame(100, 30);
     let plain_frame = crate::render::strip_ansi(&frame);
     assert!(
-        plain_frame.contains("▶ F2/2 · untracked.rs +1 (untracked, 21B) [collapsed]"),
+        plain_frame.contains("▶ File 2/2 · untracked.rs +1 (untracked, 21B) [collapsed]"),
         "frame shows collapsed indicator"
     );
 
@@ -198,7 +198,7 @@ index 1111111..2222222 100644
     let frame_expanded = state.render_frame(100, 30);
     let plain_expanded = crate::render::strip_ansi(&frame_expanded);
     assert!(
-        plain_expanded.contains("▼ F2/2 · untracked.rs +1 (untracked, 21B)"),
+        plain_expanded.contains("▼ File 2/2 · untracked.rs +1 (untracked, 21B)"),
         "frame shows expanded indicator"
     );
 }
@@ -302,7 +302,7 @@ Binary files a/old.png and b/new.png differ
     let frame = state.render_frame(100, 30);
     let plain_frame = crate::render::strip_ansi(&frame);
     assert!(
-        plain_frame.contains("════ F1/2 · logo.png"),
+        plain_frame.contains("════ File 1/2 · logo.png"),
         "frame shows flat header rule without expand caret"
     );
     assert!(
@@ -463,8 +463,8 @@ fn test_diffuse_golden_plan_md_hunk_divider() {
     state.jump_to_row(plan_file_row, false);
 
     let frame = state.render_frame(140, 40);
-    assert!(frame.contains("H1"), "must contain H1 divider");
-    assert!(frame.contains("H2"), "must contain H2 divider");
+    assert!(frame.contains("Hunk 1"), "must contain H1 divider");
+    assert!(frame.contains("Hunk 2"), "must contain H2 divider");
 }
 
 #[test]

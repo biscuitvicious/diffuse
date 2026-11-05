@@ -1065,7 +1065,7 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
 
     let frame = state.render_frame(140, 80);
     assert!(
-        frame.contains("──── H2/"),
+        frame.contains("──── Hunk 2/"),
         "H2 divider must still exist before fully merged"
     );
     assert!(
@@ -1296,9 +1296,9 @@ index 111..222 100644
 
     // Verify dividers are re-rendered
     let frame = state.render_frame(140, 200);
-    assert!(frame.contains("──── H1/3 ·"));
-    assert!(frame.contains("──── H2/3 ·"));
-    assert!(frame.contains("──── H3/3 ·"));
+    assert!(frame.contains("──── Hunk 1/3 ·"));
+    assert!(frame.contains("──── Hunk 2/3 ·"));
+    assert!(frame.contains("──── Hunk 3/3 ·"));
 }
 
 #[test]
@@ -1383,7 +1383,7 @@ index 1111111..2222222 100644
         "file header must remain visible on screen"
     );
     assert!(
-        frame_after.contains("──── H1/1 ·"),
+        frame_after.contains("──── Hunk 1/1 ·"),
         "H1 divider must remain visible on screen"
     );
     assert!(
@@ -3623,18 +3623,18 @@ fn test_file_badge_omits_total_while_streaming() {
     state.is_streaming = true;
     let streaming = state.render_frame(120, 20);
     assert!(
-        streaming.contains("F1"),
+        streaming.contains("File 1"),
         "streaming banner keeps the position:\n{streaming}"
     );
     assert!(
-        !streaming.contains("F1/2"),
+        !streaming.contains("File 1/2"),
         "streaming banner must omit the still-growing total:\n{streaming}"
     );
 
     state.is_streaming = false;
     let loaded = state.render_frame(120, 20);
     assert!(
-        loaded.contains("F1/2"),
+        loaded.contains("File 1/2"),
         "the total appears once the diff is loaded:\n{loaded}"
     );
 }
@@ -5069,7 +5069,7 @@ fn test_sticky_file_banner_sticks_to_top_when_scrolling_down() {
         "row 0 must stick to a.rs banner when scrolled down into content"
     );
     assert!(
-        lines_5[1].contains("H1/1"),
+        lines_5[1].contains("Hunk 1/1"),
         "screen row 1 must show sticky hunk divider beneath file banner, got: {:?}",
         lines_5[1]
     );
@@ -5144,7 +5144,7 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
         "b.rs banner must now stick to row 0"
     );
     assert!(
-        lines_b_sticky[1].contains("H1/1"),
+        lines_b_sticky[1].contains("Hunk 1/1"),
         "screen row 1 must show sticky hunk divider beneath b.rs banner, got: {:?}",
         lines_b_sticky[1]
     );
@@ -5223,7 +5223,7 @@ fn test_sticky_hunk_header_sticks_below_file_header() {
     // At scroll = 0: row 0 is a.rs header, row 1 is H1 divider.
     let (lines_0, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(lines_0[0].contains("a.rs"));
-    assert!(lines_0[1].contains("H1/1"));
+    assert!(lines_0[1].contains("Hunk 1/1"));
 
     // Scroll down inside a.rs (scroll = 5).
     state.scroll_to_visual(5);
@@ -5233,8 +5233,8 @@ fn test_sticky_hunk_header_sticks_below_file_header() {
         "row 0 must stick to a.rs banner"
     );
     assert!(
-        lines_5[1].contains("H1/1"),
-        "row 1 must stick to hunk divider H1/1 immediately below file banner, got: {:?}",
+        lines_5[1].contains("Hunk 1/1"),
+        "row 1 must stick to hunk divider Hunk 1/1 immediately below file banner, got: {:?}",
         lines_5[1]
     );
     assert!(
@@ -5293,15 +5293,24 @@ fn test_sticky_hunk_header_pushed_by_next_hunk() {
     state.row_idx = h2_row; // Cursor on H2 so keep_cursor_visible doesn't clamp scroll up
     let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(lines_meet[0].contains("a.rs"));
-    assert!(lines_meet[1].contains("H1/2"), "H1/2 still sticky at row 1");
-    assert!(lines_meet[2].contains("H2/2"), "H2/2 meeting at row 2");
+    assert!(
+        lines_meet[1].contains("Hunk 1/2"),
+        "Hunk 1/2 still sticky at row 1"
+    );
+    assert!(
+        lines_meet[2].contains("Hunk 2/2"),
+        "Hunk 2/2 meeting at row 2"
+    );
 
     // Scroll 1 line further: H2 reaches row 1, pushing H1 completely off!
     state.scroll_to_visual(h2_vis.saturating_sub(1));
     state.row_idx = h2_row;
     let (lines_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(lines_pushed[0].contains("a.rs"));
-    assert!(lines_pushed[1].contains("H2/2"), "H2/2 now sticky at row 1");
+    assert!(
+        lines_pushed[1].contains("Hunk 2/2"),
+        "Hunk 2/2 now sticky at row 1"
+    );
     assert!(crate::render::strip_ansi(&lines_pushed[6]).contains("h2 line 1"));
 }
 
@@ -5335,7 +5344,7 @@ fn test_sticky_hunk_header_pushed_by_next_file() {
     state.row_idx = b_banner_row;
     let (lines_meet, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(lines_meet[0].contains("a.rs"));
-    assert!(lines_meet[1].contains("H1/1"));
+    assert!(lines_meet[1].contains("Hunk 1/1"));
     assert!(lines_meet[2].contains("b.rs"));
 
     // Scroll 1 line further: b.rs reaches row 1, pushing H1 off!
@@ -5350,7 +5359,7 @@ fn test_sticky_hunk_header_pushed_by_next_file() {
     state.row_idx = b_banner_row;
     let (lines_file_pushed, _, _, _, _) = state.render_diff_viewport_lines(80, 10, 10);
     assert!(lines_file_pushed[0].contains("b.rs"));
-    assert!(lines_file_pushed[1].contains("H1/1")); // b.rs's H1/1!
+    assert!(lines_file_pushed[1].contains("Hunk 1/1")); // b.rs's Hunk 1/1!
 }
 
 #[test]

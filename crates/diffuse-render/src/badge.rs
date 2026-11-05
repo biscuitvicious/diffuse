@@ -1,5 +1,5 @@
-//! Position badges (`F3/17`, `H2/3`): index of a file or hunk within its
-//! total, shared by the TUI banners and the CLI pretty printer.
+//! Position badges (`File 3/17`, `Hunk 2/3`): index of a file or hunk within
+//! its total, shared by the TUI banners and the CLI pretty printer.
 
 /// Position of a file or hunk within its parent total.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -12,21 +12,21 @@ pub struct Badge {
 }
 
 impl Badge {
-    /// File badge text (`F3/17`, or `F3` when the total is not known yet).
+    /// File badge text (`File 3/17`, or `F3` when the total is not known yet).
     #[must_use]
     pub fn file_text(&self) -> String {
         match self.total {
-            Some(total) => format!("F{}/{total}", self.idx + 1),
-            None => format!("F{}", self.idx + 1),
+            Some(total) => format!("File {}/{total}", self.idx + 1),
+            None => format!("File {}", self.idx + 1),
         }
     }
 
-    /// Hunk badge text (`H2/3`, or `H2` when the total is not known yet).
+    /// Hunk badge text (`Hunk 2/3`, or `H2` when the total is not known yet).
     #[must_use]
     pub fn hunk_text(&self) -> String {
         match self.total {
-            Some(total) => format!("H{}/{total}", self.idx + 1),
-            None => format!("H{}", self.idx + 1),
+            Some(total) => format!("Hunk {}/{total}", self.idx + 1),
+            None => format!("Hunk {}", self.idx + 1),
         }
     }
 }
@@ -41,18 +41,18 @@ mod tests {
             idx: 2,
             total: Some(17),
         };
-        assert_eq!(file.file_text(), "F3/17");
+        assert_eq!(file.file_text(), "File 3/17");
         let hunk = Badge {
             idx: 1,
             total: Some(3),
         };
-        assert_eq!(hunk.hunk_text(), "H2/3");
+        assert_eq!(hunk.hunk_text(), "Hunk 2/3");
         let single = Badge {
             idx: 0,
             total: Some(1),
         };
-        assert_eq!(single.file_text(), "F1/1");
-        assert_eq!(single.hunk_text(), "H1/1");
+        assert_eq!(single.file_text(), "File 1/1");
+        assert_eq!(single.hunk_text(), "Hunk 1/1");
     }
 
     #[test]
@@ -61,11 +61,11 @@ mod tests {
             idx: 2,
             total: None,
         };
-        assert_eq!(file.file_text(), "F3");
+        assert_eq!(file.file_text(), "File 3");
         let hunk = Badge {
             idx: 1,
             total: None,
         };
-        assert_eq!(hunk.hunk_text(), "H2");
+        assert_eq!(hunk.hunk_text(), "Hunk 2");
     }
 }

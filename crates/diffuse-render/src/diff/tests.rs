@@ -257,7 +257,7 @@ fn test_write_file_header_bar_direct_buffer() {
     )
     .unwrap();
     assert!(
-        buf_badged.contains("F1/2"),
+        buf_badged.contains("File 1/2"),
         "badged banner must show file position: {buf_badged:?}"
     );
 }
@@ -557,8 +557,8 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     assert!(plain.contains("a.txt −2 +2"));
 
     // Each hunk has a hunk divider
-    assert!(plain.contains("──── H1/2"));
-    assert!(plain.contains("──── H2/2"));
+    assert!(plain.contains("──── Hunk 1/2"));
+    assert!(plain.contains("──── Hunk 2/2"));
 
     // -p hunk headers do not contain the hidden gap / expansion arrows
     assert!(!plain.contains("more lines"));
@@ -737,7 +737,7 @@ fn test_render_file_diff_continuation_lines_indented_six_spaces() {
     let lines: Vec<&str> = rendered.lines().collect();
     let diff_lines: Vec<&str> = lines
         .into_iter()
-        .filter(|l| !l.contains("a.txt") && !l.contains("──── H1/1"))
+        .filter(|l| !l.contains("a.txt") && !l.contains("──── Hunk 1/1"))
         .collect();
 
     assert_eq!(

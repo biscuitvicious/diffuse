@@ -525,7 +525,7 @@ fn test_expand_all_merges_and_reset_restores() {
         "reset must split back"
     );
     let frame = state.render_frame(140, 80);
-    assert!(frame.contains("──── H1/2 ·") || frame.contains("──── H2/2 ·"));
+    assert!(frame.contains("──── Hunk 1/2 ·") || frame.contains("──── Hunk 2/2 ·"));
 }
 
 // 11. Streaming append — live file ingestion
@@ -632,11 +632,11 @@ fn test_initial_screen_rendered_visual_frame() {
     assert!(!screen_lines[1].contains("hunk"));
 
     // Row 2: File Header Banner in Diff Viewport
-    assert!(screen_lines[2].contains("▼ F1/1 · filesystem.rs"));
+    assert!(screen_lines[2].contains("▼ File 1/1 · filesystem.rs"));
     assert!(screen_lines[2].contains("+1 ~1"));
 
     // Row 3: Hunk divider with context
-    assert!(screen_lines[3].contains("H1/1 · 2 lines"));
+    assert!(screen_lines[3].contains("Hunk 1/1 · 2 lines"));
     assert!(screen_lines[3].contains("more lines: ▼"));
 
     // Row 7..: Diff lines with line numbers and change markers
@@ -724,7 +724,7 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
     assert!(screen_lines[1].contains("crates/diffuse-core/src/moves/"));
 
     // Row 2: File header banner
-    assert!(screen_lines[2].contains("▼ F1/2 · mod.rs"));
+    assert!(screen_lines[2].contains("▼ File 1/2 · mod.rs"));
 
     // Bottom Navigation Ribbon
     assert!(screen_lines[height - 1].contains("[j/k]move"));

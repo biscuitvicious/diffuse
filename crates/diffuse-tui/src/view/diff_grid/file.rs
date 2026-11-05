@@ -48,8 +48,8 @@ fn rename_prefix_visual_span(
 
     if common_len > 0 {
         let prefix = old_parts[..common_len].join("/");
-        // Prefix starts after the indicator, badge and dot (`════ ▼ F3/17 · `
-        // or `════ F3/17 · ` for binaries) and includes trailing '/'
+        // Prefix starts after the indicator, badge and dot (`════ ▼ File 3/17 · `
+        // or `════ File 3/17 · ` for binaries) and includes trailing '/'
         let badge_shift = display_width(format!("{} · ", badge.file_text()));
         let p_start = if file.is_binary {
             5 + badge_shift
@@ -67,7 +67,8 @@ fn rename_prefix_visual_span(
 pub const FILE_HEADER_INDICATOR_COL: usize = 5;
 
 /// Indicator prefix (with file position badge) and collapse tag of a file
-/// header banner row: `════ ▼ F3/17 · ` or `════ F3/17 · ` for binaries.
+/// header banner row: `════ ▼ File 3/17 · ` or `════ File 3/17 · ` for
+/// binaries.
 fn file_header_indicator(file: &OutputFile, badge: Badge, is_collapsed: bool) -> (String, String) {
     let badge = format!("{} · ", badge.file_text());
     if file.is_binary {

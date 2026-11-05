@@ -521,12 +521,12 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
 
     // Must contain both hunk divider badges
     assert!(
-        full_text.contains("H1/2"),
-        "preview must show H1/2 divider: {full_text}"
+        full_text.contains("Hunk 1/2"),
+        "preview must show Hunk 1/2 divider: {full_text}"
     );
     assert!(
-        full_text.contains("H2/2"),
-        "preview must show H2/2 divider: {full_text}"
+        full_text.contains("Hunk 2/2"),
+        "preview must show Hunk 2/2 divider: {full_text}"
     );
     assert!(full_text.contains("first hunk add"));
     assert!(full_text.contains("second hunk del"));
@@ -557,8 +557,8 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
         );
     }
     let ansi_joined = ansi_lines.join("\n");
-    assert!(ansi_joined.contains("H1/2"));
-    assert!(ansi_joined.contains("H2/2"));
+    assert!(ansi_joined.contains("Hunk 1/2"));
+    assert!(ansi_joined.contains("Hunk 2/2"));
     assert!(!ansi_joined.contains('⬍'));
     assert!(!ansi_joined.contains('▲'));
     assert!(!ansi_joined.contains('▼'));

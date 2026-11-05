@@ -51,7 +51,7 @@ pub fn hunk_leading_gap(file: &OutputFile, hi: usize) -> usize {
 }
 
 /// Build the raw text of a hunk header divider with format
-/// `──── H2/3 · 6 lines: −1 +4 ~1 ────` plus optional hidden-gap tail.
+/// `──── Hunk 2/3 · 6 lines: −1 +4 ~1 ────` plus optional hidden-gap tail.
 #[must_use]
 pub fn hunk_divider_text(badge: Badge, hunk: &OutputHunk, hidden_gap: usize) -> String {
     let counts = hunk.counts();

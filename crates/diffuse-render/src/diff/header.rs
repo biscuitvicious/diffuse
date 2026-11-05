@@ -14,7 +14,7 @@ use crate::{
 /// Format a file's header bar directly into an output buffer without
 /// intermediate string allocations. Mirrors the TUI file banner order:
 /// badge, filename, change counts, then status parens. `badge` carries the
-/// file position (`F3/17`); pass `None` while streaming, where the total is
+/// file position (`File 3/17`); pass `None` while streaming, where the total is
 /// unknown. The filename and status parens render in the current-file path
 /// white (the pager has no cursor states).
 pub fn write_file_header_bar<W: Write>(
