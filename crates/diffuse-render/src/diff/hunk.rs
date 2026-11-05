@@ -95,11 +95,15 @@ pub fn render_hunk_divider(
     theme: &DiffuseTheme,
 ) -> String {
     let txt = hunk_divider_text(badge, hunk, hidden_gap);
-    // Rest state resolves at the cursor baseline tier (asset bg is
-    // `primary`, rendering as the empty-string background code).
+    // Rest state resolves at the cursor baseline tier, whose asset background
+    // is `primary`: the divider inherits the canvas instead of naming a color.
+    // The pager paints no canvas of its own, so an inherited background must
+    // be written out explicitly; otherwise a terminal whose own background
+    // differs from the theme's (a light terminal running the dark theme) shows
+    // through the hunk headers.
     let divider = &theme.palette[crate::theme::Cursor::Rest].hunk_divider;
     let bg_code = match divider.bg {
-        yansi::Color::Primary => String::new(),
+        yansi::Color::Primary => theme.palette.ui.bg_base.bg_code(),
         color => color.bg_code(),
     };
     let fg_code = divider.fg.fg_code();

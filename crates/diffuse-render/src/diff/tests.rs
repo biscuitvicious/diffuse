@@ -563,6 +563,28 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     // -p hunk headers do not contain the hidden gap / expansion arrows
     assert!(!plain.contains("more lines"));
     assert!(!plain.contains('▼'));
+
+    // The divider paints the theme canvas instead of inheriting the terminal
+    // background: a light terminal running the dark theme would otherwise
+    // show a white band across every hunk header.
+    let dark_divider = rendered
+        .lines()
+        .find(|line| line.contains("──── Hunk 1/2"))
+        .expect("hunk divider line");
+    assert!(
+        dark_divider.starts_with("\x1b[48;5;233m"),
+        "the dark divider must set the theme canvas background: {dark_divider:?}"
+    );
+
+    let light = render_file_diff(&out.files[0], None, &DiffuseTheme::light(), true);
+    let light_divider = light
+        .lines()
+        .find(|line| line.contains("──── Hunk 1/2"))
+        .expect("hunk divider line");
+    assert!(
+        light_divider.starts_with("\x1b[48;2;250;250;250m"),
+        "the light divider must set the theme canvas background: {light_divider:?}"
+    );
 }
 
 #[test]
