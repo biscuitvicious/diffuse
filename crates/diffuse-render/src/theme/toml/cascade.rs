@@ -595,10 +595,10 @@ mod tests {
         let palette = compile_model("").unwrap();
         let ctx = palette[Cursor::Rest][DiffKind::Ctx];
         assert_eq!(ctx.surface.bg, Color::Fixed(233), "dark base_bg baseline");
-        assert_eq!(ctx.surface.fg, Color::Primary, "dark base_fg baseline");
+        assert_eq!(ctx.surface.fg, Color::Fixed(231), "dark base_fg baseline");
         assert_eq!(ctx.surface.fill, None);
-        assert_eq!(ctx.gutter.num, StyledColor::default());
-        assert_eq!(ctx.gutter.icon, StyledColor::default());
+        assert_eq!(ctx.gutter.num, StyledColor::new(Color::Fixed(231)));
+        assert_eq!(ctx.gutter.icon, StyledColor::new(Color::Fixed(231)));
         assert_eq!(ctx.syntax, SyntaxPalette::dark());
         assert_eq!(palette[Cursor::Row].file_header.bg, Color::Fixed(233));
         assert_eq!(palette[Cursor::Row].hunk_divider.bg, Color::Fixed(233));
@@ -693,8 +693,8 @@ mod tests {
         assert_eq!(mov.gutter.num.color, Color::Fixed(40), "mov explicit slot");
         assert_eq!(
             mov.gutter.icon,
-            StyledColor::default(),
-            "icon not in any channel"
+            StyledColor::new(Color::Fixed(231)),
+            "unset slots fall back to the explicit dark base foreground"
         );
 
         let add = palette[Cursor::Rest][DiffKind::Add];

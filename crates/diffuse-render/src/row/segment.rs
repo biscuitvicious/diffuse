@@ -16,7 +16,6 @@ use crate::{
     theme::{Cursor, DiffKind, DiffuseTheme},
     width::grapheme_width,
 };
-use diffuse_syntax::color::TokenColor;
 
 /// Check whether a row consists solely of common/context runs.
 /// Addition rows added in diffs are never treated as context rows.
@@ -255,15 +254,19 @@ pub fn write_row_segment<W: Write>(
             if tok.kind == RunKind::Del {
                 let del_fg = s_del.fg.fg_code();
                 write!(out, "{bg}\x1b[9m{del_fg}{}\x1b[39m\x1b[29m", tok.text)?;
-            } else {
-                let color = if syntax_on {
-                    tok.color
-                } else {
-                    TokenColor::Default
-                };
-                let sgr = if syntax_on { tok.sgr } else { None };
+            } else if !syntax_on {
+                write!(out, "{bg}{}", tok.text)?;
                 write!(out, "{bg}")?;
-                theme.write_token(color, &tok.text, row_kind_str, Some(tok_kind_str), sgr, out);
+            } else {
+                write!(out, "{bg}")?;
+                theme.write_token(
+                    tok.color,
+                    &tok.text,
+                    row_kind_str,
+                    Some(tok_kind_str),
+                    tok.sgr,
+                    out,
+                );
                 write!(out, "{bg}")?;
             }
         }
@@ -330,20 +333,19 @@ pub fn write_row_segment<W: Write>(
             let del_fg = s_del.fg.fg_code();
             write!(out, "{bg}\x1b[9m{del_fg}{sub_piece}\x1b[39m\x1b[29m")?;
         } else {
-            // syntax off downgrades every run to plain text (no fg, no sgr)
-            let color = if syntax_on {
-                tok.color
-            } else {
-                TokenColor::Default
-            };
-            let sgr = if syntax_on { tok.sgr } else { None };
+            // Syntax off bypasses the theme: plain runs must not inherit a
+            // default token color from the palette.
+            if !syntax_on {
+                write!(out, "{bg}{sub_piece}{bg}")?;
+                continue;
+            }
             write!(out, "{bg}")?;
             theme.write_token(
-                color,
+                tok.color,
                 &sub_piece,
                 row_kind_str,
                 Some(tok_kind_str),
-                sgr,
+                tok.sgr,
                 out,
             );
             write!(out, "{bg}")?;

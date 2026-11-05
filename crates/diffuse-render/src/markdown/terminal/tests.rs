@@ -627,7 +627,7 @@ fn test_table_cell_with_strikethrough_renders_dim_and_strike() {
     let lines = rendered(src, 40);
     let joined = lines.join("\n");
     assert!(
-        joined.contains("\x1b[2;9mdeprecated\x1b[29m\x1b[22m"),
-        "must emit dim + strike stacked SGR around deprecated in cell: {joined:?}"
+        joined.contains("\x1b[2;9m\x1b[38;5;231mdeprecated\x1b[39m\x1b[29m\x1b[22m"),
+        "must emit dim + strike stacked SGR with explicit plain-text color in cell: {joined:?}"
     );
 }

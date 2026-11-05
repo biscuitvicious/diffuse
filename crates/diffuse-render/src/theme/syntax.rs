@@ -40,7 +40,7 @@ impl SyntaxPalette {
     #[must_use]
     pub const fn dark() -> Self {
         Self {
-            text: Color::Primary,
+            text: Color::Fixed(231),
             keyword: Color::Fixed(147),
             typ: Color::Fixed(220),
             function: Color::Fixed(123),
@@ -70,7 +70,7 @@ impl SyntaxPalette {
     #[must_use]
     pub const fn light() -> Self {
         Self {
-            text: Color::Primary,
+            text: Color::Rgb(36, 41, 47),
             keyword: Color::Rgb(170, 20, 120),
             typ: Color::Rgb(15, 110, 130),
             function: Color::Rgb(10, 85, 185),
@@ -98,9 +98,10 @@ impl SyntaxPalette {
 
     /// Resolve the active [`Color`] for a semantic [`TokenColor`].
     ///
-    /// Returns `None` for unstyled text (`TokenColor::Default`) matching
-    /// `Color::Primary`, or for `TokenColor::Strike` which applies ANSI
+    /// Returns `None` only for `TokenColor::Strike`, which applies ANSI
     /// strikethrough/dim attributes rather than a dedicated foreground color.
+    /// Unstyled text always resolves to an explicit theme color so the
+    /// terminal's own foreground can never leak through.
     #[must_use]
     pub const fn token_color(&self, color: TokenColor) -> Option<Color> {
         match color {
@@ -148,10 +149,12 @@ mod tests {
     #[test]
     fn test_syntax_palette_presets() {
         let dark = SyntaxPalette::dark();
+        assert_eq!(dark.text, Color::Fixed(231));
         assert_eq!(dark.keyword, Color::Fixed(147));
         assert_eq!(dark.string, Color::Fixed(120));
 
         let light = SyntaxPalette::light();
+        assert_eq!(light.text, Color::Rgb(36, 41, 47));
         assert_eq!(light.keyword, Color::Rgb(170, 20, 120));
         assert_eq!(light.string, Color::Rgb(20, 115, 40));
 
@@ -162,9 +165,9 @@ mod tests {
     #[test]
     fn test_syntax_palette_token_color_mapping() {
         let mut p = SyntaxPalette::dark();
-        assert_eq!(p.token_color(TokenColor::Default), None);
+        assert_eq!(p.token_color(TokenColor::Default), Some(Color::Fixed(231)));
 
-        // When text is not Primary, it is returned
+        // A custom text color is returned as-is.
         p.text = Color::Fixed(120);
         assert_eq!(p.token_color(TokenColor::Default), Some(Color::Fixed(120)));
 

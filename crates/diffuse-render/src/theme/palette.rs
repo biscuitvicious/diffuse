@@ -68,7 +68,7 @@ impl CursorPalette {
 pub struct UiPalette {
     /// Application background canvas.
     pub bg_base: Color,
-    /// Base diff text foreground (terminal default when unset).
+    /// Base diff text foreground (always an explicit theme color).
     pub text: Color,
     /// Modal / overlay background canvas.
     pub bg_modal: Color,

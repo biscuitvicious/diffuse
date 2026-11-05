@@ -126,7 +126,7 @@ impl Baseline {
 /// Frozen dark baseline values.
 pub(crate) const DARK: Baseline = Baseline {
     ctx_tint_bg: Color::Fixed(233),
-    ctx_fg: Color::Primary,
+    ctx_fg: Color::Fixed(231),
     ctx_gutter_out_hunk: Color::Fixed(238),
     ctx_gutter_in_hunk: Color::Fixed(245),
     ctx_cursor_bg: Color::Fixed(237),
@@ -156,7 +156,7 @@ pub(crate) const DARK: Baseline = Baseline {
     mov_gutter_icon: Color::Fixed(117),
     mov_cursor_bg: Color::Fixed(237),
     band_bg: Color::Fixed(235),
-    text: Color::Primary,
+    text: Color::Fixed(231),
     file_header_bg_rest: Color::Fixed(233),
     file_header_bg_current: Color::Fixed(235),
     file_header_bg_selected: Color::Fixed(238),
@@ -176,7 +176,7 @@ pub(crate) const DARK: Baseline = Baseline {
     note: Color::Fixed(220),
     accent: Color::Fixed(51),
     status_bar_bg: Color::Fixed(234),
-    status_bar_fg: Color::Fixed(252),
+    status_bar_fg: Color::Fixed(231),
     status_bar_dim: Color::Fixed(244),
     status_bar_accent: Color::Fixed(220),
     ribbon_divider: Color::Fixed(244),
@@ -184,7 +184,7 @@ pub(crate) const DARK: Baseline = Baseline {
     header_bar_bg: Color::Fixed(234),
     header_bar_fg: Color::Fixed(231),
     header_repo: Color::Fixed(117),
-    header_branch: Color::Fixed(252),
+    header_branch: Color::Fixed(231),
     header_dim: Color::Fixed(244),
     header_staged: Color::Fixed(120),
     header_prefix: Color::Fixed(152),
@@ -208,7 +208,7 @@ pub(crate) const DARK: Baseline = Baseline {
 /// The frozen dark token matrix (kind-major, TOKEN_KEYS order).
 static TOKEN_MATRIX_DARK: [[Option<Color>; TOKEN_COUNT]; TOKEN_KINDS] = [
     [
-        None,
+        Some(Color::Fixed(231)),
         Some(Color::Fixed(147)),
         Some(Color::Fixed(220)),
         Some(Color::Fixed(123)),
@@ -233,7 +233,7 @@ static TOKEN_MATRIX_DARK: [[Option<Color>; TOKEN_COUNT]; TOKEN_KINDS] = [
         Some(Color::Fixed(243)),
     ],
     [
-        None,
+        Some(Color::Fixed(231)),
         Some(Color::Fixed(147)),
         Some(Color::Fixed(220)),
         Some(Color::Fixed(123)),
@@ -258,7 +258,7 @@ static TOKEN_MATRIX_DARK: [[Option<Color>; TOKEN_COUNT]; TOKEN_KINDS] = [
         Some(Color::Fixed(243)),
     ],
     [
-        None,
+        Some(Color::Fixed(203)),
         Some(Color::Fixed(183)),
         Some(Color::Fixed(215)),
         Some(Color::Fixed(159)),
@@ -283,7 +283,7 @@ static TOKEN_MATRIX_DARK: [[Option<Color>; TOKEN_COUNT]; TOKEN_KINDS] = [
         Some(Color::Fixed(243)),
     ],
     [
-        None,
+        Some(Color::Fixed(231)),
         Some(Color::Fixed(147)),
         Some(Color::Fixed(220)),
         Some(Color::Fixed(123)),
@@ -308,7 +308,7 @@ static TOKEN_MATRIX_DARK: [[Option<Color>; TOKEN_COUNT]; TOKEN_KINDS] = [
         Some(Color::Fixed(243)),
     ],
     [
-        None,
+        Some(Color::Fixed(231)),
         Some(Color::Fixed(147)),
         Some(Color::Fixed(220)),
         Some(Color::Fixed(123)),

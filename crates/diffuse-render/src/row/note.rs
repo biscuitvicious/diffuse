@@ -6,7 +6,6 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::text::{expand_runs_tabs, expand_tabs, slice_by_visual_width};
 use crate::{core::wire::OutputRun, theme::DiffuseTheme, width::grapheme_width};
-use diffuse_syntax::color::TokenColor;
 
 /// Write a single slice/segment of a review note row with syntax highlighting
 /// directly to a buffer.
@@ -60,13 +59,11 @@ pub fn write_note_segment<W: Write>(
             continue;
         }
 
-        let color = if syntax_on {
-            tok.color
-        } else {
-            TokenColor::Default
-        };
-        let sgr = if syntax_on { tok.sgr } else { None };
-        theme.write_token(color, &sub_piece, "ctx", Some("ctx"), sgr, out);
+        if !syntax_on {
+            out.write_str(&sub_piece)?;
+            continue;
+        }
+        theme.write_token(tok.color, &sub_piece, "ctx", Some("ctx"), tok.sgr, out);
     }
 
     Ok(())

@@ -61,7 +61,7 @@ num = "#afb8c1"
 icon = "#afb8c1"
 
 [rest.ctx.syntax]
-text = "#24292f"        # legacy `text` (the baseline falls back to terminal default)
+text = "#24292f"       # legacy `text`
 url = "#697382"         # legacy parity: context rows render Url with the comment color
 
 [rest.add]

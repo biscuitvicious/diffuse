@@ -15,13 +15,13 @@ light_pair = "light"
 
 [ui]
 bg_base = 233
-text = "primary"       # legacy `text` (terminal default)
+text = 231              # explicit base text; never inherit the terminal default
 bg_modal = 236          # legacy `modal_bg`
 warning = 220
 note = 220
 accent = 51
 status_bar_bg = 234
-status_bar_fg = 252
+status_bar_fg = 231
 status_bar_dim = 244
 status_bar_accent = 220
 ribbon_divider = 244
@@ -29,7 +29,7 @@ ribbon_text = 244
 header_bar_bg = 234
 header_bar_fg = 231
 header_repo = 117
-header_branch = 252
+header_branch = 231
 header_dim = 244
 header_staged = 120
 header_prefix = 152
@@ -61,11 +61,12 @@ bg = 235
 
 [rest.ctx]              # context rows outside the current hunk
 bg = 233
-fg = "primary"
+fg = 231
 num = 238
 icon = 238
 
 [rest.ctx.syntax]
+text = 231              # explicit base text; never inherit the terminal default
 url = 150               # legacy parity: context rows render Url with the comment color
 
 [rest.add]
@@ -93,7 +94,7 @@ number = 222
 literal = 222
 comment = 224
 operator = 153
-text = "primary"
+text = 203              # deleted plain text uses the deletion foreground
 bold = 222
 italic = 224
 link = 153

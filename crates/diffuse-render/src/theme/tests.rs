@@ -132,9 +132,9 @@ fn test_default_theme_palette() {
     assert_eq!(row[DiffKind::Mod].surface.bg, Color::Rgb(66, 66, 66));
     // Context canvas: cursor and base foreground.
     assert_eq!(row[DiffKind::Ctx].surface.bg, Color::Fixed(237));
-    assert_eq!(rest[DiffKind::Ctx].surface.fg, Color::Primary);
-    // UI: base text on the dark canvas is the terminal default.
-    assert_eq!(palette.ui.text, Color::Primary);
+    assert_eq!(rest[DiffKind::Ctx].surface.fg, Color::Fixed(231));
+    // UI: explicit base text on the dark canvas.
+    assert_eq!(palette.ui.text, Color::Fixed(231));
     assert_eq!(dark.name, "default");
 }
 #[test]
@@ -408,11 +408,11 @@ fn test_quote_and_fence_border_aliases_resolve_to_palette_keys() {
 #[test]
 fn test_palette_semantic_ui_fields() {
     let p = DiffuseTheme::dark().palette.ui;
-    assert_eq!(p.status_bar_fg, Color::Fixed(252));
+    assert_eq!(p.status_bar_fg, Color::Fixed(231));
     assert_eq!(p.status_bar_dim, Color::Fixed(244));
     assert_eq!(p.status_bar_accent, Color::Fixed(220));
     assert_eq!(p.header_repo, Color::Fixed(117));
-    assert_eq!(p.header_branch, Color::Fixed(252));
+    assert_eq!(p.header_branch, Color::Fixed(231));
     assert_eq!(p.header_staged, Color::Fixed(120));
     assert_eq!(p.header_prefix, Color::Fixed(152));
     assert_eq!(p.ribbon_divider, Color::Fixed(244));
@@ -454,11 +454,19 @@ fn test_channel_syntax_palettes_resolve_and_override_independently() {
         del.token_color(TokenColor::Keyword),
         Some(Color::Fixed(183))
     );
-    // Unstyled default tokens on the dark theme return None (use the
-    // terminal default text).
-    assert_eq!(ctx.token_color(TokenColor::Default), None);
-    assert_eq!(add.token_color(TokenColor::Default), None);
-    assert_eq!(del.token_color(TokenColor::Default), None);
+    // Unstyled default tokens resolve to explicit theme colors.
+    assert_eq!(
+        ctx.token_color(TokenColor::Default),
+        Some(Color::Fixed(231))
+    );
+    assert_eq!(
+        add.token_color(TokenColor::Default),
+        Some(Color::Fixed(231))
+    );
+    assert_eq!(
+        del.token_color(TokenColor::Default),
+        Some(Color::Fixed(203))
+    );
 
     // The syntax palettes are `Copy`, so an overridden clone resolves
     // standalone without touching the shared palette.
@@ -474,6 +482,40 @@ fn test_channel_syntax_palettes_resolve_and_override_independently() {
             .token_color(TokenColor::Keyword),
         Some(Color::Fixed(147)),
         "the shared palette is unaffected by the local overlay"
+    );
+}
+
+#[test]
+fn test_dark_plain_text_uses_theme_foreground() {
+    let theme = DiffuseTheme::dark();
+    for kind in [
+        DiffKind::Ctx,
+        DiffKind::Add,
+        DiffKind::Del,
+        DiffKind::Mod,
+        DiffKind::Mov,
+    ] {
+        let syntax = theme.palette[Cursor::Rest][kind].syntax;
+        assert!(
+            matches!(syntax.token_color(TokenColor::Default), Some(color) if color != Color::Primary),
+            "plain {kind:?} text must resolve to an explicit theme color"
+        );
+    }
+    assert_ne!(
+        theme.palette.ui.text,
+        Color::Primary,
+        "the TUI canvas foreground must not be the terminal default"
+    );
+    assert_ne!(
+        theme.palette[Cursor::Rest][DiffKind::Ctx].surface.fg,
+        Color::Primary,
+        "context rows must not inherit the terminal foreground"
+    );
+
+    let rendered = theme.render_token(TokenColor::Default, "plain", "ctx", None, None);
+    assert!(
+        rendered.starts_with("\x1b[38;"),
+        "plain tokens must emit an explicit foreground: {rendered:?}"
     );
 }
 #[test]
@@ -547,28 +589,28 @@ fn test_syntax_text_token_colors() {
         theme.palette[Cursor::Rest][DiffKind::from_row(rk)].syntax
     };
 
-    // Dark theme should NOT emit foreground escape sequences for unclassified
-    // default tokens, preserving byte-for-byte golden fidelity.
+    // Dark theme must emit an explicit foreground for unclassified default
+    // tokens, matching the light theme behavior on its own canvas.
     let dark = DiffuseTheme::dark();
     assert_eq!(
         syntax(&dark, RowKind::Ctx).token_color(TokenColor::Default),
-        None
+        Some(Color::Fixed(231))
     );
     assert_eq!(
         syntax(&dark, RowKind::Add).token_color(TokenColor::Default),
-        None
+        Some(Color::Fixed(231))
     );
     assert_eq!(
         syntax(&dark, RowKind::Del).token_color(TokenColor::Default),
-        None
+        Some(Color::Fixed(203))
     );
     assert_eq!(
         syntax(&dark, RowKind::Mod).token_color(TokenColor::Default),
-        None
+        Some(Color::Fixed(231))
     );
     assert_eq!(
         dark.render_token(TokenColor::Default, "yansi", "ctx", None, None),
-        "yansi"
+        "\x1b[38;5;231myansi\x1b[39m"
     );
 
     // Light theme MUST resolve default text tokens to high-contrast colors

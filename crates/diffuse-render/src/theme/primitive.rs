@@ -29,7 +29,7 @@ impl PrimitivePalette {
     pub const fn dark() -> Self {
         Self {
             base_bg: Color::Fixed(233),
-            base_fg: Color::Primary,
+            base_fg: Color::Fixed(231),
             red: Color::Fixed(203),
             green: Color::Fixed(120),
             yellow: Color::Fixed(220),
@@ -48,7 +48,7 @@ impl PrimitivePalette {
     pub const fn light() -> Self {
         Self {
             base_bg: Color::Fixed(255),
-            base_fg: Color::Primary,
+            base_fg: Color::Rgb(36, 41, 47),
             red: Color::Fixed(160),
             green: Color::Fixed(28),
             yellow: Color::Fixed(172),
@@ -98,11 +98,13 @@ mod tests {
     fn test_primitive_palette_presets() {
         let dark = PrimitivePalette::dark();
         assert_eq!(dark.base_bg, Color::Fixed(233));
+        assert_eq!(dark.base_fg, Color::Fixed(231));
         assert_eq!(dark.red, Color::Fixed(203));
         assert_eq!(dark.green, Color::Fixed(120));
 
         let light = PrimitivePalette::light();
         assert_eq!(light.base_bg, Color::Fixed(255));
+        assert_eq!(light.base_fg, Color::Rgb(36, 41, 47));
         assert_eq!(light.red, Color::Fixed(160));
         assert_eq!(light.green, Color::Fixed(28));
 

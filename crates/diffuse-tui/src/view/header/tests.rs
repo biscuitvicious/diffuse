@@ -1032,7 +1032,7 @@ fn test_header_bar_shows_branch_indicator() {
         .iter()
         .find(|s| s.content == "main")
         .expect("must have branch span");
-    assert_eq!(branch_span.style.fg, Some(Color::Indexed(252)));
+    assert_eq!(branch_span.style.fg, Some(Color::Indexed(231)));
     assert!(branch_span.style.add_modifier.contains(Modifier::BOLD));
 
     // The branch glyph span must directly precede the branch name with no
