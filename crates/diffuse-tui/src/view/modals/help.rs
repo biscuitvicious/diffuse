@@ -9,10 +9,7 @@ use ratatui::{
 };
 
 use super::geometry::standard_modal_area;
-use crate::{
-    render::{ColorExt, DiffuseTheme},
-    view::header::truncate_pad,
-};
+use crate::render::DiffuseTheme;
 
 /// Canonical key bindings reference displayed in the `?` help dialog.
 pub const HELP_ENTRIES: &[(&str, &str)] = &[
@@ -48,65 +45,6 @@ pub const HELP_ENTRIES: &[(&str, &str)] = &[
     ("?", "toggle help"),
     ("q · Ctrl+c", "quit"),
 ];
-
-/// Render the `?` key-bindings modal as full-screen overlay lines.
-pub fn render_help_modal(width: usize, height: usize, theme: &DiffuseTheme) -> Vec<String> {
-    let key_w = if width < 48 {
-        16
-    } else if width < 58 {
-        22
-    } else {
-        32
-    };
-
-    let entries = HELP_ENTRIES;
-
-    let p = &theme.palette.ui;
-    let bg_code = p.bg_modal.bg_code();
-    let border_code = p.modal_border.fg_code();
-    let title_code = p.modal_title.fg_code();
-    let text_code = p.modal_text.fg_code();
-    let dim_code = p.modal_dim.fg_code();
-
-    let mut lines = Vec::new();
-    lines.push(format!(
-        "{bg_code}\x1b[1m{title_code}{}\x1b[0m",
-        truncate_pad("  KEY BINDINGS", width)
-    ));
-    lines.push(format!(
-        "{bg_code}{border_code}{}\x1b[0m",
-        "─".repeat(width)
-    ));
-
-    for (key, desc) in entries {
-        let desc_w = width.saturating_sub(key_w + 4);
-        let wrapped_keys = wrap_words(key, key_w);
-        let wrapped_descs = wrap_words(desc, desc_w);
-        let num_rows = wrapped_keys.len().max(wrapped_descs.len());
-
-        for i in 0..num_rows {
-            let k = wrapped_keys.get(i).map(|s| s.as_str()).unwrap_or("");
-            let d = wrapped_descs.get(i).map(|s| s.as_str()).unwrap_or("");
-            let k_str = truncate_pad(k, key_w);
-            let line_raw = format!("  {k_str} {d}");
-            lines.push(format!(
-                "{bg_code}{text_code}{}\x1b[0m",
-                truncate_pad(&line_raw, width)
-            ));
-        }
-    }
-
-    lines.push(format!(
-        "{bg_code}{dim_code}{}\x1b[0m",
-        truncate_pad("  ? · Esc to close", width)
-    ));
-
-    while lines.len() < height {
-        lines.push(format!("{bg_code}{}\x1b[0m", " ".repeat(width)));
-    }
-
-    lines
-}
 
 /// Wrap a text string into multiple lines at word boundaries up to `max_width`.
 pub fn wrap_words(text: &str, max_width: usize) -> Vec<String> {

@@ -1,122 +1,12 @@
-use super::{
-    counts::{format_counts_ansi, format_counts_spans},
-    text::{truncate_pad, visible_width, wrap_text_by_visual_width},
-};
+use super::{counts::format_counts_spans, text::truncate_pad};
 use crate::{
     core::counts::FileCounts,
-    render::{ColorExt, DiffuseTheme, UiPalette, width::display_width},
+    render::{DiffuseTheme, UiPalette, width::display_width},
 };
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
-
-/// Render the top review header bar: repo name, branch/commit-range glyph, the
-/// number of reviewed files, and global counts.
-#[allow(clippy::too_many_arguments)]
-pub fn render_header_bar(
-    repo: &str,
-    width: usize,
-    global_counts: Option<FileCounts>,
-    branch: Option<&str>,
-    commit_range: Option<&str>,
-    is_staged: bool,
-    ui: &UiPalette,
-    total_files: Option<usize>,
-) -> Vec<String> {
-    let branch_seg = if let Some(range) = commit_range
-        && !range.is_empty()
-    {
-        format!(
-            " {}\u{2387}\x1b[0m\x1b[1m{}{range}\x1b[0m",
-            ui.header_dim.fg_code(),
-            ui.header_branch.fg_code()
-        )
-    } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
-        let staged_badge = if is_staged {
-            format!(
-                " {}(\x1b[1m{}staged\x1b[0m{})",
-                ui.header_dim.fg_code(),
-                ui.header_staged.fg_code(),
-                ui.header_dim.fg_code()
-            )
-        } else {
-            String::new()
-        };
-        format!(
-            " {}\u{2387}\x1b[0m\x1b[1m{}{b}\x1b[0m{staged_badge}",
-            ui.header_dim.fg_code(),
-            ui.header_branch.fg_code()
-        )
-    } else if is_staged {
-        format!(
-            " {}\u{2387}(\x1b[1m{}staged\x1b[0m{})",
-            ui.header_dim.fg_code(),
-            ui.header_staged.fg_code(),
-            ui.header_dim.fg_code()
-        )
-    } else {
-        String::new()
-    };
-    // No dot before the global counts: the branch glyph (or repo name)
-    // already separates them.
-    let global_counts_seg = match global_counts {
-        Some(ref gc) if !gc.is_empty() => {
-            format!(" {}", format_counts_ansi(gc, ui))
-        }
-        _ => String::new(),
-    };
-
-    // The file count is omitted while the diff is streaming, where the number
-    // of files seen so far is not the number of files under review.
-    let files_seg = match total_files {
-        Some(n) => format!(
-            " {}{n} {}\x1b[0m",
-            ui.header_dim.fg_code(),
-            if n == 1 { "file" } else { "files" }
-        ),
-        None => String::new(),
-    };
-
-    let mut head_raw = format!(
-        " \x1b[1m{}{repo}\x1b[0m{branch_seg}{files_seg}{global_counts_seg}",
-        ui.header_repo.fg_code()
-    );
-    // The change counts say more than the file count, so the file count is what
-    // gives way first when the bar cannot hold the whole header.
-    if total_files.is_some() && visible_width(&head_raw) > width {
-        head_raw = format!(
-            " \x1b[1m{}{repo}\x1b[0m{branch_seg}{global_counts_seg}",
-            ui.header_repo.fg_code()
-        );
-    }
-    let wrapped = wrap_text_by_visual_width(&head_raw, width);
-    wrapped
-        .into_iter()
-        .map(|piece| {
-            let piece_vw = visible_width(&piece);
-            let pad = " ".repeat(width.saturating_sub(piece_vw));
-            format!(
-                "{}\x1b[1m{}{piece}{pad}\x1b[0m",
-                ui.header_bar_bg.bg_code(),
-                ui.header_bar_fg.fg_code()
-            )
-        })
-        .collect()
-}
-
-/// Render the bottom navigation key-bindings ribbon.
-pub fn render_bottom_ribbon(width: usize, ui: &UiPalette) -> (String, String) {
-    let div_str = format!(" {}", "─".repeat(width.saturating_sub(2).min(60)));
-    let divider = format!("{}{div_str}\x1b[39m", ui.ribbon_divider.fg_code());
-    let ribbon_text = truncate_pad(
-        " [?]help [q]uit [j/k]move [n/p]file [J/K]hunk [Enter]toggle [v]select [m]note [o]edit [s]tage [t]staged [T]theme [x]discard",
-        width.saturating_sub(1),
-    );
-
-    let ribbon = format!("{}{ribbon_text}\x1b[39m", ui.ribbon_text.fg_code());
-    (divider, ribbon)
-}
 
 /// Render the review header bar as a styled Ratatui [`Line`] with theme
 /// support: repo name, branch/commit-range glyph, the number of reviewed

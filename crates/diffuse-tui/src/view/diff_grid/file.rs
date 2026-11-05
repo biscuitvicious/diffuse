@@ -316,32 +316,6 @@ pub fn render_file_header_segment(
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
-/// Render a file header banner row with collapse status indicator and counts.
-#[allow(clippy::too_many_arguments)]
-pub fn render_file_header(
-    file: &OutputFile,
-    badge: Badge,
-    is_collapsed: bool,
-    is_selected: bool,
-    is_current: bool,
-    in_band: bool,
-    content_width: usize,
-    theme: &DiffuseTheme,
-) -> String {
-    render_file_header_segment(
-        file,
-        badge,
-        is_collapsed,
-        is_selected,
-        is_current,
-        in_band,
-        0,
-        content_width,
-        theme,
-        None,
-    )
-}
-
 /// Render a file header banner row as a styled Ratatui [`Line`] with theme
 /// support.
 #[allow(clippy::too_many_arguments)]

@@ -1,8 +1,5 @@
 pub use crate::render::counts::{CountCell, count_cells, count_color};
-use crate::{
-    core::counts::FileCounts,
-    render::{ColorExt, UiPalette},
-};
+use crate::{core::counts::FileCounts, render::UiPalette};
 use ratatui::{
     style::{Modifier, Style},
     text::Span,
@@ -19,25 +16,6 @@ pub fn format_counts_plain(counts: &FileCounts) -> String {
         .map(|seg| format!("{}{}", seg.marker, seg.value))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// Format mod counts as an ANSI-highlighted string (`−dels`, `+adds`, `~mods`,
-/// `≈movs`, `💬 notes`), omitting zero counts. Returns an empty string when
-/// all counts are zero.
-pub fn format_counts_ansi(counts: &FileCounts, ui: &UiPalette) -> String {
-    count_cells(counts, ui)
-        .iter()
-        .enumerate()
-        .map(|(i, cell)| {
-            let sep = if i == 0 { "" } else { " " };
-            format!(
-                "{sep}\x1b[1m{}{}{}\x1b[0m",
-                cell.color.fg_code(),
-                cell.marker,
-                cell.value
-            )
-        })
-        .collect::<String>()
 }
 
 /// Format mod counts as styled Ratatui [`Span`]s (`−dels`, `+adds`, `~mods`,

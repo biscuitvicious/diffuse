@@ -8,7 +8,6 @@ use crate::{
     },
     finder::FileFinderState,
     render::DiffuseTheme,
-    view::header::visible_width,
 };
 use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};
 
@@ -420,23 +419,28 @@ fn test_finder_modal_navigation_updates_preview_visual_layout() {
 }
 
 #[test]
-fn test_ansi_finder_modal_visual_layout() {
+fn test_finder_modal_visual_layout() {
     let output = sample_finder_output();
     let finder = FileFinderState::new(&output.files, 0, 0);
 
-    let lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::dark());
-    assert_eq!(lines.len(), 24);
-    for (i, line) in lines.iter().enumerate() {
-        assert_eq!(
-            visible_width(line),
-            80,
-            "line {i} must have exact visual width 80"
-        );
-    }
+    let backend = TestBackend::new(80, 24);
+    let mut terminal = Terminal::new(backend).unwrap();
+    terminal
+        .draw(|f| {
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
+        })
+        .unwrap();
 
-    let joined = lines.join("\n");
+    let buffer = terminal.backend().buffer();
+    let mut joined = String::new();
+    for y in 0..24 {
+        for x in 0..80 {
+            joined.push_str(buffer[(x, y)].symbol());
+        }
+        joined.push('\n');
+    }
     assert!(joined.contains("FIND FILE (1/2)"));
-    assert!(joined.contains("@ █"));
+    assert!(joined.contains('@'));
     assert!(joined.contains("TODO.md"));
     assert!(joined.contains("+2"));
     assert!(!joined.contains("+2 -0 ~0"));
@@ -545,23 +549,6 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
         !full_text.contains('▼'),
         "divider must not contain expansion icons"
     );
-
-    // Verify ANSI path as well
-    let ansi_lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::dark());
-    assert_eq!(ansi_lines.len(), 24);
-    for (i, line) in ansi_lines.iter().enumerate() {
-        assert_eq!(
-            visible_width(line),
-            80,
-            "ansi line {i} visual width must be 80"
-        );
-    }
-    let ansi_joined = ansi_lines.join("\n");
-    assert!(ansi_joined.contains("Hunk 1/2"));
-    assert!(ansi_joined.contains("Hunk 2/2"));
-    assert!(!ansi_joined.contains('⬍'));
-    assert!(!ansi_joined.contains('▲'));
-    assert!(!ansi_joined.contains('▼'));
 }
 
 #[test]
@@ -588,20 +575,7 @@ fn test_standard_modal_area_scaling_and_centering() {
 
 #[test]
 fn test_help_modal_narrow_screen_no_wrapping() {
-    use crate::view::header::visible_width;
-
-    // Narrow phone width (44 columns, 24 rows)
-    let lines = render_help_modal(44, 24, &DiffuseTheme::dark());
-    assert!(lines.len() >= 24);
-    for (i, line) in lines.iter().enumerate() {
-        let vw = visible_width(line);
-        assert!(
-            vw <= 44,
-            "line #{i} visual width {vw} exceeds target width 44 on narrow screens: {line}"
-        );
-    }
-
-    // Test with Ratatui backend on 44x32 terminal
+    // Ratatui backend on a 44x32 terminal
     let backend = TestBackend::new(44, 32);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -624,10 +598,7 @@ fn test_help_modal_narrow_screen_no_wrapping() {
 
 #[test]
 fn test_finder_modal_narrow_screen_no_wrapping() {
-    use crate::{
-        core::{counts::FileCounts, wire::OutputFile},
-        view::header::visible_width,
-    };
+    use crate::core::{counts::FileCounts, wire::OutputFile};
 
     let file = OutputFile {
         path: "crates/diffuse-tui/src/view/diff_grid.rs".to_string(),
@@ -677,17 +648,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
     };
     let finder = FileFinderState::new(&output.files, 0, 0);
 
-    // Narrow phone width (44 columns, 24 rows)
-    let lines = render_finder_modal(&output, &finder, 44, 24, &DiffuseTheme::dark());
-    for (i, line) in lines.iter().enumerate() {
-        let vw = visible_width(line);
-        assert!(
-            vw <= 44,
-            "finder line #{i} visual width {vw} exceeds target width 44 on narrow screens: {line}"
-        );
-    }
-
-    // Test with Ratatui backend on 44x24 terminal
+    // Ratatui backend on a 44x24 terminal
     let backend = TestBackend::new(44, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -710,10 +671,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
 
 #[test]
 fn test_finder_modal_lines_exact_width_wide_and_narrow() {
-    use crate::{
-        core::{counts::FileCounts, wire::OutputFile},
-        view::header::visible_width,
-    };
+    use crate::core::{counts::FileCounts, wire::OutputFile};
 
     let file_specs = [
         ("crates/diffuse-tui/src/app/tests.rs", 73, 0, 0),
@@ -770,23 +728,36 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
             let mut finder = FileFinderState::new(&output.files, 0, 0);
             finder.selected_idx = sel;
 
-            let lines = render_finder_modal(&output, &finder, w, 24, &DiffuseTheme::dark());
-            assert_eq!(
-                lines.len(),
-                24,
-                "must produce exactly 24 lines for w={w}, sel={sel}"
-            );
-            for (i, line) in lines.iter().enumerate() {
-                let vw = visible_width(line);
-                assert!(
-                    vw <= w,
-                    "line #{i} visual width {vw} exceeds target width {w} (sel={sel}): {line}"
-                );
-                assert_eq!(
-                    vw, w,
-                    "line #{i} visual width {vw} must be exactly padded to width {w} (sel={sel})"
-                );
+            let backend = TestBackend::new(w, 24);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|f| {
+                    render_finder_modal_widget(
+                        f,
+                        &output,
+                        &finder,
+                        &DiffuseTheme::dark(),
+                        f.area(),
+                    );
+                })
+                .unwrap();
+
+            let buffer = terminal.backend().buffer();
+            let mut text = String::new();
+            for y in 0..24 {
+                for x in 0..w {
+                    text.push_str(buffer[(x, y)].symbol());
+                }
+                text.push('\n');
             }
+            assert!(
+                text.contains("FIND FILE"),
+                "w={w}, sel={sel}: modal must render its title"
+            );
+            assert!(
+                text.contains("line content"),
+                "w={w}, sel={sel}: preview must render the selected file's row"
+            );
         }
     }
 }
@@ -1187,19 +1158,9 @@ fn test_finder_modal_counts_format_omits_zero_and_matches_canonical_order() {
     let mut finder = FileFinderState::new(&output.files, 0, 0);
     finder.selected_idx = 0; // src/full.rs selected
 
-    // 1. ANSI renderer test
     let theme = DiffuseTheme::dark();
-    let lines = render_finder_modal(&output, &finder, 80, 24, &theme);
-    let joined = lines.join("\n");
 
-    // Canonical order is − (dels), + (adds), ~ (mods), ≈ (movs)
-    assert!(joined.contains("−5 +10 ~2 ≈3"));
-    assert!(joined.contains("+4"));
-    assert!(!joined.contains("+4 -0 ~0"));
-    assert!(joined.contains("−2 ~1"));
-    assert!(!joined.contains("+0 -2 ~1"));
-
-    // 2. Ratatui widget test
+    // Ratatui widget test
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
@@ -1221,6 +1182,8 @@ fn test_finder_modal_counts_format_omits_zero_and_matches_canonical_order() {
     assert!(full_rendered.contains("−5 +10 ~2 ≈3"));
     assert!(full_rendered.contains("+4"));
     assert!(full_rendered.contains("−2 ~1"));
+    assert!(!full_rendered.contains("+4 -0 ~0"));
+    assert!(!full_rendered.contains("+0 -2 ~1"));
 
     // Verify cell color attributes:
     // Selected row (src/full.rs) counts must use modal_selected_fg &

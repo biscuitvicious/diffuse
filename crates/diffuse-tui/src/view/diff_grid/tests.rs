@@ -51,74 +51,51 @@ fn dummy_hunk() -> OutputHunk {
 
 #[test]
 fn test_file_header_has_background_stripe() {
+    use ratatui::style::Color;
+
     let f = dummy_file();
-    let unselected = render_file_header(
-        &f,
-        Badge {
-            idx: 0,
-            total: Some(1),
-        },
-        false,
-        false,
-        false,
-        false,
-        80,
-        &DiffuseTheme::dark(),
-    );
-    assert!(
-        unselected.contains("\x1b[48;5;233m"),
+    let badge = Badge {
+        idx: 0,
+        total: Some(1),
+    };
+    let theme = DiffuseTheme::dark();
+
+    let unselected = file_header_line(&f, badge, false, false, false, false, 80, &theme);
+    let style = unselected.spans[0].style;
+    assert_eq!(
+        style.bg,
+        Some(Color::Indexed(233)),
         "unselected file header must have default file_header_bg_rest (233) background stripe"
     );
-    assert!(
-        unselected.contains("\x1b[38;5;214m"),
+    assert_eq!(
+        style.fg,
+        Some(Color::Indexed(214)),
         "unselected file header must have default file_header_fg_rest (214)"
     );
-    assert!(
-        unselected.ends_with("\x1b[0m"),
-        "unselected file header must reset style at the end"
-    );
 
-    let current_file = render_file_header(
-        &f,
-        Badge {
-            idx: 0,
-            total: Some(1),
-        },
-        false,
-        false,
-        true,
-        false,
-        80,
-        &DiffuseTheme::dark(),
-    );
-    assert!(
-        current_file.contains("\x1b[48;5;235m"),
+    let current_file = file_header_line(&f, badge, false, false, true, false, 80, &theme);
+    let style = current_file.spans[0].style;
+    assert_eq!(
+        style.bg,
+        Some(Color::Indexed(235)),
         "current file header must have default file_header_bg_current (235)"
     );
-    assert!(
-        current_file.contains("\x1b[38;5;220m"),
+    assert_eq!(
+        style.fg,
+        Some(Color::Indexed(220)),
         "current file header must have default file_header_fg_current (220)"
     );
 
-    let selected = render_file_header(
-        &f,
-        Badge {
-            idx: 0,
-            total: Some(1),
-        },
-        false,
-        true,
-        true,
-        false,
-        80,
-        &DiffuseTheme::dark(),
-    );
-    assert!(
-        selected.contains("\x1b[48;5;238m"),
+    let selected = file_header_line(&f, badge, false, true, true, false, 80, &theme);
+    let style = selected.spans[0].style;
+    assert_eq!(
+        style.bg,
+        Some(Color::Indexed(238)),
         "selected file header must have default file_header_bg_selected (238)"
     );
-    assert!(
-        selected.contains("\x1b[38;5;221m"),
+    assert_eq!(
+        style.fg,
+        Some(Color::Indexed(221)),
         "selected file header must have default file_header_fg_selected (221)"
     );
 }
@@ -128,7 +105,7 @@ fn test_binary_file_header_has_no_expand_caret() {
     let mut f = dummy_file();
     f.is_binary = true;
     f.path = "test.png".to_string();
-    let rendered = render_file_header(
+    let rendered = file_header_line(
         &f,
         Badge {
             idx: 0,
@@ -140,7 +117,8 @@ fn test_binary_file_header_has_no_expand_caret() {
         false,
         80,
         &DiffuseTheme::dark(),
-    );
+    )
+    .to_string();
     assert!(
         !rendered.contains('▼'),
         "binary file must not show expanded caret ▼"
@@ -149,14 +127,13 @@ fn test_binary_file_header_has_no_expand_caret() {
         !rendered.contains('▶'),
         "binary file must not show collapsed caret ▶"
     );
-    let plain = crate::render::strip_ansi(&rendered);
     assert!(
-        plain.contains("════ File 1/1 · test.png −2 +5 ~1"),
-        "binary file header must start with flat rule without caret: {plain:?}"
+        rendered.contains("════ File 1/1 · test.png −2 +5 ~1"),
+        "binary file header must start with flat rule without caret: {rendered:?}"
     );
     assert!(
-        rendered.contains("\x1b[22m\x1b[38;5;251m (binary)"),
-        "status parens must be muted white: {rendered:?}"
+        rendered.contains(" (binary)"),
+        "binary file header must carry the status tag: {rendered:?}"
     );
 }
 
@@ -297,19 +274,6 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
         &DiffuseTheme::dark(),
     );
     assert_eq!(h_line_narrow.to_string().chars().count(), 10);
-
-    // Also verify bottom gap divider rule runs to the end of line
-    let bottom = render_bottom_gap_divider(10, false, 80, &DiffuseTheme::dark());
-    let plain_bottom = crate::render::strip_ansi(&bottom);
-    assert_eq!(
-        plain_bottom.chars().count(),
-        80,
-        "bottom gap divider must fill width"
-    );
-    assert!(
-        plain_bottom.ends_with("─────"),
-        "bottom gap divider horizontal rule must run to the end of the line, got: {plain_bottom:?}"
-    );
 
     // Bottom gap segment beyond text width fills with horizontal rule dashes
     let bottom_beyond =
@@ -498,7 +462,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
     assert!(!top_gap.contains("▲"));
 
     // Bottom gap divider (only up arrow) — 4-dash prefix and post
-    let bottom = render_bottom_gap_divider(80, false, 80, &DiffuseTheme::dark());
+    let bottom = bottom_gap_divider_text(80);
     assert!(bottom.contains("──── 80 more lines: ▲ ────"));
     assert!(!bottom.contains("▼"));
 }

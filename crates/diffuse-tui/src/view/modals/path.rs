@@ -7,68 +7,7 @@ use ratatui::{
     text::Span,
 };
 
-use crate::render::{ColorExt, UiPalette};
-
-pub(crate) fn format_path_matches(
-    path: &str,
-    indices: &[usize],
-    max_w: usize,
-    selected: bool,
-    palette: &UiPalette,
-) -> (String, usize) {
-    let clean = if path.contains('\t') {
-        Cow::Owned(path.replace('\t', "⇥"))
-    } else {
-        Cow::Borrowed(path)
-    };
-    let char_count = clean.chars().count();
-    if char_count <= max_w {
-        (
-            highlight_path_matches(&clean, indices, selected, palette),
-            char_count,
-        )
-    } else if max_w <= 2 {
-        let truncated: String = clean.chars().take(max_w).collect();
-        let len = truncated.chars().count();
-        (
-            highlight_path_matches(&truncated, indices, selected, palette),
-            len,
-        )
-    } else {
-        let keep_chars = max_w - 1;
-        let skip_chars = char_count - keep_chars;
-        let mut actual_skip = skip_chars;
-        if let Some(slash_offset) = clean
-            .chars()
-            .skip(skip_chars)
-            .take(8)
-            .position(|c| c == '/')
-        {
-            let candidate_skip = skip_chars + slash_offset;
-            if char_count - candidate_skip < max_w {
-                actual_skip = candidate_skip;
-            }
-        }
-
-        let tail: String = clean.chars().skip(actual_skip).collect();
-        let shifted_indices: Vec<usize> = indices
-            .iter()
-            .copied()
-            .filter(|&idx| idx >= actual_skip)
-            .map(|idx| idx - actual_skip)
-            .collect();
-        let default_color = if selected {
-            format!("\x1b[1m{}", palette.modal_title.fg_code())
-        } else {
-            palette.modal_text.fg_code()
-        };
-        let tail_highlighted = highlight_path_matches(&tail, &shifted_indices, selected, palette);
-        (
-            format!("{default_color}…{tail_highlighted}"),
-            1 + tail.chars().count(),
-        )
-    }
-}
+use crate::render::UiPalette;
 
 pub(crate) fn format_path_matches_spans(
     path: &str,
@@ -172,34 +111,4 @@ pub(crate) fn highlight_path_matches_spans(
         spans.push(Span::styled(cur_text, style));
     }
     spans
-}
-
-pub(crate) fn highlight_path_matches(
-    path: &str,
-    indices: &[usize],
-    selected: bool,
-    palette: &UiPalette,
-) -> String {
-    let mut out = String::new();
-    let default_color = if selected {
-        format!("\x1b[1m{}", palette.modal_title.fg_code())
-    } else {
-        palette.modal_text.fg_code()
-    };
-    let match_color = format!("\x1b[1m{}", palette.accent.fg_code());
-
-    let mut cur_matched = None;
-    for (i, ch) in path.char_indices() {
-        let is_m = indices.contains(&i);
-        if Some(is_m) != cur_matched {
-            if is_m {
-                out.push_str(&match_color);
-            } else {
-                out.push_str(&default_color);
-            }
-            cur_matched = Some(is_m);
-        }
-        out.push(ch);
-    }
-    out
 }

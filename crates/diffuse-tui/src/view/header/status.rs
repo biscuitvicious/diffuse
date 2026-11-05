@@ -1,7 +1,6 @@
-use super::text::{visible_width, wrap_text_by_visual_width};
 use crate::{
     core::{counts::FileCounts, wire::OutputFile},
-    render::{ColorExt, width::display_width},
+    render::width::display_width,
 };
 use ratatui::{
     style::{Modifier, Style},
@@ -31,47 +30,6 @@ pub struct StatusBarContext<'a> {
     pub hunk_counts: Option<FileCounts>,
     /// Active theme for status bar styling.
     pub theme: crate::render::DiffuseTheme,
-}
-
-/// Render the secondary status bar as ANSI strings: the shared
-/// [`status_layout`](crate::view::status_layout) segments emitted as escape
-/// runs (empty when no persistent or transient content; callers render a blank
-/// slot to hold layout and background).
-pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
-    use crate::view::status_layout::{StatusSegment, status_layout};
-
-    let bg_code = ctx.theme.palette.ui.status_bar_bg.bg_code();
-
-    let seg_ansi = |seg: &StatusSegment| -> String {
-        let bold = if seg.bold { "\x1b[1m" } else { "" };
-        let bold_off = if seg.bold { "\x1b[22m" } else { "" };
-        format!(
-            "{}{bold}{}{bold_off}\x1b[39m",
-            seg.color.fg_code(),
-            seg.text
-        )
-    };
-
-    let layout = status_layout(&ctx);
-    if layout.segments.is_empty() {
-        return Vec::new();
-    }
-    let line: String = layout.segments.iter().map(seg_ansi).collect();
-    if !layout.wraps {
-        let vw = visible_width(&line);
-        return vec![format!(
-            "{bg_code}{line}{}\x1b[0m",
-            " ".repeat(ctx.width.saturating_sub(vw))
-        )];
-    }
-    wrap_text_by_visual_width(&line, ctx.width)
-        .into_iter()
-        .map(|piece| {
-            let piece_vw = visible_width(&piece);
-            let pad = " ".repeat(ctx.width.saturating_sub(piece_vw));
-            format!("{bg_code}{piece}{pad}\x1b[0m")
-        })
-        .collect()
 }
 
 /// Render the secondary status bar as a styled Ratatui [`Line`], consuming

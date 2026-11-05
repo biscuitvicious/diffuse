@@ -5,7 +5,7 @@ use crate::{
         notes::NoteStatus,
         wire::{OutputFile, OutputNote},
     },
-    render::{ColorExt, DiffuseTheme},
+    render::DiffuseTheme,
 };
 use ratatui::{
     style::{Color, Modifier},
@@ -31,29 +31,23 @@ fn test_render_status_bar_styling() {
         hunk_counts: None,
         theme: crate::render::DiffuseTheme::dark(),
     };
-    let rendered = render_status_bar(ctx).join("\n");
-    let visible = crate::render::strip_ansi(&rendered);
-    assert_eq!(
-        visible.trim(),
-        "crates/diffuse-core/src/",
-        "secondary must carry the directory prefix, got: {visible}"
-    );
     let line = status_bar_line(ctx);
     assert_eq!(
         line.to_string().trim(),
         "crates/diffuse-core/src/",
         "TUI status line must carry the directory prefix"
     );
+    let text = line.to_string();
     assert!(
-        !rendered.contains("hunk 1/3"),
+        !text.contains("hunk 1/3"),
         "status bar must not show hunk badge"
     );
     assert!(
-        !rendered.contains("file 1/11"),
+        !text.contains("file 1/11"),
         "status bar must omit file count badge"
     );
     assert!(
-        !rendered.contains("prefix:"),
+        !text.contains("prefix:"),
         "status bar must not contain prefix:"
     );
 
@@ -75,7 +69,7 @@ fn test_render_status_bar_styling() {
         hunk_counts: None,
         theme: crate::render::DiffuseTheme::dark(),
     };
-    let rendered_root = render_status_bar(root_ctx).join("\n");
+    let rendered_root = status_bar_line(root_ctx).to_string();
     assert!(
         rendered_root.is_empty(),
         "status bar must be empty when no transient segments, got: {rendered_root}"
@@ -231,22 +225,6 @@ fn test_ratatui_header_and_status_lines() {
         !text.contains("hunk"),
         "status line must omit hunk data: {text}"
     );
-    let ansi = render_status_bar(ctx).join("\n");
-    let (a_stream, a_col, a_go, a_pfx) = (
-        ansi.find("streaming...").expect("ansi streaming"),
-        ansi.find("col 4+").expect("ansi col"),
-        ansi.find("go 12").expect("ansi go"),
-        ansi.find("src/").expect("ansi prefix"),
-    );
-    assert!(
-        a_stream < a_col && a_col < a_go && a_go < a_pfx,
-        "ANSI order must be streaming, col, go, prefix"
-    );
-    assert!(
-        !ansi.contains("hunk"),
-        "ANSI status bar must omit hunk data"
-    );
-
     // Renamed files do not show path in the secondary status bar.
     let rename_ctx = StatusBarContext {
         common_prefix: Some("crates/"),
@@ -277,10 +255,6 @@ fn test_ratatui_header_and_status_lines() {
     assert!(div.to_string().contains("──"));
     assert!(rib.to_string().starts_with(" [?]help [q]uit"));
     assert!(rib.to_string().contains("[j/k]move"));
-
-    let (ansi_div, ansi_rib) = render_bottom_ribbon(80, &DiffuseTheme::dark().palette.ui);
-    assert!(ansi_div.contains("──"));
-    assert!(ansi_rib.contains("[?]help [q]uit"));
 }
 
 #[test]
@@ -307,29 +281,6 @@ fn test_header_bar_zero_notes_suppressed() {
         new_bytes: None,
         raw_source: None,
     };
-    // ANSI status bar: must not contain "💬" when there are no notes.
-    let ansi = render_status_bar(StatusBarContext {
-        cur_fi: 0,
-        total_files: 1,
-        cur_hunk: 0,
-        total_hunks: 1,
-        raw_diff: false,
-        col_offset: 0,
-        num_buffer: "",
-        common_prefix: None,
-        width: 80,
-        is_streaming: false,
-        streaming_dot: "●",
-        status_message: None,
-        file: Some(&file),
-        hunk_counts: None,
-        theme: crate::render::DiffuseTheme::dark(),
-    })
-    .join("\n");
-    assert!(
-        !ansi.contains("💬"),
-        "ANSI status bar must not show note icon when there are no notes"
-    );
     // Ratatui status bar: must not contain "💬" when there are no notes.
     let line = status_bar_line(StatusBarContext {
         cur_fi: 0,
@@ -353,21 +304,19 @@ fn test_header_bar_zero_notes_suppressed() {
         "TUI status line must not show note icon when there are no notes"
     );
     // Top header with empty global counts: no note icon either.
-    let header_ansi = render_header_bar(
+    let header_line = header_bar_line(
         "repo",
-        80,
+        &DiffuseTheme::dark(),
         None,
         None,
         None,
         false,
-        &crate::render::DiffuseTheme::dark().palette.ui,
         None,
-    )
-    .join("\n");
-
+        usize::MAX,
+    );
     assert!(
-        !header_ansi.contains("💬"),
-        "ANSI header must not show note icon when global counts are empty"
+        !header_line.to_string().contains("💬"),
+        "header must not show note icon when global counts are empty"
     );
 }
 
@@ -429,7 +378,7 @@ fn test_header_bar_nonzero_notes_shown() {
         new_bytes: None,
         raw_source: None,
     };
-    // ANSI status bar: transient-only, so notes no longer surface here.
+    // Transient-only status bar: notes no longer surface here.
     let ctx = StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -447,11 +396,6 @@ fn test_header_bar_nonzero_notes_shown() {
         hunk_counts: Some(file.counts),
         theme: crate::render::DiffuseTheme::dark(),
     };
-    let ansi = render_status_bar(ctx).join("\n");
-    assert!(
-        ansi.is_empty(),
-        "ANSI status bar must be empty when no transient segments, got: {ansi}"
-    );
     // Ratatui status bar: must be empty when no transient segments.
     let line = status_bar_line(ctx);
     assert!(
@@ -467,43 +411,24 @@ fn test_header_bar_nonzero_notes_shown() {
         notes: 2,
         ..Default::default()
     };
-    let header_ansi = render_header_bar(
+    let header_line = header_bar_line(
         "repo",
-        80,
+        &DiffuseTheme::dark(),
         Some(global),
         None,
         None,
         false,
-        &crate::render::DiffuseTheme::dark().palette.ui,
         None,
-    )
-    .join("\n");
+        usize::MAX,
+    );
     assert!(
-        header_ansi.contains("💬2"),
-        "ANSI header must show global '💬2'"
+        header_line.to_string().contains("💬2"),
+        "header must show global '💬2'"
     );
 }
 
 #[test]
 fn test_header_bar_none_file_no_diffs() {
-    let ansi = render_header_bar(
-        "my_repo",
-        80,
-        None,
-        None,
-        None,
-        false,
-        &crate::render::DiffuseTheme::dark().palette.ui,
-        None,
-    )
-    .join("\n");
-
-    assert!(ansi.contains("my_repo"), "must contain repo name");
-    assert!(
-        !ansi.contains("crates/"),
-        "header must not contain the prefix (it lives in the secondary bar)"
-    );
-
     let line = header_bar_line(
         "my_repo",
         &DiffuseTheme::dark(),
@@ -554,13 +479,13 @@ fn test_status_bar_no_branch_indicator() {
     };
 
     // Branch indicator (glyph and name) should not appear in the status bar
-    let ansi = render_status_bar(ctx).join("\n");
+    let text = status_bar_line(ctx).to_string();
     assert!(
-        !ansi.contains("\u{2387}"),
+        !text.contains("\u{2387}"),
         "status bar must NOT show branch glyph"
     );
     assert!(
-        !ansi.contains("work"),
+        !text.contains("work"),
         "status bar must NOT show branch name"
     );
 }
@@ -584,8 +509,6 @@ fn test_status_bar_streaming_dot_blinking() {
         hunk_counts: None,
         theme: crate::render::DiffuseTheme::dark(),
     };
-    let ansi_on = render_status_bar(ctx_dot_on).join("\n");
-    assert!(ansi_on.contains("● streaming..."));
     let line_on = status_bar_line(ctx_dot_on);
     assert!(line_on.to_string().contains("● streaming..."));
 
@@ -606,8 +529,6 @@ fn test_status_bar_streaming_dot_blinking() {
         hunk_counts: None,
         theme: crate::render::DiffuseTheme::dark(),
     };
-    let ansi_off = render_status_bar(ctx_dot_off).join("\n");
-    assert!(ansi_off.contains("  streaming..."));
     let line_off = status_bar_line(ctx_dot_off);
     assert!(line_off.to_string().contains("  streaming..."));
 }
@@ -644,30 +565,6 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         raw_source: None,
     };
 
-    // ANSI renderer with modified status
-    let ansi_mod = render_status_bar(StatusBarContext {
-        cur_fi: 0,
-        total_files: 1,
-        cur_hunk: 0,
-        total_hunks: 1,
-        raw_diff: false,
-        col_offset: 0,
-        num_buffer: "",
-        common_prefix: None,
-        width: 80,
-        is_streaming: false,
-        streaming_dot: "●",
-        status_message: None,
-        file: Some(&file),
-        hunk_counts: None,
-        theme: crate::render::DiffuseTheme::dark(),
-    })
-    .join("\n");
-    assert!(
-        !ansi_mod.contains("(modified)"),
-        "ANSI status bar must omit '(modified)', got: {ansi_mod}"
-    );
-
     // Ratatui line renderer with modified status
     let line_mod = status_bar_line(StatusBarContext {
         cur_fi: 0,
@@ -694,28 +591,6 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
 
     // Now test with added status
     file.status = diffuse_core::FileStatus::Added;
-    let ansi_add = render_status_bar(StatusBarContext {
-        cur_fi: 0,
-        total_files: 1,
-        cur_hunk: 0,
-        total_hunks: 1,
-        raw_diff: false,
-        col_offset: 0,
-        num_buffer: "",
-        common_prefix: None,
-        width: 80,
-        is_streaming: false,
-        streaming_dot: "●",
-        status_message: None,
-        file: Some(&file),
-        hunk_counts: None,
-        theme: crate::render::DiffuseTheme::dark(),
-    })
-    .join("\n");
-    assert!(
-        !ansi_add.contains("(added)"),
-        "ANSI status bar must omit '(added)', got: {ansi_add}"
-    );
     let line_add = status_bar_line(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -741,28 +616,6 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
 
     // Test with deleted status
     file.status = diffuse_core::FileStatus::Deleted;
-    let ansi_del = render_status_bar(StatusBarContext {
-        cur_fi: 0,
-        total_files: 1,
-        cur_hunk: 0,
-        total_hunks: 1,
-        raw_diff: false,
-        col_offset: 0,
-        num_buffer: "",
-        common_prefix: None,
-        width: 80,
-        is_streaming: false,
-        streaming_dot: "●",
-        status_message: None,
-        file: Some(&file),
-        hunk_counts: None,
-        theme: crate::render::DiffuseTheme::dark(),
-    })
-    .join("\n");
-    assert!(
-        !ansi_del.contains("(deleted)"),
-        "ANSI status bar must omit '(deleted)', got: {ansi_del}"
-    );
     let line_del = status_bar_line(StatusBarContext {
         cur_fi: 0,
         total_files: 1,
@@ -976,100 +829,6 @@ fn test_header_bar_global_mod_counts_ratatui() {
         local_mov_text.is_empty(),
         "status line must be empty when no transient segments, got: {local_mov_text}"
     );
-    let local_mov_ansi = render_status_bar(status_ctx).join("\n");
-    assert!(
-        local_mov_ansi.is_empty(),
-        "ANSI status bar must be empty when no transient segments, got: {local_mov_ansi}"
-    );
-}
-
-#[test]
-fn test_header_bar_global_mod_counts_ansi() {
-    let file = OutputFile {
-        path: "AGENTS.md".to_string(),
-        old_path: None,
-        old_mode: None,
-        new_mode: None,
-        status: diffuse_core::FileStatus::Modified,
-        new_line_count: 10,
-        old_line_count: 10,
-        new_content: vec![],
-        old_content: vec![],
-        hunks: vec![],
-        raw_hunks: vec![],
-        counts: FileCounts {
-            adds: 15,
-            dels: 7,
-            mods: 6,
-            movs: 0,
-            notes: 0,
-            ..Default::default()
-        },
-        fences: vec![],
-        notes: vec![],
-        content_runs: vec![],
-        rows: vec![],
-        is_binary: false,
-        old_bytes: None,
-        new_bytes: None,
-        raw_source: None,
-    };
-
-    let global_counts = FileCounts {
-        adds: 15,
-        dels: 7,
-        mods: 6,
-        movs: 2,
-        notes: 0,
-        ..Default::default()
-    };
-
-    let ansi_lines = render_header_bar(
-        "diffuse",
-        120,
-        Some(global_counts),
-        None,
-        None,
-        false,
-        &crate::render::DiffuseTheme::dark().palette.ui,
-        None,
-    );
-
-    let joined = ansi_lines.join("\n");
-
-    // Check highlighted global mod counts in ANSI escapes
-    assert!(joined.contains("\x1b[1m\x1b[38;5;203m−7\x1b[0m"));
-    assert!(joined.contains("\x1b[1m\x1b[38;5;120m+15\x1b[0m"));
-    assert!(joined.contains("\x1b[1m\x1b[38;5;214m~6\x1b[0m"));
-    assert!(joined.contains("\x1b[1m\x1b[38;5;147m≈2\x1b[0m"));
-    assert!(
-        !joined.contains("AGENTS.md"),
-        "top header must not show the current file"
-    );
-
-    // The transient-only status bar is empty when no transient segments.
-    let status_ansi = render_status_bar(StatusBarContext {
-        cur_fi: 0,
-        total_files: 1,
-        cur_hunk: 0,
-        total_hunks: 1,
-        raw_diff: false,
-        col_offset: 0,
-        num_buffer: "",
-        common_prefix: None,
-        width: 120,
-        is_streaming: false,
-        streaming_dot: "●",
-        status_message: None,
-        file: Some(&file),
-        hunk_counts: None,
-        theme: crate::render::DiffuseTheme::dark(),
-    })
-    .join("\n");
-    assert!(
-        status_ansi.is_empty(),
-        "status bar must be empty when no transient segments, got: {status_ansi}"
-    );
 }
 
 #[test]
@@ -1171,8 +930,8 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
 }
 
 #[test]
-fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
-    use crate::view::header::{format_counts_ansi, format_counts_plain, format_counts_spans};
+fn test_format_counts_plain_and_spans_identical_underlying_struct() {
+    use crate::view::header::{format_counts_plain, format_counts_spans};
     let p = &crate::render::DiffuseTheme::dark().palette.ui;
 
     // Test with all change types populated
@@ -1186,10 +945,6 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
     };
 
     assert_eq!(format_counts_plain(&counts), "−7 +15 ~6 ≈2");
-    assert_eq!(
-        format_counts_ansi(&counts, p),
-        "\x1b[1m\x1b[38;5;203m−7\x1b[0m \x1b[1m\x1b[38;5;120m+15\x1b[0m \x1b[1m\x1b[38;5;214m~6\x1b[0m \x1b[1m\x1b[38;5;147m≈2\x1b[0m"
-    );
 
     let spans = format_counts_spans(&counts, p);
     assert_eq!(spans.len(), 4);
@@ -1212,10 +967,6 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
         ..Default::default()
     };
     assert_eq!(format_counts_plain(&del_only), "−4");
-    assert_eq!(
-        format_counts_ansi(&del_only, p),
-        "\x1b[1m\x1b[38;5;203m−4\x1b[0m"
-    );
     let del_spans = format_counts_spans(&del_only, p);
     assert_eq!(del_spans.len(), 1);
     assert_eq!(del_spans[0].content, "−4");
@@ -1223,7 +974,7 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
 
 #[test]
 fn test_format_counts_omit_zero_dels() {
-    use crate::view::header::{format_counts_ansi, format_counts_plain, format_counts_spans};
+    use crate::view::header::{format_counts_plain, format_counts_spans};
     let p = &crate::render::DiffuseTheme::dark().palette.ui;
 
     // No del lines: the −0 segment must be omitted like any other zero.
@@ -1236,10 +987,6 @@ fn test_format_counts_omit_zero_dels() {
         ..Default::default()
     };
     assert_eq!(format_counts_plain(&adds_only), "+3 ~1");
-    assert_eq!(
-        format_counts_ansi(&adds_only, p),
-        "\x1b[1m\x1b[38;5;120m+3\x1b[0m \x1b[1m\x1b[38;5;214m~1\x1b[0m"
-    );
     let spans = format_counts_spans(&adds_only, p);
     assert_eq!(spans.len(), 2);
     assert_eq!(spans[0].content, "+3");
@@ -1261,35 +1008,6 @@ fn test_format_counts_omit_zero_dels() {
 
 #[test]
 fn test_header_bar_shows_branch_indicator() {
-    let p = &crate::render::DiffuseTheme::dark().palette.ui;
-    // ANSI header with branch
-    let ansi =
-        render_header_bar("diffuse", 80, None, Some("main"), None, false, p, None).join("\n");
-    assert!(
-        ansi.contains("\u{2387}"),
-        "ANSI header must show branch glyph"
-    );
-    assert!(ansi.contains("main"), "ANSI header must show branch name");
-    assert!(ansi.contains("diffuse"), "ANSI header must show repo");
-    // The branch glyph itself is the separator — no `·` dot between the repo
-    // name and the branch glyph.
-    let repo_glyph_gap = ansi
-        .find("diffuse")
-        .and_then(|ri| ansi[ri..].find("\u{2387}").map(|gi| &ansi[ri..ri + gi]))
-        .unwrap_or("");
-    assert!(
-        !repo_glyph_gap.contains('\u{00b7}'),
-        "ANSI header must not place a dot between repo name and branch glyph"
-    );
-
-    // ANSI header without branch
-    let ansi_no_branch =
-        render_header_bar("diffuse", 80, None, None, None, false, p, None).join("\n");
-    assert!(
-        !ansi_no_branch.contains("\u{2387}"),
-        "ANSI header must not show branch glyph when branch is None"
-    );
-
     // Ratatui header with branch — verify spans contain branch
     let line = header_bar_line(
         "diffuse",
@@ -1353,23 +1071,7 @@ fn test_header_bar_shows_branch_indicator() {
 
 #[test]
 fn test_header_bar_shows_staged_indicator() {
-    let p = &crate::render::DiffuseTheme::dark().palette.ui;
-    // When is_staged is true, the header must show `(staged)` after the branch
-    let ansi = render_header_bar("diffuse", 80, None, Some("work"), None, true, p, None).join("\n");
-    let visible_ansi = crate::render::ansi::strip_ansi(&ansi);
-    assert!(
-        visible_ansi.contains("work"),
-        "ANSI header must show branch name"
-    );
-    assert!(
-        visible_ansi.contains("(staged)"),
-        "ANSI header must show (staged) indicator"
-    );
-    assert!(
-        ansi.contains("38;5;120m"),
-        "ANSI header must style staged in green"
-    );
-
+    // When is_staged is true, the header must show `(staged)` after the branch.
     // Ratatui line with is_staged
     let line = header_bar_line(
         "diffuse",
@@ -1400,7 +1102,6 @@ fn test_header_bar_shows_staged_indicator() {
 
 #[test]
 fn test_top_header_drops_file_section_and_counts_dot() {
-    let p = &crate::render::DiffuseTheme::dark().palette.ui;
     let global = FileCounts {
         adds: 15,
         dels: 7,
@@ -1409,31 +1110,6 @@ fn test_top_header_drops_file_section_and_counts_dot() {
         notes: 2,
         ..Default::default()
     };
-    // ANSI header: repo, glyph, branch, then global counts with no dot and
-    // no file section.
-    let ansi = render_header_bar(
-        "diffuse",
-        120,
-        Some(global),
-        Some("main"),
-        None,
-        false,
-        p,
-        None,
-    )
-    .join("\n");
-    assert!(ansi.contains("diffuse"), "must show repo name");
-    let visible = crate::render::ansi::strip_ansi(&ansi);
-    assert_eq!(
-        visible.trim_end(),
-        " diffuse \u{2387}main −7 +15 ~6 💬2",
-        "unexpected top header visible text"
-    );
-    assert!(
-        !visible.contains("main.rs"),
-        "top header must not show the current file"
-    );
-
     // Ratatui header renders the exact compact form.
     let line = header_bar_line(
         "diffuse",
@@ -1535,12 +1211,6 @@ fn test_status_bar_shows_file_and_hunk_stats() {
     };
 
     // Transient-only status bar omits hunk/file/counts data entirely.
-    let ansi = render_status_bar(ctx).join("\n");
-    assert!(
-        ansi.is_empty(),
-        "ANSI status bar must be empty when no transient segments, got: {ansi}"
-    );
-
     let line = status_bar_line(ctx);
     assert_eq!(
         line,
@@ -1606,13 +1276,6 @@ fn test_status_bar_full_badges() {
     let file = status_test_file("crates/diffuse-core/src/lib.rs");
     let mut ctx = status_ctx(Some(&file), 80);
     ctx.raw_diff = true;
-    let lines = render_status_bar(ctx);
-    assert_eq!(lines.len(), 1);
-    let plain = crate::render::strip_ansi(&lines[0]);
-    assert!(
-        plain.contains("raw diff"),
-        "single transient must fit on one line: {plain:?}"
-    );
     let line = status_bar_line(ctx);
     assert!(line.to_string().contains("raw diff"));
 }
@@ -1624,23 +1287,11 @@ fn test_status_bar_abbreviates_badges_on_overflow() {
     ctx.raw_diff = true;
     ctx.col_offset = 12;
     ctx.num_buffer = "42";
-    let lines = render_status_bar(ctx);
-    assert_eq!(lines.len(), 1, "must stay one line: {lines:?}");
-    let plain = crate::render::strip_ansi(&lines[0]);
+    let text = status_bar_line(ctx).to_string();
     assert!(
-        plain.contains("raw diff") && plain.contains("col 12+") && plain.contains("go 42"),
-        "multiple transients must be joined: {plain:?}"
+        text.contains("raw diff") && text.contains("col 12+") && text.contains("go 42"),
+        "multiple transients must be joined: {text:?}"
     );
-}
-
-#[test]
-fn test_status_bar_tight_width_falls_back_to_wrap() {
-    let file = status_test_file("crates/diffuse-core/src/lib.rs");
-    let mut ctx = status_ctx(Some(&file), 10);
-    ctx.raw_diff = true;
-    ctx.col_offset = 12;
-    let lines = render_status_bar(ctx);
-    assert!(lines.len() > 1, "must wrap: {lines:?}");
 }
 
 #[test]
@@ -1711,17 +1362,6 @@ fn test_status_bar_background_styled() {
             crate::render::DiffuseTheme::dark().palette.ui.status_bar_bg
         ))
     );
-    let dark_ansi = render_status_bar(ctx).join("\n");
-    assert!(
-        dark_ansi.contains(
-            &crate::render::DiffuseTheme::dark()
-                .palette
-                .ui
-                .status_bar_bg
-                .bg_code()
-        ),
-        "ANSI status bar must include dark status_bar_bg"
-    );
 
     // Light theme
     ctx.theme = crate::render::DiffuseTheme::light();
@@ -1734,17 +1374,6 @@ fn test_status_bar_background_styled() {
                 .ui
                 .status_bar_bg
         ))
-    );
-    let light_ansi = render_status_bar(ctx).join("\n");
-    assert!(
-        light_ansi.contains(
-            &crate::render::DiffuseTheme::light()
-                .palette
-                .ui
-                .status_bar_bg
-                .bg_code()
-        ),
-        "ANSI status bar must include light status_bar_bg"
     );
 }
 
@@ -1833,23 +1462,6 @@ fn test_header_bar_carries_the_file_count() {
         !unknown.contains("file"),
         "an unknown count is omitted: {unknown}"
     );
-
-    let ansi = render_header_bar(
-        "diffuse",
-        80,
-        Some(counts),
-        Some("work"),
-        None,
-        false,
-        &theme.palette.ui,
-        Some(11),
-    )
-    .join("\n");
-    let plain = crate::render::strip_ansi(&ansi);
-    assert!(
-        plain.contains("11 files"),
-        "the ansi header carries the count: {plain}"
-    );
 }
 
 #[test]
@@ -1899,26 +1511,5 @@ fn test_header_bar_drops_the_file_count_before_the_change_counts() {
     assert!(
         narrow.contains("+10") && narrow.contains("~73"),
         "a narrow header keeps the change counts: {narrow}"
-    );
-
-    let ansi = render_header_bar(
-        "diffuse",
-        25,
-        Some(counts),
-        Some("work"),
-        None,
-        false,
-        &theme.palette.ui,
-        Some(11),
-    )
-    .join("\n");
-    let plain = crate::render::strip_ansi(&ansi);
-    assert!(
-        !plain.contains("11 files"),
-        "a narrow ansi header drops the file count: {plain}"
-    );
-    assert!(
-        plain.contains("+10") && plain.contains("~73"),
-        "a narrow ansi header keeps the change counts: {plain}"
     );
 }

@@ -153,16 +153,6 @@ pub fn render_bottom_gap_divider_segment(
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
-/// Render a clean bottom divider for trailing hidden lines after the last hunk.
-pub fn render_bottom_gap_divider(
-    hidden_gap: usize,
-    is_current: bool,
-    content_width: usize,
-    theme: &DiffuseTheme,
-) -> String {
-    render_bottom_gap_divider_segment(hidden_gap, is_current, false, 0, content_width, theme)
-}
-
 /// Render a hunk header divider as a styled Ratatui [`Line`] with theme
 /// support.
 pub fn hunk_divider_line(
