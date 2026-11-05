@@ -5708,3 +5708,34 @@ fn test_is_reload_deferred_guards_active_interactions() {
     state.pending_editor = None;
     assert!(!state.is_reload_deferred());
 }
+
+#[test]
+fn test_header_file_count_waits_for_the_stream() {
+    let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-old\n+new\n";
+    let output = crate::core::pipeline::run_pipeline_full(
+        diff,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    let mut state = AppState::new(
+        output,
+        "repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    state.is_streaming = true;
+    let streaming = state.render_frame(120, 20);
+    assert!(
+        !streaming.contains("2 files") && !streaming.contains("1 file"),
+        "a growing total is not announced:\n{streaming}"
+    );
+
+    state.is_streaming = false;
+    let loaded = state.render_frame(120, 20);
+    assert!(
+        loaded.contains("2 files"),
+        "the loaded total is announced:\n{loaded}"
+    );
+}

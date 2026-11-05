@@ -4,15 +4,16 @@ use super::{
 };
 use crate::{
     core::counts::FileCounts,
-    render::{ColorExt, DiffuseTheme, UiPalette},
+    render::{ColorExt, DiffuseTheme, UiPalette, width::display_width},
 };
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
 
-/// Render the top review header bar: repo name, branch/commit-range glyph,
-/// and global counts.
+/// Render the top review header bar: repo name, branch/commit-range glyph, the
+/// number of reviewed files, and global counts.
+#[allow(clippy::too_many_arguments)]
 pub fn render_header_bar(
     repo: &str,
     width: usize,
@@ -21,6 +22,7 @@ pub fn render_header_bar(
     commit_range: Option<&str>,
     is_staged: bool,
     ui: &UiPalette,
+    total_files: Option<usize>,
 ) -> Vec<String> {
     let branch_seg = if let Some(range) = commit_range
         && !range.is_empty()
@@ -65,10 +67,29 @@ pub fn render_header_bar(
         _ => String::new(),
     };
 
-    let head_raw = format!(
-        " \x1b[1m{}{repo}\x1b[0m{branch_seg}{global_counts_seg}",
+    // The file count is omitted while the diff is streaming, where the number
+    // of files seen so far is not the number of files under review.
+    let files_seg = match total_files {
+        Some(n) => format!(
+            " {}{n} {}\x1b[0m",
+            ui.header_dim.fg_code(),
+            if n == 1 { "file" } else { "files" }
+        ),
+        None => String::new(),
+    };
+
+    let mut head_raw = format!(
+        " \x1b[1m{}{repo}\x1b[0m{branch_seg}{files_seg}{global_counts_seg}",
         ui.header_repo.fg_code()
     );
+    // The change counts say more than the file count, so the file count is what
+    // gives way first when the bar cannot hold the whole header.
+    if total_files.is_some() && visible_width(&head_raw) > width {
+        head_raw = format!(
+            " \x1b[1m{}{repo}\x1b[0m{branch_seg}{global_counts_seg}",
+            ui.header_repo.fg_code()
+        );
+    }
     let wrapped = wrap_text_by_visual_width(&head_raw, width);
     wrapped
         .into_iter()
@@ -98,7 +119,9 @@ pub fn render_bottom_ribbon(width: usize, ui: &UiPalette) -> (String, String) {
 }
 
 /// Render the review header bar as a styled Ratatui [`Line`] with theme
-/// support: repo name, branch/commit-range glyph, and global counts.
+/// support: repo name, branch/commit-range glyph, the number of reviewed
+/// files, and global counts.
+#[allow(clippy::too_many_arguments)]
 pub fn header_bar_line(
     repo: &str,
     theme: &DiffuseTheme,
@@ -106,7 +129,51 @@ pub fn header_bar_line(
     branch: Option<&str>,
     commit_range: Option<&str>,
     is_staged: bool,
+    total_files: Option<usize>,
+    width: usize,
 ) -> Line<'static> {
+    let mut spans = header_bar_spans(
+        repo,
+        theme,
+        global_counts,
+        branch,
+        commit_range,
+        is_staged,
+        total_files,
+    );
+    // The change counts say more than the file count, so the file count is what
+    // gives way first when the bar cannot hold the whole header.
+    if total_files.is_some() && spans_width(&spans) > width {
+        spans = header_bar_spans(
+            repo,
+            theme,
+            global_counts,
+            branch,
+            commit_range,
+            is_staged,
+            None,
+        );
+    }
+    let bg = crate::view::to_color(theme.palette.ui.header_bar_bg);
+    Line::from(spans).style(Style::default().bg(bg))
+}
+
+/// Visible width of a span sequence in terminal cells.
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(|span| display_width(&span.content)).sum()
+}
+
+/// Build the header bar spans: repo name, branch/commit-range glyph, the
+/// reviewed file count, and global change counts.
+fn header_bar_spans(
+    repo: &str,
+    theme: &DiffuseTheme,
+    global_counts: Option<FileCounts>,
+    branch: Option<&str>,
+    commit_range: Option<&str>,
+    is_staged: bool,
+    total_files: Option<usize>,
+) -> Vec<Span<'static>> {
     let mut spans = vec![
         Span::raw(" "),
         Span::styled(
@@ -178,6 +245,15 @@ pub fn header_bar_line(
         ));
     }
 
+    // The count is omitted while the diff is streaming, where the files seen so
+    // far are not the files under review.
+    if let Some(n) = total_files {
+        spans.push(Span::styled(
+            format!(" {n} {}", if n == 1 { "file" } else { "files" }),
+            Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
+        ));
+    }
+
     if let Some(ref gc) = global_counts
         && !gc.is_empty()
     {
@@ -187,8 +263,7 @@ pub fn header_bar_line(
         spans.extend(format_counts_spans(gc, &theme.palette.ui));
     }
 
-    let bg = crate::view::to_color(theme.palette.ui.header_bar_bg);
-    Line::from(spans).style(Style::default().bg(bg))
+    spans
 }
 
 /// Render the bottom navigation key-bindings ribbon as styled Ratatui

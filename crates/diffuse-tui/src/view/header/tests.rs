@@ -118,7 +118,16 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let header_line = header_bar_line("diffuse", &DiffuseTheme::dark(), None, None, None, false);
+    let header_line = header_bar_line(
+        "diffuse",
+        &DiffuseTheme::dark(),
+        None,
+        None,
+        None,
+        false,
+        None,
+        usize::MAX,
+    );
     assert!(header_line.to_string().contains("diffuse"));
     assert!(
         !header_line.to_string().contains("src/"),
@@ -153,7 +162,16 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let rename_header = header_bar_line("diffuse", &DiffuseTheme::dark(), None, None, None, false);
+    let rename_header = header_bar_line(
+        "diffuse",
+        &DiffuseTheme::dark(),
+        None,
+        None,
+        None,
+        false,
+        None,
+        usize::MAX,
+    );
     assert!(rename_header.to_string().contains("diffuse"));
     assert!(
         !rename_header.to_string().contains("crates/"),
@@ -343,6 +361,7 @@ fn test_header_bar_zero_notes_suppressed() {
         None,
         false,
         &crate::render::DiffuseTheme::dark().palette.ui,
+        None,
     )
     .join("\n");
 
@@ -456,6 +475,7 @@ fn test_header_bar_nonzero_notes_shown() {
         None,
         false,
         &crate::render::DiffuseTheme::dark().palette.ui,
+        None,
     )
     .join("\n");
     assert!(
@@ -474,6 +494,7 @@ fn test_header_bar_none_file_no_diffs() {
         None,
         false,
         &crate::render::DiffuseTheme::dark().palette.ui,
+        None,
     )
     .join("\n");
 
@@ -483,14 +504,32 @@ fn test_header_bar_none_file_no_diffs() {
         "header must not contain the prefix (it lives in the secondary bar)"
     );
 
-    let line = header_bar_line("my_repo", &DiffuseTheme::dark(), None, None, None, false);
+    let line = header_bar_line(
+        "my_repo",
+        &DiffuseTheme::dark(),
+        None,
+        None,
+        None,
+        false,
+        None,
+        usize::MAX,
+    );
     assert!(line.to_string().contains("my_repo"));
     assert!(
         !line.to_string().contains("crates/"),
         "header line must not contain the prefix"
     );
 
-    let plain_line = header_bar_line("my_repo", &DiffuseTheme::dark(), None, None, None, false);
+    let plain_line = header_bar_line(
+        "my_repo",
+        &DiffuseTheme::dark(),
+        None,
+        None,
+        None,
+        false,
+        None,
+        usize::MAX,
+    );
     assert!(plain_line.to_string().contains("my_repo"));
 }
 
@@ -845,6 +884,8 @@ fn test_header_bar_global_mod_counts_ratatui() {
         None,
         None,
         false,
+        None,
+        usize::MAX,
     );
     let text = header_line.to_string();
     assert_eq!(
@@ -893,6 +934,8 @@ fn test_header_bar_global_mod_counts_ratatui() {
         None,
         None,
         false,
+        None,
+        usize::MAX,
     );
     let mov_text = mov_header_line.to_string();
     assert_eq!(
@@ -989,6 +1032,7 @@ fn test_header_bar_global_mod_counts_ansi() {
         None,
         false,
         &crate::render::DiffuseTheme::dark().palette.ui,
+        None,
     );
 
     let joined = ansi_lines.join("\n");
@@ -1048,6 +1092,8 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         None,
         None,
         false,
+        None,
+        usize::MAX,
     );
     assert_eq!(none_line.to_string(), " diffuse −5 +20 ~3");
 
@@ -1089,6 +1135,8 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         None,
         None,
         false,
+        None,
+        usize::MAX,
     );
     assert_eq!(
         pfx_line.to_string(),
@@ -1215,7 +1263,8 @@ fn test_format_counts_omit_zero_dels() {
 fn test_header_bar_shows_branch_indicator() {
     let p = &crate::render::DiffuseTheme::dark().palette.ui;
     // ANSI header with branch
-    let ansi = render_header_bar("diffuse", 80, None, Some("main"), None, false, p).join("\n");
+    let ansi =
+        render_header_bar("diffuse", 80, None, Some("main"), None, false, p, None).join("\n");
     assert!(
         ansi.contains("\u{2387}"),
         "ANSI header must show branch glyph"
@@ -1234,7 +1283,8 @@ fn test_header_bar_shows_branch_indicator() {
     );
 
     // ANSI header without branch
-    let ansi_no_branch = render_header_bar("diffuse", 80, None, None, None, false, p).join("\n");
+    let ansi_no_branch =
+        render_header_bar("diffuse", 80, None, None, None, false, p, None).join("\n");
     assert!(
         !ansi_no_branch.contains("\u{2387}"),
         "ANSI header must not show branch glyph when branch is None"
@@ -1248,6 +1298,8 @@ fn test_header_bar_shows_branch_indicator() {
         Some("main"),
         None,
         false,
+        None,
+        usize::MAX,
     );
     let text = line.to_string();
     assert!(
@@ -1292,6 +1344,8 @@ fn test_header_bar_shows_branch_indicator() {
         None,
         Some("v1.0..v2.0"),
         false,
+        None,
+        usize::MAX,
     );
     assert!(line_range.to_string().contains("v1.0..v2.0"));
     assert!(line_range.to_string().contains("\u{2387}"));
@@ -1301,7 +1355,7 @@ fn test_header_bar_shows_branch_indicator() {
 fn test_header_bar_shows_staged_indicator() {
     let p = &crate::render::DiffuseTheme::dark().palette.ui;
     // When is_staged is true, the header must show `(staged)` after the branch
-    let ansi = render_header_bar("diffuse", 80, None, Some("work"), None, true, p).join("\n");
+    let ansi = render_header_bar("diffuse", 80, None, Some("work"), None, true, p, None).join("\n");
     let visible_ansi = crate::render::ansi::strip_ansi(&ansi);
     assert!(
         visible_ansi.contains("work"),
@@ -1324,6 +1378,8 @@ fn test_header_bar_shows_staged_indicator() {
         Some("work"),
         None,
         true,
+        None,
+        usize::MAX,
     );
     let text = line.to_string();
     assert!(text.contains("work"), "Ratatui line must show branch name");
@@ -1355,8 +1411,17 @@ fn test_top_header_drops_file_section_and_counts_dot() {
     };
     // ANSI header: repo, glyph, branch, then global counts with no dot and
     // no file section.
-    let ansi =
-        render_header_bar("diffuse", 120, Some(global), Some("main"), None, false, p).join("\n");
+    let ansi = render_header_bar(
+        "diffuse",
+        120,
+        Some(global),
+        Some("main"),
+        None,
+        false,
+        p,
+        None,
+    )
+    .join("\n");
     assert!(ansi.contains("diffuse"), "must show repo name");
     let visible = crate::render::ansi::strip_ansi(&ansi);
     assert_eq!(
@@ -1377,6 +1442,8 @@ fn test_top_header_drops_file_section_and_counts_dot() {
         Some("main"),
         None,
         false,
+        None,
+        usize::MAX,
     );
     assert_eq!(
         line.to_string(),
@@ -1697,4 +1764,161 @@ fn test_file_status_tag_unmodified_is_empty() {
 
     file.status = diffuse_core::FileStatus::Deleted;
     assert_eq!(file_status_tag(&file), " (deleted)");
+}
+
+#[test]
+fn test_header_bar_carries_the_file_count() {
+    let theme = DiffuseTheme::dark();
+    let counts = FileCounts {
+        adds: 10,
+        mods: 73,
+        ..Default::default()
+    };
+
+    let line = header_bar_line(
+        "diffuse",
+        &theme,
+        Some(counts),
+        Some("work"),
+        None,
+        false,
+        Some(11),
+        usize::MAX,
+    )
+    .to_string();
+    let branch_at = line.find("work").expect("header must carry the branch");
+    let files_at = line
+        .find("11 files")
+        .expect("header must carry the file count");
+    let counts_at = line
+        .find("+10")
+        .expect("header must carry the change counts");
+    assert!(
+        branch_at < files_at && files_at < counts_at,
+        "the file count sits between the branch and the counts: {line}"
+    );
+
+    let singular = header_bar_line(
+        "diffuse",
+        &theme,
+        None,
+        Some("work"),
+        None,
+        false,
+        Some(1),
+        usize::MAX,
+    )
+    .to_string();
+    assert!(
+        singular.contains("1 file"),
+        "one file is singular: {singular}"
+    );
+    assert!(
+        !singular.contains("1 files"),
+        "no plural for one file: {singular}"
+    );
+
+    let unknown = header_bar_line(
+        "diffuse",
+        &theme,
+        None,
+        Some("work"),
+        None,
+        false,
+        None,
+        usize::MAX,
+    )
+    .to_string();
+    assert!(
+        !unknown.contains("file"),
+        "an unknown count is omitted: {unknown}"
+    );
+
+    let ansi = render_header_bar(
+        "diffuse",
+        80,
+        Some(counts),
+        Some("work"),
+        None,
+        false,
+        &theme.palette.ui,
+        Some(11),
+    )
+    .join("\n");
+    let plain = crate::render::strip_ansi(&ansi);
+    assert!(
+        plain.contains("11 files"),
+        "the ansi header carries the count: {plain}"
+    );
+}
+
+#[test]
+fn test_header_bar_drops_the_file_count_before_the_change_counts() {
+    let theme = DiffuseTheme::dark();
+    let counts = FileCounts {
+        adds: 10,
+        mods: 73,
+        ..Default::default()
+    };
+
+    let wide = header_bar_line(
+        "diffuse",
+        &theme,
+        Some(counts),
+        Some("work"),
+        None,
+        false,
+        Some(11),
+        80,
+    )
+    .to_string();
+    assert!(
+        wide.contains("11 files"),
+        "a wide header keeps the file count: {wide}"
+    );
+    assert!(
+        wide.contains("+10") && wide.contains("~73"),
+        "a wide header keeps the change counts: {wide}"
+    );
+
+    let narrow = header_bar_line(
+        "diffuse",
+        &theme,
+        Some(counts),
+        Some("work"),
+        None,
+        false,
+        Some(11),
+        25,
+    )
+    .to_string();
+    assert!(
+        !narrow.contains("11 files"),
+        "a narrow header drops the file count: {narrow}"
+    );
+    assert!(
+        narrow.contains("+10") && narrow.contains("~73"),
+        "a narrow header keeps the change counts: {narrow}"
+    );
+
+    let ansi = render_header_bar(
+        "diffuse",
+        25,
+        Some(counts),
+        Some("work"),
+        None,
+        false,
+        &theme.palette.ui,
+        Some(11),
+    )
+    .join("\n");
+    let plain = crate::render::strip_ansi(&ansi);
+    assert!(
+        !plain.contains("11 files"),
+        "a narrow ansi header drops the file count: {plain}"
+    );
+    assert!(
+        plain.contains("+10") && plain.contains("~73"),
+        "a narrow ansi header keeps the change counts: {plain}"
+    );
 }

@@ -621,8 +621,8 @@ fn test_initial_screen_rendered_visual_frame() {
     }
     println!("└{}┘\n", "─".repeat(width));
 
-    // Row 0: Top Header Bar (repo + global mod counts, no file section)
-    assert!(screen_lines[0].starts_with(" diffuse +1 ~1"));
+    // Row 0: Top Header Bar (repo + reviewed file count + global mod counts)
+    assert!(screen_lines[0].starts_with(" diffuse 1 file +1 ~1"));
     assert!(screen_lines[0].contains("+1"));
     assert!(screen_lines[0].contains("~1"));
     assert!(!screen_lines[0].contains("filesystem.rs"));
