@@ -45,7 +45,11 @@ pub fn render_hunk_divider_segment(
     theme: &DiffuseTheme,
 ) -> String {
     let txt = hunk_divider_text(badge, hunk, hidden_gap);
-    let (bg, fg) = theme.palette.hunk_divider_colors(is_selected, is_current);
+
+    let divider = theme.scoped_palette()
+        [crate::render::Cursor::from_banner_state(is_selected, is_current)]
+    .hunk_divider;
+    let (bg, fg) = (divider.bg, divider.fg);
     let bg_code = match bg {
         crate::render::Color::Primary => String::new(),
         color => color.bg_code(),
@@ -123,7 +127,11 @@ pub fn render_bottom_gap_divider_segment(
     theme: &DiffuseTheme,
 ) -> String {
     let txt = bottom_gap_divider_text(hidden_gap);
-    let (bg, fg) = theme.palette.hunk_divider_colors(is_selected, is_current);
+
+    let divider = theme.scoped_palette()
+        [crate::render::Cursor::from_banner_state(is_selected, is_current)]
+    .hunk_divider;
+    let (bg, fg) = (divider.bg, divider.fg);
     let bg_code = match bg {
         crate::render::Color::Primary => String::new(),
         color => color.bg_code(),
@@ -175,7 +183,11 @@ pub fn hunk_divider_line(
     } else {
         slice_by_visual_width(&txt, 0, content_width)
     };
-    let (bg, fg) = theme.palette.hunk_divider_colors(false, is_current);
+
+    let divider = theme.scoped_palette()
+        [crate::render::Cursor::from_banner_state(false, is_current)]
+    .hunk_divider;
+    let (bg, fg) = (divider.bg, divider.fg);
     let mut style = Style::default()
         .fg(crate::view::to_color(fg))
         .add_modifier(Modifier::BOLD);
@@ -201,7 +213,11 @@ pub fn bottom_gap_divider_line(
     } else {
         slice_by_visual_width(&txt, 0, content_width)
     };
-    let (bg, fg) = theme.palette.hunk_divider_colors(is_selected, is_current);
+
+    let divider = theme.scoped_palette()
+        [crate::render::Cursor::from_banner_state(is_selected, is_current)]
+    .hunk_divider;
+    let (bg, fg) = (divider.bg, divider.fg);
     let mut style = Style::default()
         .fg(crate::view::to_color(fg))
         .add_modifier(Modifier::BOLD);

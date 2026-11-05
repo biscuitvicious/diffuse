@@ -6,19 +6,28 @@ use std::collections::HashMap;
 use crate::{
     app::AppState,
     core::notes::{ReviewNote, query_notes_for_file},
-    render::{Color, ColorExt, FG_RESET, render_note_callout_lines},
+    render::{
+        Color, ColorExt, Cursor, DiffKind, DiffuseTheme, FG_RESET, render_note_callout_lines,
+    },
 };
 
 /// Apply cursor focus highlight to a rendered note callout line: switches the
 /// left-edge stripe from the status color to active cyan, and if
-/// `is_current_line` is true, highlights the line background with cursor
-/// background (`Fixed(237)`).
-pub(crate) fn style_focused_note_line(nline: &str, is_current_line: bool) -> String {
+/// `is_current_line` is true, highlights the line background with the
+/// row-tier ctx cursor background.
+pub(crate) fn style_focused_note_line(
+    nline: &str,
+    is_current_line: bool,
+    theme: &DiffuseTheme,
+) -> String {
     let gutter_fg = Color::Rgb(220, 220, 20).fg_code();
     let glyph_fg = Color::Fixed(255).fg_code();
     let cyan_fg = "\x1b[38;5;81m";
     let note_bg = Color::Fixed(234).bg_code();
-    let cursor_bg = Color::Fixed(237).bg_code();
+    let cursor_bg = theme.scoped_palette()[Cursor::Row][DiffKind::Ctx]
+        .surface
+        .bg
+        .bg_code();
     let active_bg = if is_current_line {
         cursor_bg.as_str()
     } else {

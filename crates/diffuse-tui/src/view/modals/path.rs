@@ -7,14 +7,14 @@ use ratatui::{
     text::Span,
 };
 
-use crate::render::{ColorExt, ThemePalette};
+use crate::render::{ColorExt, UiPalette};
 
 pub(crate) fn format_path_matches(
     path: &str,
     indices: &[usize],
     max_w: usize,
     selected: bool,
-    palette: &ThemePalette,
+    palette: &UiPalette,
 ) -> (String, usize) {
     let clean = if path.contains('\t') {
         Cow::Owned(path.replace('\t', "⇥"))
@@ -75,7 +75,7 @@ pub(crate) fn format_path_matches_spans(
     indices: &[usize],
     max_w: usize,
     selected: bool,
-    palette: &ThemePalette,
+    palette: &UiPalette,
 ) -> Vec<Span<'static>> {
     let clean = if path.contains('\t') {
         Cow::Owned(path.replace('\t', "⇥"))
@@ -133,7 +133,7 @@ pub(crate) fn highlight_path_matches_spans(
     path: &str,
     indices: &[usize],
     selected: bool,
-    palette: &ThemePalette,
+    palette: &UiPalette,
 ) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     let default_style = if selected {
@@ -178,7 +178,7 @@ pub(crate) fn highlight_path_matches(
     path: &str,
     indices: &[usize],
     selected: bool,
-    palette: &ThemePalette,
+    palette: &UiPalette,
 ) -> String {
     let mut out = String::new();
     let default_color = if selected {

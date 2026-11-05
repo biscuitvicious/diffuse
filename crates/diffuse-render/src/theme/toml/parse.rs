@@ -53,6 +53,16 @@ pub enum ThemeParseError {
     #[error("invalid theme: {0}")]
     Toml(#[from] toml::de::Error),
 
+    /// An unusable color value (`"none"` clear sentinel) reaches a slot that
+    /// cannot represent it.
+    #[error("unusable color 'none' in '{path}'")]
+    InvalidColor {
+        /// The offending raw value (`none`).
+        value: String,
+        /// Dotted path of the offending key (`{section}.{field}`).
+        path: String,
+    },
+
     /// A `$variable` reference (or bare swatch name) does not match any
     /// primitive in the effective `[palette]` table.
     #[error("unresolved palette variable '${name}' in '{path}'")]
@@ -90,6 +100,12 @@ pub struct ParsedTheme {
     pub name: String,
     /// Effective application mode, selecting primitive and syntax baselines.
     pub mode: Mode,
+    /// Name of the theme paired for the light terminal mode, declared by the
+    /// self document's `[theme]` metadata.
+    pub light_pair: Option<String>,
+    /// Name of the theme paired for the dark terminal mode, declared by the
+    /// self document's `[theme]` metadata.
+    pub dark_pair: Option<String>,
 }
 
 /// Parse a declarative theme document into a scoped palette.
@@ -140,10 +156,18 @@ pub fn parse_theme_str(source: &str) -> Result<ParsedTheme, ThemeParseError> {
         .unwrap_or_else(|| "default".to_string());
 
     let palette = cascade::compile(&models, mode)?;
+    // Pairing metadata comes from the self document only (a theme pairs the
+    // opposite mode it declares, not one inherited from a base).
+    let (light_pair, dark_pair) = match models.first() {
+        Some(self_model) => (self_model.light_pair.clone(), self_model.dark_pair.clone()),
+        None => (None, None),
+    };
     Ok(ParsedTheme {
         palette,
         name,
         mode,
+        light_pair,
+        dark_pair,
     })
 }
 
@@ -237,6 +261,20 @@ mod equivalence {
                     (DiffKind::Ctx, _) => (legacy.ctx_gutter_out_hunk, legacy.ctx_gutter_out_hunk),
                     _ => (num, icon),
                 };
+                // The cursor tier carries the interactive cursor/fill
+                // backgrounds (legacy `*_cursor_bg` / `*_fill_cursor_bg`);
+                // del and mov carry no fill-cursor (dead legacy fields).
+                let (bg, fill) = if cursor == Cursor::Row {
+                    match kind {
+                        DiffKind::Ctx => (legacy.ctx_cursor_bg, None),
+                        DiffKind::Add => (legacy.add_cursor_bg, Some(legacy.add_fill_cursor_bg)),
+                        DiffKind::Del => (legacy.del_cursor_bg, None),
+                        DiffKind::Mod => (legacy.mod_cursor_bg, Some(legacy.mod_fill_cursor_bg)),
+                        DiffKind::Mov => (legacy.mov_cursor_bg, None),
+                    }
+                } else {
+                    (bg, fill)
+                };
                 assert_eq!(
                     palette.surface.bg, bg,
                     "{mode:?} {kind:?} surface.bg at {cursor:?}"
@@ -311,6 +349,18 @@ mod equivalence {
             assert_eq!(header.bg, bg, "{mode:?} file_header.bg at {cursor:?}");
             assert_eq!(header.fg, fg, "{mode:?} file_header.fg at {cursor:?}");
             assert_eq!(header.fill, None);
+            // Phase 6: the banner path color (per-state path white).
+            let path = match cursor {
+                Cursor::Rest => legacy.file_header_path_rest,
+                Cursor::File => legacy.file_header_path_current,
+                Cursor::Row => legacy.file_header_path_selected,
+                _ => unreachable!("banner states exist at rest/file/row"),
+            };
+            assert_eq!(
+                header.fg_or_path(),
+                path,
+                "{mode:?} file_header.path at {cursor:?}"
+            );
         }
         for (cursor, bg, fg) in [
             (
@@ -333,6 +383,22 @@ mod equivalence {
             assert_eq!(divider.bg, bg, "{mode:?} hunk_divider.bg at {cursor:?}");
             assert_eq!(divider.fg, fg, "{mode:?} hunk_divider.fg at {cursor:?}");
             assert_eq!(divider.fill, None);
+            // The hunk divider carries no override: unset paths resolve to
+            // the banner foreground at cascade time.
+            assert_eq!(
+                divider.fg_or_path(),
+                fg,
+                "{mode:?} hunk_divider.fg_or_path at {cursor:?}"
+            );
+        }
+
+        // Phase 6: the visual-selection band cascades from the rest baseline
+        // to every tier (legacy `band_bg`).
+        for cursor in Cursor::cascade() {
+            assert_eq!(
+                theme.palette[cursor].band.bg, legacy.band_bg,
+                "{mode:?} band.bg at {cursor:?}"
+            );
         }
 
         // UI chrome, verified field-for-field.
@@ -350,6 +416,7 @@ mod equivalence {
         }
         ui_field_eq!(
             bg_base,
+            text,
             warning,
             note,
             accent,
@@ -529,6 +596,25 @@ mod tests {
         let error = parse_theme_str("not [ toml[").unwrap_err();
         assert!(error.to_string().starts_with("invalid theme:"));
         assert!(matches!(error, ThemeParseError::Toml(_)));
+    }
+
+    #[test]
+    fn test_fill_none_clears_inherited_fill() {
+        // The Clear sentinel unsets an otherwise cascading fill; `bg`/`fg`
+        // slots cannot represent it and reject at compile time.
+        let theme =
+            parse_theme_str("[row.del]\nbg = 1\nfill = \"none\"\n[rest.add]\nbg = 2\nfill = 3\n")
+                .unwrap();
+        let del = theme.palette[Cursor::Row][DiffKind::Del];
+        assert_eq!(del.surface.fill, None, "explicit none clears the fill");
+        let add = theme.palette[Cursor::Rest][DiffKind::Add];
+        assert_eq!(add.surface.fill, Some(Color::Fixed(3)));
+
+        let error = parse_theme_str("[rest.ctx]\nbg = \"none\"\n").unwrap_err();
+        assert!(
+            matches!(error, ThemeParseError::InvalidColor { .. }),
+            "bg slots reject the none sentinel: {error}"
+        );
     }
 
     #[test]

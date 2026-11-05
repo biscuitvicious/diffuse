@@ -47,6 +47,9 @@ pub enum ColorValue {
     /// Terminal primary styling: the unmodified default color
     /// (`Color::Primary`).
     Primary,
+    /// Explicitly clears an inherited value to unset (`"none"`); semantics
+    /// depend on the slot (`fill` slots resolve to `None`).
+    Clear,
     /// A `$variable` reference (forced) or a named primitive swatch.
     Named(String),
     /// `#RRGGBB` hexadecimal literal.
@@ -64,12 +67,15 @@ impl<'de> Deserialize<'de> for ColorValue {
 
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str(
-                    "a color (\"#RRGGBB\", an ANSI 256 index, \"primary\", or a variable name)",
+                    "a color (\"#RRGGBB\", an ANSI 256 index, \"primary\", \"none\", or a \
+                     variable name)",
                 )
             }
 
             fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<ColorValue, E> {
-                if s == "primary" {
+                if s == "none" {
+                    Ok(ColorValue::Clear)
+                } else if s == "primary" {
                     Ok(ColorValue::Primary)
                 } else if let Some(hex) = s.strip_prefix('#') {
                     let [r, g, b] = parse_hex_triplet(hex).map_err(|_| {
@@ -141,6 +147,8 @@ pub struct SurfaceModel {
     pub bg: Option<ColorValue>,
     pub fill: Option<ColorValue>,
     pub fg: Option<ColorValue>,
+    /// Banner path text color (the file-header filename foreground).
+    pub path: Option<ColorValue>,
 }
 
 /// Per-diff-kind override slots: surface (`bg`/`fill`/`fg`), gutter
@@ -157,12 +165,14 @@ pub struct DiffModel {
 }
 
 /// Per-cursor-tier override tables, keyed by diff kind (the `mov` channel
-/// covers both relocation sides).
+/// covers both relocation sides). `band` carries the visual-selection band
+/// surface for rows at this tier.
 #[derive(Clone, Default, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CursorModel {
     pub file_header: Option<SurfaceModel>,
     pub hunk_divider: Option<SurfaceModel>,
+    pub band: Option<SurfaceModel>,
     pub ctx: Option<DiffModel>,
     pub add: Option<DiffModel>,
     pub del: Option<DiffModel>,
@@ -194,6 +204,7 @@ impl CursorModel {
 #[serde(deny_unknown_fields)]
 pub struct UiModel {
     pub bg_base: Option<ColorValue>,
+    pub text: Option<ColorValue>,
     pub bg_modal: Option<ColorValue>,
     pub warning: Option<ColorValue>,
     pub note: Option<ColorValue>,
@@ -338,6 +349,41 @@ mod tests {
         // Unknown keys anywhere are rejected.
         assert!(toml::from_str::<Wrap>("num = 1\nicon = 2\nunknown = 3\n").is_err());
         assert!(toml::from_str::<Wrap>("num = 1\nicon = 2\n[noneMisc]\nbg = 3\n").is_err());
+    }
+
+    #[test]
+    fn test_surface_model_path_slot() {
+        // Phase 6: banner path color (the file-header filename foreground).
+        let surface: SurfaceModel = toml::from_str("bg = 234\nfg = 251\npath = 254\n").unwrap();
+        assert_eq!(surface.path, Some(ColorValue::Indexed(254)));
+        assert!(
+            toml::from_str::<SurfaceModel>("bg = 1")
+                .unwrap()
+                .path
+                .is_none()
+        );
+
+        // The `none` clear sentinel parses as `Clear`, distinct from
+        // `primary` and from plain named swatches.
+        assert_eq!(
+            toml::from_str::<SurfaceModel>("fill = \"none\"")
+                .unwrap()
+                .fill,
+            Some(ColorValue::Clear)
+        );
+    }
+
+    #[test]
+    fn test_cursor_model_band_slot() {
+        // Phase 6: the visual-selection band is a per-tier surface in the
+        // cursor model, not a diff-kind slot.
+        let cursor: CursorModel =
+            toml::from_str("[band]\nbg = 235\nfg = \"primary\"\n[add]\nbg = 2\n").unwrap();
+        assert_eq!(
+            cursor.band.as_ref().and_then(|band| band.bg.clone()),
+            Some(ColorValue::Indexed(235))
+        );
+        assert!(cursor.add.is_some());
     }
 
     #[test]

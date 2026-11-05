@@ -5,11 +5,15 @@
 //! 1. Canvas background (`bg`)
 //! 2. Optional interior highlight or emphasis fill (`fill`)
 //! 3. Foreground text or content glyphs (`fg`)
+//!
+//! Banner surfaces additionally carry a `path` color (the file-header
+//! filename foreground); unset paths resolve to the foreground at cascade
+//! time, so banners without path data share the foreground color.
 
 use yansi::{Color, Style};
 
 /// Three-layer composite surface colors for background, optional interior fill,
-/// and foreground glyphs.
+/// and foreground glyphs, plus the banner path color.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SurfaceColors {
     /// Layer 1: Base surface canvas background.
@@ -19,6 +23,9 @@ pub struct SurfaceColors {
     pub fill: Option<Color>,
     /// Layer 3: Foreground text or primary content glyphs.
     pub fg: Color,
+    /// Banner path text color (file-header filename); `None` resolves to the
+    /// foreground at cascade time.
+    pub path: Option<Color>,
 }
 
 impl SurfaceColors {
@@ -26,7 +33,12 @@ impl SurfaceColors {
     #[inline]
     #[must_use]
     pub const fn new(bg: Color, fg: Color) -> Self {
-        Self { bg, fill: None, fg }
+        Self {
+            bg,
+            fill: None,
+            fg,
+            path: None,
+        }
     }
 
     /// Construct a new surface with an interior emphasis fill.
@@ -37,6 +49,17 @@ impl SurfaceColors {
             bg,
             fill: Some(fill),
             fg,
+            path: None,
+        }
+    }
+
+    /// The surface without path data: `path` falls back to the foreground.
+    #[inline]
+    #[must_use]
+    pub const fn fg_or_path(&self) -> Color {
+        match self.path {
+            Some(path) => path,
+            None => self.fg,
         }
     }
 
@@ -102,6 +125,7 @@ impl Default for SurfaceColors {
             bg: Color::Primary,
             fill: None,
             fg: Color::Primary,
+            path: None,
         }
     }
 }
@@ -150,6 +174,24 @@ mod tests {
             sc.text_with_fill_style(),
             Style::new().bg(Color::Fixed(30)).fg(Color::Fixed(120))
         );
+    }
+
+    #[test]
+    fn test_surface_colors_path_layer() {
+        // Phase 6: banner path color; unset paths resolve to the foreground.
+        let unset = SurfaceColors::new(Color::Fixed(233), Color::Fixed(120));
+        assert_eq!(unset.path, None);
+        assert_eq!(unset.fg_or_path(), Color::Fixed(120));
+
+        let with_path = SurfaceColors {
+            path: Some(Color::Fixed(251)),
+            ..unset
+        };
+        assert_eq!(with_path.fg_or_path(), Color::Fixed(251));
+
+        let defaulted = SurfaceColors::default();
+        assert_eq!(defaulted.path, None);
+        assert_eq!(defaulted.fg_or_path(), Color::Primary);
     }
 
     #[test]

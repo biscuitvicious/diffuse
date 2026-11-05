@@ -20,14 +20,17 @@ use super::super::{
     surface::SurfaceColors,
 };
 
-/// Styling for one cursor tier: banner surfaces plus one [`DiffPalette`]
-/// per diff kind, dual-indexed by `palette[cursor][kind]`.
+/// Styling for one cursor tier: banner surfaces, the visual-selection band
+/// surface, and one [`DiffPalette`] per diff kind, dual-indexed by
+/// `palette[cursor][kind]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct CursorPalette {
     /// File header banner surface.
     pub file_header: SurfaceColors,
     /// Hunk divider banner surface.
     pub hunk_divider: SurfaceColors,
+    /// Visual-selection band surface for diff rows at this tier.
+    pub band: SurfaceColors,
     /// Per-kind diff styling, indexed by [`DiffKind`].
     pub diffs: [DiffPalette; DiffKind::COUNT],
 }
@@ -42,18 +45,20 @@ impl ops::Index<DiffKind> for CursorPalette {
 }
 
 impl CursorPalette {
-    /// Construct a cursor-tier palette from its banner surfaces and diff
-    /// palettes.
+    /// Construct a cursor-tier palette from its banner surfaces, band
+    /// surface, and diff palettes.
     #[inline]
     #[must_use]
     pub const fn new(
         file_header: SurfaceColors,
         hunk_divider: SurfaceColors,
+        band: SurfaceColors,
         diffs: [DiffPalette; DiffKind::COUNT],
     ) -> Self {
         Self {
             file_header,
             hunk_divider,
+            band,
             diffs,
         }
     }
@@ -64,6 +69,8 @@ impl CursorPalette {
 pub struct UiPalette {
     /// Application background canvas.
     pub bg_base: Color,
+    /// Base diff text foreground (terminal default when unset).
+    pub text: Color,
     /// Modal / overlay background canvas.
     pub bg_modal: Color,
 

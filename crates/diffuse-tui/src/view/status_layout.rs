@@ -27,7 +27,7 @@ fn push_segment(
     text: String,
     color: Color,
     bold: bool,
-    p: &crate::render::ThemePalette,
+    p: &crate::render::UiPalette,
 ) {
     if !segs.is_empty() {
         segs.push(StatusSegment {
@@ -49,7 +49,7 @@ fn push_segment(
 /// persistent empty-state notice (zero files), then the transient
 /// indicators.
 fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
-    let p = &ctx.theme.palette;
+    let p = &ctx.theme.scoped_palette().ui;
     let mut segs = Vec::new();
     if let Some((msg, is_ok)) = ctx.status_message {
         let color = if is_ok { p.header_staged } else { p.count_dels };
@@ -297,14 +297,20 @@ mod tests {
         let ok = status_layout(&c);
         assert_eq!(
             ok.segments[0].color,
-            crate::render::DiffuseTheme::DEFAULT.palette.header_staged
+            crate::render::DiffuseTheme::DEFAULT
+                .scoped_palette()
+                .ui
+                .header_staged
         );
         assert!(ok.segments[0].bold);
         c.status_message = Some(("bad note", false));
         let err = status_layout(&c);
         assert_eq!(
             err.segments[0].color,
-            crate::render::DiffuseTheme::DEFAULT.palette.count_dels
+            crate::render::DiffuseTheme::DEFAULT
+                .scoped_palette()
+                .ui
+                .count_dels
         );
         assert!(err.segments[0].bold);
     }

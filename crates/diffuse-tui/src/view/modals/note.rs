@@ -20,7 +20,7 @@ pub fn render_note_modal_widget(
     theme: &DiffuseTheme,
     area: Rect,
 ) {
-    let p = &theme.palette;
+    let p = &theme.scoped_palette().ui;
     let margin_w = if area.width <= 60 { 2 } else { 4 };
     let modal_w = area.width.saturating_sub(margin_w).min(88);
 
@@ -72,7 +72,7 @@ pub fn render_note_modal_widget(
         .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(crate::view::to_color(p.modal_bg))
+                .bg(crate::view::to_color(p.bg_modal))
                 .fg(crate::view::to_color(p.modal_text)),
         );
 

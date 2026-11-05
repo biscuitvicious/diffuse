@@ -136,6 +136,64 @@ fn test_row_style_methods() {
 }
 
 #[test]
+fn test_row_style_scoped_parity() {
+    // Phase 6: row_style now reads through the scoped palette (rest tier for
+    // tint/underlying style, row tier for cursor backgrounds); output must
+    // match the legacy flat values for every kind, in both modes.
+    for theme in [DiffuseTheme::DEFAULT, DiffuseTheme::LIGHT] {
+        let legacy = theme.palette;
+        let add = theme.row_style(diffuse_core::parse::RowKind::Add);
+        assert_eq!(add.tint_bg, legacy.add_tint_bg);
+        assert_eq!(add.cursor_bg, legacy.add_cursor_bg);
+        assert_eq!(add.fill_bg, Some(legacy.add_fill_bg));
+        assert_eq!(add.fill_cursor_bg, Some(legacy.add_fill_cursor_bg));
+        assert_eq!(add.fg, legacy.add_fg, "{:?}", theme.name);
+
+        let del = theme.row_style(diffuse_core::parse::RowKind::Del);
+        assert_eq!(del.tint_bg, legacy.del_tint_bg);
+        assert_eq!(del.cursor_bg, legacy.del_cursor_bg);
+        assert_eq!(del.fill_bg, None, "del has no fill (dead legacy field)");
+        assert_eq!(del.fill_cursor_bg, None);
+        assert_eq!(del.fg, legacy.del_fg);
+
+        let r#mod = theme.row_style(diffuse_core::parse::RowKind::Mod);
+        assert_eq!(r#mod.tint_bg, legacy.mod_tint_bg);
+        assert_eq!(r#mod.cursor_bg, legacy.mod_cursor_bg);
+        assert_eq!(r#mod.fill_bg, Some(legacy.mod_fill_bg));
+        assert_eq!(r#mod.fill_cursor_bg, Some(legacy.mod_fill_cursor_bg));
+        assert_eq!(r#mod.fg, legacy.mod_fg);
+
+        let mov = theme.row_style(diffuse_core::parse::RowKind::Mov);
+        assert_eq!(mov.tint_bg, legacy.mov_tint_bg);
+        assert_eq!(mov.cursor_bg, legacy.mov_cursor_bg);
+        assert_eq!(mov.fill_bg, None);
+        assert_eq!(mov.fill_cursor_bg, None);
+        assert_eq!(mov.fg, legacy.mov_fg);
+    }
+}
+
+#[test]
+fn test_theme_paired_mode_toggle() {
+    // Phase 6: the `t`-key mode toggle resolves the opposite-mode pair
+    // declared by the theme's asset metadata, not hardcoded constants.
+    assert_eq!(
+        DiffuseTheme::DEFAULT.paired(),
+        Some(DiffuseTheme::LIGHT),
+        "dark pairs to light"
+    );
+    assert_eq!(
+        DiffuseTheme::LIGHT.paired(),
+        Some(DiffuseTheme::DEFAULT),
+        "light pairs to dark"
+    );
+    // Round trip: toggling twice returns the original theme.
+    assert_eq!(
+        DiffuseTheme::DEFAULT.paired().and_then(|t| t.paired()),
+        Some(DiffuseTheme::DEFAULT)
+    );
+}
+
+#[test]
 fn test_theme_from_name_and_env() {
     let _guard = ENV_MUTEX.lock().unwrap();
     assert_eq!(

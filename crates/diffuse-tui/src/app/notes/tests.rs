@@ -1009,7 +1009,8 @@ fn test_style_focused_note_line() {
     let note_line = callouts.values().next().unwrap().first().unwrap();
 
     // Non-current line of focused note keeps note_bg (234) with cyan stripe
-    let focused_non_current = style_focused_note_line(note_line, false);
+    let focused_non_current =
+        style_focused_note_line(note_line, false, &crate::render::DiffuseTheme::DEFAULT);
     assert!(
         focused_non_current.contains("\x1b[38;5;81m"),
         "must switch left stripe to cyan ANSI color"
@@ -1024,7 +1025,8 @@ fn test_style_focused_note_line() {
     );
 
     // Current line of focused note gets cursor_bg (237) background highlight
-    let focused_current = style_focused_note_line(note_line, true);
+    let focused_current =
+        style_focused_note_line(note_line, true, &crate::render::DiffuseTheme::DEFAULT);
     assert!(
         focused_current.contains("\x1b[38;5;81m"),
         "must switch left stripe to cyan ANSI color"
@@ -1058,7 +1060,11 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     assert_eq!(in_progress_lines.len(), 3);
 
     // First line (InProgress)
-    let focused_first = style_focused_note_line(&in_progress_lines[0], true);
+    let focused_first = style_focused_note_line(
+        &in_progress_lines[0],
+        true,
+        &crate::render::DiffuseTheme::DEFAULT,
+    );
     assert!(
         focused_first.contains("\x1b[38;5;81m"),
         "in-progress first line must switch left stripe to cyan"
@@ -1073,7 +1079,11 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     );
 
     // Middle line (InProgress, line_prefix)
-    let focused_middle = style_focused_note_line(&in_progress_lines[1], false);
+    let focused_middle = style_focused_note_line(
+        &in_progress_lines[1],
+        false,
+        &crate::render::DiffuseTheme::DEFAULT,
+    );
     assert!(
         focused_middle.contains("\x1b[38;5;81m"),
         "in-progress continuation line must switch left stripe to cyan"
@@ -1085,7 +1095,11 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     assert!(focused_middle.contains('│'), "must preserve connector │");
 
     // Final line (InProgress, final_prefix)
-    let focused_final = style_focused_note_line(&in_progress_lines[2], false);
+    let focused_final = style_focused_note_line(
+        &in_progress_lines[2],
+        false,
+        &crate::render::DiffuseTheme::DEFAULT,
+    );
     assert!(
         focused_final.contains("\x1b[38;5;81m"),
         "in-progress final line must switch left stripe to cyan"
@@ -1108,7 +1122,11 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     );
     assert_eq!(resolved_lines.len(), 2);
 
-    let focused_res = style_focused_note_line(&resolved_lines[0], true);
+    let focused_res = style_focused_note_line(
+        &resolved_lines[0],
+        true,
+        &crate::render::DiffuseTheme::DEFAULT,
+    );
     assert!(
         focused_res.contains("\x1b[38;5;81m"),
         "resolved line must switch left stripe to cyan"
@@ -1124,7 +1142,10 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
 
     // Non-note string falls through unchanged
     let non_note = "arbitrary line content";
-    assert_eq!(style_focused_note_line(non_note, true), non_note);
+    assert_eq!(
+        style_focused_note_line(non_note, true, &crate::render::DiffuseTheme::DEFAULT),
+        non_note
+    );
 }
 
 #[test]

@@ -6,7 +6,7 @@ use std::{fmt, fmt::Write};
 use crate::{
     ansi::{Color, ColorExt},
     core::parse::RowKind,
-    theme::DiffuseTheme,
+    theme::{Cursor, DiffKind, DiffuseTheme},
 };
 
 /// Write a row in the raw unified-diff representation with theme support
@@ -22,21 +22,25 @@ pub fn write_raw_row<W: Write>(
     highlight_trailing: bool,
     theme: &DiffuseTheme,
 ) -> fmt::Result {
+    let scoped = theme.scoped_palette();
     let (fg_color, sub_bg_color, sub_fg_color) = match kind {
         RowKind::Add => (
-            theme.palette.add_gutter_icon,
-            theme.palette.add_fill_bg,
-            theme.palette.add_gutter_num,
+            scoped[Cursor::Rest][DiffKind::Add].gutter.icon.color,
+            scoped[Cursor::Rest][DiffKind::Add]
+                .surface
+                .fill
+                .unwrap_or(Color::Primary),
+            scoped[Cursor::Rest][DiffKind::Add].gutter.num.color,
         ),
         RowKind::Del => (
-            theme.palette.del_gutter_icon,
-            theme.palette.del_cursor_bg,
-            theme.palette.del_gutter_num,
+            scoped[Cursor::Rest][DiffKind::Del].gutter.icon.color,
+            scoped[Cursor::Row][DiffKind::Del].surface.bg,
+            scoped[Cursor::Rest][DiffKind::Del].gutter.num.color,
         ),
         _ => (
-            theme.palette.ctx_gutter_in_hunk,
-            theme.palette.ctx_cursor_bg,
-            theme.palette.ctx_gutter_out_hunk,
+            scoped[Cursor::Hunk][DiffKind::Ctx].gutter.num.color,
+            scoped[Cursor::Row][DiffKind::Ctx].surface.bg,
+            scoped[Cursor::Rest][DiffKind::Ctx].gutter.num.color,
         ),
     };
     let fg = fg_color.fg_code();
@@ -44,11 +48,11 @@ pub fn write_raw_row<W: Write>(
     let sub_fg = sub_fg_color.fg_code();
 
     let bg_color = if selected {
-        theme.palette.ctx_cursor_bg
+        scoped[Cursor::Row][DiffKind::Ctx].surface.bg
     } else if band {
-        theme.palette.band_bg
+        scoped[Cursor::Row].band.bg
     } else {
-        theme.palette.ctx_tint_bg
+        scoped[Cursor::Rest][DiffKind::Ctx].surface.bg
     };
     let bg = match bg_color {
         Color::Primary => String::new(),

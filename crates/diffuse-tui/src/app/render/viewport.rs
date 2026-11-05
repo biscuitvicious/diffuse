@@ -572,7 +572,11 @@ impl AppState {
                             && self.vis_line == div_segs + seg_counts[idx] + nl_idx;
                         line_src.push(Some(idx));
                         let line_str = if is_focused {
-                            super::super::notes::style_focused_note_line(nline, is_current_line)
+                            super::super::notes::style_focused_note_line(
+                                nline,
+                                is_current_line,
+                                &self.theme,
+                            )
                         } else {
                             nline.clone()
                         };

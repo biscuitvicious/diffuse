@@ -45,6 +45,21 @@ impl Cursor {
             Cursor::Rest => None,
         }
     }
+
+    /// The tier a banner or divider banner renders at, from its interactive
+    /// state: the selected banner lifts to the row tier, the current banner
+    /// sits at the file tier, and everything else rests.
+    #[inline]
+    #[must_use]
+    pub const fn from_banner_state(is_selected: bool, is_current: bool) -> Cursor {
+        if is_selected {
+            Cursor::Row
+        } else if is_current {
+            Cursor::File
+        } else {
+            Cursor::Rest
+        }
+    }
 }
 
 #[cfg(test)]
@@ -89,5 +104,13 @@ mod tests {
             walked += 1;
         }
         assert_eq!(walked, Cursor::COUNT);
+    }
+
+    #[test]
+    fn test_cursor_from_banner_state() {
+        assert_eq!(Cursor::from_banner_state(true, true), Cursor::Row);
+        assert_eq!(Cursor::from_banner_state(true, false), Cursor::Row);
+        assert_eq!(Cursor::from_banner_state(false, true), Cursor::File);
+        assert_eq!(Cursor::from_banner_state(false, false), Cursor::Rest);
     }
 }

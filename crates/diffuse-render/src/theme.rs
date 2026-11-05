@@ -160,41 +160,50 @@ impl DiffuseTheme {
 
     /// Get the row background and icon style for the specified diff row kind
     /// under this theme.
+    ///
+    /// Resolves through the scoped palette: tint/fill/foreground at the rest
+    /// tier, the cursor and fill-cursor backgrounds at the row tier.
     #[must_use]
     pub fn row_style(&self, kind: diffuse_core::parse::RowKind) -> RowStyle {
         use diffuse_core::parse::RowKind;
+        let scoped = self.scoped_palette();
+        let rest = &scoped[Cursor::Rest];
+        let row = &scoped[Cursor::Row];
         match kind {
             RowKind::Add => RowStyle {
                 icon: "+",
-                tint_bg: self.palette.add_tint_bg,
-                cursor_bg: self.palette.add_cursor_bg,
-                fill_bg: Some(self.palette.add_fill_bg),
-                fill_cursor_bg: Some(self.palette.add_fill_cursor_bg),
-                fg: self.palette.add_fg,
+                tint_bg: rest[DiffKind::Add].surface.bg,
+                cursor_bg: row[DiffKind::Add].surface.bg,
+                fill_bg: rest[DiffKind::Add].surface.fill,
+                fill_cursor_bg: row[DiffKind::Add].surface.fill,
+                fg: rest[DiffKind::Add].surface.fg,
             },
             RowKind::Del => RowStyle {
                 icon: "-",
-                tint_bg: self.palette.del_tint_bg,
-                cursor_bg: self.palette.del_cursor_bg,
+                tint_bg: rest[DiffKind::Del].surface.bg,
+                cursor_bg: row[DiffKind::Del].surface.bg,
+                // Del carries no fill in the row styler (the legacy flat
+                // `del_fill_bg` is dead, and the asset clears the row-tier
+                // fill to match).
                 fill_bg: None,
                 fill_cursor_bg: None,
-                fg: self.palette.del_fg,
+                fg: rest[DiffKind::Del].surface.fg,
             },
             RowKind::Mod => RowStyle {
                 icon: "~",
-                tint_bg: self.palette.mod_tint_bg,
-                cursor_bg: self.palette.mod_cursor_bg,
-                fill_bg: Some(self.palette.mod_fill_bg),
-                fill_cursor_bg: Some(self.palette.mod_fill_cursor_bg),
-                fg: self.palette.mod_fg,
+                tint_bg: rest[DiffKind::Mod].surface.bg,
+                cursor_bg: row[DiffKind::Mod].surface.bg,
+                fill_bg: rest[DiffKind::Mod].surface.fill,
+                fill_cursor_bg: row[DiffKind::Mod].surface.fill,
+                fg: rest[DiffKind::Mod].surface.fg,
             },
             _ => RowStyle {
                 icon: "≈",
-                tint_bg: self.palette.mov_tint_bg,
-                cursor_bg: self.palette.mov_cursor_bg,
+                tint_bg: rest[DiffKind::Mov].surface.bg,
+                cursor_bg: row[DiffKind::Mov].surface.bg,
                 fill_bg: None,
                 fill_cursor_bg: None,
-                fg: self.palette.mov_fg,
+                fg: rest[DiffKind::Mov].surface.fg,
             },
         }
     }
@@ -360,6 +369,24 @@ impl DiffuseTheme {
             "auto" => Some(Self::auto_detect()),
             _ => None,
         }
+    }
+
+    /// The opposite-mode theme declared by this theme's pairing metadata
+    /// (`light_pair` for dark themes, `dark_pair` for light themes), resolved
+    /// by name. `None` when the asset declares no pair or the pair does not
+    /// resolve to a known theme.
+    #[must_use]
+    pub fn paired(&self) -> Option<Self> {
+        let parsed = toml::parse_builtin(self.name)?;
+        let pair = match parsed.mode {
+            toml::model::Mode::Dark => parsed.light_pair,
+            toml::model::Mode::Light => parsed.dark_pair,
+        }?;
+        // A pair naming the theme itself would loop; treat it as unpaired.
+        if pair.eq_ignore_ascii_case(self.name) {
+            return None;
+        }
+        Self::from_name(&pair)
     }
 
     /// Resolve the active theme from the `DIFFUSE_THEME` environment variable,

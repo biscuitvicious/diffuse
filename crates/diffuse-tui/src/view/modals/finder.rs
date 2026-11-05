@@ -34,8 +34,8 @@ pub fn render_finder_modal(
     height: usize,
     theme: &DiffuseTheme,
 ) -> Vec<String> {
-    let p = &theme.palette;
-    let bg_code = p.modal_bg.bg_code();
+    let p = &theme.scoped_palette().ui;
+    let bg_code = p.bg_modal.bg_code();
     let border_code = p.modal_border.fg_code();
     let title_code = p.modal_title.fg_code();
 
@@ -106,7 +106,7 @@ pub fn render_finder_modal(
             let row_bg_code = if is_sel {
                 p.modal_selected_bg.bg_code()
             } else {
-                p.modal_bg.bg_code()
+                p.bg_modal.bg_code()
             };
             let stats_color = if is_sel {
                 p.modal_selected_fg.fg_code()
@@ -179,9 +179,10 @@ pub fn render_finder_modal(
                 ));
             }
         } else {
-            let (bg, fg) = theme.palette.hunk_divider_colors(false, false);
+            let divider = theme.scoped_palette()[crate::render::Cursor::Rest].hunk_divider;
+            let (bg, fg) = (divider.bg, divider.fg);
             let div_bg_code = match bg {
-                crate::render::Color::Primary => p.modal_bg.bg_code(),
+                crate::render::Color::Primary => p.bg_modal.bg_code(),
                 color => color.bg_code(),
             };
             let fg_code = fg.fg_code();
@@ -254,7 +255,7 @@ pub fn render_finder_modal_widget(
     let modal_area = standard_modal_area(area);
     f.render_widget(Clear, modal_area);
 
-    let p = &theme.palette;
+    let p = &theme.scoped_palette().ui;
     let file_list_h = (modal_area.height / 5).max(3);
     let finder_h = (file_list_h + 4)
         .min(modal_area.height.saturating_sub(4))
@@ -301,7 +302,7 @@ pub fn render_finder_modal_widget(
         .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(crate::view::to_color(p.modal_bg))
+                .bg(crate::view::to_color(p.bg_modal))
                 .fg(crate::view::to_color(p.modal_text)),
         );
 
@@ -372,7 +373,7 @@ pub fn render_finder_modal_widget(
             let bg_color = if is_sel {
                 crate::view::to_color(p.modal_selected_bg)
             } else {
-                crate::view::to_color(p.modal_bg)
+                crate::view::to_color(p.bg_modal)
             };
             let pad_style = Style::default().bg(bg_color);
 
@@ -388,7 +389,7 @@ pub fn render_finder_modal_widget(
                     } else {
                         Style::default()
                             .fg(crate::view::to_color(p.modal_dim))
-                            .bg(crate::view::to_color(p.modal_bg))
+                            .bg(crate::view::to_color(p.bg_modal))
                     },
                 ));
             }
@@ -417,7 +418,7 @@ pub fn render_finder_modal_widget(
         .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(crate::view::to_color(p.modal_bg))
+                .bg(crate::view::to_color(p.bg_modal))
                 .fg(crate::view::to_color(p.modal_text)),
         );
 
@@ -466,7 +467,7 @@ pub fn render_finder_modal_widget(
                 if let Some(span) = div_line.spans.first_mut()
                     && span.style.bg.is_none()
                 {
-                    span.style = span.style.bg(crate::view::to_color(p.modal_bg));
+                    span.style = span.style.bg(crate::view::to_color(p.bg_modal));
                 }
                 preview_lines.push(div_line);
 

@@ -6,7 +6,7 @@ use ratatui::{
 use super::super::header::truncate_pad;
 use crate::{
     core::wire::OutputFile,
-    render::{Badge, ColorExt, DiffuseTheme, width::display_width},
+    render::{Badge, ColorExt, Cursor, DiffuseTheme, width::display_width},
 };
 
 fn rename_prefix_visual_span(
@@ -228,9 +228,12 @@ pub fn render_file_header_segment(
     use super::super::header::count_cells;
 
     let prefix_text = file_header_text_with_prefix(file, badge, is_collapsed, common_prefix);
-    let (bg, fg) = theme
-        .palette
-        .file_header_colors(is_selected, is_current, in_band);
+    // Selected banners lift to the row tier; current / in-band banners sit
+    // at the file tier; everything else rests.
+    let banner = theme.scoped_palette()
+        [Cursor::from_banner_state(is_selected, is_current || in_band)]
+    .file_header;
+    let (bg, fg) = (banner.bg, banner.fg);
     let bg_code = bg.bg_code();
     let fg_code = fg.fg_code();
 
@@ -246,13 +249,7 @@ pub fn render_file_header_segment(
     // Columns walk the shared parts in order, so text and ranges cannot
     // drift apart.
     let parts = file_header_parts(file, badge, is_collapsed, common_prefix);
-    let path_color = if is_selected {
-        theme.palette.file_header_path_selected
-    } else if in_band || is_current {
-        theme.palette.file_header_path_current
-    } else {
-        theme.palette.file_header_path_rest
-    };
+    let path_color = banner.fg_or_path();
     let white_open = format!("\x1b[22m{}", path_color.fg_code());
     let white_close = format!("\x1b[39m\x1b[1m{fg_code}");
     let mut runs: Vec<BannerStyleRun> = Vec::new();
@@ -360,12 +357,12 @@ pub fn file_header_line(
 ) -> Line<'static> {
     let bar = file_header_text(file, badge, is_collapsed);
     let bar_str = truncate_pad(&bar, content_width);
-    let (bg, fg) = theme
-        .palette
-        .file_header_colors(is_selected, is_current, in_band);
+    let banner = theme.scoped_palette()
+        [Cursor::from_banner_state(is_selected, is_current || in_band)]
+    .file_header;
     let style = Style::default()
-        .bg(crate::view::to_color(bg))
-        .fg(crate::view::to_color(fg))
+        .bg(crate::view::to_color(banner.bg))
+        .fg(crate::view::to_color(banner.fg))
         .add_modifier(Modifier::BOLD);
     Line::from(Span::styled(bar_str, style))
 }

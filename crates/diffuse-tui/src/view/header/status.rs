@@ -40,7 +40,7 @@ pub struct StatusBarContext<'a> {
 pub fn render_status_bar(ctx: StatusBarContext<'_>) -> Vec<String> {
     use crate::view::status_layout::{StatusSegment, status_layout};
 
-    let bg_code = ctx.theme.palette.status_bar_bg.bg_code();
+    let bg_code = ctx.theme.scoped_palette().ui.status_bar_bg.bg_code();
 
     let seg_ansi = |seg: &StatusSegment| -> String {
         let bold = if seg.bold { "\x1b[1m" } else { "" };
@@ -93,7 +93,7 @@ pub fn status_bar_line(ctx: StatusBarContext<'_>) -> Line<'static> {
         return Line::default();
     }
     let spans: Vec<Span<'static>> = layout.segments.iter().map(seg_span).collect();
-    let bg = crate::view::to_color(ctx.theme.palette.status_bar_bg);
+    let bg = crate::view::to_color(ctx.theme.scoped_palette().ui.status_bar_bg);
     padded_line(spans, ctx.width).style(Style::default().bg(bg))
 }
 

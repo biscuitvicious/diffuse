@@ -76,11 +76,12 @@ impl AppState {
             TuiCommand::ToggleRawDiff => self.toggle_raw_diff(),
             TuiCommand::ToggleHelp => self.show_help = !self.show_help,
             TuiCommand::ToggleTheme => {
-                self.theme = if self.theme == crate::render::DiffuseTheme::LIGHT {
-                    crate::render::DiffuseTheme::DEFAULT
-                } else {
-                    crate::render::DiffuseTheme::LIGHT
-                };
+                // Resolve the opposite-mode pair from the theme's asset
+                // metadata (data-driven; user themes pair by declaration).
+                self.theme = self
+                    .theme
+                    .paired()
+                    .unwrap_or(crate::render::DiffuseTheme::DEFAULT);
                 if let Some(ref mut editor) = self.note_editor {
                     editor.set_highlighter(Some(crate::editor::markdown_highlighter(self.theme)));
                 }

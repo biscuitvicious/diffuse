@@ -6,7 +6,7 @@
 - [x] Phase 3 — TOML Theme Schema, Serde Deserializer & Cascading Engine with `inherits` & `$variable` Reference (`crates/diffuse-render/src/theme/toml/`)
 - [x] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)
 - [x] Phase 5 — Render Pipeline & Row Styler Migration (`crates/diffuse-render/src/`)
-- [ ] Phase 6 — Interactive TUI Grid, Header, Gutter & Mode Toggle Migration (`crates/diffuse-tui/src/`)
+- [x] Phase 6 — Interactive TUI Grid, Header, Gutter & Mode Toggle Migration (`crates/diffuse-tui/src/`)
 - [ ] Phase 7 — Dynamic User Theme Discovery, Configuration & CLI Integration (`crates/diffuse/src/`)
 - [ ] Phase 8 — Frozen Golden Corpus Verification, Dual-Leg Sign-Off & Benchmarks
 
@@ -17,9 +17,9 @@
 The diffuse theme palette currently represents diff colors, syntax tokens, and UI chrome across flat, ad-hoc struct fields in [`crates/diffuse-render/src/theme/palette/mod.rs`](../crates/diffuse-render/src/theme/palette/mod.rs). Colors are multiplied across repetitive naming permutations (`add_*`, `del_*`, `mod_*`, `mov_*`, `ctx_*`, `*_in_hunk`, `*_out_hunk`, `*_cursor_bg`, `*_selected`, `*_current`, `*_rest`), leading to over 140 individual fields with hand-coded match statements and zero support for external configuration files.
 
 This plan executes a comprehensive re-architecture inspired by canonical, state-of-the-art theming systems (Helix, Zed, Alacritty):
-1. **Structural Scope Containment Axis**: Introduces `enum Scope { None, File, Hunk, Row }`, formalizing the visual hierarchy of diff review ($\text{None (Global)} \supset \text{File} \supset \text{Hunk} \supset \text{Row}$).
-2. **Unified Surface Abstraction & Typography**: Encapsulates 3-layer visual composite styling into `SurfaceColors` (`bg`, `fill`, `fg`) and supports optional text modifiers (`bold`, `italic`, `dim`, `underline`) on `StyledColor`.
-3. **First-Class DiffKind & Array Indexing**: Defines `enum DiffKind { Ctx, Add, Del, Mod, MovSrc, MovTgt }`, unifying all diff kinds under an identical `DiffPalette` and enabling $O(1)$ dual-indexed access: `palette[scope][diff_kind]`.
+1. **Structural Cursor Containment Axis**: Introduces `enum Cursor { Rest, File, Hunk, Row }`, formalizing the visual hierarchy of diff review ($\text{Rest (Global)} \supset \text{File} \supset \text{Hunk} \supset \text{Row}$) *(revised in phase 5: originally `Scope { None, ... }`)*.
+2. **Unified Surface Abstraction & Typography**: Encapsulates 3-layer visual composite styling into `SurfaceColors` (`bg`, `fill`, `fg`, plus the banner `path` color added in phase 6) and supports optional text modifiers (`bold`, `italic`, `dim`, `underline`) on `StyledColor`.
+3. **First-Class DiffKind & Array Indexing**: Defines `enum DiffKind { Ctx, Add, Del, Mod, Mov }`, unifying all diff kinds under an identical `DiffPalette` and enabling $O(1)$ dual-indexed access: `palette[cursor][diff_kind]` *(revised in phase 5: originally `MovSrc`/`MovTgt`)*.
 4. **Primitive Swatches with `$variable` Expansion**: Introduces `PrimitivePalette` defining foundational color swatches (`red`, `green`, `bg_dark`, etc.) referenced symbolically in TOML (e.g. `fg = "$green"`).
 5. **Declarative TOML Engine with `inherits` & Theme Pairing**: Supports standalone dark/light theme files, base theme extension (`inherits = "dark"`), and twin mode pairing (`light_pair = "catppuccin-latte"`).
 6. **Zero-Allocation Runtime Discipline**: All TOML deserialization and cascading inheritance resolve at load time into a flat, `Copy`, array-indexed `ThemePalette` guaranteeing $O(1)$ pointer offsets with zero heap allocations during terminal rendering.
@@ -308,7 +308,7 @@ Migrate diff row renderers, gutters, and markdown formatters to pass and consume
 - **Migrated to scoped dispatch** (all byte-identical; goldens stayed green): `write_token`/`write_token_stacked` via `scoped[Cursor::Rest][DiffKind::from_row(rk)].syntax.token_color(color)`; `diff/header.rs` header bar bg/fg from `scoped.ui` (`file_header_path_current` stays flat — no scoped slot); `diff/hunk.rs` rest divider from `scoped[Cursor::Rest].hunk_divider` (asset `bg = "primary"` reproduces the empty-string bg-code guard); `row/gutter.rs` `styled_prefix` composes per-kind gutters at `Cursor::Rest` with cross-kind glyphs from sibling slots and ctx gutters switching at `Cursor::Hunk` per the `in_hunk` flag; `counts.rs` `count_color`/`count_cells` take `&UiPalette`.
 - **Del-gutter italic is palette data**: assets carry `[rest.del] num = { color, italic = true }`; new `StyledColor::fg_code()` fuses attr flags SGR-style (`\x1b[3;38;5;203m`, attr order bold/italic/dim/underline), byte-identical to the legacy `italic_fg_code` (which remains on `ColorExt`, pinned by test).
 - **TUI counts call sites migrated** (mechanical): `view/header/counts.rs` formatters, `render_header_bar`/`render_bottom_ribbon`/`bottom_ribbon_lines` now take `&UiPalette` (their reads are all ui fields); `header_bar_line` keeps `&DiffuseTheme` with flat field reads (phase 6) but routes counts through `scoped_palette().ui`; `view/diff_grid/file.rs` and `app/render/ratatui.rs` count/ribbon callers pass `scoped_palette().ui`.
-- **Stays flat (deferred)**: `DiffuseTheme::row_style` (cursor/fill backgrounds have no scoped slot until phase 6 adds the cursor-state fields), `row/raw.rs` and `row/segment.rs` (deferred cursor/band fields), and all markdown emitters (token routing already flows through the migrated `write_token`). The legacy flat palettes remain authoritative for those fields until phases 6-7.
+- **Stays flat (deferred)**: `DiffuseTheme::row_style`, `row/raw.rs` and `row/segment.rs` (cursor/fill backgrounds and `band_bg` had no scoped slot — resolved in phase 6), and all markdown emitters (token routing already flows through the migrated `write_token`). The legacy flat palettes remained authoritative for those fields until phase 6.
 - **`parse_builtin(name)`** exported (`theme::toml::parse_builtin` → theme root) as the asset-parse entry for the scoped statics; equivalence suite extended to pin the del-gutter italic attribute.
 
 ---
@@ -320,7 +320,7 @@ Update the interactive terminal reviewer (`diffuse-tui`) to dynamically resolve 
 
 ### Key Types and Modules
 - **Location**: `crates/diffuse-tui/src/view/diff_grid/`, `crates/diffuse-tui/src/view/header/`, `crates/diffuse-tui/src/app/render/`, `crates/diffuse-tui/src/app/dispatch/`
-- **Cursor Resolution Function** *(renamed from `scope_for_row` in phase 5)*:
+- **Cursor Resolution Function** *(superseded in phase 6 by `Cursor::from_banner_state` — consumers hold local selected/current booleans, so a row-index ladder would be dead code)*:
   ```rust
   impl AppState {
       pub fn cursor_for_row(&self, row_idx: usize) -> Cursor {
@@ -340,11 +340,19 @@ Update the interactive terminal reviewer (`diffuse-tui`) to dynamically resolve 
   - File header banners query `palette.tier(file_cursor).file_header`.
   - Hunk divider banners query `palette.tier(hunk_cursor).hunk_divider`.
 - **Mode Toggle**:
-  Pressing `t` resolves the current theme's paired twin (`light_pair` or `dark_pair`) with instant $O(1)$ visual update.
+  Pressing `T` (or `Ctrl+t` / F2) resolves the current theme's paired twin (`light_pair` or `dark_pair`) with instant $O(1)$ visual update.
 
 ### Acceptance Criteria
 - TUI interactive navigation and visual rendering pass all existing test suites.
 - Cursor row highlights and active hunk indicators maintain visual fidelity.
+
+### Implementation Record
+- **Schema/assets**: `SurfaceModel`/`SurfaceColors` gain the banner `path` color (unset paths resolve to the surface foreground at cascade time via `fg_or_path`); `CursorModel`/`CursorPalette` gain the per-tier `band` surface, cascading along the cursor walk. Both assets declare `path` on the three file-header tiers, `[rest.band]` (single legacy `band_bg` cascading to every tier), and the `[row.{ctx,add,del,mod,mov}]` cursor tables (`bg` = legacy `*_cursor_bg`, `fill` = legacy `*_fill_cursor_bg` for add/mod). New `fill = "none"` clear sentinel (`ColorValue::Clear`) unsets an otherwise cascading fill — required for `[row.del]`, whose legacy fill-cursor is dead — rejected outside `fill` slots (`ThemeParseError::InvalidColor`). New `ui.text` slot (legacy `text`; dark primary, light `#24292f`). Equivalence suite pins all of it field-for-field for both modes, plus banner `fg_or_path` parity.
+- **Row styler**: `DiffuseTheme::row_style` keeps its `RowStyle` shape but reads the scoped palette — tint/fill/fg at the `Cursor::Rest` tier, cursor/fill-cursor backgrounds at the `Cursor::Row` tier (del/mov carry no fill, matching legacy); parity test against the flat values for every kind in both modes. `row/segment.rs` and `row/raw.rs` resolve `band_bg` at `tier(Row).band`, `ctx_cursor_bg` at `[Cursor::Row][Ctx].surface.bg`, and their remaining gutter/tint reads at `Cursor::Rest`/`Cursor::Hunk`.
+- **Banner/divider tiers**: new `Cursor::from_banner_state(is_selected, is_current)` (selected→Row, current→File, else→Rest; in-band file banners map to File, matching the legacy `in_band || is_current` fold). `view/diff_grid/file.rs` banner colors and path colors (`banner.fg_or_path`), `view/diff_grid/hunk.rs` dividers (4 sites), and the finder modal divider all resolve through the tier axis. `AppState::cursor_for_row` from the original spec was **not** implemented: every consumer already holds local selected/current booleans, so a row-index ladder would be dead code; `from_banner_state` is the tier-selection primitive the TUI actually needs.
+- **UI chrome**: every remaining flat read migrated to `scoped.ui` — `app/render/ratatui.rs` (bg/status/scrollbar/text), `blank_status_widget` (`&UiPalette`), `view/header/bar.rs::header_bar_line`, `view/header/status.rs`, `view/status_layout.rs` (+ `push_segment`), `editor/highlight.rs`, all modals (`p = &theme.scoped_palette().ui`; legacy `modal_bg` → `ui.bg_modal`), and `modals/path.rs` formatters (`&UiPalette`). `UiPalette` gained `text`; `ThemePalette` (flat) reads are now zero in diffuse-tui non-test code.
+- **Mode toggle**: `TuiCommand::ToggleTheme` now calls `DiffuseTheme::paired()` — resolves the self document's `light_pair`/`dark_pair` asset metadata by name (self-pairing guarded as unpaired; falls back to the default theme), so user themes in phase 7 pair by declaration. `ParsedTheme` exposes `light_pair`/`dark_pair`; keybinds unchanged (`T` / `Ctrl+t` / F2).
+- **Notes callout**: `style_focused_note_line` takes the theme and resolves its hardcoded `Fixed(237)` cursor background from `[row.ctx]` (pre-existing theme bypass found in the inventory).
 
 ---
 

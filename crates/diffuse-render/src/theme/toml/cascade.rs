@@ -65,20 +65,23 @@ const DIFF_KINDS: [DiffKind; DiffKind::COUNT] = [
     DiffKind::Mov,
 ];
 
-/// Banner surface of a cursor-tier palette.
+/// Per-tier surface slot of a cursor-tier palette.
 #[derive(Clone, Copy)]
-enum Banner {
+enum Surface {
     FileHeader,
     HunkDivider,
+    /// Visual-selection band for diff rows.
+    Band,
 }
 
-impl Banner {
-    /// TOML key for the banner.
+impl Surface {
+    /// TOML key for the surface.
     #[inline]
     fn key(self) -> &'static str {
         match self {
-            Banner::FileHeader => "file_header",
-            Banner::HunkDivider => "hunk_divider",
+            Surface::FileHeader => "file_header",
+            Surface::HunkDivider => "hunk_divider",
+            Surface::Band => "band",
         }
     }
 }
@@ -133,6 +136,10 @@ fn resolve_color(
         }
         ColorValue::Rgb { r, g, b } => Ok(Color::Rgb(*r, *g, *b)),
         ColorValue::Indexed(index) => Ok(Color::Fixed(*index)),
+        ColorValue::Clear => Err(ThemeParseError::InvalidColor {
+            value: "none".to_string(),
+            path: path.to_string(),
+        }),
     }
 }
 
@@ -187,13 +194,14 @@ impl<'a> Compiler<'a> {
             .find_map(|model| model.cursor(cursor).and_then(|s| s.slot(kind)))
     }
 
-    /// The first banner model defining `banner` at `cursor`, searching the
+    /// The first surface model defining `surface` at `cursor`, searching the
     /// chain self-first.
-    fn banner_channel(&self, cursor: Cursor, banner: Banner) -> Option<&'a SurfaceModel> {
+    fn surface_channel(&self, cursor: Cursor, surface: Surface) -> Option<&'a SurfaceModel> {
         self.models.iter().find_map(|model| {
-            model.cursor(cursor).and_then(|s| match banner {
-                Banner::FileHeader => s.file_header.as_ref(),
-                Banner::HunkDivider => s.hunk_divider.as_ref(),
+            model.cursor(cursor).and_then(|s| match surface {
+                Surface::FileHeader => s.file_header.as_ref(),
+                Surface::HunkDivider => s.hunk_divider.as_ref(),
+                Surface::Band => s.band.as_ref(),
             })
         })
     }
@@ -235,6 +243,8 @@ impl<'a> Compiler<'a> {
                 None => self.primitives.base_bg,
             },
             fill: match fill {
+                // `fill = "none"` explicitly clears an inherited fill.
+                Some(ColorValue::Clear) => None,
                 Some(value) => Some(resolve_color(
                     value,
                     &self.primitives,
@@ -246,6 +256,7 @@ impl<'a> Compiler<'a> {
                 Some(value) => resolve_color(value, &self.primitives, &format!("{section}.fg"))?,
                 None => self.primitives.base_fg,
             },
+            path: None, // diff rows carry no banner path data
         };
         let gutter = GutterColors {
             num: match num {
@@ -332,24 +343,35 @@ impl<'a> Compiler<'a> {
     }
 
     /// Compile one banner surface.
-    fn build_banner(
+    fn build_surface(
         &self,
         cursor: Cursor,
-        banner: Banner,
+        surface: Surface,
     ) -> Result<SurfaceColors, ThemeParseError> {
         let mut channels = Vec::new();
         let mut current = Some(cursor);
         while let Some(cursor) = current {
             current = cursor.outer();
-            if let Some(model) = self.banner_channel(cursor, banner) {
+            if let Some(model) = self.surface_channel(cursor, surface) {
                 channels.push(model);
             }
         }
 
-        let section = format!("{}.{}", cursor_key(cursor), banner.key());
+        let section = format!("{}.{}", cursor_key(cursor), surface.key());
         let bg = channels.iter().find_map(|c| c.bg.as_ref());
         let fill = channels.iter().find_map(|c| c.fill.as_ref());
         let fg = channels.iter().find_map(|c| c.fg.as_ref());
+        let path = channels.iter().find_map(|c| c.path.as_ref());
+
+        let fg = match fg {
+            Some(value) => resolve_color(value, &self.primitives, &format!("{section}.fg"))?,
+            None => self.primitives.base_fg,
+        };
+        // Unset banner paths share the foreground color (`fg_or_path`).
+        let path = match path {
+            Some(value) => resolve_color(value, &self.primitives, &format!("{section}.path"))?,
+            None => fg,
+        };
 
         Ok(SurfaceColors {
             bg: match bg {
@@ -357,6 +379,8 @@ impl<'a> Compiler<'a> {
                 None => self.primitives.base_bg,
             },
             fill: match fill {
+                // `fill = "none"` explicitly clears an inherited fill.
+                Some(ColorValue::Clear) => None,
                 Some(value) => Some(resolve_color(
                     value,
                     &self.primitives,
@@ -364,22 +388,22 @@ impl<'a> Compiler<'a> {
                 )?),
                 None => None,
             },
-            fg: match fg {
-                Some(value) => resolve_color(value, &self.primitives, &format!("{section}.fg"))?,
-                None => self.primitives.base_fg,
-            },
+            fg,
+            path: Some(path),
         })
     }
 
-    /// Compile one cursor-tier palette: both banners plus every diff kind.
+    /// Compile one cursor-tier palette: both banners, the band surface, and
+    /// every diff kind.
     fn build_cursor(&self, cursor: Cursor) -> Result<CursorPalette, ThemeParseError> {
-        let file_header = self.build_banner(cursor, Banner::FileHeader)?;
-        let hunk_divider = self.build_banner(cursor, Banner::HunkDivider)?;
+        let file_header = self.build_surface(cursor, Surface::FileHeader)?;
+        let hunk_divider = self.build_surface(cursor, Surface::HunkDivider)?;
+        let band = self.build_surface(cursor, Surface::Band)?;
         let mut diffs = [DiffPalette::default(); DiffKind::COUNT];
         for (index, kind) in DIFF_KINDS.iter().enumerate() {
             diffs[index] = self.build_diff(cursor, *kind)?;
         }
-        Ok(CursorPalette::new(file_header, hunk_divider, diffs))
+        Ok(CursorPalette::new(file_header, hunk_divider, band, diffs))
     }
 
     /// Compile UI chrome: inherit-chain overlays over the default palette,
@@ -389,7 +413,7 @@ impl<'a> Compiler<'a> {
         for model in self.models.iter().rev() {
             if let Some(source) = model.ui.as_ref() {
                 overlay_color_fields!(source, ui, &self.primitives, "ui";
-                    bg_base, bg_modal, warning, note, accent,
+                    bg_base, text, bg_modal, warning, note, accent,
                     status_bar_bg, status_bar_fg, status_bar_dim, status_bar_accent,
                     ribbon_divider, ribbon_text,
                     header_bar_bg, header_bar_fg, header_repo, header_branch,

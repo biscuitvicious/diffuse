@@ -61,8 +61,8 @@ pub fn render_help_modal(width: usize, height: usize, theme: &DiffuseTheme) -> V
 
     let entries = HELP_ENTRIES;
 
-    let p = &theme.palette;
-    let bg_code = p.modal_bg.bg_code();
+    let p = &theme.scoped_palette().ui;
+    let bg_code = p.bg_modal.bg_code();
     let border_code = p.modal_border.fg_code();
     let title_code = p.modal_title.fg_code();
     let text_code = p.modal_text.fg_code();
@@ -164,7 +164,7 @@ pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect)
     let modal_area = standard_modal_area(area);
     f.render_widget(Clear, modal_area);
 
-    let p = &theme.palette;
+    let p = &theme.scoped_palette().ui;
     let title = if modal_area.width < 38 {
         " KEYS · ?/Esc "
     } else {
@@ -183,7 +183,7 @@ pub fn render_help_modal_widget(f: &mut Frame, theme: &DiffuseTheme, area: Rect)
         .border_style(Style::default().fg(crate::view::to_color(p.modal_border)))
         .style(
             Style::default()
-                .bg(crate::view::to_color(p.modal_bg))
+                .bg(crate::view::to_color(p.bg_modal))
                 .fg(crate::view::to_color(p.modal_text)),
         );
 

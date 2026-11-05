@@ -6,11 +6,10 @@
 # legacy palette remains authoritative for consumers; these assets become
 # authoritative at migration.
 #
-# Cursor axis for banners: REST state at `Cursor::Rest`, CURRENT at
-# `Cursor::File`, SELECTED at `Cursor::Row`. Context gutters: out-of-hunk rows
-# resolve at `Cursor::Rest`/`Cursor::File`, in-hunk rows at `Cursor::Hunk`.
-# Banner path suffix colors and per-row-kind cursor backgrounds are not yet
-# representable in the scoped palette (deferred to the TUI migration).
+# Cursor axis: REST state at `Cursor::Rest`, CURRENT at `Cursor::File`,
+# SELECTED at `Cursor::Row`. Banner `path` colors and the visual-selection
+# band (`band`) are tier surfaces; the `[row.*]` tables carry the interactive
+# cursor/fill backgrounds.
 
 name = "default"
 mode = "dark"
@@ -18,6 +17,7 @@ light_pair = "light"
 
 [ui]
 bg_base = 233
+text = "primary"       # legacy `text` (terminal default)
 bg_modal = 236          # legacy `modal_bg`
 warning = 220
 note = 220
@@ -52,10 +52,14 @@ count_notes = 220
 [rest.file_header]      # rest state
 bg = 233
 fg = 214
+path = 251              # legacy `file_header_path_rest`
 
 [rest.hunk_divider]     # rest state
 bg = "primary"          # legacy `hunk_divider_bg_rest` = Color::Primary
 fg = 213
+
+[rest.band]             # visual-selection band (legacy `band_bg`)
+bg = 235
 
 [rest.ctx]              # context rows outside the current hunk
 bg = 233
@@ -117,6 +121,7 @@ icon = 117
 [file.file_header]      # current-file state
 bg = 235
 fg = 220
+path = 254              # legacy `file_header_path_current`
 
 [file.hunk_divider]
 bg = 235
@@ -129,7 +134,30 @@ icon = 245
 [row.file_header]       # selected state
 bg = 238
 fg = 221
+path = 255              # legacy `file_header_path_selected`
 
 [row.hunk_divider]
 bg = 238
 fg = "#ff9bff"
+
+[row.ctx]               # legacy `ctx_cursor_bg`
+bg = 237
+
+[row.add]               # legacy `add_cursor_bg` / `add_fill_cursor_bg`
+bg = "#2e4a30"
+fill = "#257841"
+fg = 120
+
+[row.del]               # legacy `del_cursor_bg` (fill-cursor: RowStyle carries none)
+bg = "#44181a"
+fill = "none"
+fg = 203
+
+[row.mod]               # legacy `mod_cursor_bg` / `mod_fill_cursor_bg`
+bg = "#424242"
+fill = "#257841"
+fg = 245
+
+[row.mov]               # legacy `mov_cursor_bg`
+bg = 237
+fg = 245
