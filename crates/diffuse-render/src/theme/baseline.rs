@@ -2,7 +2,7 @@
 //!
 //! Snapshotted from the legacy flat palettes (`theme/palette/dark.rs` and
 //! `theme/palette/light.rs`) as phase 7 removed them: the equivalence
-//! suite now verifies the compiled scoped palettes against these in-source
+//! suite now verifies the compiled palettes against these in-source
 //! literals instead of the deleted runtime structures.
 
 use diffuse_core::parse::RowKind;

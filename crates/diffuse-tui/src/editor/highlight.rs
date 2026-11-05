@@ -113,7 +113,7 @@ pub fn markdown_highlighter(theme: DiffuseTheme) -> HighlightingCallback {
         while out.len() < lines.len() {
             out.push(vec![Span::styled(
                 lines[out.len()].clone(),
-                ratatui::style::Style::default().fg(to_color(theme.scoped_palette().ui.modal_text)),
+                ratatui::style::Style::default().fg(to_color(theme.palette.ui.modal_text)),
             )]);
         }
 

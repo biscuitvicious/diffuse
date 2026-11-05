@@ -700,7 +700,7 @@ fn test_note_callout_gutter_band_and_terminal_line() {
     let yellow = crate::render::Color::Rgb(220, 220, 20).fg_code();
     let note_bg = crate::render::Color::Fixed(234).bg_code();
     let white = crate::render::Color::Fixed(255).fg_code();
-    // Legacy note-tint foreground guard (Rgb(76, 64, 20)); the scoped
+    // Legacy note-tint foreground guard (Rgb(76, 64, 20)); the cursor-tiered
     // schema dropped the unconsumed tint slot.
     let muted = crate::render::Color::Rgb(76, 64, 20).bg_code();
     for line in note_lines {

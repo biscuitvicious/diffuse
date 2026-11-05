@@ -64,16 +64,13 @@ pub fn write_row_segment<W: Write>(
     // The visual-selection band: one neutral shade applied across the whole
     // row (distinct from the cursor's per-style lift). Resolved from the row
     // cursor tier (the asset declares it once and it cascades to every tier).
-    let band_bg = theme.scoped_palette()[Cursor::Row].band.bg.bg_code();
+    let band_bg = theme.palette[Cursor::Row].band.bg.bg_code();
     // Interactive cursor backgrounds live at the row tier.
-    let ctx_cursor_bg = theme.scoped_palette()[Cursor::Row][DiffKind::Ctx]
+    let ctx_cursor_bg = theme.palette[Cursor::Row][DiffKind::Ctx]
         .surface
         .bg
         .bg_code();
-    let ctx_tint_bg = match theme.scoped_palette()[Cursor::Rest][DiffKind::Ctx]
-        .surface
-        .bg
-    {
+    let ctx_tint_bg = match theme.palette[Cursor::Rest][DiffKind::Ctx].surface.bg {
         Color::Primary => String::new(),
         color => color.bg_code(),
     };

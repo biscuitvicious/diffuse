@@ -118,7 +118,7 @@ impl AppState {
             self.commit_range.as_deref(),
             self.target.is_staged(),
         );
-        let header_bg = to_color(self.theme.scoped_palette().ui.header_bar_bg);
+        let header_bg = to_color(self.theme.palette.ui.header_bar_bg);
         f.render_widget(
             Paragraph::new(header_line).style(Style::default().bg(header_bg)),
             main_chunks[chunk_idx],
@@ -136,7 +136,7 @@ impl AppState {
         let ribbon_area = main_chunks[chunk_idx];
 
         if self.output.files.get(cur_fi).is_none() {
-            let bg = to_color(self.theme.scoped_palette().ui.bg_base);
+            let bg = to_color(self.theme.palette.ui.bg_base);
             // Main area stays blank: the empty-state notice lives in the
             // secondary bar (persistent, no timeout).
             let p = Paragraph::new(ratatui::text::Line::default()).style(Style::default().bg(bg));
@@ -164,20 +164,16 @@ impl AppState {
                     hunk_counts,
                     theme: self.theme,
                 });
-                let status_bg = to_color(self.theme.scoped_palette().ui.status_bar_bg);
+                let status_bg = to_color(self.theme.palette.ui.status_bar_bg);
                 f.render_widget(
                     Paragraph::new(status_line).style(Style::default().bg(status_bg)),
                     status_area,
                 );
             } else {
-                f.render_widget(
-                    blank_status_widget(&self.theme.scoped_palette().ui),
-                    status_area,
-                );
+                f.render_widget(blank_status_widget(&self.theme.palette.ui), status_area);
             }
 
-            let (div_line, rib_line) =
-                bottom_ribbon_lines(main_width, &self.theme.scoped_palette().ui);
+            let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette.ui);
             f.render_widget(
                 Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(bg)),
                 ribbon_area,
@@ -225,8 +221,8 @@ impl AppState {
             .into_iter()
             .map(|l| crate::view::ansi_to_ratatui_line(optimize_ansi(&l).as_ref()))
             .collect();
-        let diff_bg = to_color(self.theme.scoped_palette().ui.bg_base);
-        let diff_fg = to_color(self.theme.scoped_palette().ui.text);
+        let diff_bg = to_color(self.theme.palette.ui.bg_base);
+        let diff_fg = to_color(self.theme.palette.ui.text);
         f.render_widget(
             Paragraph::new(paragraph_lines).style(Style::default().fg(diff_fg).bg(diff_bg)),
             diff_area,
@@ -236,8 +232,8 @@ impl AppState {
         if let Some(bar) = bar_area
             && has_scrollbar
         {
-            let thumb_color = to_color(self.theme.scoped_palette().ui.scrollbar_thumb);
-            let track_color = to_color(self.theme.scoped_palette().ui.scrollbar_track);
+            let thumb_color = to_color(self.theme.palette.ui.scrollbar_thumb);
+            let track_color = to_color(self.theme.palette.ui.scrollbar_track);
             let (_, counts, _, total_vis_lines) = self.cached_geometry_tuple(content_width);
             let header_vis = counts.first().copied().unwrap_or(1);
             let subcell = Self::scrollbar_subcell_for(
@@ -264,7 +260,7 @@ impl AppState {
                     }
                 })
                 .collect();
-            let track_bg = to_color(self.theme.scoped_palette().ui.scrollbar_track);
+            let track_bg = to_color(self.theme.palette.ui.scrollbar_track);
             f.render_widget(
                 Paragraph::new(bar_lines).style(Style::default().bg(track_bg)),
                 bar,
@@ -292,21 +288,18 @@ impl AppState {
                 hunk_counts,
                 theme: self.theme,
             });
-            let status_bg = to_color(self.theme.scoped_palette().ui.status_bar_bg);
+            let status_bg = to_color(self.theme.palette.ui.status_bar_bg);
             f.render_widget(
                 Paragraph::new(status_line).style(Style::default().bg(status_bg)),
                 status_area,
             );
         } else {
-            f.render_widget(
-                blank_status_widget(&self.theme.scoped_palette().ui),
-                status_area,
-            );
+            f.render_widget(blank_status_widget(&self.theme.palette.ui), status_area);
         }
 
         // 6. Bottom Ribbon
-        let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.scoped_palette().ui);
-        let rib_bg = to_color(self.theme.scoped_palette().ui.bg_base);
+        let (div_line, rib_line) = bottom_ribbon_lines(main_width, &self.theme.palette.ui);
+        let rib_bg = to_color(self.theme.palette.ui.bg_base);
         f.render_widget(
             Paragraph::new(vec![div_line, rib_line]).style(Style::default().bg(rib_bg)),
             ribbon_area,

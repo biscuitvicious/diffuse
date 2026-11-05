@@ -1,7 +1,7 @@
 //! Declarative theme cascade compiler.
 //!
 //! Merges a chain of [`ThemeModel`]s (self first, inherited bases after)
-//! into a flat, scoped [`ThemePalette`].
+//! into a flat, cursor-tiered [`ThemePalette`].
 //!
 //! Resolution walks the cursor axis innermost-first (Row → Hunk → File
 //! → Rest). For each diff kind the explicit kind channel is consulted along
@@ -21,7 +21,7 @@ use crate::theme::{
     Color,
     cursor::Cursor,
     diff::{DiffKind, DiffPalette},
-    palette::scoped::{CursorPalette, ThemePalette as ScopedPalette, UiPalette},
+    palette::{CursorPalette, ThemePalette, UiPalette},
     primitive::PrimitivePalette,
     styled_color::{GutterColors, StyledColor},
     surface::SurfaceColors,
@@ -445,9 +445,9 @@ fn primitives_for(models: &[ThemeModel], mode: Mode) -> Result<PrimitivePalette,
     Ok(primitives)
 }
 
-/// Compile an inherit chain into a scoped palette. `models[0]` is the self
-/// theme; subsequent entries are inherited bases in decreasing priority.
-pub(super) fn compile(models: &[ThemeModel], mode: Mode) -> Result<ScopedPalette, ThemeParseError> {
+/// Compile an inherit chain into a cursor-tiered palette. `models[0]` is the
+/// self theme; subsequent entries are inherited bases in decreasing priority.
+pub(super) fn compile(models: &[ThemeModel], mode: Mode) -> Result<ThemePalette, ThemeParseError> {
     let compiler = Compiler {
         models,
         primitives: primitives_for(models, mode)?,
@@ -458,7 +458,7 @@ pub(super) fn compile(models: &[ThemeModel], mode: Mode) -> Result<ScopedPalette
         tiers[cursor as usize] = compiler.build_cursor(cursor)?;
     }
     let ui = compiler.build_ui()?;
-    Ok(ScopedPalette::new(tiers, ui))
+    Ok(ThemePalette::new(tiers, ui))
 }
 
 #[cfg(test)]
@@ -467,12 +467,12 @@ mod tests {
 
     use super::*;
 
-    fn compile_model(source: &str) -> Result<ScopedPalette, ThemeParseError> {
+    fn compile_model(source: &str) -> Result<ThemePalette, ThemeParseError> {
         let model: ThemeModel = toml::from_str(source).expect("model parses");
         compile(&[model], Mode::Dark)
     }
 
-    fn compile_chain(models: &[ThemeModel]) -> Result<ScopedPalette, ThemeParseError> {
+    fn compile_chain(models: &[ThemeModel]) -> Result<ThemePalette, ThemeParseError> {
         let mode = models
             .iter()
             .find_map(|model| model.mode)

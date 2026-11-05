@@ -22,25 +22,25 @@ pub fn write_raw_row<W: Write>(
     highlight_trailing: bool,
     theme: &DiffuseTheme,
 ) -> fmt::Result {
-    let scoped = theme.scoped_palette();
+    let palette = theme.palette;
     let (fg_color, sub_bg_color, sub_fg_color) = match kind {
         RowKind::Add => (
-            scoped[Cursor::Rest][DiffKind::Add].gutter.icon.color,
-            scoped[Cursor::Rest][DiffKind::Add]
+            palette[Cursor::Rest][DiffKind::Add].gutter.icon.color,
+            palette[Cursor::Rest][DiffKind::Add]
                 .surface
                 .fill
                 .unwrap_or(Color::Primary),
-            scoped[Cursor::Rest][DiffKind::Add].gutter.num.color,
+            palette[Cursor::Rest][DiffKind::Add].gutter.num.color,
         ),
         RowKind::Del => (
-            scoped[Cursor::Rest][DiffKind::Del].gutter.icon.color,
-            scoped[Cursor::Row][DiffKind::Del].surface.bg,
-            scoped[Cursor::Rest][DiffKind::Del].gutter.num.color,
+            palette[Cursor::Rest][DiffKind::Del].gutter.icon.color,
+            palette[Cursor::Row][DiffKind::Del].surface.bg,
+            palette[Cursor::Rest][DiffKind::Del].gutter.num.color,
         ),
         _ => (
-            scoped[Cursor::Hunk][DiffKind::Ctx].gutter.num.color,
-            scoped[Cursor::Row][DiffKind::Ctx].surface.bg,
-            scoped[Cursor::Rest][DiffKind::Ctx].gutter.num.color,
+            palette[Cursor::Hunk][DiffKind::Ctx].gutter.num.color,
+            palette[Cursor::Row][DiffKind::Ctx].surface.bg,
+            palette[Cursor::Rest][DiffKind::Ctx].gutter.num.color,
         ),
     };
     let fg = fg_color.fg_code();
@@ -48,11 +48,11 @@ pub fn write_raw_row<W: Write>(
     let sub_fg = sub_fg_color.fg_code();
 
     let bg_color = if selected {
-        scoped[Cursor::Row][DiffKind::Ctx].surface.bg
+        palette[Cursor::Row][DiffKind::Ctx].surface.bg
     } else if band {
-        scoped[Cursor::Row].band.bg
+        palette[Cursor::Row].band.bg
     } else {
-        scoped[Cursor::Rest][DiffKind::Ctx].surface.bg
+        palette[Cursor::Rest][DiffKind::Ctx].surface.bg
     };
     let bg = match bg_color {
         Color::Primary => String::new(),

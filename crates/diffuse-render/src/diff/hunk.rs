@@ -97,7 +97,7 @@ pub fn render_hunk_divider(
     let txt = hunk_divider_text(badge, hunk, hidden_gap);
     // Rest state resolves at the cursor baseline tier (asset bg is
     // `primary`, rendering as the empty-string background code).
-    let divider = &theme.scoped_palette()[crate::theme::Cursor::Rest].hunk_divider;
+    let divider = &theme.palette[crate::theme::Cursor::Rest].hunk_divider;
     let bg_code = match divider.bg {
         yansi::Color::Primary => String::new(),
         color => color.bg_code(),

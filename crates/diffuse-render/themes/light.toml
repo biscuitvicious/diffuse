@@ -1,8 +1,8 @@
 # Canonical light theme — bundled asset.
 #
-# Byte-for-byte equivalent to the legacy flat light palette
-# (`theme/palette/light.rs`), frozen by the phase 4 equivalence tests (see
-# `themes/dark.toml` for the scope-axis mapping notes).
+# The authoritative light palette, pinned against the frozen legacy values by
+# the equivalence tests in `theme/toml/parse.rs` (see `themes/dark.toml` for
+# the cursor-axis mapping notes).
 
 name = "default"
 mode = "light"

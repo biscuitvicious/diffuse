@@ -1,14 +1,19 @@
-//! Cursor-indexed palette architecture.
+//! Cursor- and diff-kind-indexed theme palette.
 //!
 //! Replaces flat color permutations with two orthogonal axes: containment
 //! [`Cursor`] and semantic [`DiffKind`]. Lookup is $O(1)$ pointer arithmetic:
 //! `palette[Cursor::Row][DiffKind::Add].surface.bg`.
+//!
+//! [`ThemePalette`] is the complete resolved theme: one [`CursorPalette`] per
+//! cursor tier plus the cursor-independent [`UiPalette`] chrome.
 
 use std::ops;
 
+use diffuse_core::parse::RowKind;
+use diffuse_syntax::color::TokenColor;
 use yansi::Color;
 
-use super::super::{
+use super::{
     cursor::Cursor,
     diff::{DiffKind, DiffPalette},
     surface::SurfaceColors,
@@ -138,9 +143,9 @@ pub struct UiPalette {
     pub count_notes: Color,
 }
 
-/// Complete scoped theme palette: one [`CursorPalette`] per cursor tier
-/// plus UI chrome, resolved at load time into flat, `Copy`, array-indexed
-/// storage for zero-allocation rendering.
+/// Complete theme palette: one [`CursorPalette`] per cursor tier plus UI
+/// chrome, resolved at load time into flat, `Copy`, array-indexed storage for
+/// zero-allocation rendering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct ThemePalette {
     /// One palette per cursor tier, ordered by [`Cursor`] discriminant.
@@ -185,11 +190,7 @@ impl ThemePalette {
     /// kind at the canonical rest tier ([`Cursor::Rest`]).
     #[inline]
     #[must_use]
-    pub fn token_color(
-        &self,
-        color: diffuse_syntax::color::TokenColor,
-        row_kind: diffuse_core::parse::RowKind,
-    ) -> Option<Color> {
+    pub fn token_color(&self, color: TokenColor, row_kind: RowKind) -> Option<Color> {
         let kind = DiffKind::from_row(row_kind);
         self.tiers[Cursor::Rest as usize].diffs[kind as usize]
             .syntax
@@ -199,10 +200,9 @@ impl ThemePalette {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        super::super::styled_color::{GutterColors, StyledColor},
-        *,
-    };
+    use crate::theme::styled_color::{GutterColors, StyledColor};
+
+    use super::*;
 
     #[test]
     fn test_cursor_palette_indexes_each_diff_kind() {

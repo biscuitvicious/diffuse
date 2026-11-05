@@ -18,7 +18,7 @@ use std::{fs, io, path::PathBuf};
 
 use thiserror::Error;
 
-use super::{DiffuseTheme, ThemeParseError, palette::scoped::ThemePalette, toml::parse_theme_str};
+use super::{DiffuseTheme, ThemePalette, ThemeParseError, toml::parse_theme_str};
 
 #[cfg(test)]
 use super::toml::model::Mode;

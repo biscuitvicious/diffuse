@@ -120,7 +120,7 @@ impl RowStyle {
 }
 
 /// A resolved theme: its display name, effective terminal mode, and the
-/// compiled scoped palette.
+/// compiled palette.
 ///
 /// The palette is a `&'static` reference into a process-wide cache: the
 /// bundled builtins initialize once on first access, and (with the phase 7
@@ -134,20 +134,20 @@ pub struct DiffuseTheme {
     /// Effective terminal mode, selecting primitive and syntax baselines.
     pub mode: Mode,
     /// Compiled cursor-tier palette, indexed `palette[cursor][kind]`.
-    pub palette: &'static palette::scoped::ThemePalette,
+    pub palette: &'static ThemePalette,
 }
 
-/// Compiled scoped palettes, initialized on first access from the bundled
+/// Compiled palettes, initialized on first access from the bundled
 /// TOML assets (`themes/{dark,light}.toml`).
-static SCOPED_DARK: OnceLock<palette::scoped::ThemePalette> = OnceLock::new();
-static SCOPED_LIGHT: OnceLock<palette::scoped::ThemePalette> = OnceLock::new();
+static DARK_PALETTE: OnceLock<ThemePalette> = OnceLock::new();
+static LIGHT_PALETTE: OnceLock<ThemePalette> = OnceLock::new();
 
 impl DiffuseTheme {
     /// The bundled dark theme (asset `themes/dark.toml`), compiled on first
     /// access and cached as a process-wide static.
     #[must_use]
     pub fn dark() -> Self {
-        let parsed = SCOPED_DARK.get_or_init(|| {
+        let parsed = DARK_PALETTE.get_or_init(|| {
             toml::parse_builtin("dark")
                 .expect("bundled dark theme parses against the schema")
                 .palette
@@ -163,7 +163,7 @@ impl DiffuseTheme {
     /// first access and cached as a process-wide static.
     #[must_use]
     pub fn light() -> Self {
-        let parsed = SCOPED_LIGHT.get_or_init(|| {
+        let parsed = LIGHT_PALETTE.get_or_init(|| {
             toml::parse_builtin("light")
                 .expect("bundled light theme parses against the schema")
                 .palette
@@ -175,25 +175,17 @@ impl DiffuseTheme {
         }
     }
 
-    /// The compiled scoped palette: the [`Self::palette`] reference, kept
-    /// as the accessor every consumer already resolves through.
-    #[inline]
-    #[must_use]
-    pub fn scoped_palette(&self) -> &'static palette::scoped::ThemePalette {
-        self.palette
-    }
-
     /// Get the row background and icon style for the specified diff row kind
     /// under this theme.
     ///
-    /// Resolves through the scoped palette: tint/fill/foreground at the rest
+    /// Resolves through the theme palette: tint/fill/foreground at the rest
     /// tier, the cursor and fill-cursor backgrounds at the row tier.
     #[must_use]
     pub fn row_style(&self, kind: diffuse_core::parse::RowKind) -> RowStyle {
         use diffuse_core::parse::RowKind;
-        let scoped = self.scoped_palette();
-        let rest = &scoped[Cursor::Rest];
-        let row = &scoped[Cursor::Row];
+        let palette = self.palette;
+        let rest = &palette[Cursor::Rest];
+        let row = &palette[Cursor::Row];
         match kind {
             RowKind::Add => RowStyle {
                 icon: "+",
@@ -233,7 +225,7 @@ impl DiffuseTheme {
         }
     }
 
-    /// Resolve a token color through the scoped palette at the canonical
+    /// Resolve a token color through the theme palette at the canonical
     /// render cursor tier ([`Cursor::Rest`]), dispatching the row kind to
     /// its diff-kind syntax channel. Mod/Mov rows inherit the ctx channel,
     /// matching the legacy flat `token_color` semantics (frozen by the

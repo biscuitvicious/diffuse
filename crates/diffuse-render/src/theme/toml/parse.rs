@@ -12,7 +12,7 @@ use super::{
     cascade,
     model::{Mode, ThemeModel},
 };
-use crate::theme::palette::scoped::ThemePalette as ScopedPalette;
+use crate::theme::ThemePalette;
 
 /// Bundled canonical theme assets (phase 4), embedded at compile time.
 const DARK_THEME_TOML: &str = include_str!("../../../themes/dark.toml");
@@ -90,11 +90,11 @@ pub enum ThemeParseError {
     },
 }
 
-/// A parsed declarative theme, ready for scoped rendering.
+/// A parsed declarative theme, ready for rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedTheme {
-    /// The fully resolved scoped palette.
-    pub palette: ScopedPalette,
+    /// The fully resolved theme palette.
+    pub palette: ThemePalette,
     /// Theme display name: the `name` key, else the inherited base name,
     /// else `"default"`.
     pub name: String,
@@ -108,11 +108,11 @@ pub struct ParsedTheme {
     pub dark_pair: Option<String>,
 }
 
-/// Parse a declarative theme document into a scoped palette.
+/// Parse a declarative theme document into a theme palette.
 ///
 /// The document is validated against the schema, its `inherits` chain is
 /// composed (self theme first, bases after), and every field is cascaded
-/// through the cursor and diff-kind axes into a flat [`ScopedPalette`].
+/// through the cursor and diff-kind axes into a flat [`ThemePalette`].
 ///
 /// # Errors
 ///
@@ -175,7 +175,7 @@ pub fn parse_theme_str(source: &str) -> Result<ParsedTheme, ThemeParseError> {
 mod equivalence {
     //! Acceptance: bundled assets reproduce the frozen legacy baseline
     //! (snapshotted from the removed flat palettes) field-for-field through
-    //! the scoped model.
+    //! the cursor-tiered model.
 
     use diffuse_core::parse::RowKind;
 

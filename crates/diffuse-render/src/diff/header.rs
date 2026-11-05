@@ -38,13 +38,13 @@ pub fn write_file_header_bar_with_width<W: Write>(
     let counts = &file.counts;
     let path_display = file.display_path();
     let status_display = file.display_status();
-    let ui = &theme.scoped_palette().ui;
+    let ui = &theme.palette.ui;
     let bg_code = ui.header_bar_bg.bg_code();
     let fg_code = ui.header_bar_fg.fg_code();
     // The current-file path white resolves at the `Cursor::File` banner
     // tier (`path` surface color; unset paths fall back to the foreground
     // at cascade time).
-    let path_white = theme.scoped_palette()[Cursor::File]
+    let path_white = theme.palette[Cursor::File]
         .file_header
         .fg_or_path()
         .fg_code();
@@ -70,7 +70,7 @@ pub fn write_file_header_bar_with_width<W: Write>(
     // Shared count cells: the same segments, order, and colors as the
     // status bar and the TUI banners (the ≈ mov count converges on the
     // shared 147; the gutter icon keeps its own color).
-    for cell in count_cells(counts, &theme.scoped_palette().ui) {
+    for cell in count_cells(counts, &theme.palette.ui) {
         let fg = cell.color.fg_code();
         write!(
             bar_buf,

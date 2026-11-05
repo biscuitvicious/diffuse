@@ -11,7 +11,7 @@ use crate::{
 };
 use yansi::Color;
 
-/// Highlight color for mod-count segments resolved from the scoped
+/// Highlight color for mod-count segments resolved from the
 /// [`UiPalette`].
 #[must_use]
 pub fn count_color(kind: CountKind, ui: &UiPalette) -> Color {
@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_count_cells_order_and_colors() {
-        let ui = &crate::theme::DiffuseTheme::dark().scoped_palette().ui;
+        let ui = &crate::theme::DiffuseTheme::dark().palette.ui;
         let cells = count_cells(
             &FileCounts {
                 dels: 7,
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_count_cells_zero_counts_omitted() {
-        let ui = &crate::theme::DiffuseTheme::dark().scoped_palette().ui;
+        let ui = &crate::theme::DiffuseTheme::dark().palette.ui;
         let cells = count_cells(
             &FileCounts {
                 dels: 0,

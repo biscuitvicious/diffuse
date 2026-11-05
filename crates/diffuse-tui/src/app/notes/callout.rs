@@ -24,7 +24,7 @@ pub(crate) fn style_focused_note_line(
     let glyph_fg = Color::Fixed(255).fg_code();
     let cyan_fg = "\x1b[38;5;81m";
     let note_bg = Color::Fixed(234).bg_code();
-    let cursor_bg = theme.scoped_palette()[Cursor::Row][DiffKind::Ctx]
+    let cursor_bg = theme.palette[Cursor::Row][DiffKind::Ctx]
         .surface
         .bg
         .bg_code();

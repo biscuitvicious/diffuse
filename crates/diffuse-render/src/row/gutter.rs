@@ -86,7 +86,7 @@ pub fn prefix_of(
 /// Generate styled ANSI 6-character prefix gutter with color highlights and
 /// theme support.
 ///
-/// Colors resolve through the scoped palette: per-kind gutters at the rest
+/// Colors resolve through the theme palette: per-kind gutters at the rest
 /// cursor tier, with cross-kind glyphs (the trailing `±` on relocation and
 /// aux rows, the `~` on aux rows) composed from the sibling kind slots at
 /// render time. The in-hunk flag selects the cursor tier for context
@@ -103,8 +103,8 @@ pub fn styled_prefix(
     theme: &DiffuseTheme,
 ) -> String {
     let mut buf = [b' '; 4];
-    let scoped = theme.scoped_palette();
-    let ctx_num_fg = scoped[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
+    let palette = theme.palette;
+    let ctx_num_fg = palette[if in_hunk { Cursor::Hunk } else { Cursor::Rest }][DiffKind::Ctx]
         .gutter
         .num
         .fg_code();
@@ -112,10 +112,10 @@ pub fn styled_prefix(
         let pad = pad4_bytes(new_line, &mut buf);
         return format!("{ctx_num_fg}{pad}  {FG_RESET}\x1b[23m");
     }
-    let add = &scoped[Cursor::Rest][DiffKind::Add].gutter;
-    let del = &scoped[Cursor::Rest][DiffKind::Del].gutter;
-    let mov = &scoped[Cursor::Rest][DiffKind::Mov].gutter;
-    let r#mod = &scoped[Cursor::Rest][DiffKind::Mod].gutter;
+    let add = &palette[Cursor::Rest][DiffKind::Add].gutter;
+    let del = &palette[Cursor::Rest][DiffKind::Del].gutter;
+    let mov = &palette[Cursor::Rest][DiffKind::Mov].gutter;
+    let r#mod = &palette[Cursor::Rest][DiffKind::Mod].gutter;
     match group {
         Some(RowGroup::Anchor) if kind == RowKind::Mod => {
             let pad = pad4_bytes(new_line, &mut buf);

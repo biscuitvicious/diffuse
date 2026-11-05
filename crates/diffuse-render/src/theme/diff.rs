@@ -28,7 +28,7 @@ pub enum DiffKind {
 }
 
 impl DiffKind {
-    /// Number of diff kinds indexed by the scoped palettes.
+    /// Number of diff kinds indexed by each cursor-tier palette.
     pub const COUNT: usize = 5;
 
     /// Map a wire row to its palette channel. Structural rows (file

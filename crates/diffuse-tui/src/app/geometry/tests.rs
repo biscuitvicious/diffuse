@@ -705,7 +705,7 @@ fn test_scrollbar_subcell_glyphs_and_inversion() {
     use super::ScrollbarCell;
     use crate::render::{ColorExt, DiffuseTheme};
 
-    let p = &DiffuseTheme::dark().scoped_palette().ui;
+    let p = &DiffuseTheme::dark().palette.ui;
 
     // Track
     let track = ScrollbarCell::Track;

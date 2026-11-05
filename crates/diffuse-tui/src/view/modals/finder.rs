@@ -34,7 +34,7 @@ pub fn render_finder_modal(
     height: usize,
     theme: &DiffuseTheme,
 ) -> Vec<String> {
-    let p = &theme.scoped_palette().ui;
+    let p = &theme.palette.ui;
     let bg_code = p.bg_modal.bg_code();
     let border_code = p.modal_border.fg_code();
     let title_code = p.modal_title.fg_code();
@@ -179,7 +179,7 @@ pub fn render_finder_modal(
                 ));
             }
         } else {
-            let divider = theme.scoped_palette()[crate::render::Cursor::Rest].hunk_divider;
+            let divider = theme.palette[crate::render::Cursor::Rest].hunk_divider;
             let (bg, fg) = (divider.bg, divider.fg);
             let div_bg_code = match bg {
                 crate::render::Color::Primary => p.bg_modal.bg_code(),
@@ -255,7 +255,7 @@ pub fn render_finder_modal_widget(
     let modal_area = standard_modal_area(area);
     f.render_widget(Clear, modal_area);
 
-    let p = &theme.scoped_palette().ui;
+    let p = &theme.palette.ui;
     let file_list_h = (modal_area.height / 5).max(3);
     let finder_h = (file_list_h + 4)
         .min(modal_area.height.saturating_sub(4))

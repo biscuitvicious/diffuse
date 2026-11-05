@@ -1,4 +1,4 @@
-# Plan — Unified DiffPalette, Scoped Theming and TOML Engine
+# Plan — Unified DiffPalette, Cursor-Tiered Theming and TOML Engine
 
 ## Global TODO
 - [x] Phase 1 — Foundational Surface, StyledColor & Primitive Palette Modeling (`SurfaceColors`, `StyledColor`, `GutterColors`, `SyntaxPalette`, `PrimitivePalette`)
@@ -381,6 +381,7 @@ Support user customization through explicit CLI flag (`--theme <name-or-path>`) 
 - **Theme loader** (`theme/loader.rs`): 3-tier `load_theme(name_or_path)` — (1) existing file path parses directly, (2) builtin names resolve through `from_name`, (3) XDG discovery over `$XDG_CONFIG_HOME/diffuse/themes/<name>.toml` then `~/.config/diffuse/themes/`. `ThemeLoadError` distinguishes `NotFound`/`Parse`/`Io` with Display messages carrying the offending path. User palettes leak into stable `'static` references on load, honoring the `DiffuseTheme::palette` contract. 10 unit tests (path, builtins, malformed, missing, XDG + `$HOME` fallback, error display).
 - **CLI integration**: `resolve_theme` resolves any `--theme` value through `load_theme` (builtin aliases, file paths, and installed theme names all accepted) and degrades gracefully — unresolvable or malformed themes print `diffuse: {error}; falling back to default theme` and continue with the default. `--theme` help documents the path and config-dir forms. Integration tests load a custom TOML from disk (verifying the leaked name, mode, and a cascaded `ui.accent` override) and pin the malformed-file fallback.
 - **Deferred to phase 8**: nothing; golden corpora remained byte-identical throughout (verified by the full gate).
+- **Naming canonicalization**: the `scoped` qualifier is retired everywhere it named the cursor-tier architecture. `theme/palette/mod.rs` and `theme/palette/scoped.rs` collapse into one `theme/palette.rs` (matching the single-file layout of `cursor.rs`, `diff.rs`, `surface.rs`, `syntax.rs`), so the palette is `theme::palette::ThemePalette`, re-exported as `theme::ThemePalette`; the `ScopedPalette` aliases in `cascade.rs`/`parse.rs`, the `SCOPED_DARK`/`SCOPED_LIGHT` statics (`DARK_PALETTE`/`LIGHT_PALETTE`), and the redundant `DiffuseTheme::scoped_palette()` accessor are gone, with consumers reading the public `palette` field directly. The plan is retitled to match; `Scope` references in the phase 2/5 records remain as history.
 
 ---
 

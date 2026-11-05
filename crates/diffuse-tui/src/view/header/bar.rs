@@ -112,7 +112,7 @@ pub fn header_bar_line(
         Span::styled(
             repo.to_string(),
             Style::default()
-                .fg(crate::view::to_color(theme.scoped_palette().ui.header_repo))
+                .fg(crate::view::to_color(theme.palette.ui.header_repo))
                 .add_modifier(Modifier::BOLD),
         ),
     ];
@@ -122,67 +122,59 @@ pub fn header_bar_line(
     {
         spans.push(Span::styled(
             " \u{2387}",
-            Style::default().fg(crate::view::to_color(theme.scoped_palette().ui.header_dim)),
+            Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
         ));
         spans.push(Span::styled(
             range.to_string(),
             Style::default()
-                .fg(crate::view::to_color(
-                    theme.scoped_palette().ui.header_branch,
-                ))
+                .fg(crate::view::to_color(theme.palette.ui.header_branch))
                 .add_modifier(Modifier::BOLD),
         ));
     } else if let Some(b) = branch.filter(|b| !b.is_empty()) {
         spans.push(Span::styled(
             " \u{2387}",
-            Style::default().fg(crate::view::to_color(theme.scoped_palette().ui.header_dim)),
+            Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
         ));
         spans.push(Span::styled(
             b.to_string(),
             Style::default()
-                .fg(crate::view::to_color(
-                    theme.scoped_palette().ui.header_branch,
-                ))
+                .fg(crate::view::to_color(theme.palette.ui.header_branch))
                 .add_modifier(Modifier::BOLD),
         ));
         if is_staged {
             spans.push(Span::styled(
                 " (",
-                Style::default().fg(crate::view::to_color(theme.scoped_palette().ui.header_dim)),
+                Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
             ));
             spans.push(Span::styled(
                 "staged",
                 Style::default()
-                    .fg(crate::view::to_color(
-                        theme.scoped_palette().ui.header_staged,
-                    ))
+                    .fg(crate::view::to_color(theme.palette.ui.header_staged))
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
                 ")",
-                Style::default().fg(crate::view::to_color(theme.scoped_palette().ui.header_dim)),
+                Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
             ));
         }
     } else if is_staged {
         spans.push(Span::styled(
             " \u{2387}",
-            Style::default().fg(crate::view::to_color(theme.scoped_palette().ui.header_dim)),
+            Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
         ));
         spans.push(Span::styled(
             "(",
-            Style::default().fg(crate::view::to_color(theme.scoped_palette().ui.header_dim)),
+            Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
         ));
         spans.push(Span::styled(
             "staged",
             Style::default()
-                .fg(crate::view::to_color(
-                    theme.scoped_palette().ui.header_staged,
-                ))
+                .fg(crate::view::to_color(theme.palette.ui.header_staged))
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
             ")",
-            Style::default().fg(crate::view::to_color(theme.scoped_palette().ui.header_dim)),
+            Style::default().fg(crate::view::to_color(theme.palette.ui.header_dim)),
         ));
     }
 
@@ -192,10 +184,10 @@ pub fn header_bar_line(
         // No dot separator: the branch glyph (or repo name) already
         // separates the global counts.
         spans.push(Span::raw(" "));
-        spans.extend(format_counts_spans(gc, &theme.scoped_palette().ui));
+        spans.extend(format_counts_spans(gc, &theme.palette.ui));
     }
 
-    let bg = crate::view::to_color(theme.scoped_palette().ui.header_bar_bg);
+    let bg = crate::view::to_color(theme.palette.ui.header_bar_bg);
     Line::from(spans).style(Style::default().bg(bg))
 }
 

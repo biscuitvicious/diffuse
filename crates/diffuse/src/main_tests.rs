@@ -219,7 +219,7 @@ fn test_resolve_theme_falls_back_on_unknown_name() {
 }
 
 /// Phase 7: `--theme` accepts a file path to a custom TOML theme; the
-/// resolved theme carries the document's name and compiled scoped palette.
+/// resolved theme carries the document's name and compiled palette.
 #[test]
 fn test_resolve_theme_loads_theme_file_from_path() {
     let _guard = ENV_MUTEX.lock().unwrap();

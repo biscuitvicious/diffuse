@@ -230,9 +230,8 @@ pub fn render_file_header_segment(
     let prefix_text = file_header_text_with_prefix(file, badge, is_collapsed, common_prefix);
     // Selected banners lift to the row tier; current / in-band banners sit
     // at the file tier; everything else rests.
-    let banner = theme.scoped_palette()
-        [Cursor::from_banner_state(is_selected, is_current || in_band)]
-    .file_header;
+    let banner =
+        theme.palette[Cursor::from_banner_state(is_selected, is_current || in_band)].file_header;
     let (bg, fg) = (banner.bg, banner.fg);
     let bg_code = bg.bg_code();
     let fg_code = fg.fg_code();
@@ -264,7 +263,7 @@ pub fn render_file_header_segment(
     col += path_w;
     if !parts.counts.is_empty() {
         col += 1;
-        for cell in count_cells(&file.counts, &theme.scoped_palette().ui) {
+        for cell in count_cells(&file.counts, &theme.palette.ui) {
             let text = format!("{}{}", cell.marker, cell.value);
             let w = display_width(&text);
             runs.push(BannerStyleRun {
@@ -357,9 +356,8 @@ pub fn file_header_line(
 ) -> Line<'static> {
     let bar = file_header_text(file, badge, is_collapsed);
     let bar_str = truncate_pad(&bar, content_width);
-    let banner = theme.scoped_palette()
-        [Cursor::from_banner_state(is_selected, is_current || in_band)]
-    .file_header;
+    let banner =
+        theme.palette[Cursor::from_banner_state(is_selected, is_current || in_band)].file_header;
     let style = Style::default()
         .bg(crate::view::to_color(banner.bg))
         .fg(crate::view::to_color(banner.fg))

@@ -98,9 +98,9 @@ fn test_encode_decode_sgr() {
 #[test]
 fn test_default_theme_palette() {
     let dark = DiffuseTheme::dark();
-    let scoped = dark.palette;
-    let rest = &scoped[Cursor::Rest];
-    let row = &scoped[Cursor::Row];
+    let palette = dark.palette;
+    let rest = &palette[Cursor::Rest];
+    let row = &palette[Cursor::Row];
     // Row surfaces & foregrounds (rest tier) and cursor backgrounds (row
     // tier), frozen from the legacy flat values.
     assert_eq!(rest[DiffKind::Add].surface.fg, Color::Fixed(120));
@@ -134,15 +134,15 @@ fn test_default_theme_palette() {
     assert_eq!(row[DiffKind::Ctx].surface.bg, Color::Fixed(237));
     assert_eq!(rest[DiffKind::Ctx].surface.fg, Color::Primary);
     // UI: base text on the dark canvas is the terminal default.
-    assert_eq!(scoped.ui.text, Color::Primary);
+    assert_eq!(palette.ui.text, Color::Primary);
     assert_eq!(dark.name, "default");
 }
 #[test]
 fn test_row_style_methods() {
     let theme = DiffuseTheme::dark();
-    let scoped = theme.palette;
-    let rest = &scoped[Cursor::Rest];
-    let row = &scoped[Cursor::Row];
+    let palette = theme.palette;
+    let rest = &palette[Cursor::Rest];
+    let row = &palette[Cursor::Row];
 
     let add_style = theme.row_style(diffuse_core::parse::RowKind::Add);
     assert_eq!(add_style.tint_bg, rest[DiffKind::Add].surface.bg);
@@ -156,8 +156,8 @@ fn test_row_style_methods() {
     assert_eq!(del_style.fill_cursor_style(), None);
 }
 #[test]
-fn test_row_style_scoped_parity() {
-    // Phase 6: row_style reads through the scoped palette (rest tier for
+fn test_row_style_palette_parity() {
+    // row_style reads through the theme palette (rest tier for
     // tint/underlying style, row tier for cursor backgrounds); output must
     // match the frozen legacy baseline values for every kind, in both modes.
     for theme in [DiffuseTheme::dark(), DiffuseTheme::light()] {
@@ -459,7 +459,7 @@ fn test_channel_syntax_palettes_resolve_and_override_independently() {
     assert_eq!(del.token_color(TokenColor::Default), None);
 
     // The syntax palettes are `Copy`, so an overridden clone resolves
-    // standalone without touching the shared scoped palette.
+    // standalone without touching the shared palette.
     let mut add_overlay = add;
     add_overlay.keyword = Color::Rgb(10, 20, 30);
     assert_eq!(
@@ -471,7 +471,7 @@ fn test_channel_syntax_palettes_resolve_and_override_independently() {
             .syntax
             .token_color(TokenColor::Keyword),
         Some(Color::Fixed(147)),
-        "the shared scoped channel is unaffected by the local overlay"
+        "the shared palette is unaffected by the local overlay"
     );
 }
 #[test]
@@ -838,8 +838,8 @@ fn test_theme_from_name_auto_stays_query_free() {
 }
 
 #[test]
-fn test_scoped_palette_resolves_by_theme_mode() {
-    // Each mode compiles its own scoped palette, cached as a static:
+fn test_palette_resolves_by_theme_mode() {
+    // Each mode compiles its own palette, cached as a static:
     // repeated construction resolves the same compiled instance.
     let dark = DiffuseTheme::dark();
     let light = DiffuseTheme::light();
@@ -849,9 +849,9 @@ fn test_scoped_palette_resolves_by_theme_mode() {
         DiffuseTheme::light().palette,
         "light is cached"
     );
-    assert_eq!(dark.scoped_palette(), dark.palette);
+    assert_eq!(dark.palette, dark.palette);
 
-    // Scoped banner states resolve per cursor tier from the frozen legacy
+    // Banner states resolve per cursor tier from the frozen legacy
     // baseline values.
     assert_eq!(
         dark.palette[Cursor::Rest].file_header.bg,
@@ -867,8 +867,8 @@ fn test_scoped_palette_resolves_by_theme_mode() {
     );
 }
 #[test]
-fn test_scoped_token_dispatch_matches_legacy() {
-    // write_token dispatches through the scoped palette now; output must
+fn test_token_dispatch_matches_legacy() {
+    // write_token dispatches through the theme palette now; output must
     // stay byte-identical for every row kind and token.
     let theme = DiffuseTheme::dark();
     for (row_kind, tok_kind) in [
