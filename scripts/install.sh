@@ -20,6 +20,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/target.sh"
 
+# A standalone install builds at low priority with a bounded job budget, so it
+# does not monopolize the machine (see target.sh).
+reexec_low_priority "$0" "$@"
+shape_build_resources
+
 HOST_TARGET="$(detect_host_target)"
 TARGET="${TARGET:-${DIFFUSE_TARGET:-}}"
 

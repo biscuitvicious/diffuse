@@ -4,6 +4,10 @@
 set -e
 set -o pipefail
 
+# Option parsing below consumes "$@"; the low-priority re-exec must forward the
+# original command line verbatim, so capture it first.
+ORIGINAL_ARGS=("$@")
+
 # Default modes
 fmt_mode=apply
 clippy_mode=apply
@@ -44,6 +48,16 @@ while [[ $# -gt 0 ]]; do
             TARGET_EXPLICIT=true
             shift
             ;;
+        --jobs)
+            DIFFUSE_JOBS="$2"
+            export DIFFUSE_JOBS
+            shift 2
+            ;;
+        --jobs=*)
+            DIFFUSE_JOBS="${1#*=}"
+            export DIFFUSE_JOBS
+            shift
+            ;;
         *)
             echo "Unknown flag: $1" >&2
             exit 1
@@ -53,6 +67,11 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/target.sh"
+
+# Keep the machine responsive: low CPU priority plus a bounded job budget that
+# every nested cargo invocation inherits (see target.sh).
+reexec_low_priority "$0" "${ORIGINAL_ARGS[@]}"
+shape_build_resources
 
 HOST_TARGET="$(detect_host_target)"
 # Only pass an explicit --target to cargo invocations when the user asked

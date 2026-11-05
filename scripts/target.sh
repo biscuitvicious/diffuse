@@ -7,6 +7,77 @@ set -euo pipefail
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PINNED_TOOLCHAIN="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$WORKSPACE_ROOT/rust-toolchain.toml" 2>/dev/null || echo "")"
 
+# ── Resource shaping ────────────────────────────────────────────────────────
+# Cargo saturates every core by default, and rustc plus the linker are memory
+# hungry enough that a full workspace build pushes a laptop into swap. The
+# helpers below bound cargo and libtest parallelism and drop CPU priority so a
+# verification gate leaves the machine usable:
+#
+#   DIFFUSE_JOBS=<n>   compile/test with exactly <n> jobs
+#   DIFFUSE_JOBS=all   use every core (no headroom)
+#   DIFFUSE_JOBS=auto  three quarters of the cores (default)
+#   DIFFUSE_NICE=<n>   niceness level (default 10; empty disables the re-exec)
+#   CARGO_BUILD_JOBS   when already set, the computed budget is skipped
+
+# Re-execute the calling script once at low CPU priority.
+reexec_low_priority() {
+    if [ -n "${DIFFUSE_LOW_PRIORITY:-}" ]; then
+        return 0
+    fi
+    if [ -z "${DIFFUSE_NICE-10}" ]; then
+        return 0
+    fi
+    if ! command -v nice >/dev/null 2>&1; then
+        return 0
+    fi
+    export DIFFUSE_LOW_PRIORITY=1
+    exec nice -n "${DIFFUSE_NICE-10}" "$@"
+}
+
+# Bound build/test parallelism to three quarters of the cores, leaving the rest
+# for interactive work. Exports CARGO_BUILD_JOBS and RUST_TEST_THREADS so every
+# nested cargo invocation (including cargo install) inherits the budget.
+shape_build_resources() {
+    local cores jobs niceness
+    cores=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 1)
+    if [ -z "${CARGO_BUILD_JOBS:-}" ]; then
+        case "${DIFFUSE_JOBS:-auto}" in
+            all)
+                jobs=$cores
+                ;;
+            auto)
+                # Three quarters of the cores, leaving a quarter for
+                # interactive work.
+                jobs=$((cores * 3 / 4))
+                if [ "$jobs" -lt 1 ]; then
+                    jobs=1
+                fi
+                ;;
+            *)
+                case "$DIFFUSE_JOBS" in
+                    *[!0-9]* | "")
+                        echo "Invalid DIFFUSE_JOBS='$DIFFUSE_JOBS' (expected a positive integer or 'all')" >&2
+                        return 1
+                        ;;
+                esac
+                jobs=$DIFFUSE_JOBS
+                ;;
+        esac
+        export CARGO_BUILD_JOBS=$jobs
+    fi
+    # Test threads follow the same budget unless the caller set their own.
+    if [ -z "${RUST_TEST_THREADS:-}" ]; then
+        RUST_TEST_THREADS=$CARGO_BUILD_JOBS
+        export RUST_TEST_THREADS
+    fi
+    # Report once per process tree: check.sh re-enters this via install.sh.
+    if [ -z "${DIFFUSE_RESOURCES_REPORTED:-}" ]; then
+        export DIFFUSE_RESOURCES_REPORTED=1
+        niceness=$(ps -o ni= -p $$ 2>/dev/null | tr -d '[:space:]')
+        echo "Build resources: $CARGO_BUILD_JOBS build job(s), $RUST_TEST_THREADS test thread(s), niceness ${niceness:-?} (DIFFUSE_JOBS=<n|all> to override)"
+    fi
+}
+
 # Supported target triples from rust-toolchain.toml
 SUPPORTED_TARGETS=(
     "x86_64-unknown-linux-gnu"
