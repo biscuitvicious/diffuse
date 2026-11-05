@@ -4,7 +4,7 @@ use std::{
     io::{self, IsTerminal, Stdout, Write, stdout},
     panic,
     sync::atomic::AtomicBool,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -63,6 +63,50 @@ pub fn install_panic_hook() {
         // panics abort the process cleanly instead of leaving the TUI running.
         std::process::exit(101);
     }));
+}
+
+/// The shortest poll timeout whose early return is diagnostic: below it, an
+/// empty return is normal and carries no signal.
+const EARLY_RETURN_GRACE: Duration = Duration::from_millis(10);
+
+/// Result of polling the terminal for input.
+#[derive(Debug)]
+pub enum PollOutcome {
+    /// A terminal event is ready.
+    Event(Event),
+    /// The poll waited out its timeout with no event; the terminal is healthy.
+    Idle,
+    /// The terminal can no longer deliver input, so the session must end.
+    Disconnected,
+}
+
+/// Classify a terminal poll.
+///
+/// A healthy event source blocks for the full timeout when no input arrives,
+/// so an `Ok(None)` that returns almost immediately means the source behind
+/// stdin is gone: the controlling terminal was closed, or a multiplexer pane
+/// hung up. Reporting that as [`PollOutcome::Idle`] would spin the render loop
+/// at full CPU forever, because a hung-up descriptor never blocks and never
+/// surfaces an error.
+#[must_use]
+pub fn classify_poll(
+    requested: Duration,
+    elapsed: Duration,
+    result: io::Result<Option<Event>>,
+) -> PollOutcome {
+    match result {
+        Ok(Some(event)) => PollOutcome::Event(event),
+        Ok(None) => {
+            if requested >= EARLY_RETURN_GRACE && elapsed * 2 < requested {
+                PollOutcome::Disconnected
+            } else {
+                PollOutcome::Idle
+            }
+        }
+        // A signal interrupted the wait; the terminal is still usable.
+        Err(err) if err.kind() == io::ErrorKind::Interrupted => PollOutcome::Idle,
+        Err(_) => PollOutcome::Disconnected,
+    }
 }
 
 impl TerminalGuard {
@@ -152,13 +196,16 @@ impl TerminalGuard {
             .unwrap_or_else(|_| terminal_size().unwrap_or((80, 24)))
     }
 
-    /// Poll for terminal events with a timeout.
-    pub fn poll_event(&self, timeout: Duration) -> io::Result<Option<Event>> {
-        if event::poll(timeout)? {
-            Ok(Some(event::read()?))
-        } else {
-            Ok(None)
-        }
+    /// Poll for a terminal event, measuring how long the wait took so that a
+    /// dead event source is reported as [`PollOutcome::Disconnected`].
+    pub fn poll_outcome(&self, timeout: Duration) -> PollOutcome {
+        let started = Instant::now();
+        let result = match event::poll(timeout) {
+            Ok(true) => event::read().map(Some),
+            Ok(false) => Ok(None),
+            Err(err) => Err(err),
+        };
+        classify_poll(timeout, started.elapsed(), result)
     }
 
     /// Draw a frame using Ratatui.

@@ -24,7 +24,7 @@ pub use command::TuiCommand;
 pub use editor::{Editor, open_editor, resolve_editor_args};
 pub use event::handle_event;
 pub use finder::FileFinderState;
-pub use terminal::TerminalGuard;
+pub use terminal::{PollOutcome, TerminalGuard};
 pub use types::{
     CursorSnapshot, FlatRow, FlatRowKind, HunkMeta, HunkStart, Selection, StickyHeaderInfo,
     StickyHunkInfo,
@@ -146,6 +146,45 @@ fn trigger_streaming_reload(
     *dirty = true;
 }
 
+/// The terminal surface the interactive run loop drives.
+///
+/// [`TerminalGuard`] is the production implementation. Tests substitute a
+/// synthetic session to drive [`run_session`] without a real terminal.
+pub trait Session {
+    /// Poll the input source, waiting at most `timeout` for an event.
+    fn poll_outcome(&self, timeout: Duration) -> PollOutcome;
+    /// Current terminal size as `(columns, rows)`.
+    fn size(&self) -> (u16, u16);
+    /// Render one frame of `state`.
+    fn draw_frame(&mut self, state: &mut AppState) -> io::Result<()>;
+    /// Release the terminal before running an external program.
+    fn suspend(&mut self) -> io::Result<()>;
+    /// Reclaim the terminal after an external program exits.
+    fn resume(&mut self) -> io::Result<()>;
+}
+
+impl Session for TerminalGuard {
+    fn poll_outcome(&self, timeout: Duration) -> PollOutcome {
+        TerminalGuard::poll_outcome(self, timeout)
+    }
+
+    fn size(&self) -> (u16, u16) {
+        TerminalGuard::size(self)
+    }
+
+    fn draw_frame(&mut self, state: &mut AppState) -> io::Result<()> {
+        self.draw(|frame| state.render_ratatui_frame(frame))
+    }
+
+    fn suspend(&mut self) -> io::Result<()> {
+        TerminalGuard::suspend(self)
+    }
+
+    fn resume(&mut self) -> io::Result<()> {
+        TerminalGuard::resume(self)
+    }
+}
+
 /// Launch and run the interactive TUI application with live streaming file
 /// ingestion.
 #[allow(clippy::too_many_arguments)]
@@ -162,6 +201,37 @@ pub fn run_tui(
     watch: bool,
 ) -> io::Result<()> {
     let mut guard = TerminalGuard::enter()?;
+    run_session(
+        &mut guard,
+        initial_output,
+        streaming_rx,
+        meta_rx,
+        target,
+        notes_path,
+        expand_lines,
+        theme,
+        show_resolved,
+        show_source,
+        watch,
+    )
+}
+
+/// Drive the interactive loop until the user quits or the session reports that
+/// its terminal is gone.
+#[allow(clippy::too_many_arguments)]
+pub fn run_session<S: Session + ?Sized>(
+    session: &mut S,
+    initial_output: PipelineOutput,
+    streaming_rx: Option<Receiver<OutputFile>>,
+    meta_rx: Option<Receiver<Result<GitRepoMeta, String>>>,
+    target: diffuse_core::ReviewTarget,
+    notes_path: PathBuf,
+    expand_lines: usize,
+    theme: crate::render::DiffuseTheme,
+    show_resolved: bool,
+    show_source: bool,
+    watch: bool,
+) -> io::Result<()> {
     let mut state = AppState::new(
         initial_output,
         target.display_name().to_string(),
@@ -204,7 +274,7 @@ pub fn run_tui(
     }
     let mut streaming_active = streaming_rx.is_some();
     let mut dirty = true;
-    let mut last_size = guard.size();
+    let mut last_size = session.size();
     let mut last_dot = state.streaming_dot();
 
     while !state.should_quit {
@@ -423,7 +493,7 @@ pub fn run_tui(
             }
         }
 
-        let size = guard.size();
+        let size = session.size();
         if size != last_size {
             dirty = true;
             last_size = size;
@@ -434,7 +504,7 @@ pub fn run_tui(
         }
 
         if dirty {
-            guard.draw(|f| state.render_ratatui_frame(f))?;
+            session.draw_frame(&mut state)?;
             dirty = false;
         }
 
@@ -444,20 +514,29 @@ pub fn run_tui(
             Duration::from_millis(100)
         };
 
-        if let Some(event) = guard.poll_event(poll_duration)? {
-            handle_event(&mut state, event);
-            while let Ok(Some(next_event)) = guard.poll_event(Duration::ZERO) {
-                handle_event(&mut state, next_event);
+        match session.poll_outcome(poll_duration) {
+            PollOutcome::Event(event) => {
+                handle_event(&mut state, event);
+                while let PollOutcome::Event(next_event) = session.poll_outcome(Duration::ZERO) {
+                    handle_event(&mut state, next_event);
+                }
+                dirty = true;
             }
-            dirty = true;
+            PollOutcome::Idle => {}
+            PollOutcome::Disconnected => {
+                // The session's terminal is gone (closed pty, hung-up
+                // multiplexer pane). Leaving the loop restores the terminal
+                // and exits instead of spinning on a dead descriptor.
+                state.should_quit = true;
+            }
         }
 
         if let Some(req) = state.pending_editor.take() {
             let repo_root = state.repo_root.clone();
             let git_revs = state.git_revs.clone();
-            let _ = guard.suspend();
+            let _ = session.suspend();
             let _ = editor::open_editor(&req.file, req.line, req.range, &repo_root);
-            let _ = guard.resume();
+            let _ = session.resume();
             let _ = actions::reload_diff(&mut state, &repo_root, &git_revs);
             dirty = true;
         }
