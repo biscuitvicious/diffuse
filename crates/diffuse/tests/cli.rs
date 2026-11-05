@@ -377,6 +377,20 @@ fn test_cli_pager_flag() {
         stdout.contains("\x1b["),
         "stdout must contain ANSI colored diff"
     );
+    // The pager streams, so the banner carries the position alone: the total
+    // is not known until the stream ends.
+    assert!(
+        stdout.contains("File 1 ·"),
+        "pager banner must carry the file position: {stdout:.400}"
+    );
+    assert!(
+        stdout.contains("File 2 ·"),
+        "pager banner must carry the last file position: {stdout:.400}"
+    );
+    assert!(
+        !stdout.contains("File 1/2") && !stdout.contains("File 2/2"),
+        "a streaming banner must not claim a total: {stdout:.400}"
+    );
 }
 
 /// `diffuse parse --json` should parse diff and emit JSON token stream.

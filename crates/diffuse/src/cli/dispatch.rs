@@ -12,6 +12,7 @@ use diffuse::{
     git::{diff_paths, is_inside_work_tree},
     notes::{default_notes_path, load_notes},
     prelude::*,
+    render::Badge,
     streaming::{self, spawn_git_stream_pipeline, stream_diff_reader, stream_parsed_files},
     theme::discard_pending_terminal_input,
     wire::emit_file_jsonl,
@@ -626,8 +627,13 @@ fn dispatch_git_review(
     } else {
         let mut stdout = io::stdout().lock();
         let term_width = detect_terminal_width();
-        for file in consumer {
-            let mut rendered = render_file_diff_with_width(&file, None, &theme, true, term_width);
+        // Stream each file as it is parsed. The total is only known once the
+        // stream ends, so the banner carries the position alone, exactly as
+        // the TUI does before the total is known.
+        for (idx, file) in consumer.enumerate() {
+            let badge = Badge { idx, total: None };
+            let mut rendered =
+                render_file_diff_with_width(&file, Some(badge), &theme, true, term_width);
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();
             }
@@ -746,8 +752,13 @@ fn consume_and_render(
     } else {
         let mut stdout = io::stdout().lock();
         let term_width = detect_terminal_width();
-        for file in consumer {
-            let mut rendered = render_file_diff_with_width(&file, None, &theme, true, term_width);
+        // Stream each file as it is parsed. The total is only known once the
+        // stream ends, so the banner carries the position alone, exactly as
+        // the TUI does before the total is known.
+        for (idx, file) in consumer.enumerate() {
+            let badge = Badge { idx, total: None };
+            let mut rendered =
+                render_file_diff_with_width(&file, Some(badge), &theme, true, term_width);
             if !colorize {
                 rendered = strip_ansi(&rendered).to_string();
             }

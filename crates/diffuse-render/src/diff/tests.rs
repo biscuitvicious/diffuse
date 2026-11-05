@@ -77,7 +77,7 @@ fn test_render_raw_pipeline_output() {
     file_fallback.counts.movs = 1;
     let single_raw = render_raw_file_diff(&file_fallback, None, &DiffuseTheme::dark());
     assert!(single_raw.contains("~1"));
-    assert!(single_raw.contains("moved"));
+    assert!(single_raw.contains("≈1"));
     assert!(single_raw.contains("@@ -1,2 +1,2 @@"));
 }
 
@@ -228,13 +228,14 @@ fn test_write_file_header_bar_direct_buffer() {
     };
     let mut buf = String::new();
     write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::dark()).unwrap();
-    assert!(buf.starts_with("\x1b[48;5;234m\x1b[1m\x1b[38;5;231m"));
+    assert!(buf.starts_with("\x1b[48;5;233m\x1b[1m\x1b[38;5;214m"));
     assert!(buf.contains("+5"));
     assert!(buf.contains("−2"));
     assert!(buf.contains("~3"));
     assert!(buf.contains("≈1"));
     assert!(buf.ends_with("\x1b[0m\n"));
-    assert!(!buf.ends_with(" \x1b[0m\n"));
+    // The canonical banner ends with a gap before the next row.
+    assert!(buf.ends_with(" \x1b[0m\n"));
     assert!(!buf.contains("(modified)"));
     let plain = strip_ansi(&buf);
     assert!(plain.contains("src/lib.rs −2 +5 ~3 ≈1"));
@@ -308,7 +309,7 @@ fn test_render_file_diff_light_theme() {
 
     assert_ne!(rendered_dark, rendered_light);
     assert!(rendered_light.contains("48;2;"));
-    assert!(rendered_light.contains("235;238;242"));
+    assert!(rendered_light.contains("240;243;248"));
 }
 
 #[test]
@@ -560,9 +561,16 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     assert!(plain.contains("──── Hunk 1/2"));
     assert!(plain.contains("──── Hunk 2/2"));
 
-    // -p hunk headers do not contain the hidden gap / expansion arrows
+    // -p hunk headers do not contain the hidden gap / expansion arrows (the
+    // file banner above them carries the collapse caret).
     assert!(!plain.contains("more lines"));
-    assert!(!plain.contains('▼'));
+    assert!(
+        !rendered
+            .lines()
+            .filter(|line| line.contains("──── Hunk"))
+            .any(|line| line.contains('▼')),
+        "hunk headers must not carry expansion arrows"
+    );
 
     // The divider paints the theme canvas instead of inheriting the terminal
     // background: a light terminal running the dark theme would otherwise
@@ -630,11 +638,15 @@ fn test_render_file_diff_extends_background_to_terminal_width() {
     let theme = DiffuseTheme::dark();
     let del_bg = theme.row_style(crate::core::parse::RowKind::Del).tint_bg();
     let add_bg = theme.row_style(crate::core::parse::RowKind::Add).tint_bg();
-    let header_bg = theme.palette.ui.header_bar_bg.bg_code();
+    let header_bg = theme.palette[crate::theme::Cursor::Rest]
+        .file_header
+        .bg
+        .bg_code();
 
     // Line 0: Header bar
     assert!(lines[0].starts_with(&header_bg));
-    assert!(lines[0].ends_with(&"  \x1b[0m".to_string()));
+    // The banner runs out its ruler to the terminal width.
+    assert!(lines[0].ends_with("═\x1b[0m"));
 
     // Line 3: Deletion row (-old1)
     assert!(lines[3].contains(&del_bg));
@@ -653,7 +665,8 @@ fn test_render_file_diff_extends_background_to_terminal_width() {
         crate::width::display_width(header_plain.trim_end_matches('\n')),
         120
     );
-    assert!(header_buf.ends_with(" \x1b[0m\n"));
+    // The banner extends across the requested width with its ruler fill.
+    assert!(header_buf.ends_with("═\x1b[0m\n"));
 }
 
 #[test]
@@ -700,7 +713,7 @@ fn test_render_file_diff_multiline_wrapping_extends_last_line_to_width() {
 }
 
 #[test]
-fn test_write_file_header_bar_without_width_has_no_trailing_space() {
+fn test_write_file_header_bar_without_width_ends_with_a_gap() {
     let file = OutputFile {
         path: "src/lib.rs".to_string(),
         old_path: None,
@@ -726,7 +739,7 @@ fn test_write_file_header_bar_without_width_has_no_trailing_space() {
     let mut buf = String::new();
     write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::dark()).unwrap();
     assert!(buf.ends_with("\x1b[0m\n"));
-    assert!(!buf.ends_with(" \x1b[0m\n"));
+    assert!(buf.ends_with(" \x1b[0m\n"));
 }
 
 #[test]

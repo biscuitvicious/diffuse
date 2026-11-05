@@ -6,7 +6,10 @@ use ratatui::{
 use super::super::header::truncate_pad;
 use crate::{
     core::wire::OutputFile,
-    render::{Badge, ColorExt, Cursor, DiffuseTheme, width::display_width},
+    render::{
+        Badge, ColorExt, Cursor, DiffuseTheme, FileHeaderBanner, FileHeaderSpec, HeaderRole,
+        file_header_banner, file_header_text as canonical_file_header_text, width::display_width,
+    },
 };
 
 fn rename_prefix_visual_span(
@@ -63,87 +66,8 @@ fn rename_prefix_visual_span(
     }
 }
 
-/// Char column of the collapse/expand triangle in [`file_header_text`].
+/// Char column of the collapse/expand triangle in the file banner.
 pub const FILE_HEADER_INDICATOR_COL: usize = 5;
-
-/// Indicator prefix (with file position badge) and collapse tag of a file
-/// header banner row: `════ ▼ File 3/17 · ` or `════ File 3/17 · ` for
-/// binaries.
-fn file_header_indicator(file: &OutputFile, badge: Badge, is_collapsed: bool) -> (String, String) {
-    let badge = format!("{} · ", badge.file_text());
-    if file.is_binary {
-        (format!("════ {badge}"), String::new())
-    } else {
-        let indicator = if is_collapsed { "▶" } else { "▼" };
-        let tag = if is_collapsed { " [collapsed]" } else { "" };
-        (format!("════ {indicator} {badge}"), tag.to_string())
-    }
-}
-
-/// Assembled plain parts of a file header banner row, in render order.
-/// Both the raw text builder and the styled segment renderer consume these,
-/// so slicing columns and style ranges cannot drift apart.
-struct FileHeaderParts {
-    indicator: String,
-    path: String,
-    counts: String,
-    status: String,
-    collapse: String,
-}
-
-fn file_header_parts(
-    file: &OutputFile,
-    badge: Badge,
-    is_collapsed: bool,
-    common_prefix: Option<&str>,
-) -> FileHeaderParts {
-    use super::super::header::format_counts_plain;
-
-    let (indicator_prefix, collapse_tag) = file_header_indicator(file, badge, is_collapsed);
-    let path_display = file.display_path_with_prefix(common_prefix);
-    let status_str = file.display_status();
-    let status_tag =
-        if status_str.is_empty() || status_str == "modified" || status_str == "unmodified" {
-            String::new()
-        } else {
-            format!(" ({status_str})")
-        };
-    FileHeaderParts {
-        indicator: indicator_prefix,
-        path: path_display,
-        counts: format_counts_plain(&file.counts),
-        status: status_tag,
-        collapse: collapse_tag,
-    }
-}
-
-/// Build the raw text of a file header banner row with optional common prefix
-/// stripping. Change counts sit between the filename and the status parens,
-/// rendered with the shared [`format_counts_plain`] (zero counts omitted).
-pub fn file_header_text_with_prefix(
-    file: &OutputFile,
-    badge: Badge,
-    is_collapsed: bool,
-    common_prefix: Option<&str>,
-) -> String {
-    let parts = file_header_parts(file, badge, is_collapsed, common_prefix);
-    if parts.counts.is_empty() {
-        format!(
-            "{}{}{}{} ",
-            parts.indicator, parts.path, parts.status, parts.collapse
-        )
-    } else {
-        format!(
-            "{}{} {}{}{} ",
-            parts.indicator, parts.path, parts.counts, parts.status, parts.collapse
-        )
-    }
-}
-
-/// Build the raw text of a file header banner row.
-pub fn file_header_text(file: &OutputFile, badge: Badge, is_collapsed: bool) -> String {
-    file_header_text_with_prefix(file, badge, is_collapsed, None)
-}
 
 /// A styled column range over plain banner text: emitted with `open`
 /// before the overlapped slice and `close` after it.
@@ -152,6 +76,39 @@ struct BannerStyleRun {
     end: usize,
     open: String,
     close: String,
+}
+
+/// Build the styled column ranges of a canonical banner, one per non-base
+/// run, so the renderer only chooses escape syntax.
+fn banner_runs(banner: &FileHeaderBanner) -> Vec<BannerStyleRun> {
+    let base_fg = banner.surface.fg.fg_code();
+    let path_fg = banner.surface.fg_or_path().fg_code();
+    let mut runs = Vec::with_capacity(banner.spans.len());
+    let mut col = 0usize;
+    for span in &banner.spans {
+        let width = display_width(&span.text);
+        let escapes = match span.role {
+            HeaderRole::Base => None,
+            HeaderRole::Path => Some((
+                format!("\x1b[22m{path_fg}"),
+                format!("\x1b[39m\x1b[1m{base_fg}"),
+            )),
+            HeaderRole::Count(color) => Some((
+                format!("\x1b[1m{}", color.fg_code()),
+                format!("\x1b[39m{base_fg}"),
+            )),
+        };
+        if let Some((open, close)) = escapes {
+            runs.push(BannerStyleRun {
+                start: col,
+                end: col + width,
+                open,
+                close,
+            });
+        }
+        col += width;
+    }
+    runs
 }
 
 /// Render a visual slice of plain banner text, applying the styled column
@@ -211,8 +168,30 @@ fn render_banner_piece(
     (out, visible)
 }
 
-/// Render a specific visual segment of a file header banner row with theme
-/// support.
+/// Canonical plain text of a file banner row with the shared directory prefix
+/// stripped.
+pub fn file_header_text_with_prefix(
+    file: &OutputFile,
+    badge: Badge,
+    is_collapsed: bool,
+    common_prefix: Option<&str>,
+) -> String {
+    canonical_file_header_text(
+        file,
+        &FileHeaderSpec {
+            badge: Some(badge),
+            is_collapsed,
+            common_prefix,
+        },
+    )
+}
+
+/// Canonical plain text of a file banner row.
+pub fn file_header_text(file: &OutputFile, badge: Badge, is_collapsed: bool) -> String {
+    file_header_text_with_prefix(file, badge, is_collapsed, None)
+}
+
+/// Render a specific visual segment of a file banner row with theme support.
 #[allow(clippy::too_many_arguments)]
 pub fn render_file_header_segment(
     file: &OutputFile,
@@ -226,71 +205,33 @@ pub fn render_file_header_segment(
     theme: &DiffuseTheme,
     common_prefix: Option<&str>,
 ) -> String {
-    use super::super::header::count_cells;
-
-    let prefix_text = file_header_text_with_prefix(file, badge, is_collapsed, common_prefix);
     // Selected banners lift to the row tier; current / in-band banners sit
     // at the file tier; everything else rests.
-    let banner =
-        theme.palette[Cursor::from_banner_state(is_selected, is_current || in_band)].file_header;
-    let (bg, fg) = (banner.bg, banner.fg);
-    let bg_code = bg.bg_code();
-    let fg_code = fg.fg_code();
+    let tier = Cursor::from_banner_state(is_selected, is_current || in_band);
+    let banner = file_header_banner(
+        file,
+        &FileHeaderSpec {
+            badge: Some(badge),
+            is_collapsed,
+            common_prefix,
+        },
+        theme,
+        tier,
+    );
+    let bg_code = banner.surface.bg.bg_code();
+    let fg_code = banner.surface.fg.fg_code();
 
-    let total_prefix_w = display_width(&prefix_text);
+    let total_prefix_w = display_width(&banner.text);
     if seg_start >= total_prefix_w {
         let bar_str = "═".repeat(content_width);
         return format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m");
     }
 
-    // Styled ranges share the status bar's count cells (same segments, same
-    // colors); the filename and status parens render in the per-state path
-    // white (selected brightest, rest most muted).
-    // Columns walk the shared parts in order, so text and ranges cannot
-    // drift apart.
-    let parts = file_header_parts(file, badge, is_collapsed, common_prefix);
-    let path_color = banner.fg_or_path();
-    let white_open = format!("\x1b[22m{}", path_color.fg_code());
-    let white_close = format!("\x1b[39m\x1b[1m{fg_code}");
-    let mut runs: Vec<BannerStyleRun> = Vec::new();
-    let mut col = display_width(&parts.indicator);
-    let path_w = display_width(&parts.path);
-    runs.push(BannerStyleRun {
-        start: col,
-        end: col + path_w,
-        open: white_open.clone(),
-        close: white_close.clone(),
-    });
-    col += path_w;
-    if !parts.counts.is_empty() {
-        col += 1;
-        for cell in count_cells(&file.counts, &theme.palette.ui) {
-            let text = format!("{}{}", cell.marker, cell.value);
-            let w = display_width(&text);
-            runs.push(BannerStyleRun {
-                start: col,
-                end: col + w,
-                open: format!("\x1b[1m{}", cell.color.fg_code()),
-                close: format!("\x1b[39m{fg_code}"),
-            });
-            col += w + 1;
-        }
-
-        col -= 1;
-    }
-    if !parts.status.is_empty() {
-        let status_w = display_width(&parts.status);
+    let mut runs = banner_runs(&banner);
+    if let Some((start, end)) = rename_prefix_visual_span(file, badge, common_prefix) {
         runs.push(BannerStyleRun {
-            start: col,
-            end: col + status_w,
-            open: white_open,
-            close: white_close,
-        });
-    }
-    if let Some((p_start, p_end)) = rename_prefix_visual_span(file, badge, common_prefix) {
-        runs.push(BannerStyleRun {
-            start: p_start,
-            end: p_end,
+            start,
+            end,
             open: "\x1b[4m\x1b[38;5;139m".to_string(),
             close: format!("\x1b[24m{fg_code}"),
         });
@@ -298,7 +239,7 @@ pub fn render_file_header_segment(
     runs.sort_by_key(|r| r.start);
 
     let (styled_piece, piece_w) =
-        render_banner_piece(&prefix_text, &runs, seg_start, content_width);
+        render_banner_piece(&banner.text, &runs, seg_start, content_width);
 
     let bar_str = if piece_w < content_width {
         let ruler_len = content_width - piece_w;
@@ -316,8 +257,7 @@ pub fn render_file_header_segment(
     format!("{bg_code}\x1b[1m{fg_code}{bar_str}\x1b[0m")
 }
 
-/// Render a file header banner row as a styled Ratatui [`Line`] with theme
-/// support.
+/// Render a file banner row as a styled Ratatui [`Line`] with theme support.
 #[allow(clippy::too_many_arguments)]
 pub fn file_header_line(
     file: &OutputFile,
@@ -329,13 +269,20 @@ pub fn file_header_line(
     content_width: usize,
     theme: &DiffuseTheme,
 ) -> Line<'static> {
-    let bar = file_header_text(file, badge, is_collapsed);
-    let bar_str = truncate_pad(&bar, content_width);
-    let banner =
-        theme.palette[Cursor::from_banner_state(is_selected, is_current || in_band)].file_header;
+    let banner = file_header_banner(
+        file,
+        &FileHeaderSpec {
+            badge: Some(badge),
+            is_collapsed,
+            common_prefix: None,
+        },
+        theme,
+        Cursor::from_banner_state(is_selected, is_current || in_band),
+    );
+    let bar_str = truncate_pad(&banner.text, content_width);
     let style = Style::default()
-        .bg(crate::view::to_color(banner.bg))
-        .fg(crate::view::to_color(banner.fg))
+        .bg(crate::view::to_color(banner.surface.bg))
+        .fg(crate::view::to_color(banner.surface.fg))
         .add_modifier(Modifier::BOLD);
     Line::from(Span::styled(bar_str, style))
 }

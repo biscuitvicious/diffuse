@@ -11,7 +11,10 @@ pub mod row;
 #[cfg(test)]
 mod tests;
 
-pub use header::{write_file_header_bar, write_file_header_bar_with_width};
+pub use header::{
+    FileHeaderBanner, FileHeaderSpec, HeaderRole, HeaderSpan, file_header_banner, file_header_text,
+    write_file_header_bar, write_file_header_bar_with_width,
+};
 pub use hunk::{hunk_divider_text, hunk_leading_gap, render_hunk_divider};
 pub use render::{
     render_file_diff, render_file_diff_with_width, render_pipeline_output,
