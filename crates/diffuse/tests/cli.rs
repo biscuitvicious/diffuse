@@ -2212,6 +2212,85 @@ fn piped_diff_into_diffuse_with_pty_stdout_enters_tui_and_quits() {
     );
 }
 
+/// The TUI must take over the terminal promptly. Startup may not block on a
+/// terminal capability probe: a terminal that never answers one still has to
+/// see the interface immediately.
+#[test]
+fn tui_takes_over_the_terminal_promptly() {
+    use std::{io::Read, os::unix::process::CommandExt};
+
+    const TAKEOVER_BUDGET: Duration = Duration::from_millis(50);
+
+    let winsize = nix::pty::Winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let pty = nix::pty::openpty(Some(&winsize), None).expect("openpty failed");
+    let mut master = File::from(pty.master);
+    let slave = File::from(pty.slave);
+
+    // A terminal on both ends: this is the interactive git review, the only
+    // mode that consults the terminal for keyboard-protocol support.
+    let dir = setup_repo();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.arg("--theme")
+        .arg("dark")
+        .current_dir(dir.path())
+        .stdin(slave.try_clone().unwrap())
+        .stdout(slave)
+        .stderr(Stdio::piped());
+
+    unsafe {
+        cmd.pre_exec(move || {
+            libc::setsid();
+            libc::ioctl(1, libc::TIOCSCTTY, 0);
+            Ok(())
+        });
+    }
+
+    let started = Instant::now();
+    let mut child = cmd.spawn().unwrap();
+    drop(cmd);
+
+    // Answer the cursor-position query the way a real terminal does; the
+    // keyboard-protocol query is deliberately left unanswered, as by any
+    // terminal without that support.
+    let mut seen = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let mut takeover = None;
+    while started.elapsed() < Duration::from_secs(5) {
+        match master.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                seen.extend_from_slice(&chunk[..n]);
+                if seen.windows(3).any(|w| w == b"[6n") {
+                    let _ = master.write_all(b"\x1b[1;1R");
+                    let _ = master.flush();
+                }
+                if seen.windows(5).any(|w| w == b"?1049") {
+                    takeover = Some(started.elapsed());
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+
+    let _ = master.write_all(b"q");
+    let _ = master.flush();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let elapsed = takeover.expect("TUI never entered the alternate screen");
+    eprintln!("terminal takeover in {elapsed:?}");
+    assert!(
+        elapsed < TAKEOVER_BUDGET,
+        "TUI took {elapsed:?} to take over the terminal, budget is {TAKEOVER_BUDGET:?}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn piped_large_multi_file_diff_into_diffuse_with_pty_stdout_never_panics() {

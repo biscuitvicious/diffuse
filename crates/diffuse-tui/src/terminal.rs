@@ -1,7 +1,7 @@
 //! Terminal Session RAII wrapper, Crossterm events & raw mode initialization.
 
 use std::{
-    io::{self, IsTerminal, Stdout, Write, stdout},
+    io::{self, Stdout, Write, stdout},
     panic,
     sync::atomic::AtomicBool,
     time::{Duration, Instant},
@@ -16,7 +16,7 @@ use crossterm::{
     execute,
     terminal::{
         EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-        size as terminal_size, supports_keyboard_enhancement,
+        size as terminal_size,
     },
 };
 use ratatui::{Frame, Terminal, backend::CrosstermBackend};
@@ -26,7 +26,6 @@ use ratatui::{Frame, Terminal, backend::CrosstermBackend};
 pub struct TerminalGuard {
     terminal: Terminal<CrosstermBackend<Stdout>>,
     active: bool,
-    enhanced_keyboard: bool,
 }
 
 static PANIC_HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
@@ -115,14 +114,14 @@ impl TerminalGuard {
         install_panic_hook();
         let mut stdout = stdout();
         enable_raw_mode()?;
-        let enhanced_keyboard =
-            io::stdin().is_terminal() && supports_keyboard_enhancement().unwrap_or(false);
-        if enhanced_keyboard {
-            let _ = execute!(
-                stdout,
-                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-            );
-        }
+        // Announce the flags without asking first: a terminal that does not
+        // implement the kitty keyboard protocol ignores the sequence, while
+        // querying support blocks startup for seconds when a terminal does
+        // not answer the query.
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
         execute!(
             stdout,
             EnterAlternateScreen,
@@ -137,7 +136,6 @@ impl TerminalGuard {
         Ok(Self {
             terminal,
             active: true,
-            enhanced_keyboard,
         })
     }
 
@@ -145,9 +143,7 @@ impl TerminalGuard {
     /// editor).
     pub fn suspend(&mut self) -> io::Result<()> {
         if self.active {
-            if self.enhanced_keyboard {
-                let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
-            }
+            let _ = execute!(self.terminal.backend_mut(), PopKeyboardEnhancementFlags);
             execute!(
                 self.terminal.backend_mut(),
                 LeaveAlternateScreen,
@@ -166,14 +162,10 @@ impl TerminalGuard {
     pub fn resume(&mut self) -> io::Result<()> {
         if !self.active {
             enable_raw_mode()?;
-            if self.enhanced_keyboard {
-                let _ = execute!(
-                    self.terminal.backend_mut(),
-                    PushKeyboardEnhancementFlags(
-                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    )
-                );
-            }
+            let _ = execute!(
+                self.terminal.backend_mut(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            );
             execute!(
                 self.terminal.backend_mut(),
                 EnterAlternateScreen,
