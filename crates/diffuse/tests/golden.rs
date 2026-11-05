@@ -1578,7 +1578,13 @@ fn run_bin_raw_leg(name: &str) {
     let fixture = load_fixture(name);
     let diff_text = Arc::clone(&fixture.diff);
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
-    cmd.arg("parse").arg("--raw").arg("--color=always");
+    // The raw fixture encodes the dark palette; pin it so an ambient
+    // COLORFGBG cannot change the bytes under comparison.
+    cmd.arg("parse")
+        .arg("--raw")
+        .arg("--color=always")
+        .arg("--theme")
+        .arg("dark");
     if let Some(ref notes_path) = fixture.notes_file {
         cmd.arg("--notes-file").arg(notes_path);
     }

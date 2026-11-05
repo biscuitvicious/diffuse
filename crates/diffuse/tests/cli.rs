@@ -1849,19 +1849,20 @@ fn test_cli_notes_markdown_highlighting() {
     assert!(stdout_show.contains("\x1b[1m"));
 }
 
-/// Regression: one-shot runs must never emit the OSC 11 background query
-/// (`ESC ] 11 ; ?`). The terminal answers with its background color as
-/// *input*; when the 30ms read times out, the late response leaks into the
-/// shell as echoed garbage and phantom typed text (`11;rgb:...`).
-/// Only the interactive TUI (which owns the terminal for its whole
-/// lifetime) may query. Covers both the reported `diffuse -p` and the bare
-/// early-exit path (which never reaches TUI takeover).
+/// Regression: one-shot runs that do not print to the terminal must never
+/// emit the OSC 11 background query (`ESC ] 11 ; ?`). The terminal answers
+/// with its background as *input*; when the 30ms read times out, the late
+/// response leaks into the shell as echoed garbage and phantom typed text
+/// (`11;rgb:...`). Only the interactive TUI and the pager — both printing to
+/// the terminal the user reads — may query; this covers the bare early-exit
+/// path that never reaches TUI takeover.
 #[cfg(unix)]
 #[test]
 fn pty_one_shot_run_never_emits_osc11_background_query() {
     use std::io::Read;
 
-    for extra_args in [&[] as &[&str], &["-p"] as &[&str]] {
+    {
+        let extra_args = &[] as &[&str];
         let pty = nix::pty::openpty(None, None).expect("openpty failed");
         let mut master = File::from(pty.master);
         let slave = File::from(pty.slave);
@@ -1911,6 +1912,80 @@ fn pty_one_shot_run_never_emits_osc11_background_query() {
             "one-shot run {extra_args:?} must not emit the OSC 11 query, pty saw: {pty_bytes:?}"
         );
     }
+}
+
+/// The pager asks for the background only while its output is the terminal
+/// the user reads. Redirected pager output must stay query-free, so no late
+/// reply can land in the shell's input queue.
+#[cfg(unix)]
+#[test]
+fn pager_with_piped_stdout_never_emits_osc11_background_query() {
+    use std::os::unix::process::CommandExt;
+
+    let pty = nix::pty::openpty(None, None).expect("openpty failed");
+    let slave = File::from(pty.slave);
+    let repo = setup_repo();
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.arg("-p")
+        .current_dir(repo.path())
+        .stdin(slave)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("TERM", "xterm")
+        .env_remove("DIFFUSE_THEME")
+        .env_remove("COLORFGBG")
+        .env_remove("TERM_BACKGROUND");
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+
+    let out = cmd.output().unwrap();
+    assert!(
+        !out.stdout.windows(5).any(|window| window == b"]11;?"),
+        "redirected pager output must not carry the OSC 11 query, saw: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+/// A redirected run must honor the background the environment declares: a
+/// pipe is not a reason to fall back to dark.
+#[test]
+fn piped_output_uses_the_background_the_environment_declares() {
+    let repo = setup_repo();
+    let out = Command::new(env!("CARGO_BIN_EXE_diffuse"))
+        .arg("-p")
+        .current_dir(repo.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env("TERM_BACKGROUND", "light")
+        .env_remove("DIFFUSE_THEME")
+        .env_remove("COLORFGBG")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stdout
+            .windows(LIGHT_ADD_TINT.len())
+            .any(|window| window == LIGHT_ADD_TINT),
+        "piped output must use the declared light background"
+    );
+    assert!(
+        !out.stdout
+            .windows(DARK_ADD_TINT.len())
+            .any(|window| window == DARK_ADD_TINT),
+        "piped output must not fall back to the dark palette"
+    );
 }
 
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -2227,6 +2302,12 @@ const LIGHT_PALETTE_BG: &[u8] = b"48;2;250;250;250";
 /// The dark palette's base background, as emitted by the crossterm backend.
 const DARK_PALETTE_BG: &[u8] = b"48;5;233";
 
+/// Add-row tint of the bundled light theme, as the pager paints it.
+const LIGHT_ADD_TINT: &[u8] = b"48;2;230;246;236";
+
+/// Add-row tint of the bundled dark theme, as the pager paints it.
+const DARK_ADD_TINT: &[u8] = b"48;2;28;50;30";
+
 /// A running interactive review attached to a pty, with the terminal on both
 /// stdin and stdout: the only configuration that reaches the TUI.
 struct PtyReview {
@@ -2246,6 +2327,17 @@ impl Drop for PtyReview {
 /// The pty answers no query, so any startup path that waits for a terminal
 /// reply shows up as a stall.
 fn spawn_review_on_pty(theme: Option<&str>) -> PtyReview {
+    spawn_on_pty(&[], theme)
+}
+
+/// Spawn the one-shot pager on an 80×24 pty, optionally pinning the theme.
+fn spawn_pager_on_pty(theme: Option<&str>) -> PtyReview {
+    spawn_on_pty(&["-p"], theme)
+}
+
+/// Spawn `diffuse` with the terminal on both stdin and stdout, the only
+/// configuration in which background detection can reach the terminal.
+fn spawn_on_pty(extra_args: &[&str], theme: Option<&str>) -> PtyReview {
     use std::os::{fd::AsRawFd, unix::process::CommandExt};
 
     let winsize = nix::pty::Winsize {
@@ -2260,13 +2352,20 @@ fn spawn_review_on_pty(theme: Option<&str>) -> PtyReview {
 
     let repo = setup_repo();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
+    cmd.args(extra_args);
     if let Some(theme) = theme {
         cmd.arg("--theme").arg(theme);
     }
     cmd.current_dir(repo.path())
         .stdin(slave.try_clone().unwrap())
         .stdout(slave)
-        .stderr(Stdio::piped());
+        .stderr(Stdio::piped())
+        // Detection must rest on the terminal's answer, never on the ambient
+        // environment of the machine running the tests.
+        .env("TERM", "xterm")
+        .env_remove("DIFFUSE_THEME")
+        .env_remove("COLORFGBG")
+        .env_remove("TERM_BACKGROUND");
 
     unsafe {
         cmd.pre_exec(move || {
@@ -2358,6 +2457,45 @@ fn wait_for_output_as_light_terminal(
     Err(seen)
 }
 
+/// Wait until `needle` appears, answering the OSC 11 query as a light
+/// terminal after `delay`. Terminal emulators are not instant, and a reply the
+/// pager stops waiting for is echoed by the shell as typed text.
+fn wait_for_output_as_slow_light_terminal(
+    pty: &mut PtyReview,
+    needle: &[u8],
+    budget: Duration,
+    delay: Duration,
+) -> Result<Duration, Vec<u8>> {
+    use io::{Read, Write};
+
+    let started = Instant::now();
+    let mut seen = Vec::new();
+    let mut answered = false;
+    let mut chunk = [0u8; 4096];
+    while started.elapsed() < budget {
+        match pty.master.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                seen.extend_from_slice(&chunk[..n]);
+                if !answered && seen.windows(6).any(|window| window == b"\x1b]11;?") {
+                    answered = true;
+                    std::thread::sleep(delay);
+                    // The child may already have exited; the write only fails
+                    // when it has, which is exactly the failure under test.
+                    let _ = pty.master.write_all(OSC11_LIGHT_REPLY);
+                }
+            }
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+            Err(_) => break,
+        }
+        if seen.windows(needle.len()).any(|window| window == needle) {
+            return Ok(started.elapsed());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Err(seen)
+}
+
 /// The TUI must take over the terminal promptly. Startup may not block on a
 /// terminal capability probe: a terminal that never answers one still has to
 /// see the interface immediately.
@@ -2367,7 +2505,6 @@ fn tui_takes_over_the_terminal_promptly() {
     let elapsed = wait_for_output(&mut pty, b"?1049", Duration::from_secs(5))
         .unwrap_or_else(|seen| panic!("TUI never entered the alternate screen, pty saw: {seen:?}"));
 
-    eprintln!("terminal takeover in {elapsed:?}");
     assert!(
         elapsed < TAKEOVER_BUDGET,
         "TUI took {elapsed:?} to take over the terminal, budget is {TAKEOVER_BUDGET:?}"
@@ -2383,7 +2520,10 @@ fn tui_renders_when_the_terminal_answers_no_query() {
         panic!("the review never rendered on a terminal that answers no query, pty saw: {seen:?}")
     });
 
-    eprintln!("first frame in {rendered:?}");
+    assert!(
+        rendered < FIRST_FRAME_BUDGET,
+        "the first frame took {rendered:?}, budget is {FIRST_FRAME_BUDGET:?}"
+    );
     assert_eq!(
         pty.child.try_wait().unwrap(),
         None,
@@ -2396,7 +2536,7 @@ fn tui_renders_when_the_terminal_answers_no_query() {
 #[test]
 fn tui_uses_the_background_the_terminal_reports() {
     let mut pty = spawn_review_on_pty(None);
-    let rendered = wait_for_output_as_light_terminal(
+    let _ = wait_for_output_as_light_terminal(
         &mut pty,
         LIGHT_PALETTE_BG,
         FIRST_FRAME_BUDGET,
@@ -2414,8 +2554,51 @@ fn tui_uses_the_background_the_terminal_reports() {
             "the terminal reported a light background but the review {painted}, pty saw: {seen:?}"
         )
     });
+}
 
-    eprintln!("light palette in {rendered:?}");
+/// The pager must follow the background the terminal reports: `diffuse -p` in
+/// a light terminal renders the light palette, never the dark fallback.
+#[test]
+fn pager_uses_the_background_the_terminal_reports() {
+    let mut pty = spawn_pager_on_pty(None);
+    let _ = wait_for_output_as_light_terminal(
+        &mut pty,
+        LIGHT_ADD_TINT,
+        Duration::from_secs(5),
+    )
+    .unwrap_or_else(|seen| {
+        let painted = if seen
+            .windows(DARK_ADD_TINT.len())
+            .any(|window| window == DARK_ADD_TINT)
+        {
+            "painted the dark palette"
+        } else {
+            "painted neither palette"
+        };
+        panic!(
+            "the terminal reported a light background but the pager {painted}, pty saw: {seen:?}"
+        )
+    });
+}
+
+/// A terminal that answers the background query with a little latency still
+/// decides the pager's theme: the reply may not be treated as absent, because
+/// the shell then reads it as typed text.
+#[test]
+fn pager_waits_for_a_slow_terminal_answer() {
+    let mut pty = spawn_pager_on_pty(None);
+    let _ = wait_for_output_as_slow_light_terminal(
+        &mut pty,
+        LIGHT_ADD_TINT,
+        Duration::from_secs(5),
+        Duration::from_millis(80),
+    )
+    .unwrap_or_else(|seen| {
+        panic!(
+            "a delayed light answer must still select the light palette, pty saw: {:?}",
+            String::from_utf8_lossy(&seen)
+        )
+    });
 }
 
 #[cfg(unix)]

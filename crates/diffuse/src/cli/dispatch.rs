@@ -13,12 +13,13 @@ use diffuse::{
     notes::{default_notes_path, load_notes},
     prelude::*,
     streaming::{self, spawn_git_stream_pipeline, stream_diff_reader, stream_parsed_files},
+    theme::discard_pending_terminal_input,
     wire::emit_file_jsonl,
 };
 
 use super::{
     args::{Args, SubCommand},
-    theme::{init_color_mode, resolve_theme},
+    theme::{ThemeTarget, init_color_mode, resolve_theme},
 };
 use crate::notes_cli;
 
@@ -305,7 +306,7 @@ fn dispatch_path_diff(
     );
 
     if !no_tui && stdout_tty && is_terminal_interactive(stdin_tty) {
-        let theme = resolve_theme(args.theme.as_deref(), stdin_tty);
+        let theme = resolve_theme(args.theme.as_deref(), ThemeTarget::Tui);
         let initial_out = PipelineOutput {
             files: Vec::new(),
             branch: String::new(),
@@ -412,7 +413,7 @@ fn dispatch_diff_stream(
     };
 
     if !no_tui && stdout_tty && is_terminal_interactive(stdin_tty) {
-        let theme = resolve_theme(args.theme.as_deref(), stdin_tty);
+        let theme = resolve_theme(args.theme.as_deref(), ThemeTarget::Tui);
         let initial_out = PipelineOutput {
             files: Vec::new(),
             branch: String::new(),
@@ -504,7 +505,7 @@ fn dispatch_git_review(
     let staged = args.staged;
 
     if !no_tui && stdout_tty && is_terminal_interactive(stdin_tty) {
-        let theme = resolve_theme(args.theme.as_deref(), stdin_tty);
+        let theme = resolve_theme(args.theme.as_deref(), ThemeTarget::Tui);
         let (consumer, meta_rx) = spawn_git_stream_pipeline(
             repo_root,
             git_revs.to_vec(),
@@ -536,7 +537,7 @@ fn dispatch_git_review(
         return Ok(());
     }
 
-    let theme = resolve_theme(args.theme.as_deref(), false);
+    let theme = resolve_theme(args.theme.as_deref(), one_shot_target(args));
     let (consumer, meta_rx) = spawn_git_stream_pipeline(
         repo_root,
         git_revs.to_vec(),
@@ -639,7 +640,21 @@ fn dispatch_git_review(
         }
         let _ = stdout.flush();
     }
+    // A background reply that arrives while printing would otherwise be read
+    // by the shell as typed text.
+    discard_pending_terminal_input();
     Ok(())
+}
+
+/// Pager output is the terminal the user is reading, so it may ask the
+/// terminal for its background once; every other one-shot mode stays
+/// query-free and relies on the environment indicators alone.
+fn one_shot_target(args: &Args) -> ThemeTarget {
+    if args.pager || args.no_tui {
+        ThemeTarget::Pager
+    } else {
+        ThemeTarget::Batch
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -655,7 +670,7 @@ fn consume_and_render(
     stdout_tty: bool,
     colorize: bool,
 ) -> io::Result<()> {
-    let theme = resolve_theme(args.theme.as_deref(), false);
+    let theme = resolve_theme(args.theme.as_deref(), one_shot_target(args));
 
     if is_markdown {
         let md_colorize = if colorize {
@@ -746,5 +761,8 @@ fn consume_and_render(
         let _ = stdout.flush();
     }
 
+    // A background reply that arrives while printing would otherwise be read
+    // by the shell as typed text.
+    discard_pending_terminal_input();
     Ok(())
 }

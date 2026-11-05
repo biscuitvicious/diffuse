@@ -4,6 +4,17 @@ use std::env;
 
 use diffuse::{prelude::DiffuseTheme, theme::load_theme};
 
+/// Where the resolved theme will be rendered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeTarget {
+    /// The interactive TUI, which owns the terminal for its whole lifetime.
+    Tui,
+    /// One-shot pager output printed to the terminal the user is reading.
+    Pager,
+    /// Pipes, redirects, and machine-readable output.
+    Batch,
+}
+
 /// Resolves the diffuse color theme based on CLI override, environment, and
 /// terminal capability.
 ///
@@ -13,13 +24,17 @@ use diffuse::{prelude::DiffuseTheme, theme::load_theme};
 /// XDG config directories (`$XDG_CONFIG_HOME/diffuse/themes/`,
 /// `~/.config/diffuse/themes/<name>.toml`). Unresolvable or malformed
 /// themes degrade gracefully to the default with an informative error.
-pub fn resolve_theme(cli_theme: Option<&str>, interactive: bool) -> DiffuseTheme {
+///
+/// `auto` consults the environment in every target; only [`ThemeTarget::Tui`]
+/// and [`ThemeTarget::Pager`] may additionally ask the terminal for its
+/// background, and the pager asks only while its output is the terminal.
+pub fn resolve_theme(cli_theme: Option<&str>, target: ThemeTarget) -> DiffuseTheme {
     if let Some(spec) = cli_theme {
         if spec.trim().eq_ignore_ascii_case("auto") {
-            return if interactive {
-                DiffuseTheme::auto_detect_interactive()
-            } else {
-                DiffuseTheme::auto_detect()
+            return match target {
+                ThemeTarget::Tui => DiffuseTheme::auto_detect_interactive(),
+                ThemeTarget::Pager => DiffuseTheme::auto_detect_pager(),
+                ThemeTarget::Batch => DiffuseTheme::auto_detect(),
             };
         }
         match load_theme(spec) {
@@ -27,10 +42,10 @@ pub fn resolve_theme(cli_theme: Option<&str>, interactive: bool) -> DiffuseTheme
             Err(err) => eprintln!("diffuse: {err}; falling back to default theme"),
         }
     }
-    if interactive {
-        DiffuseTheme::from_env_interactive()
-    } else {
-        DiffuseTheme::from_env()
+    match target {
+        ThemeTarget::Tui => DiffuseTheme::from_env_interactive(),
+        ThemeTarget::Pager => DiffuseTheme::from_env_pager(),
+        ThemeTarget::Batch => DiffuseTheme::from_env(),
     }
 }
 

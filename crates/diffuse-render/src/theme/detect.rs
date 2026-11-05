@@ -7,6 +7,22 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Budget for the interactive TUI's OSC 11 read: its first frame may not wait
+/// on the terminal.
+const TUI_QUERY_TIMEOUT: Duration = Duration::from_millis(30);
+
+/// Budget for the one-shot pager's OSC 11 read: no frame waits on it, and
+/// terminal emulators under load answer well after the TUI's budget. A reply
+/// hurried past is not just a lost theme, it is text the shell then reads as
+/// typed input.
+const PAGER_QUERY_TIMEOUT: Duration = Duration::from_millis(250);
+
+/// Set once a one-shot pager has written the OSC 11 query, so its exit path
+/// knows a reply may still be queued.
+#[cfg(unix)]
+static PAGER_QUERIED_BACKGROUND: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalMode {
     Dark,
@@ -136,7 +152,7 @@ fn read_stdin_byte(byte: &mut [u8; 1]) -> bool {
 }
 
 #[cfg(unix)]
-fn query_terminal_mode_osc11() -> Option<TerminalMode> {
+fn query_terminal_mode_osc11(timeout: Duration, one_shot: bool) -> Option<TerminalMode> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return None;
     }
@@ -146,9 +162,11 @@ fn query_terminal_mode_osc11() -> Option<TerminalMode> {
     let mut stdout = io::stdout().lock();
     stdout.write_all(b"\x1b]11;?\x1b\\").ok()?;
     stdout.flush().ok()?;
+    if one_shot {
+        PAGER_QUERIED_BACKGROUND.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 
     let start = Instant::now();
-    let timeout = Duration::from_millis(30);
     let mut buf = Vec::with_capacity(64);
     let mut byte = [0u8; 1];
 
@@ -169,24 +187,46 @@ fn query_terminal_mode_osc11() -> Option<TerminalMode> {
         }
     }
 
+    // A one-shot caller prints and exits right after the query: a reply still
+    // in flight when the deadline expires would otherwise be read by the
+    // shell as typed text. Discard what the terminal has already delivered;
+    // the TUI keeps its input, where queued keys are events.
+    if one_shot {
+        unsafe { libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH) };
+    }
+
     let text = str::from_utf8(&buf).ok()?;
     let (r, g, b) = parse_osc11_response(text)?;
     Some(classify_luminance(r, g, b))
 }
 
 #[cfg(not(unix))]
-fn query_terminal_mode_osc11() -> Option<TerminalMode> {
+fn query_terminal_mode_osc11(_timeout: Duration, _one_shot: bool) -> Option<TerminalMode> {
     None
+}
+
+/// Discard input the terminal queued in reply to the pager's OSC 11 query.
+///
+/// A one-shot pager prints and exits: bytes it never read are echoed by the
+/// shell as typed text (`11;rgb:...`). A no-op unless this process queried, so
+/// the pager exit path may call it unconditionally.
+pub fn discard_pending_terminal_input() {
+    #[cfg(unix)]
+    if PAGER_QUERIED_BACKGROUND.load(std::sync::atomic::Ordering::Relaxed) {
+        unsafe { libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH) };
+    }
 }
 
 /// Detect terminal background color mode across prioritized evaluation tiers:
 /// 1. `DIFFUSE_THEME` environment override
-/// 2. Non-TTY / dumb terminal bypass
+/// 2. Dumb-terminal bypass
 /// 3. `TERM_BACKGROUND` and `COLORFGBG` environment indicators
 ///
 /// Never writes to the terminal: safe in one-shot (pager/pipe/redirect)
-/// modes. The OSC 11 dynamic query lives in
-/// [`detect_terminal_mode_interactive`] only.
+/// modes, where the environment indicators still apply, so output piped out
+/// of a terminal inherits the background the user declared. Only the OSC 11
+/// dynamic query in [`detect_terminal_mode_interactive`] and
+/// [`detect_terminal_mode_pager`] requires the terminal on stdin and stdout.
 #[must_use]
 pub fn detect_terminal_mode() -> Option<TerminalMode> {
     if let Ok(val) = env::var("DIFFUSE_THEME") {
@@ -198,9 +238,6 @@ pub fn detect_terminal_mode() -> Option<TerminalMode> {
         }
     }
 
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return None;
-    }
     if env::var("TERM").as_deref() == Ok("dumb") {
         return None;
     }
@@ -230,5 +267,18 @@ pub fn detect_terminal_mode() -> Option<TerminalMode> {
 /// phantom typed text (`11;rgb:...`).
 #[must_use]
 pub fn detect_terminal_mode_interactive() -> Option<TerminalMode> {
-    detect_terminal_mode().or_else(query_terminal_mode_osc11)
+    detect_terminal_mode().or_else(|| query_terminal_mode_osc11(TUI_QUERY_TIMEOUT, false))
+}
+
+/// Detection pipeline for the one-shot pager: the environment tiers of
+/// [`detect_terminal_mode`], then one OSC 11 query, whose pending reply is
+/// discarded before the process prints and exits.
+///
+/// The environment tiers already require stdin and stdout to be terminals, so
+/// piped and redirected pager output never queries. Unlike the interactive
+/// pipeline the terminal returns to the shell as soon as the pager exits, so
+/// this path flushes the input queue the reply would otherwise land in.
+#[must_use]
+pub fn detect_terminal_mode_pager() -> Option<TerminalMode> {
+    detect_terminal_mode().or_else(|| query_terminal_mode_osc11(PAGER_QUERY_TIMEOUT, true))
 }

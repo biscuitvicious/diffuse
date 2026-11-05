@@ -375,6 +375,18 @@ impl DiffuseTheme {
         }
     }
 
+    /// Automatically detect the theme for a one-shot pager attached to the
+    /// terminal: environment indicators first, then a single OSC 11 query
+    /// whose pending reply is discarded before the process exits. Piped and
+    /// redirected output never queries.
+    #[must_use]
+    pub fn auto_detect_pager() -> Self {
+        match detect_terminal_mode_pager() {
+            Some(TerminalMode::Light) => Self::light(),
+            Some(TerminalMode::Dark) | None => Self::dark(),
+        }
+    }
+
     /// Resolve a theme by name (`"default"`, `"dark"`, `"black"`, `"light"`,
     /// `"white"`, `"auto"`).
     #[must_use]
@@ -410,11 +422,7 @@ impl DiffuseTheme {
     /// to `default` if invalid. Never queries the terminal; safe in any mode.
     #[must_use]
     pub fn from_env() -> Self {
-        if let Ok(val) = env::var("DIFFUSE_THEME") {
-            Self::from_name(&val).unwrap_or_else(Self::auto_detect)
-        } else {
-            Self::auto_detect()
-        }
+        Self::from_env_with_detection(Self::auto_detect)
     }
 
     /// [`from_env`](Self::from_env) for interactive sessions: `auto`
@@ -422,16 +430,24 @@ impl DiffuseTheme {
     /// query. Call ONLY from the interactive TUI.
     #[must_use]
     pub fn from_env_interactive() -> Self {
-        if let Ok(val) = env::var("DIFFUSE_THEME") {
-            if val.trim().eq_ignore_ascii_case("auto") {
-                return Self::auto_detect_interactive();
-            }
-            if let Some(named) = Self::from_name(&val) {
-                return named;
-            }
-            Self::auto_detect_interactive()
-        } else {
-            Self::auto_detect_interactive()
+        Self::from_env_with_detection(Self::auto_detect_interactive)
+    }
+
+    /// [`from_env`](Self::from_env) for the one-shot pager: `auto`
+    /// (explicit, unset, or invalid) falls back to one OSC 11 query while the
+    /// terminal is still attached.
+    #[must_use]
+    pub fn from_env_pager() -> Self {
+        Self::from_env_with_detection(Self::auto_detect_pager)
+    }
+
+    /// Resolve `DIFFUSE_THEME` through the named-theme loader, falling back to
+    /// `detect` for `auto`, unset, and unresolvable values.
+    fn from_env_with_detection(detect: fn() -> Self) -> Self {
+        match env::var("DIFFUSE_THEME") {
+            Ok(val) if val.trim().eq_ignore_ascii_case("auto") => detect(),
+            Ok(val) => Self::from_name(&val).unwrap_or_else(detect),
+            Err(_) => detect(),
         }
     }
 }

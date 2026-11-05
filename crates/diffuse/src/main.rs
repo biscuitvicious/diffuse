@@ -27,7 +27,7 @@ pub use cli::{
 pub use cli::{
     args::SubCommand,
     dispatch::{is_terminal_interactive, route_mode},
-    theme::resolve_theme,
+    theme::{ThemeTarget, resolve_theme},
 };
 
 fn main() -> io::Result<()> {

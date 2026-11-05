@@ -229,6 +229,8 @@ fn test_theme_from_name_and_env() {
     assert_eq!(DiffuseTheme::from_name("unknown-theme"), None);
 
     unsafe {
+        env::remove_var("COLORFGBG");
+        env::remove_var("TERM_BACKGROUND");
         env::set_var("DIFFUSE_THEME", "default");
         assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::dark());
         env::remove_var("DIFFUSE_THEME");
@@ -785,6 +787,51 @@ fn test_theme_char_literal_rendering() {
     assert_eq!(chr_light_add, "\x1b[38;2;16;128;67m'x'\x1b[39m");
     assert_eq!(chr_light_del, "\x1b[38;2;190;45;55m'x'\x1b[39m");
     assert_eq!(chr_light_ctx, "\x1b[38;2;16;128;67m'x'\x1b[39m");
+}
+
+/// Background detection must honor the environment indicators even when the
+/// output is a pipe: a redirected run inherits the background the user
+/// declared instead of falling back to dark because stdout is not a
+/// terminal.
+#[test]
+fn test_env_indicators_apply_to_piped_output() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    unsafe {
+        env::remove_var("DIFFUSE_THEME");
+        env::remove_var("COLORFGBG");
+        env::set_var("TERM_BACKGROUND", "light");
+        assert_eq!(detect_terminal_mode(), Some(TerminalMode::Light));
+        assert_eq!(DiffuseTheme::auto_detect(), DiffuseTheme::light());
+
+        env::remove_var("TERM_BACKGROUND");
+        // `fg;bg`: background 15 is white, background 0 is black.
+        env::set_var("COLORFGBG", "0;15");
+        assert_eq!(detect_terminal_mode(), Some(TerminalMode::Light));
+
+        env::set_var("COLORFGBG", "15;0");
+        assert_eq!(detect_terminal_mode(), Some(TerminalMode::Dark));
+        assert_eq!(DiffuseTheme::auto_detect(), DiffuseTheme::dark());
+
+        env::remove_var("COLORFGBG");
+    }
+}
+
+/// The pager arm resolves the same environment tiers as the batch arm, so a
+/// redirected pager run selects the theme the user declared.
+#[test]
+fn test_theme_auto_pager_matches_env_tiers() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    unsafe {
+        env::remove_var("DIFFUSE_THEME");
+        env::remove_var("COLORFGBG");
+        env::set_var("TERM_BACKGROUND", "light");
+        assert_eq!(DiffuseTheme::auto_detect_pager(), DiffuseTheme::light());
+        assert_eq!(DiffuseTheme::from_env_pager(), DiffuseTheme::light());
+        env::set_var("DIFFUSE_THEME", "dark");
+        assert_eq!(DiffuseTheme::from_env_pager(), DiffuseTheme::dark());
+        env::remove_var("DIFFUSE_THEME");
+        env::remove_var("TERM_BACKGROUND");
+    }
 }
 
 #[test]

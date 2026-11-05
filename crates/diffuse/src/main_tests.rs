@@ -4,7 +4,7 @@ use clap::Parser;
 
 use diffuse::prelude::*;
 
-use super::{Args, SubCommand, is_terminal_interactive, route_mode};
+use super::{Args, SubCommand, ThemeTarget, is_terminal_interactive, route_mode};
 
 #[test]
 fn piped_diff_is_stream_mode() {
@@ -162,23 +162,27 @@ fn test_resolve_theme_prefers_cli_flag() {
     let _guard = ENV_MUTEX.lock().unwrap();
     unsafe { env::remove_var("DIFFUSE_THEME") };
     assert_eq!(
-        super::resolve_theme(Some("dark"), false),
+        super::resolve_theme(Some("dark"), ThemeTarget::Batch),
         DiffuseTheme::dark()
     );
     assert_eq!(
-        super::resolve_theme(Some("light"), false),
+        super::resolve_theme(Some("light"), ThemeTarget::Batch),
         DiffuseTheme::light()
     );
-    let auto_theme = super::resolve_theme(Some("auto"), false);
+    let auto_theme = super::resolve_theme(Some("auto"), ThemeTarget::Batch);
     assert!(auto_theme == DiffuseTheme::dark() || auto_theme == DiffuseTheme::light());
-    assert_eq!(super::resolve_theme(None, false), DiffuseTheme::from_env());
+    assert_eq!(
+        super::resolve_theme(None, ThemeTarget::Batch),
+        DiffuseTheme::from_env()
+    );
 }
 
-/// One-shot (non-interactive) resolution must stay on the environment-only
-/// pipeline even for explicit `auto`: no OSC 11 query may be issued, so no
-/// late terminal response can leak into the shell as typed input. (The
-/// pty end-to-end test `pty_one_shot_run_never_emits_osc11_background_query`
-/// proves the byte-level absence; here the routing inputs are pinned.)
+/// Batch resolution must stay on the environment-only pipeline even for
+/// explicit `auto`: no OSC 11 query may be issued, so no late terminal
+/// response can leak into the shell as typed input. The pager arm may add
+/// the query, but only while its output is a terminal, and never changes the
+/// environment tiers. (The pty end-to-end tests prove the byte-level
+/// behavior; here the routing inputs are pinned.)
 #[test]
 fn test_resolve_theme_non_interactive_auto_matches_env_only() {
     let _guard = ENV_MUTEX.lock().unwrap();
@@ -189,21 +193,34 @@ fn test_resolve_theme_non_interactive_auto_matches_env_only() {
     }
     // Named themes resolve identically in both modes (no query either way).
     assert_eq!(
-        super::resolve_theme(Some("dark"), false),
-        super::resolve_theme(Some("dark"), true)
+        super::resolve_theme(Some("dark"), ThemeTarget::Batch),
+        super::resolve_theme(Some("dark"), ThemeTarget::Tui)
     );
     assert_eq!(
-        super::resolve_theme(Some("light"), false),
-        super::resolve_theme(Some("light"), true)
+        super::resolve_theme(Some("light"), ThemeTarget::Batch),
+        super::resolve_theme(Some("light"), ThemeTarget::Tui)
     );
     // Explicit auto in a non-TTY test session falls back to the default;
-    // the interactive arm may only add the query, never change env tiers.
-    let auto_safe = super::resolve_theme(Some("auto"), false);
+    // the interactive and pager arms may only add the query, never change
+    // env tiers.
+    let auto_safe = super::resolve_theme(Some("auto"), ThemeTarget::Batch);
     assert!(auto_safe == DiffuseTheme::dark() || auto_safe == DiffuseTheme::light());
+    let auto_pager = super::resolve_theme(Some("auto"), ThemeTarget::Pager);
+    assert_eq!(auto_pager, auto_safe);
     unsafe {
         env::set_var("DIFFUSE_THEME", "light");
-        assert_eq!(super::resolve_theme(None, false), DiffuseTheme::light());
-        assert_eq!(super::resolve_theme(None, true), DiffuseTheme::light());
+        assert_eq!(
+            super::resolve_theme(None, ThemeTarget::Batch),
+            DiffuseTheme::light()
+        );
+        assert_eq!(
+            super::resolve_theme(None, ThemeTarget::Tui),
+            DiffuseTheme::light()
+        );
+        assert_eq!(
+            super::resolve_theme(None, ThemeTarget::Pager),
+            DiffuseTheme::light()
+        );
         env::remove_var("DIFFUSE_THEME");
     }
 }
@@ -211,9 +228,13 @@ fn test_resolve_theme_non_interactive_auto_matches_env_only() {
 #[test]
 fn test_resolve_theme_falls_back_on_unknown_name() {
     let _guard = ENV_MUTEX.lock().unwrap();
-    unsafe { env::remove_var("DIFFUSE_THEME") };
+    unsafe {
+        env::remove_var("DIFFUSE_THEME");
+        env::remove_var("COLORFGBG");
+        env::remove_var("TERM_BACKGROUND");
+    }
     assert_eq!(
-        super::resolve_theme(Some("bogus-theme"), false),
+        super::resolve_theme(Some("bogus-theme"), ThemeTarget::Batch),
         DiffuseTheme::dark()
     );
 }
@@ -232,7 +253,7 @@ fn test_resolve_theme_loads_theme_file_from_path() {
     )
     .unwrap();
 
-    let theme = super::resolve_theme(Some(theme_path.to_str().unwrap()), false);
+    let theme = super::resolve_theme(Some(theme_path.to_str().unwrap()), ThemeTarget::Batch);
     assert_eq!(theme.name, "path-custom");
     assert_eq!(theme.mode, diffuse::render::theme::Mode::Dark);
     assert_eq!(
@@ -253,7 +274,7 @@ fn test_resolve_theme_falls_back_on_malformed_theme_file() {
     std::fs::write(&theme_path, "not [ valid [ toml").unwrap();
 
     assert_eq!(
-        super::resolve_theme(Some(theme_path.to_str().unwrap()), false),
+        super::resolve_theme(Some(theme_path.to_str().unwrap()), ThemeTarget::Batch),
         DiffuseTheme::dark()
     );
 }
