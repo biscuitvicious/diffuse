@@ -1404,12 +1404,12 @@ fn assert_render_matches(output: &PipelineOutput, name: &str) {
     let actual_dark_encoded = encode_sgr(&actual_dark_raw);
     assert_render_flavor_matches(&actual_dark_encoded, name, "dark");
 
-    let light_theme = DiffuseTheme::LIGHT;
+    let light_theme = DiffuseTheme::light();
     let actual_light_raw = render_pipeline_output(output, &light_theme, true);
     let actual_light_encoded = encode_sgr(&actual_light_raw);
     assert_render_flavor_matches(&actual_light_encoded, name, "light");
 
-    let raw_theme = DiffuseTheme::DEFAULT;
+    let raw_theme = DiffuseTheme::dark();
     let actual_raw = render_raw_pipeline_output(output, &raw_theme);
     let actual_raw_encoded = encode_sgr(&actual_raw);
     assert_render_flavor_matches(&actual_raw_encoded, name, "raw");

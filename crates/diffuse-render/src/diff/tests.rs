@@ -25,7 +25,7 @@ fn test_output_ends_with_terminal_reset() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered = render_pipeline_output(&out, &DiffuseTheme::DEFAULT, true);
+    let rendered = render_pipeline_output(&out, &DiffuseTheme::dark(), true);
     assert!(
         rendered.ends_with("\x1b[0m"),
         "terminal must be left in a clean SGR state"
@@ -47,7 +47,7 @@ fn test_render_raw_pipeline_output() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered = render_raw_pipeline_output(&out, &DiffuseTheme::DEFAULT);
+    let rendered = render_raw_pipeline_output(&out, &DiffuseTheme::dark());
     assert!(rendered.ends_with("\x1b[0m"));
     assert!(rendered.contains("a.txt"));
     // Must contain @@ hunk header
@@ -75,7 +75,7 @@ fn test_render_raw_pipeline_output() {
     file_fallback.raw_hunks.clear();
     file_fallback.counts.mods = 1;
     file_fallback.counts.movs = 1;
-    let single_raw = render_raw_file_diff(&file_fallback, None, &DiffuseTheme::DEFAULT);
+    let single_raw = render_raw_file_diff(&file_fallback, None, &DiffuseTheme::dark());
     assert!(single_raw.contains("~1"));
     assert!(single_raw.contains("moved"));
     assert!(single_raw.contains("@@ -1,2 +1,2 @@"));
@@ -105,13 +105,13 @@ fn test_render_renamed_file_diff() {
         new_bytes: Some(0),
         raw_source: None,
     };
-    let visual = render_file_diff(&file, None, &DiffuseTheme::DEFAULT, true);
+    let visual = render_file_diff(&file, None, &DiffuseTheme::dark(), true);
     assert!(
         crate::ansi::strip_ansi(&visual).contains("src/old.rs -> new.rs (renamed, 0B)"),
         "zero counts omitted, status parens follow the path: {visual:?}"
     );
 
-    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::DEFAULT);
+    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::dark());
     assert!(
         crate::ansi::strip_ansi(&raw).contains("src/old.rs -> new.rs (renamed, 0B)"),
         "zero counts omitted, status parens follow the path: {raw:?}"
@@ -134,13 +134,13 @@ fn test_zero_notes_not_rendered() {
         PipelineOptions::default(),
     );
     // Styled render: zero notes must be invisible.
-    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::dark(), true);
     assert!(
         !rendered.contains("0 note"),
         "styled render must not show '0 notes' when there are no notes"
     );
     // Raw render: same requirement.
-    let raw = render_raw_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT);
+    let raw = render_raw_file_diff(&out.files[0], None, &DiffuseTheme::dark());
     assert!(
         !raw.contains("0 note"),
         "raw render must not show '0 notes' when there are no notes"
@@ -183,12 +183,12 @@ fn test_nonzero_notes_still_rendered() {
         new_bytes: None,
         raw_source: None,
     };
-    let rendered = render_file_diff(&file, None, &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&file, None, &DiffuseTheme::dark(), true);
     assert!(
         rendered.contains("1 note"),
         "styled render must show '1 note' when there is 1 note"
     );
-    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::DEFAULT);
+    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::dark());
     assert!(
         raw.contains("1 note"),
         "raw render must show '1 note' when there is 1 note"
@@ -227,7 +227,7 @@ fn test_write_file_header_bar_direct_buffer() {
         raw_source: None,
     };
     let mut buf = String::new();
-    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::DEFAULT).unwrap();
+    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::dark()).unwrap();
     assert!(buf.starts_with("\x1b[48;5;234m\x1b[1m\x1b[38;5;231m"));
     assert!(buf.contains("+5"));
     assert!(buf.contains("−2"));
@@ -242,7 +242,7 @@ fn test_write_file_header_bar_direct_buffer() {
     // And with added status:
     file.status = diffuse_core::FileStatus::Added;
     let mut buf_added = String::new();
-    write_file_header_bar(&mut buf_added, &file, None, &DiffuseTheme::DEFAULT).unwrap();
+    write_file_header_bar(&mut buf_added, &file, None, &DiffuseTheme::dark()).unwrap();
     assert!(buf_added.contains("(added)"));
     // Badged variant carries the file position badge.
     let mut buf_badged = String::new();
@@ -250,7 +250,7 @@ fn test_write_file_header_bar_direct_buffer() {
         &mut buf_badged,
         &file,
         Some(Badge { idx: 0, total: 2 }),
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     )
     .unwrap();
     assert!(
@@ -274,7 +274,7 @@ fn test_render_file_diff_resets_background_at_end_of_lines() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::dark(), true);
     let rows: Vec<_> = rendered.lines().skip(1).collect();
     assert!(!rows.is_empty(), "must have rendered diff rows");
     for line in rows {
@@ -300,8 +300,8 @@ fn test_render_file_diff_light_theme() {
         Some(old_content),
         PipelineOptions::default(),
     );
-    let rendered_dark = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
-    let rendered_light = render_file_diff(&out.files[0], None, &DiffuseTheme::LIGHT, true);
+    let rendered_dark = render_file_diff(&out.files[0], None, &DiffuseTheme::dark(), true);
+    let rendered_light = render_file_diff(&out.files[0], None, &DiffuseTheme::light(), true);
 
     assert_ne!(rendered_dark, rendered_light);
     assert!(rendered_light.contains("48;2;"));
@@ -317,7 +317,7 @@ fn test_status_suffix_unmodified_unadorned() {
     };
 
     let mut buf = String::new();
-    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::DEFAULT).unwrap();
+    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::dark()).unwrap();
     assert!(!buf.contains("(unmodified)"));
 }
 
@@ -411,7 +411,7 @@ fn test_render_file_diff_renders_inline_note_callouts() {
         raw_source: None,
     };
 
-    let rendered = render_file_diff(&file, None, &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&file, None, &DiffuseTheme::dark(), true);
     let plain = strip_ansi(&rendered);
 
     // Banner note must appear right after the header bar, before the first code
@@ -434,7 +434,7 @@ fn test_render_file_diff_renders_inline_note_callouts() {
     );
 
     // Raw mode diff must also render the inline callouts
-    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::DEFAULT);
+    let raw = render_raw_file_diff(&file, None, &DiffuseTheme::dark());
     let raw_plain = strip_ansi(&raw);
     assert!(raw_plain.contains("▌███ 💬 Unanchored banner note"));
     assert!(raw_plain.contains("▌███ 🔄 Anchored line note"));
@@ -477,8 +477,8 @@ fn test_render_file_diff_wraps_notes_at_specified_width() {
         raw_source: None,
     };
 
-    let narrow = render_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, true, 40);
-    let wide = render_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, true, 160);
+    let narrow = render_file_diff_with_width(&file, None, &DiffuseTheme::dark(), true, 40);
+    let wide = render_file_diff_with_width(&file, None, &DiffuseTheme::dark(), true, 160);
 
     let narrow_lines: Vec<&str> = narrow.lines().filter(|l| l.contains('▌')).collect();
     let wide_lines: Vec<&str> = wide.lines().filter(|l| l.contains('▌')).collect();
@@ -498,23 +498,22 @@ fn test_render_file_diff_wraps_notes_at_specified_width() {
     };
 
     let p_narrow =
-        render_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, true, 40);
-    let p_wide =
-        render_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, true, 160);
+        render_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::dark(), true, 40);
+    let p_wide = render_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::dark(), true, 160);
     let p_narrow_lines: Vec<&str> = p_narrow.lines().filter(|l| l.contains('▌')).collect();
     let p_wide_lines: Vec<&str> = p_wide.lines().filter(|l| l.contains('▌')).collect();
     assert!(p_narrow_lines.len() > p_wide_lines.len());
 
-    let raw_narrow = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, 40);
-    let raw_wide = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::DEFAULT, 160);
+    let raw_narrow = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::dark(), 40);
+    let raw_wide = render_raw_file_diff_with_width(&file, None, &DiffuseTheme::dark(), 160);
     let raw_narrow_lines: Vec<&str> = raw_narrow.lines().filter(|l| l.contains('▌')).collect();
     let raw_wide_lines: Vec<&str> = raw_wide.lines().filter(|l| l.contains('▌')).collect();
     assert!(raw_narrow_lines.len() > raw_wide_lines.len());
 
     let raw_p_narrow =
-        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, 40);
+        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::dark(), 40);
     let raw_p_wide =
-        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::DEFAULT, 160);
+        render_raw_pipeline_output_with_width(&pipeline_out, &DiffuseTheme::dark(), 160);
     let raw_p_narrow_lines: Vec<&str> = raw_p_narrow.lines().filter(|l| l.contains('▌')).collect();
     let raw_p_wide_lines: Vec<&str> = raw_p_wide.lines().filter(|l| l.contains('▌')).collect();
     assert!(raw_p_narrow_lines.len() > raw_p_wide_lines.len());
@@ -548,7 +547,7 @@ fn test_render_file_diff_outputs_hunk_divider_between_hunks() {
     assert_eq!(out.files.len(), 1);
     assert_eq!(out.files[0].hunks.len(), 2);
 
-    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::DEFAULT, true);
+    let rendered = render_file_diff(&out.files[0], None, &DiffuseTheme::dark(), true);
     let plain = strip_ansi(&rendered);
 
     // File header must separate filename from badges
@@ -586,7 +585,7 @@ fn test_render_file_diff_extends_background_to_terminal_width() {
 
     let width = 80;
     let rendered =
-        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::DEFAULT, true, width);
+        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::dark(), true, width);
 
     let lines: Vec<&str> = rendered.lines().collect();
     for (i, line) in lines.iter().enumerate() {
@@ -603,10 +602,10 @@ fn test_render_file_diff_extends_background_to_terminal_width() {
     }
 
     // Verify background tints are active on trailing spaces before reset
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let del_bg = theme.row_style(crate::core::parse::RowKind::Del).tint_bg();
     let add_bg = theme.row_style(crate::core::parse::RowKind::Add).tint_bg();
-    let header_bg = theme.palette.header_bar_bg.bg_code();
+    let header_bg = theme.palette.ui.header_bar_bg.bg_code();
 
     // Line 0: Header bar
     assert!(lines[0].starts_with(&header_bg));
@@ -658,7 +657,7 @@ fn test_render_file_diff_multiline_wrapping_extends_last_line_to_width() {
 
     let width = 80;
     let rendered =
-        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::DEFAULT, true, width);
+        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::dark(), true, width);
 
     for (i, line) in rendered.lines().enumerate() {
         let plain = strip_ansi(line);
@@ -700,7 +699,7 @@ fn test_write_file_header_bar_without_width_has_no_trailing_space() {
         raw_source: None,
     };
     let mut buf = String::new();
-    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::DEFAULT).unwrap();
+    write_file_header_bar(&mut buf, &file, None, &DiffuseTheme::dark()).unwrap();
     assert!(buf.ends_with("\x1b[0m\n"));
     assert!(!buf.ends_with(" \x1b[0m\n"));
 }
@@ -730,7 +729,7 @@ fn test_render_file_diff_continuation_lines_indented_six_spaces() {
 
     let width = 80;
     let rendered =
-        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::DEFAULT, true, width);
+        render_file_diff_with_width(&out.files[0], None, &DiffuseTheme::dark(), true, width);
 
     let lines: Vec<&str> = rendered.lines().collect();
     let diff_lines: Vec<&str> = lines
@@ -783,7 +782,7 @@ fn test_render_file_diff_continuation_lines_indented_six_spaces() {
 
 #[test]
 fn test_render_source_rows_mirrors_grid_rendering() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let rows = vec![
         crate::core::wire::OutputRow {
             kind: crate::core::parse::RowKind::Ctx,

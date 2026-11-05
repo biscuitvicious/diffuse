@@ -7,7 +7,7 @@ use crate::{
     ansi::{ColorExt, FG_RESET, SGR_RESET, strip_ansi},
     core::wire::OutputFile,
     counts::count_cells,
-    theme::DiffuseTheme,
+    theme::{Cursor, DiffuseTheme},
     width::display_width,
 };
 
@@ -41,9 +41,13 @@ pub fn write_file_header_bar_with_width<W: Write>(
     let ui = &theme.scoped_palette().ui;
     let bg_code = ui.header_bar_bg.bg_code();
     let fg_code = ui.header_bar_fg.fg_code();
-    // The current-file path white has no scoped slot yet (deferred to the
-    // TUI migration); it keeps its flat palette entry.
-    let path_white = theme.palette.file_header_path_current.fg_code();
+    // The current-file path white resolves at the `Cursor::File` banner
+    // tier (`path` surface color; unset paths fall back to the foreground
+    // at cascade time).
+    let path_white = theme.scoped_palette()[Cursor::File]
+        .file_header
+        .fg_or_path()
+        .fg_code();
 
     let status_suffix = if status_display.is_empty()
         || status_display == "modified"

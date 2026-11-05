@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_count_cells_order_and_colors() {
-        let ui = &crate::theme::DiffuseTheme::DEFAULT.scoped_palette().ui;
+        let ui = &crate::theme::DiffuseTheme::dark().scoped_palette().ui;
         let cells = count_cells(
             &FileCounts {
                 dels: 7,
@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_count_cells_zero_counts_omitted() {
-        let ui = &crate::theme::DiffuseTheme::DEFAULT.scoped_palette().ui;
+        let ui = &crate::theme::DiffuseTheme::dark().scoped_palette().ui;
         let cells = count_cells(
             &FileCounts {
                 dels: 0,

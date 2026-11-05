@@ -2,7 +2,7 @@ use diffuse_syntax::color::TokenColor;
 
 use super::*;
 use crate::{
-    DiffuseTheme,
+    Cursor, DiffKind, DiffuseTheme,
     ansi::ColorExt,
     core::{
         counts::FileCounts,
@@ -15,7 +15,7 @@ use crate::{
 
 #[test]
 fn test_markdown_options_default_theme() {
-    assert_eq!(MarkdownOptions::default().theme, DiffuseTheme::DEFAULT);
+    assert_eq!(MarkdownOptions::default().theme, DiffuseTheme::dark());
 }
 
 fn sample_output() -> PipelineOutput {
@@ -275,7 +275,7 @@ fn test_render_markdown_options_variations() {
         show_resolved_notes: false,
         show_source: false,
         colorize: false,
-        theme: DiffuseTheme::DEFAULT,
+        theme: DiffuseTheme::dark(),
     };
     let md1 = render_markdown_output(&output, &opts_no_summary_no_collapse);
     assert!(!md1.contains("### Diff Summary"));
@@ -292,7 +292,7 @@ fn test_render_markdown_options_variations() {
         show_resolved_notes: false,
         show_source: false,
         colorize: false,
-        theme: DiffuseTheme::DEFAULT,
+        theme: DiffuseTheme::dark(),
     };
     let md2 = render_markdown_output(&output, &opts_closed);
     assert!(md2.contains("<details>"));
@@ -1274,7 +1274,7 @@ fn test_render_markdown_note_with_nested_source_diff_code_block() {
 #[test]
 fn test_render_markdown_lines_uncolorized_preserves_text_with_prefix() {
     let md = "# Title\n\nSome **bold** and `code` text.\n- item 1\n- item 2";
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let lines = super::render_markdown_lines(md, &theme, false, "  ");
     assert_eq!(
         lines,
@@ -1297,7 +1297,7 @@ fn test_render_markdown_lines_uncolorized_preserves_text_with_prefix() {
 #[test]
 fn test_render_markdown_lines_colorized_applies_markdown_highlighting_and_fences() {
     let md = "### Header\nParagraph with **bold** and `inline`.\n```rust\nlet mut x = 42;\n```\nAfter fence";
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let lines = super::render_markdown_lines(md, &theme, true, "  ");
     assert_eq!(lines.len(), 6);
 
@@ -1322,9 +1322,9 @@ fn test_render_markdown_lines_colorized_applies_markdown_highlighting_and_fences
     assert!(lines[3].contains("mut"));
     assert!(lines[3].contains("42"));
     // Keyword color for Rust in default theme is non-empty
-    let kw_color = theme
-        .palette
-        .token_color(TokenColor::Keyword, RowKind::Ctx)
+    let kw_color = theme.palette[Cursor::Rest][DiffKind::Ctx]
+        .syntax
+        .token_color(TokenColor::Keyword)
         .unwrap();
     let kw_ansi = kw_color.fg_code();
     assert!(
@@ -1342,12 +1342,12 @@ fn test_render_markdown_lines_colorized_applies_markdown_highlighting_and_fences
 #[test]
 fn test_render_markdown_lines_table_formatting() {
     let md = "| Col A | Col B |\n|---|---|\n| 1 | 2 |";
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let lines = super::render_markdown_lines(md, &theme, true, "");
     assert_eq!(lines.len(), 3);
-    let head_color = theme
-        .palette
-        .token_color(TokenColor::TableHeader, RowKind::Ctx)
+    let head_color = theme.palette[Cursor::Rest][DiffKind::Ctx]
+        .syntax
+        .token_color(TokenColor::TableHeader)
         .unwrap();
     let head_ansi = head_color.fg_code();
     assert!(
@@ -1358,7 +1358,7 @@ fn test_render_markdown_lines_table_formatting() {
 
 #[test]
 fn test_render_markdown_lines_empty_and_blank() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     assert!(super::render_markdown_lines("", &theme, false, "  ").is_empty());
     assert!(super::render_markdown_lines("", &theme, true, "  ").is_empty());
     assert_eq!(super::render_markdown_text("", &theme, false, "  "), "");
@@ -1368,7 +1368,7 @@ fn test_render_markdown_lines_empty_and_blank() {
 #[test]
 fn test_render_markdown_lines_wrapping_adds_padding_to_wrapped_lines() {
     let md = "This is a long line of markdown that will wrap into multiple visual lines when wrapped at 40 columns.";
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let lines = super::render_markdown_lines_with_width(md, &theme, false, "  ", 40);
     assert!(lines.len() >= 2, "must wrap into at least 2 lines");
     for line in &lines {

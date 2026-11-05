@@ -30,7 +30,7 @@ pub struct StatusBarContext<'a> {
     /// Change counts of the current hunk, shown after the hunk badge.
     pub hunk_counts: Option<FileCounts>,
     /// Active theme for status bar styling.
-    pub theme: &'a crate::render::DiffuseTheme,
+    pub theme: crate::render::DiffuseTheme,
 }
 
 /// Render the secondary status bar as ANSI strings: the shared

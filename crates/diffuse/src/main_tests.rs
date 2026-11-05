@@ -163,14 +163,14 @@ fn test_resolve_theme_prefers_cli_flag() {
     unsafe { env::remove_var("DIFFUSE_THEME") };
     assert_eq!(
         super::resolve_theme(Some("dark"), false),
-        DiffuseTheme::DEFAULT
+        DiffuseTheme::dark()
     );
     assert_eq!(
         super::resolve_theme(Some("light"), false),
-        DiffuseTheme::LIGHT
+        DiffuseTheme::light()
     );
     let auto_theme = super::resolve_theme(Some("auto"), false);
-    assert!(auto_theme == DiffuseTheme::DEFAULT || auto_theme == DiffuseTheme::LIGHT);
+    assert!(auto_theme == DiffuseTheme::dark() || auto_theme == DiffuseTheme::light());
     assert_eq!(super::resolve_theme(None, false), DiffuseTheme::from_env());
 }
 
@@ -199,11 +199,11 @@ fn test_resolve_theme_non_interactive_auto_matches_env_only() {
     // Explicit auto in a non-TTY test session falls back to the default;
     // the interactive arm may only add the query, never change env tiers.
     let auto_safe = super::resolve_theme(Some("auto"), false);
-    assert!(auto_safe == DiffuseTheme::DEFAULT || auto_safe == DiffuseTheme::LIGHT);
+    assert!(auto_safe == DiffuseTheme::dark() || auto_safe == DiffuseTheme::light());
     unsafe {
         env::set_var("DIFFUSE_THEME", "light");
-        assert_eq!(super::resolve_theme(None, false), DiffuseTheme::LIGHT);
-        assert_eq!(super::resolve_theme(None, true), DiffuseTheme::LIGHT);
+        assert_eq!(super::resolve_theme(None, false), DiffuseTheme::light());
+        assert_eq!(super::resolve_theme(None, true), DiffuseTheme::light());
         env::remove_var("DIFFUSE_THEME");
     }
 }
@@ -214,7 +214,47 @@ fn test_resolve_theme_falls_back_on_unknown_name() {
     unsafe { env::remove_var("DIFFUSE_THEME") };
     assert_eq!(
         super::resolve_theme(Some("bogus-theme"), false),
-        DiffuseTheme::DEFAULT
+        DiffuseTheme::dark()
+    );
+}
+
+/// Phase 7: `--theme` accepts a file path to a custom TOML theme; the
+/// resolved theme carries the document's name and compiled scoped palette.
+#[test]
+fn test_resolve_theme_loads_theme_file_from_path() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    unsafe { env::remove_var("DIFFUSE_THEME") };
+    let dir = tempfile::TempDir::new().unwrap();
+    let theme_path = dir.path().join("custom.toml");
+    std::fs::write(
+        &theme_path,
+        "inherits = \"dark\"\nname = \"path-custom\"\n[ui]\naccent = 200\n",
+    )
+    .unwrap();
+
+    let theme = super::resolve_theme(Some(theme_path.to_str().unwrap()), false);
+    assert_eq!(theme.name, "path-custom");
+    assert_eq!(theme.mode, diffuse::render::theme::Mode::Dark);
+    assert_eq!(
+        theme.palette.ui.accent,
+        diffuse::render::Color::Fixed(200),
+        "the custom accent override survives the cascade"
+    );
+}
+
+/// A path that exists but fails to parse falls back to the default theme
+/// with an informative error (graceful degradation, not a panic).
+#[test]
+fn test_resolve_theme_falls_back_on_malformed_theme_file() {
+    let _guard = ENV_MUTEX.lock().unwrap();
+    unsafe { env::remove_var("DIFFUSE_THEME") };
+    let dir = tempfile::TempDir::new().unwrap();
+    let theme_path = dir.path().join("broken.toml");
+    std::fs::write(&theme_path, "not [ valid [ toml").unwrap();
+
+    assert_eq!(
+        super::resolve_theme(Some(theme_path.to_str().unwrap()), false),
+        DiffuseTheme::dark()
     );
 }
 

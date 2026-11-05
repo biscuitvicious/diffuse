@@ -14,7 +14,7 @@ pub fn plain_row_texts(rows: &[OutputRow]) -> String {
 /// terminal width, with standard diff row coloring (or plain text when color is
 /// disabled), without extra line-prefix indentation.
 pub fn format_rows_with_context(rows: &[OutputRow], use_color: bool, width: usize) -> Vec<String> {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let rendered = render_source_rows(rows, &theme, width, true);
     rendered
         .into_iter()
@@ -42,7 +42,7 @@ pub fn print_rows_with_context(rows: &[OutputRow], use_color: bool) {
 /// (or unconstrained when width is 0), with two-space padding on wrapped
 /// continuation lines.
 pub fn format_note_text(text: &str, use_color: bool, width: usize) -> Vec<String> {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     diffuse::render::render_markdown_lines_with_width(text, &theme, use_color, "  ", width)
 }
 

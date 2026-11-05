@@ -361,19 +361,24 @@ featuring summary count badges, syntax-highlighted code blocks, and review notes
     )]
     pub no_color: bool,
 
-    /// Color theme ('auto', 'default'/'dark', 'light'). Defaults to 'auto',
-    /// selecting based on terminal background mode. Overrides `DIFFUSE_THEME`.
+    /// Color theme ('auto', builtin name, path, or config-dir theme).
+    /// Defaults to 'auto', selecting based on terminal background mode.
+    /// Overrides `DIFFUSE_THEME`.
     #[arg(
         long,
-        value_name = "NAME",
+        value_name = "THEME",
         global = true,
         help_heading = "Theme & Styling",
-        help = "Color theme: 'auto', 'default'/'dark', 'light'",
+        help = "Color theme: 'auto', 'default'/'dark', 'light', a TOML path, or an installed theme name",
         long_help = "Color palette theme for terminal rendering. \
 'auto' (default) detects the background via COLORFGBG / environment, and via \
 an OSC 11 terminal query in interactive TUI mode only (one-shot pager/pipe \
 modes never query, so nothing can leak into the shell); \
 'default'/'dark' applies deep dark theme; 'light' applies high-contrast light theme. \
+THEME may also be a path to a theme TOML file, or the name of a theme \
+installed at $XDG_CONFIG_HOME/diffuse/themes/<THEME>.toml \
+(~/.config/diffuse/themes/ when XDG_CONFIG_HOME is unset). \
+Unresolvable or malformed themes fall back to the default with an error. \
 Overrides the DIFFUSE_THEME environment variable."
     )]
     pub theme: Option<String>,

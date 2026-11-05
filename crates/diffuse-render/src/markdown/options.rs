@@ -34,7 +34,7 @@ impl Default for MarkdownOptions {
             show_resolved_notes: false,
             show_source: false,
             colorize: false,
-            theme: DiffuseTheme::DEFAULT,
+            theme: DiffuseTheme::dark(),
         }
     }
 }

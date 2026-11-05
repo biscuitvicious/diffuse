@@ -116,7 +116,7 @@ fn test_fs_watcher_live_notification_and_reload() {
         out,
         "test".into(),
         notes_path,
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     )
     .with_repo_context(root.clone(), Vec::new(), false);
 
@@ -184,7 +184,7 @@ fn test_force_reload_state_transition() {
         out,
         "test".into(),
         notes_path,
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     )
     .with_repo_context(root, Vec::new(), false);
 
@@ -216,7 +216,7 @@ fn test_reloading_diff_status_clears_when_streaming_disconnects() {
         },
         "test".into(),
         PathBuf::from("/nonexistent.json"),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     state.set_status_message("↻ reloading diff...".into(), true);
     assert!(state.visible_status_message().is_some());

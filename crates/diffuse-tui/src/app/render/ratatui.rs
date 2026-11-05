@@ -162,7 +162,7 @@ impl AppState {
                     status_message: msg_ref,
                     file: none_file,
                     hunk_counts,
-                    theme: &self.theme,
+                    theme: self.theme,
                 });
                 let status_bg = to_color(self.theme.scoped_palette().ui.status_bar_bg);
                 f.render_widget(
@@ -290,7 +290,7 @@ impl AppState {
                 status_message: msg_ref,
                 file: file_ref,
                 hunk_counts,
-                theme: &self.theme,
+                theme: self.theme,
             });
             let status_bg = to_color(self.theme.scoped_palette().ui.status_bar_bg);
             f.render_widget(

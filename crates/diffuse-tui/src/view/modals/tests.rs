@@ -19,7 +19,7 @@ fn test_ratatui_help_modal_widget() {
 
     terminal
         .draw(|f| {
-            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
+            render_help_modal_widget(f, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -57,7 +57,7 @@ fn test_ratatui_help_modal_large_screen_centering() {
 
     terminal
         .draw(|f| {
-            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
+            render_help_modal_widget(f, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -86,7 +86,7 @@ fn test_ratatui_help_modal_visual_layout() {
 
     terminal
         .draw(|f| {
-            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
+            render_help_modal_widget(f, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -154,7 +154,7 @@ fn test_ratatui_finder_modal_widget() {
 
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -272,7 +272,7 @@ fn test_ratatui_finder_modal_visual_layout() {
 
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -305,7 +305,11 @@ fn test_ratatui_finder_modal_visual_layout() {
     assert!(full_text.contains("+ Second todo item"));
 
     let modal_area = finder_modal_area(Rect::new(0, 0, 80, 24));
-    let add_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.add_tint_bg);
+    let add_tint_bg = crate::view::to_color(
+        DiffuseTheme::dark().palette[crate::render::Cursor::Rest][crate::render::DiffKind::Add]
+            .surface
+            .bg,
+    );
     let mut found_preview_row = false;
     for y in 0..24 {
         let mut line = String::new();
@@ -344,7 +348,7 @@ fn test_finder_modal_navigation_updates_preview_visual_layout() {
 
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -369,8 +373,16 @@ fn test_finder_modal_navigation_updates_preview_visual_layout() {
     assert!(full_text.contains("+ new render line"));
 
     let modal_area = finder_modal_area(Rect::new(0, 0, 80, 24));
-    let del_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.del_tint_bg);
-    let add_tint_bg = crate::view::to_color(DiffuseTheme::DEFAULT.palette.add_tint_bg);
+    let del_tint_bg = crate::view::to_color(
+        DiffuseTheme::dark().palette[crate::render::Cursor::Rest][crate::render::DiffKind::Del]
+            .surface
+            .bg,
+    );
+    let add_tint_bg = crate::view::to_color(
+        DiffuseTheme::dark().palette[crate::render::Cursor::Rest][crate::render::DiffKind::Add]
+            .surface
+            .bg,
+    );
     let mut found_del = false;
     let mut found_add = false;
     for y in 0..24 {
@@ -412,7 +424,7 @@ fn test_ansi_finder_modal_visual_layout() {
     let output = sample_finder_output();
     let finder = FileFinderState::new(&output.files, 0, 0);
 
-    let lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::DEFAULT);
+    let lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::dark());
     assert_eq!(lines.len(), 24);
     for (i, line) in lines.iter().enumerate() {
         assert_eq!(
@@ -494,7 +506,7 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -535,7 +547,7 @@ fn test_finder_modal_preview_renders_standard_hunk_dividers() {
     );
 
     // Verify ANSI path as well
-    let ansi_lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::DEFAULT);
+    let ansi_lines = render_finder_modal(&output, &finder, 80, 24, &DiffuseTheme::dark());
     assert_eq!(ansi_lines.len(), 24);
     for (i, line) in ansi_lines.iter().enumerate() {
         assert_eq!(
@@ -579,7 +591,7 @@ fn test_help_modal_narrow_screen_no_wrapping() {
     use crate::view::header::visible_width;
 
     // Narrow phone width (44 columns, 24 rows)
-    let lines = render_help_modal(44, 24, &DiffuseTheme::DEFAULT);
+    let lines = render_help_modal(44, 24, &DiffuseTheme::dark());
     assert!(lines.len() >= 24);
     for (i, line) in lines.iter().enumerate() {
         let vw = visible_width(line);
@@ -594,7 +606,7 @@ fn test_help_modal_narrow_screen_no_wrapping() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|f| {
-            render_help_modal_widget(f, &DiffuseTheme::DEFAULT, f.area());
+            render_help_modal_widget(f, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -666,7 +678,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
     let finder = FileFinderState::new(&output.files, 0, 0);
 
     // Narrow phone width (44 columns, 24 rows)
-    let lines = render_finder_modal(&output, &finder, 44, 24, &DiffuseTheme::DEFAULT);
+    let lines = render_finder_modal(&output, &finder, 44, 24, &DiffuseTheme::dark());
     for (i, line) in lines.iter().enumerate() {
         let vw = visible_width(line);
         assert!(
@@ -680,7 +692,7 @@ fn test_finder_modal_narrow_screen_no_wrapping() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -758,7 +770,7 @@ fn test_finder_modal_lines_exact_width_wide_and_narrow() {
             let mut finder = FileFinderState::new(&output.files, 0, 0);
             finder.selected_idx = sel;
 
-            let lines = render_finder_modal(&output, &finder, w, 24, &DiffuseTheme::DEFAULT);
+            let lines = render_finder_modal(&output, &finder, w, 24, &DiffuseTheme::dark());
             assert_eq!(
                 lines.len(),
                 24,
@@ -859,7 +871,7 @@ fn test_finder_modal_proportional_height_scaling() {
     let mut terminal = Terminal::new(backend).unwrap();
     terminal
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
     let buffer = terminal.backend().buffer();
@@ -880,7 +892,7 @@ fn test_finder_modal_proportional_height_scaling() {
     let mut term_constrained = Terminal::new(backend_constrained).unwrap();
     term_constrained
         .draw(|f| {
-            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::DEFAULT, f.area());
+            render_finder_modal_widget(f, &output, &finder, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
     let buf_constrained = term_constrained.backend().buffer();
@@ -908,7 +920,7 @@ fn test_ratatui_note_modal_visual_layout() {
                 "src/lib.rs:12-18",
                 "Fix potential off-by-one error\nEnsure bounds are checked",
                 None,
-                &DiffuseTheme::DEFAULT,
+                &DiffuseTheme::dark(),
                 f.area(),
             );
         })
@@ -948,14 +960,7 @@ fn test_ratatui_note_modal_empty_draft_visual() {
 
     terminal
         .draw(|f| {
-            render_note_modal_widget(
-                f,
-                "Cargo.toml:5",
-                "",
-                None,
-                &DiffuseTheme::DEFAULT,
-                f.area(),
-            );
+            render_note_modal_widget(f, "Cargo.toml:5", "", None, &DiffuseTheme::dark(), f.area());
         })
         .unwrap();
 
@@ -987,7 +992,7 @@ fn test_ratatui_note_modal_constrained_terminal() {
                 "main.rs:1",
                 "short note",
                 None,
-                &DiffuseTheme::DEFAULT,
+                &DiffuseTheme::dark(),
                 f.area(),
             );
         })
@@ -1019,7 +1024,7 @@ fn test_ratatui_note_modal_long_line_word_wrapping() {
                 "long.rs:10",
                 long_line,
                 None,
-                &DiffuseTheme::DEFAULT,
+                &DiffuseTheme::dark(),
                 f.area(),
             );
         })
@@ -1052,7 +1057,7 @@ fn test_ratatui_note_modal_equal_margins_on_small_screens() {
                 "Cargo.lock:81",
                 "hello",
                 None,
-                &DiffuseTheme::DEFAULT,
+                &DiffuseTheme::dark(),
                 f.area(),
             );
         })
@@ -1183,7 +1188,7 @@ fn test_finder_modal_counts_format_omits_zero_and_matches_canonical_order() {
     finder.selected_idx = 0; // src/full.rs selected
 
     // 1. ANSI renderer test
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let lines = render_finder_modal(&output, &finder, 80, 24, &theme);
     let joined = lines.join("\n");
 
@@ -1220,10 +1225,10 @@ fn test_finder_modal_counts_format_omits_zero_and_matches_canonical_order() {
     // Verify cell color attributes:
     // Selected row (src/full.rs) counts must use modal_selected_fg &
     // modal_selected_bg
-    let modal_sel_fg = crate::view::to_color(theme.palette.modal_selected_fg);
-    let modal_sel_bg = crate::view::to_color(theme.palette.modal_selected_bg);
-    let modal_dim_fg = crate::view::to_color(theme.palette.modal_dim);
-    let modal_bg = crate::view::to_color(theme.palette.modal_bg);
+    let modal_sel_fg = crate::view::to_color(theme.palette.ui.modal_selected_fg);
+    let modal_sel_bg = crate::view::to_color(theme.palette.ui.modal_selected_bg);
+    let modal_dim_fg = crate::view::to_color(theme.palette.ui.modal_dim);
+    let modal_bg = crate::view::to_color(theme.palette.ui.bg_modal);
 
     // Find the row containing "−5 +10 ~2 ≈3"
     let mut found_full_row = false;

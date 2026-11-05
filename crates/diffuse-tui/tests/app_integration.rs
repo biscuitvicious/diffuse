@@ -163,7 +163,7 @@ fn test_render_frame_header_and_viewport() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     let frame = state.render_frame(120, 30);
     assert!(
@@ -185,7 +185,7 @@ fn test_file_collapse_toggle_and_click() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     state.render_frame(120, 30);
     assert!(!state.collapsed_files.contains(&0));
@@ -218,7 +218,7 @@ fn test_navigation_moves_and_hunk_jumps() {
         multi_file_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     state.render_frame(80, 20);
     let start = state.row_idx;
@@ -255,7 +255,7 @@ fn test_selection_anchor_band_and_confirm() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     // walk to first coordinate row then anchor
     for _ in 0..3 {
@@ -302,7 +302,7 @@ fn test_notes_commit_and_delete_via_public_api() {
         sample_output(),
         "test_repo".into(),
         path.clone(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
 
     let file = state.current_file().unwrap().path.clone();
@@ -333,7 +333,7 @@ fn test_rev_key_scopes_state_to_commit() {
         sample_output(),
         "test_repo".into(),
         path.clone(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     )
     .with_rev_key(Some("abc1234".into()));
 
@@ -365,7 +365,7 @@ fn test_finder_open_query_and_confirm() {
         multi_file_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     assert!(state.file_finder.is_none());
     state.open_file_finder();
@@ -390,7 +390,7 @@ fn test_raw_diff_toggle_and_cursor_preserved() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     for _ in 0..4 {
         state.move_down();
@@ -415,7 +415,7 @@ fn test_context_expand_below_and_above_shrinks_gap() {
         two_hunk_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
     let fi = 0;
@@ -439,7 +439,7 @@ fn test_hunk_divider_click_expands_and_stays_pinned() {
         two_hunk_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
     state.render_frame(140, 80);
@@ -500,7 +500,7 @@ fn test_expand_all_merges_and_reset_restores() {
         two_hunk_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(12);
     let fi = 0;
@@ -535,7 +535,7 @@ fn test_streaming_append_new_file() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     let before_files = state.output.files.len();
     let diff = r#"diff --git a/new_stream.rs b/new_stream.rs
@@ -571,7 +571,7 @@ fn test_help_modal_toggle_and_frame_contains_bindings() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     let plain = state.render_frame(100, 30);
     assert!(!plain.contains("KEY BINDINGS"));
@@ -592,7 +592,7 @@ fn test_initial_screen_rendered_visual_frame() {
         sample_output(),
         "diffuse".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     let width = 80;
     let height = 18;
@@ -685,7 +685,7 @@ diff --git a/crates/diffuse-core/src/moves/tests.rs b/crates/diffuse-core/src/mo
         out,
         "diffuse".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
 
     let width = 100;
@@ -742,7 +742,7 @@ fn test_long_note_with_emoji_stays_within_viewport_width() {
         sample_output(),
         "test_repo".into(),
         path,
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
     state.note_draft = Some(
         "renders the identical golden (the extension's golden walk's rust leg \u{2014} \u{2705} passed); A/B on the real repo with a fairly long trailing tail to push past the edge".into(),
@@ -773,7 +773,7 @@ fn test_deep_scroll_renders_correct_window() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
 
     // Scroll deep and render: the window must show deep content, every
@@ -823,7 +823,7 @@ fn test_perf_big_hunk_scrolled_frames() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        diffuse_tui::render::DiffuseTheme::DEFAULT,
+        diffuse_tui::render::DiffuseTheme::dark(),
     );
 
     for scroll in [0, 1000, 3000, 6000] {

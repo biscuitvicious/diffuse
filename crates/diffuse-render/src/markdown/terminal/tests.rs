@@ -4,7 +4,7 @@ use super::*;
 use crate::theme::DiffuseTheme;
 
 fn theme() -> DiffuseTheme {
-    DiffuseTheme::DEFAULT
+    DiffuseTheme::dark()
 }
 
 /// Plain text of a rendered line (prefix excluded).

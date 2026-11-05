@@ -29,7 +29,7 @@ fn test_render_status_bar_styling() {
         status_message: None,
         file: None,
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
     let rendered = render_status_bar(ctx).join("\n");
     let visible = crate::render::strip_ansi(&rendered);
@@ -73,7 +73,7 @@ fn test_render_status_bar_styling() {
         status_message: None,
         file: None,
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
     let rendered_root = render_status_bar(root_ctx).join("\n");
     assert!(
@@ -118,7 +118,7 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let header_line = header_bar_line("diffuse", &DiffuseTheme::DEFAULT, None, None, None, false);
+    let header_line = header_bar_line("diffuse", &DiffuseTheme::dark(), None, None, None, false);
     assert!(header_line.to_string().contains("diffuse"));
     assert!(
         !header_line.to_string().contains("src/"),
@@ -153,7 +153,7 @@ fn test_ratatui_header_and_status_lines() {
         raw_source: None,
     };
 
-    let rename_header = header_bar_line("diffuse", &DiffuseTheme::DEFAULT, None, None, None, false);
+    let rename_header = header_bar_line("diffuse", &DiffuseTheme::dark(), None, None, None, false);
     assert!(rename_header.to_string().contains("diffuse"));
     assert!(
         !rename_header.to_string().contains("crates/"),
@@ -179,7 +179,7 @@ fn test_ratatui_header_and_status_lines() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
     let status_line = status_bar_line(ctx);
     assert!(!status_line.to_string().contains("hunk 1/1"));
@@ -255,12 +255,12 @@ fn test_ratatui_header_and_status_lines() {
         "streaming span must be bold"
     );
 
-    let (div, rib) = bottom_ribbon_lines(80, &DiffuseTheme::DEFAULT.scoped_palette().ui);
+    let (div, rib) = bottom_ribbon_lines(80, &DiffuseTheme::dark().scoped_palette().ui);
     assert!(div.to_string().contains("──"));
     assert!(rib.to_string().starts_with(" [?]help [q]uit"));
     assert!(rib.to_string().contains("[j/k]move"));
 
-    let (ansi_div, ansi_rib) = render_bottom_ribbon(80, &DiffuseTheme::DEFAULT.scoped_palette().ui);
+    let (ansi_div, ansi_rib) = render_bottom_ribbon(80, &DiffuseTheme::dark().scoped_palette().ui);
     assert!(ansi_div.contains("──"));
     assert!(ansi_rib.contains("[?]help [q]uit"));
 }
@@ -305,7 +305,7 @@ fn test_header_bar_zero_notes_suppressed() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .join("\n");
     assert!(
@@ -328,7 +328,7 @@ fn test_header_bar_zero_notes_suppressed() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     });
     assert!(
         !line.to_string().contains("💬"),
@@ -342,7 +342,7 @@ fn test_header_bar_zero_notes_suppressed() {
         None,
         None,
         false,
-        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
+        &crate::render::DiffuseTheme::dark().scoped_palette().ui,
     )
     .join("\n");
 
@@ -426,7 +426,7 @@ fn test_header_bar_nonzero_notes_shown() {
         status_message: None,
         file: Some(&file),
         hunk_counts: Some(file.counts),
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
     let ansi = render_status_bar(ctx).join("\n");
     assert!(
@@ -455,7 +455,7 @@ fn test_header_bar_nonzero_notes_shown() {
         None,
         None,
         false,
-        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
+        &crate::render::DiffuseTheme::dark().scoped_palette().ui,
     )
     .join("\n");
     assert!(
@@ -473,7 +473,7 @@ fn test_header_bar_none_file_no_diffs() {
         None,
         None,
         false,
-        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
+        &crate::render::DiffuseTheme::dark().scoped_palette().ui,
     )
     .join("\n");
 
@@ -483,14 +483,14 @@ fn test_header_bar_none_file_no_diffs() {
         "header must not contain the prefix (it lives in the secondary bar)"
     );
 
-    let line = header_bar_line("my_repo", &DiffuseTheme::DEFAULT, None, None, None, false);
+    let line = header_bar_line("my_repo", &DiffuseTheme::dark(), None, None, None, false);
     assert!(line.to_string().contains("my_repo"));
     assert!(
         !line.to_string().contains("crates/"),
         "header line must not contain the prefix"
     );
 
-    let plain_line = header_bar_line("my_repo", &DiffuseTheme::DEFAULT, None, None, None, false);
+    let plain_line = header_bar_line("my_repo", &DiffuseTheme::dark(), None, None, None, false);
     assert!(plain_line.to_string().contains("my_repo"));
 }
 
@@ -511,7 +511,7 @@ fn test_status_bar_no_branch_indicator() {
         status_message: None,
         file: None,
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
 
     // Branch indicator (glyph and name) should not appear in the status bar
@@ -543,7 +543,7 @@ fn test_status_bar_streaming_dot_blinking() {
         status_message: None,
         file: None,
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
     let ansi_on = render_status_bar(ctx_dot_on).join("\n");
     assert!(ansi_on.contains("● streaming..."));
@@ -565,7 +565,7 @@ fn test_status_bar_streaming_dot_blinking() {
         status_message: None,
         file: None,
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
     let ansi_off = render_status_bar(ctx_dot_off).join("\n");
     assert!(ansi_off.contains("  streaming..."));
@@ -621,7 +621,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .join("\n");
     assert!(
@@ -645,7 +645,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .to_string();
     assert!(
@@ -670,7 +670,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .join("\n");
     assert!(
@@ -692,7 +692,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .to_string();
     assert!(
@@ -717,7 +717,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .join("\n");
     assert!(
@@ -739,7 +739,7 @@ fn test_status_bar_omits_modified_status_and_shows_others() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .to_string();
     assert!(
@@ -840,7 +840,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
 
     let header_line = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         Some(global_counts),
         None,
         None,
@@ -888,7 +888,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
     };
     let mov_header_line = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         Some(global_with_movs),
         None,
         None,
@@ -926,7 +926,7 @@ fn test_header_bar_global_mod_counts_ratatui() {
         status_message: None,
         file: Some(&file_with_movs),
         hunk_counts: Some(file_with_movs.counts),
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
     let local_mov_text = status_bar_line(status_ctx).to_string();
     assert!(
@@ -988,7 +988,7 @@ fn test_header_bar_global_mod_counts_ansi() {
         None,
         None,
         false,
-        &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui,
+        &crate::render::DiffuseTheme::dark().scoped_palette().ui,
     );
 
     let joined = ansi_lines.join("\n");
@@ -1019,7 +1019,7 @@ fn test_header_bar_global_mod_counts_ansi() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .join("\n");
     assert!(
@@ -1043,7 +1043,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
     // lives in the secondary bar.
     let none_line = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         Some(global_counts),
         None,
         None,
@@ -1084,7 +1084,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
 
     let pfx_line = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         Some(global_counts),
         None,
         None,
@@ -1112,7 +1112,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
         status_message: None,
         file: Some(&file),
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     })
     .to_string();
     assert_eq!(
@@ -1125,7 +1125,7 @@ fn test_header_bar_global_mod_counts_with_common_prefix_and_none_file() {
 #[test]
 fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
     use crate::view::header::{format_counts_ansi, format_counts_plain, format_counts_spans};
-    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
+    let p = &crate::render::DiffuseTheme::dark().scoped_palette().ui;
 
     // Test with all change types populated
     let counts = FileCounts {
@@ -1176,7 +1176,7 @@ fn test_format_counts_plain_ansi_spans_identical_underlying_struct() {
 #[test]
 fn test_format_counts_omit_zero_dels() {
     use crate::view::header::{format_counts_ansi, format_counts_plain, format_counts_spans};
-    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
+    let p = &crate::render::DiffuseTheme::dark().scoped_palette().ui;
 
     // No del lines: the −0 segment must be omitted like any other zero.
     let adds_only = FileCounts {
@@ -1213,7 +1213,7 @@ fn test_format_counts_omit_zero_dels() {
 
 #[test]
 fn test_header_bar_shows_branch_indicator() {
-    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
+    let p = &crate::render::DiffuseTheme::dark().scoped_palette().ui;
     // ANSI header with branch
     let ansi = render_header_bar("diffuse", 80, None, Some("main"), None, false, p).join("\n");
     assert!(
@@ -1243,7 +1243,7 @@ fn test_header_bar_shows_branch_indicator() {
     // Ratatui header with branch — verify spans contain branch
     let line = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         None,
         Some("main"),
         None,
@@ -1287,7 +1287,7 @@ fn test_header_bar_shows_branch_indicator() {
     // Commit range shows the same branch glyph in header
     let line_range = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         None,
         None,
         Some("v1.0..v2.0"),
@@ -1299,7 +1299,7 @@ fn test_header_bar_shows_branch_indicator() {
 
 #[test]
 fn test_header_bar_shows_staged_indicator() {
-    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
+    let p = &crate::render::DiffuseTheme::dark().scoped_palette().ui;
     // When is_staged is true, the header must show `(staged)` after the branch
     let ansi = render_header_bar("diffuse", 80, None, Some("work"), None, true, p).join("\n");
     let visible_ansi = crate::render::ansi::strip_ansi(&ansi);
@@ -1319,7 +1319,7 @@ fn test_header_bar_shows_staged_indicator() {
     // Ratatui line with is_staged
     let line = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         None,
         Some("work"),
         None,
@@ -1344,7 +1344,7 @@ fn test_header_bar_shows_staged_indicator() {
 
 #[test]
 fn test_top_header_drops_file_section_and_counts_dot() {
-    let p = &crate::render::DiffuseTheme::DEFAULT.scoped_palette().ui;
+    let p = &crate::render::DiffuseTheme::dark().scoped_palette().ui;
     let global = FileCounts {
         adds: 15,
         dels: 7,
@@ -1372,7 +1372,7 @@ fn test_top_header_drops_file_section_and_counts_dot() {
     // Ratatui header renders the exact compact form.
     let line = header_bar_line(
         "diffuse",
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         Some(global),
         Some("main"),
         None,
@@ -1464,7 +1464,7 @@ fn test_status_bar_shows_file_and_hunk_stats() {
         status_message: None,
         file: Some(&file),
         hunk_counts: Some(hunk_counts),
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     };
 
     // Transient-only status bar omits hunk/file/counts data entirely.
@@ -1530,7 +1530,7 @@ fn status_ctx<'a>(file: Option<&'a OutputFile>, width: usize) -> StatusBarContex
         status_message: None,
         file,
         hunk_counts: None,
-        theme: &crate::render::DiffuseTheme::DEFAULT,
+        theme: crate::render::DiffuseTheme::dark(),
     }
 }
 
@@ -1636,19 +1636,20 @@ fn test_status_bar_background_styled() {
     ctx.raw_diff = true;
 
     // Dark theme
-    ctx.theme = &crate::render::DiffuseTheme::DEFAULT;
+    ctx.theme = crate::render::DiffuseTheme::dark();
     let dark_line = status_bar_line(ctx);
     assert_eq!(
         dark_line.style.bg,
         Some(crate::view::to_color(
-            crate::render::DiffuseTheme::DEFAULT.palette.status_bar_bg
+            crate::render::DiffuseTheme::dark().palette.ui.status_bar_bg
         ))
     );
     let dark_ansi = render_status_bar(ctx).join("\n");
     assert!(
         dark_ansi.contains(
-            &crate::render::DiffuseTheme::DEFAULT
+            &crate::render::DiffuseTheme::dark()
                 .palette
+                .ui
                 .status_bar_bg
                 .bg_code()
         ),
@@ -1656,19 +1657,23 @@ fn test_status_bar_background_styled() {
     );
 
     // Light theme
-    ctx.theme = &crate::render::DiffuseTheme::LIGHT;
+    ctx.theme = crate::render::DiffuseTheme::light();
     let light_line = status_bar_line(ctx);
     assert_eq!(
         light_line.style.bg,
         Some(crate::view::to_color(
-            crate::render::DiffuseTheme::LIGHT.palette.status_bar_bg
+            crate::render::DiffuseTheme::light()
+                .palette
+                .ui
+                .status_bar_bg
         ))
     );
     let light_ansi = render_status_bar(ctx).join("\n");
     assert!(
         light_ansi.contains(
-            &crate::render::DiffuseTheme::LIGHT
+            &crate::render::DiffuseTheme::light()
                 .palette
+                .ui
                 .status_bar_bg
                 .bg_code()
         ),

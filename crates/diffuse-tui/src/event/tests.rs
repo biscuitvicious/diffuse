@@ -16,7 +16,7 @@ fn state_with_draft() -> AppState {
         },
         "test".into(),
         unique_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     s.note_draft = Some("hello".into());
     s
@@ -56,7 +56,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         unique_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
 }
 
@@ -590,7 +590,7 @@ index 3333333..4444444 100644
         run_pipeline_full(diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         unique_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     assert_eq!(s.current_file_idx(), 0, "starts on file 0 (apple.rs)");
@@ -975,19 +975,19 @@ fn test_t_toggles_staged() {
 #[test]
 fn test_shift_t_toggles_theme() {
     let mut s = state_with_rows();
-    assert_eq!(s.theme, crate::render::DiffuseTheme::DEFAULT);
+    assert_eq!(s.theme, crate::render::DiffuseTheme::dark());
 
     handle_event(
         &mut s,
         Event::Key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT)),
     );
-    assert_eq!(s.theme, crate::render::DiffuseTheme::LIGHT);
+    assert_eq!(s.theme, crate::render::DiffuseTheme::light());
 
     handle_event(
         &mut s,
         Event::Key(KeyEvent::new(KeyCode::Char('T'), KeyModifiers::SHIFT)),
     );
-    assert_eq!(s.theme, crate::render::DiffuseTheme::DEFAULT);
+    assert_eq!(s.theme, crate::render::DiffuseTheme::dark());
 }
 
 #[test]
@@ -1006,7 +1006,7 @@ fn test_mouse_wheel_scroll_moves_viewport() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test".into(),
         unique_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     s.viewport_height = 10;
     s.last_content_width = 80;

@@ -2168,11 +2168,11 @@ fn test_expand_anchor_marks_moved_source() {
 @@ -131,7 +131,10 @@ fn test_resolve_theme_prefers_cli_flag() {
      let _guard = ENV_MUTEX.lock().unwrap();
      unsafe { env::remove_var("DIFFUSE_THEME") };
-     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
--    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::LIGHT);
+     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::dark());
+-    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::light());
 +    assert_eq!(
 +        super::resolve_theme(Some("light"), false),
-+        DiffuseTheme::LIGHT
++        DiffuseTheme::light()
 +    );
      let auto_theme = super::resolve_theme(Some("auto"));
 "#;
@@ -2229,11 +2229,11 @@ fn test_expand_aux_marks_moved_target() {
 @@ -131,7 +131,10 @@ fn test_resolve_theme_prefers_cli_flag() {
      let _guard = ENV_MUTEX.lock().unwrap();
      unsafe { env::remove_var("DIFFUSE_THEME") };
-     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::DEFAULT);
--    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::LIGHT);
+     assert_eq!(super::resolve_theme(Some("dark")), DiffuseTheme::dark());
+-    assert_eq!(super::resolve_theme(Some("light")), DiffuseTheme::light());
 +    assert_eq!(
 +        super::resolve_theme(Some("light"), false),
-+        DiffuseTheme::LIGHT
++        DiffuseTheme::light()
 +    );
      let auto_theme = super::resolve_theme(Some("auto"));
 "#;

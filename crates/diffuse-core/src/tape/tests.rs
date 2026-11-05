@@ -34,7 +34,7 @@ fn test_alignment_tape_basic_invariants() {
 #[test]
 fn test_diffuse_theme_magic_to_default() {
     let old = "    let rendered = render_pipeline_output(&out, &DiffuseTheme::MAGIC, true);";
-    let new = "    let rendered = render_pipeline_output(&out, &DiffuseTheme::DEFAULT, true);";
+    let new = "    let rendered = render_pipeline_output(&out, &DiffuseTheme::dark(), true);";
     let tape = AlignmentTape::from_texts(old, new, None);
     eprintln!("THEME TAPE: {:#?}", tape);
     let runs = tape.to_merged_runs();

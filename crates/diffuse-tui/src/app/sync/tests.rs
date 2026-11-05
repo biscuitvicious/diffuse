@@ -36,7 +36,7 @@ fn test_incremental_file_append_and_streaming_navigation() {
         initial_output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.is_streaming = true;
     assert_eq!(state.output.files.len(), 0);
@@ -87,7 +87,7 @@ fn test_streaming_append_file_multi_hunk_with_gap() {
         empty_output,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     for file in output.files {
@@ -148,7 +148,7 @@ fn test_reset_for_streaming_reload() {
         out,
         "test".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     assert_eq!(state.output.files.len(), 1);
     assert!(!state.flat.is_empty());
@@ -189,7 +189,7 @@ fn test_reload_files_preserves_cursor_and_screen_position() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 3;
     state.terminal_width = 80;
@@ -242,7 +242,7 @@ fn test_replace_or_insert_file_preserves_cursor() {
         out,
         "test".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 1;
     let snapshot = state.capture_cursor_snapshot();

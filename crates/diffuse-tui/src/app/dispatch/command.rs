@@ -81,7 +81,7 @@ impl AppState {
                 self.theme = self
                     .theme
                     .paired()
-                    .unwrap_or(crate::render::DiffuseTheme::DEFAULT);
+                    .unwrap_or(crate::render::DiffuseTheme::dark());
                 if let Some(ref mut editor) = self.note_editor {
                     editor.set_highlighter(Some(crate::editor::markdown_highlighter(self.theme)));
                 }

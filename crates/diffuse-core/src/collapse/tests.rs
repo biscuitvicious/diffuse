@@ -2565,7 +2565,7 @@ fn test_residue_inside_call_does_not_append_after_trailing_comma() {
 
 #[test]
 fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
-    let old_line = "    assert_eq!(super::resolve_theme(Some(\"dark\")), DiffuseTheme::DEFAULT);";
+    let old_line = "    assert_eq!(super::resolve_theme(Some(\"dark\")), DiffuseTheme::dark());";
     let h = hunk(vec![
         row(RowKind::Del, old_line, None, Some(134)),
         row(RowKind::Add, "    assert_eq!(", Some(134), None),
@@ -2577,7 +2577,7 @@ fn test_multiline_call_reflow_does_not_attach_closing_paren_to_anchor() {
         ),
         row(
             RowKind::Add,
-            "        DiffuseTheme::DEFAULT",
+            "        DiffuseTheme::dark()",
             Some(136),
             None,
         ),

@@ -47,7 +47,7 @@ fn test_git_stage_unstage_reload_flow() {
         out,
         "test".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_repo_context(repo_root.clone(), Vec::new(), false);
 
@@ -98,7 +98,7 @@ fn test_git_discard_flow() {
         out,
         "test".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_repo_context(repo_root.clone(), Vec::new(), false);
 
@@ -132,7 +132,7 @@ fn test_toggle_staged_action_flow() {
         out,
         "test".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_repo_context(repo_root.clone(), Vec::new(), false);
 
@@ -218,7 +218,7 @@ fn test_reload_specific_files() {
         out,
         "test".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_repo_context(repo_root.clone(), Vec::new(), false);
 

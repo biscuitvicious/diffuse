@@ -303,7 +303,7 @@ mod tests {
             output,
             "demo_repo".into(),
             std::path::PathBuf::from("/tmp/diffuse_test_notes.json"),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         );
 
         // Verify initial screen via buffer and plain frame

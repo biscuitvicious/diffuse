@@ -116,7 +116,7 @@ fn test_note_commit_persists_and_deletes() {
         sample_output(),
         "test_repo".into(),
         notes_path.clone(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let file = state.current_file().unwrap().path.clone();
@@ -171,7 +171,7 @@ fn test_note_commit_records_content_hash() {
         sample_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let file = state.current_file().unwrap().path.clone();
@@ -198,7 +198,7 @@ fn test_note_callout_anchoring_and_banner_placement() {
         sample_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
@@ -313,7 +313,7 @@ fn test_multiline_note_anchors_to_last_line() {
         sample_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
@@ -380,7 +380,7 @@ fn test_notes_dynamic_sync_updates_counts_and_preserves_banner_notes() {
         sample_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let file = state.current_file().unwrap().path.clone();
     let banner_idx = state.first_row_of_file(state.current_file_idx());
@@ -444,7 +444,7 @@ fn test_note_callouts_render_across_all_files_and_banners() {
         multi_file_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Initial cursor is on file 0 (first.rs)
@@ -498,7 +498,7 @@ fn test_note_callouts_on_collapsed_file_render_on_banner() {
         multi_file_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let anchor_row = row_at_new(&state, 1, 2).clone();
@@ -553,7 +553,7 @@ fn test_note_callouts_full_markdown_multiline_and_wrap() {
         multi_file_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let note_text = "Test *Markdown* **formatting:**\n\n`this is a code span` with a comment.\n\n* List item one\n* List item two with a very long line that should certainly wrap when the terminal width is constrained\n\n```bash\nif [ -f hello.txt ]; then\n  cat hello.txt\nfi\n```";
@@ -665,7 +665,7 @@ fn test_note_callout_gutter_band_and_terminal_line() {
         multi_file_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let banner_idx = state.first_row_of_file(0);
 
@@ -700,7 +700,9 @@ fn test_note_callout_gutter_band_and_terminal_line() {
     let yellow = crate::render::Color::Rgb(220, 220, 20).fg_code();
     let note_bg = crate::render::Color::Fixed(234).bg_code();
     let white = crate::render::Color::Fixed(255).fg_code();
-    let muted = state.theme.palette.note_tint_bg.bg_code();
+    // Legacy note-tint foreground guard (Rgb(76, 64, 20)); the scoped
+    // schema dropped the unconsumed tint slot.
+    let muted = crate::render::Color::Rgb(76, 64, 20).bg_code();
     for line in note_lines {
         assert!(
             line.starts_with(&note_bg),
@@ -741,7 +743,7 @@ fn test_note_callout_empty_text_renders_one_line() {
         multi_file_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let banner_idx = state.first_row_of_file(0);
 
@@ -778,7 +780,7 @@ fn test_note_callout_long_line_wrapping() {
         multi_file_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let banner_idx = state.first_row_of_file(0);
 
@@ -840,7 +842,7 @@ fn test_table_note_width_at_narrow_content_width() {
         sample_output(),
         "test_repo".into(),
         notes_path,
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let banner_idx = state.first_row_of_file(0);
     let table = "| State & Style | Alignment & Code | Metrics | Long Tokens & Wrapping |\n| :--- | :---: | ---: | :--- |\n| ✅ **Ready** | `cargo test` | 100.0% | Normal text with multiple wrapped words |\n| 🔄 *Active* | [diffuse](https://diffuse.rs) | +42 ms | Supercalifragilisticexpialidocious |\n| ⬜ Pending | ~~deprecated~~ | $1,234.56 | `diffuse::render::terminal::wrap_cell` |\n| 🦀 **Mixed** 🚀 | *italic* & **bold** | -99 | **Bold across multiple lines when squashed** |\n| ⚠️ Warning | | 0.00 | Unicode: 👩‍💻 and 🇩🇪 |";
@@ -885,7 +887,7 @@ fn test_targeted_note_deletion_multiple_notes_on_same_row() {
         sample_output(),
         "test_repo".into(),
         notes_path.clone(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let file = state.current_file().unwrap().path.clone();
 
@@ -934,7 +936,7 @@ fn test_targeted_note_editing_preserves_id_and_updates_text() {
         sample_output(),
         "test_repo".into(),
         notes_path.clone(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let file = state.current_file().unwrap().path.clone();
 
@@ -974,7 +976,7 @@ fn test_delete_note_disabled_on_diff_row_without_selection() {
         sample_output(),
         "test_repo".into(),
         notes_path.clone(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let file = state.current_file().unwrap().path.clone();
 
@@ -1001,7 +1003,7 @@ fn test_style_focused_note_line() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.note_draft = Some("test note".into());
     state.commit_note_draft().expect("note commit must succeed");
@@ -1010,7 +1012,7 @@ fn test_style_focused_note_line() {
 
     // Non-current line of focused note keeps note_bg (234) with cyan stripe
     let focused_non_current =
-        style_focused_note_line(note_line, false, &crate::render::DiffuseTheme::DEFAULT);
+        style_focused_note_line(note_line, false, &crate::render::DiffuseTheme::dark());
     assert!(
         focused_non_current.contains("\x1b[38;5;81m"),
         "must switch left stripe to cyan ANSI color"
@@ -1026,7 +1028,7 @@ fn test_style_focused_note_line() {
 
     // Current line of focused note gets cursor_bg (237) background highlight
     let focused_current =
-        style_focused_note_line(note_line, true, &crate::render::DiffuseTheme::DEFAULT);
+        style_focused_note_line(note_line, true, &crate::render::DiffuseTheme::dark());
     assert!(
         focused_current.contains("\x1b[38;5;81m"),
         "must switch left stripe to cyan ANSI color"
@@ -1044,7 +1046,7 @@ fn test_style_focused_note_line() {
 #[test]
 fn test_style_focused_note_line_in_progress_and_resolved() {
     use crate::app::notes::style_focused_note_line;
-    let theme = crate::render::DiffuseTheme::DEFAULT;
+    let theme = crate::render::DiffuseTheme::dark();
 
     // Test InProgress status with 3 lines to exercise first_prefix, line_prefix,
     // final_prefix
@@ -1063,7 +1065,7 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     let focused_first = style_focused_note_line(
         &in_progress_lines[0],
         true,
-        &crate::render::DiffuseTheme::DEFAULT,
+        &crate::render::DiffuseTheme::dark(),
     );
     assert!(
         focused_first.contains("\x1b[38;5;81m"),
@@ -1082,7 +1084,7 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     let focused_middle = style_focused_note_line(
         &in_progress_lines[1],
         false,
-        &crate::render::DiffuseTheme::DEFAULT,
+        &crate::render::DiffuseTheme::dark(),
     );
     assert!(
         focused_middle.contains("\x1b[38;5;81m"),
@@ -1098,7 +1100,7 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     let focused_final = style_focused_note_line(
         &in_progress_lines[2],
         false,
-        &crate::render::DiffuseTheme::DEFAULT,
+        &crate::render::DiffuseTheme::dark(),
     );
     assert!(
         focused_final.contains("\x1b[38;5;81m"),
@@ -1125,7 +1127,7 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     let focused_res = style_focused_note_line(
         &resolved_lines[0],
         true,
-        &crate::render::DiffuseTheme::DEFAULT,
+        &crate::render::DiffuseTheme::dark(),
     );
     assert!(
         focused_res.contains("\x1b[38;5;81m"),
@@ -1143,7 +1145,7 @@ fn test_style_focused_note_line_in_progress_and_resolved() {
     // Non-note string falls through unchanged
     let non_note = "arbitrary line content";
     assert_eq!(
-        style_focused_note_line(non_note, true, &crate::render::DiffuseTheme::DEFAULT),
+        style_focused_note_line(non_note, true, &crate::render::DiffuseTheme::dark()),
         non_note
     );
 }
@@ -1154,7 +1156,7 @@ fn test_multiline_note_stripe_entirely_cyan_when_cursor_on_any_line() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.note_draft = Some("- First line\n- Second line\n- Third line".into());
     state.commit_note_draft().expect("note commit must succeed");
@@ -1185,7 +1187,7 @@ fn test_note_status_cycling_open_progress_resolved() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 1;
     state.note_draft = Some("Cycle me".into());
@@ -1276,7 +1278,7 @@ fn test_toggle_show_resolved_notes() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 1;
     state.note_draft = Some("Resolved note test".into());
@@ -1309,7 +1311,7 @@ fn test_toggle_show_note_source() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Create an unanchored note on the banner (with original_source_rows)
     let banner_idx = state.first_row_of_file(state.current_file_idx());
@@ -1394,7 +1396,7 @@ fn test_show_source_only_on_unanchored_notes() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let content_row = state
         .flat
@@ -1498,7 +1500,7 @@ fn test_event_keybindings_x_z_and_shift_s() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 1;
     state.note_draft = Some("Keybinding test".into());
@@ -1540,7 +1542,7 @@ fn test_sticky_banner_note_scrolls_line_by_line_beneath_sticky_header() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let banner_idx = state.first_row_of_file(state.current_file_idx());
     let file = state.output.files[state.current_file_idx()].path.clone();
@@ -1727,7 +1729,7 @@ diff --git a/test.rs b/test.rs
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.notes = db;
 
@@ -1877,7 +1879,7 @@ fn test_reload_notes_from_disk_updates_counts_and_hides_resolved() {
         sample_output(),
         "test_repo".into(),
         notes_path.clone(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.notes = db.clone();
     state.sync_all_notes();
@@ -1960,7 +1962,7 @@ fn test_reload_notes_from_disk_cursor_on_resolved_note_is_clamped_safely() {
         sample_output(),
         "test_repo".into(),
         notes_path.clone(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.notes = db.clone();
     state.sync_all_notes();

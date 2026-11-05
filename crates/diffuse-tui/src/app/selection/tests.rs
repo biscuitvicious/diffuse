@@ -50,7 +50,7 @@ fn test_selection_anchor_span_snaps_to_coord_rows() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // flat[0] is the file header (no coordinate); AppState starts on the
     // first coordinate row (1020). The engine pads the hunk with empty
@@ -86,7 +86,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     for _ in 0..3 {
         state.move_down();
@@ -122,7 +122,7 @@ fn test_selection_requires_coord_rows() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Anchor on the file header (no coordinate) and confirm in place: the
     // range collapses onto the header which carries no line number, so
@@ -140,7 +140,7 @@ fn test_selection_requires_coord_rows() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 0;
     state.vis_line = 0;
@@ -163,7 +163,7 @@ fn test_selection_non_coord_gap_returns_none_when_snapping_inverts() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Insert non-coordinate divider rows between two coordinate rows.
     state

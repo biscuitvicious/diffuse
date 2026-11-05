@@ -60,7 +60,7 @@ fn test_file_header_has_background_stripe() {
         false,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(
         unselected.contains("\x1b[48;5;233m"),
@@ -83,7 +83,7 @@ fn test_file_header_has_background_stripe() {
         true,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(
         current_file.contains("\x1b[48;5;235m"),
@@ -102,7 +102,7 @@ fn test_file_header_has_background_stripe() {
         true,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(
         selected.contains("\x1b[48;5;238m"),
@@ -127,7 +127,7 @@ fn test_binary_file_header_has_no_expand_caret() {
         false,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(
         !rendered.contains('▼'),
@@ -157,7 +157,7 @@ fn test_hunk_divider_is_orange() {
         8,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(
         regular.contains("38;5;213m"),
@@ -170,7 +170,7 @@ fn test_hunk_divider_is_orange() {
         8,
         true,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(
         current.contains("38;5;213m"),
@@ -181,7 +181,7 @@ fn test_hunk_divider_is_orange() {
         "current hunk divider must have default hunk_divider_bg_current (235)"
     );
 
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let selected = render_hunk_divider_segment(
         Badge { idx: 0, total: 1 },
         &h,
@@ -211,7 +211,7 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
         0,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     let plain = crate::render::strip_ansi(&rendered);
     assert_eq!(
@@ -237,7 +237,7 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
         false,
         200,
         20,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     let plain_beyond = crate::render::strip_ansi(&beyond);
     assert_eq!(plain_beyond, "─".repeat(20));
@@ -249,7 +249,7 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
         0,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert_eq!(h_line.to_string().chars().count(), 80);
     assert!(h_line.to_string().ends_with("─────"));
@@ -261,12 +261,12 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
         0,
         true,
         10,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert_eq!(h_line_narrow.to_string().chars().count(), 10);
 
     // Also verify bottom gap divider rule runs to the end of line
-    let bottom = render_bottom_gap_divider(10, false, 80, &DiffuseTheme::DEFAULT);
+    let bottom = render_bottom_gap_divider(10, false, 80, &DiffuseTheme::dark());
     let plain_bottom = crate::render::strip_ansi(&bottom);
     assert_eq!(
         plain_bottom.chars().count(),
@@ -280,21 +280,22 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
 
     // Bottom gap segment beyond text width fills with horizontal rule dashes
     let bottom_beyond =
-        render_bottom_gap_divider_segment(10, true, false, 200, 20, &DiffuseTheme::DEFAULT);
+        render_bottom_gap_divider_segment(10, true, false, 200, 20, &DiffuseTheme::dark());
     let plain_bottom_beyond = crate::render::strip_ansi(&bottom_beyond);
     assert_eq!(plain_bottom_beyond, "─".repeat(20));
 
     // Bottom gap Ratatui Line renderer
-    let b_line = bottom_gap_divider_line(10, false, false, 80, &DiffuseTheme::DEFAULT);
+    let b_line = bottom_gap_divider_line(10, false, false, 80, &DiffuseTheme::dark());
     assert_eq!(b_line.to_string().chars().count(), 80);
     assert!(b_line.to_string().ends_with("─────"));
 
-    let b_line_narrow = bottom_gap_divider_line(10, true, false, 10, &DiffuseTheme::DEFAULT);
+    let b_line_narrow = bottom_gap_divider_line(10, true, false, 10, &DiffuseTheme::dark());
     assert_eq!(b_line_narrow.to_string().chars().count(), 10);
 
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let selected_bottom = render_bottom_gap_divider_segment(10, true, true, 0, 80, &theme);
-    let (sel_bg, sel_fg) = theme.palette.hunk_divider_colors(true, true);
+    let divider = theme.palette[crate::render::Cursor::Row].hunk_divider;
+    let (sel_bg, sel_fg) = (divider.bg, divider.fg);
     assert!(
         selected_bottom.contains(&sel_bg.bg_code()),
         "selected bottom gap divider must contain selected background color"
@@ -334,7 +335,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         0,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(contiguous.contains("H2/2 ────"));
     assert!(!contiguous.contains("0 lines"));
@@ -358,7 +359,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         0,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(with_rows.contains("H2/2 · 6 lines: −1 +4 ~1 ────"));
 
@@ -369,7 +370,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         8,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(expanded.contains("H2/2 · 6 lines: −1 +4 ~1 · 8 more lines: ⬍ · ▲ · ▼ ────"));
 
@@ -387,7 +388,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         0,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(zero_div.contains("H1/1 ────"));
     assert!(!zero_div.contains("0 lines"));
@@ -399,7 +400,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         30,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(zero_gap_div.contains("H1/1 · 30 more lines: ▼ ────"));
     assert!(!zero_gap_div.contains("0 lines"));
@@ -412,7 +413,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         0,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(with_movs.contains("H2/2 · 7 lines: −1 +4 ~1 ≈1 ────"));
 
@@ -423,7 +424,7 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         1,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(single.contains("· 1 more line: ⬍ · ▲ · ▼ ────"));
 
@@ -434,13 +435,13 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         50,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(top_gap.contains("· 50 more lines: ▼ ────"));
     assert!(!top_gap.contains("▲"));
 
     // Bottom gap divider (only up arrow) — 4-dash prefix and post
-    let bottom = render_bottom_gap_divider(80, false, 80, &DiffuseTheme::DEFAULT);
+    let bottom = render_bottom_gap_divider(80, false, 80, &DiffuseTheme::dark());
     assert!(bottom.contains("──── 80 more lines: ▲ ────"));
     assert!(!bottom.contains("▼"));
 }
@@ -508,7 +509,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         false,
         0,
         30,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(seg0.contains("──── H2/2 ·"));
 
@@ -521,7 +522,7 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         false,
         30,
         30,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(!seg1.is_empty());
 }
@@ -559,7 +560,7 @@ fn test_ratatui_diff_grid_lines() {
         false,
         false,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(f_line.to_string().contains("src/main.rs"));
     assert!(f_line.to_string().contains("▼"));
@@ -577,12 +578,12 @@ fn test_ratatui_diff_grid_lines() {
         10,
         true,
         80,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
     );
     assert!(h_line.to_string().contains("H1"));
     assert!(h_line.to_string().contains("10 more lines:"));
 
-    let b_line = bottom_gap_divider_line(5, false, false, 80, &DiffuseTheme::DEFAULT);
+    let b_line = bottom_gap_divider_line(5, false, false, 80, &DiffuseTheme::dark());
     assert!(b_line.to_string().contains("5 more lines:"));
 }
 
@@ -620,7 +621,7 @@ fn test_render_file_header_segment_narrow_width() {
         false,
         0,
         55,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         None,
     );
     let vw0 = crate::view::header::visible_width(&rendered_seg0);
@@ -643,7 +644,7 @@ fn test_render_file_header_segment_narrow_width() {
         false,
         55,
         55,
-        &DiffuseTheme::DEFAULT,
+        &DiffuseTheme::dark(),
         None,
     );
     let vw1 = crate::view::header::visible_width(&rendered_seg1);
@@ -684,7 +685,7 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
         raw_source: None,
     };
 
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let common_prefix = Some("crates/");
 
     // Total plain text:
@@ -884,7 +885,7 @@ fn test_file_header_counts_colored_like_status_bar() {
     f.counts.dels = 2;
     f.counts.adds = 5;
     f.counts.mods = 1;
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let seg = render_file_header_segment(
         &f,
         Badge { idx: 0, total: 1 },

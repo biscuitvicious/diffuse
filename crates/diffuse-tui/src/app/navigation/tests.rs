@@ -80,7 +80,7 @@ index 1111111..2222222 100644
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Step down through every single row and verify render_frame never panics
@@ -159,7 +159,7 @@ index 1111111..2222222 100644
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(80, 20);
     assert_eq!(state.scroll, 0);
@@ -215,7 +215,7 @@ fn test_page_up_with_sticky_header_scrolls_one_third() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -263,7 +263,7 @@ fn test_goto_file_lands_on_banner_with_viewport_margin() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
 
@@ -306,7 +306,7 @@ fn test_goto_line_centers_when_outside_20_80_percent() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     // Initial scroll is 0. Target line 30 has target_vis = 30.
@@ -344,7 +344,7 @@ fn test_goto_line_preserves_scroll_when_within_20_80_percent() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
 
@@ -413,7 +413,7 @@ fn test_jump_to_row_centered_edge_cases() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.last_content_width = 0; // exercises fallback to 80
@@ -456,7 +456,7 @@ fn test_move_bottom_preserves_viewport_margin_below() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
 
@@ -483,7 +483,7 @@ fn test_viewport_margin_rounding_half_up() {
         },
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     state.viewport_height = 0;
@@ -542,7 +542,7 @@ fn test_next_and_prev_file_land_banner_at_row_zero() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
 
@@ -648,7 +648,7 @@ fn test_prev_file_in_first_file_reveals_banner() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -714,7 +714,7 @@ fn test_next_file_wraps_around_at_end() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -778,7 +778,7 @@ fn test_hunk_jump_wraps_around_at_edges() {
         ),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 6;
     state.last_content_width = 80;
@@ -842,7 +842,7 @@ fn test_hunk_jump_places_head_line_at_top() {
         ),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 6;
     state.last_content_width = 80;
@@ -915,7 +915,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.last_content_width = 80;
     let last = state.flat.len() - 1;
@@ -972,7 +972,7 @@ fn test_hunk_jump_onto_first_hunk_keeps_banner() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -1057,7 +1057,7 @@ fn test_hunk_jump_from_banner_counts_as_inside_first_hunk() {
         ),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 6;
     state.last_content_width = 80;
@@ -1157,7 +1157,7 @@ index 1111111..2222222 100644
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.last_content_width = 80;
@@ -1185,7 +1185,7 @@ fn test_sub_row_navigation_through_notes_and_wrapped_lines() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.last_content_width = 80;
     state.viewport_height = 20;
@@ -1251,7 +1251,7 @@ fn test_viewport_scrolling_through_tall_content_without_min_vis_snap() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.last_content_width = 80;
     state.viewport_height = 10;
@@ -1289,7 +1289,7 @@ fn test_viewport_scrolling_through_tall_wrapped_diff_line_without_min_vis_snap()
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.last_content_width = 80;
     state.viewport_height = 10;
@@ -1323,7 +1323,7 @@ fn test_hunk_divider_selectable_navigation() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.last_content_width = 80;
     assert!(state.flat[0].is_file_header());
@@ -1391,7 +1391,7 @@ index 000..111 100644
             .run(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.last_content_width = 80;
     state.viewport_height = 20;

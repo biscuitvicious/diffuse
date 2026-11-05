@@ -46,7 +46,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(120, 30);
 
@@ -154,7 +154,7 @@ new mode 100755
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // File 0: Pure rename -> collapsed by default
@@ -200,7 +200,7 @@ deleted file mode 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Deleted file starts collapsed by default
@@ -254,7 +254,7 @@ fn test_collapsing_file_releases_memory_and_expanding_reloads() {
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     assert!(!state.collapsed_files.contains(&0));
@@ -315,7 +315,7 @@ fn test_async_on_demand_expansion_sets_streaming_indicator() {
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.enable_async_on_demand();
 
@@ -389,7 +389,7 @@ fn create_multi_file_state(
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     for i in 0..file_count {
         state.collapsed_files.insert(i);
@@ -730,7 +730,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Render at width 40 so the long header wraps across at least 2 lines.
     state.render_frame(40, 20);

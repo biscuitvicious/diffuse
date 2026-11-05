@@ -7,7 +7,7 @@
 - [x] Phase 4 — Bundled Canonical Dark and Light TOML Assets with Mode Pairing (`themes/dark.toml`, `themes/light.toml`)
 - [x] Phase 5 — Render Pipeline & Row Styler Migration (`crates/diffuse-render/src/`)
 - [x] Phase 6 — Interactive TUI Grid, Header, Gutter & Mode Toggle Migration (`crates/diffuse-tui/src/`)
-- [ ] Phase 7 — Dynamic User Theme Discovery, Configuration & CLI Integration (`crates/diffuse/src/`)
+- [·] Phase 7 — Dynamic User Theme Discovery, Configuration & CLI Integration (`crates/diffuse/src/`)
 - [ ] Phase 8 — Frozen Golden Corpus Verification, Dual-Leg Sign-Off & Benchmarks
 
 ---
@@ -373,6 +373,14 @@ Support user customization through explicit CLI flag (`--theme <name-or-path>`) 
 ### Acceptance Criteria
 - Integration test loading a custom TOML theme file from disk.
 - Graceful fallbacks with informative errors for malformed or missing theme files.
+
+### Implementation Record
+- **Legacy flat palette removal**: the flat `ThemePalette`, `palette/dark.rs`, `palette/light.rs`, and the orphaned accessors (`default_palette`, `light_palette`, `file_header_colors`, `hunk_divider_colors`, flat `token_color`) are deleted; `palette/mod.rs` now re-exports only the scoped types. Before deletion, the flat values were dumped programmatically and frozen into `theme/baseline.rs` (`cfg(test)`): a `Baseline` struct per mode holding the field set the equivalence suite dereferences, plus kind-major token matrices and a `token_color` method replicating the legacy dispatch (Mod/Mov rows resolve the ctx arm). The equivalence suite in `toml/parse.rs` now compiles the bundled assets against these in-source literals instead of the deleted runtime structures — same assertions, frozen reference. `TOKEN_KEYS` visibility widened to `pub(in crate::theme)` for the baseline module.
+- **`DiffuseTheme` reshape**: `{ name: &'static str, mode: Mode, palette: &'static scoped::ThemePalette }`. The `DEFAULT`/`LIGHT` constants became OnceLock-backed constructors `DiffuseTheme::dark()`/`light()` (each compiles its bundled asset on first access and caches the scoped palette as a process-wide static); `scoped_palette()` is retained as a thin accessor over `self.palette` so consumer call sites are unchanged. `DiffuseTheme` is `Copy`. The private `scoped_token_color` became public `token_color`, delegating to a new row-kind-aware `scoped::ThemePalette::token_color` (ctx dispatch at the rest tier). `Mode` is re-exported at the theme root. `diff/header.rs` resolves the current-file path white at `[Cursor::File].file_header.fg_or_path()`.
+- **Consumer migration**: all ~470 `DiffuseTheme::DEFAULT`/`LIGHT` references (13 non-test sites, the rest tests) migrated via sed plus targeted rewrites; `theme/tests.rs` legacy pins reworked into scoped/baseline expectations (16 tests rewritten or deleted, incl. the WCAG contrast suite re-anchored on scoped channels); `StatusBarContext.theme` became an owned `DiffuseTheme` (Copy) to keep test helper construction temporary-free; `render_ansi` takes `&UiPalette`; the dead legacy `note_tint_bg` slot (no render consumer) was dropped from the schema, with its test literal inlined.
+- **Theme loader** (`theme/loader.rs`): 3-tier `load_theme(name_or_path)` — (1) existing file path parses directly, (2) builtin names resolve through `from_name`, (3) XDG discovery over `$XDG_CONFIG_HOME/diffuse/themes/<name>.toml` then `~/.config/diffuse/themes/`. `ThemeLoadError` distinguishes `NotFound`/`Parse`/`Io` with Display messages carrying the offending path. User palettes leak into stable `'static` references on load, honoring the `DiffuseTheme::palette` contract. 10 unit tests (path, builtins, malformed, missing, XDG + `$HOME` fallback, error display).
+- **CLI integration**: `resolve_theme` resolves any `--theme` value through `load_theme` (builtin aliases, file paths, and installed theme names all accepted) and degrades gracefully — unresolvable or malformed themes print `diffuse: {error}; falling back to default theme` and continue with the default. `--theme` help documents the path and config-dir forms. Integration tests load a custom TOML from disk (verifying the leaked name, mode, and a cascaded `ui.accent` override) and pin the malformed-file fallback.
+- **Deferred to phase 8**: nothing; golden corpora remained byte-identical throughout (verified by the full gate).
 
 ---
 

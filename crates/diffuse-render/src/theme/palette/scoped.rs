@@ -3,12 +3,6 @@
 //! Replaces flat color permutations with two orthogonal axes: containment
 //! [`Cursor`] and semantic [`DiffKind`]. Lookup is $O(1)$ pointer arithmetic:
 //! `palette[Cursor::Row][DiffKind::Add].surface.bg`.
-//!
-//! This module intentionally coexists with the legacy flat
-//! [`super::ThemePalette`](super::ThemePalette) until the render-pipeline and
-//! TUI migrations (phases 5-7) repoint their consumers; the scoped
-//! [`ThemePalette`] is therefore only reachable through this module until
-//! those phases complete.
 
 use std::ops;
 
@@ -185,6 +179,21 @@ impl ThemePalette {
     #[must_use]
     pub const fn diff(&self, cursor: Cursor, kind: DiffKind) -> &DiffPalette {
         &self.tiers[cursor as usize].diffs[kind as usize]
+    }
+
+    /// Resolve syntax / markdown token color in the context of a specific row
+    /// kind at the canonical rest tier ([`Cursor::Rest`]).
+    #[inline]
+    #[must_use]
+    pub fn token_color(
+        &self,
+        color: diffuse_syntax::color::TokenColor,
+        row_kind: diffuse_core::parse::RowKind,
+    ) -> Option<Color> {
+        let kind = DiffKind::from_row(row_kind);
+        self.tiers[Cursor::Rest as usize].diffs[kind as usize]
+            .syntax
+            .token_color(color)
     }
 }
 

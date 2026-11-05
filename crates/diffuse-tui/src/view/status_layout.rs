@@ -204,7 +204,7 @@ mod tests {
                 status_message: None,
                 file: None,
                 hunk_counts: None,
-                theme: &crate::render::DiffuseTheme::DEFAULT,
+                theme: crate::render::DiffuseTheme::dark(),
             },
             file,
         )
@@ -297,7 +297,7 @@ mod tests {
         let ok = status_layout(&c);
         assert_eq!(
             ok.segments[0].color,
-            crate::render::DiffuseTheme::DEFAULT
+            crate::render::DiffuseTheme::dark()
                 .scoped_palette()
                 .ui
                 .header_staged
@@ -307,7 +307,7 @@ mod tests {
         let err = status_layout(&c);
         assert_eq!(
             err.segments[0].color,
-            crate::render::DiffuseTheme::DEFAULT
+            crate::render::DiffuseTheme::dark()
                 .scoped_palette()
                 .ui
                 .count_dels
@@ -369,7 +369,7 @@ mod empty_state_tests {
             status_message: None,
             file: None,
             hunk_counts: None,
-            theme: &crate::render::DiffuseTheme::DEFAULT,
+            theme: crate::render::DiffuseTheme::dark(),
         }
     }
 

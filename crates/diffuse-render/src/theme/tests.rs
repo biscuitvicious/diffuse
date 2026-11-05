@@ -2,7 +2,10 @@ use std::{env, sync::Mutex};
 
 use diffuse_syntax::color::TokenColor;
 
-use super::*;
+use super::{
+    baseline::{DARK, LIGHT},
+    *,
+};
 
 /// Serializes the environment-touching tests below: process env is global,
 /// so parallel auto-detect tests would otherwise observe each other's
@@ -11,7 +14,7 @@ static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
 #[test]
 fn test_default_theme_token_colors() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let kw_add = theme.render_token(TokenColor::Keyword, "fn", "add", None, None);
     assert_eq!(kw_add, "\x1b[38;5;147mfn\x1b[39m");
 
@@ -39,7 +42,7 @@ fn test_default_theme_token_colors() {
 
 #[test]
 fn test_sgr_modifiers_application_and_reset() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let bold_tok = theme.render_token(TokenColor::Bold, "heading", "ctx", None, Some(1));
     assert!(bold_tok.starts_with("\x1b[1m"));
     assert!(bold_tok.ends_with("\x1b[22m"));
@@ -50,7 +53,7 @@ fn test_sgr_modifiers_application_and_reset() {
 
 #[test]
 fn test_strikethrough_diff_token_dim_strike_no_clashing_foreground() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     for (row_kind, tok_kind) in [
         ("ctx", "ctx"),
         ("add", "add"),
@@ -94,54 +97,74 @@ fn test_encode_decode_sgr() {
 
 #[test]
 fn test_default_theme_palette() {
-    let palette = ThemePalette::default_palette();
-    assert_eq!(palette.bg_base, Color::Fixed(233));
-    assert_eq!(palette.add_fg, Color::Fixed(120));
-    assert_eq!(palette.del_fg, Color::Fixed(203));
-    assert_eq!(palette.add_tint_bg, Color::Rgb(28, 50, 30));
-    assert_eq!(palette.add_cursor_bg, Color::Rgb(46, 74, 48));
-    assert_eq!(palette.del_tint_bg, Color::Rgb(38, 12, 14));
-    assert_eq!(palette.add_fill_bg, Color::Rgb(30, 96, 50));
-    assert_eq!(palette.add_fill_cursor_bg, Color::Rgb(37, 120, 65));
-    assert_eq!(palette.mod_fill_bg, Color::Rgb(30, 96, 50));
-    assert_eq!(palette.mod_fill_cursor_bg, Color::Rgb(37, 120, 65));
-    assert_eq!(palette.mod_tint_bg, Color::Rgb(38, 38, 38));
-    assert_eq!(palette.mod_cursor_bg, Color::Rgb(66, 66, 66));
-    assert_eq!(palette.note_tint_bg, Color::Rgb(76, 64, 20));
-    assert_eq!(palette.ctx_cursor_bg, Color::Fixed(237));
-    assert_eq!(palette.ctx_fg, Color::Primary);
-    assert_eq!(palette.text, Color::Primary);
-
-    let theme = DiffuseTheme::DEFAULT;
-    assert_eq!(theme.name, "default");
+    let dark = DiffuseTheme::dark();
+    let scoped = dark.palette;
+    let rest = &scoped[Cursor::Rest];
+    let row = &scoped[Cursor::Row];
+    // Row surfaces & foregrounds (rest tier) and cursor backgrounds (row
+    // tier), frozen from the legacy flat values.
+    assert_eq!(rest[DiffKind::Add].surface.fg, Color::Fixed(120));
+    assert_eq!(rest[DiffKind::Del].surface.fg, Color::Fixed(203));
+    assert_eq!(rest[DiffKind::Add].surface.bg, Color::Rgb(28, 50, 30));
+    assert_eq!(rest[DiffKind::Del].surface.bg, Color::Rgb(38, 12, 14));
+    assert_eq!(
+        rest[DiffKind::Add].surface.fill,
+        Some(Color::Rgb(30, 96, 50))
+    );
+    assert_eq!(
+        row[DiffKind::Add].surface.bg,
+        Color::Rgb(46, 74, 48),
+        "add cursor background"
+    );
+    assert_eq!(
+        row[DiffKind::Add].surface.fill,
+        Some(Color::Rgb(37, 120, 65))
+    );
+    assert_eq!(
+        rest[DiffKind::Mod].surface.fill,
+        Some(Color::Rgb(30, 96, 50))
+    );
+    assert_eq!(
+        row[DiffKind::Mod].surface.fill,
+        Some(Color::Rgb(37, 120, 65))
+    );
+    assert_eq!(rest[DiffKind::Mod].surface.bg, Color::Rgb(38, 38, 38));
+    assert_eq!(row[DiffKind::Mod].surface.bg, Color::Rgb(66, 66, 66));
+    // Context canvas: cursor and base foreground.
+    assert_eq!(row[DiffKind::Ctx].surface.bg, Color::Fixed(237));
+    assert_eq!(rest[DiffKind::Ctx].surface.fg, Color::Primary);
+    // UI: base text on the dark canvas is the terminal default.
+    assert_eq!(scoped.ui.text, Color::Primary);
+    assert_eq!(dark.name, "default");
 }
-
 #[test]
 fn test_row_style_methods() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
+    let scoped = theme.palette;
+    let rest = &scoped[Cursor::Rest];
+    let row = &scoped[Cursor::Row];
 
     let add_style = theme.row_style(diffuse_core::parse::RowKind::Add);
-    assert_eq!(add_style.tint_bg, theme.palette.add_tint_bg);
-    assert_eq!(add_style.cursor_bg, theme.palette.add_cursor_bg);
-    assert_eq!(add_style.fill_bg, Some(theme.palette.add_fill_bg));
-    assert_eq!(
-        add_style.fill_cursor_bg,
-        Some(theme.palette.add_fill_cursor_bg)
-    );
-    assert_eq!(add_style.fg, theme.palette.add_fg);
+    assert_eq!(add_style.tint_bg, rest[DiffKind::Add].surface.bg);
+    assert_eq!(add_style.cursor_bg, row[DiffKind::Add].surface.bg);
+    assert_eq!(add_style.fill_bg, rest[DiffKind::Add].surface.fill);
+    assert_eq!(add_style.fill_cursor_bg, row[DiffKind::Add].surface.fill);
+    assert_eq!(add_style.fg, rest[DiffKind::Add].surface.fg);
 
     let del_style = theme.row_style(diffuse_core::parse::RowKind::Del);
     assert_eq!(del_style.fill_style(), None);
     assert_eq!(del_style.fill_cursor_style(), None);
 }
-
 #[test]
 fn test_row_style_scoped_parity() {
-    // Phase 6: row_style now reads through the scoped palette (rest tier for
+    // Phase 6: row_style reads through the scoped palette (rest tier for
     // tint/underlying style, row tier for cursor backgrounds); output must
-    // match the legacy flat values for every kind, in both modes.
-    for theme in [DiffuseTheme::DEFAULT, DiffuseTheme::LIGHT] {
-        let legacy = theme.palette;
+    // match the frozen legacy baseline values for every kind, in both modes.
+    for theme in [DiffuseTheme::dark(), DiffuseTheme::light()] {
+        let legacy = match theme.mode {
+            Mode::Dark => &DARK,
+            Mode::Light => &LIGHT,
+        };
         let add = theme.row_style(diffuse_core::parse::RowKind::Add);
         assert_eq!(add.tint_bg, legacy.add_tint_bg);
         assert_eq!(add.cursor_bg, legacy.add_cursor_bg);
@@ -171,25 +194,24 @@ fn test_row_style_scoped_parity() {
         assert_eq!(mov.fg, legacy.mov_fg);
     }
 }
-
 #[test]
 fn test_theme_paired_mode_toggle() {
     // Phase 6: the `t`-key mode toggle resolves the opposite-mode pair
     // declared by the theme's asset metadata, not hardcoded constants.
     assert_eq!(
-        DiffuseTheme::DEFAULT.paired(),
-        Some(DiffuseTheme::LIGHT),
+        DiffuseTheme::dark().paired(),
+        Some(DiffuseTheme::light()),
         "dark pairs to light"
     );
     assert_eq!(
-        DiffuseTheme::LIGHT.paired(),
-        Some(DiffuseTheme::DEFAULT),
+        DiffuseTheme::light().paired(),
+        Some(DiffuseTheme::dark()),
         "light pairs to dark"
     );
     // Round trip: toggling twice returns the original theme.
     assert_eq!(
-        DiffuseTheme::DEFAULT.paired().and_then(|t| t.paired()),
-        Some(DiffuseTheme::DEFAULT)
+        DiffuseTheme::dark().paired().and_then(|t| t.paired()),
+        Some(DiffuseTheme::dark())
     );
 }
 
@@ -198,65 +220,28 @@ fn test_theme_from_name_and_env() {
     let _guard = ENV_MUTEX.lock().unwrap();
     assert_eq!(
         DiffuseTheme::from_name("default"),
-        Some(DiffuseTheme::DEFAULT)
+        Some(DiffuseTheme::dark())
     );
-    assert_eq!(DiffuseTheme::from_name("DARK"), Some(DiffuseTheme::DEFAULT));
-    assert_eq!(
-        DiffuseTheme::from_name("black"),
-        Some(DiffuseTheme::DEFAULT)
-    );
+    assert_eq!(DiffuseTheme::from_name("DARK"), Some(DiffuseTheme::dark()));
+    assert_eq!(DiffuseTheme::from_name("black"), Some(DiffuseTheme::dark()));
     assert_eq!(DiffuseTheme::from_name("nonexistent"), None);
     assert_eq!(DiffuseTheme::from_name(""), None);
     assert_eq!(DiffuseTheme::from_name("unknown-theme"), None);
 
     unsafe {
         env::set_var("DIFFUSE_THEME", "default");
-        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::DEFAULT);
+        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::dark());
         env::remove_var("DIFFUSE_THEME");
-        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::DEFAULT);
+        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::dark());
         env::set_var("DIFFUSE_THEME", "invalid");
-        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::DEFAULT);
+        assert_eq!(DiffuseTheme::from_env(), DiffuseTheme::dark());
         env::remove_var("DIFFUSE_THEME");
     }
 }
 
 #[test]
-fn test_theme_palette_helpers() {
-    let p = ThemePalette::default_palette();
-    assert_eq!(
-        p.file_header_colors(true, false, false),
-        (p.file_header_bg_selected, p.file_header_fg_selected)
-    );
-    assert_eq!(
-        p.file_header_colors(false, true, false),
-        (p.file_header_bg_current, p.file_header_fg_current)
-    );
-    assert_eq!(
-        p.file_header_colors(false, false, true),
-        (p.file_header_bg_current, p.file_header_fg_current)
-    );
-    assert_eq!(
-        p.file_header_colors(false, false, false),
-        (p.file_header_bg_rest, p.file_header_fg_rest)
-    );
-
-    assert_eq!(
-        p.hunk_divider_colors(true, false),
-        (p.hunk_divider_bg_selected, p.hunk_divider_fg_selected)
-    );
-    assert_eq!(
-        p.hunk_divider_colors(false, true),
-        (p.hunk_divider_bg_current, p.hunk_divider_fg)
-    );
-    assert_eq!(
-        p.hunk_divider_colors(false, false),
-        (p.hunk_divider_bg_rest, p.hunk_divider_fg)
-    );
-}
-
-#[test]
 fn test_stacked_sgr_emission_order_and_reset() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let mut out = String::new();
     theme.write_token_stacked(TokenColor::Bold, "Title", "ctx", None, &[1, 4], &mut out);
     assert!(
@@ -272,7 +257,7 @@ fn test_stacked_sgr_emission_order_and_reset() {
 
 #[test]
 fn test_table_header_token_bold_underline_and_reset() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let tok = theme.render_token(TokenColor::TableHeader, "Header", "ctx", None, Some(14));
     assert!(
         tok.starts_with("\x1b[1;4m"),
@@ -290,125 +275,137 @@ fn test_table_header_token_bold_underline_and_reset() {
 
 #[test]
 fn test_code_span_resolves_to_dedicated_code_palette_key() {
-    use diffuse_core::parse::RowKind;
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let code_ctx = theme.render_token(TokenColor::Code, "code", "ctx", None, None);
     assert_eq!(code_ctx, "\x1b[38;5;81mcode\x1b[39m");
     // Row-aware overrides resolve to the code palette keys.
-    let p = ThemePalette::default_palette();
-    assert_eq!(
-        p.token_color(TokenColor::Code, RowKind::Add),
-        Some(p.add_code)
-    );
-    assert_eq!(
-        p.token_color(TokenColor::Code, RowKind::Del),
-        Some(p.del_code)
-    );
-    assert_eq!(p.token_color(TokenColor::Code, RowKind::Ctx), Some(p.code));
+    let ctx = theme.palette[Cursor::Rest][DiffKind::Ctx].syntax;
+    let add = theme.palette[Cursor::Rest][DiffKind::Add].syntax;
+    let del = theme.palette[Cursor::Rest][DiffKind::Del].syntax;
+    assert_eq!(ctx.token_color(TokenColor::Code), Some(ctx.code));
+    assert_eq!(add.token_color(TokenColor::Code), Some(add.code));
+    assert_eq!(del.token_color(TokenColor::Code), Some(del.code));
     // Code is distinct from string so spans are visually separable.
-    assert_ne!(p.code, p.string);
-    assert_ne!(p.add_code, p.add_string);
+    assert_ne!(ctx.code, ctx.string);
+    assert_ne!(add.code, add.string);
     // Deletions keep the red string tint for consistency.
-    assert_eq!(p.del_code, p.del_string);
+    assert_eq!(del.code, del.string);
 }
-
 #[test]
 fn test_table_border_and_header_aliases_resolve_to_palette_keys() {
-    use diffuse_core::parse::RowKind;
-    let p = ThemePalette::default_palette();
+    let theme = DiffuseTheme::dark();
+    let ctx = theme.palette[Cursor::Rest][DiffKind::Ctx].syntax;
+    let add = theme.palette[Cursor::Rest][DiffKind::Add].syntax;
+    let del = theme.palette[Cursor::Rest][DiffKind::Del].syntax;
     assert_eq!(
-        p.token_color(TokenColor::TableBorder, RowKind::Ctx),
-        Some(p.table_border)
+        ctx.token_color(TokenColor::TableBorder),
+        Some(ctx.table_border)
     );
     assert_eq!(
-        p.token_color(TokenColor::TableBorder, RowKind::Add),
-        Some(p.add_table_border)
+        add.token_color(TokenColor::TableBorder),
+        Some(add.table_border)
     );
     assert_eq!(
-        p.token_color(TokenColor::TableBorder, RowKind::Del),
-        Some(p.del_table_border)
+        del.token_color(TokenColor::TableBorder),
+        Some(del.table_border)
     );
 
     assert_eq!(
-        p.token_color(TokenColor::TableHeader, RowKind::Ctx),
-        Some(p.table_header)
+        ctx.token_color(TokenColor::TableHeader),
+        Some(ctx.table_header)
     );
     assert_eq!(
-        p.token_color(TokenColor::TableHeader, RowKind::Add),
-        Some(p.add_table_header)
+        add.token_color(TokenColor::TableHeader),
+        Some(add.table_header)
     );
     assert_eq!(
-        p.token_color(TokenColor::TableHeader, RowKind::Del),
-        Some(p.del_table_header)
+        del.token_color(TokenColor::TableHeader),
+        Some(del.table_header)
     );
 }
-
 #[test]
 fn test_link_border_aliases_resolve_to_palette_key() {
-    use diffuse_core::parse::RowKind;
-    let p = ThemePalette::default_palette();
-    // link_border follows the per-theme default border color.
-    assert_eq!(p.link_border, DEFAULT_BORDER_COLOR_DARK);
-    assert_eq!(p.add_link_border, DEFAULT_BORDER_COLOR_DARK);
-    assert_eq!(p.del_link_border, DEFAULT_BORDER_COLOR_DARK);
+    let theme = DiffuseTheme::dark();
+    let ctx = theme.palette[Cursor::Rest][DiffKind::Ctx].syntax;
+    let add = theme.palette[Cursor::Rest][DiffKind::Add].syntax;
+    let del = theme.palette[Cursor::Rest][DiffKind::Del].syntax;
+    // Border tokens share the theme's default border color (legacy
+    // `DEFAULT_BORDER_COLOR_DARK`).
+    assert_eq!(ctx.table_border, Color::Fixed(243));
+    assert_eq!(ctx.link_border, Color::Fixed(243));
+    assert_eq!(add.table_border, Color::Fixed(243));
+    assert_eq!(del.table_border, Color::Fixed(243));
     assert_eq!(
-        p.token_color(TokenColor::LinkBorder, RowKind::Ctx),
-        Some(p.link_border)
+        ctx.token_color(TokenColor::LinkBorder),
+        Some(ctx.link_border)
     );
     assert_eq!(
-        p.token_color(TokenColor::LinkBorder, RowKind::Add),
-        Some(p.add_link_border)
+        add.token_color(TokenColor::LinkBorder),
+        Some(add.link_border)
     );
     assert_eq!(
-        p.token_color(TokenColor::LinkBorder, RowKind::Del),
-        Some(p.del_link_border)
+        del.token_color(TokenColor::LinkBorder),
+        Some(del.link_border)
     );
 }
-
 #[test]
 fn test_quote_and_fence_border_aliases_resolve_to_palette_keys() {
-    use diffuse_core::parse::RowKind;
-    let p = ThemePalette::default_palette();
-    // All border keys share the per-theme default border color.
-    assert_eq!(p.quote_border, DEFAULT_BORDER_COLOR_DARK);
-    assert_eq!(p.fence_border, DEFAULT_BORDER_COLOR_DARK);
-    assert_eq!(p.table_border, DEFAULT_BORDER_COLOR_DARK);
-    assert_eq!(p.link_border, DEFAULT_BORDER_COLOR_DARK);
-    let light = ThemePalette::light_palette();
-    assert_eq!(light.quote_border, DEFAULT_BORDER_COLOR_LIGHT);
-    assert_eq!(light.fence_border, DEFAULT_BORDER_COLOR_LIGHT);
-    assert_eq!(light.table_border, DEFAULT_BORDER_COLOR_LIGHT);
-    assert_eq!(light.link_border, DEFAULT_BORDER_COLOR_LIGHT);
+    let dark = DiffuseTheme::dark();
+    let light = DiffuseTheme::light();
+    // All border keys share the per-theme default border color (legacy
+    // `DEFAULT_BORDER_COLOR_{DARK,LIGHT}`).
+    for syntax in [
+        dark.palette[Cursor::Rest][DiffKind::Ctx].syntax,
+        light.palette[Cursor::Rest][DiffKind::Ctx].syntax,
+    ] {
+        assert_eq!(syntax.quote_border, syntax.table_border);
+        assert_eq!(syntax.fence_border, syntax.table_border);
+        assert_eq!(syntax.link_border, syntax.table_border);
+    }
     assert_eq!(
-        p.token_color(TokenColor::QuoteBorder, RowKind::Ctx),
-        Some(p.quote_border)
+        dark.palette[Cursor::Rest][DiffKind::Ctx]
+            .syntax
+            .table_border,
+        Color::Fixed(243)
     );
     assert_eq!(
-        p.token_color(TokenColor::QuoteBorder, RowKind::Add),
-        Some(p.add_quote_border)
+        light.palette[Cursor::Rest][DiffKind::Ctx]
+            .syntax
+            .table_border,
+        Color::Rgb(101, 109, 118)
+    );
+    let ctx = dark.palette[Cursor::Rest][DiffKind::Ctx].syntax;
+    let add = dark.palette[Cursor::Rest][DiffKind::Add].syntax;
+    let del = dark.palette[Cursor::Rest][DiffKind::Del].syntax;
+    assert_eq!(
+        ctx.token_color(TokenColor::QuoteBorder),
+        Some(ctx.quote_border)
     );
     assert_eq!(
-        p.token_color(TokenColor::QuoteBorder, RowKind::Del),
-        Some(p.del_quote_border)
+        add.token_color(TokenColor::QuoteBorder),
+        Some(add.quote_border)
+    );
+    assert_eq!(
+        del.token_color(TokenColor::QuoteBorder),
+        Some(del.quote_border)
     );
 
     assert_eq!(
-        p.token_color(TokenColor::FenceBorder, RowKind::Ctx),
-        Some(p.fence_border)
+        ctx.token_color(TokenColor::FenceBorder),
+        Some(ctx.fence_border)
     );
     assert_eq!(
-        p.token_color(TokenColor::FenceBorder, RowKind::Add),
-        Some(p.add_fence_border)
+        add.token_color(TokenColor::FenceBorder),
+        Some(add.fence_border)
     );
     assert_eq!(
-        p.token_color(TokenColor::FenceBorder, RowKind::Del),
-        Some(p.del_fence_border)
+        del.token_color(TokenColor::FenceBorder),
+        Some(del.fence_border)
     );
 }
-
 #[test]
 fn test_palette_semantic_ui_fields() {
-    let p = ThemePalette::default_palette();
+    let p = DiffuseTheme::dark().palette.ui;
     assert_eq!(p.status_bar_fg, Color::Fixed(252));
     assert_eq!(p.status_bar_dim, Color::Fixed(244));
     assert_eq!(p.status_bar_accent, Color::Fixed(220));
@@ -418,7 +415,7 @@ fn test_palette_semantic_ui_fields() {
     assert_eq!(p.header_prefix, Color::Fixed(152));
     assert_eq!(p.ribbon_divider, Color::Fixed(244));
     assert_eq!(p.ribbon_text, Color::Fixed(244));
-    assert_eq!(p.modal_bg, Color::Fixed(236));
+    assert_eq!(p.bg_modal, Color::Fixed(236));
     assert_eq!(p.modal_border, Color::Fixed(240));
     assert_eq!(p.modal_title, Color::Fixed(231));
     assert_eq!(p.count_dels, Color::Fixed(203));
@@ -427,131 +424,144 @@ fn test_palette_semantic_ui_fields() {
     assert_eq!(p.count_movs, Color::Fixed(147));
     assert_eq!(p.count_notes, Color::Fixed(220));
 }
-
 #[test]
 fn test_delim_palette_keys() {
-    use diffuse_core::parse::RowKind;
-    let p = ThemePalette::default_palette();
-    assert_eq!(
-        p.token_color(TokenColor::Delimiter, RowKind::Ctx),
-        Some(p.delim)
-    );
-    assert_eq!(
-        p.token_color(TokenColor::Delimiter, RowKind::Add),
-        Some(p.add_delim)
-    );
-    assert_eq!(
-        p.token_color(TokenColor::Delimiter, RowKind::Del),
-        Some(p.del_delim)
-    );
-
-    let light = ThemePalette::light_palette();
-    assert_eq!(
-        light.token_color(TokenColor::Delimiter, RowKind::Ctx),
-        Some(light.delim)
-    );
-    assert_eq!(
-        light.token_color(TokenColor::Delimiter, RowKind::Add),
-        Some(light.add_delim)
-    );
-    assert_eq!(
-        light.token_color(TokenColor::Delimiter, RowKind::Del),
-        Some(light.del_delim)
-    );
+    for theme in [DiffuseTheme::dark(), DiffuseTheme::light()] {
+        let ctx = theme.palette[Cursor::Rest][DiffKind::Ctx].syntax;
+        let add = theme.palette[Cursor::Rest][DiffKind::Add].syntax;
+        let del = theme.palette[Cursor::Rest][DiffKind::Del].syntax;
+        assert_eq!(ctx.token_color(TokenColor::Delimiter), Some(ctx.delim));
+        assert_eq!(add.token_color(TokenColor::Delimiter), Some(add.delim));
+        assert_eq!(del.token_color(TokenColor::Delimiter), Some(del.delim));
+    }
 }
-
 #[test]
-fn test_token_color_delegates_to_palette() {
-    use diffuse_core::parse::RowKind;
-    let mut p = ThemePalette::default_palette();
+fn test_channel_syntax_palettes_resolve_and_override_independently() {
+    let theme = DiffuseTheme::dark();
+    let ctx = theme.palette[Cursor::Rest][DiffKind::Ctx].syntax;
+    let add = theme.palette[Cursor::Rest][DiffKind::Add].syntax;
+    let del = theme.palette[Cursor::Rest][DiffKind::Del].syntax;
 
-    // In default palette, RowKind::Add and Del map to predefined colors
+    // In the default theme, the add and del channels map to predefined
+    // per-kind keyword colors.
     assert_eq!(
-        p.token_color(TokenColor::Keyword, RowKind::Add),
+        add.token_color(TokenColor::Keyword),
         Some(Color::Fixed(147))
     );
     assert_eq!(
-        p.token_color(TokenColor::Keyword, RowKind::Del),
+        del.token_color(TokenColor::Keyword),
         Some(Color::Fixed(183))
     );
+    // Unstyled default tokens on the dark theme return None (use the
+    // terminal default text).
+    assert_eq!(ctx.token_color(TokenColor::Default), None);
+    assert_eq!(add.token_color(TokenColor::Default), None);
+    assert_eq!(del.token_color(TokenColor::Default), None);
 
-    // TokenColor::Default on dark theme returns None (uses terminal default
-    // text)
-    assert_eq!(p.token_color(TokenColor::Default, RowKind::Ctx), None);
-    assert_eq!(p.token_color(TokenColor::Default, RowKind::Add), None);
-    assert_eq!(p.token_color(TokenColor::Default, RowKind::Del), None);
-
-    // Overriding the palette fields changes the resolved syntax color
-    p.add_keyword = Color::Rgb(10, 20, 30);
-    p.del_keyword = Color::Rgb(40, 50, 60);
-
+    // The syntax palettes are `Copy`, so an overridden clone resolves
+    // standalone without touching the shared scoped palette.
+    let mut add_overlay = add;
+    add_overlay.keyword = Color::Rgb(10, 20, 30);
     assert_eq!(
-        p.token_color(TokenColor::Keyword, RowKind::Add),
+        add_overlay.token_color(TokenColor::Keyword),
         Some(Color::Rgb(10, 20, 30))
     );
     assert_eq!(
-        p.token_color(TokenColor::Keyword, RowKind::Del),
-        Some(Color::Rgb(40, 50, 60))
+        theme.palette[Cursor::Rest][DiffKind::Add]
+            .syntax
+            .token_color(TokenColor::Keyword),
+        Some(Color::Fixed(147)),
+        "the shared scoped channel is unaffected by the local overlay"
     );
 }
-
 #[test]
 fn test_light_theme_palette_and_resolution() {
-    let p = ThemePalette::light_palette();
-    let d = ThemePalette::default_palette();
+    let light = DiffuseTheme::light();
+    let dark = DiffuseTheme::dark();
+    let lp = light.palette;
+    let dp = dark.palette;
 
-    // Verify key fields are distinct from dark palette
-    assert_ne!(p.bg_base, d.bg_base);
-    assert_ne!(p.ctx_fg, d.ctx_fg);
-    assert_ne!(p.add_tint_bg, d.add_tint_bg);
-    assert_ne!(p.add_fg, d.add_fg);
-    assert_ne!(p.del_tint_bg, d.del_tint_bg);
-    assert_ne!(p.del_fg, d.del_fg);
-    assert_ne!(p.mod_tint_bg, d.mod_tint_bg);
-    assert_ne!(p.mod_fg, d.mod_fg);
-    assert_ne!(p.mov_tint_bg, d.mov_tint_bg);
-    assert_ne!(p.mov_fg, d.mov_fg);
+    // Verify key fields are distinct from the dark palette.
+    assert_ne!(lp.ui.bg_base, dp.ui.bg_base);
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::Ctx].surface.fg,
+        dp[Cursor::Rest][DiffKind::Ctx].surface.fg
+    );
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::Add].surface.bg,
+        dp[Cursor::Rest][DiffKind::Add].surface.bg
+    );
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::Add].surface.fg,
+        dp[Cursor::Rest][DiffKind::Add].surface.fg
+    );
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::Del].surface.bg,
+        dp[Cursor::Rest][DiffKind::Del].surface.bg
+    );
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::Del].surface.fg,
+        dp[Cursor::Rest][DiffKind::Del].surface.fg
+    );
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::Mod].surface.bg,
+        dp[Cursor::Rest][DiffKind::Mod].surface.bg
+    );
+    assert_ne!(
+        lp[Cursor::Rest][DiffKind::Mov].surface.bg,
+        dp[Cursor::Rest][DiffKind::Mov].surface.bg
+    );
 
-    let light_theme = DiffuseTheme::LIGHT;
-    assert_eq!(light_theme.name, "light");
-    assert_eq!(light_theme.palette, p);
+    assert_eq!(light.name, "light");
 
-    assert_eq!(DiffuseTheme::from_name("light"), Some(DiffuseTheme::LIGHT));
-    assert_eq!(DiffuseTheme::from_name("LIGHT"), Some(DiffuseTheme::LIGHT));
-    assert_eq!(DiffuseTheme::from_name("white"), Some(DiffuseTheme::LIGHT));
+    assert_eq!(DiffuseTheme::from_name("light"), Some(light));
+    assert_eq!(DiffuseTheme::from_name("LIGHT"), Some(light));
+    assert_eq!(DiffuseTheme::from_name("white"), Some(light));
 
-    // Verify row styles under light theme
-    let add_style = light_theme.row_style(diffuse_core::parse::RowKind::Add);
-    assert_eq!(add_style.tint_bg, p.add_tint_bg);
-    assert_eq!(add_style.fg, p.add_fg);
-    assert_eq!(add_style.fill_bg, Some(p.add_fill_bg));
+    // Verify row styles under light theme.
+    let add_style = light.row_style(diffuse_core::parse::RowKind::Add);
+    assert_eq!(
+        add_style.tint_bg,
+        lp[Cursor::Rest][DiffKind::Add].surface.bg
+    );
+    assert_eq!(add_style.fg, lp[Cursor::Rest][DiffKind::Add].surface.fg);
+    assert_eq!(
+        add_style.fill_bg,
+        lp[Cursor::Rest][DiffKind::Add].surface.fill
+    );
 
-    let del_style = light_theme.row_style(diffuse_core::parse::RowKind::Del);
-    assert_eq!(del_style.tint_bg, p.del_tint_bg);
-    assert_eq!(del_style.fg, p.del_fg);
+    let del_style = light.row_style(diffuse_core::parse::RowKind::Del);
+    assert_eq!(
+        del_style.tint_bg,
+        lp[Cursor::Rest][DiffKind::Del].surface.bg
+    );
+    assert_eq!(del_style.fg, lp[Cursor::Rest][DiffKind::Del].surface.fg);
 }
-
 #[test]
 fn test_syntax_text_token_colors() {
     use diffuse_core::parse::RowKind;
 
+    let syntax = |theme: &DiffuseTheme, rk: RowKind| {
+        theme.palette[Cursor::Rest][DiffKind::from_row(rk)].syntax
+    };
+
     // Dark theme should NOT emit foreground escape sequences for unclassified
     // default tokens, preserving byte-for-byte golden fidelity.
-    let dark = DiffuseTheme::DEFAULT;
+    let dark = DiffuseTheme::dark();
     assert_eq!(
-        dark.palette.token_color(TokenColor::Default, RowKind::Ctx),
+        syntax(&dark, RowKind::Ctx).token_color(TokenColor::Default),
         None
     );
     assert_eq!(
-        dark.palette.token_color(TokenColor::Default, RowKind::Add),
+        syntax(&dark, RowKind::Add).token_color(TokenColor::Default),
         None
     );
     assert_eq!(
-        dark.palette.token_color(TokenColor::Default, RowKind::Del),
+        syntax(&dark, RowKind::Del).token_color(TokenColor::Default),
         None
     );
     assert_eq!(
-        dark.palette.token_color(TokenColor::Default, RowKind::Mod),
+        syntax(&dark, RowKind::Mod).token_color(TokenColor::Default),
         None
     );
     assert_eq!(
@@ -562,22 +572,23 @@ fn test_syntax_text_token_colors() {
     // Light theme MUST resolve default text tokens to high-contrast colors
     // (e.g. dark charcoal #24292f) so identifiers like "yansi" in `use
     // yansi::Color;` are clearly legible on light backgrounds.
-    let light = DiffuseTheme::LIGHT;
+    let light = DiffuseTheme::light();
     assert_eq!(
-        light.palette.token_color(TokenColor::Default, RowKind::Ctx),
-        Some(light.palette.text)
+        syntax(&light, RowKind::Ctx).token_color(TokenColor::Default),
+        Some(syntax(&light, RowKind::Ctx).text)
     );
     assert_eq!(
-        light.palette.token_color(TokenColor::Default, RowKind::Add),
-        Some(light.palette.add_text)
+        syntax(&light, RowKind::Add).token_color(TokenColor::Default),
+        Some(syntax(&light, RowKind::Add).text)
     );
     assert_eq!(
-        light.palette.token_color(TokenColor::Default, RowKind::Del),
-        Some(light.palette.del_text)
+        syntax(&light, RowKind::Del).token_color(TokenColor::Default),
+        Some(syntax(&light, RowKind::Del).text)
     );
+    // Mod rows inherit the ctx channel, matching legacy semantics.
     assert_eq!(
-        light.palette.token_color(TokenColor::Default, RowKind::Mod),
-        Some(light.palette.text)
+        syntax(&light, RowKind::Mod).token_color(TokenColor::Default),
+        Some(syntax(&light, RowKind::Ctx).text)
     );
     let yansi_rendered = light.render_token(TokenColor::Default, "yansi", "ctx", None, None);
     assert!(
@@ -613,83 +624,63 @@ fn contrast_ratio(c1: Color, c2: Color) -> f64 {
 
 #[test]
 fn test_light_palette_contrast_ratios() {
-    let p = ThemePalette::light_palette();
+    let t = DiffuseTheme::light();
+    let bg_base = t.palette.ui.bg_base;
+    let ctx = t.palette[Cursor::Rest][DiffKind::Ctx].syntax;
+    let add = t.palette[Cursor::Rest][DiffKind::Add].syntax;
+    let del = t.palette[Cursor::Rest][DiffKind::Del].syntax;
+    let add_tint = t.palette[Cursor::Rest][DiffKind::Add].surface.bg;
+    let del_tint = t.palette[Cursor::Rest][DiffKind::Del].surface.bg;
 
     // WCAG AA requirement for normal text is >= 4.5:1
+    macro_rules! ratio {
+        ($expr:expr, $name:literal) => {
+            assert!(
+                contrast_ratio($expr, bg_base) >= 4.5,
+                concat!($name, " must have >= 4.5 contrast")
+            );
+        };
+    }
     assert!(
-        contrast_ratio(p.ctx_fg, p.bg_base) >= 4.5,
-        "ctx_fg must have >= 4.5 contrast"
+        contrast_ratio(t.palette[Cursor::Rest][DiffKind::Ctx].surface.fg, bg_base) >= 4.5,
+        "ctx fg must have >= 4.5 contrast"
     );
     assert!(
-        contrast_ratio(p.add_fg, p.bg_base) >= 4.5,
-        "add_fg must have >= 4.5 contrast"
+        contrast_ratio(t.palette[Cursor::Rest][DiffKind::Add].surface.fg, bg_base) >= 4.5,
+        "add fg must have >= 4.5 contrast"
     );
     assert!(
-        contrast_ratio(p.del_fg, p.bg_base) >= 4.5,
-        "del_fg must have >= 4.5 contrast"
+        contrast_ratio(t.palette[Cursor::Rest][DiffKind::Del].surface.fg, bg_base) >= 4.5,
+        "del fg must have >= 4.5 contrast"
+    );
+    ratio!(ctx.keyword, "keyword");
+    ratio!(ctx.function, "function");
+    ratio!(ctx.string, "string");
+    ratio!(ctx.code, "code");
+    ratio!(ctx.table_border, "table_border");
+    ratio!(ctx.table_header, "table_header");
+    ratio!(ctx.number, "number");
+    ratio!(ctx.typ, "typ");
+    assert!(
+        contrast_ratio(t.palette.ui.modal_text, t.palette.ui.bg_modal) >= 4.5,
+        "modal_text must have >= 4.5 contrast against bg_modal"
     );
     assert!(
-        contrast_ratio(p.keyword, p.bg_base) >= 4.5,
-        "keyword must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.function, p.bg_base) >= 4.5,
-        "function must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.string, p.bg_base) >= 4.5,
-        "string must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.code, p.bg_base) >= 4.5,
-        "code must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.table_border, p.bg_base) >= 4.5,
-        "table_border must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.table_header, p.bg_base) >= 4.5,
-        "table_header must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.number, p.bg_base) >= 4.5,
-        "number must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.typ, p.bg_base) >= 4.5,
-        "typ must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.modal_text, p.modal_bg) >= 4.5,
-        "modal_text must have >= 4.5 contrast against modal_bg"
-    );
-    assert!(
-        contrast_ratio(p.status_bar_fg, p.status_bar_bg) >= 4.5,
+        contrast_ratio(t.palette.ui.status_bar_fg, t.palette.ui.status_bar_bg) >= 4.5,
         "status_bar_fg must have >= 4.5 contrast against status_bar_bg"
     );
+    ratio!(t.palette.ui.count_adds, "count_adds");
+    ratio!(t.palette.ui.count_dels, "count_dels");
+    ratio!(t.palette.ui.text, "text");
     assert!(
-        contrast_ratio(p.count_adds, p.bg_base) >= 4.5,
-        "count_adds must have >= 4.5 contrast"
+        contrast_ratio(add.text, add_tint) >= 4.5,
+        "add text must have >= 4.5 contrast against the add tint"
     );
     assert!(
-        contrast_ratio(p.count_dels, p.bg_base) >= 4.5,
-        "count_dels must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.text, p.bg_base) >= 4.5,
-        "text must have >= 4.5 contrast"
-    );
-    assert!(
-        contrast_ratio(p.add_text, p.add_tint_bg) >= 4.5,
-        "add_text must have >= 4.5 contrast against add_tint_bg"
-    );
-    assert!(
-        contrast_ratio(p.del_text, p.del_tint_bg) >= 4.5,
-        "del_text must have >= 4.5 contrast against del_tint_bg"
+        contrast_ratio(del.text, del_tint) >= 4.5,
+        "del text must have >= 4.5 contrast against the del tint"
     );
 }
-
 #[test]
 fn test_colorfgbg_parsing() {
     assert_eq!(parse_colorfgbg("15;0"), Some(TerminalMode::Dark));
@@ -774,12 +765,12 @@ fn test_luminance_and_classification() {
 fn test_theme_auto_resolution() {
     assert!(DiffuseTheme::from_name("auto").is_some());
     let auto_theme = DiffuseTheme::auto_detect();
-    assert!(auto_theme == DiffuseTheme::DEFAULT || auto_theme == DiffuseTheme::LIGHT);
+    assert!(auto_theme == DiffuseTheme::dark() || auto_theme == DiffuseTheme::light());
 }
 
 #[test]
 fn test_theme_char_literal_rendering() {
-    let dark = DiffuseTheme::DEFAULT;
+    let dark = DiffuseTheme::dark();
     let chr_dark_add = dark.render_token(TokenColor::CharLiteral, "'x'", "add", None, None);
     let chr_dark_del = dark.render_token(TokenColor::CharLiteral, "'x'", "del", None, None);
     let chr_dark_ctx = dark.render_token(TokenColor::CharLiteral, "'x'", "ctx", None, None);
@@ -787,7 +778,7 @@ fn test_theme_char_literal_rendering() {
     assert_eq!(chr_dark_del, "\x1b[38;5;210m'x'\x1b[39m");
     assert_eq!(chr_dark_ctx, "\x1b[38;5;158m'x'\x1b[39m");
 
-    let light = DiffuseTheme::LIGHT;
+    let light = DiffuseTheme::light();
     let chr_light_add = light.render_token(TokenColor::CharLiteral, "'x'", "add", None, None);
     let chr_light_del = light.render_token(TokenColor::CharLiteral, "'x'", "del", None, None);
     let chr_light_ctx = light.render_token(TokenColor::CharLiteral, "'x'", "ctx", None, None);
@@ -802,21 +793,24 @@ fn test_theme_auto_interactive_matches_env_tiers() {
     // Interactive auto honors explicit names without querying.
     unsafe {
         env::set_var("DIFFUSE_THEME", "light");
-        assert_eq!(DiffuseTheme::auto_detect_interactive(), DiffuseTheme::LIGHT);
-        assert_eq!(DiffuseTheme::from_env_interactive(), DiffuseTheme::LIGHT);
+        assert_eq!(
+            DiffuseTheme::auto_detect_interactive(),
+            DiffuseTheme::light()
+        );
+        assert_eq!(DiffuseTheme::from_env_interactive(), DiffuseTheme::light());
         env::set_var("DIFFUSE_THEME", "dark");
-        assert_eq!(DiffuseTheme::from_env_interactive(), DiffuseTheme::DEFAULT);
+        assert_eq!(DiffuseTheme::from_env_interactive(), DiffuseTheme::dark());
         // Explicit auto, invalid values, and unset all fall through to the
         // query-backed pipeline (a non-TTY test session resolves default).
         env::set_var("DIFFUSE_THEME", "auto");
         let auto_theme = DiffuseTheme::from_env_interactive();
-        assert!(auto_theme == DiffuseTheme::DEFAULT || auto_theme == DiffuseTheme::LIGHT);
+        assert!(auto_theme == DiffuseTheme::dark() || auto_theme == DiffuseTheme::light());
         env::set_var("DIFFUSE_THEME", "invalid");
         let invalid_theme = DiffuseTheme::from_env_interactive();
-        assert!(invalid_theme == DiffuseTheme::DEFAULT || invalid_theme == DiffuseTheme::LIGHT);
+        assert!(invalid_theme == DiffuseTheme::dark() || invalid_theme == DiffuseTheme::light());
         env::remove_var("DIFFUSE_THEME");
         let unset_theme = DiffuseTheme::from_env_interactive();
-        assert!(unset_theme == DiffuseTheme::DEFAULT || unset_theme == DiffuseTheme::LIGHT);
+        assert!(unset_theme == DiffuseTheme::dark() || unset_theme == DiffuseTheme::light());
     }
 }
 
@@ -845,44 +839,38 @@ fn test_theme_from_name_auto_stays_query_free() {
 
 #[test]
 fn test_scoped_palette_resolves_by_theme_mode() {
-    // Dark and light compile their own scoped palettes, cached as statics:
-    // repeated access returns the same compiled instance.
-    let dark = DiffuseTheme::DEFAULT.scoped_palette();
-    let light = DiffuseTheme::LIGHT.scoped_palette();
-    assert_eq!(dark.ui.accent, DiffuseTheme::DEFAULT.palette.accent);
-    assert_eq!(light.ui.accent, DiffuseTheme::LIGHT.palette.accent);
+    // Each mode compiles its own scoped palette, cached as a static:
+    // repeated construction resolves the same compiled instance.
+    let dark = DiffuseTheme::dark();
+    let light = DiffuseTheme::light();
+    assert_eq!(dark.palette, DiffuseTheme::dark().palette, "dark is cached");
     assert_eq!(
-        dark,
-        DiffuseTheme::DEFAULT.scoped_palette(),
-        "dark is cached"
-    );
-    assert_eq!(
-        light,
-        DiffuseTheme::LIGHT.scoped_palette(),
+        light.palette,
+        DiffuseTheme::light().palette,
         "light is cached"
     );
+    assert_eq!(dark.scoped_palette(), dark.palette);
 
-    // Scoped banner states resolve per cursor tier from the same asset values the
-    // flat palette exposes via its accessor methods.
-    let (rest_bg, _) = DiffuseTheme::DEFAULT
-        .palette
-        .file_header_colors(false, false, false);
-    let (current_bg, _) = DiffuseTheme::DEFAULT
-        .palette
-        .file_header_colors(false, true, false);
-    let (sel_bg, _) = DiffuseTheme::DEFAULT
-        .palette
-        .file_header_colors(true, false, false);
-    assert_eq!(dark[Cursor::Rest].file_header.bg, rest_bg);
-    assert_eq!(dark[Cursor::File].file_header.bg, current_bg);
-    assert_eq!(dark[Cursor::Row].file_header.bg, sel_bg);
+    // Scoped banner states resolve per cursor tier from the frozen legacy
+    // baseline values.
+    assert_eq!(
+        dark.palette[Cursor::Rest].file_header.bg,
+        DARK.file_header_bg_rest
+    );
+    assert_eq!(
+        dark.palette[Cursor::File].file_header.bg,
+        DARK.file_header_bg_current
+    );
+    assert_eq!(
+        dark.palette[Cursor::Row].file_header.bg,
+        DARK.file_header_bg_selected
+    );
 }
-
 #[test]
 fn test_scoped_token_dispatch_matches_legacy() {
     // write_token dispatches through the scoped palette now; output must
     // stay byte-identical for every row kind and token.
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     for (row_kind, tok_kind) in [
         ("ctx", None),
         ("ctx", Some("ctx")),
@@ -914,7 +902,10 @@ fn test_scoped_token_dispatch_matches_legacy() {
                         diffuse_core::parse::RowKind::Ctx
                     };
                     let mut out = String::new();
-                    if let Some(c) = theme.palette.token_color(token, rk) {
+                    if let Some(c) = theme.palette[Cursor::Rest][DiffKind::from_row(rk)]
+                        .syntax
+                        .token_color(token)
+                    {
                         out.push_str(&c.fg_code());
                         out.push('x');
                         out.push_str(crate::ansi::FG_RESET);

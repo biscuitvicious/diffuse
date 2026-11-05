@@ -30,7 +30,7 @@ use crate::theme::{
 
 /// Canonical `(key, token)` table for `syntax` maps, covering every
 /// [`SyntaxPalette`] field and [`TokenColor`] variant.
-pub(super) const TOKEN_KEYS: [(&str, TokenColor); 23] = [
+pub(in crate::theme) const TOKEN_KEYS: [(&str, TokenColor); 23] = [
     ("text", TokenColor::Default),
     ("keyword", TokenColor::Keyword),
     ("typ", TokenColor::Type),

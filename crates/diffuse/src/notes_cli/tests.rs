@@ -82,8 +82,7 @@ fn test_format_note_text_markdown_highlighting_and_uncolored() {
     assert!(colorized[2].contains("important"));
     assert!(colorized[2].contains("\x1b[1m"));
 
-    let kw_color = DiffuseTheme::DEFAULT
-        .palette
+    let kw_color = DiffuseTheme::dark()
         .token_color(diffuse_syntax::TokenColor::Keyword, RowKind::Ctx)
         .unwrap();
     assert!(colorized[5].contains(&kw_color.fg_code()));

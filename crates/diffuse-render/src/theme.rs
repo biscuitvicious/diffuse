@@ -34,6 +34,13 @@ pub use syntax::SyntaxPalette;
 pub mod toml;
 pub use toml::{ParsedTheme, ThemeParseError, parse_builtin, parse_theme_str};
 
+pub mod loader;
+pub use loader::{ThemeLoadError, load_theme};
+
+/// Effective terminal mode of a theme (its `mode` key or the first declared
+/// in its `inherits` chain).
+pub use toml::model::Mode;
+
 pub use crate::ansi::{
     Color, ColorExt, FG_RESET, Style, decode_sgr, encode_sgr, sgr_off, sgr_on_str, strip_ansi,
 };
@@ -112,11 +119,22 @@ impl RowStyle {
     }
 }
 
-/// A token color classifier and ANSI stylizer backed by a [`ThemePalette`].
+/// A resolved theme: its display name, effective terminal mode, and the
+/// compiled scoped palette.
+///
+/// The palette is a `&'static` reference into a process-wide cache: the
+/// bundled builtins initialize once on first access, and (with the phase 7
+/// loader) user themes leak their compiled palette into the static cache on
+/// load. Copy semantics keep theme handoff allocation-free.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DiffuseTheme {
+    /// Theme display name (the asset `name` key; `"default"` for the
+    /// bundled dark theme).
     pub name: &'static str,
-    pub palette: ThemePalette,
+    /// Effective terminal mode, selecting primitive and syntax baselines.
+    pub mode: Mode,
+    /// Compiled cursor-tier palette, indexed `palette[cursor][kind]`.
+    pub palette: &'static palette::scoped::ThemePalette,
 }
 
 /// Compiled scoped palettes, initialized on first access from the bundled
@@ -125,37 +143,44 @@ static SCOPED_DARK: OnceLock<palette::scoped::ThemePalette> = OnceLock::new();
 static SCOPED_LIGHT: OnceLock<palette::scoped::ThemePalette> = OnceLock::new();
 
 impl DiffuseTheme {
-    pub const DEFAULT: Self = Self {
-        name: "default",
-        palette: ThemePalette::default_palette(),
-    };
+    /// The bundled dark theme (asset `themes/dark.toml`), compiled on first
+    /// access and cached as a process-wide static.
+    #[must_use]
+    pub fn dark() -> Self {
+        let parsed = SCOPED_DARK.get_or_init(|| {
+            toml::parse_builtin("dark")
+                .expect("bundled dark theme parses against the schema")
+                .palette
+        });
+        Self {
+            name: "default",
+            mode: Mode::Dark,
+            palette: parsed,
+        }
+    }
 
-    pub const LIGHT: Self = Self {
-        name: "light",
-        palette: ThemePalette::light_palette(),
-    };
+    /// The bundled light theme (asset `themes/light.toml`), compiled on
+    /// first access and cached as a process-wide static.
+    #[must_use]
+    pub fn light() -> Self {
+        let parsed = SCOPED_LIGHT.get_or_init(|| {
+            toml::parse_builtin("light")
+                .expect("bundled light theme parses against the schema")
+                .palette
+        });
+        Self {
+            name: "light",
+            mode: Mode::Light,
+            palette: parsed,
+        }
+    }
 
-    /// The compiled scoped palette for this theme, cached as a process-wide
-    /// static and compiled from the bundled TOML asset on first access.
-    ///
-    /// Selection is keyed on the theme mode (`name == "light"`); the legacy
-    /// flat [`ThemePalette`](palette::ThemePalette) remains authoritative for
-    /// fields with no scoped slot until the consumer migrations complete.
+    /// The compiled scoped palette: the [`Self::palette`] reference, kept
+    /// as the accessor every consumer already resolves through.
+    #[inline]
     #[must_use]
     pub fn scoped_palette(&self) -> &'static palette::scoped::ThemePalette {
-        if self.name == "light" {
-            SCOPED_LIGHT.get_or_init(|| {
-                toml::parse_builtin("light")
-                    .expect("bundled light theme parses")
-                    .palette
-            })
-        } else {
-            SCOPED_DARK.get_or_init(|| {
-                toml::parse_builtin("dark")
-                    .expect("bundled dark theme parses")
-                    .palette
-            })
-        }
+        self.palette
     }
 
     /// Get the row background and icon style for the specified diff row kind
@@ -213,15 +238,14 @@ impl DiffuseTheme {
     /// its diff-kind syntax channel. Mod/Mov rows inherit the ctx channel,
     /// matching the legacy flat `token_color` semantics (frozen by the
     /// phase 4 equivalence suite).
-    fn scoped_token_color(
+    #[inline]
+    #[must_use]
+    pub fn token_color(
         &self,
         color: TokenColor,
         row_kind: diffuse_core::parse::RowKind,
     ) -> Option<Color> {
-        let kind = DiffKind::from_row(row_kind);
-        self.scoped_palette()[Cursor::Rest][kind]
-            .syntax
-            .token_color(color)
+        self.palette.token_color(color, row_kind)
     }
 
     /// Render a syntax/markdown token directly into an output buffer.
@@ -245,7 +269,7 @@ impl DiffuseTheme {
             RowKind::Ctx
         };
 
-        let ansi_color = self.scoped_token_color(color, rk);
+        let ansi_color = self.token_color(color, rk);
 
         if let Some(s) = sgr {
             if let Some(on) = sgr_on_str(s) {
@@ -292,7 +316,7 @@ impl DiffuseTheme {
             RowKind::Ctx
         };
 
-        let ansi_color = self.scoped_token_color(color, rk);
+        let ansi_color = self.token_color(color, rk);
 
         if !sgrs.is_empty() {
             let _ = out.write_str("\x1b[");
@@ -336,12 +360,12 @@ impl DiffuseTheme {
     /// Automatically detect the theme based on the terminal's background mode.
     /// Environment indicators only — never queries the terminal, so this is
     /// safe in one-shot (pager/pipe) modes. Falls back to
-    /// `DiffuseTheme::DEFAULT` when detection is unavailable.
+    /// [`Self::dark`] when detection is unavailable.
     #[must_use]
     pub fn auto_detect() -> Self {
         match detect_terminal_mode() {
-            Some(TerminalMode::Light) => Self::LIGHT,
-            Some(TerminalMode::Dark) | None => Self::DEFAULT,
+            Some(TerminalMode::Light) => Self::light(),
+            Some(TerminalMode::Dark) | None => Self::dark(),
         }
     }
 
@@ -354,8 +378,8 @@ impl DiffuseTheme {
     #[must_use]
     pub fn auto_detect_interactive() -> Self {
         match detect_terminal_mode_interactive() {
-            Some(TerminalMode::Light) => Self::LIGHT,
-            Some(TerminalMode::Dark) | None => Self::DEFAULT,
+            Some(TerminalMode::Light) => Self::light(),
+            Some(TerminalMode::Dark) | None => Self::dark(),
         }
     }
 
@@ -364,8 +388,8 @@ impl DiffuseTheme {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         match name.trim().to_lowercase().as_str() {
-            "default" | "dark" | "black" => Some(Self::DEFAULT),
-            "light" | "white" => Some(Self::LIGHT),
+            "default" | "dark" | "black" => Some(Self::dark()),
+            "light" | "white" => Some(Self::light()),
             "auto" => Some(Self::auto_detect()),
             _ => None,
         }
@@ -421,8 +445,10 @@ impl DiffuseTheme {
 }
 
 pub fn default_theme() -> DiffuseTheme {
-    DiffuseTheme::DEFAULT
+    DiffuseTheme::dark()
 }
 
+#[cfg(test)]
+mod baseline;
 #[cfg(test)]
 mod tests;

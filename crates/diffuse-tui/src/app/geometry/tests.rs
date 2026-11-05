@@ -94,7 +94,7 @@ fn test_word_wrap_and_visual_subline_navigation() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 2;
     // content_width = 80 - 1 (sb) = 79. text_cols = 79 - 6 = 73.
@@ -155,7 +155,7 @@ index 1111111..2222222 100644
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -196,7 +196,7 @@ fn test_hunk_divider_renders_and_extent_lift() {
         sample_output_two_hunks(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let frame = state.render_frame(120, 80);
@@ -238,7 +238,7 @@ fn test_render_frame_lines_do_not_overflow_width() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     for width in [40, 60, 80, 100, 120] {
         for height in [15, 24, 30, 40] {
@@ -260,7 +260,7 @@ fn test_current_line_highlight_covers_gutter() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Context row selected (row 1, vis_line 1 following the hunk divider at
     // vis_line 0)
@@ -288,7 +288,7 @@ fn test_file_header_wrapping_seg_count() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let header_idx = 0;
     assert!(state.flat[header_idx].is_file_header());
@@ -572,7 +572,7 @@ fn test_wrapped_line_never_overflows_scrollbar_gutter() {
         output,
         "repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let (grid_lines, has_sb, _thumb_off, _thumb_size, cw) =
@@ -705,7 +705,7 @@ fn test_scrollbar_subcell_glyphs_and_inversion() {
     use super::ScrollbarCell;
     use crate::render::{ColorExt, DiffuseTheme};
 
-    let p = &DiffuseTheme::DEFAULT.palette;
+    let p = &DiffuseTheme::dark().scoped_palette().ui;
 
     // Track
     let track = ScrollbarCell::Track;

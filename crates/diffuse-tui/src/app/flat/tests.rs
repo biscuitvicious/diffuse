@@ -61,7 +61,7 @@ fn test_hunk_starts_and_navigation() {
         sample_output_two_hunks(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     assert_eq!(state.hunk_starts.len(), 2, "both hunks must be located");
     // Start from file header (row 0): the banner counts as inside hunk 1,
@@ -154,7 +154,7 @@ index 1111111..2222222 100644
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     assert!(
@@ -226,7 +226,7 @@ rename to src/new.rs
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     assert!(
         state.collapsed_files.contains(&0),
@@ -291,7 +291,7 @@ Binary files a/old.png and b/new.png differ
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     assert!(
         state.collapsed_files.contains(&0) && state.collapsed_files.contains(&1),
@@ -386,7 +386,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     assert_eq!(state.hunk_starts.len(), 2, "must find 2 hunk starts");
@@ -443,7 +443,7 @@ fn test_diffuse_golden_plan_md_hunk_divider() {
         output,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Find PLAN.md file index
@@ -563,7 +563,7 @@ fn test_hunk_divider_not_placed_in_previous_hunk_deleted_lines() {
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     assert_eq!(state.hunk_starts.len(), 2);
@@ -607,7 +607,7 @@ fn test_palette_rs_commit_hunk_starts_not_interleaved() {
         pipeline_out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let file = &state.output.files[0];
     assert_eq!(state.hunk_starts.len(), file.hunks.len());

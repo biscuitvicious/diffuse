@@ -70,10 +70,10 @@ fn test_with_theme_builder_sets_theme() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
-    .with_theme(crate::render::DiffuseTheme::DEFAULT);
-    assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
+    .with_theme(crate::render::DiffuseTheme::dark());
+    assert_eq!(state.theme, crate::render::DiffuseTheme::dark());
 }
 
 #[test]
@@ -111,7 +111,7 @@ index 1111111..2222222 100644
         ),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(120, 30);
 
@@ -170,7 +170,7 @@ fn test_note_commit_persists_and_deletes() {
         sample_output(),
         "test_repo".into(),
         notes_path.clone(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let file = state.current_file().unwrap().path.clone();
@@ -223,7 +223,7 @@ fn test_help_modal_toggles_and_renders() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let plain = state.render_frame(100, 30);
@@ -247,7 +247,7 @@ fn test_selection_anchor_span_snaps_to_coord_rows() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // flat[0] is the file header (no coordinate); AppState starts on the
     // first coordinate row (1020). The engine pads the hunk with empty
@@ -283,7 +283,7 @@ fn test_selection_v_confirm_clears_anchor_and_band_renders() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     for _ in 0..3 {
         state.move_down();
@@ -319,7 +319,7 @@ fn test_selection_requires_coord_rows() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Anchor on the file header (no coordinate) and confirm in place: the
     // range collapses onto the header which carries no line number, so
@@ -337,7 +337,7 @@ fn test_selection_requires_coord_rows() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 0;
     state.vis_line = 0;
@@ -360,7 +360,7 @@ fn test_raw_diff_uncollapses_mod_and_renders() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     assert!(!state.raw_diff);
     state.toggle_raw_diff();
@@ -412,7 +412,7 @@ fn test_raw_diff_toggle_anchors_cursor() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // flat[5] is the mod pair (new 1026); walk onto it.
     for _ in 0..4 {
@@ -467,7 +467,7 @@ fn test_raw_diff_exact_input_reproduction() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.toggle_raw_diff();
     assert!(state.raw_diff);
@@ -518,7 +518,7 @@ fn test_toggle_raw_diff_preserves_cursor_screen_pivot() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -565,7 +565,7 @@ fn test_raw_diff_no_right_padding_or_scrollbar() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.toggle_raw_diff();
@@ -600,7 +600,7 @@ fn test_raw_diff_wrapped_line_no_false_trailing_highlight() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
     state.toggle_raw_diff();
@@ -655,7 +655,7 @@ fn test_toggle_raw_diff_from_deleted_line_to_merged_mod_line() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 20;
 
@@ -838,7 +838,7 @@ index 6f6222d..4aa7a1d 100644
         out,
         "mirage".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Exact reproduction test matching user's terminal geometry (74 rows, 300
@@ -1009,7 +1009,7 @@ fn test_separator_expand_by_enter_and_click_and_merge() {
         output,
         "opt_1".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
 
@@ -1102,7 +1102,7 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
         output,
         "opt_1".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
 
@@ -1257,7 +1257,7 @@ index 111..222 100644
         output,
         "mirage".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
 
@@ -1335,7 +1335,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let fi = 0;
@@ -1454,7 +1454,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(12);
 
@@ -1636,7 +1636,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
 
@@ -1765,7 +1765,7 @@ index 1111111..2222222 100644
         output.clone(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(w, h);
     let vh = state.viewport_height;
@@ -1786,7 +1786,7 @@ index 1111111..2222222 100644
             state.output.clone(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         );
         probe.render_frame(w, h);
         let (starts, _, _, _) = probe.visual_geometry(probe.last_content_width);
@@ -1873,7 +1873,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     state.render_frame(80, 16);
@@ -1998,7 +1998,7 @@ index 1111111..2222222 100644
             output.clone(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         );
         tmp.hunk_leading_gap(0, 1)
     };
@@ -2020,7 +2020,7 @@ index 1111111..2222222 100644
         output.clone(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let width_end = c + 1;
     state.render_frame(width_end, 40);
@@ -2059,7 +2059,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(c, 40);
     assert!(
@@ -2106,7 +2106,7 @@ fn test_scrollbar_drawn_column_matches_hit_column() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let frame = state.render_frame(80, 30);
     let cw = state.last_content_width;
@@ -2144,7 +2144,7 @@ fn test_scrollbar_click_seeks_from_pointer_row() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(80, 30);
     let vh = state.viewport_height;
@@ -2211,7 +2211,7 @@ fn test_scrollbar_click_on_thumb_does_not_snap() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(80, 30);
     let vh = state.viewport_height;
@@ -2294,7 +2294,7 @@ fn test_scrollbar_drag_follows_formula_monotonically() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(80, 24);
     let vh = state.viewport_height;
@@ -2360,7 +2360,7 @@ fn test_scrollbar_drag_extremes_from_any_grab() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(80, 24);
     let vh = state.viewport_height;
@@ -2414,7 +2414,7 @@ fn test_scrollbar_touch_scroll_inverts_and_scales_speed() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(50, 20);
     let cw = state.last_content_width;
@@ -2490,7 +2490,7 @@ fn test_scrollbar_column_spans_full_height() {
         out,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let backend = TestBackend::new(80, 20);
@@ -2583,7 +2583,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
 
@@ -2733,7 +2733,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
 
@@ -2840,7 +2840,7 @@ fn test_render_ratatui_frame_layout() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.set_status_message("Saved note".to_string(), true);
 
@@ -2910,7 +2910,7 @@ fn test_render_ratatui_frame_modals_overlay() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // 1. Help Modal Active
@@ -2976,7 +2976,7 @@ fn test_render_ratatui_frame_scrolling_clean_spans() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let backend = TestBackend::new(80, 24);
@@ -3031,7 +3031,7 @@ fn test_render_ratatui_frame_note_modal_overlay_with_range_selection() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Select range
@@ -3084,7 +3084,7 @@ fn test_render_ratatui_frame_mouse_hit_testing() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     let backend = TestBackend::new(80, 24);
@@ -3119,7 +3119,7 @@ fn test_event_paste_into_note_modal() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     state.execute(TuiCommand::StartNoteDraft);
@@ -3146,7 +3146,7 @@ fn test_event_paste_into_file_finder() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     state.execute(TuiCommand::OpenFileFinder);
@@ -3174,7 +3174,7 @@ fn test_note_modal_margins_with_scrollbar() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     state.execute(TuiCommand::StartNoteDraft);
@@ -3230,7 +3230,7 @@ fn test_mov_target_and_source_render_in_tui() {
         output,
         "opt_1".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Find collapse/mod.rs file index
@@ -3309,7 +3309,7 @@ index 1111111..2222222 100644
         output,
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(6);
     state.render_frame(120, 30);
@@ -3373,7 +3373,7 @@ fn test_file_header_indicator_hit_rectangle_three_chars_wide() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(80, 20);
     let click_row = state.last_viewport_start;
@@ -3430,7 +3430,7 @@ fn test_mouse_click_hunk_header_selects_hunk_divider() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(120, 40);
 
@@ -3478,7 +3478,7 @@ fn test_mouse_click_note_line_selects_note() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 1;
     state.vis_line = 0;
@@ -3524,7 +3524,7 @@ fn test_mouse_click_multiline_note_selects_specific_line() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.row_idx = 1;
     state.vis_line = 0;
@@ -3570,7 +3570,7 @@ fn test_mouse_click_diff_row_with_hunk_divider_selects_code_row() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(120, 40);
 
@@ -3614,7 +3614,7 @@ fn test_no_diffs_renders_header_footer_and_secondary_message_frame() {
         empty_output,
         "my_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let frame = state.render_frame(120, 20);
 
@@ -3670,7 +3670,7 @@ fn test_no_diffs_renders_header_footer_and_secondary_message_ratatui() {
         empty_output,
         "demo_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let backend = TestBackend::new(120, 20);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -3767,7 +3767,7 @@ fn test_app_commit_range_in_render_ratatui() {
         output,
         "demo_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_commit_range(Some("3f05a71..7e0caab".into()));
 
@@ -3817,7 +3817,7 @@ fn test_app_header_bar_shows_staged_badge() {
         output,
         "my_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_target(target);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
@@ -3848,7 +3848,7 @@ fn test_app_streaming_dot_blinking_and_pause() {
         output,
         "repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // When not streaming, dot is always "●"
@@ -3897,7 +3897,7 @@ fn test_viewport_line_origin_describes_file_and_row() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Banner row of the only file.
@@ -3969,7 +3969,7 @@ fn test_ratatui_status_bar_uses_scrollbar_narrowed_width() {
         out,
         "diffuse".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Transient-only secondary bar: force it visible with the `go` buffer
     // (raw_diff would disable the scrollbar column).
@@ -4061,7 +4061,7 @@ fn test_mouse_click_end_of_hunks_divider_selects() {
         trailing_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.render_frame(120, 40);
 
@@ -4108,7 +4108,7 @@ fn test_mouse_click_end_of_hunks_divider_arrow_expands() {
         trailing_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(5);
     state.render_frame(120, 40);
@@ -4173,7 +4173,7 @@ fn test_hunk_trailing_gap_when_file_shrunk_at_eof() {
         shrunk_eof_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let fi = 0;
     assert_eq!(
@@ -4217,7 +4217,7 @@ fn test_hunk_trailing_gap_when_file_shrunk_with_eof_context_row() {
         shrunk_eof_context_row_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     let fi = 0;
     assert_eq!(
@@ -4237,7 +4237,7 @@ fn test_is_cursor_on_bottom_divider_and_enter_key() {
         two_hunk_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(4);
     let fi = 0;
@@ -4336,7 +4336,7 @@ fn test_hunk_bar_click_pivots_and_retains_cursor_visual_position() {
         two_hunk_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(4);
     state.render_frame(120, 16);
@@ -4465,7 +4465,7 @@ fn test_bottom_divider_click_pivots_and_retains_cursor_visual_position() {
         trailing_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     )
     .with_expand_lines(4);
     state.render_frame(120, 12);
@@ -4525,7 +4525,7 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
             two_hunk_gap_output(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         )
         .with_expand_lines(4);
         state.render_frame(120, 16);
@@ -4589,7 +4589,7 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
             two_hunk_gap_output(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         )
         .with_expand_lines(4);
         state.render_frame(120, 16);
@@ -4665,7 +4665,7 @@ fn test_collapsing_hunk_retains_cursor_visual_position_on_screen_and_outside_scr
             two_hunk_gap_output(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         )
         .with_expand_lines(8);
         state.render_frame(120, 20);
@@ -4691,7 +4691,7 @@ fn test_collapsing_hunk_retains_cursor_visual_position_on_screen_and_outside_scr
             two_hunk_gap_output(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         )
         .with_expand_lines(8);
         state.render_frame(120, 10);
@@ -4718,7 +4718,7 @@ fn test_collapsing_hunk_retains_cursor_visual_position_on_screen_and_outside_scr
             two_hunk_gap_output(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         )
         .with_expand_lines(8);
         state.render_frame(120, 16);
@@ -4756,14 +4756,14 @@ fn test_expand_below_cursor_above_divider() {
         two_hunk_gap_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     for test_row in 0..base_state.flat.len() {
         let mut s = AppState::new(
             two_hunk_gap_output(),
             "test_repo".into(),
             temp_notes_path(),
-            crate::render::DiffuseTheme::DEFAULT,
+            crate::render::DiffuseTheme::dark(),
         );
         s.render_frame(120, 25);
         s.row_idx = test_row;
@@ -4784,7 +4784,7 @@ fn test_expand_below_cursor_above_divider() {
                 two_hunk_gap_output(),
                 "test_repo".into(),
                 temp_notes_path(),
-                crate::render::DiffuseTheme::DEFAULT,
+                crate::render::DiffuseTheme::dark(),
             )
             .with_expand_lines(4);
             state.render_frame(120, 16);
@@ -4812,7 +4812,7 @@ fn test_expand_below_cursor_above_divider() {
                 two_hunk_gap_output(),
                 "test_repo".into(),
                 temp_notes_path(),
-                crate::render::DiffuseTheme::DEFAULT,
+                crate::render::DiffuseTheme::dark(),
             )
             .with_expand_lines(4);
             state.render_frame(120, 16);
@@ -4859,7 +4859,7 @@ fn test_expand_below_cursor_above_divider() {
                 two_hunk_gap_output(),
                 "test_repo".into(),
                 temp_notes_path(),
-                crate::render::DiffuseTheme::DEFAULT,
+                crate::render::DiffuseTheme::dark(),
             )
             .with_expand_lines(4);
             state.render_frame(120, 16);
@@ -4906,7 +4906,7 @@ fn test_expand_below_cursor_above_divider() {
                 two_hunk_gap_output(),
                 "test_repo".into(),
                 temp_notes_path(),
-                crate::render::DiffuseTheme::DEFAULT,
+                crate::render::DiffuseTheme::dark(),
             )
             .with_expand_lines(4);
             state.render_frame(120, 16);
@@ -4950,15 +4950,15 @@ fn test_app_toggle_theme_command() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
-    assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
+    assert_eq!(state.theme, crate::render::DiffuseTheme::dark());
 
     state.execute(TuiCommand::ToggleTheme);
-    assert_eq!(state.theme, crate::render::DiffuseTheme::LIGHT);
+    assert_eq!(state.theme, crate::render::DiffuseTheme::light());
 
     state.execute(TuiCommand::ToggleTheme);
-    assert_eq!(state.theme, crate::render::DiffuseTheme::DEFAULT);
+    assert_eq!(state.theme, crate::render::DiffuseTheme::dark());
 }
 
 #[test]
@@ -4978,7 +4978,7 @@ fn test_sticky_file_banner_sticks_to_top_when_scrolling_down() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -5032,7 +5032,7 @@ fn test_sticky_file_banner_pushed_upwards_by_next_banner() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -5100,7 +5100,7 @@ fn test_clicking_sticky_header_toggles_collapse() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -5144,7 +5144,7 @@ fn test_sticky_hunk_header_sticks_below_file_header() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -5205,7 +5205,7 @@ fn test_sticky_hunk_header_pushed_by_next_hunk() {
         run_pipeline_full(&diff, None, None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -5249,7 +5249,7 @@ fn test_sticky_hunk_header_pushed_by_next_file() {
         run_pipeline_full(&diff, None, None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -5299,7 +5299,7 @@ fn test_clicking_sticky_hunk_header_selects_hunk() {
         run_pipeline_full(&diff, Some(new_content), None, PipelineOptions::default()),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.viewport_height = 10;
     state.last_content_width = 80;
@@ -5328,7 +5328,7 @@ fn test_secondary_status_hide_show_does_not_shift_content() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     // Hidden: no transient segments.
     state.num_buffer.clear();
@@ -5378,7 +5378,7 @@ fn test_status_message_moves_to_secondary_and_expires() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.num_buffer.clear();
     let baseline = state.render_frame(100, 30);
@@ -5485,11 +5485,12 @@ fn test_secondary_status_bar_keeps_background_when_empty() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     state.num_buffer.clear();
-    let bg_code = crate::render::DiffuseTheme::DEFAULT
+    let bg_code = crate::render::DiffuseTheme::dark()
         .palette
+        .ui
         .status_bar_bg
         .bg_code();
 
@@ -5523,7 +5524,7 @@ fn test_secondary_status_bar_keeps_background_when_empty() {
         })
         .unwrap();
     let expected =
-        crate::view::to_color(crate::render::DiffuseTheme::DEFAULT.palette.status_bar_bg);
+        crate::view::to_color(crate::render::DiffuseTheme::dark().palette.ui.status_bar_bg);
     for x in 0..80 {
         assert_eq!(
             terminal.backend().buffer()[(x, 1)].bg,
@@ -5555,7 +5556,7 @@ fn test_tui_frames_emit_optimal_ansi() {
         sample_output(),
         "test_repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
     for (w, h) in [(100, 30), (80, 24), (48, 24)] {
         let frame = state.render_frame(w, h);
@@ -5577,7 +5578,7 @@ fn test_is_reload_deferred_guards_active_interactions() {
         sample_output(),
         "repo".into(),
         temp_notes_path(),
-        crate::render::DiffuseTheme::DEFAULT,
+        crate::render::DiffuseTheme::dark(),
     );
 
     // Initial state: not deferred

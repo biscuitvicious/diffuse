@@ -127,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_render_note_callout_statuses() {
-        let theme = DiffuseTheme::DEFAULT;
+        let theme = DiffuseTheme::dark();
 
         let open =
             render_note_callout_lines(NoteStatus::Open, "open note", &[], false, true, &theme, 80);
@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn test_render_note_callout_multiline_prefixes() {
-        let theme = DiffuseTheme::DEFAULT;
+        let theme = DiffuseTheme::dark();
         let note = "- line one\n- line two\n- line three";
         let lines = render_note_callout_lines(NoteStatus::Open, note, &[], false, true, &theme, 80);
         assert_eq!(lines.len(), 3);
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_render_note_callout_empty_text() {
-        let theme = DiffuseTheme::DEFAULT;
+        let theme = DiffuseTheme::dark();
         let lines = render_note_callout_lines(NoteStatus::Open, "", &[], false, true, &theme, 80);
         assert_eq!(lines.len(), 1);
         let plain = strip_ansi(&lines[0]);
@@ -183,7 +183,7 @@ mod tests {
 
     #[test]
     fn test_render_output_note_callout() {
-        let theme = DiffuseTheme::DEFAULT;
+        let theme = DiffuseTheme::dark();
         let out_note = OutputNote {
             id: "test-note".to_string(),
             file: "foo.rs".to_string(),
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_render_note_callout_prepends_source_rows() {
-        let theme = DiffuseTheme::DEFAULT;
+        let theme = DiffuseTheme::dark();
         let rows = vec![diffuse_core::wire::OutputRow {
             kind: diffuse_core::parse::RowKind::Add,
             mov_side: None,
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_render_note_callout_multiline_pads_last_line_to_width() {
-        let theme = DiffuseTheme::DEFAULT;
+        let theme = DiffuseTheme::dark();
         let note = "- line one\n- line two";
         let width = 80;
         let lines =
@@ -261,7 +261,7 @@ mod tests {
 
     #[test]
     fn test_render_note_callout_single_line_pads_to_width() {
-        let theme = DiffuseTheme::DEFAULT;
+        let theme = DiffuseTheme::dark();
         let note = "single line";
         let width = 80;
         let lines =

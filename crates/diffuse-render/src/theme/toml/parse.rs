@@ -173,12 +173,17 @@ pub fn parse_theme_str(source: &str) -> Result<ParsedTheme, ThemeParseError> {
 
 #[cfg(test)]
 mod equivalence {
-    //! Phase 4 acceptance: bundled assets reproduce the legacy flat
-    //! palettes field-for-field through the scoped model.
+    //! Acceptance: bundled assets reproduce the frozen legacy baseline
+    //! (snapshotted from the removed flat palettes) field-for-field through
+    //! the scoped model.
 
     use diffuse_core::parse::RowKind;
 
-    use crate::theme::{cursor::Cursor, diff::DiffKind, palette::ThemePalette as LegacyPalette};
+    use crate::theme::{
+        baseline::{DARK, LIGHT},
+        cursor::Cursor,
+        diff::DiffKind,
+    };
 
     use super::{
         super::{cascade::TOKEN_KEYS, model::Mode},
@@ -197,8 +202,8 @@ mod equivalence {
         assert_eq!(theme.name, "default");
         assert_eq!(theme.mode, mode);
         let legacy = match mode {
-            Mode::Dark => LegacyPalette::default_palette(),
-            Mode::Light => LegacyPalette::light_palette(),
+            Mode::Dark => &DARK,
+            Mode::Light => &LIGHT,
         };
 
         // Row surfaces & gutters: every tier cascades to the rest baseline

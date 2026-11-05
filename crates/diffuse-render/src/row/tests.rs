@@ -6,7 +6,7 @@ use crate::{
         parse::{RowGroup, RowKind, Spans},
         wire::{MovSide, OutputRun},
     },
-    theme::DiffuseTheme,
+    theme::{Cursor, DiffKind, DiffuseTheme},
 };
 use diffuse_syntax::color::TokenColor;
 
@@ -61,7 +61,7 @@ fn test_prefix_group_gutters() {
 
 #[test]
 fn test_styled_prefix_group_and_non_group() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
 
     // Non-group mod row has right-aligned ~ ("  55 ~")
     let s_mod = styled_prefix(
@@ -75,7 +75,15 @@ fn test_styled_prefix_group_and_non_group() {
         &theme,
     );
     assert_eq!(crate::ansi::strip_ansi(&s_mod), "  55 ~");
-    assert!(s_mod.contains(&theme.palette.mod_gutter_icon.fg_code()));
+    assert!(
+        s_mod.contains(
+            &theme.palette[Cursor::Rest][DiffKind::Mod]
+                .gutter
+                .icon
+                .color
+                .fg_code()
+        )
+    );
 
     // Group anchor row has left-aligned ~ (" 141~ ")
     let s_anchor = styled_prefix(
@@ -89,7 +97,15 @@ fn test_styled_prefix_group_and_non_group() {
         &theme,
     );
     assert_eq!(crate::ansi::strip_ansi(&s_anchor), " 141~ ");
-    assert!(s_anchor.contains(&theme.palette.mod_gutter_icon.fg_code()));
+    assert!(
+        s_anchor.contains(
+            &theme.palette[Cursor::Rest][DiffKind::Mod]
+                .gutter
+                .icon
+                .color
+                .fg_code()
+        )
+    );
 
     // Group aux add row has ~+ (" 140~+")
     let s_aux_add = styled_prefix(
@@ -103,11 +119,33 @@ fn test_styled_prefix_group_and_non_group() {
         &theme,
     );
     assert_eq!(crate::ansi::strip_ansi(&s_aux_add), " 140~+");
-    assert!(s_aux_add.contains(&theme.palette.mod_gutter_icon.fg_code()));
-    assert!(s_aux_add.contains(&theme.palette.add_gutter_icon.fg_code()));
+    assert!(
+        s_aux_add.contains(
+            &theme.palette[Cursor::Rest][DiffKind::Mod]
+                .gutter
+                .icon
+                .color
+                .fg_code()
+        )
+    );
+    assert!(
+        s_aux_add.contains(
+            &theme.palette[Cursor::Rest][DiffKind::Add]
+                .gutter
+                .icon
+                .color
+                .fg_code()
+        )
+    );
     // Aux add numbers use standard add number color (green)
     assert!(
-        s_aux_add.starts_with(&theme.palette.add_gutter_num.fg_code()),
+        s_aux_add.starts_with(
+            &theme.palette[Cursor::Rest][DiffKind::Add]
+                .gutter
+                .num
+                .color
+                .fg_code()
+        ),
         "aux add number must match standard add number color: {s_aux_add:?}"
     );
 
@@ -123,11 +161,33 @@ fn test_styled_prefix_group_and_non_group() {
         &theme,
     );
     assert_eq!(crate::ansi::strip_ansi(&s_aux_del), " 140~-");
-    assert!(s_aux_del.contains(&theme.palette.mod_gutter_icon.fg_code()));
-    assert!(s_aux_del.contains(&theme.palette.del_gutter_icon.fg_code()));
+    assert!(
+        s_aux_del.contains(
+            &theme.palette[Cursor::Rest][DiffKind::Mod]
+                .gutter
+                .icon
+                .color
+                .fg_code()
+        )
+    );
+    assert!(
+        s_aux_del.contains(
+            &theme.palette[Cursor::Rest][DiffKind::Del]
+                .gutter
+                .icon
+                .color
+                .fg_code()
+        )
+    );
     // Aux del numbers use standard del number color (red) in italic style
     assert!(
-        s_aux_del.starts_with(&theme.palette.del_gutter_num.italic_fg_code()),
+        s_aux_del.starts_with(
+            &theme.palette[Cursor::Rest][DiffKind::Del]
+                .gutter
+                .num
+                .color
+                .italic_fg_code()
+        ),
         "aux del number must use standard del number color in italic style: {s_aux_del:?}"
     );
     assert!(
@@ -153,7 +213,7 @@ fn test_addition_row_with_all_common_runs_preserves_plus_gutter() {
 
 #[test]
 fn test_render_addition_row_with_subword_styling() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![
         OutputRun {
             kind: RunKind::Ctx,
@@ -192,7 +252,7 @@ fn test_render_addition_row_with_subword_styling() {
 
 #[test]
 fn test_grapheme_clusters_never_split() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     // "e" + combining acute accent = ONE grapheme cluster; "x" the second.
     let text = "e\u{301}x";
     let runs = vec![OutputRun {
@@ -251,7 +311,7 @@ fn test_grapheme_clusters_never_split() {
 
 #[test]
 fn test_syntax_on_toggle_disables_token_colors() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![OutputRun {
         kind: RunKind::Ctx,
         color: TokenColor::Keyword,
@@ -303,7 +363,7 @@ fn test_syntax_on_toggle_disables_token_colors() {
 
 #[test]
 fn test_col_offset_applies_to_token_runs() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![
         OutputRun {
             kind: RunKind::Ctx,
@@ -357,7 +417,7 @@ fn test_is_pure_deletion_mod_multibyte_unicode() {
 
 #[test]
 fn test_render_raw_row_colors() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let add = render_raw_row(
         RowKind::Add,
         "  42 + ",
@@ -397,7 +457,7 @@ fn test_render_raw_row_colors() {
 
 #[test]
 fn test_render_raw_row_trailing_whitespace() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let add_trailing = render_raw_row(
         RowKind::Add,
         "  42 + ",
@@ -455,7 +515,7 @@ fn test_render_raw_row_trailing_whitespace() {
 
 #[test]
 fn test_render_moved_row_with_indentation_subwords() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![
         OutputRun {
             kind: RunKind::Ctx,
@@ -504,7 +564,7 @@ fn test_render_moved_row_with_indentation_subwords() {
 
 #[test]
 fn test_render_mod_row_with_indentation_subwords() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![
         OutputRun {
             kind: RunKind::Ctx,
@@ -551,7 +611,7 @@ fn test_render_mod_row_with_indentation_subwords() {
 
 #[test]
 fn test_render_moved_source_del_row() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let s_del = theme.row_style(RowKind::Del);
     let runs = vec![OutputRun {
         kind: RunKind::Del,
@@ -585,7 +645,7 @@ fn test_render_moved_source_del_row() {
 
 #[test]
 fn test_mov_src_renders_like_del_row_without_strikethrough() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let s_del = theme.row_style(RowKind::Del);
     let runs = vec![OutputRun {
         kind: RunKind::Del,
@@ -627,7 +687,7 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
 
 #[test]
 fn test_write_row_segment_direct_buffer() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![OutputRun {
         kind: RunKind::Ctx,
         color: TokenColor::Keyword,
@@ -703,7 +763,7 @@ fn test_expand_tabs_and_runs() {
 
 #[test]
 fn test_sliced_row_segment_expands_tabs_without_overflow() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![OutputRun {
         kind: RunKind::Ctx,
         color: TokenColor::Default,
@@ -753,7 +813,7 @@ fn test_sliced_row_segment_expands_tabs_without_overflow() {
 #[test]
 fn test_wide_emoji_never_exceeds_segment_window() {
     use crate::core::parse::RowKind as RK;
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let prefix = "   1  ";
     // "ab✅cd": 5 graphemes, 6 visual columns. Window [0,4) must hold
     // "ab✅" (4 columns), never the 5-column "ab✅c".
@@ -851,7 +911,7 @@ fn test_wide_emoji_never_exceeds_segment_window() {
 
 #[test]
 fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_strike() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![
         OutputRun {
             kind: RunKind::Add,
@@ -900,7 +960,7 @@ fn test_render_row_segment_markdown_strikethrough_inherits_row_color_with_dim_st
 
 #[test]
 fn test_render_moved_src_run_skipped() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let runs = vec![
         OutputRun {
             kind: RunKind::Ctx,
@@ -954,7 +1014,7 @@ fn test_render_moved_src_run_skipped() {
 
 #[test]
 fn test_render_mov_tgt_with_add_row_bg() {
-    let theme = DiffuseTheme::DEFAULT;
+    let theme = DiffuseTheme::dark();
     let s_add = theme.row_style(RowKind::Add);
     let runs = vec![OutputRun {
         kind: RunKind::MovedTgt,
@@ -985,9 +1045,9 @@ fn test_render_mov_tgt_with_add_row_bg() {
         "MovTgt must render with addition tint background: {rendered_mov:?}"
     );
     // RunKind::MovedTgt tokens remain context-colored, not novelty-colored.
-    let ctx_color = theme
-        .palette
-        .token_color(TokenColor::Function, RowKind::Ctx)
+    let ctx_color = theme.palette[Cursor::Rest][DiffKind::Ctx]
+        .syntax
+        .token_color(TokenColor::Function)
         .unwrap();
     assert!(
         rendered_mov.contains(&ctx_color.fg_code()),

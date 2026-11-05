@@ -1610,7 +1610,7 @@ fn test_doc_comment_reflow_pairing() {
         rows: vec![
             Row::Del(DelLine::new(
                 263,
-                "    /// Falls back to `DiffuseTheme::DEFAULT` when detection is unavailable.",
+                "    /// Falls back to `DiffuseTheme::dark()` when detection is unavailable.",
             )),
             Row::Add(AddLine::new(
                 263,
@@ -1622,7 +1622,7 @@ fn test_doc_comment_reflow_pairing() {
             )),
             Row::Add(AddLine::new(
                 265,
-                "    /// `DiffuseTheme::DEFAULT` when detection is unavailable.",
+                "    /// `DiffuseTheme::dark()` when detection is unavailable.",
             )),
         ],
         above_ctx: 0,
