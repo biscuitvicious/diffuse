@@ -209,10 +209,94 @@ impl FsChangeCollector {
     }
 }
 
+/// Directories under `repo_root`, starting at `start`, that can hold diffable
+/// content.
+///
+/// Git's own ignore rules decide what to prune: a tree whose events
+/// [`classify_repo_path`] discards anyway (build output, dependency caches,
+/// anything matched by `.gitignore`, `.git/info/exclude`, or the global
+/// ignore file) is never registered, which is what keeps registration
+/// proportional to the source tree instead of to every cache on disk. When the
+/// ignore data cannot be read the whole tree is returned: slower, but never a
+/// missing directory.
+fn watchable_dirs(repo_root: &Path, start: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![start.to_path_buf()];
+    let filtered = gix::open(repo_root).ok().is_some_and(|repo| {
+        let Some(worktree) = repo.worktree() else {
+            return false;
+        };
+        let Ok(mut stack) = worktree.excludes(None) else {
+            return false;
+        };
+        collect_dirs(repo_root, start, &mut stack, &mut dirs);
+        true
+    });
+    if !filtered {
+        collect_unfiltered(start, &mut dirs);
+    }
+    dirs.sort();
+    dirs.dedup();
+    dirs
+}
+
+/// Walk `dir`, appending every descendant directory that git does not exclude.
+fn collect_dirs(
+    repo_root: &Path,
+    dir: &Path,
+    stack: &mut gix::AttributeStack<'_>,
+    out: &mut Vec<PathBuf>,
+) {
+    for path in child_dirs(dir) {
+        let Ok(rel) = path.strip_prefix(repo_root) else {
+            continue;
+        };
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let ignored = stack
+            .at_entry(rel.as_str(), Some(gix::index::entry::Mode::DIR))
+            .is_ok_and(|platform| platform.excluded_kind().is_some());
+        if ignored {
+            continue;
+        }
+        out.push(path.clone());
+        collect_dirs(repo_root, &path, stack, out);
+    }
+}
+
+/// Walk `dir`, appending every descendant directory.
+fn collect_unfiltered(dir: &Path, out: &mut Vec<PathBuf>) {
+    for path in child_dirs(dir) {
+        out.push(path.clone());
+        collect_unfiltered(&path, out);
+    }
+}
+
+/// Child directories of `dir`, excluding the git metadata directory.
+fn child_dirs(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| entry.file_name() != ".git")
+        .map(|entry| entry.path())
+        .collect()
+}
+
 /// Filesystem repository watcher that triggers notifications on relevant file
 /// mutations.
 pub struct RepoWatcher {
-    _watcher: RecommendedWatcher,
+    stop: mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for RepoWatcher {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl RepoWatcher {
@@ -224,31 +308,57 @@ impl RepoWatcher {
 
     /// Spawn a background filesystem watcher on optional `repo_root` and
     /// optional `notes_path` that sends classified changes to `tx`.
+    ///
+    /// Registration watches the source tree directory by directory, pruned by
+    /// git's ignore rules. A watch that covers only its own directory needs
+    /// upkeep, so a directory created or moved into the tree is handed to a
+    /// maintenance thread that registers it, and the mutation is also reported
+    /// as a repository-level change so anything written into it before its
+    /// watch existed is picked up
+    /// (`test_repo_watcher_watches_directories_created_after_spawn`,
+    /// `test_repo_watcher_watches_directories_moved_into_the_tree`).
     pub fn spawn_with_notes(
         repo_root: Option<PathBuf>,
         notes_path: Option<PathBuf>,
         tx: mpsc::Sender<FsChange>,
     ) -> Result<Self, notify::Error> {
+        let (directory_requests, directory_rx) = mpsc::channel::<PathBuf>();
+        let (stop, stop_rx) = mpsc::channel::<()>();
+        let registration = directory_requests.clone();
         let root_for_filter = repo_root.clone();
         let notes_for_filter = notes_path.clone();
 
         let event_handler = move |res: Result<Event, notify::Error>| {
-            if let Ok(event) = res {
-                if !is_mutation_event(&event.kind) {
-                    return;
+            let Ok(event) = res else {
+                return;
+            };
+            if !is_mutation_event(&event.kind) {
+                return;
+            }
+            for p in &event.paths {
+                if let Some(ref np) = notes_for_filter
+                    && is_notes_path(p, np)
+                {
+                    let _ = tx.send(FsChange::Notes);
+                    continue;
                 }
-                for p in &event.paths {
-                    if let Some(ref np) = notes_for_filter
-                        && is_notes_path(p, np)
-                    {
-                        let _ = tx.send(FsChange::Notes);
-                        continue;
-                    }
-                    if let Some(ref root) = root_for_filter
-                        && let Some(change) = classify_repo_path(p, root)
-                    {
-                        let _ = tx.send(change);
-                    }
+                // A directory that appears in the tree needs a watch of its
+                // own. The repository-level change covers whatever was written
+                // into it before that watch existed.
+                if p.is_dir()
+                    && matches!(
+                        event.kind,
+                        EventKind::Create(_) | EventKind::Modify(ModifyKind::Name(_))
+                    )
+                {
+                    let _ = registration.send(p.clone());
+                    let _ = tx.send(FsChange::Global);
+                    continue;
+                }
+                if let Some(ref root) = root_for_filter
+                    && let Some(change) = classify_repo_path(p, root)
+                {
+                    let _ = tx.send(change);
                 }
             }
         };
@@ -258,7 +368,19 @@ impl RepoWatcher {
         if let Some(ref root) = repo_root
             && root.exists()
         {
-            watcher.watch(root, RecursiveMode::Recursive)?;
+            for dir in watchable_dirs(root, root) {
+                let _ = watcher.watch(&dir, RecursiveMode::NonRecursive);
+            }
+            // Only the git metadata that can change the diff is watched: the
+            // object store below it never is.
+            let git_dir = root.join(".git");
+            if git_dir.is_dir() {
+                let _ = watcher.watch(&git_dir, RecursiveMode::NonRecursive);
+                let refs = git_dir.join("refs");
+                if refs.is_dir() {
+                    let _ = watcher.watch(&refs, RecursiveMode::Recursive);
+                }
+            }
         }
 
         if let Some(ref np) = notes_path {
@@ -274,7 +396,33 @@ impl RepoWatcher {
             }
         }
 
-        Ok(Self { _watcher: watcher })
+        let root_for_thread = repo_root.clone();
+        let thread = std::thread::spawn(move || {
+            let mut watcher = watcher;
+            loop {
+                if stop_rx.try_recv().is_ok() {
+                    break;
+                }
+                match directory_rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(dir) => {
+                        let dirs = match root_for_thread {
+                            Some(ref root) if dir.starts_with(root) => watchable_dirs(root, &dir),
+                            _ => vec![dir],
+                        };
+                        for dir in dirs {
+                            let _ = watcher.watch(&dir, RecursiveMode::NonRecursive);
+                        }
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            stop,
+            thread: Some(thread),
+        })
     }
 }
 

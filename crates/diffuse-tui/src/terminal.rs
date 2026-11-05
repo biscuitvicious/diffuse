@@ -19,7 +19,7 @@ use crossterm::{
         size as terminal_size,
     },
 };
-use ratatui::{Frame, Terminal, backend::CrosstermBackend};
+use ratatui::{Frame, Terminal, backend::CrosstermBackend, layout::Rect};
 
 /// RAII Guard that manages terminal raw mode, alternate screen buffer, and
 /// mouse capture using Ratatui with a Crossterm backend.
@@ -108,6 +108,18 @@ pub fn classify_poll(
     }
 }
 
+/// Clear the terminal and force the next draw to repaint every cell.
+///
+/// [`Terminal::clear`] reads the cursor position first so that it can restore
+/// it afterwards, and a terminal that never answers that request stalls the
+/// process for crossterm's two-second timeout before failing outright.
+/// Resizing to the current area clears the same region and resets the back
+/// buffer without asking the terminal anything.
+fn clear_for_repaint(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
+    let size = terminal.size()?;
+    terminal.resize(Rect::new(0, 0, size.width, size.height))
+}
+
 impl TerminalGuard {
     /// Enter raw mode, alternate screen buffer, and enable mouse capture.
     pub fn enter() -> io::Result<Self> {
@@ -132,7 +144,7 @@ impl TerminalGuard {
         stdout.flush()?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
-        terminal.clear()?;
+        clear_for_repaint(&mut terminal)?;
         Ok(Self {
             terminal,
             active: true,
@@ -174,7 +186,7 @@ impl TerminalGuard {
                 cursor::Hide
             )?;
             self.terminal.backend_mut().flush()?;
-            self.terminal.clear()?;
+            clear_for_repaint(&mut self.terminal)?;
             self.active = true;
         }
         Ok(())

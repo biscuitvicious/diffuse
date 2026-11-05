@@ -16,7 +16,7 @@ impl AppState {
         let txt = crate::view::diff_grid::hunk_divider_text(
             crate::render::Badge {
                 idx: hi,
-                total: f.hunks.len(),
+                total: Some(f.hunks.len()),
             },
             hunk,
             hidden_gap,

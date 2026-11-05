@@ -411,7 +411,7 @@ index 1111111..2222222 100644
     let h2_txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: state.output.files[0].hunks.len(),
+            total: Some(state.output.files[0].hunks.len()),
         },
         &state.output.files[0].hunks[1],
         gap,

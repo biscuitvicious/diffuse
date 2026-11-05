@@ -194,7 +194,7 @@ pub fn render_finder_modal(
                 }
                 let badge = Badge {
                     idx: hi,
-                    total: hunks.len(),
+                    total: Some(hunks.len()),
                 };
                 let txt = hunk_divider_text(badge, h, 0);
                 let piece = slice_by_visual_width(&txt, 0, width);
@@ -461,7 +461,7 @@ pub fn render_finder_modal_widget(
                 }
                 let badge = Badge {
                     idx: hi,
-                    total: hunks.len(),
+                    total: Some(hunks.len()),
                 };
                 let mut div_line = hunk_divider_line(badge, h, 0, false, inner_w, theme);
                 if let Some(span) = div_line.spans.first_mut()

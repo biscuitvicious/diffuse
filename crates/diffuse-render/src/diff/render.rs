@@ -89,7 +89,10 @@ pub fn render_pipeline_output_with_width(
     for (fi, f) in output.files.iter().enumerate() {
         out.push_str(&render_file_diff_with_width(
             f,
-            Some(Badge { idx: fi, total }),
+            Some(Badge {
+                idx: fi,
+                total: Some(total),
+            }),
             theme,
             styled_prefixes,
             width,
@@ -150,7 +153,7 @@ pub fn render_file_diff_with_width(
     let emit_hunk_divider = |hi: usize, hunk: &OutputHunk, out: &mut String| {
         let h_badge = Badge {
             idx: hi,
-            total: file.hunks.len(),
+            total: Some(file.hunks.len()),
         };
         let div = render_hunk_divider(h_badge, hunk, 0, width, theme);
         out.push_str(&div);
@@ -237,7 +240,10 @@ pub fn render_raw_pipeline_output_with_width(
     for (fi, f) in output.files.iter().enumerate() {
         out.push_str(&render_raw_file_diff_with_width(
             f,
-            Some(Badge { idx: fi, total }),
+            Some(Badge {
+                idx: fi,
+                total: Some(total),
+            }),
             theme,
             width,
         ));

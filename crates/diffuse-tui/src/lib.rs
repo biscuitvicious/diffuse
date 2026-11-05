@@ -104,7 +104,7 @@ fn trigger_streaming_reload(
     streaming_active: &mut bool,
     reload_snapshot: &mut Option<CursorSnapshot>,
     reload_seen_paths: &mut Option<HashSet<String>>,
-    dirty: &mut bool,
+    announce: bool,
 ) {
     let repo_root = state.repo_root.clone();
     let git_revs = state.git_revs.clone();
@@ -142,8 +142,9 @@ fn trigger_streaming_reload(
     // Light up streaming indicator without blanking screen content
     state.is_streaming = true;
     state.record_stream_activity();
-    state.set_status_message("↻ reloading diff...".into(), true);
-    *dirty = true;
+    if announce {
+        state.set_status_message("↻ reloading diff...".into(), true);
+    }
 }
 
 /// The terminal surface the interactive run loop drives.
@@ -246,23 +247,6 @@ pub fn run_session<S: Session + ?Sized>(
     state.enable_async_on_demand();
 
     let (fs_tx, fs_rx) = mpsc::channel();
-    let repo_root = state.repo_root.clone();
-    let watch_repo = !state.target.is_range() && !repo_root.as_os_str().is_empty();
-    let watch_notes = !state.notes_path.as_os_str().is_empty();
-    let _watcher = if watch && (watch_repo || watch_notes) {
-        crate::watcher::RepoWatcher::spawn_with_notes(
-            if watch_repo { Some(repo_root) } else { None },
-            if watch_notes {
-                Some(state.notes_path.clone())
-            } else {
-                None
-            },
-            fs_tx,
-        )
-        .ok()
-    } else {
-        None
-    };
     let mut fs_collector = crate::watcher::FsChangeCollector::new();
 
     let mut streaming_rx = streaming_rx;
@@ -273,12 +257,62 @@ pub fn run_session<S: Session + ?Sized>(
         state.is_streaming = true;
     }
     let mut streaming_active = streaming_rx.is_some();
-    let mut dirty = true;
+    let mut dirty = false;
     let mut last_size = session.size();
     let mut last_dot = state.streaming_dot();
 
+    // Present the first frame before any work whose cost scales with the
+    // repository: ingesting a streamed file and registering the filesystem
+    // watcher each walk content of unbounded size, and either can hold the
+    // first paint back by hundreds of milliseconds in a large tree.
+    session.draw_frame(&mut state)?;
+
+    // Registering the watch walks every directory under the repository, which
+    // costs hundreds of milliseconds in a large tree. It runs on a helper
+    // thread while the review is already on screen, and the loop adopts the
+    // watcher as soon as it is ready.
+    let (watcher_tx, watcher_rx) = mpsc::channel();
+    let repo_root = state.repo_root.clone();
+    let watch_repo = !state.target.is_range() && !repo_root.as_os_str().is_empty();
+    let watch_notes = !state.notes_path.as_os_str().is_empty();
+    let mut watcher_rx = (watch && (watch_repo || watch_notes)).then_some(watcher_rx);
+    let mut _watcher: Option<crate::watcher::RepoWatcher> = None;
+    if watcher_rx.is_some() {
+        let repo_root = watch_repo.then_some(repo_root);
+        let notes_path = watch_notes.then(|| state.notes_path.clone());
+        std::thread::spawn(move || {
+            let registered =
+                crate::watcher::RepoWatcher::spawn_with_notes(repo_root, notes_path, fs_tx);
+            let _ = watcher_tx.send(registered.ok());
+        });
+    }
+
     while !state.should_quit {
         if state.poll_on_demand() {
+            dirty = true;
+        }
+
+        if _watcher.is_none()
+            && let Some(rx) = watcher_rx.as_ref()
+            && let Ok(adopted) = rx.try_recv()
+        {
+            _watcher = adopted;
+            watcher_rx = None;
+            // The registration walk descends the tree one directory at a time.
+            // A change made in a directory that was not yet watched produced no
+            // event, and the diff that started before the walk cannot contain
+            // it. Rebuilding the diff now that every directory is watched
+            // closes that gap; anything later is delivered as an event. The
+            // rebuild is silent, because nothing the user did caused it.
+            trigger_streaming_reload(
+                &mut state,
+                &mut streaming_rx,
+                &mut meta_rx,
+                &mut streaming_active,
+                &mut reload_snapshot,
+                &mut reload_seen_paths,
+                false,
+            );
             dirty = true;
         }
 
@@ -387,8 +421,9 @@ pub fn run_session<S: Session + ?Sized>(
                                     &mut streaming_active,
                                     &mut reload_snapshot,
                                     &mut reload_seen_paths,
-                                    &mut dirty,
+                                    true,
                                 );
+                                dirty = true;
                             }
                         }
                     }
@@ -405,8 +440,9 @@ pub fn run_session<S: Session + ?Sized>(
                 &mut streaming_active,
                 &mut reload_snapshot,
                 &mut reload_seen_paths,
-                &mut dirty,
+                true,
             );
+            dirty = true;
         }
 
         if let Some(previously) = state.pending_notes_reload.take()

@@ -461,7 +461,7 @@ fn test_hunk_divider_click_expands_and_stays_pinned() {
     let txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: state.output.files[fi].hunks.len(),
+            total: Some(state.output.files[fi].hunks.len()),
         },
         h,
         gap_before,

@@ -286,7 +286,7 @@ impl AppState {
                                         let txt = hunk_divider_text(
                                             crate::render::Badge {
                                                 idx: div_hi,
-                                                total: f.hunks.len(),
+                                                total: Some(f.hunks.len()),
                                             },
                                             hunk,
                                             hidden_gap,

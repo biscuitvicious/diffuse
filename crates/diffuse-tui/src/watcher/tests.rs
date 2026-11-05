@@ -131,6 +131,103 @@ fn test_repo_watcher_spawns_and_detects_mutation() {
 }
 
 #[test]
+fn test_watchable_dirs_skip_gitignored_trees() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    let repo = diffuse_git::testing::init_repo(&root).unwrap();
+    diffuse_git::testing::commit_files(
+        &repo,
+        "init",
+        &[
+            (".gitignore", "target/\nignored/\n"),
+            ("src/lib.rs", "fn f() {}\n"),
+        ],
+    )
+    .unwrap();
+    for dir in [
+        "target/debug/deps",
+        "ignored/nested",
+        "crates/core/src",
+        "src",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+
+    let dirs: Vec<String> = super::watchable_dirs(&root, &root)
+        .iter()
+        .filter_map(|path| path.strip_prefix(&root).ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    assert!(
+        dirs.iter().any(|dir| dir == "src"),
+        "content directories stay watched: {dirs:?}"
+    );
+    assert!(
+        dirs.iter().any(|dir| dir == "crates/core/src"),
+        "nested content directories stay watched: {dirs:?}"
+    );
+    assert!(
+        !dirs.iter().any(|dir| dir.starts_with("target")),
+        "gitignored trees are pruned: {dirs:?}"
+    );
+    assert!(
+        !dirs.iter().any(|dir| dir.starts_with("ignored")),
+        "gitignored trees are pruned: {dirs:?}"
+    );
+}
+
+#[test]
+fn test_repo_watcher_watches_directories_created_after_spawn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _watcher = super::RepoWatcher::spawn(root.clone(), tx).expect("spawn watcher");
+
+    let nested = root.join("pkg/nested");
+    std::fs::create_dir_all(&nested).unwrap();
+    // A directory is registered from its creation event, so give that a moment
+    // before writing inside it.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::fs::write(nested.join("file.rs"), "fn main() {}\n").unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(super::FsChange::File(path)) if path.ends_with("pkg/nested/file.rs") => break,
+            Ok(_) => continue,
+            Err(err) => panic!("no event for a file written in a new directory: {err}"),
+        }
+    }
+}
+
+#[test]
+fn test_repo_watcher_watches_directories_moved_into_the_tree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _watcher = super::RepoWatcher::spawn(root.clone(), tx).expect("spawn watcher");
+
+    let incoming = tmp.path().join("incoming");
+    std::fs::create_dir_all(&incoming).unwrap();
+    std::fs::write(incoming.join("a.rs"), "fn a() {}\n").unwrap();
+    std::fs::rename(&incoming, root.join("moved")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::fs::write(root.join("moved/after.rs"), "fn b() {}\n").unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2000);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(remaining) {
+            Ok(super::FsChange::File(path)) if path.ends_with("moved/after.rs") => break,
+            Ok(_) => continue,
+            Err(err) => panic!("no event for a file written in a moved directory: {err}"),
+        }
+    }
+}
+
+#[test]
 fn test_classify_repo_path_working_tree_vs_global() {
     use super::{FsChange, classify_repo_path};
     let root = Path::new("/workspace/project");

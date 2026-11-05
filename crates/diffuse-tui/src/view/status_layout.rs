@@ -55,10 +55,12 @@ fn segments_for(ctx: &StatusBarContext<'_>) -> Vec<StatusSegment> {
         let color = if is_ok { p.header_staged } else { p.count_dels };
         push_segment(&mut segs, msg.to_string(), color, true, p);
     }
-    // Persistent empty state (no timeout): with no files the bar always
-    // carries the notice instead of the main area, so the reserved slot
-    // stays meaningful and the viewport keeps its geometry.
-    if ctx.total_files == 0 {
+    // Persistent empty state (no timeout): with no files the bar carries the
+    // notice instead of the main area, so the reserved slot stays meaningful
+    // and the viewport keeps its geometry. While the diff is still streaming
+    // the absence of files says nothing — the first file may be milliseconds
+    // away — so the notice waits for the stream to finish.
+    if ctx.total_files == 0 && !ctx.is_streaming {
         push_segment(
             &mut segs,
             "No diff to display.".to_string(),
@@ -375,6 +377,22 @@ mod empty_state_tests {
             .collect::<String>()
             .trim()
             .to_string()
+    }
+
+    #[test]
+    fn test_layout_empty_state_waits_for_the_stream() {
+        let mut c = empty_ctx(80);
+        c.is_streaming = true;
+        let layout = status_layout(&c);
+        let text = plain(&layout);
+        assert!(
+            !text.contains("No diff to display."),
+            "empty state must not preempt the stream: {text}"
+        );
+        assert!(
+            text.contains("streaming..."),
+            "the stream indicator stands in for the files: {text}"
+        );
     }
 
     #[test]

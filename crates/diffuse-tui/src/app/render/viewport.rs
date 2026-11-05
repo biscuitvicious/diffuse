@@ -287,7 +287,7 @@ impl AppState {
                     file_obj,
                     crate::render::Badge {
                         idx: s.file_idx,
-                        total: self.output.files.len(),
+                        total: (!self.is_streaming).then_some(self.output.files.len()),
                     },
                     is_collapsed,
                     is_selected,
@@ -310,7 +310,7 @@ impl AppState {
                     lines.push(render_hunk_divider_segment(
                         crate::render::Badge {
                             idx: h.hunk_idx,
-                            total: self.output.files[h.file_idx].hunks.len(),
+                            total: Some(self.output.files[h.file_idx].hunks.len()),
                         },
                         hunk_obj,
                         hidden_gap,
@@ -366,7 +366,7 @@ impl AppState {
                         lines.push(render_hunk_divider_segment(
                             crate::render::Badge {
                                 idx: div_hi,
-                                total: self.output.files[div_fi].hunks.len(),
+                                total: Some(self.output.files[div_fi].hunks.len()),
                             },
                             h,
                             hidden_gap,
@@ -402,7 +402,7 @@ impl AppState {
                                 file_obj,
                                 crate::render::Badge {
                                     idx: item.file_idx,
-                                    total: self.output.files.len(),
+                                    total: (!self.is_streaming).then_some(self.output.files.len()),
                                 },
                                 is_collapsed,
                                 is_selected,

@@ -2,7 +2,7 @@
 
 use std::{
     env,
-    io::{self, IsTerminal, Read, Write},
+    io::{self, IsTerminal, Write},
     str,
     time::{Duration, Instant},
 };
@@ -124,6 +124,17 @@ fn poll_stdin(timeout_ms: i32) -> bool {
     ret > 0 && (fds[0].revents & libc::POLLIN) != 0
 }
 
+/// Read one byte from stdin without buffering.
+///
+/// `io::stdin()` is buffered: a one-byte read pulls the whole reply into its
+/// 8 KiB buffer and returns a single byte, so the following polls on the raw
+/// descriptor find nothing and the rest of the response is lost.
+#[cfg(unix)]
+fn read_stdin_byte(byte: &mut [u8; 1]) -> bool {
+    let read = unsafe { libc::read(libc::STDIN_FILENO, byte.as_mut_ptr().cast(), 1) };
+    read == 1
+}
+
 #[cfg(unix)]
 fn query_terminal_mode_osc11() -> Option<TerminalMode> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
@@ -146,7 +157,7 @@ fn query_terminal_mode_osc11() -> Option<TerminalMode> {
         if remaining_ms <= 0 || !poll_stdin(remaining_ms) {
             break;
         }
-        if io::stdin().read_exact(&mut byte).is_ok() {
+        if read_stdin_byte(&mut byte) {
             buf.push(byte[0]);
             if byte[0] == 0x07
                 || (buf.len() >= 2 && buf[buf.len() - 2] == 0x1b && buf[buf.len() - 1] == b'\\')

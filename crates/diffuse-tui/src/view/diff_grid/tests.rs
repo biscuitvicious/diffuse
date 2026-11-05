@@ -54,7 +54,10 @@ fn test_file_header_has_background_stripe() {
     let f = dummy_file();
     let unselected = render_file_header(
         &f,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         false,
@@ -77,7 +80,10 @@ fn test_file_header_has_background_stripe() {
 
     let current_file = render_file_header(
         &f,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         true,
@@ -96,7 +102,10 @@ fn test_file_header_has_background_stripe() {
 
     let selected = render_file_header(
         &f,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         true,
         true,
@@ -121,7 +130,10 @@ fn test_binary_file_header_has_no_expand_caret() {
     f.path = "test.png".to_string();
     let rendered = render_file_header(
         &f,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         false,
@@ -152,7 +164,10 @@ fn test_binary_file_header_has_no_expand_caret() {
 fn test_hunk_divider_is_orange() {
     let h = dummy_hunk();
     let regular = render_hunk_divider(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         8,
         false,
@@ -165,7 +180,10 @@ fn test_hunk_divider_is_orange() {
     );
 
     let current = render_hunk_divider(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         8,
         true,
@@ -183,7 +201,10 @@ fn test_hunk_divider_is_orange() {
 
     let theme = DiffuseTheme::dark();
     let selected = render_hunk_divider_segment(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         8,
         false,
@@ -206,7 +227,10 @@ fn test_hunk_divider_is_orange() {
 fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
     let h = dummy_hunk();
     let rendered = render_hunk_divider(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         0,
         false,
@@ -230,7 +254,10 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
 
     // Segment beyond text width fills with horizontal rule dashes
     let beyond = render_hunk_divider_segment(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         0,
         false,
@@ -244,7 +271,10 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
 
     // Ratatui Line renderer: text shorter than width fills with rule
     let h_line = hunk_divider_line(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         0,
         false,
@@ -256,7 +286,10 @@ fn test_hunk_divider_horizontal_rule_runs_to_end_of_line() {
 
     // Ratatui Line renderer: text wider than width slices without trailing fill
     let h_line_narrow = hunk_divider_line(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         0,
         true,
@@ -330,7 +363,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
     };
     // Zero gap (e.g. contiguous diff)
     let contiguous = render_hunk_divider(
-        Badge { idx: 1, total: 2 },
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
         &h,
         0,
         false,
@@ -354,7 +390,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         mk(RowKind::Mod),
     ];
     let with_rows = render_hunk_divider(
-        Badge { idx: 1, total: 2 },
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
         &h,
         0,
         false,
@@ -365,7 +404,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
 
     // Normal 8 lines hidden gap
     let expanded = render_hunk_divider(
-        Badge { idx: 1, total: 2 },
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
         &h,
         8,
         false,
@@ -383,7 +425,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
         rows: vec![mk(RowKind::Ctx)],
     };
     let zero_div = render_hunk_divider(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &zero_hunk,
         0,
         false,
@@ -395,7 +440,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
 
     // Zero-change hunk with hidden gap -> shows gap without count badge
     let zero_gap_div = render_hunk_divider(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &zero_hunk,
         30,
         false,
@@ -408,7 +456,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
     // With movs (both source and target count towards modified lines)
     h.rows.push(mk(RowKind::Mov));
     let with_movs = render_hunk_divider(
-        Badge { idx: 1, total: 2 },
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
         &h,
         0,
         false,
@@ -419,7 +470,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
 
     // Single line hidden
     let single = render_hunk_divider(
-        Badge { idx: 1, total: 2 },
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
         &h,
         1,
         false,
@@ -430,7 +484,10 @@ fn test_hunk_divider_modified_lines_excludes_context() {
 
     // Top gap divider (50 lines hidden at top of file, only down arrow)
     let top_gap = render_hunk_divider(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &h,
         50,
         false,
@@ -451,7 +508,14 @@ fn test_hunk_divider_uses_four_dash_prefix_and_postfix() {
     let h = dummy_hunk();
 
     // Hunk divider text must start with exactly "──── " and end with " ────".
-    let txt = hunk_divider_text(Badge { idx: 0, total: 1 }, &h, 0);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        &h,
+        0,
+    );
     assert!(
         txt.starts_with("──── "),
         "hunk divider must start with '──── ' (4 dashes), got: {txt:?}"
@@ -493,7 +557,14 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
         new_count: 8,
         rows: (0..50).map(|_| mk(RowKind::Add)).collect(),
     };
-    let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, &h, 400);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
+        &h,
+        400,
+    );
     let txt_w = display_width(txt);
     assert!(
         txt_w > 30,
@@ -502,7 +573,10 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
 
     // Segment 0 contains the first 30 visual columns
     let seg0 = render_hunk_divider_segment(
-        Badge { idx: 1, total: 2 },
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
         &h,
         400,
         false,
@@ -515,7 +589,10 @@ fn test_hunk_divider_wraps_across_segments_when_wide() {
 
     // Segment 1 contains the wrapped continuation
     let seg1 = render_hunk_divider_segment(
-        Badge { idx: 1, total: 2 },
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
         &h,
         400,
         false,
@@ -554,7 +631,10 @@ fn test_ratatui_diff_grid_lines() {
 
     let f_line = file_header_line(
         &file,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         false,
@@ -573,7 +653,10 @@ fn test_ratatui_diff_grid_lines() {
         rows: vec![],
     };
     let h_line = hunk_divider_line(
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         &hunk,
         10,
         true,
@@ -614,7 +697,10 @@ fn test_render_file_header_segment_narrow_width() {
 
     let rendered_seg0 = render_file_header_segment(
         &file,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         false,
@@ -637,7 +723,10 @@ fn test_render_file_header_segment_narrow_width() {
 
     let rendered_seg1 = render_file_header_segment(
         &file,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         false,
@@ -691,8 +780,15 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     // Total plain text:
     // "──── ▶ diffuse-core/src/algo/mod.rs -> algo.rs (100B) -0 +0 ~0
     // [collapsed] "
-    let full_text =
-        file_header_text_with_prefix(&file, Badge { idx: 0, total: 1 }, true, common_prefix);
+    let full_text = file_header_text_with_prefix(
+        &file,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        true,
+        common_prefix,
+    );
     assert!(
         full_text.contains("diffuse-core/src/algo/mod.rs -> algo.rs"),
         "full text must keep the full un-mangled rename path without initial ellipsis: {full_text}"
@@ -701,7 +797,10 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     // Render segment 0 at width 45
     let seg0 = render_file_header_segment(
         &file,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         true,
         false,
         false,
@@ -725,7 +824,10 @@ fn test_file_header_wrapping_preserves_common_prefix_and_underline() {
     // Render segment 1 at width 45
     let seg1 = render_file_header_segment(
         &file,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         true,
         false,
         false,
@@ -751,7 +853,14 @@ fn test_file_header_text_identical_formatted_size() {
     let mut f = dummy_file();
     f.old_bytes = Some(15110);
     f.new_bytes = Some(15115);
-    let banner = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
+    let banner = file_header_text(
+        &f,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        false,
+    );
     assert!(
         banner.contains("(15kB)"),
         "banner must contain '(15kB)', got: {banner}"
@@ -817,7 +926,14 @@ fn test_wrapped_glyph_hit_never_touches_scrollbar_column() {
 fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
     let mut f = dummy_file();
     f.status = diffuse_core::FileStatus::Modified;
-    let banner = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
+    let banner = file_header_text(
+        &f,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        false,
+    );
     assert!(
         !banner.contains("(modified)"),
         "file header banner must omit '(modified)', got: {banner}"
@@ -828,14 +944,28 @@ fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
     );
 
     f.status = diffuse_core::FileStatus::Added;
-    let banner_added = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
+    let banner_added = file_header_text(
+        &f,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        false,
+    );
     assert!(
         banner_added.contains("(added)"),
         "file header banner must display '(added)', got: {banner_added}"
     );
 
     f.status = diffuse_core::FileStatus::Deleted;
-    let banner_del = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
+    let banner_del = file_header_text(
+        &f,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        false,
+    );
     assert!(
         banner_del.contains("(deleted)"),
         "file header banner must display '(deleted)', got: {banner_del}"
@@ -843,7 +973,14 @@ fn test_file_header_modified_status_omitted_and_other_statuses_displayed() {
 
     f.status = diffuse_core::FileStatus::Modified;
     f.is_binary = true;
-    let banner_bin = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
+    let banner_bin = file_header_text(
+        &f,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        false,
+    );
     assert!(
         banner_bin.contains("(binary)"),
         "file header banner must display '(binary)', got: {banner_bin}"
@@ -888,7 +1025,10 @@ fn test_file_header_counts_colored_like_status_bar() {
     let theme = DiffuseTheme::dark();
     let seg = render_file_header_segment(
         &f,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         false,
@@ -919,7 +1059,10 @@ fn test_file_header_counts_colored_like_status_bar() {
     // Cursor states brighten the path: selected brightest, current middle.
     let seg_cur = render_file_header_segment(
         &f,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         false,
         true,
@@ -935,7 +1078,10 @@ fn test_file_header_counts_colored_like_status_bar() {
     );
     let seg_sel = render_file_header_segment(
         &f,
-        Badge { idx: 0, total: 1 },
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
         false,
         true,
         false,
@@ -962,7 +1108,14 @@ fn test_file_header_zero_counts_omitted() {
     f.counts.dels = 0;
     f.counts.adds = 0;
     f.counts.mods = 0;
-    let banner = file_header_text(&f, Badge { idx: 0, total: 1 }, false);
+    let banner = file_header_text(
+        &f,
+        Badge {
+            idx: 0,
+            total: Some(1),
+        },
+        false,
+    );
     assert!(
         !banner.contains("~0") && !banner.contains("−0") && !banner.contains("+0"),
         "zero counts must be omitted: {banner:?}"

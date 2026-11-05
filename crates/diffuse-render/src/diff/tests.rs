@@ -249,7 +249,10 @@ fn test_write_file_header_bar_direct_buffer() {
     write_file_header_bar(
         &mut buf_badged,
         &file,
-        Some(Badge { idx: 0, total: 2 }),
+        Some(Badge {
+            idx: 0,
+            total: Some(2),
+        }),
         &DiffuseTheme::dark(),
     )
     .unwrap();

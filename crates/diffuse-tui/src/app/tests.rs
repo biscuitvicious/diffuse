@@ -1183,7 +1183,7 @@ fn test_hunk_divider_arrow_click_and_syntax_highlighted_expansion() {
     let txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: state.output.files[fi].hunks.len(),
+            total: Some(state.output.files[fi].hunks.len()),
         },
         h,
         hidden_gap,
@@ -1361,7 +1361,7 @@ index 1111111..2222222 100644
     let txt = hunk_divider_text(
         Badge {
             idx: 0,
-            total: state.output.files[fi].hunks.len(),
+            total: Some(state.output.files[fi].hunks.len()),
         },
         h,
         6,
@@ -1516,7 +1516,7 @@ index 1111111..2222222 100644
     let txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: state.output.files[fi].hunks.len(),
+            total: Some(state.output.files[fi].hunks.len()),
         },
         h,
         gap,
@@ -1660,7 +1660,7 @@ index 1111111..2222222 100644
     let txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: state.output.files[fi].hunks.len(),
+            total: Some(state.output.files[fi].hunks.len()),
         },
         hk,
         gap_before,
@@ -2006,7 +2006,7 @@ index 1111111..2222222 100644
     let txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: output.files[0].hunks.len(),
+            total: Some(output.files[0].hunks.len()),
         },
         &hk,
         gap_probe,
@@ -2624,7 +2624,7 @@ index 1111111..2222222 100644
     let txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: state.output.files[fi].hunks.len(),
+            total: Some(state.output.files[fi].hunks.len()),
         },
         hk,
         gap_before,
@@ -2774,7 +2774,7 @@ index 1111111..2222222 100644
         let txt = hunk_divider_text(
             Badge {
                 idx: 1,
-                total: state.output.files[fi].hunks.len(),
+                total: Some(state.output.files[fi].hunks.len()),
             },
             &hk,
             gap,
@@ -3325,7 +3325,7 @@ index 1111111..2222222 100644
     let txt = hunk_divider_text(
         Badge {
             idx: 1,
-            total: state.output.files[fi].hunks.len(),
+            total: Some(state.output.files[fi].hunks.len()),
         },
         h,
         gap,
@@ -3600,6 +3600,42 @@ fn test_mouse_click_diff_row_with_hunk_divider_selects_code_row() {
             Some(crate::app::notes::VisualTarget::DiffRow { seg_idx: 0, .. })
         ),
         "visual target must be DiffRow, not HunkDivider"
+    );
+}
+
+#[test]
+fn test_file_badge_omits_total_while_streaming() {
+    let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/b.rs b/b.rs\n--- a/b.rs\n+++ b/b.rs\n@@ -1 +1 @@\n-old\n+new\n";
+    let output = crate::core::pipeline::run_pipeline_full(
+        diff,
+        None,
+        None,
+        crate::core::PipelineOptions::default(),
+    );
+    assert_eq!(output.files.len(), 2, "both files must be present");
+    let mut state = AppState::new(
+        output,
+        "repo".into(),
+        temp_notes_path(),
+        crate::render::DiffuseTheme::dark(),
+    );
+
+    state.is_streaming = true;
+    let streaming = state.render_frame(120, 20);
+    assert!(
+        streaming.contains("F1"),
+        "streaming banner keeps the position:\n{streaming}"
+    );
+    assert!(
+        !streaming.contains("F1/2"),
+        "streaming banner must omit the still-growing total:\n{streaming}"
+    );
+
+    state.is_streaming = false;
+    let loaded = state.render_frame(120, 20);
+    assert!(
+        loaded.contains("F1/2"),
+        "the total appears once the diff is loaded:\n{loaded}"
     );
 }
 
@@ -4356,7 +4392,14 @@ fn test_hunk_bar_click_pivots_and_retains_cursor_visual_position() {
 
     let h = &state.output.files[fi].hunks[1];
     let hidden_gap = state.hunk_leading_gap(fi, 1);
-    let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+    let txt = hunk_divider_text(
+        Badge {
+            idx: 1,
+            total: Some(2),
+        },
+        h,
+        hidden_gap,
+    );
     let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
 
     // 1. Cursor is BEFORE the hunk bar (e.g. line 3 in hunk 0)
@@ -4544,7 +4587,14 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
 
         let h = &state.output.files[fi].hunks[1];
         let hidden_gap = state.hunk_leading_gap(fi, 1);
-        let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+        let txt = hunk_divider_text(
+            Badge {
+                idx: 1,
+                total: Some(2),
+            },
+            h,
+            hidden_gap,
+        );
         let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
 
         // Park cursor on line 1 (starts[1] == 1). With scroll == 6, rel_y = 1 -
@@ -4608,7 +4658,14 @@ fn test_hunk_bar_click_retains_cursor_visual_position_outside_screen_above_and_b
 
         let h = &state.output.files[fi].hunks[1];
         let hidden_gap = state.hunk_leading_gap(fi, 1);
-        let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+        let txt = hunk_divider_text(
+            Badge {
+                idx: 1,
+                total: Some(2),
+            },
+            h,
+            hidden_gap,
+        );
         let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
 
         // Park cursor on last row in hunk 1. starts[last] is > 16. With scroll
@@ -4835,7 +4892,14 @@ fn test_expand_below_cursor_above_divider() {
 
             let h = &state.output.files[fi].hunks[1];
             let hidden_gap = state.hunk_leading_gap(fi, 1);
-            let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+            let txt = hunk_divider_text(
+                Badge {
+                    idx: 1,
+                    total: Some(2),
+                },
+                h,
+                hidden_gap,
+            );
             let col = txt.find("▼").map(|i| txt[..i].chars().count()).unwrap();
 
             state.execute(TuiCommand::MouseClick {
@@ -4882,7 +4946,14 @@ fn test_expand_below_cursor_above_divider() {
 
             let h = &state.output.files[fi].hunks[1];
             let hidden_gap = state.hunk_leading_gap(fi, 1);
-            let txt = hunk_divider_text(Badge { idx: 1, total: 2 }, h, hidden_gap);
+            let txt = hunk_divider_text(
+                Badge {
+                    idx: 1,
+                    total: Some(2),
+                },
+                h,
+                hidden_gap,
+            );
             let col = txt.find("▲").map(|i| txt[..i].chars().count()).unwrap();
 
             state.execute(TuiCommand::MouseClick {

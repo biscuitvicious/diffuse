@@ -82,7 +82,7 @@ impl AppState {
                     file_obj,
                     crate::render::Badge {
                         idx: item.file_idx,
-                        total: self.output.files.len(),
+                        total: (!self.is_streaming).then_some(self.output.files.len()),
                     },
                     is_collapsed,
                     self.output.common_directory_prefix().as_deref(),

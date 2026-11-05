@@ -2212,14 +2212,41 @@ fn piped_diff_into_diffuse_with_pty_stdout_enters_tui_and_quits() {
     );
 }
 
-/// The TUI must take over the terminal promptly. Startup may not block on a
-/// terminal capability probe: a terminal that never answers one still has to
-/// see the interface immediately.
-#[test]
-fn tui_takes_over_the_terminal_promptly() {
-    use std::{io::Read, os::unix::process::CommandExt};
+/// Budget for the TUI to take over the terminal, measured from spawn.
+const TAKEOVER_BUDGET: Duration = Duration::from_millis(50);
 
-    const TAKEOVER_BUDGET: Duration = Duration::from_millis(50);
+/// Budget for the first frame to render, measured from spawn.
+const FIRST_FRAME_BUDGET: Duration = Duration::from_millis(100);
+
+/// What a light terminal replies to the OSC 11 background query.
+const OSC11_LIGHT_REPLY: &[u8] = b"\x1b]11;rgb:ffff/ffff/ffff\x1b\\";
+
+/// The light palette's base background, as emitted by the crossterm backend.
+const LIGHT_PALETTE_BG: &[u8] = b"48;2;250;250;250";
+
+/// The dark palette's base background, as emitted by the crossterm backend.
+const DARK_PALETTE_BG: &[u8] = b"48;5;233";
+
+/// A running interactive review attached to a pty, with the terminal on both
+/// stdin and stdout: the only configuration that reaches the TUI.
+struct PtyReview {
+    child: std::process::Child,
+    master: File,
+    _repo: tempfile::TempDir,
+}
+
+impl Drop for PtyReview {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Spawn the interactive review on an 80×24 pty, optionally pinning the theme.
+/// The pty answers no query, so any startup path that waits for a terminal
+/// reply shows up as a stall.
+fn spawn_review_on_pty(theme: Option<&str>) -> PtyReview {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
 
     let winsize = nix::pty::Winsize {
         ws_row: 24,
@@ -2228,16 +2255,15 @@ fn tui_takes_over_the_terminal_promptly() {
         ws_ypixel: 0,
     };
     let pty = nix::pty::openpty(Some(&winsize), None).expect("openpty failed");
-    let mut master = File::from(pty.master);
+    let master = File::from(pty.master);
     let slave = File::from(pty.slave);
 
-    // A terminal on both ends: this is the interactive git review, the only
-    // mode that consults the terminal for keyboard-protocol support.
-    let dir = setup_repo();
+    let repo = setup_repo();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_diffuse"));
-    cmd.arg("--theme")
-        .arg("dark")
-        .current_dir(dir.path())
+    if let Some(theme) = theme {
+        cmd.arg("--theme").arg(theme);
+    }
+    cmd.current_dir(repo.path())
         .stdin(slave.try_clone().unwrap())
         .stdout(slave)
         .stderr(Stdio::piped());
@@ -2250,45 +2276,146 @@ fn tui_takes_over_the_terminal_promptly() {
         });
     }
 
-    let started = Instant::now();
-    let mut child = cmd.spawn().unwrap();
+    let child = cmd.spawn().unwrap();
     drop(cmd);
 
-    // Answer the cursor-position query the way a real terminal does; the
-    // keyboard-protocol query is deliberately left unanswered, as by any
-    // terminal without that support.
+    // Non-blocking reads keep the waits honest: a child that writes nothing at
+    // all cannot hold the reader past its budget.
+    let raw = master.as_raw_fd();
+    let flags = unsafe { libc::fcntl(raw, libc::F_GETFL) };
+    assert!(flags >= 0, "fcntl(F_GETFL) failed on the pty master");
+    let set = unsafe { libc::fcntl(raw, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+    assert_eq!(set, 0, "fcntl(F_SETFL) failed on the pty master");
+
+    PtyReview {
+        child,
+        master,
+        _repo: repo,
+    }
+}
+
+/// Wait until `needle` appears in the terminal output. Returns how long it
+/// took, or everything the terminal received when it never appeared.
+fn wait_for_output(
+    pty: &mut PtyReview,
+    needle: &[u8],
+    budget: Duration,
+) -> Result<Duration, Vec<u8>> {
+    use io::Read;
+
+    let started = Instant::now();
     let mut seen = Vec::new();
-    let mut chunk = [0u8; 1024];
-    let mut takeover = None;
-    while started.elapsed() < Duration::from_secs(5) {
-        match master.read(&mut chunk) {
+    let mut chunk = [0u8; 4096];
+    while started.elapsed() < budget {
+        match pty.master.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => seen.extend_from_slice(&chunk[..n]),
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+            Err(_) => break,
+        }
+        if seen.windows(needle.len()).any(|window| window == needle) {
+            return Ok(started.elapsed());
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Err(seen)
+}
+
+/// Wait until `needle` appears, answering the OSC 11 background query the way
+/// a light terminal would. Returns how long it took, or everything the
+/// terminal received when it never appeared.
+fn wait_for_output_as_light_terminal(
+    pty: &mut PtyReview,
+    needle: &[u8],
+    budget: Duration,
+) -> Result<Duration, Vec<u8>> {
+    use io::{Read, Write};
+
+    let started = Instant::now();
+    let mut seen = Vec::new();
+    let mut answered = false;
+    let mut chunk = [0u8; 4096];
+    while started.elapsed() < budget {
+        match pty.master.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => {
                 seen.extend_from_slice(&chunk[..n]);
-                if seen.windows(3).any(|w| w == b"[6n") {
-                    let _ = master.write_all(b"\x1b[1;1R");
-                    let _ = master.flush();
-                }
-                if seen.windows(5).any(|w| w == b"?1049") {
-                    takeover = Some(started.elapsed());
-                    break;
+                if !answered && seen.windows(6).any(|window| window == b"\x1b]11;?") {
+                    answered = true;
+                    pty.master
+                        .write_all(OSC11_LIGHT_REPLY)
+                        .expect("failed to answer the OSC 11 query");
                 }
             }
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
             Err(_) => break,
         }
+        if seen.windows(needle.len()).any(|window| window == needle) {
+            return Ok(started.elapsed());
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
+    Err(seen)
+}
 
-    let _ = master.write_all(b"q");
-    let _ = master.flush();
-    let _ = child.kill();
-    let _ = child.wait();
+/// The TUI must take over the terminal promptly. Startup may not block on a
+/// terminal capability probe: a terminal that never answers one still has to
+/// see the interface immediately.
+#[test]
+fn tui_takes_over_the_terminal_promptly() {
+    let mut pty = spawn_review_on_pty(Some("dark"));
+    let elapsed = wait_for_output(&mut pty, b"?1049", Duration::from_secs(5))
+        .unwrap_or_else(|seen| panic!("TUI never entered the alternate screen, pty saw: {seen:?}"));
 
-    let elapsed = takeover.expect("TUI never entered the alternate screen");
     eprintln!("terminal takeover in {elapsed:?}");
     assert!(
         elapsed < TAKEOVER_BUDGET,
         "TUI took {elapsed:?} to take over the terminal, budget is {TAKEOVER_BUDGET:?}"
     );
+}
+
+/// A terminal that answers no query must still get the interface. No startup
+/// path may wait for a reply, least of all one whose absence is fatal.
+#[test]
+fn tui_renders_when_the_terminal_answers_no_query() {
+    let mut pty = spawn_review_on_pty(Some("dark"));
+    let rendered = wait_for_output(&mut pty, b"a.txt", FIRST_FRAME_BUDGET).unwrap_or_else(|seen| {
+        panic!("the review never rendered on a terminal that answers no query, pty saw: {seen:?}")
+    });
+
+    eprintln!("first frame in {rendered:?}");
+    assert_eq!(
+        pty.child.try_wait().unwrap(),
+        None,
+        "the review exited after rendering its first frame"
+    );
+}
+
+/// The theme must follow the background the terminal reports: an `auto` run in
+/// a light terminal renders the light palette, never the dark fallback.
+#[test]
+fn tui_uses_the_background_the_terminal_reports() {
+    let mut pty = spawn_review_on_pty(None);
+    let rendered = wait_for_output_as_light_terminal(
+        &mut pty,
+        LIGHT_PALETTE_BG,
+        FIRST_FRAME_BUDGET,
+    )
+    .unwrap_or_else(|seen| {
+        let painted = if seen
+            .windows(DARK_PALETTE_BG.len())
+            .any(|w| w == DARK_PALETTE_BG)
+        {
+            "painted the dark palette"
+        } else {
+            "painted neither palette"
+        };
+        panic!(
+            "the terminal reported a light background but the review {painted}, pty saw: {seen:?}"
+        )
+    });
+
+    eprintln!("light palette in {rendered:?}");
 }
 
 #[cfg(unix)]

@@ -563,6 +563,7 @@ dependencies = [
  "diffuse-render",
  "diffuse-syntax",
  "flate2",
+ "gix",
  "notify",
  "ratatui",
  "serde",
