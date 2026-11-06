@@ -152,7 +152,13 @@ fn test_row_style_methods() {
     assert_eq!(add_style.fg, rest[DiffKind::Add].surface.fg);
 
     let del_style = theme.row_style(diffuse_core::parse::RowKind::Del);
-    assert_eq!(del_style.fill_style(), None);
+    assert_eq!(
+        del_style.fill_style(),
+        rest[DiffKind::Del]
+            .surface
+            .fill
+            .map(|bg| Style::new().bg(bg))
+    );
     assert_eq!(del_style.fill_cursor_style(), None);
 }
 #[test]
@@ -175,7 +181,11 @@ fn test_row_style_palette_parity() {
         let del = theme.row_style(diffuse_core::parse::RowKind::Del);
         assert_eq!(del.tint_bg, legacy.del_tint_bg);
         assert_eq!(del.cursor_bg, legacy.del_cursor_bg);
-        assert_eq!(del.fill_bg, None, "del has no fill (dead legacy field)");
+        assert_eq!(
+            del.fill_bg,
+            theme.palette[Cursor::Rest][DiffKind::Del].surface.fill,
+            "del fill carries the rest-tier emphasis fill for struck spans"
+        );
         assert_eq!(del.fill_cursor_bg, None);
         assert_eq!(del.fg, legacy.del_fg);
 

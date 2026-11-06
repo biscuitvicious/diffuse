@@ -122,7 +122,9 @@ pub fn write_row_segment<W: Write>(
     } else {
         s_mod.fill_bg()
     };
-    let del_bg = s_del.tint_bg();
+    // Struck deletion spans sit on the del emphasis fill, not the row
+    // tint, so removed words keep a distinct red block on mod rows.
+    let del_bg = s_del.fill_bg();
 
     let has_subwords =
         runs.iter().any(|t| t.kind == RunKind::Add) && runs.iter().any(|t| t.kind != RunKind::Add);

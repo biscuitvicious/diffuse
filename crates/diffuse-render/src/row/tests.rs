@@ -686,6 +686,51 @@ fn test_mov_src_renders_like_del_row_without_strikethrough() {
 }
 
 #[test]
+fn test_mod_row_del_span_uses_del_fill_background() {
+    let theme = DiffuseTheme::dark();
+    let s_del = theme.row_style(RowKind::Del);
+    let runs = vec![
+        OutputRun {
+            kind: RunKind::Ctx,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "foo ".into(),
+        },
+        OutputRun {
+            kind: RunKind::Del,
+            color: TokenColor::Default,
+            sgr: None,
+            text: "bar".into(),
+        },
+    ];
+    let rendered = render_row_segment(
+        "foo bar",
+        false,
+        RowKind::Mod,
+        None,
+        &runs,
+        0,
+        usize::MAX,
+        "  15~- ",
+        false,
+        false,
+        0,
+        true,
+        true,
+        &theme,
+    );
+    let fill = s_del.fill_bg();
+    assert!(
+        !fill.is_empty(),
+        "del row style must carry a fill background"
+    );
+    assert!(
+        rendered.contains(&format!("{fill}\x1b[9m")),
+        "struck del span on mod row must sit on the del fill background"
+    );
+}
+
+#[test]
 fn test_write_row_segment_direct_buffer() {
     let theme = DiffuseTheme::dark();
     let runs = vec![OutputRun {

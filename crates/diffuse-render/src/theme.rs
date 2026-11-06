@@ -199,10 +199,10 @@ impl DiffuseTheme {
                 icon: "-",
                 tint_bg: rest[DiffKind::Del].surface.bg,
                 cursor_bg: row[DiffKind::Del].surface.bg,
-                // Del carries no fill in the row styler (the legacy flat
-                // `del_fill_bg` is dead, and the asset clears the row-tier
-                // fill to match).
-                fill_bg: None,
+                // Del carries the rest-tier fill so struck deletion spans on
+                // mod rows sit on the emphasis fill; the asset clears the
+                // row-tier fill, so there is no fill-cursor variant.
+                fill_bg: rest[DiffKind::Del].surface.fill,
                 fill_cursor_bg: None,
                 fg: rest[DiffKind::Del].surface.fg,
             },
